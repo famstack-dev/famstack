@@ -1,0 +1,34 @@
+# stacklets/ai/docker-compose.yml — Text-to-Speech (Piper)
+#
+# Piper TTS doesn't need Metal GPU — it's fast enough on CPU, so Docker
+# is fine. The LLM (oMLX) and STT (whisper.cpp) run natively on macOS
+# and are managed by setup.sh, not this compose file.
+#
+# Uses the -min image (~1 GB) which only includes Piper. The full image
+# adds XTTS v2 (~8 GB) which needs a GPU we don't have in Docker.
+
+name: stack-ai
+
+services:
+  stack-ai-speech:
+    container_name: stack-ai-speech
+    image: ghcr.io/matatonic/openedai-speech-min
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42063:8000"
+    volumes:
+      # Bind-mounted so voice mappings can be changed without rebuilding
+      - ./config/voice_to_speaker.yaml:/app/config/voice_to_speaker.yaml:ro
+      # Voice models auto-download from Hugging Face on first TTS request
+      - ${SPEECH_DATA_DIR}/voices:/app/voices
+    environment:
+      TTS_HOME: voices
+      HF_HOME: voices
+    restart: unless-stopped
+
+networks:
+  famstack:
+    external: true

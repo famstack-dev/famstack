@@ -1,0 +1,70 @@
+# stacklets/messages/docker-compose.yml — Matrix/Synapse + Element
+#
+# The messaging backbone. Synapse handles the Matrix protocol — accounts,
+# rooms, message history, media. Element is the web client anyone in the
+# family can open in a browser. Other stacklets push notifications here.
+#
+# Three containers:
+#   stack-messages-synapse   — Matrix homeserver (API on port 8008 internally)
+#   stack-messages-db        — PostgreSQL for message history, accounts, rooms
+#   stack-messages-element   — Element Web client (static files on port 80)
+
+name: stack-messages
+
+services:
+  stack-messages-synapse:
+    container_name: stack-messages-synapse
+    image: matrixdotorg/synapse:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    volumes:
+      - ${SYNAPSE_DATA}:/data
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      stack-messages-db:
+        condition: service_healthy
+    ports:
+      # Synapse API — Element and mobile apps connect here
+      - "${PORT_BIND_IP:-127.0.0.1}:42031:8008"
+    restart: unless-stopped
+
+  stack-messages-db:
+    container_name: stack-messages-db
+    image: postgres:16-alpine
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --lc-collate=C --lc-ctype=C'
+    volumes:
+      - ${MESSAGES_DB_DATA}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  stack-messages-element:
+    container_name: stack-messages-element
+    image: vectorim/element-web:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    volumes:
+      - ${SYNAPSE_DATA}/element-config.json:/app/config.json:ro
+    ports:
+      # Element Web — the UI users open in their browser
+      - "${PORT_BIND_IP:-127.0.0.1}:42030:80"
+    restart: unless-stopped
+
+networks:
+  famstack:
+    external: true

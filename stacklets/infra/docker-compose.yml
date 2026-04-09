@@ -1,0 +1,66 @@
+# infra/docker-compose.yml — domain mode infrastructure
+#
+# AdGuard: DNS server, resolves *.domain → server IP
+# Caddy: reverse proxy, routes by hostname to containers
+#
+# For domain mode:
+#   1. AdGuard resolves *.home.internal → server IP
+#   2. Caddy routes by hostname to the right container
+#   3. Point your router's DNS to this server
+
+name: stack-infra
+
+services:
+
+  # ── AdGuard Home ─────────────────────────────────────────────────────────────
+  # DNS server with ad-blocking. Provides wildcard DNS for domain mode.
+  # First run: complete setup wizard at http://ip:3000
+  # After setup: admin panel at http://ip:42080
+  stack-infra-adguard:
+    image: adguard/adguardhome:latest
+    container_name: stack-infra-adguard
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - stack
+    ports:
+      # DNS (must be 53 for network clients)
+      - "${PORT_BIND_IP:-0.0.0.0}:53:53/udp"
+      - "${PORT_BIND_IP:-0.0.0.0}:53:53/tcp"
+      # Setup wizard (first run)
+      - "${PORT_BIND_IP:-0.0.0.0}:3000:3000"
+      # Admin panel (after setup)
+      - "${PORT_BIND_IP:-0.0.0.0}:42080:80"
+    volumes:
+      - ${ADGUARD_DATA_DIR}/work:/opt/adguardhome/work
+      - ${ADGUARD_DATA_DIR}/conf:/opt/adguardhome/conf
+    environment:
+      TZ: ${TZ}
+
+  # ── Caddy ──────────────────────────────────────────────────────────────────
+  # Reverse proxy. Routes requests by hostname to the right container.
+  stack-infra-caddy:
+    image: caddy:2-alpine
+    container_name: stack-infra-caddy
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - stack
+    ports:
+      - "${PORT_BIND_IP:-0.0.0.0}:80:80"
+      - "${PORT_BIND_IP:-0.0.0.0}:443:443"
+    environment:
+      - STACK_DOMAIN=${STACK_DOMAIN:-home.internal}
+    volumes:
+      - ${CADDYFILE_PATH}:/etc/caddy/Caddyfile:ro
+      - ${CADDY_DATA_DIR}:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-config:
+
+networks:
+  stack:
+    external: true

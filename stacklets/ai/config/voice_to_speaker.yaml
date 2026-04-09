@@ -1,0 +1,53 @@
+# Voice mappings for openedai-speech (Piper TTS).
+#
+# Maps OpenAI voice names to local Piper models. Open WebUI and any
+# OpenAI-compatible client can request these voices by name.
+#
+# English voices: alloy, echo, nova
+# German voices:  onyx, fable, shimmer
+#
+# thorsten-high is the best German voice in Piper (male, clear, natural).
+# libritts_r-medium is a solid English voice for general conversation.
+# Models auto-download from Hugging Face on first use.
+
+tts-1:
+  # English
+  alloy:
+    model: voices/en_US-libritts_r-medium.onnx
+    speaker: 0
+  echo:
+    model: voices/en_US-libritts_r-medium.onnx
+    speaker: 0
+  nova:
+    model: voices/en_US-libritts_r-medium.onnx
+    speaker: 0
+  # German
+  onyx:
+    model: voices/de_DE-thorsten-high.onnx
+    speaker: 0
+  fable:
+    model: voices/de_DE-thorsten-high.onnx
+    speaker: 0
+  shimmer:
+    model: voices/de_DE-thorsten-high.onnx
+    speaker: 0
+
+tts-1-hd:
+  alloy:
+    model: voices/en_US-libritts_r-medium.onnx
+    speaker: 0
+  echo:
+    model: voices/en_US-libritts_r-medium.onnx
+    speaker: 0
+  nova:
+    model: voices/en_US-libritts_r-medium.onnx
+    speaker: 0
+  onyx:
+    model: voices/de_DE-thorsten-high.onnx
+    speaker: 0
+  fable:
+    model: voices/de_DE-thorsten-high.onnx
+    speaker: 0
+  shimmer:
+    model: voices/de_DE-thorsten-high.onnx
+    speaker: 0

@@ -1,0 +1,15 @@
+# A stacklet that declares generated secrets.
+# Tests: secret generation, secret cleanup on destroy, secret stability.
+
+id          = "with_secrets"
+name        = "With Secrets"
+description = "Tests secret generation and lifecycle"
+version     = "0.1.0"
+category    = "test"
+
+[env]
+generate = ["DB_PASSWORD", "API_KEY"]
+
+[env.defaults]
+SECRET_DATA_DIR = "{data_dir}/with_secrets"
+TZ              = "{timezone}"

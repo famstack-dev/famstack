@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# stack CLI — all logic lives in lib/stack/
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec env PYTHONPATH="$SCRIPT_DIR/lib" python3 -m stack "$@"

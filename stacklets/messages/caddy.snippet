@@ -1,0 +1,12 @@
+# stacklets/messages/caddy.snippet
+#
+# Two routes: Synapse API and Element Web client.
+# Assembled into the Caddyfile by 'stack up'.
+
+messages.{$FAMSTACK_DOMAIN} {
+    reverse_proxy stack-messages-synapse:8008
+}
+
+element.{$FAMSTACK_DOMAIN} {
+    reverse_proxy stack-messages-element:80
+}

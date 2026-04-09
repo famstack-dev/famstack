@@ -1,0 +1,12 @@
+# A minimal stacklet with no hooks, no Docker, no secrets.
+# Tests: discovery, env rendering, template resolution.
+
+id          = "basic"
+name        = "Basic"
+description = "Minimal stacklet for framework testing"
+version     = "0.1.0"
+category    = "test"
+
+[env.defaults]
+BASIC_DATA_DIR = "{data_dir}/basic"
+TZ             = "{timezone}"

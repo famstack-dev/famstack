@@ -1,0 +1,85 @@
+# stack.toml — famstack configuration
+#
+# Copy this to stack.toml and edit it:  cp stack.example.toml stack.toml
+# Or run: stack init (does this automatically)
+#
+# stack.toml is gitignored — your settings won't conflict with updates.
+# The only value you must set is data_dir. Everything else has sensible defaults.
+
+[core]
+# Product name — used in CLI messages and UI branding.
+name = "famstack"
+
+# Leave empty for port mode (zero setup, access via hostname:port from any device).
+# Set to enable pretty URLs via Caddy reverse proxy:
+#   domain = "home.internal"  →  photos.home.internal, docs.home.internal
+#   Requires wildcard DNS on your router: *.home.internal → server IP
+domain = ""
+
+# Absolute path where all persistent data lives: databases, uploads, config.
+# This directory is NOT managed by git — back it up separately.
+# The ~ shorthand is expanded by the stack CLI.
+data_dir = "~/famstack-data"
+
+# Timezone for containers that need one (Immich, Paperless, cron jobs, etc.)
+# Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+timezone = "UTC"
+
+[updates]
+# When Watchtower runs its nightly image update check.
+# Format: 6-field cron (seconds minutes hours day-of-month month day-of-week)
+# Default: 3am every night — quiet hours for most households.
+# Set to "" to disable automatic updates entirely.
+schedule = "0 0 3 * * *"
+
+[ai]
+# OpenAI-compatible API endpoint for LLM inference.
+# Both oMLX (MLX models) and LM Studio (GGUF models) are installed
+# automatically by `stack up ai`. Point this at whichever you're using:
+#   oMLX native app: http://localhost:8000/v1  (default)
+#   oMLX via brew:   http://localhost:42060/v1
+#   LM Studio:       http://localhost:42061/v1
+# Containers reach this automatically via host.docker.internal.
+openai_url = "http://localhost:8000/v1"
+
+# API key for the local LLM server. Any value works — this is just local auth.
+openai_key = "local"
+
+# Default model for all AI tasks. Bots resolve models by path:
+#   resolve("archivist/classifier") walks:
+#     1. [ai.models] archivist.classifier — task-specific override
+#     2. [ai.models] archivist            — bot-level override
+#     3. [ai] default                     — fallback for everything
+# Required when running bots. Set to whatever model you have loaded.
+#
+# Recommended defaults by RAM:
+#   32GB: mlx-community/Qwen3.5-9B-MLX-8bit
+#   64GB: mlx-community/Qwen2.5-14B-Instruct-4bit
+# TODO: model profiles (8GB, 16GB, 32GB, 64GB) coming soon
+default = "mlx-community/Qwen3.5-9B-MLX-8bit"
+
+# Override models per bot or per task. Bots resolve by path:
+#   resolve("archivist/classifier") checks in order:
+#     archivist.classifier → archivist → default (above)
+#
+# Examples:
+# [ai.models]
+# archivist = "mlx-community/Qwen2.5-14B-Instruct-4bit"           # all archivist tasks use this
+# archivist.classifier = "mlx-community/Qwen2.5-7B-Instruct-4bit" # fast model just for classification
+
+# Whisper.cpp speech-to-text server. Built from source by `stack up ai`
+# because the Homebrew formula disables the HTTP server.
+whisper_url = "http://localhost:42062/v1"
+
+# Language for AI interactions — controls TTS voice selection and
+# default Whisper transcription language.
+# "en" = English (alloy voice), "de" = German (onyx voice)
+language = "en"
+
+[services]
+# Homepage dashboard URL — set automatically when core is enabled.
+homepage_url = "http://localhost:3000"
+
+# Host service API — only needed when the stack CLI itself runs inside a
+# container (e.g. as an OpenClaw agent). Leave unset for native macOS installs.
+# host_service = "http://host.docker.internal:6110"

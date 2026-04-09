@@ -1,0 +1,67 @@
+# core/docker-compose.yml — essential services
+#
+# Watchtower: nightly image updates for all containers with
+# watchtower.enable=true label. Old images kept for rollback.
+#
+# Bot runner: discovers bots from enabled stacklets, runs them
+# in one async process. Connects to Matrix for messaging, uses
+# the API socket for CLI commands.
+
+name: stack-core
+
+services:
+  stack-core-watchtower:
+    image: containrrr/watchtower:latest
+    container_name: stack-core-watchtower
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_SCHEDULE=${WATCHTOWER_SCHEDULE:-0 0 3 * * *}
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_CLEANUP=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  stack-core-bot-runner:
+    build: ./bot-runner
+    container_name: stack-core-bot-runner
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - famstack
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    volumes:
+      # Bot discovery — scans enabled stacklets for bot/ dirs
+      - ../../stacklets:/stacklets:ro
+      # Setup state — knows which stacklets are enabled, holds secrets
+      - ../../.stack:/setup-state:ro
+      # Shared library — resolve_model, compat shims
+      - ../../lib/stack:/app/stack:ro
+      # Per-stacklet bot data (sessions, crypto stores)
+      - ${DATA_DIR}:/data
+      # API is TCP on host.docker.internal:42001 — no socket mount needed
+    restart: unless-stopped
+
+  # Tools HTTP server — OpenAPI endpoints for Open WebUI tool calling.
+  # Lets the AI search documents, find photos, and check server status.
+  stack-core-tools:
+    build: ./tools-server
+    container_name: stack-core-tools
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - famstack
+    extra_hosts:
+      # TCP API runs natively on macOS, reached via Docker gateway
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42000:8000"
+    restart: unless-stopped
+
+networks:
+  famstack:
+    external: true

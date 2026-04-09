@@ -1,0 +1,31 @@
+# Minimal container for integration testing.
+# Alpine + busybox httpd — starts in ~1 second, serves health check.
+
+name: stack-test
+
+services:
+  stack-test:
+    container_name: stack-test
+    image: alpine:latest
+    command: >
+      sh -c "while true; do
+        echo -e 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok' |
+        nc -l -p 8080;
+      done"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - stack
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42099:8080"
+    volumes:
+      - ${TEST_DATA_DIR}:/data
+    environment:
+      TZ: ${TZ}
+      TEST_SECRET: ${TEST_SECRET}
+      TEST_ADMIN: ${TEST_ADMIN}
+    restart: unless-stopped
+
+networks:
+  stack:
+    external: true

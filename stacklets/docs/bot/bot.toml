@@ -1,0 +1,9 @@
+id          = "archivist-bot"
+name        = "Archivist"
+description = "Auto-files documents with AI classification"
+room        = "documents"
+room_topic  = "Drop photos, PDFs, or links here. They get filed and tagged automatically. Type 'help' for tips."
+
+[settings]
+classify = true
+reformat = true

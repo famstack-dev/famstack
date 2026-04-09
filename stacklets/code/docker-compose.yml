@@ -1,0 +1,37 @@
+# Forgejo — lightweight self-hosted Git server
+#
+# Web UI:  http://<ip>:42040
+# SSH:     ssh://git@<ip>:222/user/repo.git
+#
+# First user to register becomes admin.
+# All data stored in CODE_DATA_DIR (~/famstack-data/code/).
+# SQLite — no separate database container needed.
+
+name: stack-code
+
+services:
+  stack-code:
+    container_name: stack-code
+    image: codeberg.org/forgejo/forgejo:14
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    ports:
+      - "${PORT_BIND_IP:-0.0.0.0}:42040:3000"
+      - "${PORT_BIND_IP:-0.0.0.0}:${CODE_SSH_PORT:-222}:22"
+    volumes:
+      - ${CODE_DATA_DIR}:/data
+      - /etc/localtime:/etc/localtime:ro
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  famstack:
+    external: true

@@ -1,0 +1,13 @@
+# A stacklet that depends on 'basic'.
+# Tests: requires enforcement, dependency error messages.
+
+id          = "with_deps"
+name        = "With Dependencies"
+description = "Tests dependency checking"
+version     = "0.1.0"
+category    = "test"
+requires    = ["basic"]
+
+[env.defaults]
+DEPS_DATA_DIR = "{data_dir}/with_deps"
+TZ            = "{timezone}"

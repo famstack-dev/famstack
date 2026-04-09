@@ -1,0 +1,4 @@
+id   = "stacker-bot"
+name = "Stacker"
+room = "famstack"
+room_topic = "famstack system notifications, service status, and admin alerts."

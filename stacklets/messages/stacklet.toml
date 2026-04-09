@@ -1,0 +1,60 @@
+# stacklet.toml — messages stacklet (Matrix/Synapse + Element)
+#
+# The messaging backbone of famstack. Synapse is the Matrix homeserver,
+# Element is the web client. Other stacklets send notifications through
+# this — it's the nervous system of the stack.
+#
+# Federation is disabled by default — this is a LAN-only server for your
+# household. The door stays open for federation if you use a real domain
+# as the server_name.
+#
+# Three containers:
+#   synapse            — Matrix homeserver (messages, accounts, media)
+#   messages_postgres  — PostgreSQL database
+#   element            — Element Web client (static web app)
+#
+# The server_name is permanent. It appears in every user ID (@user:name)
+# and cannot be changed after setup. 'stack up messages' prompts for it
+# on first run and stores it in stack.toml under [messages].
+
+id          = "messages"
+name        = "Messages"
+description = "Family chat and notification backbone (Matrix + Element)"
+version     = "0.2.0"
+category    = "communication"
+port        = 42030
+
+# Next-step hints shown after 'stack up'. Template vars: {url}, {ip}
+login_field = "username"
+
+hints = [
+    "Open {url} in your browser",
+    "On phones: install Element, use http://{ip}:42031 as the server",
+]
+
+# Secondary ports — the main 'port' is Element (web client), but Synapse
+# exposes its own API port for mobile apps and CLI tools. Declaring it here
+# makes it discoverable from the manifest instead of hardcoded in plugins.
+[ports]
+element = 42030
+synapse = 42031
+
+[upstream]
+image   = "matrixdotorg/synapse"
+channel = "patch"
+
+[env]
+generate = ["DB_PASSWORD", "REGISTRATION_SECRET", "MACAROON_SECRET", "SCRIBE_BOT_PASSWORD"]
+
+[env.defaults]
+FAMSTACK_MESSAGES_SERVER_NAME = "{messages_server_name}"
+SYNAPSE_DATA     = "{data_dir}/messages/synapse"
+MESSAGES_DB_DATA = "{data_dir}/messages/postgres"
+SYNAPSE_PUBLIC_URL = "{messages_synapse_url}"
+TZ               = "{timezone}"
+DB_USER          = "synapse"
+DB_NAME          = "synapse"
+
+[health]
+url    = "http://localhost:42031/_matrix/client/versions"
+expect = "200"

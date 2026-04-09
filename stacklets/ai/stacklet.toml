@@ -1,0 +1,84 @@
+# stacklet.toml — ai stacklet (LLM inference + Whisper + Speech)
+#
+# The AI engine for famstack. Services that together enable voice
+# conversations: speak a question, get a spoken answer — all local,
+# nothing leaves the network.
+#
+# LLM and Whisper run natively on macOS because Metal GPU acceleration
+# is not available inside Docker's Linux VM (20-40x speed difference).
+# Piper TTS runs in Docker because it's CPU-only and fast enough.
+
+id          = "ai"
+name        = "AI"
+description = "Local AI engine for voice, text, and speech"
+version     = "0.2.0"
+category    = "ai"
+type        = "host"
+port        = 42060
+
+hints = [
+    "oMLX admin UI: http://localhost:42060/admin (password: {ai_openai_key})",
+    "Try: stack ai models",
+]
+
+[[health.checks]]
+name = "TTS"
+url  = "http://localhost:42063/"
+hint = "TTS not running — check 'docker logs stack-ai-speech'"
+
+[[health.checks]]
+name = "Whisper"
+url  = "http://localhost:42062/"
+hint = "Whisper not running — check whisper-server logs"
+
+[[health.checks]]
+name = "LLM"
+url  = "{ai_openai_url}/models"
+hint = "LLM endpoint not reachable — run 'stack ai models' to configure"
+[health.checks.headers]
+Authorization = "Bearer {ai_openai_key}"
+
+[ports]
+omlx      = 42060
+lmstudio  = 42061
+whisper   = 42062
+speech    = 42063
+
+# ── LLM backends ──────────────────────────────────────────────────────────
+#
+# Both are installed and managed automatically by setup.sh.
+#   oMLX       — MLX models with smart SSD caching (brew)
+#   LM Studio  — GGUF models via llama.cpp (headless installer)
+
+[services.omlx]
+name        = "oMLX"
+description = "MLX inference with SSD caching (Metal GPU)"
+check_url   = "{ai_openai_url}/models"
+start       = "brew services start omlx"
+stop        = "brew services stop omlx"
+# Installed headlessly via: brew tap jundot/omlx && brew install omlx
+
+[services.lmstudio]
+name        = "LM Studio"
+description = "GGUF inference via llama.cpp (Metal GPU)"
+check_url   = "http://localhost:42061/v1/models"
+start       = "~/.lmstudio/bin/lms daemon up && ~/.lmstudio/bin/lms server start --port 42061"
+stop        = "~/.lmstudio/bin/lms server stop && ~/.lmstudio/bin/lms daemon down"
+# Installed headlessly via: curl -fsSL https://lmstudio.ai/install.sh | bash
+
+# ── Always-on services ────────────────────────────────────────────────────
+
+[services.whisper]
+name        = "Whisper"
+description = "Speech-to-text (whisper.cpp, Metal GPU)"
+check_url   = "http://localhost:42062/"
+start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.whisper.plist"
+stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plist"
+# Homebrew's whisper-cpp formula builds with -DWHISPER_BUILD_SERVER=OFF,
+# so there's no HTTP server binary. setup.sh builds from source instead.
+
+[env.defaults]
+SPEECH_DATA_DIR = "{data_dir}/ai/speech"
+TZ              = "{timezone}"
+# Derived from [ai].language — so users set language once, not voice names.
+AUDIO_TTS_VOICE = "{ai_tts_voice}"

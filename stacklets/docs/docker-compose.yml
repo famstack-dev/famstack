@@ -1,0 +1,116 @@
+# stacklets/docs/docker-compose.yml — Paperless-ngx
+#
+# Family document archive with OCR. Drop a PDF, photo, or Office file
+# and Paperless handles the rest: OCR, categorisation, and long-term archival.
+#
+# Five containers:
+#   stack-docs-paperless  — web app + OCR engine (Tesseract via OCRmyPDF)
+#   stack-docs-db         — PostgreSQL database
+#   stack-docs-redis      — Redis/Valkey task queue (Celery)
+#   stack-docs-gotenberg  — converts Office documents to PDF
+#   stack-docs-tika       — extracts text from Office docs and email
+
+name: stack-docs
+
+services:
+  stack-docs-paperless:
+    container_name: stack-docs-paperless
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    depends_on:
+      stack-docs-db:
+        condition: service_healthy
+      stack-docs-redis:
+        condition: service_healthy
+      stack-docs-gotenberg:
+        condition: service_started
+      stack-docs-tika:
+        condition: service_started
+    volumes:
+      - ${PAPERLESS_CONSUME}:/usr/src/paperless/consume
+      - ${PAPERLESS_DATA_DIR}/media:/usr/src/paperless/media
+      - ${PAPERLESS_DATA_DIR}/data:/usr/src/paperless/data
+      - ${PAPERLESS_DATA_DIR}/export:/usr/src/paperless/export
+    environment:
+      PAPERLESS_DBHOST: stack-docs-db
+      PAPERLESS_DBNAME: ${DB_NAME}
+      PAPERLESS_DBUSER: ${DB_USER}
+      PAPERLESS_DBPASS: ${DB_PASSWORD}
+      PAPERLESS_REDIS: redis://stack-docs-redis:6379
+      PAPERLESS_TIKA_ENABLED: 1
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://stack-docs-gotenberg:3000
+      PAPERLESS_TIKA_ENDPOINT: http://stack-docs-tika:9998
+      PAPERLESS_SECRET_KEY: ${SECRET_KEY}
+      PAPERLESS_TIME_ZONE: ${TZ}
+      PAPERLESS_OCR_LANGUAGE: ${PAPERLESS_OCR_LANG:-deu+eng}
+      PAPERLESS_ADMIN_USER: ${ADMIN_USER}
+      PAPERLESS_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      PAPERLESS_OCR_MODE: skip
+      PAPERLESS_OCR_OUTPUT_TYPE: pdfa
+      PAPERLESS_FILENAME_FORMAT: "{created_year}/{created_month}/{created_year}-{created_month}-{created_day} {correspondent} - {title}"
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42020:8000"
+    restart: unless-stopped
+
+  stack-docs-db:
+    container_name: stack-docs-db
+    image: postgres:16-alpine
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - ${PAPERLESS_DB_DATA}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  stack-docs-redis:
+    container_name: stack-docs-redis
+    image: docker.io/valkey/valkey:8-alpine
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  stack-docs-gotenberg:
+    container_name: stack-docs-gotenberg
+    image: gotenberg/gotenberg:8
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    command:
+      - "gotenberg"
+      - "--chromium-disable-javascript=true"
+      - "--chromium-allow-list=file:///tmp/.*"
+    restart: unless-stopped
+
+  stack-docs-tika:
+    container_name: stack-docs-tika
+    image: apache/tika:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - famstack
+    restart: unless-stopped
+
+networks:
+  famstack:
+    external: true

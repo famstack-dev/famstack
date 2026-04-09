@@ -1,0 +1,23 @@
+# users.toml — family members
+#
+# Copy this to users.toml and edit it:  cp users.example.toml users.toml
+#
+# The first user with role = "admin" becomes the admin account for all
+# services (Immich, Paperless, Open WebUI, etc.). Their password is used
+# as the default admin password — change it if your WiFi is shared.
+#
+# users.toml is gitignored — your family details stay private.
+
+[[users]]
+id       = "admin"
+name     = "Your Name"
+email    = "you@home.local"
+password = "change-me"
+role     = "admin"
+
+# Add family members — they get accounts in services that support it.
+# [[users]]
+# id   = "partner"
+# name = "Partner"
+# email = "partner@home.local"
+# role  = "member"

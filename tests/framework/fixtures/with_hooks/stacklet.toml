@@ -1,0 +1,16 @@
+# A stacklet with all lifecycle hooks.
+# Tests: hook resolution (.py preferred over .sh), hook execution order,
+# ctx interface (env, secret, step).
+
+id          = "with_hooks"
+name        = "With Hooks"
+description = "Tests hook resolution and execution"
+version     = "0.1.0"
+category    = "test"
+
+[env]
+generate = ["HOOK_SECRET"]
+
+[env.defaults]
+HOOKS_DATA_DIR = "{data_dir}/with_hooks"
+TZ             = "{timezone}"

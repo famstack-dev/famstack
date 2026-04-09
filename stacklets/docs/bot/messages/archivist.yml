@@ -1,0 +1,227 @@
+# archivist-bot — User-facing messages in all supported languages
+#
+# Add a new language by copying the "en" block and translating.
+# Use {placeholders} for dynamic values — they're filled in at runtime.
+# Multi-line messages use YAML literal block style (|).
+
+en:
+  # Startup
+  startup: "\u270D\uFE0F The Archivist has returned. Hand me your documents."
+
+  # File upload
+  received_photo: "\U0001F4F7 Received photo from {sender} — analyzing..."
+  received_document: "\U0001F4C4 Received document from {sender} — analyzing..."
+  download_failed: "\u274C Failed to download {name}: {error}"
+  download_failed_matrix: "\u274C Failed to download {name} from Matrix."
+
+  # Processing
+  upload_failed: "\u274C Could not upload {name}. Paperless might be down: try `stack up docs` or check `stack status`."
+  reading_classifying: "\U0001F50D Reading text and classifying..."
+  ocr_failed: "\u274C Could not process {name} — OCR failed or timed out."
+  filed_no_details: "\U0001F4C1 Filed: {name} (could not read details)\n\n  {link}"
+  filed_no_text: "\U0001F4C1 Filed: {name}\n\n  No text detected — manual tagging needed.\n\n  {link}"
+  filed: "\u2705 Filed: {title} (#{doc_id})"
+
+  # Ollama errors
+  llm_unavailable: |
+    📁 Filed: {name}
+
+      *AI classification skipped — set up AI with `stack up ai` for automatic tagging.*
+
+      {link}
+  llm_model_missing: |
+    📁 Filed: {name}
+
+      ⚠️ Model "{model}" is not available.
+      Check your AI backend (oMLX, Ollama, etc.)
+      Please tag manually in Paperless.
+
+      {link}
+  llm_timeout: |
+    📁 Filed: {name}
+
+      ⚠️ AI timed out — the model may still be loading.
+      Try uploading again in a minute, or tag manually in Paperless.
+
+      {link}
+  classify_failed: "\U0001F4C1 Filed: {name}\n\n  Could not classify automatically — please tag in Paperless.\n\n  {link}"
+
+  # Classification summary
+  category: "Category: {value}"
+  category_new: "Category: {value} (new)"
+  person: "Person: {value}"
+  type: "Type: {value}"
+  type_new: "Type: {value} (new)"
+  from: "From: {value}"
+  from_new: "From: {value} (new)"
+  date: "Date: {value}"
+  no_classification: "No classification applied"
+  reformat_failed: "Note: text reformatting skipped (timed out) — document is still classified."
+  new_in_paperless: "\U0001F195 New in Paperless: {items}"
+
+  # Scan
+  scan_started: "\U0001F4F8 Scan started for {sender} — upload your pages, then send ) or 'fertig' when done."
+  page_received: "\U0001F4C4 Page {num} received."
+  scan_page_failed: "\u274C Failed to download page: {error}"
+  scan_page_failed_matrix: "\u274C Failed to download page from Matrix."
+  scan_cancelled: "No pages received — scan cancelled."
+  scan_complete_single: "\U0001F4CB Scan complete (1 page) — analyzing..."
+  scan_complete_multi: "\U0001F4CB Scan complete — combining {count} pages into PDF..."
+  scan_combine_failed: "\u274C Failed to combine pages into PDF: {error}"
+  no_active_scan: "No active scan. Send ( or 'scan' to start one."
+
+  # URL archiving
+  downloading_google: "\U0001F310 Downloading {type} as PDF..."
+  downloading_url: "\U0001F310 Downloading document..."
+  url_http_error: "\u274C Failed to download — HTTP {status}.\n  Is the document publicly shared?"
+  url_empty: "\u274C Downloaded file is empty."
+  url_timeout: "\u274C Download timed out after 60 seconds."
+  url_error: "\u274C Failed to download: {error}"
+  url_not_pdf: "\u274C URL does not point to a PDF (Content-Type: {content_type}).\n  Currently only PDF links and Google Docs are supported."
+
+  # Search
+  search_no_results: "\U0001F50D No documents found for \"{query}\"."
+  search_results: "\U0001F50D Found {count} document(s) for \"{query}\":"
+
+  # Error
+  error_processing: "\u274C Error processing file: {error}"
+
+  # Welcome / Help
+  welcome: |
+    📋 **Hi! I'm Archivist!** Your famstack document keeper.
+
+    From now on, I'll take care of your documents. No more digging through drawers or scrolling through photos to find that one receipt from last year.
+
+    **What I can do:**
+
+    - 📷 **Upload a document:** post a photo, PDF, or file here → automatically archived, OCR'd, and tagged
+    - 📸 **Multi-page scan:** type `(` then upload pages, then type `)` → combined into one PDF
+    - 🌐 **Archive a link:** paste a PDF or Google Docs link → downloaded and archived
+    - 🔍 **Search:** type any search term, e.g. "insurance 2024" → full-text search across all documents
+    - 📄 **Show document:** `show 42` → fetches the content of document #42
+
+    **💡 Tips:**
+
+    - Use your phone's document scanner for best results!
+      - iPhone: Notes app → Camera → Scan Documents
+      - Android: Google Drive → + → Scan
+    - The scanner auto-crops and enhances contrast: much better than a regular photo
+    - For regular photos: good lighting, straight angle, full document in frame
+
+    {ai_status}
+
+    📂 **All documents:** {url}
+    ❓ Type **help** or **hilfe** to see this message again.
+
+    **Ready to try? Drop a document here and let's see it in action!**
+
+de:
+  # Startup
+  startup: "\u270D\uFE0F Der Archivar ist zurück. Gebt mir eure Dokumente."
+
+  # File upload
+  received_photo: "\U0001F4F7 Foto von {sender} empfangen — wird analysiert..."
+  received_document: "\U0001F4C4 Dokument von {sender} empfangen — wird analysiert..."
+  download_failed: "\u274C Download von {name} fehlgeschlagen: {error}"
+  download_failed_matrix: "\u274C Download von {name} aus Matrix fehlgeschlagen."
+
+  # Processing
+  upload_failed: "\u274C Konnte {name} nicht hochladen. Paperless ist möglicherweise nicht erreichbar: `stack up docs` oder `stack status` prüfen."
+  reading_classifying: "\U0001F50D Text wird gelesen und klassifiziert..."
+  ocr_failed: "\u274C Konnte {name} nicht verarbeiten — OCR fehlgeschlagen oder Zeitlimit erreicht."
+  filed_no_details: "\U0001F4C1 Abgelegt: {name} (Details nicht lesbar)\n\n  {link}"
+  filed_no_text: "\U0001F4C1 Abgelegt: {name}\n\n  Kein Text erkannt — bitte manuell in Paperless taggen.\n\n  {link}"
+  filed: "\u2705 Abgelegt: {title} (#{doc_id})"
+
+  # Ollama errors
+  llm_unavailable: |
+    📁 Abgelegt: {name}
+
+      *KI-Klassifizierung übersprungen — mit `stack up ai` einrichten für automatisches Tagging.*
+
+      {link}
+  llm_model_missing: |
+    📁 Abgelegt: {name}
+
+      ⚠️ Modell "{model}" ist nicht verfügbar.
+      Prüfe dein KI-Backend (oMLX, Ollama, etc.)
+      Bitte manuell in Paperless taggen.
+
+      {link}
+  llm_timeout: |
+    📁 Abgelegt: {name}
+
+      ⚠️ KI-Zeitlimit erreicht — Modell lädt möglicherweise noch.
+      Versuche es in einer Minute erneut, oder tagge manuell in Paperless.
+
+      {link}
+  classify_failed: "\U0001F4C1 Abgelegt: {name}\n\n  Automatische Klassifizierung fehlgeschlagen — bitte in Paperless taggen.\n\n  {link}"
+
+  # Classification summary
+  category: "Kategorie: {value}"
+  category_new: "Kategorie: {value} (neu)"
+  person: "Person: {value}"
+  type: "Typ: {value}"
+  type_new: "Typ: {value} (neu)"
+  from: "Von: {value}"
+  from_new: "Von: {value} (neu)"
+  date: "Datum: {value}"
+  no_classification: "Keine Klassifizierung angewendet"
+  reformat_failed: "Hinweis: Textformatierung übersprungen (Zeitlimit) — Dokument wurde trotzdem klassifiziert."
+  new_in_paperless: "\U0001F195 Neu in Paperless: {items}"
+
+  # Scan
+  scan_started: "\U0001F4F8 Scan gestartet für {sender} — lade deine Seiten hoch, dann sende ) oder 'fertig'."
+  page_received: "\U0001F4C4 Seite {num} empfangen."
+  scan_page_failed: "\u274C Seite konnte nicht heruntergeladen werden: {error}"
+  scan_page_failed_matrix: "\u274C Seite konnte nicht aus Matrix heruntergeladen werden."
+  scan_cancelled: "Keine Seiten empfangen — Scan abgebrochen."
+  scan_complete_single: "\U0001F4CB Scan abgeschlossen (1 Seite) — wird analysiert..."
+  scan_complete_multi: "\U0001F4CB Scan abgeschlossen — {count} Seiten werden zu PDF zusammengefasst..."
+  scan_combine_failed: "\u274C Seiten konnten nicht zu PDF zusammengefasst werden: {error}"
+  no_active_scan: "Kein aktiver Scan. Sende ( oder 'scan' um einen zu starten."
+
+  # URL archiving
+  downloading_google: "\U0001F310 {type} wird als PDF heruntergeladen..."
+  downloading_url: "\U0001F310 Dokument wird heruntergeladen..."
+  url_http_error: "\u274C Download fehlgeschlagen — HTTP {status}.\n  Ist das Dokument öffentlich freigegeben?"
+  url_empty: "\u274C Heruntergeladene Datei ist leer."
+  url_timeout: "\u274C Download-Zeitlimit nach 60 Sekunden erreicht."
+  url_error: "\u274C Download fehlgeschlagen: {error}"
+  url_not_pdf: "\u274C URL zeigt nicht auf ein PDF (Content-Type: {content_type}).\n  Aktuell werden nur PDF-Links und Google Docs unterstützt."
+
+  # Search
+  search_no_results: "\U0001F50D Keine Dokumente gefunden für \"{query}\"."
+  search_results: "\U0001F50D {count} Dokument(e) gefunden für \"{query}\":"
+
+  # Error
+  error_processing: "\u274C Fehler bei der Verarbeitung: {error}"
+
+  # Welcome / Help
+  welcome: |
+    📋 **Hallo! Ich bin Archivist!** Euer famstack Dokumenten-Verwalter.
+
+    Ab jetzt kümmere ich mich um eure Dokumente. Schluss mit dem Wühlen in Schubladen oder dem Durchscrollen von Fotos, um die eine Rechnung vom letzten Jahr zu finden.
+
+    **Was ich kann:**
+
+    - 📷 **Dokument hochladen:** Foto, PDF oder Datei hier posten → wird automatisch archiviert, per OCR gelesen und verschlagwortet
+    - 📸 **Mehrseitige Dokumente:** `(` tippen, Seiten hochladen, dann `)` tippen → zu einem PDF zusammengefasst
+    - 🌐 **Link archivieren:** PDF-Link oder Google Docs-Link einfügen → wird heruntergeladen und archiviert
+    - 🔍 **Suchen:** einfach Suchbegriff tippen, z.B. "Steuerbescheid 2024" → Volltextsuche über alle Dokumente
+    - 📄 **Dokument anzeigen:** `show 42` → zeigt den Inhalt von Dokument #42
+
+    **💡 Tipps:**
+
+    - Nutzt den Dokumentenscanner eures Handys!
+      - iPhone: Notizen-App → Kamera → Dokumente scannen
+      - Android: Google Drive → + → Scannen
+    - Der Scanner schneidet automatisch aus und verbessert den Kontrast: viel besser als ein normales Foto
+    - Bei normalen Fotos: gutes Licht, gerader Winkel, ganzes Dokument im Bild
+
+    {ai_status}
+
+    📂 **Alle Dokumente:** {url}
+    ❓ **help** oder **hilfe** tippen für diese Nachricht.
+
+    **Bereit zum Testen? Wirf einfach ein Dokument hier rein!**

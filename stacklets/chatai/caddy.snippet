@@ -1,0 +1,8 @@
+# stacklets/chatai/caddy.snippet
+#
+# Assembled into the Caddyfile by 'stack up'. Caddy runs in Docker on the
+# famstack network, so backends are referenced by container name.
+
+chatai.{$FAMSTACK_DOMAIN} {
+    reverse_proxy chatai:8080
+}

@@ -1,0 +1,55 @@
+# stacklet.toml — photos stacklet (Immich)
+#
+# Immich is the heart of the family photo library. It handles uploads, automatic
+# mobile backup, face recognition, and album sharing — all on your own hardware.
+#
+# This is the first stacklet to enable. It exercises every code path in the
+# stack CLI: setup, env validation, Caddy routing, and account seeding.
+
+id          = "photos"
+name        = "Photos"
+description = "Your private photo library (Immich)"
+version     = "0.2.0"
+category    = "media"
+port        = 42010
+
+# Next-step hints shown after 'stack up'. Template vars: {url}, {ip}
+login_field = "email"
+
+hints = [
+    "Open {url}",
+    "Install the Immich app on your phone — enter {url} as the server",
+]
+
+# Immich publishes patch releases frequently — Watchtower handles them silently.
+# Set to "none" if you want to pin the version and update manually.
+[upstream]
+image   = "ghcr.io/immich-app/immich-server"
+channel = "patch"
+
+# Environment variables passed to docker compose on enable.
+#
+# 'generate' keys are auto-generated and stored in .famstack/secrets.toml.
+# 'defaults' are templates rendered against stack.toml values at enable time.
+# Available template vars: {data_dir}, {domain}, {timezone}, {stacklet_id}
+#
+# No .env file needed — stack enable constructs everything from these.
+[env]
+generate = ["DB_PASSWORD"]
+
+[env.defaults]
+UPLOAD_LOCATION  = "{data_dir}/photos/library"
+DB_DATA_LOCATION = "{data_dir}/photos/postgres"
+TZ               = "{timezone}"
+DB_USERNAME      = "postgres"
+DB_DATABASE_NAME = "immich"
+DB_HOSTNAME      = "stack-photos-db"
+REDIS_HOSTNAME   = "stack-photos-redis"
+IMMICH_VERSION   = "release"
+
+# stack status uses this to confirm the service is actually responding,
+# not just that the container is running.
+[health]
+url  = "http://localhost:42010/api/server/ping"
+path = "$.res"
+expect = "pong"

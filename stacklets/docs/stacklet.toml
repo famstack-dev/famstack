@@ -1,0 +1,49 @@
+# stacklet.toml — docs stacklet (Paperless-ngx)
+#
+# Family document archive with OCR, tagging, and full-text search. Drop a
+# PDF, photo of a letter, or Office document and Paperless handles the rest:
+# OCR, categorisation, and archival as PDF/A for long-term preservation.
+#
+# Five containers: the web app, Postgres, Redis (task queue), Gotenberg
+# (Office → PDF conversion), and Tika (text extraction from email/Office).
+
+id          = "docs"
+name        = "Documents"
+description = "Digitize, archive, and search all your documents (Paperless-ngx)"
+version     = "0.2.0"
+category    = "productivity"
+port        = 42020
+
+# Next-step hints shown after 'stack up'. Template vars: {url}, {ip}
+login_field = "username"
+
+hints = [
+    "Open {url}",
+]
+
+[upstream]
+image   = "ghcr.io/paperless-ngx/paperless-ngx"
+channel = "patch"
+
+# Environment variables passed to docker compose on enable.
+#
+# 'generate' keys are auto-generated and stored in .famstack/secrets.toml.
+# 'defaults' are templates rendered against stack.toml values at enable time.
+[env]
+generate = ["DB_PASSWORD", "SECRET_KEY", "ARCHIVIST_BOT_PASSWORD"]
+
+[env.defaults]
+PAPERLESS_DATA_DIR   = "{data_dir}/docs/paperless"
+PAPERLESS_DB_DATA    = "{data_dir}/docs/postgres"
+PAPERLESS_CONSUME    = "{data_dir}/docs/consume"
+TZ                   = "{timezone}"
+PAPERLESS_OCR_LANG   = "deu+eng"
+DB_USER              = "paperless"
+DB_NAME              = "paperless"
+# Tech admin account created on first start
+ADMIN_USER           = "{admin_username}"
+ADMIN_PASSWORD       = "{admin_password}"
+
+[health]
+url    = "http://localhost:42020/api/"
+expect = "200"

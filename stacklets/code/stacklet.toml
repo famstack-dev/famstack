@@ -1,0 +1,44 @@
+# stacklet.toml — code stacklet (Forgejo)
+#
+# Lightweight self-hosted Git server for your family. Push code, manage
+# repos, review PRs — all on your own hardware. Forgejo is a community
+# fork of Gitea, fast, low-resource, and runs on SQLite (no extra DB).
+#
+# SSH access on port 222 (macOS uses 22 for its own SSH).
+# First user to register becomes admin.
+
+id          = "code"
+name        = "Code"
+description = "Private Git server (Forgejo)"
+version     = "0.2.0"
+category    = "productivity"
+port        = 42040
+
+login_field = "username"
+
+hints = [
+    "Open {url}",
+    "SSH clone: ssh://git@{ip}:222/user/repo.git",
+]
+
+[upstream]
+image   = "codeberg.org/forgejo/forgejo"
+channel = "major"
+
+[env.defaults]
+CODE_DATA_DIR  = "{data_dir}/code"
+CODE_SSH_PORT  = "222"
+TZ             = "{timezone}"
+admin_username = "{admin_username}"
+admin_email    = "{admin_email}"
+admin_password = "{admin_password}"
+FORGEJO__server__ROOT_URL              = "{code_url}/"
+FORGEJO__server__DOMAIN                = "{ip}"
+FORGEJO__server__SSH_DOMAIN            = "{ip}"
+FORGEJO__server__SSH_PORT              = "222"
+FORGEJO__database__DB_TYPE             = "sqlite3"
+FORGEJO__security__INSTALL_LOCK        = "true"
+FORGEJO__service__DISABLE_REGISTRATION = "false"
+
+[health]
+url    = "http://localhost:42040/api/healthz"

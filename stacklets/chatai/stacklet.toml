@@ -1,0 +1,58 @@
+# stacklet.toml — chatai stacklet (Open WebUI)
+#
+# Browser-based chat interface for your local AI models. Ask questions,
+# have conversations, speak to it — all running on your Mac, nothing
+# leaves the network. When the ai stacklet is enabled, you also get
+# voice input (Whisper) and spoken responses (Piper TTS).
+
+id          = "chatai"
+name        = "ChatAI"
+description = "Chat with your AI in the browser (Open WebUI)"
+version     = "0.2.0"
+category    = "ai"
+port        = 42050
+
+login_field = "email"
+
+hints = [
+    "Open {url}",
+]
+
+[upstream]
+image   = "ghcr.io/open-webui/open-webui"
+channel = "patch"
+
+[env.defaults]
+CHATAI_DATA_DIR = "{data_dir}/chatai"
+TZ              = "{timezone}"
+# LLM endpoint — Open WebUI auto-discovers available models from this URL.
+OPENAI_API_URL  = "{ai_openai_url_docker}"
+OPENAI_API_KEY  = "{ai_openai_key}"
+# Pre-select the famstack default model so users don't have to pick one
+DEFAULT_MODELS  = "{ai_default_model_short}"
+# Each family member gets their own account with personal chat history.
+WEBUI_AUTH      = "true"
+# Created automatically from users.toml on first start.
+WEBUI_ADMIN_NAME     = "{admin_username}"
+WEBUI_ADMIN_EMAIL    = "{admin_email}"
+WEBUI_ADMIN_PASSWORD = "{admin_password}"
+# Speech-to-text — whisper.cpp running natively on the host (Metal GPU).
+# Open WebUI has a built-in faster-whisper, but it runs CPU-only inside
+# Docker and is dramatically slower than native Metal inference.
+AUDIO_STT_ENGINE              = "openai"
+AUDIO_STT_OPENAI_API_BASE_URL = "{ai_whisper_url_docker}"
+AUDIO_STT_OPENAI_API_KEY      = "unused"
+# Text-to-speech — Piper via openedai-speech in the ai stacklet.
+# Container-to-container on the famstack Docker network.
+AUDIO_TTS_ENGINE              = "openai"
+AUDIO_TTS_OPENAI_API_BASE_URL = "http://stack-ai-speech:8000/v1"
+AUDIO_TTS_API_KEY             = "unused"
+AUDIO_TTS_VOICE               = "{ai_tts_voice}"
+# Tools server — Open WebUI auto-discovers endpoints via OpenAPI spec.
+# Container-to-container on the famstack network, no host routing needed.
+TOOL_SERVER_CONNECTIONS       = '[{{"url": "http://stack-core-tools:8000", "path": "openapi.json", "auth_type": "none", "key": "", "config": {{"enable": true}}}}]'
+
+[health]
+url     = "http://localhost:42050"
+expect  = "200"
+timeout = 300

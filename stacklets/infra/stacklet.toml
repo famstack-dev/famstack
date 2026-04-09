@@ -1,0 +1,34 @@
+# infra/stacklet.toml — domain mode infrastructure
+#
+# Two services that enable pretty URLs (photos.home.internal):
+#   - AdGuard Home: DNS server, resolves *.domain → server IP
+#   - Caddy: reverse proxy, routes by hostname to containers
+#
+# Automatically enabled when [core] domain is set in stack.toml.
+# First run walks you through AdGuard setup.
+
+id          = "infra"
+name        = "Infrastructure"
+description = "DNS + reverse proxy for domain mode"
+version     = "0.2.0"
+category    = "infrastructure"
+always_on   = true
+
+[ports]
+dns         = 53
+dns_setup   = 3000
+dns_admin   = 42080
+http        = 80
+https       = 443
+
+hints = [
+    "Point your router's DNS to {ip}",
+    "Services are now available at *.{domain}",
+]
+
+[env.defaults]
+TZ                  = "{timezone}"
+STACK_DOMAIN        = "{domain}"
+ADGUARD_DATA_DIR    = "{data_dir}/infra/adguard"
+CADDYFILE_PATH      = "{data_dir}/infra/Caddyfile"
+CADDY_DATA_DIR      = "{data_dir}/infra/caddy"

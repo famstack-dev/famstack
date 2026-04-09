@@ -1,0 +1,62 @@
+# core/stacklet.toml — essential services
+#
+# Watchtower: nightly Docker image updates for all containers.
+# Bot runner: discovers and runs bots from enabled stacklets.
+# famstack API: Unix socket server for host CLI access from containers.
+
+id          = "core"
+name        = "Core"
+description = "Auto-updates, bot runner, and API socket"
+version     = "0.2.0"
+category    = "infrastructure"
+type        = "host"
+always_on   = true
+build       = true
+
+hints = [
+    "Containers will auto-update nightly at 3am",
+    "Bot runner discovers bots from enabled stacklets",
+]
+
+[env]
+generate = ["STACKER_BOT_PASSWORD"]
+
+[env.defaults]
+# 6-field cron: sec min hour day month weekday
+WATCHTOWER_SCHEDULE = "0 0 3 * * *"
+
+# Data dir — bot runner mounts this for per-stacklet bot data
+DATA_DIR = "{data_dir}"
+
+# Matrix — bot runner connects to Synapse for all bots
+MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
+MATRIX_SERVER_NAME = "{messages_server_name}"
+
+# Admin credentials — for bot account creation
+MATRIX_ADMIN_USER     = "{admin_username}"
+MATRIX_ADMIN_PASSWORD = "{admin_password}"
+
+# Stacker-bot: only these users can run up/down/restart (comma-separated user IDs)
+STACK_ADMIN_USER_IDS = "{admin_user_ids}"
+
+# AI services — bots reach native host services via Docker gateway
+OPENAI_URL     = "{ai_openai_url_docker}"
+OPENAI_KEY     = "{ai_openai_key}"
+WHISPER_URL    = "{ai_whisper_url_docker}/audio/transcriptions"
+
+# Paperless — document search for archivist bot and tools server
+PAPERLESS_URL        = "http://stack-docs-paperless:8000"
+PAPERLESS_PUBLIC_URL = "{docs_url}"
+PAPERLESS_TOKEN      = "{docs__API_TOKEN}"
+
+# Immich — photo search for tools server
+IMMICH_URL     = "http://stack-photos-server:2283"
+IMMICH_API_KEY = "{photos__API_KEY}"
+
+# Tools server port — Open WebUI connects here for tool calling
+TOOLS_PORT = "42000"
+
+# Language and models
+LANGUAGE         = "{ai_language}"
+AI_DEFAULT_MODEL = "{ai_default_model}"
+AI_MODELS_JSON   = "{ai_models_json}"
