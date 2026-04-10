@@ -4,6 +4,12 @@ famstack is an opinionated, batteries-included stack built on established open s
 
 Getting started, day-to-day operations, and the things you actually need to know.
 
+Documents, paperwork, photos from different devices, capturing and conserving memories. These are the core things every family has to deal with. That is what famstack focuses on first.
+
+But there is more. Families are like small businesses. Why not treat them that way and have the IT infrastructure to match? We have similar requirements. And we have to deal with all of it on our own. Someone is the CEO and someone takes the role of IT operations and helpdesk. Typically the parents. This is for you. We deserve the same amount of automation and technology to make our lives easier. Stacklet by stacklet.
+
+famstack is technology for people. Turn your Mac into the brain of your household and operate it from your phone.
+
 ## Install
 
 ```bash
@@ -21,14 +27,17 @@ After the installer finishes, open Element X on your phone or browser and sign i
 Messages is set up by the installer. Everything else is one command:
 
 ```bash
-./stack up photos      # Immich: photo library + phone backup
+# The established ones. 
+./stack up photos      # Immich: Google Photos-like photo app: Store your photo library + share it with your family
 ./stack up docs        # Paperless-ngx: document archive with OCR
-./stack up ai          # oMLX + Whisper + TTS: local AI engine
-./stack up chatai      # Open WebUI: ChatGPT-like interface
-./stack up code        # Forgejo: private Git server
+./stack up ai          # The heavy one. Turns your Mac into an AI Machine: oMLX + Whisper + TTS: local AI engine
+
+# Only when you need it.
+./stack up chatai      # Open WebUI: ChatGPT-like interface. Skip it when you have just 16GB RAM
+./stack up code        # Forgejo: private Git server: I need it, that is why it is here. Skip it when you do not need it.
 ```
 
-Each stacklet runs its own first-time setup on the first `stack up`. Subsequent runs just start the containers.
+Each stacklet runs its own first-time setup on the first `./stack up`. Subsequent runs just start the containers.
 
 Check what's running:
 
@@ -40,7 +49,11 @@ Check what's running:
 
 ### Messages (Matrix + Element)
 
-Your family's private chat. WhatsApp replacement on your hardware.
+Your family's private chat. WhatsApp replacement on your hardware. The messaging backbone of famstack.
+
+**Why Matrix?** Because Element X has native apps for every platform: iOS, Android, macOS, Windows, browser. That's the whole point. Install Element X on every family member's phone, log them in, put it on the home screen. Done.
+
+**The tradeoff:** Matrix is powerful. It was built for federated public servers with full E2E encryption. We don't need any of that for a local setup, and the config options are complex. famstack hides that complexity and sets up everything for you. We didn't find a better free messenger that covers all platforms. (See [ADR-004](adr/adr-004-messaging-backend-and-abstraction.md))
 
 ```bash
 ./stack up messages    # set up by the installer, usually already running
@@ -48,14 +61,14 @@ Your family's private chat. WhatsApp replacement on your hardware.
 
 The installer creates three rooms: Family Room (everyday chat), Memories (voice diary), and Server Room (admin alerts). Every family member gets an account. Default login is your first name (lowercase) as both username and password. Change it after first login.
 
-Install Element X on your phone to chat from anywhere on your network.
-
 **Port:** 42030 (Element), 42031 (Synapse)
 **Data:** `~/famstack-data/messages/synapse/` (history, media), `~/famstack-data/messages/postgres/` (database)
 
 ### Photos (Immich)
 
-Google Photos replacement. Face recognition, maps, memories, albums.
+Google Photos replacement on your hardware. Face recognition, maps, memories, albums, shared libraries.
+
+**Why Immich?** It's the most complete self-hosted photo solution. Native mobile apps for iOS and Android with automatic background upload. Your family doesn't need to change their habits: take photos, they sync.
 
 ```bash
 ./stack up photos
@@ -68,20 +81,25 @@ Install the Immich app on your phone, enter your server's URL, and photos sync a
 
 ### Docs (Paperless-ngx)
 
-Document archive with OCR. Receipts, letters, contracts, tax documents.
+Document archive with OCR. Receipts, letters, contracts, tax documents. Search across everything by content.
+
+**Why Paperless?** It's the gold standard for self-hosted document management. OCR, full-text search, automatic classification. Mature project with a large community. famstack makes your documents available on your smartphone through the chat.
 
 ```bash
 ./stack up docs
 ```
 
-The archivist bot creates a Documents room in your chat. Send it a photo of a receipt and it files it automatically. AI classifies and tags documents when the AI stacklet is running. Type `show 42` to read a document's content, or search by typing any term.
+The archivist bot creates a **Documents** room in your chat. Send it a photo of a receipt and it files it automatically. AI classifies and tags documents when the AI stacklet is running. Type `show 42` to read a document's content, or search by typing any term.
 
 **Port:** 42020
 **Data:** `~/famstack-data/docs/paperless/` (documents, media), `~/famstack-data/docs/postgres/` (database), `~/famstack-data/docs/consume/` (inbox folder)
 
 ### AI (oMLX + Whisper + TTS)
 
-Local AI engine. Powers document classification, voice transcription, and text-to-speech.
+Local AI engine. Powers document classification, voice transcription, and text-to-speech. The heavy one.
+
+**Why oMLX?** It runs MLX-native models directly on Apple's Metal GPU with a smart SSD caching layer. Faster than Ollama on Apple Silicon, and it can serve models larger than your RAM by spilling to disk. (See [ADR-009](adr/adr-009-managed-ai-provider.md) and our [benchmarks](https://famstack.dev/guides/mlx-vs-gguf-part-2-isolating-variables/))
+
 
 ```bash
 ./stack up ai
@@ -99,6 +117,10 @@ Three components installed natively on your Mac (not Docker):
 
 ChatGPT-like web interface for your local AI. Conversations stay on your machine.
 
+**Why Open WebUI?** It's the most polished open source chat UI. Supports multiple models, conversation history, file uploads. Feels like ChatGPT but runs locally.
+
+**The tradeoff:** Another container using RAM. Skip it if you have 16 GB. The AI still works for document classification and voice transcription without it.
+
 ```bash
 ./stack up chatai
 ```
@@ -109,6 +131,8 @@ ChatGPT-like web interface for your local AI. Conversations stay on your machine
 ### Code (Forgejo)
 
 Private Git server. Lightweight GitHub alternative.
+
+**Why Forgejo?** Community fork of Gitea. Simple, fast, low resource usage. We use it to host the famstack repo itself on our home server. Start it when you need to version-track text files.
 
 ```bash
 ./stack up code
@@ -123,7 +147,7 @@ One of the most valuable things you can do with famstack has nothing to do with 
 
 The Memories room is a place to record your family's life. Voice messages, photos, text. We record a voice diary once or twice a week at the dinner table: what was funny, what was special, what the kids want to tell their future selves. Holiday diaries, first days at school, bedtime stories in their own words.
 
-Voice messages are transcribed by Whisper and become searchable. Everything stays on your Mac.
+Start collecting these. They become valuable just as they are. One of the next famstack updates will use local AI to make your memories searchable. "Remember? One year ago...", "Sarah's 3rd birthday..." Everything stays on your Mac. Your memories are just yours. That is the beauty of the stack.
 
 Start now. You'll wish you had started earlier.
 
