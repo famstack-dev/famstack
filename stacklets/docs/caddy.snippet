@@ -1,7 +1,7 @@
 # stacklets/docs/caddy.snippet
 #
 # Assembled into the Caddyfile by 'stack up'. Caddy runs in Docker on the
-# famstack network, so backends are referenced by container name.
+# stack network, so backends are referenced by container name.
 
 docs.{$FAMSTACK_DOMAIN} {
     reverse_proxy stack-docs-paperless:8000

@@ -18,7 +18,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     volumes:
       - ${SYNAPSE_DATA}:/data
       - /etc/localtime:/etc/localtime:ro
@@ -36,7 +36,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -57,7 +57,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     volumes:
       - ${SYNAPSE_DATA}/element-config.json:/app/config.json:ro
     ports:
@@ -66,5 +66,5 @@ services:
     restart: unless-stopped
 
 networks:
-  famstack:
+  stack:
     external: true

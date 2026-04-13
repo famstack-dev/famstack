@@ -43,13 +43,13 @@ AUDIO_STT_ENGINE              = "openai"
 AUDIO_STT_OPENAI_API_BASE_URL = "{ai_whisper_url_docker}"
 AUDIO_STT_OPENAI_API_KEY      = "unused"
 # Text-to-speech — Piper via openedai-speech in the ai stacklet.
-# Container-to-container on the famstack Docker network.
+# Container-to-container on the stack Docker network.
 AUDIO_TTS_ENGINE              = "openai"
 AUDIO_TTS_OPENAI_API_BASE_URL = "http://stack-ai-speech:8000/v1"
 AUDIO_TTS_API_KEY             = "unused"
 AUDIO_TTS_VOICE               = "{ai_tts_voice}"
 # Tools server — Open WebUI auto-discovers endpoints via OpenAPI spec.
-# Container-to-container on the famstack network, no host routing needed.
+# Container-to-container on the stack network, no host routing needed.
 TOOL_SERVER_CONNECTIONS       = '[{{"url": "http://stack-core-tools:8000", "path": "openapi.json", "auth_type": "none", "key": "", "config": {{"enable": true}}}}]'
 
 [health]

@@ -16,7 +16,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     volumes:
       # Photo uploads — the actual library. Back this up.
       - ${UPLOAD_LOCATION}:/data
@@ -42,7 +42,7 @@ services:
     # Metal is not yet supported in the Docker image. Still fast enough for
     # face recognition and CLIP search on M-series chips.
     networks:
-      - famstack
+      - stack
     volumes:
       - model-cache:/cache
     env_file:
@@ -57,7 +57,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
     restart: unless-stopped
@@ -68,7 +68,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_USER: ${DB_USERNAME}
@@ -84,5 +84,5 @@ volumes:
   model-cache:
 
 networks:
-  famstack:
+  stack:
     external: true

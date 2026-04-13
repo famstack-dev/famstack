@@ -19,7 +19,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     depends_on:
       stack-docs-db:
         condition: service_healthy
@@ -61,7 +61,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -81,7 +81,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
@@ -95,7 +95,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     command:
       - "gotenberg"
       - "--chromium-disable-javascript=true"
@@ -108,9 +108,9 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     restart: unless-stopped
 
 networks:
-  famstack:
+  stack:
     external: true

@@ -542,11 +542,11 @@ This convention enables:
 
 ```yaml
 networks:
-  famstack:
+  stack:
     external: true
 ```
 
-All containers join the shared `famstack` network, declared as external.
+All containers join the shared `stack` network, declared as external.
 Created by `stack init`, removed by `stack uninstall`. Every service in
 every stacklet must include this.
 

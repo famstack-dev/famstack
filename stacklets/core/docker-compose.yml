@@ -27,7 +27,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
     networks:
-      - famstack
+      - stack
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -52,7 +52,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
     networks:
-      - famstack
+      - stack
     extra_hosts:
       # TCP API runs natively on macOS, reached via Docker gateway
       - "host.docker.internal:host-gateway"
@@ -63,5 +63,5 @@ services:
     restart: unless-stopped
 
 networks:
-  famstack:
+  stack:
     external: true

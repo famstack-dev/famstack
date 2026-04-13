@@ -5,7 +5,7 @@
 #
 # LLM and Whisper run natively on macOS (Metal GPU), reached via
 # host.docker.internal. TTS runs in the ai stacklet's stack-ai-speech
-# container, reached by service name on the famstack network.
+# container, reached by service name on the stack network.
 
 name: stack-chatai
 
@@ -16,7 +16,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     extra_hosts:
       # oMLX and Whisper run natively on macOS (Metal GPU requires it)
       - "host.docker.internal:host-gateway"
@@ -47,5 +47,5 @@ services:
     restart: unless-stopped
 
 networks:
-  famstack:
+  stack:
     external: true

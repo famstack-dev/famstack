@@ -16,7 +16,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
-      - famstack
+      - stack
     ports:
       - "${PORT_BIND_IP:-0.0.0.0}:42040:3000"
       - "${PORT_BIND_IP:-0.0.0.0}:${CODE_SSH_PORT:-222}:22"
@@ -33,5 +33,5 @@ services:
     restart: unless-stopped
 
 networks:
-  famstack:
+  stack:
     external: true

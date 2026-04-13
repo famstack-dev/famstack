@@ -24,11 +24,11 @@ from fastapi.responses import JSONResponse
 STACK_API_HOST = os.environ.get("STACK_API_HOST", "host.docker.internal")
 STACK_API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
-# Paperless — container-to-container on famstack network
+# Paperless — container-to-container on stack network
 PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
 PAPERLESS_TOKEN = os.environ.get("PAPERLESS_TOKEN", "")
 
-# Immich — container-to-container on famstack network
+# Immich — container-to-container on stack network
 IMMICH_URL = os.environ.get("IMMICH_URL", "")
 IMMICH_API_KEY = os.environ.get("IMMICH_API_KEY", "")
 
