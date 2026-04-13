@@ -18,18 +18,23 @@
   <img src="https://img.shields.io/badge/version-0.2.0-orange?style=flat-square" alt="Version">
 </p>
 
-**Turn your Mac Mini into the brain of your household and operate it from your phone.**
-Photos, memories, documents, chat, local AI: private by default, gets smarter over time. Open source.
+**Turn your Mac into the brain of your household and operate it from your phone.**
+Photos, memories, documents, chat, local AI: local and private by default, gets smarter over time. Open source.
 
 *"I built this because our photos, our voices, our documents: That's our life. It belongs on our hardware, not in someone else's cloud."*
 
 The reference implementation runs on a Mac Studio M1 in our living room at Lake Constance, Germany. Where is yours going to run?
 <br>
 
+
+## Quick Start
+
 ```bash
 git clone https://github.com/famstack-dev/famstack.git && cd famstack
 ./stack         # Starts the Installer
 ```
+
+- [User Guide](docs/guide.md) - Install, configure, day-to-day operations, troubleshooting
 
 Works on any Mac with Apple Silicon. Twenty minutes from clone to a working family server on your machine.
 
