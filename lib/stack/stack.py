@@ -218,12 +218,16 @@ class Stack:
     def _public_url(self, stacklet_id: str, port: int) -> str:
         """Build the URL a user would click to reach a service.
 
-        In domain mode: http://{stacklet}.{domain}
+        In domain mode: http(s)://{stacklet}.{domain}
         In port mode: http://{ip}:{port} (LAN-reachable)
+
+        Set [core].https = true when a reverse proxy terminates TLS in front
+        of the stack.
         """
         domain = self._cfg("core", "domain")
         if domain:
-            return f"http://{stacklet_id}.{domain}"
+            scheme = "https" if self._cfg("core", "https") else "http"
+            return f"{scheme}://{stacklet_id}.{domain}"
         return f"http://{self._lan_ip()}:{port}"
 
     def env(self, stacklet_id: str) -> dict:
@@ -253,6 +257,8 @@ class Stack:
 
         template_vars = self._build_template_vars()
         template_vars["stacklet_id"] = stacklet_id
+        template_vars["url"] = self._public_url(stacklet_id, s.get("port", 0))
+        template_vars["ip"] = self._lan_ip()
 
         # Render templates — warn on missing vars (typos cause silent failures)
         import re

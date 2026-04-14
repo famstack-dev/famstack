@@ -48,6 +48,7 @@ services:
       PAPERLESS_OCR_LANGUAGE: ${PAPERLESS_OCR_LANG:-deu+eng}
       PAPERLESS_ADMIN_USER: ${ADMIN_USER}
       PAPERLESS_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      PAPERLESS_URL: ${PAPERLESS_URL}
       PAPERLESS_OCR_MODE: skip
       PAPERLESS_OCR_OUTPUT_TYPE: pdfa
       PAPERLESS_FILENAME_FORMAT: "{created_year}/{created_month}/{created_year}-{created_month}-{created_day} {correspondent} - {title}"

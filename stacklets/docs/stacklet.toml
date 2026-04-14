@@ -43,6 +43,7 @@ DB_NAME              = "paperless"
 # Tech admin account created on first start
 ADMIN_USER           = "{admin_username}"
 ADMIN_PASSWORD       = "{admin_password}"
+PAPERLESS_URL        = "{url}"
 
 [health]
 url    = "http://localhost:42020/api/"
