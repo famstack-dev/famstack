@@ -91,6 +91,8 @@ Document archive with OCR. Receipts, letters, contracts, tax documents. Search a
 
 The archivist bot creates a **Documents** room in your chat. Send it a photo of a receipt and it files it automatically. AI classifies and tags documents when the AI stacklet is running. Type `show 42` to read a document's content, or search by typing any term.
 
+On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml) for the full list.
+
 **Port:** 42020
 **Data:** `~/famstack-data/docs/paperless/` (documents, media), `~/famstack-data/docs/postgres/` (database), `~/famstack-data/docs/consume/` (inbox folder)
 
@@ -162,6 +164,7 @@ The single config file. Everything flows from here.
 domain   = ""                    # empty = port mode (recommended to start)
 data_dir = "~/famstack-data"     # where all data lives
 timezone = "Europe/Berlin"
+language = "de"                  # "de" or "en" — used for document tags, UI
 
 [ai]
 default = "mlx-community/Qwen3.5-9B-MLX-4bit"   # change to match your RAM
@@ -171,6 +174,7 @@ language = "en"                                    # "de" for German voice/trans
 Key things to know:
 - **domain**: leave empty to start. Services are reachable via `hostname:port`. Set a domain later for pretty URLs like `photos.home.internal` (requires wildcard DNS on your router).
 - **data_dir**: where databases, uploads, and media live. Back this up. It's outside the git repo.
+- **language**: the installer detects this from your timezone. Controls which language document categories are seeded in (German or English). Change it and run `./stack restart docs` to seed missing tags.
 - **AI model**: the installer picks one for your RAM tier. The alternatives are listed as comments in `stack.toml`. Switch by uncommenting a different line and running `./stack setup ai`.
 
 ### users.toml

@@ -45,6 +45,7 @@ DB_NAME              = "paperless"
 ADMIN_USER           = "{admin_username}"
 ADMIN_PASSWORD       = "{admin_password}"
 PAPERLESS_URL        = "{url}"
+LANGUAGE             = "{language}"
 
 [health]
 url    = "http://localhost:42020/api/"

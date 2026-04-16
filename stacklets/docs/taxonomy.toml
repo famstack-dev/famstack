@@ -1,0 +1,111 @@
+# taxonomy.toml — initial document categories and types for Paperless-ngx
+#
+# Seeded on first setup and every `stack up docs`. Idempotent — existing
+# tags are skipped. The LLM prompt includes these as "existing topic tags"
+# so it picks from the list instead of inventing inconsistent names.
+#
+# Organized by what goes into a family's filing cabinet. Not too granular
+# (Housing covers rent, mortgage, utilities), not too broad (Finance is
+# separate from Taxes because you search for them differently).
+
+[de]
+tags = [
+    "Versicherung",        # health, car, home, liability, life
+    "Finanzen",            # bank statements, retirement, accounts
+    "Investments",         # stocks, funds, portfolios, dividends
+    "Einkommen",           # salary, freelance income, side jobs
+    "Steuern",             # returns, assessments, deductions
+    "Finanzamt",           # tax office correspondence, Steuerbescheid
+    "Gesundheit",          # doctors, prescriptions, lab results
+    "Schule",              # report cards, enrollment, school letters
+    "Kinder",              # daycare, activities, allowances, Kindergeld
+    "Ehe",                 # marriage certificate, divorce, joint documents
+    "Fahrzeug",            # registration, inspections, repairs, fuel
+    "Wohnen",              # rent, mortgage, renovations, maintenance
+    "Immobilien",          # property purchase, Grundbuch, Makler
+    "Nebenkosten",         # electricity, water, gas, heating
+    "Arbeit",              # contracts, pay slips, references
+    "Recht",               # legal contracts, notary, court
+    "Behörden",            # ID, permits, registrations, Meldebescheinigung
+    "Mitgliedschaft",      # clubs, associations, memberships
+    "Abonnement",          # streaming, software, magazines
+    "Einkauf",             # general shopping, warranties, returns
+    "Elektronik",          # computers, phones, gadgets, tech purchases
+    "Lebensmittel",        # groceries, supermarket receipts
+    "Reise",               # bookings, tickets, travel insurance
+    "Haustiere",           # vet, registration, insurance
+    "Telekommunikation",   # phone, internet, mobile contracts
+    "Rezepte",             # family recipes, grandma's classics, cooking and baking
+    "Erinnerungen",        # kids' artwork, letters, postcards, milestone docs
+    "Urkunden",            # birth/death certificates, passports, wills, Vollmacht
+    "Rente",               # state pension, Riester, company pension, Altersvorsorge
+    "Spenden",             # charity donations, tax-deductible receipts
+    "Garantie",            # warranty cards, proof of purchase for claims
+    "Impfungen",           # vaccination records, allergy passes, blood type
+    "Zugangsdaten",        # WiFi passwords, serial numbers, access codes
+]
+types = [
+    "Rechnung",
+    "Quittung",
+    "Vertrag",
+    "Brief",
+    "Bescheinigung",
+    "Kontoauszug",
+    "Bescheid",
+    "Kündigung",
+    "Police",
+    "Bedienungsanleitung",
+    "Protokoll",
+    "Buchung",
+]
+
+[en]
+tags = [
+    "Insurance",           # health, car, home, liability, life
+    "Finance",             # bank statements, retirement, accounts
+    "Investments",         # stocks, funds, portfolios, dividends
+    "Income",              # salary, freelance income, side jobs
+    "Taxes",               # returns, assessments, deductions
+    "Tax Office",          # IRS/HMRC correspondence, tax notices
+    "Medical",             # doctors, prescriptions, lab results
+    "School",              # report cards, enrollment, school letters
+    "Children",            # daycare, activities, allowances, child benefit
+    "Marriage",            # marriage certificate, divorce, joint documents
+    "Vehicle",             # registration, inspections, repairs, fuel
+    "Housing",             # rent, mortgage, renovations, maintenance
+    "Property",            # property purchase, deed, real estate agent
+    "Utilities",           # electricity, water, gas, heating
+    "Employment",          # contracts, pay slips, references
+    "Legal",               # contracts, notary, court
+    "Government",          # ID, permits, registrations
+    "Membership",          # clubs, associations, memberships
+    "Subscription",        # streaming, software, magazines
+    "Shopping",            # general shopping, warranties, returns
+    "Electronics",         # computers, phones, gadgets, tech purchases
+    "Groceries",           # supermarket receipts
+    "Travel",              # bookings, tickets, travel insurance
+    "Pets",                # vet, registration, insurance
+    "Telecom",             # phone, internet, mobile contracts
+    "Recipes",             # family recipes, grandma's classics, cooking and baking
+    "Memories",            # kids' artwork, letters, postcards, milestone docs
+    "Personal Records",    # birth/death certificates, passports, wills, power of attorney
+    "Pension",             # state pension, 401k, company pension, retirement
+    "Donations",           # charity donations, tax-deductible receipts
+    "Warranty",            # warranty cards, proof of purchase for claims
+    "Vaccinations",        # vaccination records, allergy passes, blood type
+    "Credentials",         # WiFi passwords, serial numbers, access codes
+]
+types = [
+    "Invoice",
+    "Receipt",
+    "Contract",
+    "Letter",
+    "Certificate",
+    "Statement",
+    "Notice",
+    "Cancellation",
+    "Policy",
+    "Manual",
+    "Protocol",
+    "Booking",
+]

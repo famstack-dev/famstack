@@ -3,10 +3,10 @@
 Runs once after Paperless-ngx is healthy:
 1. Obtains an API token and stores it in secrets.toml
 2. Creates admin-role user accounts as superusers
-3. Seeds person tags from users.toml
+3. Seeds person tags and document taxonomy
 
-Person tags are also seeded on every `stack up docs` via on_start.py
-so they stay in sync with users.toml changes.
+Also seeded on every `stack up docs` via on_start_ready.py
+so they stay in sync with users.toml and taxonomy.yaml changes.
 """
 
 import json
@@ -15,10 +15,7 @@ from pathlib import Path
 
 # seed.py lives one level up from hooks/
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from seed import seed_person_tags
-
-PAPERLESS_URL = "http://localhost:42020"
-
+from seed import seed_person_tags, seed_taxonomy
 
 def run(ctx):
     env = ctx.env
@@ -26,6 +23,8 @@ def run(ctx):
     step = ctx.step
     http_post = ctx.http_post
     http_get = ctx.http_get
+
+    PAPERLESS_URL = env.get("PAPERLESS_URL", "http://localhost:42020")
 
     # Verify existing token still works (a previous destroy + up cycle
     # creates a fresh database, invalidating the old token in secrets.toml)
@@ -68,8 +67,8 @@ def run(ctx):
     # ── Create admin-role users as superusers ────────────────────────
     _create_admin_users(ctx, existing_token)
 
-    # ── Seed person tags from users.toml ─────────────────────────────
-    _seed_person_tags(ctx, existing_token)
+    # ── Seed person tags + category taxonomy ───────────────────────────
+    _seed_taxonomy(ctx, existing_token)
 
 
 def _create_admin_users(ctx, token):
@@ -120,6 +119,9 @@ def _create_admin_users(ctx, token):
             ctx.step(f"Could not create Docs admin {uid}: {err}")
 
 
-def _seed_person_tags(ctx, token):
-    """Seed person tags from users.toml. See seed.py for details."""
-    seed_person_tags(PAPERLESS_URL, token, ctx.users, step=ctx.step)
+def _seed_taxonomy(ctx, token):
+    """Seed person tags and document taxonomy. See seed.py for details."""
+    url = ctx.env.get("PAPERLESS_URL", "http://localhost:42020")
+    seed_person_tags(url, token, ctx.users, step=ctx.step)
+    language = ctx.env.get("LANGUAGE", "en")
+    seed_taxonomy(url, token, language, step=ctx.step)

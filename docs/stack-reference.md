@@ -143,6 +143,7 @@ Available template variables:
 |---|---|
 | `{data_dir}` | `stack.toml` → `[core].data_dir` |
 | `{domain}` | `stack.toml` → `[core].domain` |
+| `{language}` | `stack.toml` → `[core].language` (falls back to `[ai].language`, then `en`) |
 | `{timezone}` | `stack.toml` → `[core].timezone` |
 | `{stacklet_id}` | The stacklet's own `id` field |
 | `{admin_username}` | Tech admin username (`stackadmin`) |
@@ -795,6 +796,7 @@ One file, committed to the repo. User edits it directly.
 domain   = ""                    # empty = port mode
 data_dir = "~/famstack-data"
 timezone = "Europe/Berlin"
+language = "de"                  # document tags, UI language (de, en)
 
 [updates]
 schedule = "0 0 3 * * *"        # Watchtower cron (3am nightly)
