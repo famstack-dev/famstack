@@ -24,7 +24,8 @@ stacklets/photos/
     on_configure.py      ← first run: interactive prompts
     on_install.py        ← first run: create dirs, install deps
     on_install_success.py← first run: obtain tokens, seed data
-    on_start.py          ← every up: start native services
+    on_start.py          ← every up: validate config, start native services (before containers)
+    on_start_ready.py    ← every up: seed data, sync accounts (after health checks)
     on_stop.py           ← every down: stop native services
     on_destroy.py        ← teardown: remove native services
   cli/
@@ -43,7 +44,8 @@ there, it's used. If it's not, it's skipped. Hooks can be `.py`
 | `hooks/on_configure` | Once on first `stack up` | Interactive prompts (API keys, server names) |
 | `hooks/on_install` | Once on first `stack up` | Create directories, install native deps |
 | `hooks/on_install_success` | Once after first healthy start | Obtain tokens, seed data |
-| `hooks/on_start` | Every `stack up` | Start native services |
+| `hooks/on_start` | Every `stack up`, before containers | Validate config, start native services |
+| `hooks/on_start_ready` | Every `stack up`, after health checks | Seed data, sync accounts (service is healthy) |
 | `hooks/on_stop` | Every `stack down` | Stop native services |
 | `hooks/on_destroy` | On `stack destroy` | Remove native services |
 | `cli/*.py` | On demand via `stack <id> <command>` | Stacklet-specific CLI commands |
@@ -307,8 +309,9 @@ effect.
 10. Wait for health check
 11. First run only:
     a. hooks/on_install_success.py — obtain tokens, seed data
-12. Reload Caddy (domain mode)
-13. Show welcome screen with URL, login, hints
+12. hooks/on_start_ready.py — service is healthy, seed data, sync accounts
+13. Reload Caddy (domain mode)
+14. Show welcome screen with URL, login, hints
 ```
 
 **First run detection:** `.famstack/{id}.setup-done` marker. Absent
@@ -360,8 +363,8 @@ the step is skipped. No registration needed.
 ```
 First stack up:
 
-  on_configure ──► on_install ──► on_start ──► health ──► on_install_success
-  (config gate)    (system)       (services)   (wait)     (API work)
+  on_configure ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready
+  (config gate)    (system)       (services)   (wait)     (first-run API work)   (every-up API work)
 
 on_configure is the gate: it collects all required settings (provider
 choice, API keys, server names) and persists them to stack.toml or
@@ -371,8 +374,8 @@ that on_configure wrote and acts on it. Both hooks should be idempotent.
 
 Subsequent stack up:
 
-  on_start
-  (services)
+  on_start ──► health ──► on_start_ready
+  (services)   (wait)     (API work)
 
 stack down:
 
@@ -389,8 +392,9 @@ stack destroy:
 |---|---|---|
 | `on_configure` | Once | **Config gate.** Collects all required configuration via interactive prompts and writes it to `stack.toml` or `secrets.toml`. Must be idempotent — if it set some config values but the process was interrupted, the next run should detect what's already set and only ask for what's missing. `on_install` only proceeds when `on_configure` completes without error. |
 | `on_install` | Once | **System setup.** Create directories, install native software, build from source. Should be idempotent — check whether each step was already done before doing it again (e.g. `brew list omlx` before `brew install omlx`, check if binary exists before building). |
-| `on_install_success` | Once | Obtain API tokens, seed data, create accounts. Requires a running service. |
-| `on_start` | Every up | **Validate config first**, then start native services. If required config is missing or invalid, raise with a clear message telling the user how to fix it. The framework stops the pipeline on failure — containers won't start. |
+| `on_install_success` | Once | Obtain API tokens, seed initial data, create accounts. Runs after first healthy start. |
+| `on_start` | Every up | **Runs before containers start.** Validate config, start native services. If required config is missing or invalid, raise with a clear message — the framework stops the pipeline and containers won't start. |
+| `on_start_ready` | Every up | **Runs after health checks pass.** The service is healthy and accepting API calls. Seed data, sync accounts, anything that needs the service running. Must be idempotent. |
 | `on_stop` | Every down | Stop native services. Only stops services we manage (.state/ markers). |
 | `on_destroy` | Once | Remove native services entirely (unload plists, uninstall). |
 

@@ -1,11 +1,23 @@
 """Post-setup hook for the docs stacklet.
 
-Runs once after Paperless-ngx is healthy. Obtains an API token using the
-admin credentials and stores it in secrets.toml. Then creates accounts for
-admin-role users as superusers via the Paperless API.
+Runs once after Paperless-ngx is healthy:
+1. Obtains an API token and stores it in secrets.toml
+2. Creates admin-role user accounts as superusers
+3. Seeds person tags from users.toml
+
+Person tags are also seeded on every `stack up docs` via on_start.py
+so they stay in sync with users.toml changes.
 """
 
 import json
+import sys
+from pathlib import Path
+
+# seed.py lives one level up from hooks/
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from seed import seed_person_tags
+
+PAPERLESS_URL = "http://localhost:42020"
 
 
 def run(ctx):
@@ -22,7 +34,7 @@ def run(ctx):
     if existing_token:
         try:
             http_get(
-                "http://localhost:42020/api/documents/",
+                f"{PAPERLESS_URL}/api/documents/",
                 headers={"Authorization": f"Token {existing_token}"},
             )
             token_valid = True
@@ -39,7 +51,7 @@ def run(ctx):
         step("Obtaining API token...")
         try:
             data = http_post(
-                "http://localhost:42020/api/token/",
+                f"{PAPERLESS_URL}/api/token/",
                 f"username={username}&password={password}",
             )
             existing_token = data.get("token")
@@ -55,6 +67,9 @@ def run(ctx):
 
     # ── Create admin-role users as superusers ────────────────────────
     _create_admin_users(ctx, existing_token)
+
+    # ── Seed person tags from users.toml ─────────────────────────────
+    _seed_person_tags(ctx, existing_token)
 
 
 def _create_admin_users(ctx, token):
@@ -103,3 +118,8 @@ def _create_admin_users(ctx, token):
         else:
             err = (result.stderr or result.stdout).strip().split("\n")[-1]
             ctx.step(f"Could not create Docs admin {uid}: {err}")
+
+
+def _seed_person_tags(ctx, token):
+    """Seed person tags from users.toml. See seed.py for details."""
+    seed_person_tags(PAPERLESS_URL, token, ctx.users, step=ctx.step)

@@ -259,6 +259,19 @@ class CLI:
             self.stack.run_on_install_success(
                 stacklet_id, step_fn=self.stack.output.step)
 
+        # on_start_ready: runs every up, after health checks pass.
+        # The service is healthy and accepting API calls. Use this for
+        # seeding data, syncing accounts, or anything that needs the
+        # service running. Idempotent hooks only.
+        from .hooks import HookResolver, build_hook_ctx
+        ready_resolver = HookResolver(stacklet_dir)
+        if ready_resolver.resolve("on_start_ready"):
+            ready_ctx = build_hook_ctx(
+                stacklet_id, env=env_dict,
+                step_fn=self.stack.output.step, stack=self.stack,
+            )
+            ready_resolver.run("on_start_ready", ready_ctx)
+
         result["name"] = stacklet.get("name", stacklet_id)
         result["port"] = stacklet.get("port")
         result["description"] = stacklet.get("description", "")
@@ -681,21 +694,13 @@ def handle_logs(stck, args):
 
 
 def handle_restart(stck, args):
-    try:
-        stck.refresh_env(args.stacklet)
-    except ValueError:
-        pass
-    stacklet = stck._find_stacklet(args.stacklet)
-    if not stacklet:
-        print_error({"error": f"'{args.stacklet}' not found"}); sys.exit(1)
-    compose_file = docker.find_compose_file(Path(stacklet["path"]))
-    if compose_file:
-        docker.compose(compose_file, "down")
-        code, _, stderr = docker.compose(compose_file, "up", "-d")
-        if code == 0:
-            print(f"  {GREEN}✓{RESET} {args.stacklet}: restarted")
-        else:
-            print_error({"error": stderr.strip()}); sys.exit(1)
+    cli = CLI(stck)
+    cli.down(args.stacklet)
+    result = cli.up(args.stacklet)
+    if "error" in result:
+        print_error(result); sys.exit(1)
+    else:
+        print_up_success(result, stck)
 
 
 def handle_setup(stck, args):

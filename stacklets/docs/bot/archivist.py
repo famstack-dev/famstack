@@ -47,6 +47,7 @@ from nio import (
     RoomMessageText,
 )
 
+from matching import fuzzy_match_entity, match_persons, deduplicate_hashtags, MAX_TITLE_LENGTH
 from microbot import MicroBot
 from stack import resolve_model
 
@@ -103,6 +104,7 @@ class LLMModelNotFoundError(Exception):
 
 class LLMTimeoutError(Exception):
     """LLM took too long — large documents or cold model start can cause this."""
+
 
 
 # ── Translations ─────────────────────────────────────────────────────────────
@@ -343,11 +345,33 @@ class ArchivistBot(MicroBot):
                 return {c["name"]: c["id"] for c in (await resp.json()).get("results", [])}
             return {}
 
+    # ── Paperless entity creation ──────────────────────────────────────
+    #
+    # When creating new tags, doc types, or correspondents, we configure
+    # Paperless's built-in matching so future documents get auto-assigned
+    # even without the LLM. Paperless matching_algorithm values:
+    #
+    #   1 = any word    "ADAC" matches if ANY word in the doc matches
+    #   2 = all words   all words must appear
+    #   3 = exact        exact string match
+    #   4 = regex
+    #   5 = fuzzy        Paperless's own fuzzy matching (handles typos)
+    #   6 = auto         Paperless learns from manual assignments
+    #
+    # We use algorithm 6 (auto) as the default. Paperless learns matching
+    # patterns from the documents the Archivist assigns. Over time it can
+    # auto-assign without LLM help -- a safety net if the LLM is unavailable.
+
     async def _paperless_create_tag(self, name: str, color: str = "#9e9e9e") -> int | None:
         async with self._http.post(
             f"{self.paperless_url}/api/tags/",
             headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json={"name": name, "color": color},
+            json={
+                "name": name,
+                "color": color,
+                "matching_algorithm": 6,
+                "is_insensitive": True,
+            },
         ) as resp:
             if resp.status == 201:
                 data = await resp.json()
@@ -359,17 +383,28 @@ class ArchivistBot(MicroBot):
         async with self._http.post(
             f"{self.paperless_url}/api/document_types/",
             headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json={"name": name},
+            json={
+                "name": name,
+                "matching_algorithm": 6,
+                "is_insensitive": True,
+            },
         ) as resp:
             if resp.status == 201:
                 return (await resp.json())["id"]
             return None
 
     async def _paperless_create_correspondent(self, name: str) -> int | None:
+        # matching_algorithm 0 (none): don't let Paperless auto-assign
+        # correspondents. The LLM reads the document and decides who sent
+        # it. Paperless's auto-learn (6) guesses wrong with few samples
+        # (e.g. assigns the first correspondent to every new document).
         async with self._http.post(
             f"{self.paperless_url}/api/correspondents/",
             headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json={"name": name},
+            json={
+                "name": name,
+                "matching_algorithm": 0,
+            },
         ) as resp:
             if resp.status == 201:
                 return (await resp.json())["id"]
@@ -454,37 +489,64 @@ class ArchivistBot(MicroBot):
     async def _classify(self, ocr_text: str, tags: dict, doc_types: dict, correspondents: dict) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
-        The prompt gives the LLM the list of existing tags, document types,
-        and correspondents from Paperless so it picks from known values when
-        possible. If nothing fits, it can suggest new ones — the archivist
-        creates them automatically. Returns structured JSON metadata.
+        The prompt focuses on three things that matter:
+        - topic tag: what is this document about (Insurance, Shopping, Medical)
+        - person: which family member does this belong to
+        - correspondent: who sent/issued this document
+
+        document_type is optional -- Paperless learns it over time via
+        matching_algorithm=6 (auto). We don't force the LLM to distinguish
+        "topic" from "format" because even humans find that confusing.
         """
         person_tags = [t for t in tags if t.startswith("Person: ")]
+        # Strip "Person: " prefix for the prompt so the LLM sees clean
+        # first names like "Homer", "Marge" -- not "Person: Homer".
+        person_names = [t.replace("Person: ", "") for t in person_tags]
         category_tags = [t for t in tags if not t.startswith("Person: ")]
         truncated = ocr_text[:3000]
+
+        # ── Classification prompt ────────────────────────────────────────
+        #
+        # Simplified to three clear axes:
+        #   topic         = what is this about?   "Insurance", "Shopping"
+        #   person        = which family member?   "Homer", "Bart", or null
+        #   correspondent = who sent it?           "Springfield Nuclear", "Kwik-E-Mart"
+        #
+        # A Kwik-E-Mart receipt for Homer:
+        #   topic="Shopping", person="Homer", correspondent="Kwik-E-Mart"
+        # A school letter about Bart:
+        #   topic="School", person="Bart", correspondent="Springfield Elementary"
 
         prompt = f"""Classify this document. Return ONLY a JSON object.
 
 IMPORTANT: Always prefer existing values from the lists below. Only suggest
-a new value when NOTHING in the list is a reasonable match. For example,
-if "Finanzamt" exists and the document is from "Finanzamt Friedrichshafen",
-use the existing "Finanzamt" — don't create a new entry.
+a new value when NOTHING in the list is a reasonable match.
 
-Existing categories: {json.dumps(category_tags, ensure_ascii=False)}
-Existing persons: {json.dumps(person_tags, ensure_ascii=False)}
+Family members: {json.dumps(person_names, ensure_ascii=False)}
+Existing topic tags: {json.dumps(category_tags, ensure_ascii=False)}
 Existing document types: {json.dumps(list(doc_types.keys()), ensure_ascii=False)}
 Existing correspondents: {json.dumps(list(correspondents.keys()), ensure_ascii=False)}
 
 Return this exact JSON structure:
 {{
-  "title": "short descriptive title in the document's language",
+  "title": "scannable title: [Correspondent] - [what] [key amount]. E.g. 'Anthropic - Max Plan EUR 90.00', 'ADAC - Kfz-Versicherung 2026 EUR 340'. Must be useful when scanning a list of 500 documents. Max 128 chars. Document's language.",
   "date": "YYYY-MM-DD or null",
-  "category": "pick from existing categories, or suggest a new one only if nothing fits",
-  "person": "pick from existing persons when possible, or null if no person is relevant",
-  "document_type": "pick from existing types, or suggest a new one only if nothing fits",
-  "correspondent": "pick from existing correspondents, or the actual sender if truly new",
-  "summary": "2-3 sentence summary with key facts: amounts, dates, names, deadlines"
+  "topic": "what is this document about? The subject area. E.g. Shopping, Insurance, Subscription, Medical, School, Finance, Home, Vehicle, Legal. Pick from existing topic tags when possible.",
+  "persons": ["which family members does this belong to? Pick from the family members list by first name. Can be multiple for joint documents (marriage, family insurance). Empty list if unclear. These are who the document is FOR or ABOUT, not who sent it."],
+  "document_type": "optional: what format is this? Invoice, Receipt, Contract, Letter, Certificate, or null if unclear.",
+  "correspondent": "the SENDER or ISSUING ORGANIZATION. Who wrote or sent this? NOT the recipient. On an invoice, this is the company that billed, not the customer. Use the shortest recognizable name.",
+  "summary": "2-3 sentence summary with key facts: amounts, dates, names, deadlines",
+  "facts": ["key structured facts, e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'"],
+  "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
 }}
+
+Rules:
+- LANGUAGE: use the document's original language for title, summary, facts, and action_items. A German document gets a German title and German facts. Never translate.
+- persons: match by first name from the family members list. Can be multiple for joint documents. A marriage certificate for Homer and Marge: ["Homer", "Marge"]. A personal invoice for Homer only: ["Homer"].
+- correspondent: always the SENDER, never the addressee/customer/recipient.
+- topic: the subject, not the document format. An invoice from a shop is topic "Shopping", not "Invoice". An invoice for insurance is topic "Insurance", not "Invoice". Use the document's language for new topic tags too.
+- facts: concrete numbers, dates, account numbers, amounts. Empty list if none.
+- action_items: deadlines, payments due, forms to return. Empty list if none.
 
 Document text:
 ---
@@ -610,58 +672,93 @@ OCR text:
             await self._send(room_id, self.t("classify_failed", name=display_name, link=link), reply_to)
             return
 
-        # Apply classification
+        # Apply classification.
+        # resolved_* vars track the matched Paperless names (not raw LLM output)
+        # so hashtags in the summary show what was actually applied.
         updates = {}
         summary = []
         created_new = []
 
         title = classification.get("title")
         if title and isinstance(title, str):
-            updates["title"] = title
+            updates["title"] = title[:MAX_TITLE_LENGTH]
 
+        # ── Topic tag ────────────────────────────────────────────────────
+        # Match against category_tags only (excludes "Person: " tags) to
+        # prevent "Personal" or "Persona" from colliding with person names.
         tag_ids = list(doc.get("tags", []))
-        category = classification.get("category")
-        if category and isinstance(category, str):
-            if category in tags:
-                tag_ids.append(tags[category])
-                summary.append(self.t("category", value=category))
+        category_tags_dict = {t: tags[t] for t in tags if not t.startswith("Person: ")}
+        resolved_topic = None
+        topic = classification.get("topic")
+        if topic and isinstance(topic, str):
+            matched = fuzzy_match_entity(topic, category_tags_dict)
+            if matched:
+                tag_ids.append(tags[matched])
+                resolved_topic = matched
+                summary.append(self.t("category", value=matched))
             else:
-                new_id = await self._paperless_create_tag(category, "#4caf50")
+                new_id = await self._paperless_create_tag(topic, "#4caf50")
                 if new_id:
                     tag_ids.append(new_id)
-                    summary.append(self.t("category_new", value=category))
-                    created_new.append(f"tag \"{category}\"")
+                    resolved_topic = topic
+                    summary.append(self.t("category_new", value=topic))
+                    created_new.append(f"tag \"{topic}\"")
 
-        # Person tags — only match existing, never create
-        person = classification.get("person")
-        if person and isinstance(person, str) and person in tags:
-            tag_ids.append(tags[person])
-            summary.append(self.t("person", value=person.replace("Person: ", "")))
+        # ── Person tags -- closed set, never create ──────────────────────
+        # LLM returns "Homer" or ["Homer", "Marge"] for joint documents.
+        # match_persons handles strings, lists, full names, prefixed forms.
+        resolved_persons = []
+        persons_raw = classification.get("persons") or classification.get("person")
+        person_tags_matched = match_persons(persons_raw, tags)
+        for pt in person_tags_matched:
+            tag_ids.append(tags[pt])
+            name = pt.replace("Person: ", "")
+            resolved_persons.append(name)
+            summary.append(self.t("person", value=name))
 
         if tag_ids:
             updates["tags"] = list(set(tag_ids))
 
+        # ── Document type ───────────────────────────────────────────────
+        # Respect existing: if Homer manually set the type, don't overwrite.
+        resolved_type = None
         doc_type = classification.get("document_type")
-        if doc_type and isinstance(doc_type, str):
-            if doc_type in doc_types:
-                updates["document_type"] = doc_types[doc_type]
+        if doc_type and isinstance(doc_type, str) and doc_type.lower() != "null":
+            existing_type = doc.get("document_type")
+            if existing_type:
                 summary.append(self.t("type", value=doc_type))
             else:
-                new_id = await self._paperless_create_doc_type(doc_type)
-                if new_id:
-                    updates["document_type"] = new_id
-                    summary.append(self.t("type_new", value=doc_type))
-                    created_new.append(f"document type \"{doc_type}\"")
+                matched = fuzzy_match_entity(doc_type, doc_types)
+                if matched:
+                    updates["document_type"] = doc_types[matched]
+                    resolved_type = matched
+                    summary.append(self.t("type", value=matched))
+                else:
+                    new_id = await self._paperless_create_doc_type(doc_type)
+                    if new_id:
+                        updates["document_type"] = new_id
+                        resolved_type = doc_type
+                        summary.append(self.t("type_new", value=doc_type))
+                        created_new.append(f"document type \"{doc_type}\"")
 
+        # ── Correspondent ───────────────────────────────────────────────
+        # Always overwrite. Paperless's auto-classifier (matching_algorithm 6)
+        # may have guessed wrong with limited training data -- e.g. assigning
+        # "Denny Gunawan" to all documents because it was the first correspondent
+        # created. The LLM reads the actual document text and knows better.
+        resolved_correspondent = None
         correspondent = classification.get("correspondent")
         if correspondent and isinstance(correspondent, str):
-            if correspondent in correspondents:
-                updates["correspondent"] = correspondents[correspondent]
-                summary.append(self.t("from", value=correspondent))
+            matched = fuzzy_match_entity(correspondent, correspondents)
+            if matched:
+                updates["correspondent"] = correspondents[matched]
+                resolved_correspondent = matched
+                summary.append(self.t("from", value=matched))
             else:
                 new_id = await self._paperless_create_correspondent(correspondent)
                 if new_id:
                     updates["correspondent"] = new_id
+                    resolved_correspondent = correspondent
                     summary.append(self.t("from_new", value=correspondent))
                     created_new.append(f"correspondent \"{correspondent}\"")
 
@@ -683,31 +780,61 @@ OCR text:
             else:
                 reformat_failed = True
 
-        # Build summary message
-        doc_summary = classification.get("summary", "")
+        # ── Build chat summary ───────────────────────────────────────────
+        #
+        # Layout optimized for scanning in Element:
+        #
+        #   Filed: Cursor - Pro Subscription USD 192.00 (#10)
+        #
+        #   Subscription | Invoice | Cursor | 2025-03-27
+        #
+        #   Summary text from LLM...
+        #
+        #   - Invoice number: 4182A976 0001
+        #   - Amount due: USD 192.00
+        #
+        #   Payment of USD 192.00 due (due 2025-03-27)
+        #
+        #   #Subscription #Cursor
+        #   http://...
+
         display_title = title or display_name
-        lines = [self.t("filed", title=display_title, doc_id=doc_id), ""]
+        lines = [self.t("filed", title=display_title, doc_id=doc_id)]
 
-        if summary:
-            for s in summary:
-                lines.append(f"  {s}")
-        else:
-            lines.append(f"  {self.t('no_classification')}")
+        # Compact metadata line: topic | type | from | date
+        # Separated by pipes for scannability instead of dense "Key: Value" pairs.
+        meta_parts = []
+        for s in summary:
+            # Strip "Category: ", "Type: ", "From: ", "Date: " prefixes
+            # to keep just the values for the compact line.
+            value = s.split(": ", 1)[-1] if ": " in s else s
+            meta_parts.append(value)
+        if meta_parts:
+            lines.extend(["", "  " + " | ".join(meta_parts)])
 
+        doc_summary = classification.get("summary", "")
         if doc_summary and isinstance(doc_summary, str):
             lines.extend(["", f"  {doc_summary}"])
 
-        tag_keywords = []
-        if category:
-            tag_keywords.append(f"#{category}")
-        if person and isinstance(person, str):
-            tag_keywords.append(f"#{person.replace('Person: ', '')}")
-        if doc_type:
-            tag_keywords.append(f"#{doc_type}")
-        if correspondent:
-            tag_keywords.append(f"#{correspondent}")
-        if tag_keywords:
-            lines.extend(["", "  " + " ".join(tag_keywords)])
+        # Facts as bullet points
+        facts = classification.get("facts", [])
+        if facts and isinstance(facts, list):
+            fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
+            if fact_lines:
+                lines.append("")
+                for f in fact_lines[:5]:
+                    lines.append(f"  - {f}")
+
+        # Action items with due dates
+        action_items = classification.get("action_items", [])
+        if action_items and isinstance(action_items, list):
+            valid_actions = [a for a in action_items if isinstance(a, dict) and a.get("action")]
+            if valid_actions:
+                lines.append("")
+                for a in valid_actions[:3]:
+                    due = a.get("due", "")
+                    due_str = f" (due {due})" if due else ""
+                    lines.append(f"  {a['action']}{due_str}")
 
         if created_new:
             lines.extend(["", f"  {self.t('new_in_paperless', items=', '.join(created_new))}"])

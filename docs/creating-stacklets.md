@@ -137,8 +137,9 @@ stacklets/myapp/
   hooks/
     on_configure.py       # first-run config (interactive prompts)
     on_install.sh         # first-run setup (install dependencies)
+    on_start.py           # every stack up, before compose (config validation)
     on_install_success.py # after first successful health check
-    on_start.py           # every stack up (create accounts, etc.)
+    on_start_ready.py     # every stack up, after health checks (seed data, sync accounts)
     on_stop.sh            # every stack down
     on_destroy.sh         # full teardown
 ```
