@@ -157,6 +157,7 @@ class Stack:
             # Core config
             "data_dir":              str(self.data),
             "domain":                self._cfg("core", "domain"),
+            "language":              self._cfg("core", "language", self._cfg("ai", "language", "en")),
             "timezone":              self._cfg("core", "timezone", "UTC"),
             # AI service URLs — host-side for CLI, docker-side for containers
             "ai_openai_url":         ai_openai_url,

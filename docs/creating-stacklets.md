@@ -34,6 +34,7 @@ Values in `{braces}` are resolved from `stack.toml` and runtime state:
 
 | Variable | Source |
 |---|---|
+| `{language}` | `[core].language` (falls back to `[ai].language`, then `en`) |
 | `{timezone}` | `[core].timezone` |
 | `{data_dir}` | `[core].data_dir` |
 | `{domain}` | `[core].domain` |
