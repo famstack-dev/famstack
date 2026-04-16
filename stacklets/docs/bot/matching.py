@@ -19,7 +19,13 @@ Two matching strategies:
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple
+
+
+class TopicResult(NamedTuple):
+    """What match_topics returns: existing tags that matched, and new ones to create."""
+    matched: list[str]
+    new: list[str]
 
 # Paperless limits titles to 128 characters.
 MAX_TITLE_LENGTH = 128
@@ -180,7 +186,7 @@ def match_persons(names: str | list | None, tags: dict[str, Any]) -> list[str]:
 def match_topics(
     topics: str | list | None,
     category_tags: dict[str, Any],
-) -> list[str]:
+) -> TopicResult:
     """Match LLM-returned topic(s) to existing Paperless category tags.
 
     Handles the ways an LLM might return topic data:
