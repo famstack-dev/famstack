@@ -19,10 +19,36 @@ Two matching strategies:
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple
+
+
+class TopicResult(NamedTuple):
+    """What match_topics returns: existing tags that matched, and new ones to create."""
+    matched: list[str]
+    new: list[str]
 
 # Paperless limits titles to 128 characters.
 MAX_TITLE_LENGTH = 128
+
+# LLMs return "null", "None", "N/A" instead of actual null.
+_EMPTY_STRINGS = frozenset(("null", "none", "n/a", ""))
+
+
+def _is_empty(value: str | None) -> bool:
+    """True if the value is None or an LLM-style empty string.
+
+    >>> _is_empty(None)
+    True
+    >>> _is_empty("null")
+    True
+    >>> _is_empty("None")
+    True
+    >>> _is_empty("Insurance")
+    False
+    """
+    if not value or not isinstance(value, str):
+        return True
+    return value.lower().strip() in _EMPTY_STRINGS
 
 # Split on whitespace and common entity-name punctuation (hyphens, dots,
 # apostrophes, commas) so "Kwik-E-Mart" becomes ["kwik", "e", "mart"] and
@@ -139,7 +165,7 @@ def match_persons(names: str | list | None, tags: dict[str, Any]) -> list[str]:
     for name in name_list:
         if not name or not isinstance(name, str):
             continue
-        if name.lower().strip() in ("null", ""):
+        if _is_empty(name):
             continue
 
         clean_name = name.replace("Person: ", "").strip()
@@ -155,6 +181,121 @@ def match_persons(names: str | list | None, tags: dict[str, Any]) -> list[str]:
                 matched_tags.append(tag)
 
     return matched_tags
+
+
+def match_topics(
+    topics: str | list | None,
+    category_tags: dict[str, Any],
+) -> TopicResult:
+    """Match LLM-returned topic(s) to existing Paperless category tags.
+
+    Handles the ways an LLM might return topic data:
+    - Single string: "Insurance"             -> ["Insurance"]
+    - List:          ["Insurance", "Medical"] -> ["Insurance", "Medical"]
+    - Literal null:  "null"                   -> []
+    - None:          None                     -> []
+
+    Each topic is fuzzy-matched against existing category tags (excludes
+    "Person: " tags). Matched names are returned; unmatched originals are
+    returned as-is so the caller can create them in Paperless.
+
+    Returns (matched, new) tuple:
+    - matched: list of existing tag names that fuzzy-matched
+    - new: list of topic strings that need to be created
+
+    >>> tags = {"Insurance": 1, "Shopping": 2, "Medical": 3}
+    >>> match_topics("Insurance", tags)
+    (['Insurance'], [])
+    >>> match_topics(["Insurance", "Medical"], tags)
+    (['Insurance', 'Medical'], [])
+    >>> match_topics(["Insurance", "School"], tags)
+    (['Insurance'], ['School'])
+    >>> match_topics("null", tags)
+    ([], [])
+    >>> match_topics(None, tags)
+    ([], [])
+    """
+    if not topics:
+        return [], []
+
+    # Normalize to list
+    if isinstance(topics, str):
+        topic_list = [topics]
+    elif isinstance(topics, list):
+        topic_list = topics
+    else:
+        return [], []
+
+    matched = []
+    new = []
+    seen = set()
+
+    for topic in topic_list:
+        if not topic or not isinstance(topic, str):
+            continue
+        if _is_empty(topic):
+            continue
+
+        topic_clean = topic.strip()
+        if topic_clean.lower() in seen:
+            continue
+        seen.add(topic_clean.lower())
+
+        existing = fuzzy_match_entity(topic_clean, category_tags)
+        if existing:
+            if existing not in matched:
+                matched.append(existing)
+        else:
+            if topic_clean not in new:
+                new.append(topic_clean)
+
+    return matched, new
+
+
+def build_document_event(
+    doc_id: int,
+    classification: dict,
+    *,
+    resolved_topics: list[str] | None = None,
+    resolved_persons: list[str] | None = None,
+    resolved_correspondent: str | None = None,
+    resolved_type: str | None = None,
+    paperless_url: str = "",
+) -> dict:
+    """Build a structured event payload for a classified document.
+
+    Attaches full metadata as a custom Matrix event (dev.famstack.document)
+    so downstream bots can consume it without parsing human-readable text.
+
+    >>> evt = build_document_event(42, {"title": "ADAC - Kfz EUR 340", "summary": "Insurance renewal"}, resolved_topics=["Insurance"], resolved_persons=["Homer"], resolved_correspondent="ADAC")
+    >>> evt["type"]
+    'dev.famstack.document'
+    >>> evt["body"]["doc_id"]
+    42
+    >>> evt["body"]["topics"]
+    ['Insurance']
+    >>> evt["body"]["persons"]
+    ['Homer']
+    """
+    body = {
+        "doc_id": doc_id,
+        "title": classification.get("title", ""),
+        "date": classification.get("date"),
+        "topics": resolved_topics or [],
+        "persons": resolved_persons or [],
+        "correspondent": resolved_correspondent,
+        "document_type": resolved_type,
+        "summary": classification.get("summary", ""),
+        "facts": classification.get("facts", []),
+        "action_items": classification.get("action_items", []),
+    }
+    if paperless_url:
+        body["url"] = f"{paperless_url}/documents/{doc_id}/details"
+
+    return {
+        "type": "dev.famstack.document",
+        "body": body,
+    }
 
 
 def deduplicate_hashtags(*labels: str | None) -> list[str]:
@@ -177,7 +318,7 @@ def deduplicate_hashtags(*labels: str | None) -> list[str]:
     result = []
     seen = set()
     for label in labels:
-        if not label or not isinstance(label, str) or label.lower().strip() == "null":
+        if _is_empty(label):
             continue
         clean = label.replace("Person: ", "").strip()
         if not clean:

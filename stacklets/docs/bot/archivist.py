@@ -47,7 +47,10 @@ from nio import (
     RoomMessageText,
 )
 
-from matching import fuzzy_match_entity, match_persons, deduplicate_hashtags, MAX_TITLE_LENGTH
+from matching import (
+    _is_empty, fuzzy_match_entity, match_persons, match_topics,
+    build_document_event, deduplicate_hashtags, MAX_TITLE_LENGTH,
+)
 from microbot import MicroBot
 from stack import resolve_model
 
@@ -347,20 +350,27 @@ class ArchivistBot(MicroBot):
 
     # ── Paperless entity creation ──────────────────────────────────────
     #
-    # When creating new tags, doc types, or correspondents, we configure
-    # Paperless's built-in matching so future documents get auto-assigned
-    # even without the LLM. Paperless matching_algorithm values:
+    # All entities use matching_algorithm=0 (disabled). The LLM classifies
+    # every document; Paperless just stores what the LLM decides.
     #
-    #   1 = any word    "ADAC" matches if ANY word in the doc matches
-    #   2 = all words   all words must appear
-    #   3 = exact        exact string match
-    #   4 = regex
-    #   5 = fuzzy        Paperless's own fuzzy matching (handles typos)
-    #   6 = auto         Paperless learns from manual assignments
+    # Why not auto-learn (algorithm 6)?
     #
-    # We use algorithm 6 (auto) as the default. Paperless learns matching
-    # patterns from the documents the Archivist assigns. Over time it can
-    # auto-assign without LLM help -- a safety net if the LLM is unavailable.
+    # Paperless auto-assigns during document consumption -- BEFORE the LLM
+    # runs. With algorithm 6, Paperless learns from the first few LLM-assigned
+    # documents, then starts pre-assigning based on that tiny sample:
+    #
+    #   1. LLM tags three invoices as "Shopping"
+    #   2. Paperless learns: "Shopping" = common tag
+    #   3. Paperless auto-assigns "Shopping" to every new document at ingest
+    #   4. LLM adds the correct tag, but "Shopping" is already there too
+    #   5. Result: every document gets "Shopping" regardless of content
+    #
+    # Same failure mode hit correspondents: "Denny Gunawan" (first correspondent
+    # created) got auto-assigned to all subsequent documents.
+    #
+    # Algorithm 0 means: Paperless never guesses. The LLM reads the actual
+    # document text and makes the call. If the LLM is unavailable, documents
+    # get filed without tags -- the user can classify manually in the UI.
 
     async def _paperless_create_tag(self, name: str, color: str = "#9e9e9e") -> int | None:
         async with self._http.post(
@@ -369,7 +379,7 @@ class ArchivistBot(MicroBot):
             json={
                 "name": name,
                 "color": color,
-                "matching_algorithm": 6,
+                "matching_algorithm": 0,
                 "is_insensitive": True,
             },
         ) as resp:
@@ -385,7 +395,7 @@ class ArchivistBot(MicroBot):
             headers={**self._paperless_headers(), "Content-Type": "application/json"},
             json={
                 "name": name,
-                "matching_algorithm": 6,
+                "matching_algorithm": 0,
                 "is_insensitive": True,
             },
         ) as resp:
@@ -489,14 +499,11 @@ class ArchivistBot(MicroBot):
     async def _classify(self, ocr_text: str, tags: dict, doc_types: dict, correspondents: dict) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
-        The prompt focuses on three things that matter:
-        - topic tag: what is this document about (Insurance, Shopping, Medical)
-        - person: which family member does this belong to
+        Returns structured JSON with:
+        - topics: subject areas (1-2 tags, e.g. ["Insurance", "Medical"])
+        - persons: which family members this belongs to
         - correspondent: who sent/issued this document
-
-        document_type is optional -- Paperless learns it over time via
-        matching_algorithm=6 (auto). We don't force the LLM to distinguish
-        "topic" from "format" because even humans find that confusing.
+        - document_type: optional format (Invoice, Receipt, etc.)
         """
         person_tags = [t for t in tags if t.startswith("Person: ")]
         # Strip "Person: " prefix for the prompt so the LLM sees clean
@@ -515,7 +522,9 @@ class ArchivistBot(MicroBot):
         # A Kwik-E-Mart receipt for Homer:
         #   topic="Shopping", person="Homer", correspondent="Kwik-E-Mart"
         # A school letter about Bart:
-        #   topic="School", person="Bart", correspondent="Springfield Elementary"
+        #   topics=["School"], person="Bart", correspondent="Springfield Elementary"
+        # A health insurance invoice for Homer:
+        #   topics=["Insurance", "Medical"], person="Homer", correspondent="AOK"
 
         prompt = f"""Classify this document. Return ONLY a JSON object.
 
@@ -531,10 +540,10 @@ Return this exact JSON structure:
 {{
   "title": "scannable title: [Correspondent] - [what] [key amount]. E.g. 'Anthropic - Max Plan EUR 90.00', 'ADAC - Kfz-Versicherung 2026 EUR 340'. Must be useful when scanning a list of 500 documents. Max 128 chars. Document's language.",
   "date": "YYYY-MM-DD or null",
-  "topic": "what is this document about? The subject area. E.g. Shopping, Insurance, Subscription, Medical, School, Finance, Home, Vehicle, Legal. Pick from existing topic tags when possible.",
+  "topics": ["what is this document about? One or two subject areas. E.g. ['Insurance'], ['Insurance', 'Vehicle'], ['Shopping']. A health insurance bill is ['Insurance', 'Medical']. A car repair invoice is ['Vehicle']. Pick from existing topic tags when possible. Usually one topic, two only when the document genuinely spans two areas."],
   "persons": ["which family members does this belong to? Pick from the family members list by first name. Can be multiple for joint documents (marriage, family insurance). Empty list if unclear. These are who the document is FOR or ABOUT, not who sent it."],
   "document_type": "optional: what format is this? Invoice, Receipt, Contract, Letter, Certificate, or null if unclear.",
-  "correspondent": "the SENDER or ISSUING ORGANIZATION. Who wrote or sent this? NOT the recipient. On an invoice, this is the company that billed, not the customer. Use the shortest recognizable name.",
+  "correspondent": "the SENDER or ISSUING ORGANIZATION, or null if unclear. Who wrote or sent this? NOT the recipient. On an invoice, this is the company that billed, not the customer. Use the shortest recognizable name. null is better than guessing.",
   "summary": "2-3 sentence summary with key facts: amounts, dates, names, deadlines",
   "facts": ["key structured facts, e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'"],
   "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
@@ -542,9 +551,9 @@ Return this exact JSON structure:
 
 Rules:
 - LANGUAGE: use the document's original language for title, summary, facts, and action_items. A German document gets a German title and German facts. Never translate.
+- topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas.
 - persons: match by first name from the family members list. Can be multiple for joint documents. A marriage certificate for Homer and Marge: ["Homer", "Marge"]. A personal invoice for Homer only: ["Homer"].
-- correspondent: always the SENDER, never the addressee/customer/recipient.
-- topic: the subject, not the document format. An invoice from a shop is topic "Shopping", not "Invoice". An invoice for insurance is topic "Insurance", not "Invoice". Use the document's language for new topic tags too.
+- correspondent: always the SENDER, never the addressee/customer/recipient. Use null if the sender is not clearly identifiable. Do not guess from fragments.
 - facts: concrete numbers, dates, account numbers, amounts. Empty list if none.
 - action_items: deadlines, payments due, forms to return. Empty list if none.
 
@@ -601,11 +610,14 @@ OCR text:
         self, room_id: str, filename: str, display_name: str,
         file_data: bytes, reply_to: str | None = None,
     ):
-        """The core pipeline: upload → OCR → classify → tag → report.
+        """The core pipeline: upload → OCR → classify → tag → report → emit event.
 
         Shared by all entry points: single file upload, multi-page scan,
         and URL archiving. Each step can fail independently — the bot
         reports partial progress so the user knows what happened.
+
+        After the human-readable summary, emits a dev.famstack.document
+        custom event with full structured metadata for downstream bots.
         """
         logger.info("[archivist] Processing: {} ({} bytes)", display_name, len(file_data))
 
@@ -683,26 +695,26 @@ OCR text:
         if title and isinstance(title, str):
             updates["title"] = title[:MAX_TITLE_LENGTH]
 
-        # ── Topic tag ────────────────────────────────────────────────────
-        # Match against category_tags only (excludes "Person: " tags) to
-        # prevent "Personal" or "Persona" from colliding with person names.
+        # ── Topic tags ───────────────────────────────────────────────────
+        # LLM returns "topics": ["Insurance", "Medical"] (usually 1, max 2).
+        # match_topics fuzzy-matches against category tags (excludes "Person: "
+        # tags) and splits into matched vs new-to-create.
         tag_ids = list(doc.get("tags", []))
         category_tags_dict = {t: tags[t] for t in tags if not t.startswith("Person: ")}
-        resolved_topic = None
-        topic = classification.get("topic")
-        if topic and isinstance(topic, str):
-            matched = fuzzy_match_entity(topic, category_tags_dict)
-            if matched:
-                tag_ids.append(tags[matched])
-                resolved_topic = matched
-                summary.append(self.t("category", value=matched))
-            else:
-                new_id = await self._paperless_create_tag(topic, "#4caf50")
-                if new_id:
-                    tag_ids.append(new_id)
-                    resolved_topic = topic
-                    summary.append(self.t("category_new", value=topic))
-                    created_new.append(f"tag \"{topic}\"")
+        resolved_topics = []
+        topics_raw = classification.get("topics") or classification.get("topic")
+        matched_topics, new_topics = match_topics(topics_raw, category_tags_dict)
+        for mt in matched_topics:
+            tag_ids.append(tags[mt])
+            resolved_topics.append(mt)
+            summary.append(self.t("category", value=mt))
+        for nt in new_topics:
+            new_id = await self._paperless_create_tag(nt, "#4caf50")
+            if new_id:
+                tag_ids.append(new_id)
+                resolved_topics.append(nt)
+                summary.append(self.t("category_new", value=nt))
+                created_new.append(f"tag \"{nt}\"")
 
         # ── Person tags -- closed set, never create ──────────────────────
         # LLM returns "Homer" or ["Homer", "Marge"] for joint documents.
@@ -723,7 +735,7 @@ OCR text:
         # Respect existing: if Homer manually set the type, don't overwrite.
         resolved_type = None
         doc_type = classification.get("document_type")
-        if doc_type and isinstance(doc_type, str) and doc_type.lower() != "null":
+        if not _is_empty(doc_type):
             existing_type = doc.get("document_type")
             if existing_type:
                 summary.append(self.t("type", value=doc_type))
@@ -748,7 +760,7 @@ OCR text:
         # created. The LLM reads the actual document text and knows better.
         resolved_correspondent = None
         correspondent = classification.get("correspondent")
-        if correspondent and isinstance(correspondent, str):
+        if not _is_empty(correspondent):
             matched = fuzzy_match_entity(correspondent, correspondents)
             if matched:
                 updates["correspondent"] = correspondents[matched]
@@ -847,6 +859,28 @@ OCR text:
 
         await self._send(room_id, "\n".join(lines), reply_to)
         logger.info("[archivist] Processed: {} → doc {} [{}]", filename, doc_id, ", ".join(summary))
+
+        # ── Structured event for downstream bots ────────────────────────
+        # Custom Matrix event carrying full classification metadata.
+        # Element ignores unknown event types, so users don't see this.
+        # Bots can filter on dev.famstack.document to build the knowledge
+        # graph without parsing human-readable chat messages.
+        event_payload = build_document_event(
+            doc_id, classification,
+            resolved_topics=resolved_topics,
+            resolved_persons=resolved_persons,
+            resolved_correspondent=resolved_correspondent,
+            resolved_type=resolved_type,
+            paperless_url=self.paperless_public_url or self.paperless_url,
+        )
+        try:
+            await self._client.room_send(
+                room_id=room_id,
+                message_type=event_payload["type"],
+                content=event_payload["body"],
+            )
+        except Exception as e:
+            logger.warning("[archivist] Failed to send {} event for doc {}: {}", event_payload["type"], doc_id, e)
 
     # ── Event handlers ───────────────────────────────────────────────────
 
