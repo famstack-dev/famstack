@@ -12,14 +12,50 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "stacklets" / "docs" / "bot"))
 
 from matching import (
-    fuzzy_match_entity,
-    match_persons,
-    build_person_lookup,
-    deduplicate_hashtags,
+    _is_empty,
     _is_word_boundary_match,
     _tokenize,
+    fuzzy_match_entity,
+    match_persons,
+    match_topics,
+    build_person_lookup,
+    build_document_event,
+    deduplicate_hashtags,
     MAX_TITLE_LENGTH,
 )
+
+
+# ── Empty value detection ──────────────────────────────────────────────
+
+class TestIsEmpty:
+    """LLMs return "null", "None", "N/A" instead of actual null."""
+
+    def test_none(self):
+        assert _is_empty(None) is True
+
+    def test_empty_string(self):
+        assert _is_empty("") is True
+
+    def test_null(self):
+        assert _is_empty("null") is True
+
+    def test_none_string(self):
+        assert _is_empty("None") is True
+
+    def test_na(self):
+        assert _is_empty("N/A") is True
+
+    def test_whitespace(self):
+        assert _is_empty("  ") is True
+
+    def test_null_with_whitespace(self):
+        assert _is_empty("  null  ") is True
+
+    def test_real_value(self):
+        assert _is_empty("Insurance") is False
+
+    def test_integer(self):
+        assert _is_empty(42) is True
 
 
 # ── Tokenizer ───────────────────────────────────────────────────────────
@@ -234,6 +270,9 @@ class TestMatchPersons:
     def test_null_string_returns_empty(self):
         assert match_persons("null", SIMPSON_TAGS) == []
 
+    def test_none_string_returns_empty(self):
+        assert match_persons("None", SIMPSON_TAGS) == []
+
     def test_none_returns_empty(self):
         assert match_persons(None, SIMPSON_TAGS) == []
 
@@ -289,6 +328,166 @@ class TestDeduplicateHashtags:
         # Joint document: topic + two persons + correspondent
         result = deduplicate_hashtags("Insurance", "Homer", "Marge", "ADAC")
         assert result == ["#Insurance", "#Homer", "#Marge", "#ADAC"]
+
+
+# ── Topic matching ─────────────────────────────────────────────────────
+
+SPRINGFIELD_CATEGORY_TAGS = {
+    "Insurance": 1,
+    "Shopping": 2,
+    "Medical": 3,
+    "School": 4,
+    "Vehicle": 5,
+}
+
+
+class TestMatchTopics:
+    """match_topics resolves LLM output to existing Paperless category tags.
+
+    Returns (matched, new) -- matched are existing tags, new need creation.
+    """
+
+    def test_single_existing_topic(self):
+        matched, new = match_topics("Insurance", SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance"]
+        assert new == []
+
+    def test_multiple_existing_topics(self):
+        # Health insurance invoice: both Insurance and Medical apply
+        matched, new = match_topics(["Insurance", "Medical"], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance", "Medical"]
+        assert new == []
+
+    def test_mix_of_existing_and_new(self):
+        # "Insurance" exists, "Taxes" needs to be created
+        matched, new = match_topics(["Insurance", "Taxes"], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance"]
+        assert new == ["Taxes"]
+
+    def test_all_new_topics(self):
+        matched, new = match_topics(["Taxes", "Legal"], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == ["Taxes", "Legal"]
+
+    def test_fuzzy_matches_existing(self):
+        # LLM says "Shopping Mall" but "Shopping" already exists
+        matched, new = match_topics("Shopping Mall", {"Shopping": 1})
+        assert matched == ["Shopping"]
+        assert new == []
+
+    def test_deduplicates_same_topic(self):
+        matched, new = match_topics(["Insurance", "Insurance"], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance"]
+        assert new == []
+
+    def test_deduplicates_case_insensitive(self):
+        matched, new = match_topics(["Insurance", "insurance"], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance"]
+        assert new == []
+
+    def test_deduplicates_new_topics(self):
+        matched, new = match_topics(["Taxes", "Taxes"], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == ["Taxes"]
+
+    def test_string_input_normalized_to_list(self):
+        matched, new = match_topics("Insurance", SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance"]
+
+    def test_null_string_returns_empty(self):
+        matched, new = match_topics("null", SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == []
+
+    def test_none_string_returns_empty(self):
+        matched, new = match_topics("None", SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == []
+
+    def test_none_returns_empty(self):
+        matched, new = match_topics(None, SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == []
+
+    def test_empty_string_returns_empty(self):
+        matched, new = match_topics("", SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == []
+
+    def test_empty_list_returns_empty(self):
+        matched, new = match_topics([], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == []
+        assert new == []
+
+    def test_list_with_nulls_filtered(self):
+        matched, new = match_topics(["Insurance", "null", None, ""], SPRINGFIELD_CATEGORY_TAGS)
+        assert matched == ["Insurance"]
+        assert new == []
+
+    def test_empty_tags_all_new(self):
+        matched, new = match_topics(["Insurance", "School"], {})
+        assert matched == []
+        assert new == ["Insurance", "School"]
+
+
+# ── Document event payload ─────────────────────────────────────────────
+
+class TestBuildDocumentEvent:
+    """build_document_event creates structured metadata for Matrix events.
+
+    The event type dev.famstack.document is invisible to Element but
+    consumable by bots for the knowledge architecture event bus.
+    """
+
+    def test_basic_event_structure(self):
+        evt = build_document_event(42, {"title": "ADAC - Kfz EUR 340"})
+        assert evt["type"] == "dev.famstack.document"
+        assert evt["body"]["doc_id"] == 42
+        assert evt["body"]["title"] == "ADAC - Kfz EUR 340"
+
+    def test_resolved_fields(self):
+        evt = build_document_event(
+            42,
+            {"title": "Test", "summary": "A test doc"},
+            resolved_topics=["Insurance", "Vehicle"],
+            resolved_persons=["Homer"],
+            resolved_correspondent="ADAC",
+            resolved_type="Invoice",
+        )
+        assert evt["body"]["topics"] == ["Insurance", "Vehicle"]
+        assert evt["body"]["persons"] == ["Homer"]
+        assert evt["body"]["correspondent"] == "ADAC"
+        assert evt["body"]["document_type"] == "Invoice"
+
+    def test_includes_paperless_url(self):
+        evt = build_document_event(
+            42, {},
+            paperless_url="http://localhost:42020",
+        )
+        assert evt["body"]["url"] == "http://localhost:42020/documents/42/details"
+
+    def test_no_url_when_empty(self):
+        evt = build_document_event(42, {})
+        assert "url" not in evt["body"]
+
+    def test_facts_and_actions_passthrough(self):
+        classification = {
+            "facts": ["Total: EUR 340", "Policy: 12345"],
+            "action_items": [{"action": "Pay invoice", "due": "2026-05-01"}],
+        }
+        evt = build_document_event(42, classification)
+        assert evt["body"]["facts"] == ["Total: EUR 340", "Policy: 12345"]
+        assert evt["body"]["action_items"][0]["action"] == "Pay invoice"
+
+    def test_defaults_for_missing_fields(self):
+        evt = build_document_event(42, {})
+        assert evt["body"]["topics"] == []
+        assert evt["body"]["persons"] == []
+        assert evt["body"]["correspondent"] is None
+        assert evt["body"]["document_type"] is None
+        assert evt["body"]["summary"] == ""
+        assert evt["body"]["facts"] == []
+        assert evt["body"]["action_items"] == []
 
 
 # ── Constants ───────────────────────────────────────────────────────────
