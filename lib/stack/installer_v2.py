@@ -85,6 +85,18 @@ def detect_timezone():
     return "UTC"
 
 
+# Map timezone to primary language. Only de and en for now --
+# taxonomy.yaml only has these two. Add more as we add translations.
+_TZ_LANGUAGE = {
+    "Europe/Berlin": "de", "Europe/Vienna": "de", "Europe/Zurich": "de",
+}
+
+
+def detect_language(timezone: str) -> str:
+    """Guess the household language from timezone. Defaults to English."""
+    return _TZ_LANGUAGE.get(timezone, "en")
+
+
 # (min_ram_gb, model_id, label)
 MODEL_TIERS = [
     (48, "mlx-community/Qwen3.5-35B-A3B-8bit", "48 GB+ RAM — best quality"),
@@ -229,7 +241,7 @@ def _model_comments(chosen: str) -> str:
     return "\n".join(lines)
 
 
-def write_stack_toml(family_name, server_name, timezone):
+def write_stack_toml(family_name, server_name, timezone, language="en"):
     """Write a minimal stack.toml — just enough for messages."""
     default_model = detect_default_model()
     model_block = _model_comments(default_model)
@@ -243,6 +255,7 @@ stack_owner = "{family_name}"
 domain = ""
 data_dir = "~/famstack-data"
 timezone = "{timezone}"
+language = "{language}"
 
 [updates]
 schedule = "0 0 3 * * *"
@@ -409,9 +422,10 @@ def wizard():
     nl()
 
     timezone = detect_timezone()
+    language = detect_language(timezone)
 
     with Spinner("Writing stack.toml"):
-        write_stack_toml(family_name, server_name, timezone)
+        write_stack_toml(family_name, server_name, timezone, language)
 
     with Spinner("Writing users.toml"):
         write_users_toml(users)

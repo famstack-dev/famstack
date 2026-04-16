@@ -295,6 +295,7 @@ def write_stack_toml(config):
 domain = ""
 data_dir = "{data_dir}"
 timezone = "{tz}"
+language = "{language}"
 
 [updates]
 schedule = "0 0 3 * * *"
