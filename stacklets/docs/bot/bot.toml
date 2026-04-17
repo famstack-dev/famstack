@@ -8,3 +8,7 @@ room_topic  = "Drop photos, PDFs, or links here. They get filed and tagged autom
 classify = true
 reformat = true
 mirror_to_git = true
+# Forgejo organisation the archivist owns the `documents` repo under.
+# Admins are added to the org's Owners team so they see it in their
+# dashboard. Default: `family` (matches the Family Brain framing).
+mirror_org = "family"

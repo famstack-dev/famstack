@@ -2,8 +2,9 @@
 
 Real Paperless, real Synapse, real bot-runner, real Forgejo, mocked
 OpenAI. Homer uploads a document; the archivist classifies it, emits
-its Matrix event, and mirrors the result into the `archivist-bot/documents`
-Forgejo repo with YAML frontmatter and a commit trailer.
+its Matrix event, and mirrors the result into the `family/documents`
+Forgejo repo (org name is configurable via `bot.toml`) with YAML
+frontmatter and a commit trailer.
 
 Reprocessing the same Paperless document produces an `update:` commit
 at the same filepath — idempotency via the `-p<id>` filename suffix.
@@ -29,7 +30,9 @@ from tests.integration.openai_stub import stub_classify, stub_reformat
 
 
 DOCS_ROOM_ALIAS = "#documents:test.local"
-BOT_OWNER = "archivist-bot"
+# Repo owner = the Forgejo org `mirror_org` in the archivist's bot.toml.
+# Default is "family"; stays in sync with `FORGEJO_DOCS_OWNER` in conftest.
+DOCS_OWNER = "family"
 DOCS_REPO = "documents"
 
 
@@ -46,7 +49,7 @@ async def _wait_for_paperless_doc(paperless, title: str, timeout: int = 120) -> 
 async def _wait_for_mirror_file(code, paperless_id: int, timeout: int = 60) -> str | None:
     for _ in range(timeout):
         try:
-            path = code.find_by_paperless_id(BOT_OWNER, DOCS_REPO, paperless_id)
+            path = code.find_by_paperless_id(DOCS_OWNER, DOCS_REPO, paperless_id)
             if path:
                 return path
         except ForgejoError:
@@ -138,7 +141,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
         f"unexpected path suffix: {path}"
 
     # ── Then: frontmatter carries the classification ────────────────
-    fm, body = code.load_frontmatter(BOT_OWNER, DOCS_REPO, path)
+    fm, body = code.load_frontmatter(DOCS_OWNER, DOCS_REPO, path)
     bdd.then("the frontmatter carries the full classification")
     assert fm.get("title") == expected_title
     assert fm.get("paperless_id") == paperless_id
@@ -159,7 +162,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
 
     # ── Then: commit carries the Paperless-Id trailer ───────────────
     bdd.then(f"the latest commit message carries Paperless-Id: {paperless_id}")
-    commits = code.list_commits(BOT_OWNER, DOCS_REPO, path=path, limit=5)
+    commits = code.list_commits(DOCS_OWNER, DOCS_REPO, path=path, limit=5)
     assert commits, f"no commits found for {path}"
     latest_msg = commits[0]["commit"]["message"]
     assert f"Paperless-Id: {paperless_id}" in latest_msg, \
@@ -169,9 +172,10 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
         f"first commit should be 'learn:', got: {latest_msg.splitlines()[0]!r}"
     bdd.ok(f"commit: {latest_msg.splitlines()[0]}")
 
-    # ── Then: admin users are collaborators on the repo ─────────────
-    bdd.then("Homer and Marge (admin-role users) are repo collaborators")
-    collaborators = set(code.list_collaborators(BOT_OWNER, DOCS_REPO))
-    assert "homer" in collaborators, f"homer not in collaborators: {collaborators}"
-    assert "marge" in collaborators, f"marge not in collaborators: {collaborators}"
-    bdd.ok(f"collaborators = {sorted(collaborators)}")
+    # ── Then: admin users + bot are in the org's Owners team ───────
+    bdd.then(f"archivist-bot, Homer, and Marge are members of the `{DOCS_OWNER}` org")
+    members = set(code.list_org_members(DOCS_OWNER))
+    assert "archivist-bot" in members, f"archivist-bot not in {DOCS_OWNER} org: {members}"
+    assert "homer" in members, f"homer not in {DOCS_OWNER} org: {members}"
+    assert "marge" in members, f"marge not in {DOCS_OWNER} org: {members}"
+    bdd.ok(f"org members = {sorted(members)}")

@@ -39,7 +39,8 @@ REPO_DESCRIPTION = "Archive of all documents filed via the archivist bot. Autoge
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
 TOKEN_NAME = "archivist-git-mirror"
-TOKEN_SCOPES = ["write:repository", "read:repository", "read:user"]
+TOKEN_SCOPES = ["write:repository", "read:repository", "read:user", "write:organization"]
+ORG_DESCRIPTION = "Your family's Forgejo — documents, knowledge, and shared repos."
 
 
 @dataclass
@@ -61,12 +62,20 @@ class GitMirror:
     admin_usernames: list[str]
     data_dir: Path
     http: aiohttp.ClientSession
+    org_name: str = "family"
     paperless_version: str = ""
 
     _setup_done: bool = field(default=False, init=False)
     _creds: MirrorCreds | None = field(default=None, init=False)
     _cache: dict[int, str] = field(default_factory=dict, init=False)
     _cache_loaded: bool = field(default=False, init=False)
+
+    @property
+    def repo_owner(self) -> str:
+        """The Forgejo login that owns the documents repo. Equals the
+        configured org — publishes, tree walks, and commit fetches all
+        go through this namespace."""
+        return self.org_name
 
     @property
     def creds_path(self) -> Path:
@@ -120,25 +129,43 @@ class GitMirror:
 
         client.token = self._creds.token
 
+        # ── Org + team membership ────────────────────────────────────
+        # Orgs are the right home for family-wide repos (documents now,
+        # brain/calendar later). Admins see every org repo on their
+        # dashboard without per-repo watches.
+        try:
+            await client.create_org(self.org_name, description=ORG_DESCRIPTION)
+        except ForgejoError as e:
+            logger.warning("[git-mirror] Could not ensure org {}: {}", self.org_name, e)
+            return False
+
+        try:
+            owners_team_id = await client.get_owners_team_id(self.org_name)
+        except ForgejoError as e:
+            logger.warning("[git-mirror] Could not resolve Owners team: {}", e)
+            return False
+
+        # Bot first so it can write; admins after so they see it.
+        for member in (BOT_USERNAME, *self.admin_usernames):
+            try:
+                await client.add_team_member(owners_team_id, member)
+            except ForgejoError as e:
+                logger.warning("[git-mirror] Could not add {} to Owners: {}", member, e)
+
         try:
             await client.create_repo(
-                BOT_USERNAME, REPO_NAME,
+                self.org_name, REPO_NAME,
                 description=REPO_DESCRIPTION, private=True,
+                owner_is_org=True,
             )
         except ForgejoError as e:
             logger.warning("[git-mirror] Could not ensure repo: {}", e)
             return False
 
-        for admin in self.admin_usernames:
-            try:
-                await client.add_collaborator(BOT_USERNAME, REPO_NAME, admin, permission="write")
-            except ForgejoError as e:
-                logger.warning("[git-mirror] Could not add collaborator {}: {}", admin, e)
-
         await self._seed_readme_once(client)
 
         self._setup_done = True
-        logger.info("[git-mirror] Setup complete: {}/{}", BOT_USERNAME, REPO_NAME)
+        logger.info("[git-mirror] Setup complete: {}/{}", self.org_name, REPO_NAME)
         return True
 
     def _load_or_create_creds(self) -> MirrorCreds:
@@ -168,7 +195,7 @@ class GitMirror:
 
     async def _seed_readme_once(self, client: ForgejoClient) -> None:
         """Write a README on the very first repo creation (not on update)."""
-        existing = await client.get_file(BOT_USERNAME, REPO_NAME, "README.md")
+        existing = await client.get_file(self.repo_owner, REPO_NAME, "README.md")
         if existing and existing.get("content"):
             import base64
             try:
@@ -180,7 +207,7 @@ class GitMirror:
 
         readme = self._render_readme()
         await client.put_file(
-            BOT_USERNAME, REPO_NAME, "README.md",
+            self.repo_owner, REPO_NAME, "README.md",
             content=readme,
             message="chore: seed README",
             sha=existing["sha"] if existing else None,
@@ -239,13 +266,13 @@ class GitMirror:
         self._load_cache()
         cached = self._cache.get(paperless_id)
         if cached:
-            existing = await client.get_file(BOT_USERNAME, REPO_NAME, cached)
+            existing = await client.get_file(self.repo_owner, REPO_NAME, cached)
             if existing:
                 return cached
             self._cache.pop(paperless_id, None)
 
         suffix_variants = (f"-p{paperless_id}.md", f"/p{paperless_id}.md")
-        tree = await client.list_tree(BOT_USERNAME, REPO_NAME)
+        tree = await client.list_tree(self.repo_owner, REPO_NAME)
         for entry in tree:
             path = entry.get("path", "")
             if entry.get("type") == "blob" and any(path.endswith(s) or path == s.lstrip("/") for s in suffix_variants):
@@ -416,7 +443,7 @@ class GitMirror:
         existing_path = await self._lookup_path(client, paperless_id)
         existing = None
         if existing_path:
-            existing = await client.get_file(BOT_USERNAME, REPO_NAME, existing_path)
+            existing = await client.get_file(self.repo_owner, REPO_NAME, existing_path)
 
         fm = self._frontmatter(
             title=title, date=date,
@@ -439,24 +466,24 @@ class GitMirror:
         try:
             if existing and existing_path != target_path:
                 await client.delete_file(
-                    BOT_USERNAME, REPO_NAME, existing_path,
+                    self.repo_owner, REPO_NAME, existing_path,
                     sha=existing["sha"],
                     message=f"rename: {existing_path} → {target_path}\n\nPaperless-Id: {paperless_id}",
                 )
                 await client.put_file(
-                    BOT_USERNAME, REPO_NAME, target_path,
+                    self.repo_owner, REPO_NAME, target_path,
                     content=content, message=message,
                     author_name=BOT_USERNAME, author_email=BOT_EMAIL,
                 )
             elif existing:
                 await client.put_file(
-                    BOT_USERNAME, REPO_NAME, target_path,
+                    self.repo_owner, REPO_NAME, target_path,
                     content=content, message=message, sha=existing["sha"],
                     author_name=BOT_USERNAME, author_email=BOT_EMAIL,
                 )
             else:
                 await client.put_file(
-                    BOT_USERNAME, REPO_NAME, target_path,
+                    self.repo_owner, REPO_NAME, target_path,
                     content=content, message=message,
                     author_name=BOT_USERNAME, author_email=BOT_EMAIL,
                 )

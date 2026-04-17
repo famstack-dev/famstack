@@ -104,6 +104,14 @@ class ForgejoAPI:
         ) or []
         return [c.get("login") for c in data if c.get("login")]
 
+    def list_org_members(self, org: str) -> list[str]:
+        """Everyone in `org`, regardless of team. Requires admin or membership."""
+        data = self._req(
+            "GET", f"/api/v1/orgs/{org}/members",
+            {"per_page": "100"},
+        ) or []
+        return [m.get("login") for m in data if m.get("login")]
+
     # ── Convenience ──────────────────────────────────────────────────────
 
     def find_by_paperless_id(self, owner: str, repo: str, paperless_id: int) -> str | None:

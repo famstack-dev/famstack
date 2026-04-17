@@ -287,7 +287,12 @@ async def homer(matrix):
 
 # ── Forgejo / code stacklet (shared, session-scoped) ─────────────────────
 
-FORGEJO_BOT_OWNER = "archivist-bot"
+# The documents repo now lives under the Forgejo org the archivist
+# provisions (`mirror_org` in `stacklets/docs/bot/bot.toml`, default
+# "family"). The bot keeps its own Forgejo user identity for commit
+# authorship, but the repo owner is the org so admins see it in their
+# dashboards.
+FORGEJO_DOCS_OWNER = "family"
 FORGEJO_DOCS_REPO = "documents"
 
 
@@ -332,6 +337,6 @@ def mirror_scope(code, scope) -> Scope:
     `documents` repo whose frontmatter title starts with scope.uid is
     deleted. The repo + bot user + README survive between tests."""
     scope.on_cleanup.append(
-        lambda uid: cleanup_mirror_files(code, FORGEJO_BOT_OWNER, FORGEJO_DOCS_REPO, uid)
+        lambda uid: cleanup_mirror_files(code, FORGEJO_DOCS_OWNER, FORGEJO_DOCS_REPO, uid)
     )
     return scope

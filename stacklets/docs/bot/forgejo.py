@@ -122,6 +122,69 @@ class ForgejoClient:
             logger.info("[forgejo] Issued token for {}: {}", username, name)
             return secret
 
+    # ── Orgs + teams ─────────────────────────────────────────────────────
+
+    async def org_exists(self, org: str) -> bool:
+        async with self.http.get(
+            f"{self.base_url}/api/v1/orgs/{org}",
+            headers=self._auth_headers(admin=True),
+        ) as r:
+            return r.status == 200
+
+    async def create_org(self, org: str, description: str = "") -> None:
+        """Create a Forgejo organisation. Idempotent."""
+        async with self.http.post(
+            f"{self.base_url}/api/v1/orgs",
+            headers={**self._auth_headers(admin=True), "Content-Type": "application/json"},
+            json={
+                "username": org,
+                "full_name": org,
+                "description": description,
+                "visibility": "private",
+                "repo_admin_change_team_access": True,
+            },
+        ) as r:
+            if r.status in (200, 201):
+                logger.info("[forgejo] Created org: {}", org)
+                return
+            body = await r.text()
+            if r.status == 422 and "already exists" in body.lower():
+                logger.debug("[forgejo] Org exists: {}", org)
+                return
+            raise ForgejoError(f"create_org({org}) failed: HTTP {r.status} {body[:200]}")
+
+    async def get_owners_team_id(self, org: str) -> int:
+        """Return the id of the org's built-in 'Owners' team."""
+        async with self.http.get(
+            f"{self.base_url}/api/v1/orgs/{org}/teams",
+            headers=self._auth_headers(admin=True),
+        ) as r:
+            if r.status != 200:
+                body = await r.text()
+                raise ForgejoError(f"list_teams({org}) failed: HTTP {r.status} {body[:200]}")
+            teams = await r.json()
+        for t in teams or []:
+            if t.get("name", "").lower() == "owners":
+                return int(t["id"])
+        raise ForgejoError(f"org {org!r} has no 'Owners' team — Forgejo should auto-create it")
+
+    async def add_team_member(self, team_id: int, username: str) -> None:
+        """Add `username` to `team_id`. Idempotent — already-a-member is OK."""
+        async with self.http.put(
+            f"{self.base_url}/api/v1/teams/{team_id}/members/{username}",
+            headers=self._auth_headers(admin=True),
+        ) as r:
+            if r.status in (200, 201, 204):
+                logger.info("[forgejo] Added {} to team #{}", username, team_id)
+                return
+            body = await r.text()
+            if r.status == 404:
+                raise ForgejoError(f"add_team_member: user {username!r} does not exist")
+            if "already" in body.lower():
+                logger.debug("[forgejo] {} already in team #{}", username, team_id)
+                return
+            raise ForgejoError(f"add_team_member({username}, {team_id}) failed: HTTP {r.status} {body[:200]}")
+
     # ── Repos ────────────────────────────────────────────────────────────
 
     async def repo_exists(self, owner: str, repo: str) -> bool:
@@ -135,10 +198,22 @@ class ForgejoClient:
         self, owner: str, repo: str,
         description: str = "", private: bool = True,
         default_branch: str = "main",
+        owner_is_org: bool = False,
     ) -> None:
-        """Create a repo under `owner`. Uses admin creds, auto-inits with README."""
+        """Create a repo under `owner`. Uses admin creds, auto-inits with README.
+
+        For user-owned repos the admin `/admin/users/{owner}/repos` path
+        is the fastest — a site admin creates the repo on behalf of the
+        user. For org-owned repos (`owner_is_org=True`) use the
+        `/orgs/{owner}/repos` path; admin is always a member of orgs it
+        created, so the call succeeds.
+        """
+        if owner_is_org:
+            path = f"/api/v1/orgs/{owner}/repos"
+        else:
+            path = f"/api/v1/admin/users/{owner}/repos"
         async with self.http.post(
-            f"{self.base_url}/api/v1/admin/users/{owner}/repos",
+            f"{self.base_url}{path}",
             headers={**self._auth_headers(admin=True), "Content-Type": "application/json"},
             json={
                 "name": repo,

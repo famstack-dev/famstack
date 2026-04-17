@@ -190,6 +190,7 @@ class ArchivistBot(MicroBot):
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
         self.mirror_to_git = settings.get("mirror_to_git", True)
+        self.mirror_org = settings.get("mirror_org", "family")
         self._scan_sessions: dict[str, dict] = {}
         self._http: aiohttp.ClientSession | None = None
         self._mirror: GitMirror | None = None
@@ -257,9 +258,10 @@ class ArchivistBot(MicroBot):
             admin_usernames=admin_usernames,
             data_dir=self._session_dir,
             http=self._http,
+            org_name=self.mirror_org,
         )
-        logger.info("[archivist] Git mirror configured: {} (admins: {})",
-                    code_url, ", ".join(admin_usernames) or "-")
+        logger.info("[archivist] Git mirror configured: {} org={} (admins: {})",
+                    code_url, self.mirror_org, ", ".join(admin_usernames) or "-")
 
     def _ai_status(self) -> str:
         if self.openai_url:
