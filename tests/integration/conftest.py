@@ -104,6 +104,14 @@ def test_stack() -> TestStack:
     return TestStack()
 
 
+@pytest.fixture(scope="session")
+def stack():
+    """A Stack instance pointed at the test instance — for tests that
+    need to exercise the framework API directly (is_healthy, etc.)."""
+    from stack.cli import create_stack
+    return create_stack(REPO_ROOT, INSTANCE_DIR)
+
+
 # ── Per-test prefix + cleanup ────────────────────────────────────────────
 
 @dataclass
