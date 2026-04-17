@@ -535,7 +535,6 @@ def wizard():
     out(f"  {TEAL}stack up docs{RESET}       Document archive with OCR")
     out(f"  {TEAL}stack up ai{RESET}         Local AI engine")
     out(f"  {TEAL}stack up chatai{RESET}     ChatGPT-like interface")
-    out(f"  {TEAL}stack up bots{RESET}       AI helpers in chat")
     nl()
     out(f"  {TEAL}stack status{RESET}        See what's running")
     nl()

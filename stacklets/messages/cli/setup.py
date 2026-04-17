@@ -201,7 +201,6 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None):
         "  stack up docs        Document archive with OCR\n"
         "  stack up ai          Local AI engine\n"
         "  stack up chatai      ChatGPT-like interface\n"
-        "  stack up bots        AI helpers in this chat\n"
     )
 
     html = (
@@ -220,7 +219,6 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None):
         "<tr><td><code>stack up docs</code></td><td>Document archive with OCR</td></tr>"
         "<tr><td><code>stack up ai</code></td><td>Local AI engine</td></tr>"
         "<tr><td><code>stack up chatai</code></td><td>ChatGPT-like interface</td></tr>"
-        "<tr><td><code>stack up bots</code></td><td>AI helpers in this chat</td></tr>"
         "</table>"
     )
 
