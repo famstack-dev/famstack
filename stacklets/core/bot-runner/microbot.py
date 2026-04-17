@@ -236,6 +236,29 @@ class MicroBot:
         messages, announce the bot to rooms, etc. Not called on restarts."""
         pass
 
+    async def emit_event(self, room_id: str, event_type: str, body: dict) -> bool:
+        """Emit a structured (non-message) event into a Matrix room.
+
+        Custom event types (convention: dev.famstack.<name>) form the
+        framework's bus for bot-to-bot communication. Element ignores
+        unknown types, so they stay invisible in the chat UI while other
+        bots filter on them to drive downstream behavior.
+
+        Returns True on success, False on failure — failures are logged
+        but not raised, because the event bus is best-effort: a missed
+        event shouldn't take down the caller's main path.
+        """
+        try:
+            await self._client.room_send(
+                room_id=room_id,
+                message_type=event_type,
+                content=body,
+            )
+            return True
+        except Exception as e:
+            logger.warning("[{}] Failed to emit {} to {}: {}", self.name, event_type, room_id, e)
+            return False
+
     async def stop(self) -> None:
         """Signal the sync loop to exit."""
         self._running = False
