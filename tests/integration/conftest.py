@@ -1,18 +1,24 @@
 """Integration test fixtures.
 
-The rig is a dedicated stack instance at tests/integration/instance/.
+The rig now runs against the *repo root* as a test instance — same
+layout as a real famstack (`stack.toml`, `users.toml`, `.stack/` at
+the repo root). A sentinel file `.stack/.test-instance` marks the
+repo as test-owned; `_seed_secrets.seed()` refuses to clobber a
+non-test setup, so running the rig over a real user's stack errors
+out with a cleanup hint instead of silently overwriting it.
+
 Stacklets are spun up on demand by the fixtures below — `paperless`
-brings up `docs`, `matrix` brings up `messages`. They stay running
-across pytest invocations; stop them between coding sessions with
-`tests/integration/test-env-down.sh`.
+brings up `docs`, `matrix` brings up `messages`, `code` brings up
+Forgejo. They stay running across pytest invocations; tear them down
+between coding sessions with `tests/integration/stacktests cleanup`.
 
 Per-test isolation is by prefix: every entity a test creates in a
 backend carries its scope uid, and teardown deletes only what matches.
 Tests run in parallel as long as they each ask for the same scope.
 
 External services exercised for real: Paperless, Postgres, Redis,
-Synapse. Only OpenAI is mocked (determinism trumps realism for
-classification output).
+Synapse, Forgejo. Only OpenAI is mocked (determinism trumps realism
+for classification output).
 """
 
 from __future__ import annotations
@@ -28,7 +34,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-INSTANCE_DIR = REPO_ROOT / "tests" / "integration" / "instance"
+# The test instance IS the repo root. Kept as a distinct name so
+# `.stack/` / `stack.toml` / `users.toml` references stay readable.
+INSTANCE_DIR = REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
@@ -36,7 +44,10 @@ from tests.integration.paperless import PaperlessAPI, cleanup_prefix
 from tests.integration.matrix import MatrixCreds, login
 from tests.integration.forgejo import ForgejoAPI, cleanup_mirror_files
 from tests.integration.bdd import BDDLog
-from tests.integration._seed_secrets import seed as _seed_test_instance_secrets
+from tests.integration._seed_secrets import (
+    seed as _seed_test_instance_secrets,
+    TestInstanceConflict,
+)
 
 
 # ── Pin the OpenAI mock to the port baked into stack.toml ────────────────
@@ -69,14 +80,18 @@ def openai(httpserver):
 
 @dataclass
 class TestStack:
-    """Thin wrapper around the CLI pointed at the test instance."""
+    """Thin wrapper around the CLI pointed at the test instance.
+
+    The test instance IS the repo root, so we don't set STACK_DIR.
+    `_seed_test_instance_secrets()` installs the test-owned stack.toml
+    and sentinel marker up front.
+    """
 
     instance_dir: Path = INSTANCE_DIR
 
     def _env(self) -> dict:
         return {
             **os.environ,
-            "STACK_DIR": str(self.instance_dir),
             "PYTHONPATH": str(REPO_ROOT / "lib"),
         }
 
@@ -109,9 +124,10 @@ def test_stack() -> TestStack:
 @pytest.fixture(scope="session")
 def stack():
     """A Stack instance pointed at the test instance — for tests that
-    need to exercise the framework API directly (is_healthy, etc.)."""
+    need to exercise the framework API directly (is_healthy, etc.).
+    Repo root and instance dir are the same in the repo-root rig."""
     from stack.cli import create_stack
-    return create_stack(REPO_ROOT, INSTANCE_DIR)
+    return create_stack(REPO_ROOT, REPO_ROOT)
 
 
 # ── Per-test prefix + cleanup ────────────────────────────────────────────
@@ -182,7 +198,10 @@ def paperless(test_stack) -> PaperlessAPI:
     Subsequent: no-op. Not torn down at session end — stop the test stack
     manually with tests/integration/test-env-down.sh.
     """
-    _seed_test_instance_secrets()
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
     result = test_stack.run("up", "docs", timeout=240)
     if "_stderr" in result and not result.get("ok"):
         pytest.fail(
@@ -220,7 +239,10 @@ def matrix(test_stack) -> dict:
     the first test pays the ~40s Synapse boot and the rest pay nothing.
     Not torn down — stop with tests/integration/test-env-down.sh.
     """
-    _seed_test_instance_secrets()
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
     result = test_stack.run("up", "messages", timeout=240)
     if "_stderr" in result and not result.get("ok"):
         pytest.fail(
@@ -273,7 +295,10 @@ def code(test_stack) -> ForgejoAPI:
 
     First call per coding session: ~40s. Subsequent: no-op.
     """
-    _seed_test_instance_secrets()
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
     for target, timeout in (("core", 60), ("code", 240)):
         result = test_stack.run("up", target, timeout=timeout)
         if "_stderr" in result and not result.get("ok"):
