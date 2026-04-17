@@ -166,10 +166,15 @@ def bdd() -> BDDLog:
 
 # ── Sample files for upload ──────────────────────────────────────────────
 
-@pytest.fixture(scope="session")
-def sample_invoice_pdf() -> bytes:
+@pytest.fixture
+def sample_invoice_pdf(scope) -> bytes:
     """A minimal single-page PDF with extractable text — enough for
-    Paperless OCR to produce recognizable content the LLM can classify."""
+    Paperless OCR to produce recognizable content the LLM can classify.
+
+    Function-scoped with the test's scope uid baked into the rendered
+    text. Different bytes per run → Paperless's content-hash duplicate
+    check doesn't fire on re-runs against a retained instance (where
+    the prior doc is sitting in the trash)."""
     from PIL import Image, ImageDraw
     import io as _io
 
@@ -181,7 +186,8 @@ def sample_invoice_pdf() -> bytes:
               "Jahresbeitrag: EUR 340,00\n"
               "Versicherungsnehmer: Homer Simpson\n"
               "Vertragsnummer: KFZ-2026-000123\n"
-              "Zahlungsziel: 15.03.2026",
+              "Zahlungsziel: 15.03.2026\n\n"
+              f"Ref: {scope.uid}",
               fill="black")
     buf = _io.BytesIO()
     img.save(buf, format="PDF")
