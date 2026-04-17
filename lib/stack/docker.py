@@ -199,6 +199,25 @@ def check_health(url: str, headers: dict = None) -> bool:
         return False
 
 
+def probe_health(url: str, headers: dict = None, timeout: float = 3) -> str:
+    """Single-shot health probe. Returns 'ready', 'auth', or 'down'.
+
+    No retries — the caller loops if they want a wait. Used by both
+    wait_for_health (bootstrap-time polling) and Stack.is_healthy
+    (runtime reachability checks).
+    """
+    try:
+        req = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL):
+            return "ready"
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return "auth"
+        return "down"
+    except Exception:
+        return "down"
+
+
 def wait_for_health(url: str, timeout: int = 120, interval: int = 3,
                     headers: dict = None) -> str:
     """Poll a URL until it responds. Returns 'ready', 'auth', or 'timeout'.
@@ -208,16 +227,9 @@ def wait_for_health(url: str, timeout: int = 120, interval: int = 3,
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            req = urllib.request.Request(url, headers=headers or {})
-            with urllib.request.urlopen(req, timeout=5, context=_SSL):
-                return "ready"
-        except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
-                return "auth"
-            pass
-        except Exception:
-            pass
+        status = probe_health(url, headers=headers, timeout=5)
+        if status in ("ready", "auth"):
+            return status
         time.sleep(interval)
     return "timeout"
 
