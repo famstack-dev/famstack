@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# stacktests — operate the dedicated integration test stack.
+#
+# Wraps the stack CLI with STACK_DIR pointed at the test instance so it
+# stays isolated from your dev install. Most verbs forward to stack; a
+# few are test-specific conveniences.
+#
+# Usage (callable from anywhere — paths resolve off the script location):
+#   tests/integration/stacktests up              — bring up what tests need
+#   tests/integration/stacktests down            — stop every test stacklet
+#   tests/integration/stacktests reset [slet]    — destroy + up (clean slate)
+#   tests/integration/stacktests cleanup          — nuke every test stacklet +
+#                                                   instance state + test data
+#   tests/integration/stacktests e2e [args]      — run every e2e test
+#   tests/integration/stacktests pytest [args]   — pytest with env + deps
+#   tests/integration/stacktests <any stack cmd> — forward: logs, status...
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export STACK_DIR="$SCRIPT_DIR/instance"
+export PYTHONPATH="$REPO_ROOT/lib"
+cd "$REPO_ROOT"
+
+# Stacklets needed for the archivist e2e scenario, in dependency order.
+# - core: always_on, provides the bot-runner container that actually
+#   executes the archivist bot (which then auto-creates #documents).
+# - messages: Synapse + Element (Matrix backbone).
+# - docs: Paperless-ngx + archivist bot definition.
+REQUIRED_STACKLETS=(core messages docs)
+
+case "${1:-}" in
+  up)
+    # `./stacktests up`  — bring up the full set in order.
+    # `./stacktests up X` — forward to `stack up X`.
+    if [[ -z "${2:-}" ]]; then
+      for sid in "${REQUIRED_STACKLETS[@]}"; do
+        echo "==> stack up $sid"
+        python3 -m stack up "$sid"
+      done
+    else
+      shift
+      exec python3 -m stack up "$@"
+    fi
+    ;;
+
+  down)
+    # Stop everything the tests care about.
+    shift || true
+    if [[ -z "${1:-}" ]]; then
+      exec python3 -m stack down all
+    else
+      exec python3 -m stack down "$@"
+    fi
+    ;;
+
+  reset)
+    # Destroy + up — recover from a half-bootstrapped state without
+    # hunting down setup markers or stale containers. --yes skips the
+    # destroy confirmation because this is a test stack.
+    shift || true
+    if [[ -z "${1:-}" ]]; then
+      targets=("${REQUIRED_STACKLETS[@]}")
+    else
+      targets=("$@")
+    fi
+    for sid in "${targets[@]}"; do
+      echo "==> stack destroy $sid --yes"
+      python3 -m stack destroy "$sid" --yes || true
+    done
+    for sid in "${targets[@]}"; do
+      echo "==> stack up $sid"
+      python3 -m stack up "$sid"
+    done
+    ;;
+
+  pytest)
+    # Run pytest with the test-deps extra and the env already set.
+    shift
+    exec uv run --extra test pytest "$@"
+    ;;
+
+  e2e)
+    # Run every end-to-end test under tests/integration/. Convention:
+    # any file named test_*_e2e.py is picked up. Extra args forward to
+    # pytest (e.g. `stacktests e2e -s -k homer`).
+    #
+    # Brings up required stacklets first — idempotent, near-instant
+    # if they're already running, so no penalty for repeat runs.
+    shift || true
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      python3 -m stack up "$sid" > /dev/null
+    done
+    exec uv run --extra test pytest tests/integration/ -k "_e2e" "$@"
+    ;;
+
+  cleanup)
+    # Nuke everything test-related so the next `up` starts from zero.
+    #   1. Destroy each stacklet (containers, per-stacklet secrets,
+    #      per-stacklet data dir, setup marker).
+    #   2. Wipe the test instance's .stack/ — clears global secrets
+    #      (ADMIN_PASSWORD, user passwords) that survive per-stacklet
+    #      destroy by design.
+    #   3. Wipe the test data directory — catches detritus from runs
+    #      that aborted before destroy could clean per-stacklet.
+    #
+    # Scope is confined to the test instance and ~/famstack-test-data.
+    # Production (~/famstack-data) is never touched because STACK_DIR
+    # points at the test config, not the dev install.
+
+    shift || true
+    TEST_DATA_DIR="${HOME}/famstack-test-data"
+
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      echo "==> stack destroy $sid --yes"
+      python3 -m stack destroy "$sid" --yes || true
+    done
+
+    # Belt and suspenders: force-remove any stack-<id>-* containers that
+    # survived destroy (e.g. if compose_down silently errored). Without
+    # this, a lingering container talking to a wiped data dir confuses
+    # the next `up` into a schema-mismatch crash loop.
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      leftovers=$(docker ps -aq --filter "name=^stack-${sid}-" 2>/dev/null || true)
+      if [[ -n "$leftovers" ]]; then
+        echo "==> docker rm -f (leftover stack-${sid}-* containers)"
+        echo "$leftovers" | xargs docker rm -f || true
+      fi
+    done
+
+    if [[ -d "$STACK_DIR/.stack" ]]; then
+      echo "==> rm -rf $STACK_DIR/.stack"
+      rm -rf "$STACK_DIR/.stack"
+    fi
+
+    if [[ -d "$TEST_DATA_DIR" ]]; then
+      echo "==> rm -rf $TEST_DATA_DIR"
+      rm -rf "$TEST_DATA_DIR"
+    fi
+
+    echo ""
+    echo "✓ Test stack cleaned. Next 'stacktests up' starts fresh."
+    ;;
+
+  "")
+    python3 -m stack
+    ;;
+
+  *)
+    # Anything else — forward untouched to stack.
+    exec python3 -m stack "$@"
+    ;;
+esac

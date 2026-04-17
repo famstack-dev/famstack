@@ -1,0 +1,29 @@
+# Test family — Simpsons.
+# Homer and Marge are admins so setup flows work.
+# Bart and Lisa are members for multi-person document tests.
+
+[[users]]
+id    = "homer"
+name  = "Homer Simpson"
+email = "homer@home.local"
+role  = "admin"
+
+[[users]]
+id    = "marge"
+name  = "Marge Simpson"
+email = "marge@home.local"
+role  = "admin"
+
+[[users]]
+id        = "bart"
+name      = "Bart Simpson"
+email     = "bart@home.local"
+role      = "member"
+stacklets = ["messages", "docs"]
+
+[[users]]
+id        = "lisa"
+name      = "Lisa Simpson"
+email     = "lisa@home.local"
+role      = "member"
+stacklets = ["messages", "docs"]
