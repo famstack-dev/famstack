@@ -238,7 +238,7 @@ def run(args, stacklet, config):
 
     Loads users.toml, resolves the Immich URL, and creates accounts.
     """
-    if not stacklet.get("enabled"):
+    if not config["is_healthy"]():
         return {"error": "Photos is not running — start it with 'stack up photos'"}
 
     # Immich listens on its port inside the host network. We always use

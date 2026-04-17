@@ -79,7 +79,7 @@ def run(args, stacklet, config):
     know about — we pull them from sys.argv directly since the stacklet
     CLI plugin system passes the full args namespace.
     """
-    if not stacklet.get("enabled"):
+    if not config["is_healthy"]():
         return {"error": "Messages is not running — start it with 'stack up messages'"}
 
     # Parse room and message from the remaining argv

@@ -27,7 +27,7 @@ from _matrix import MatrixClient
 
 
 def run(args, stacklet, config):
-    if not stacklet.get("enabled"):
+    if not config["is_healthy"]():
         return {"error": "Messages is not running — start it with 'stack up messages'"}
 
     argv = sys.argv[3:]  # skip 'stack', 'messages', 'join'

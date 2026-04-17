@@ -68,24 +68,6 @@ pattern will break today unless its plugins use `instance_dir`.
 
 ---
 
-## Migrate plugins from `stacklet["enabled"]` to the new state API
-
-**Framework work done:** `Stack.is_installed` / `is_running` /
-`is_healthy` / `wait_for_healthy` shipped with commit `aa1c867`.
-`enabled` on the discover dict keeps its install-state meaning for
-backwards compatibility.
-
-**Remaining:** grep `stacklet.get("enabled")` / `stacklet["enabled"]`
-in `stacklets/*/cli/*.py`. For each check, ask: "do I mean *installed*
-or *reachable*?" Most are reachability checks — migrate to
-`stack.is_healthy(sid)` for cleaner errors and correct semantics.
-
-**Why:** the proxy coincidence is fixed at the framework layer; each
-plugin still needs to opt in to the new names. Until they do, the next
-lifecycle change risks breaking them again.
-
----
-
 ## Admin-role bypass pattern is stacklet-local
 
 `stacklets/messages/cli/setup.py` used to skip users without a
