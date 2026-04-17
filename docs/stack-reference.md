@@ -261,6 +261,38 @@ Bot passwords are declared in the stacklet's `[env].generate` (e.g.
 `"ARCHIVIST_BOT_PASSWORD"` in `docs/stacklet.toml`). The bot runner reads
 passwords from `.stack/secrets.toml` on startup.
 
+### Bot Events
+
+Bots communicate peer-to-peer by emitting structured Matrix events
+alongside human-readable messages. Element ignores unknown event types,
+so these events stay invisible in chat while acting as a bus other bots
+subscribe to.
+
+Convention: `dev.famstack.<name>` for event types. Examples shipping
+today:
+
+| Type | Emitter | Body |
+|---|---|---|
+| `dev.famstack.document` | `archivist-bot` | `{doc_id, title, date, topics[], persons[], correspondent, document_type, summary, facts[], action_items[], url}` |
+
+To emit an event from a bot, call the `MicroBot.emit_event` helper:
+
+```python
+await self.emit_event(
+    room_id,
+    "dev.famstack.my_event",
+    {"key": "value"},
+)
+```
+
+The helper returns `True` on success and `False` on failure — failures
+are logged but never raised. The bus is best-effort: a downstream bot
+being offline must not take the emitter's main path with it.
+
+Subscribing to custom events on the bot side isn't wired yet — that
+comes with the first consumer bot. The emit contract is stable and
+tested end-to-end (see `tests/integration/test_archivist_e2e.py`).
+
 ---
 
 ## Lifecycle

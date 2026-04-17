@@ -860,11 +860,9 @@ OCR text:
         await self._send(room_id, "\n".join(lines), reply_to)
         logger.info("[archivist] Processed: {} → doc {} [{}]", filename, doc_id, ", ".join(summary))
 
-        # ── Structured event for downstream bots ────────────────────────
-        # Custom Matrix event carrying full classification metadata.
-        # Element ignores unknown event types, so users don't see this.
-        # Bots can filter on dev.famstack.document to build the knowledge
-        # graph without parsing human-readable chat messages.
+        # Structured event for downstream bots — Element ignores unknown
+        # event types, so this rides alongside the human-readable message
+        # without showing up in chat.
         event_payload = build_document_event(
             doc_id, classification,
             resolved_topics=resolved_topics,
@@ -873,14 +871,7 @@ OCR text:
             resolved_type=resolved_type,
             paperless_url=self.paperless_public_url or self.paperless_url,
         )
-        try:
-            await self._client.room_send(
-                room_id=room_id,
-                message_type=event_payload["type"],
-                content=event_payload["body"],
-            )
-        except Exception as e:
-            logger.warning("[archivist] Failed to send {} event for doc {}: {}", event_payload["type"], doc_id, e)
+        await self.emit_event(room_id, event_payload["type"], event_payload["body"])
 
     # ── Event handlers ───────────────────────────────────────────────────
 
