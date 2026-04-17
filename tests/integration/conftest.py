@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 from tests.integration.paperless import PaperlessAPI, cleanup_prefix
 from tests.integration.matrix import MatrixCreds, login
+from tests.integration.forgejo import ForgejoAPI, cleanup_mirror_files
 from tests.integration.bdd import BDDLog
 from tests.integration._seed_secrets import seed as _seed_test_instance_secrets
 
@@ -254,3 +255,52 @@ async def homer(matrix):
         yield client
     finally:
         await client.close()
+
+
+# ── Forgejo / code stacklet (shared, session-scoped) ─────────────────────
+
+FORGEJO_BOT_OWNER = "archivist-bot"
+FORGEJO_DOCS_REPO = "documents"
+
+
+@pytest.fixture(scope="session")
+def code(test_stack) -> ForgejoAPI:
+    """Brings up the code stacklet (Forgejo) and returns an admin API client.
+
+    `up core` first so any new core env (e.g. CODE_URL for the bot
+    runner) is rendered into the .env file and the bot-runner restarts
+    with it. `up code` then boots Forgejo itself.
+
+    First call per coding session: ~40s. Subsequent: no-op.
+    """
+    _seed_test_instance_secrets()
+    for target, timeout in (("core", 60), ("code", 240)):
+        result = test_stack.run("up", target, timeout=timeout)
+        if "_stderr" in result and not result.get("ok"):
+            pytest.fail(
+                f"`stack up {target}` failed (code {result.get('_code')}):\n"
+                f"{result.get('_stderr', '')}\n{result.get('_stdout', '')}"
+            )
+
+    from stack.secrets import TomlSecretStore
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    admin_password = store.get("_", "ADMIN_PASSWORD") or store.get("global", "ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.fail("No ADMIN_PASSWORD in test instance secrets for Forgejo.")
+
+    return ForgejoAPI(
+        url="http://localhost:42040",
+        admin_user="stackadmin",
+        admin_password=admin_password,
+    )
+
+
+@pytest.fixture
+def mirror_scope(code, scope) -> Scope:
+    """Scope bound to mirror cleanup — on teardown, every file in the
+    `documents` repo whose frontmatter title starts with scope.uid is
+    deleted. The repo + bot user + README survive between tests."""
+    scope.on_cleanup.append(
+        lambda uid: cleanup_mirror_files(code, FORGEJO_BOT_OWNER, FORGEJO_DOCS_REPO, uid)
+    )
+    return scope
