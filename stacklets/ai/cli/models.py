@@ -3,7 +3,6 @@
 HELP = "Available models"
 
 import sys
-import tomllib
 from pathlib import Path
 
 
@@ -25,16 +24,9 @@ def run(args, stacklet, config):
     if not probe.reachable:
         return {"error": f"AI endpoint unavailable at {base_url}"}
 
-    # Load default model from config
-    default_model = ""
-    toml_path = repo_root / "stack.toml"
-    if toml_path.exists():
-        try:
-            with open(toml_path, "rb") as f:
-                cfg = tomllib.load(f)
-                default_model = cfg.get("ai", {}).get("default", "")
-        except Exception:
-            pass
+    # Default model from the hook contract — framework has already
+    # parsed stack.toml, no need to re-read it from disk.
+    default_model = config.get("stack", {}).get("ai", {}).get("default", "")
 
     models = [{"id": m} for m in probe.models]
     default_name = default_model.split("/")[-1] if "/" in default_model else default_model

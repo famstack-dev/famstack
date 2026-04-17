@@ -10,11 +10,8 @@ def run(args, stacklet, config):
 
     import datetime
     import os
-    import tomllib
-    from pathlib import Path
     from stack.prompt import nl, out, dim, orange
 
-    repo_root = Path(config.get("repo_root", "."))
     ai_cfg = config.get("stack", {}).get("ai", {})
     url = ai_cfg.get("openai_url", "")
     key = ai_cfg.get("openai_key", "")
@@ -24,19 +21,13 @@ def run(args, stacklet, config):
     if not url:
         return {"error": "No LLM backend configured. Run './stack setup ai' first."}
 
-    # Context
+    # Context — users come from the hook contract, framework has already
+    # loaded users.toml from the correct instance dir.
     admin_name = ""
-    try:
-        users_path = repo_root / "users.toml"
-        if users_path.exists():
-            with open(users_path, "rb") as f:
-                users = tomllib.load(f).get("users", [])
-            for u in users:
-                if u.get("role") == "admin":
-                    admin_name = u.get("name", "").split()[0]
-                    break
-    except Exception:
-        pass
+    for u in config.get("users", []):
+        if u.get("role") == "admin":
+            admin_name = u.get("name", "").split()[0]
+            break
 
     now_time = datetime.datetime.now().strftime("%H:%M")
     now_date = datetime.datetime.now().strftime("%A, %B %d")

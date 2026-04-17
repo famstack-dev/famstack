@@ -1,17 +1,17 @@
 """
 stack photos setup — create Immich accounts from users.toml
 
-Reads users.toml from the repo root, connects to the Immich API, and ensures
-every listed user has an account. Idempotent — existing accounts are left
-alone.
+Uses the framework-provided users list (config["users"]) and ensures
+every member has an Immich account. Idempotent — existing accounts are
+left alone.
 
-The first user with role=admin becomes the Immich admin (created via the
-one-time admin-sign-up endpoint). All other users are created as regular
-accounts through the admin API.
+The first user with role=admin becomes the Immich admin (created via
+the one-time admin-sign-up endpoint). All other users are created as
+regular accounts through the admin API.
 
-Passwords default to the user's id (e.g. "arthur") unless overridden with a
-password field in users.toml. This is intentional — famstack runs on a local
-network, not the internet.
+Passwords default to the user's id (e.g. "arthur") unless overridden
+with a password field in users.toml. This is intentional — famstack
+runs on a local network, not the internet.
 """
 
 HELP = "Create accounts from users.toml"
@@ -19,7 +19,6 @@ HELP = "Create accounts from users.toml"
 import json
 import ssl
 import sys
-import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -69,18 +68,13 @@ def _put(url, body, **kw):
 
 # ── User loading ─────────────────────────────────────────────────────────────
 
-def _load_users(repo_root):
-    """Read users.toml from the repo root.
+def _validate_users(users):
+    """Validate the users list (already loaded by the framework).
 
-    Returns a list of user dicts. Validates that at least one admin exists and
-    that required fields are present.
+    At least one admin, required fields present. Users themselves come
+    from config["users"] — the framework loads users.toml once per
+    run_cli_command so plugins don't duplicate the read.
     """
-    path = Path(repo_root) / "users.toml"
-    if not path.exists():
-        return None, "users.toml not found. Copy users.toml.example to users.toml and add your family members."
-    with open(path, "rb") as f:
-        raw = tomllib.load(f)
-    users = raw.get("users", [])
     if not users:
         return None, "users.toml has no users defined"
     for u in users:
@@ -246,8 +240,7 @@ def run(args, stacklet, config):
     port = stacklet.get("port", 2283)
     base_url = f"http://localhost:{port}"
 
-    repo_root = config.get("repo_root", ".")
-    users, err = _load_users(repo_root)
+    users, err = _validate_users(config.get("users", []))
     if err:
         return {"error": err}
 
