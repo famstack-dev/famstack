@@ -110,8 +110,11 @@ def _setup(client, users, config, secrets=None):
     remaining = users
     for u in remaining:
         uid = user_id(u)
+        is_admin_role = u.get("role") == "admin"
         allowed = u.get("stacklets", [])
-        if "messages" not in allowed:
+        # Admins are created on every stacklet per stack-reference.md —
+        # the `stacklets` opt-in list only gates non-admin members.
+        if not is_admin_role and "messages" not in allowed:
             results.append({"item": uid, "action": "skipped (not in stacklets list)"})
             continue
 
@@ -120,7 +123,6 @@ def _setup(client, users, config, secrets=None):
             results.append({"item": uid, "action": "no password in secrets"})
             continue
 
-        is_admin_role = u.get("role") == "admin"
         created = client.create_user(uid, password, displayname=u.get("name"), admin=is_admin_role)
 
         if created:
@@ -147,7 +149,7 @@ def _setup(client, users, config, secrets=None):
         bot_pass = sec_mod.token_urlsafe(16)
         # Persist so the password survives re-runs
         from stack.secrets import TomlSecretStore
-        store = TomlSecretStore(Path(config.get("repo_root", ".")) / ".stack" / "secrets.toml")
+        store = TomlSecretStore(Path(config.get("instance_dir", config.get("repo_root", "."))) / ".stack" / "secrets.toml")
         store.set("messages", BOT_SECRET_KEY, bot_pass)
 
     bot_created = client.create_user(BOT_NAME, bot_pass, displayname=BOT_DISPLAY)
@@ -271,10 +273,7 @@ def _pretty(result):
 
 def run(args, stacklet, config):
     """Called by the main stack CLI: 'stack messages setup'."""
-    if not stacklet.get("enabled"):
-        return {"error": "Messages is not running — start it with 'stack up messages'"}
-
-    repo_root = config.get("repo_root", ".")
+    instance_dir = config.get("instance_dir", config.get("repo_root", "."))
     stack_cfg = config.get("stack", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
 
@@ -283,7 +282,19 @@ def run(args, stacklet, config):
     manifest = config.get("manifest", {})
     synapse_port = manifest.get("ports", {}).get("synapse", 42031)
     base_url = f"http://localhost:{synapse_port}"
-    client = MatrixClient(base_url, server_name, repo_root)
+
+    # Reachability probe — produce a clear error when the user runs
+    # setup before messages is actually up. The previous "enabled" check
+    # broke when setup.py IS the install — the setup-done marker isn't
+    # touched until on_install_success succeeds (i.e. until this runs).
+    import socket
+    try:
+        with socket.create_connection(("localhost", synapse_port), timeout=2):
+            pass
+    except OSError:
+        return {"error": "Messages is not running — start it with 'stack up messages'"}
+
+    client = MatrixClient(base_url, server_name, instance_dir)
 
     users = config.get("users", [])
     if not users:

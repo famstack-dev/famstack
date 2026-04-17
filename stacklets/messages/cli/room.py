@@ -79,7 +79,7 @@ def _find_family_space(client, base_url):
 
 def _connect(config):
     """Set up and authenticate a Matrix client from CLI config."""
-    repo_root = config.get("repo_root", ".")
+    instance_dir = config.get("instance_dir", config.get("repo_root", "."))
     secrets = config.get("secrets", {})
     stack_cfg = config.get("stack", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
@@ -89,7 +89,7 @@ def _connect(config):
     synapse_port = manifest.get("ports", {}).get("synapse", 42031)
     base_url = f"http://localhost:{synapse_port}"
 
-    client = MatrixClient(base_url, server_name, repo_root)
+    client = MatrixClient(base_url, server_name, instance_dir)
     if not _login_admin(client, secrets, admin_pass):
         return None, base_url, server_name
     return client, base_url, server_name

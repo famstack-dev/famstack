@@ -91,7 +91,7 @@ def run(args, stacklet, config):
     room = argv[0]
     message = " ".join(argv[1:])
 
-    repo_root = config.get("repo_root", ".")
+    instance_dir = config.get("instance_dir", config.get("repo_root", "."))
     stack_cfg = config.get("stack", {})
     secrets = config.get("secrets", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
@@ -106,7 +106,7 @@ def run(args, stacklet, config):
     manifest = config.get("manifest", {})
     synapse_port = manifest.get("ports", {}).get("synapse", 42031)
     base_url = f"http://localhost:{synapse_port}"
-    client = MatrixClient(base_url, server_name, repo_root)
+    client = MatrixClient(base_url, server_name, instance_dir)
 
     if not client.login("stacker-bot", bot_pass):
         return {"error": "stacker-bot can't log in. Run 'stack messages setup' first."}

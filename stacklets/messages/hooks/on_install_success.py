@@ -71,4 +71,10 @@ def run(ctx):
 
     # ── Rooms, Space, and family member accounts ────────────────────
     # Delegate to setup.py which handles all of this idempotently.
-    ctx.stack.run_cli_command("messages", "setup")
+    result = ctx.stack.run_cli_command("messages", "setup")
+    if result and result.get("error"):
+        # Surface setup.py failures — without this, a broken setup
+        # silently succeeds from the framework's POV (marker touched,
+        # no accounts created) and bites us at first login.
+        step(f"messages setup failed: {result['error']}")
+        raise RuntimeError(f"messages setup failed: {result['error']}")
