@@ -246,13 +246,16 @@ class ArchivistBot(MicroBot):
             if name and name != admin_user:
                 admin_usernames.append(name)
 
-        data_dir = Path(os.environ.get("DATA_DIR", "/data")) / "docs" / "bot"
+        # `self._session_dir` is already the in-container path the bot
+        # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
+        # that env var carries the host path and would dump mirror state
+        # outside the container's volume mount.
         self._mirror = GitMirror(
             code_url=code_url,
             admin_user=admin_user,
             admin_password=admin_password,
             admin_usernames=admin_usernames,
-            data_dir=data_dir,
+            data_dir=self._session_dir,
             http=self._http,
         )
         logger.info("[archivist] Git mirror configured: {} (admins: {})",
