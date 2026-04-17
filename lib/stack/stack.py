@@ -27,6 +27,17 @@ from .output import SilentOutput
 from .secrets import TomlSecretStore
 
 
+class StackletNotHealthyError(RuntimeError):
+    """wait_for_healthy timed out waiting for the declared [health] probe."""
+
+    def __init__(self, stacklet_id: str, timeout: float):
+        self.stacklet_id = stacklet_id
+        self.timeout = timeout
+        super().__init__(
+            f"Stacklet '{stacklet_id}' did not become healthy within {timeout:.1f}s"
+        )
+
+
 class Stack:
     """The stack framework.
 
@@ -538,6 +549,72 @@ class Stack:
         """A stacklet is 'set up' if its setup-done marker exists.
         Used for dependency checking."""
         return self._setup_done_marker(stacklet_id).exists()
+
+    # ── State queries: installed / running / healthy ─────────────────
+    #
+    # Three distinct states, one word each. They used to be conflated
+    # behind `stacklet["enabled"]`, which broke any caller that meant
+    # "reachable" (the proxy held by coincidence). Now:
+    #
+    #   is_installed  — first-run setup completed (setup-done marker)
+    #   is_running    — any container under stack-{id}-* is running
+    #   is_healthy    — the declared [health] probe currently responds
+    #
+    # CLI plugins almost always want is_healthy.
+
+    def is_installed(self, stacklet_id: str) -> bool:
+        """True once on_install + on_install_success have both succeeded."""
+        return self._is_set_up(stacklet_id)
+
+    def is_running(self, stacklet_id: str) -> bool:
+        """True if any container belonging to the stacklet is running.
+        Does not imply the service is serving requests — see is_healthy."""
+        return stacklet_id in self._running_project_ids()
+
+    def is_healthy(self, stacklet_id: str) -> bool:
+        """True if the stacklet's declared [health] probe responds.
+
+        For stacklets with no [health] block, trivially healthy when
+        running. Uses the same probe config the framework runs at
+        `stack up` time — no duplicate health knobs per plugin.
+        """
+        s = self._find_stacklet(stacklet_id)
+        if not s:
+            return False
+        manifest = s.get("manifest", {})
+        template_vars = self._build_template_vars()
+        checks = self._resolve_health_checks(manifest, template_vars)
+        if not checks:
+            return self.is_running(stacklet_id)
+
+        # An "auth" response (401/403) counts as healthy: the HTTP layer
+        # is up, just gating credentials. Matches wait_for_health's
+        # bootstrap semantics — is_healthy is liveness, not authorization.
+        from .docker import probe_health
+        for check in checks:
+            url = check.get("url")
+            if not url:
+                continue
+            if probe_health(url, headers=check.get("headers", {})) not in ("ready", "auth"):
+                return False
+        return True
+
+    def wait_for_healthy(self, stacklet_id: str,
+                         timeout: float = 60.0,
+                         interval: float = 0.5) -> None:
+        """Poll is_healthy until the stacklet responds or timeout expires.
+
+        Raises StackletNotHealthyError on timeout, naming the stacklet
+        and elapsed time — callers get an actionable message instead
+        of a bare False/None.
+        """
+        import time as _time
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            if self.is_healthy(stacklet_id):
+                return
+            _time.sleep(interval)
+        raise StackletNotHealthyError(stacklet_id, timeout)
 
     def _write_env_file(self, stacklet_dir: Path, env_dict: dict) -> None:
         """Write rendered env vars to .env for docker compose.
