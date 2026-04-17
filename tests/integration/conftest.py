@@ -35,6 +35,7 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 from tests.integration.paperless import PaperlessAPI, cleanup_prefix
 from tests.integration.matrix import MatrixCreds, login
 from tests.integration.bdd import BDDLog
+from tests.integration._seed_secrets import seed as _seed_test_instance_secrets
 
 
 # ── Pin the OpenAI mock to the port baked into stack.toml ────────────────
@@ -171,19 +172,6 @@ def sample_invoice_pdf() -> bytes:
 
 
 # ── Paperless (shared, session-scoped) ───────────────────────────────────
-
-def _seed_test_instance_secrets() -> None:
-    """Seed global secrets that `stack init` normally creates interactively.
-    Idempotent — never overwrites existing values."""
-    from stack.secrets import TomlSecretStore
-    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
-    if not store.get("_", "ADMIN_PASSWORD"):
-        store.set("global", "ADMIN_PASSWORD", "testpass")
-    for uid in ("homer", "marge", "bart", "lisa"):
-        key = f"USER_{uid.upper()}_PASSWORD"
-        if not store.get("_", key):
-            store.set("global", key, uid)
-
 
 @pytest.fixture(scope="session")
 def paperless(test_stack) -> PaperlessAPI:

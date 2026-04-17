@@ -30,10 +30,18 @@ cd "$REPO_ROOT"
 # - docs: Paperless-ngx + archivist bot definition.
 REQUIRED_STACKLETS=(core messages docs)
 
+# Seed the global secrets that `stack init` normally creates. Safe to
+# call before every `stack up` — idempotent, never overwrites. Lives in
+# a Python helper so the pytest fixtures share the same code path.
+seed_secrets() {
+  python3 "$SCRIPT_DIR/_seed_secrets.py"
+}
+
 case "${1:-}" in
   up)
     # `./stacktests up`  — bring up the full set in order.
     # `./stacktests up X` — forward to `stack up X`.
+    seed_secrets
     if [[ -z "${2:-}" ]]; then
       for sid in "${REQUIRED_STACKLETS[@]}"; do
         echo "==> stack up $sid"
@@ -86,9 +94,10 @@ case "${1:-}" in
     # any file named test_*_e2e.py is picked up. Extra args forward to
     # pytest (e.g. `stacktests e2e -s -k homer`).
     #
-    # Brings up required stacklets first — idempotent, near-instant
-    # if they're already running, so no penalty for repeat runs.
+    # Seeds secrets + brings up required stacklets first. Both steps
+    # are idempotent, so repeat runs pay near-zero cost.
     shift || true
+    seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       python3 -m stack up "$sid" > /dev/null
     done
