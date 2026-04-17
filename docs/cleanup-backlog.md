@@ -104,6 +104,37 @@ manually." Not a shipping-quality behaviour.
 
 ---
 
+## Bot readiness marker — close the `stack up X` → bot-in-room race
+
+`stack up X` returns as soon as X's `[health]` probe passes, but the
+archivist (and any future bot) lives in the `core/bot-runner` container
+and has its own async startup: log in → initial sync → join its
+declared room. Today there's a ~5–15s window after `stack up` returns
+where a user who immediately drops a file in `#documents` gets ignored
+because the bot hasn't joined yet. The test rig surfaces the same race
+whenever core's `.env` changes (e.g. a new stacklet adds an env entry
+and the bot-runner restarts).
+
+**Scope:**
+- `microbot.py` — write a per-bot readiness marker to
+  `{session_dir}/{name}.ready` at the end of `on_first_sync`.
+- `lib/stack/stack.py` / `cli.py` — extend `wait_for_healthy` to also
+  wait for each declared bot's marker when the stacklet ships a
+  `bot/bot.toml`.
+- `docs/stack-reference.md` — document the bot readiness contract
+  alongside the existing `setup-done` marker.
+
+**Why deferred:** real but mild in production (humans don't type that
+fast); test rig mitigated with a `wait_for_room` helper in
+`tests/integration/matrix.py`. The refactor touches cross-stacklet
+startup orchestration — better as its own PR than folded into a
+feature.
+
+**When picking up:** the test helper becomes redundant for the common
+case but is worth keeping for scenarios that restart core mid-session.
+
+---
+
 ## `on_install.sh` hardcoded-default pattern
 
 Shell hooks read `${FAMSTACK_DATA_DIR:-$HOME/famstack-data}`. The
