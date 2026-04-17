@@ -26,6 +26,13 @@ Photos, memories, documents, chat, local AI: local and private by default, gets 
 The reference implementation runs on a Mac Studio M1 in our living room at Lake Constance, Germany. Where is yours going to run?
 <br>
 
+> [!NOTE]
+> **v0.2.0** is about to be tagged (Week 3 of April) Back in the day we would have called it "Beta". 
+>
+> The state of this project is: **It works on my machine.™**
+> I gave my best it works on yours too. If it doesn't, come back and report it
+> or join our [Discord](https://discord.gg/hfutdmmfBe).
+> If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
 ## Quick Start
 
@@ -108,12 +115,6 @@ Check everything is running:
 ```bash
 ./stack status
 ```
-
-> [!NOTE]
-> **v0.2.0** Back in the day we would have called it "Beta". **It works on my machine.™**
-> I gave my best it works on yours too. If it doesn't, come back and report it
-> or join our [Discord](https://discord.gg/hfutdmmfBe).
-> If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
 ---
 
