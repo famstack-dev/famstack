@@ -47,6 +47,7 @@ from nio import (
     RoomMessageText,
 )
 
+from git_mirror import GitMirror
 from matching import (
     _is_empty, fuzzy_match_entity, match_persons, match_topics,
     build_document_event, deduplicate_hashtags, MAX_TITLE_LENGTH,
@@ -188,8 +189,11 @@ class ArchivistBot(MicroBot):
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
+        self.mirror_to_git = settings.get("mirror_to_git", True)
         self._scan_sessions: dict[str, dict] = {}
         self._http: aiohttp.ClientSession | None = None
+        self._mirror: GitMirror | None = None
+        self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
         return _t(self.language, key, **kwargs)
@@ -199,9 +203,9 @@ class ArchivistBot(MicroBot):
         self.add_event_callback(self._on_text, RoomMessageText)
 
     async def start(self) -> None:
-        logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={}",
+        logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={} mirror_to_git={}",
                      self.paperless_url, self.openai_url, self.language,
-                     self.classify_enabled, self.reformat_enabled)
+                     self.classify_enabled, self.reformat_enabled, self.mirror_to_git)
         try:
             default_model = resolve_model(f"{self.name}/classifier")
             logger.info("[archivist] Model (classifier): {}", default_model)
@@ -210,9 +214,49 @@ class ArchivistBot(MicroBot):
 
         self._http = aiohttp.ClientSession()
         try:
+            if self.mirror_to_git:
+                self._init_mirror()
             await super().start()
         finally:
             await self._http.close()
+
+    def _init_mirror(self) -> None:
+        """Build a GitMirror if all required env is present.
+
+        Soft-fails: missing env just disables the mirror for this run.
+        The live reachability check happens inside `GitMirror.ensure_setup`
+        on first publish.
+        """
+        code_url = os.environ.get("CODE_URL", "")
+        admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+        admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+        admin_ids = os.environ.get("STACK_ADMIN_USER_IDS", "")
+
+        if not (code_url and admin_user and admin_password):
+            logger.info("[archivist] Git mirror disabled — CODE_URL or admin creds missing")
+            return
+
+        # @arthur:homestead.me → arthur
+        admin_usernames = []
+        for raw in admin_ids.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            name = raw.lstrip("@").split(":", 1)[0]
+            if name and name != admin_user:
+                admin_usernames.append(name)
+
+        data_dir = Path(os.environ.get("DATA_DIR", "/data")) / "docs" / "bot"
+        self._mirror = GitMirror(
+            code_url=code_url,
+            admin_user=admin_user,
+            admin_password=admin_password,
+            admin_usernames=admin_usernames,
+            data_dir=data_dir,
+            http=self._http,
+        )
+        logger.info("[archivist] Git mirror configured: {} (admins: {})",
+                    code_url, ", ".join(admin_usernames) or "-")
 
     def _ai_status(self) -> str:
         if self.openai_url:
@@ -785,6 +829,7 @@ OCR text:
         # Reformat OCR text into clean markdown
         await self._set_typing(room_id)
         reformat_failed = False
+        formatted: str | None = None
         if self.reformat_enabled:
             formatted = await self._reformat(ocr_text)
             if formatted:
@@ -872,6 +917,38 @@ OCR text:
             paperless_url=self.paperless_public_url or self.paperless_url,
         )
         await self.emit_event(room_id, event_payload["type"], event_payload["body"])
+
+        # Mirror to Forgejo — best-effort, never blocks the chat reply.
+        if self._mirror:
+            body_text = formatted if formatted else ocr_text
+            processing = "ai" if formatted else "ocr_only"
+            try:
+                model = resolve_model(f"{self.name}/reformat") if formatted else None
+            except ValueError:
+                model = None
+            # Merge classification with resolved tag names so the mirror's
+            # frontmatter matches what was actually written to Paperless.
+            enriched = dict(classification)
+            enriched["topics"] = resolved_topics
+            enriched["persons"] = resolved_persons
+            enriched["correspondent"] = resolved_correspondent
+            enriched["document_type"] = resolved_type
+            paperless_tags = [
+                *resolved_topics,
+                *(f"Person: {p}" for p in resolved_persons),
+            ]
+            try:
+                await self._mirror.publish(
+                    paperless_id=doc_id,
+                    classification=enriched,
+                    body_text=body_text,
+                    processing=processing,
+                    model=model,
+                    paperless_url=self.paperless_public_url or self.paperless_url,
+                    tags=paperless_tags,
+                )
+            except Exception as e:
+                logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)
 
     # ── Event handlers ───────────────────────────────────────────────────
 

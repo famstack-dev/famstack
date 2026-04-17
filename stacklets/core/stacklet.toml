@@ -49,6 +49,10 @@ PAPERLESS_URL        = "http://stack-docs-paperless:8000"
 PAPERLESS_PUBLIC_URL = "{docs_url}"
 PAPERLESS_TOKEN      = "{docs__API_TOKEN}"
 
+# Forgejo — archivist bot mirrors classified documents here
+CODE_URL        = "http://stack-code:3000"
+CODE_PUBLIC_URL = "{code_url}"
+
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"
 IMMICH_API_KEY = "{photos__API_KEY}"
