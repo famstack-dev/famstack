@@ -669,7 +669,7 @@ def handle_destroy(stck, args):
     name = stacklet.get("name", args.stacklet)
     data_path = stck.data / args.stacklet
 
-    if not stacklet.get("enabled"):
+    if not stck.is_installed(args.stacklet):
         if data_path.exists():
             import shutil
             shutil.rmtree(data_path)

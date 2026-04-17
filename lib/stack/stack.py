@@ -823,6 +823,11 @@ class Stack:
                     "stack": self.config,
                     "secrets": self.secrets.all(),
                     "users": load_users(self.instance_dir),
+                    # Lazy health probe — plugins call config["is_healthy"]()
+                    # when they need to gate work on the stacklet actually
+                    # responding. Zero-arg closure so we don't pay the HTTP
+                    # round-trip on every plugin invocation.
+                    "is_healthy": lambda: self.is_healthy(stacklet_id),
                 }
                 return mod.run(args or [], stacklet, config)
         except Exception as e:
