@@ -116,9 +116,13 @@ class TestUpCommand:
         assert "error" in result
 
     def test_first_run_flag(self, tmp_path):
+        # UpCommand runs Stack.up; the setup-done marker is promoted by
+        # run_on_install_success (owned by the CLI layer). Simulate the
+        # full first-run cycle so the second call sees first_run=False.
         from stack.commands import UpCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
         r1 = UpCommand().execute(stck, stacklet="myapp")
+        stck.run_on_install_success("myapp")
         r2 = UpCommand().execute(stck, stacklet="myapp")
         assert r1["first_run"] is True
         assert r2["first_run"] is False
@@ -155,9 +159,13 @@ class TestDestroyCommand:
         assert stck.secrets.get("myapp", "SECRET") is None
 
     def test_removes_marker(self, tmp_path):
+        # The setup-done marker is promoted by run_on_install_success —
+        # call it explicitly here to simulate a fully-installed stacklet
+        # before destroy.
         from stack.commands import DestroyCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
         stck.up("myapp")
+        stck.run_on_install_success("myapp")
         assert (tmp_path / ".stack" / "myapp.setup-done").exists()
 
         DestroyCommand().execute(stck, stacklet="myapp")

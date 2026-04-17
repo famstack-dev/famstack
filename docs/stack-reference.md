@@ -1,10 +1,11 @@
 # Stacklet Reference
 
-A stacklet is the unit of deployment. The `stack` CLI is the runtime. The
-runtime discovers stacklets by walking the filesystem, reads their manifests,
+A stacklet is the unit of deployment. The stack is a composition of stacklets. 
+The `stack` CLI is the runtime. It discovers stacklets by walking the filesystem, reads their manifests,
 and manages their lifecycle. No central registry — if it's a directory under
 `stacklets/` with a `stacklet.toml`, it exists.
 
+It is convention over configuration to "sew" services together.
 Think Spring Boot for self-hosted services on a Mac.
 
 ---
@@ -323,6 +324,9 @@ destroy.
 
 Transitions from **running** to **stopped**. Data and containers are
 preserved — `stack up` brings it back without re-running setup.
+
+Use `stack down all` to stop every currently-running stacklet in reverse
+dependency order (dependents first, deps last).
 
 ```
 1. hooks/on_stop.sh — stop native services (host stacklets only)
@@ -828,3 +832,33 @@ No `enabled` file — stacklet state is derived from Docker containers
 and the filesystem. See [States](#states).
 
 Deleted entirely by `stack uninstall`.
+
+---
+
+## Multiple Instances: `STACK_DIR`
+
+One repo can power more than one stack instance. A stacklet definition
+(code, compose file, hooks) is shared; the *instance* (config, secrets,
+state, data) is swappable.
+
+- **Repo root** — holds `stacklets/` and `lib/`. Discovered by walking
+  up from the current working directory.
+- **Instance dir** — holds `stack.toml`, `users.toml`, `.stack/`. Holds
+  the data referenced by `[core].data_dir`. Defaults to the repo root.
+
+Point the CLI at a different instance with `STACK_DIR`:
+
+```
+STACK_DIR=tests/integration/instance stack up docs
+```
+
+The same `stacklets/` definitions apply, but config, secrets, setup
+markers, and data all live under that directory instead. If `STACK_DIR`
+is set to a non-existent path, the CLI fails fast rather than silently
+falling back.
+
+Instances share Docker container names (`stack-docs`, `stack-messages`),
+so two instances cannot run concurrently on the same machine — `stack
+down` the active one before bringing another up. Useful for: dedicated
+test environments, sandboxes, experimenting with a clean state without
+touching your real household install.

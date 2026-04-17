@@ -104,7 +104,7 @@ class StackContext:
     def users(self):
         """Load users from users.toml."""
         from .users import load_users
-        return load_users(self.stack.root)
+        return load_users(self.stack.instance_dir)
 
     def cfg(self, key: str, value=None, default: str = "") -> str:
         """Read/write stack.toml config scoped to the current stacklet's section.
@@ -234,9 +234,22 @@ class HookResolver:
 
         Shell hooks stream output directly to the terminal — they handle
         their own progress reporting (sections, steps, spinners).
+
+        FAMSTACK_DATA_DIR and FAMSTACK_DOMAIN are injected from the stack
+        so hooks reading them (e.g. on_install.sh for bind-mount paths)
+        see the *configured* values, not the hardcoded `$HOME/famstack-data`
+        fallback. Stacklet-declared env vars still override, because they
+        come second in the merge order.
         """
         env_dict = ctx.env if hasattr(ctx, "env") else ctx.get("env", {})
-        env = {**os.environ, **env_dict}
+        stack = getattr(ctx, "stack", None) if hasattr(ctx, "stack") else None
+
+        framework_env = {}
+        if stack is not None:
+            framework_env["FAMSTACK_DATA_DIR"] = str(stack.data)
+            framework_env["FAMSTACK_DOMAIN"] = stack._cfg("core", "domain")
+
+        env = {**os.environ, **framework_env, **env_dict}
 
         # Flush any active spinner so shell output isn't clobbered
         if hasattr(ctx, "stack") and hasattr(ctx.stack, "output"):
