@@ -68,21 +68,21 @@ pattern will break today unless its plugins use `instance_dir`.
 
 ---
 
-## Document `stacklet["enabled"]` semantics
+## Migrate plugins from `stacklet["enabled"]` to the new state API
 
-`enabled` means "the setup-done marker exists," which (post the
-marker-gating fix) means "on_install_success ran successfully." Setup.py
-used it as a proxy for "the service is reachable" — and the proxy
-broke when setup.py itself became on_install_success. Other plugins
-might do the same.
+**Framework work done:** `Stack.is_installed` / `is_running` /
+`is_healthy` / `wait_for_healthy` shipped with commit `aa1c867`.
+`enabled` on the discover dict keeps its install-state meaning for
+backwards compatibility.
 
-**Scope:** grep `stacklet.get("enabled")` / `stacklet["enabled"]` in
-`stacklets/*/cli/*.py`. For each check, ask: "do I mean *installed* or
-*reachable*?" Migrate reachability checks to explicit socket/HTTP
-probes.
+**Remaining:** grep `stacklet.get("enabled")` / `stacklet["enabled"]`
+in `stacklets/*/cli/*.py`. For each check, ask: "do I mean *installed*
+or *reachable*?" Most are reachability checks — migrate to
+`stack.is_healthy(sid)` for cleaner errors and correct semantics.
 
-**Why:** the two concepts diverged quietly. Future lifecycle changes
-will re-break any implicit coupling.
+**Why:** the proxy coincidence is fixed at the framework layer; each
+plugin still needs to opt in to the new names. Until they do, the next
+lifecycle change risks breaking them again.
 
 ---
 
