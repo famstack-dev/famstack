@@ -1,0 +1,32 @@
+[project]
+name = "famstack"
+version = "0.2.0"
+description = "Self-hosted family server stack for Apple Silicon"
+requires-python = ">=3.9"
+
+# The CLI itself depends only on the stdlib — stacklet containers carry
+# their own runtime deps. These extras are for host-side tooling: tests
+# and hook scripts that import bot modules directly.
+
+[project.optional-dependencies]
+test = [
+    # pytest 8.x still supports Python 3.9 (per AGENT.md runtime target);
+    # pytest 9+ requires 3.10+. Revisit when we drop 3.9 compat.
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.21",
+    "pytest-httpserver>=1.0",
+    # Bot runtime deps — tests import the archivist and log into Matrix
+    # as test users, so the bot's own libraries must be installed here.
+    "matrix-nio>=0.25",
+    "aiohttp>=3.8",
+    "Pillow>=10",
+    "loguru",
+    "pyyaml",
+    "markdown",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "v2_only: tests for the lifecycle v2 refactor (will fail until migration is complete)",
+]

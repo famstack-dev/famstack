@@ -1,0 +1,28 @@
+# Test instance config — a dedicated stack for integration tests.
+#
+# Points at an isolated data dir and a fake LLM endpoint. Shares
+# stacklets/ with the dev instance (via STACK_DIR pointing here).
+# The test family (users.toml) is the Simpsons — easier to reason
+# about than abstract test users.
+
+[core]
+name     = "stack"
+domain   = ""
+data_dir = "~/famstack-test-data"
+timezone = "Europe/Berlin"
+language = "en"
+
+[updates]
+schedule = "0 0 3 * * *"
+
+[ai]
+# pytest-httpserver instance — started by the `openai` conftest fixture.
+openai_url = "http://localhost:42199/v1"
+openai_key = "test"
+default    = "test-model"
+language   = "en"
+
+[messages]
+# Server name is permanent in every Matrix user ID (@homer:test.local).
+# Pre-set here so `stack up messages` skips the interactive prompt.
+server_name = "test.local"
