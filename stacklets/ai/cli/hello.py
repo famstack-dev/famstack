@@ -12,21 +12,13 @@ def run(args, stacklet, config):
     language = ai_cfg.get("language", "en")
     voice = "onyx" if language.startswith("de") else "alloy"
 
-    # Admin name for personalisation
+    # Admin name for personalisation — users come from the hook contract,
+    # framework already loaded users.toml.
     admin_name = ""
-    repo_root = config.get("repo_root", ".")
-    try:
-        import tomllib
-        users_path = Path(repo_root) / "users.toml"
-        if users_path.exists():
-            with open(users_path, "rb") as f:
-                users = tomllib.load(f).get("users", [])
-            for u in users:
-                if u.get("role") == "admin":
-                    admin_name = u.get("name", "").split()[0]
-                    break
-    except Exception:
-        pass
+    for u in config.get("users", []):
+        if u.get("role") == "admin":
+            admin_name = u.get("name", "").split()[0]
+            break
 
     if language.startswith("de"):
         greeting = f"Hallo {admin_name}. " if admin_name else ""
