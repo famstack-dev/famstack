@@ -18,6 +18,7 @@ the docker module. This file is the glue.
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from ._compat import tomllib
 from pathlib import Path
@@ -256,8 +257,13 @@ class CLI:
                         sp.fail(h_hint if h_hint else None)
 
         if first_run:
-            self.stack.run_on_install_success(
+            # Hook failure must propagate — a silently-failed post-install
+            # leaves the stacklet half-bootstrapped (no admin, no rooms)
+            # and the marker correctly stays absent for a retry.
+            success = self.stack.run_on_install_success(
                 stacklet_id, step_fn=self.stack.output.step)
+            if not success:
+                return {"error": "on_install_success hook failed"}
 
         # on_start_ready: runs every up, after health checks pass.
         # The service is healthy and accepting API calls. Use this for
@@ -279,7 +285,14 @@ class CLI:
         return result
 
     def down(self, stacklet_id: str) -> dict:
-        """Stop: Stack.down() + Docker compose stop."""
+        """Stop: Stack.down() + Docker compose stop.
+
+        Special case: stacklet_id == "all" stops every currently-running
+        stacklet in reverse dependency order (dependents first).
+        """
+        if stacklet_id == "all":
+            return self._down_all()
+
         result = self.stack.down(stacklet_id)
         if "error" in result:
             return result
@@ -296,6 +309,27 @@ class CLI:
             return {"stacklet": stacklet_id, "action": "down",
                     "success": code == 0, "output": output}
         return {"stacklet": stacklet_id, "action": "down", "success": True}
+
+    def _down_all(self) -> dict:
+        """Stop every running stacklet in reverse dependency order.
+
+        Running is determined by Docker — stopped/available stacklets are
+        untouched. Dependents shut down before their deps so services
+        making outbound calls don't error on a disappearing backend.
+        """
+        running = docker.running_project_ids()
+        order = _reverse_dependency_order(self.stack.discover(), running)
+
+        stopped: list[str] = []
+        errors: list[dict] = []
+        for sid in order:
+            result = self.down(sid)
+            if result.get("success", result.get("ok")):
+                stopped.append(sid)
+            else:
+                errors.append({"stacklet": sid, "result": result})
+
+        return {"ok": not errors, "stopped": stopped, "errors": errors}
 
     def destroy(self, stacklet_id: str) -> dict:
         """Destroy: Docker compose down + Stack.destroy()."""
@@ -320,6 +354,60 @@ class CLI:
         return self.stack.destroy(stacklet_id)
 
 
+# ── Topological helpers ───────────────────────────────────────────────────
+
+def _reverse_dependency_order(stacklets: list[dict], include: set[str]) -> list[str]:
+    """Return the subset of stacklet IDs in `include`, ordered so that
+    dependents come before their dependencies.
+
+    Kahn's algorithm on the reversed dependency graph: build a map of
+    dep → set(dependents), then repeatedly emit stacklets whose remaining
+    dependents have already been emitted. Stacklets with requires on
+    stacklets NOT in `include` have those edges dropped — we only care
+    about ordering among the ones we're actually stopping.
+    """
+    by_id = {s["id"]: s for s in stacklets if s["id"] in include}
+    if not by_id:
+        return []
+
+    # Edges: for each stacklet, the deps it relies on that we're also stopping.
+    remaining_deps = {
+        sid: {d for d in s.get("manifest", {}).get("requires", []) if d in by_id}
+        for sid, s in by_id.items()
+    }
+    # Who depends on me? sid → set of dependents.
+    dependents: dict[str, set[str]] = {sid: set() for sid in by_id}
+    for sid, deps in remaining_deps.items():
+        for d in deps:
+            dependents[d].add(sid)
+
+    # Start with leaf stacklets — the ones nobody depends on.
+    ready = sorted([sid for sid, d in dependents.items() if not d])
+    order: list[str] = []
+    while ready:
+        sid = ready.pop(0)
+        order.append(sid)
+        # This sid shut down — its deps lose one dependent.
+        for dep in remaining_deps[sid]:
+            dependents[dep].discard(sid)
+            if not dependents[dep]:
+                ready.append(dep)
+        ready.sort()  # deterministic order among siblings
+
+    # Any cycle leaves nodes stuck — append them so we still try to stop
+    # them. Warn so the underlying manifest bug gets noticed; append order
+    # is dict-insertion, not meaningful.
+    stuck = [sid for sid in by_id if sid not in order]
+    if stuck:
+        print(
+            f"  {ORANGE}⚠{RESET}  Dependency cycle detected among: {', '.join(stuck)}",
+            file=sys.stderr,
+        )
+        order.extend(stuck)
+
+    return order
+
+
 # ── Repo discovery ────────────────────────────────────────────────────────
 
 def find_repo_root() -> Path | None:
@@ -331,11 +419,33 @@ def find_repo_root() -> Path | None:
     return None
 
 
-def create_stack(repo_root: Path) -> Stack:
-    """Create a Stack instance from the repo root."""
+def find_instance_dir() -> Path | None:
+    """Return the directory holding stack.toml / users.toml / .stack/.
+
+    STACK_DIR overrides the default (repo root). Used for dedicated test
+    instances or sandboxes that share the same stacklet definitions but
+    keep their config, secrets, and state isolated.
+
+    Returns None if STACK_DIR is set but points at a non-existent path —
+    forces the caller to fail loudly rather than silently fall back.
+    """
+    if env := os.environ.get("STACK_DIR"):
+        path = Path(env).expanduser().resolve()
+        return path if path.is_dir() else None
+    return find_repo_root()
+
+
+def create_stack(repo_root: Path, instance_dir: Path | None = None) -> Stack:
+    """Create a Stack instance.
+
+    repo_root: where stacklets/ are discovered (and git lives).
+    instance_dir: where stack.toml and runtime state live. Defaults to
+    repo_root, which is the single-instance case.
+    """
     from .output import TerminalOutput
 
-    config_path = repo_root / "stack.toml"
+    instance = instance_dir or repo_root
+    config_path = instance / "stack.toml"
     cfg = {}
     if config_path.exists():
         try:
@@ -346,7 +456,12 @@ def create_stack(repo_root: Path) -> Stack:
 
     name = cfg.get("core", {}).get("name", "stack")
     data_dir = cfg.get("core", {}).get("data_dir", f"~/{name}-data")
-    return Stack(root=repo_root, data=Path(data_dir).expanduser(), output=TerminalOutput())
+    return Stack(
+        root=repo_root,
+        data=Path(data_dir).expanduser(),
+        instance_dir=instance,
+        output=TerminalOutput(),
+    )
 
 
 # ── Output formatting ────────────────────────────────────────────────────
@@ -516,6 +631,21 @@ def handle_up(stck, args):
 
 def handle_down(stck, args):
     cli = CLI(stck)
+
+    if args.stacklet == "all":
+        result = cli.down("all")
+        stopped = result.get("stopped", [])
+        if not result.get("ok"):
+            print_error({"error": "Some stacklets failed to stop",
+                         "problems": [f"{e['stacklet']}" for e in result.get("errors", [])]})
+            sys.exit(1)
+        if not stopped:
+            print(f"  {DIM}Nothing was running.{RESET}")
+            return
+        for sid in stopped:
+            print(f"  {GREEN}✓{RESET} {sid}: stopped")
+        return
+
     stacklet = stck._find_stacklet(args.stacklet)
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
 
@@ -933,12 +1063,22 @@ def print_help(name="stack", plugin_cmds=None):
 
 def main():
     repo_root = find_repo_root()
+    instance_dir = find_instance_dir()
+
+    # Fail loudly when STACK_DIR points at a non-existent path. Silently
+    # falling back to the default would hide config mistakes.
+    if os.environ.get("STACK_DIR") and instance_dir is None:
+        print(
+            f"  {RED}✗{RESET}  STACK_DIR={os.environ['STACK_DIR']!r} is not a directory",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Fresh install — launch the wizard only when no command given
-    has_config = repo_root and (repo_root / "stack.toml").exists()
+    has_config = instance_dir and (instance_dir / "stack.toml").exists()
     has_command = len(sys.argv) > 1
     if repo_root and not has_config and not has_command and sys.stdin.isatty():
-        stck = create_stack(repo_root)
+        stck = create_stack(repo_root, instance_dir)
         handle_install(stck, None)
         return
 
@@ -976,7 +1116,7 @@ def main():
     # Stacklet CLI plugins
     stacklet_cmds = {}
     if repo_root:
-        stck = create_stack(repo_root)
+        stck = create_stack(repo_root, instance_dir)
         stacklet_cmds = _load_stacklet_commands(stck)
         for sid, cmds in stacklet_cmds.items():
             sp = sub.add_parser(sid)
@@ -999,7 +1139,7 @@ def main():
 
     if not args.command:
         if repo_root and has_config:
-            stck = create_stack(repo_root)
+            stck = create_stack(repo_root, instance_dir)
             preferred = stck._cfg("core", "runtime", "orbstack")
             docker.init_runtime(preferred)
             result = stck.status()
@@ -1017,7 +1157,7 @@ def main():
         print(f"  {RED}✗{RESET}  Can't find stack directory", file=sys.stderr)
         sys.exit(1)
 
-    stck = create_stack(repo_root)
+    stck = create_stack(repo_root, instance_dir)
 
     # Pin all docker commands to the configured runtime context
     preferred = stck._cfg("core", "runtime", "orbstack")

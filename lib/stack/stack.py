@@ -38,10 +38,15 @@ class Stack:
     tests or a TerminalOutput for the CLI.
     """
 
-    def __init__(self, root: Path, data: Path, output=None):
+    def __init__(self, root: Path, data: Path, instance_dir: Path | None = None, output=None):
         self.root = Path(root)
+        # Instance dir holds config (stack.toml, users.toml) and runtime state
+        # (.stack/secrets.toml, setup markers). Defaults to root so one repo
+        # can power one instance. Splitting them lets tests and sandboxes
+        # share stacklet definitions without cloning the repo.
+        self.instance_dir = Path(instance_dir) if instance_dir is not None else self.root
         self.data = Path(data)
-        self.secrets = TomlSecretStore(self.root / ".stack" / "secrets.toml")
+        self.secrets = TomlSecretStore(self.instance_dir / ".stack" / "secrets.toml")
         self.output = output or SilentOutput()
 
     def product_name(self) -> str:
@@ -53,7 +58,7 @@ class Stack:
     @property
     def config(self) -> dict:
         """Always read stack.toml fresh from disk. No stale cache."""
-        path = self.root / "stack.toml"
+        path = self.instance_dir / "stack.toml"
         if not path.exists():
             return {}
         try:
@@ -76,7 +81,7 @@ class Stack:
         section if it doesn't exist.
         """
         import re
-        toml_path = self.root / "stack.toml"
+        toml_path = self.instance_dir / "stack.toml"
         if not toml_path.exists():
             return
         content = toml_path.read_text()
@@ -197,7 +202,7 @@ class Stack:
 
         # Comma-separated user IDs of all admin-role users from users.toml
         admin_ids = [
-            user_id(u) for u in load_users(self.root)
+            user_id(u) for u in load_users(self.instance_dir)
             if u.get("role") == "admin"
         ]
         template_vars["admin_user_ids"] = ",".join(admin_ids)
@@ -524,7 +529,7 @@ class Stack:
 
     def _setup_done_marker(self, stacklet_id: str) -> Path:
         """Path to the marker that gates once-only hooks."""
-        return self.root / ".stack" / f"{stacklet_id}.setup-done"
+        return self.instance_dir / ".stack" / f"{stacklet_id}.setup-done"
 
     def _is_first_run(self, stacklet_id: str) -> bool:
         return not self._setup_done_marker(stacklet_id).exists()
@@ -625,9 +630,10 @@ class Stack:
             if not resolver.run("on_install", ctx):
                 self.output.error("on_install hook failed")
                 return {"error": "on_install hook failed", "steps": steps}
-            self._setup_done_marker(stacklet_id).parent.mkdir(
-                parents=True, exist_ok=True)
-            self._setup_done_marker(stacklet_id).touch()
+            # The setup-done marker is promoted by run_on_install_success,
+            # not here. If health or post-install work fails, a retry must
+            # re-enter the full first-run chain. on_install is idempotent
+            # per convention, so re-running it is safe.
 
         self.output.step("Writing .env")
         self._write_env_file(stacklet_dir, env_dict)
@@ -670,6 +676,12 @@ class Stack:
         Called by the CLI after the health check passes on first run.
         Provides secret/http helpers that on_install doesn't need but
         post-setup hooks do (obtaining API tokens, creating accounts).
+
+        On success, promotes the setup-done marker so subsequent
+        `stack up` calls skip the first-run chain. If the hook fails
+        (or errors), the marker is NOT touched — a retry re-enters
+        bootstrap so transient failures (network, timing) don't leave
+        the stacklet half-initialised.
         """
         s = self._find_stacklet(stacklet_id)
         if not s:
@@ -677,15 +689,25 @@ class Stack:
 
         stacklet_dir = Path(s["path"])
         resolver = HookResolver(stacklet_dir)
+
         if not resolver.resolve("on_install_success"):
-            return True  # no hook = success
+            # No hook = trivially successful post-install work.
+            self._mark_setup_done(stacklet_id)
+            return True
 
         env_dict = self.env(stacklet_id)
         step_fn = step_fn or (lambda msg: None)
-        # StackContext gives the hook full access to Stack — secrets,
-        # http, run_cli_command, everything. No lambda wrapping needed.
         ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=step_fn, stack=self)
-        return resolver.run("on_install_success", ctx)
+        success = resolver.run("on_install_success", ctx)
+        if success:
+            self._mark_setup_done(stacklet_id)
+        return success
+
+    def _mark_setup_done(self, stacklet_id: str) -> None:
+        """Touch the setup-done marker. Gates first_run detection."""
+        marker = self._setup_done_marker(stacklet_id)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
 
     def run_cli_command(self, stacklet_id: str, command: str, args: list | None = None) -> dict | None:
         """Run a stacklet's CLI plugin command.
@@ -719,10 +741,11 @@ class Stack:
                     "domain": self._cfg("core", "domain"),
                     "data_dir": str(self.data),
                     "repo_root": str(self.root),
+                    "instance_dir": str(self.instance_dir),
                     "manifest": stacklet.get("manifest", {}),
                     "stack": self.config,
                     "secrets": self.secrets.all(),
-                    "users": load_users(self.root),
+                    "users": load_users(self.instance_dir),
                 }
                 return mod.run(args or [], stacklet, config)
         except Exception as e:

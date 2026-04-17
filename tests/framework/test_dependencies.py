@@ -20,8 +20,12 @@ class TestRequiresEnforcement:
         assert "stack up basic" in result.get("hint", "")
 
     def test_passes_when_dep_set_up(self, make_stack):
+        # Stack.up handles on_install; run_on_install_success promotes
+        # the setup-done marker. Both are needed for the dependency check
+        # to see `basic` as fully installed.
         stck = make_stack(stacklets=["basic", "with_deps"])
         stck.up("basic")
+        stck.run_on_install_success("basic")
         result = stck.up("with_deps")
         assert "must be set up first" not in result.get("error", "")
 

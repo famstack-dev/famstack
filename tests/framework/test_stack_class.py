@@ -108,6 +108,119 @@ data_dir = "/tmp/test-data"
         assert env["TOKEN"] == ""
 
 
+class TestStackInstanceDir:
+    """Stack can separate where stacklets/ live (root) from where config
+    and state live (instance_dir). The two coincide by default. Splitting
+    them lets one repo power multiple stack instances — dev, test, sandbox."""
+
+    def test_defaults_instance_dir_to_root(self, tmp_path):
+        from stack import Stack
+        s = Stack(root=tmp_path, data=tmp_path / "data")
+        assert s.instance_dir == tmp_path
+
+    def test_config_read_from_instance_dir_not_root(self, tmp_path):
+        repo = tmp_path / "repo"
+        instance = tmp_path / "instance"
+        repo.mkdir()
+        instance.mkdir()
+
+        (repo / "stack.toml").write_text('[core]\ntimezone = "UTC"\n')
+        (instance / "stack.toml").write_text('[core]\ntimezone = "Europe/Berlin"\n')
+
+        from stack import Stack
+        s = Stack(root=repo, data=tmp_path / "data", instance_dir=instance)
+        assert s.config["core"]["timezone"] == "Europe/Berlin"
+
+    def test_users_read_from_instance_dir(self, tmp_path):
+        repo = tmp_path / "repo"
+        instance = tmp_path / "instance"
+        repo.mkdir()
+        instance.mkdir()
+
+        (repo / "users.toml").write_text(
+            '[[users]]\nid = "wrong"\nname = "Wrong"\nrole = "admin"\n'
+        )
+        (instance / "users.toml").write_text(
+            '[[users]]\nid = "homer"\nname = "Homer"\nrole = "admin"\n'
+        )
+
+        from stack.users import load_users
+        from stack import Stack
+        s = Stack(root=repo, data=tmp_path / "data", instance_dir=instance)
+        assert load_users(s.instance_dir)[0]["id"] == "homer"
+
+    def test_secrets_live_in_instance_dir(self, tmp_path):
+        repo = tmp_path / "repo"
+        instance = tmp_path / "instance"
+        repo.mkdir()
+        instance.mkdir()
+
+        from stack import Stack
+        s = Stack(root=repo, data=tmp_path / "data", instance_dir=instance)
+        s.secrets.set("myapp", "PASSWORD", "value")
+        assert (instance / ".stack" / "secrets.toml").exists()
+        assert not (repo / ".stack" / "secrets.toml").exists()
+
+    def test_stacklet_discovery_still_uses_root(self, tmp_path):
+        repo = tmp_path / "repo"
+        instance = tmp_path / "instance"
+        repo.mkdir()
+        instance.mkdir()
+        _create_stacklet(repo, "myapp", name="My App")
+
+        from stack import Stack
+        s = Stack(root=repo, data=tmp_path / "data", instance_dir=instance)
+        assert "myapp" in {st["id"] for st in s.discover()}
+
+    def test_setup_marker_lives_in_instance_dir(self, tmp_path):
+        repo = tmp_path / "repo"
+        instance = tmp_path / "instance"
+        repo.mkdir()
+        instance.mkdir()
+        (instance / ".stack").mkdir()
+
+        from stack import Stack
+        s = Stack(root=repo, data=tmp_path / "data", instance_dir=instance)
+        marker = s._setup_done_marker("myapp")
+        assert marker.parent == instance / ".stack"
+
+
+class TestFindInstanceDir:
+    """find_instance_dir resolves STACK_DIR env var, falls back to repo root."""
+
+    def test_returns_repo_root_without_env(self, tmp_path, monkeypatch):
+        (tmp_path / "stacklets").mkdir()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("STACK_DIR", raising=False)
+
+        from stack.cli import find_instance_dir
+        assert find_instance_dir() == tmp_path
+
+    def test_returns_stack_dir_env_when_set(self, tmp_path, monkeypatch):
+        (tmp_path / "stacklets").mkdir()
+        instance = tmp_path / "alt-instance"
+        instance.mkdir()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("STACK_DIR", str(instance))
+
+        from stack.cli import find_instance_dir
+        assert find_instance_dir() == instance.resolve()
+
+    def test_expands_user_in_stack_dir(self, tmp_path, monkeypatch):
+        (tmp_path / "stacklets").mkdir()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("STACK_DIR", "~")
+
+        from stack.cli import find_instance_dir
+        assert find_instance_dir() == Path("~").expanduser().resolve()
+
+    def test_returns_none_when_stack_dir_does_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STACK_DIR", str(tmp_path / "does-not-exist"))
+
+        from stack.cli import find_instance_dir
+        assert find_instance_dir() is None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def _create_stacklet(root, sid, name=None, description="", version="0.1.0",
