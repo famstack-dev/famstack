@@ -38,7 +38,7 @@ def run(args, stacklet, config):
     usernames = argv[1:]
 
     # ── Connect and authenticate ────────────────────────────────────────
-    repo_root = config.get("repo_root", ".")
+    instance_dir = config.get("instance_dir", config.get("repo_root", "."))
     stack_cfg = config.get("stack", {})
     secrets = config.get("secrets", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
@@ -50,7 +50,7 @@ def run(args, stacklet, config):
 
     from stack.users import TECH_ADMIN_USERNAME
 
-    client = MatrixClient(base_url, server_name, repo_root)
+    client = MatrixClient(base_url, server_name, instance_dir)
     logged_in = client.login(TECH_ADMIN_USERNAME, admin_pass)
     if not logged_in:
         for key, pw in secrets.items():
