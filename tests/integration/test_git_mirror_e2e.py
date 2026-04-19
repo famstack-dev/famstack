@@ -36,7 +36,10 @@ DOCS_OWNER = "family"
 DOCS_REPO = "documents"
 
 
-async def _wait_for_paperless_doc(paperless, title: str, timeout: int = 120) -> dict | None:
+async def _wait_for_paperless_doc(paperless, title: str, timeout: int = 45) -> dict | None:
+    # Paperless's task pipeline for a small PDF finishes in a few seconds;
+    # 45s covers a cold Celery worker. Longer waits just slow down the
+    # red path when the archivist isn't reaching the classify stub.
     for _ in range(timeout):
         docs = paperless.list_documents()
         match = next((d for d in docs if d.get("title") == title), None)

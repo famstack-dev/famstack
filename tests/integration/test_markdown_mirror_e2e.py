@@ -34,7 +34,10 @@ DOCS_OWNER = "family"
 DOCS_REPO = "documents"
 
 
-async def _wait_for_paperless_doc(paperless, title: str, timeout: int = 120) -> dict | None:
+async def _wait_for_paperless_doc(paperless, title: str, timeout: int = 30) -> dict | None:
+    # Text files skip OCR entirely — TextDocumentParser just stores the
+    # content. A stubbed classify call should land within a couple of
+    # seconds; 30s is generous padding for a cold Celery warmup.
     for _ in range(timeout):
         docs = paperless.list_documents()
         match = next((d for d in docs if d.get("title") == title), None)
