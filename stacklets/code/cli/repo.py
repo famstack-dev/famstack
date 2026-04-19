@@ -21,13 +21,9 @@ How it works:
 
 HELP = "Manage Forgejo repositories (list, create, show)"
 
-import json as _json
 import sys
-from pathlib import Path
 
-_here = Path(__file__).parent
-sys.path.insert(0, str(_here))
-from _forgejo import ForgejoClient, ForgejoError
+from stack.forgejo import ForgejoClient, ForgejoError
 
 
 def _connect(config):

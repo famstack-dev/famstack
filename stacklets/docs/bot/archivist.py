@@ -257,7 +257,6 @@ class ArchivistBot(MicroBot):
             admin_password=admin_password,
             admin_usernames=admin_usernames,
             data_dir=self._session_dir,
-            http=self._http,
             org_name=self.mirror_org,
         )
         logger.info("[archivist] Git mirror configured: {} org={} (admins: {})",

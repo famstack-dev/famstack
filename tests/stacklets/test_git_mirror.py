@@ -2,7 +2,7 @@
 
 Covers the pure methods — filename generation, slug normalization,
 frontmatter shape, commit trailer format, markdown assembly. Forgejo
-and aiohttp interactions are exercised live in integration tests, not
+HTTP interactions are exercised live in integration tests, not
 stubbed here.
 """
 
@@ -14,21 +14,22 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "stacklets" / "docs" / "bot"))
+_REPO_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from git_mirror import GitMirror  # noqa: E402
 
 
 @pytest.fixture
 def mirror(tmp_path):
-    """GitMirror with stubbed http, just enough to call pure methods."""
+    """GitMirror wired enough to exercise its pure methods."""
     return GitMirror(
         code_url="http://stack-code:3000",
         admin_user="stackadmin",
         admin_password="secret",
         admin_usernames=["homer"],
         data_dir=tmp_path,
-        http=None,  # type: ignore[arg-type] — unused by pure methods
         paperless_version="2.14.5",
     )
 
@@ -134,7 +135,7 @@ class TestFrontmatter:
     def test_no_paperless_version_when_unset(self, tmp_path):
         m = GitMirror(
             code_url="", admin_user="", admin_password="",
-            admin_usernames=[], data_dir=tmp_path, http=None,  # type: ignore[arg-type]
+            admin_usernames=[], data_dir=tmp_path,
         )
         fm = m._frontmatter(
             title="t", date=None,

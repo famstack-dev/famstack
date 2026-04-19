@@ -19,6 +19,7 @@ v1 leaves deleted Paperless docs as stale markdown in git history.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -27,11 +28,10 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import aiohttp
 import yaml
 from loguru import logger
 
-from forgejo import ForgejoClient, ForgejoError
+from stack.forgejo import ForgejoClient, ForgejoError
 
 
 REPO_NAME = "documents"
@@ -55,13 +55,18 @@ class MirrorCreds:
 
 @dataclass
 class GitMirror:
-    """Stateful mirror client. One per archivist bot."""
+    """Stateful mirror client. One per archivist bot.
+
+    Forgejo I/O goes through the framework's sync `ForgejoClient`
+    wrapped in `asyncio.to_thread(...)` — strictly simpler than
+    maintaining a parallel aiohttp client with the same surface, and
+    the same module backs the code-stacklet CLI plugins.
+    """
     code_url: str
     admin_user: str
     admin_password: str
     admin_usernames: list[str]
     data_dir: Path
-    http: aiohttp.ClientSession
     org_name: str = "family"
     paperless_version: str = ""
 
@@ -98,28 +103,29 @@ class GitMirror:
             return True
 
         client = ForgejoClient(
-            base_url=self.code_url,
-            http=self.http,
+            url=self.code_url,
             admin_user=self.admin_user,
             admin_password=self.admin_password,
         )
 
-        if not await client.ping():
+        if not await asyncio.to_thread(client.ping):
             logger.info("[git-mirror] Forgejo unreachable at {}, skipping", self.code_url)
             return False
 
         self._creds = self._load_or_create_creds()
         try:
-            await client.create_user(BOT_USERNAME, BOT_EMAIL, self._creds.password)
+            await asyncio.to_thread(
+                client.create_user, BOT_USERNAME, BOT_EMAIL, self._creds.password,
+            )
         except ForgejoError as e:
             logger.warning("[git-mirror] Could not ensure bot user: {}", e)
             return False
 
         if not self._creds.token:
             try:
-                token = await client.issue_token(
-                    BOT_USERNAME, self._creds.password,
-                    name=TOKEN_NAME, scopes=TOKEN_SCOPES,
+                token = await asyncio.to_thread(
+                    client.issue_token,
+                    BOT_USERNAME, self._creds.password, TOKEN_NAME, TOKEN_SCOPES,
                 )
                 self._creds.token = token
                 self._save_creds()
@@ -134,13 +140,17 @@ class GitMirror:
         # brain/calendar later). Admins see every org repo on their
         # dashboard without per-repo watches.
         try:
-            await client.create_org(self.org_name, description=ORG_DESCRIPTION)
+            await asyncio.to_thread(
+                client.create_org, self.org_name, ORG_DESCRIPTION,
+            )
         except ForgejoError as e:
             logger.warning("[git-mirror] Could not ensure org {}: {}", self.org_name, e)
             return False
 
         try:
-            owners_team_id = await client.get_owners_team_id(self.org_name)
+            owners_team_id = await asyncio.to_thread(
+                client.get_owners_team_id, self.org_name,
+            )
         except ForgejoError as e:
             logger.warning("[git-mirror] Could not resolve Owners team: {}", e)
             return False
@@ -148,15 +158,14 @@ class GitMirror:
         # Bot first so it can write; admins after so they see it.
         for member in (BOT_USERNAME, *self.admin_usernames):
             try:
-                await client.add_team_member(owners_team_id, member)
+                await asyncio.to_thread(client.add_team_member, owners_team_id, member)
             except ForgejoError as e:
                 logger.warning("[git-mirror] Could not add {} to Owners: {}", member, e)
 
         try:
-            await client.create_repo(
-                self.org_name, REPO_NAME,
-                description=REPO_DESCRIPTION, private=True,
-                owner_is_org=True,
+            await asyncio.to_thread(
+                client.create_repo, self.org_name, REPO_NAME,
+                description=REPO_DESCRIPTION, private=True, owner_is_org=True,
             )
         except ForgejoError as e:
             logger.warning("[git-mirror] Could not ensure repo: {}", e)
@@ -195,7 +204,9 @@ class GitMirror:
 
     async def _seed_readme_once(self, client: ForgejoClient) -> None:
         """Write a README on the very first repo creation (not on update)."""
-        existing = await client.get_file(self.repo_owner, REPO_NAME, "README.md")
+        existing = await asyncio.to_thread(
+            client.get_file, self.repo_owner, REPO_NAME, "README.md",
+        )
         if existing and existing.get("content"):
             import base64
             try:
@@ -206,7 +217,8 @@ class GitMirror:
                 pass
 
         readme = self._render_readme()
-        await client.put_file(
+        await asyncio.to_thread(
+            client.put_file,
             self.repo_owner, REPO_NAME, "README.md",
             content=readme,
             message="chore: seed README",
@@ -266,13 +278,15 @@ class GitMirror:
         self._load_cache()
         cached = self._cache.get(paperless_id)
         if cached:
-            existing = await client.get_file(self.repo_owner, REPO_NAME, cached)
+            existing = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, cached,
+            )
             if existing:
                 return cached
             self._cache.pop(paperless_id, None)
 
         suffix_variants = (f"-p{paperless_id}.md", f"/p{paperless_id}.md")
-        tree = await client.list_tree(self.repo_owner, REPO_NAME)
+        tree = await asyncio.to_thread(client.list_tree, self.repo_owner, REPO_NAME)
         for entry in tree:
             path = entry.get("path", "")
             if entry.get("type") == "blob" and any(path.endswith(s) or path == s.lstrip("/") for s in suffix_variants):
@@ -418,9 +432,7 @@ class GitMirror:
         if not await self.ensure_setup():
             return False
 
-        client = ForgejoClient(
-            base_url=self.code_url, http=self.http, token=self._creds.token,
-        )
+        client = ForgejoClient(url=self.code_url, token=self._creds.token)
 
         title = classification.get("title") or f"Paperless #{paperless_id}"
         date = classification.get("date")
@@ -443,7 +455,9 @@ class GitMirror:
         existing_path = await self._lookup_path(client, paperless_id)
         existing = None
         if existing_path:
-            existing = await client.get_file(self.repo_owner, REPO_NAME, existing_path)
+            existing = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, existing_path,
+            )
 
         fm = self._frontmatter(
             title=title, date=date,
@@ -465,24 +479,28 @@ class GitMirror:
 
         try:
             if existing and existing_path != target_path:
-                await client.delete_file(
+                await asyncio.to_thread(
+                    client.delete_file,
                     self.repo_owner, REPO_NAME, existing_path,
                     sha=existing["sha"],
                     message=f"rename: {existing_path} → {target_path}\n\nPaperless-Id: {paperless_id}",
                 )
-                await client.put_file(
+                await asyncio.to_thread(
+                    client.put_file,
                     self.repo_owner, REPO_NAME, target_path,
                     content=content, message=message,
                     author_name=BOT_USERNAME, author_email=BOT_EMAIL,
                 )
             elif existing:
-                await client.put_file(
+                await asyncio.to_thread(
+                    client.put_file,
                     self.repo_owner, REPO_NAME, target_path,
                     content=content, message=message, sha=existing["sha"],
                     author_name=BOT_USERNAME, author_email=BOT_EMAIL,
                 )
             else:
-                await client.put_file(
+                await asyncio.to_thread(
+                    client.put_file,
                     self.repo_owner, REPO_NAME, target_path,
                     content=content, message=message,
                     author_name=BOT_USERNAME, author_email=BOT_EMAIL,

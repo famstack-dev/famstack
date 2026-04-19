@@ -104,6 +104,45 @@ manually." Not a shipping-quality behaviour.
 
 ---
 
+## Bot context (ctx object for long-running bots)
+
+Hooks get a rich `ctx` with `ctx.secret`, `ctx.users`, `ctx.stack`,
+`ctx.http_*`, `ctx.shell`, `ctx.step`. Bots get env vars + a settings
+dict + session_dir. The asymmetry forces every new bot need to be
+plumbed as an env template in `core/stacklet.toml` or a bot-local
+state file.
+
+Concrete friction points already felt:
+- Archivist mirrors Forgejo creds to `/data/docs/bot/forgejo-creds.json`
+  because `.stack/secrets.toml` is mounted read-only.
+- Admin usernames arrive parsed out of `STACK_ADMIN_USER_IDS`; native
+  access to `users.toml` would be cleaner.
+- No way for a bot to invoke another stacklet's CLI plugin without
+  duplicating the operation locally.
+
+**Scope when picked up:**
+- `lib/stack/context.py` with a `BotContext` class (or a shared base
+  with `HookContext`).
+- `core/bot-runner/main.py` builds ctx per bot; `MicroBot.__init__`
+  accepts it.
+- Compose mount adds `stack.toml` + `users.toml` to `/setup-state/`
+  (secrets.toml already there).
+- Per-plugin `api.py` / `cli.py` split so `ctx.cli("code", "org",
+  "create", "family")` can import-and-call without subprocess.
+
+**Why deferred:** touches framework, bot-runner, compose, and every
+plugin's shape — worth doing when we have a second bot that wants
+cross-stacklet access (deriver, scribe-on-commit, morning briefing).
+Today only the archivist would benefit.
+
+**Dependency on this item:** the "Option 3" Forgejo-client collapse
+in feat/docs-git-mirror (sync client under `stack.forgejo`, bot
+wraps in `asyncio.to_thread`) is fine without ctx — but
+`ctx.cli(...)` is what unlocks cleaner Phase 2 if we ever want the
+bot to stop touching HTTP directly.
+
+---
+
 ## Bot readiness marker — close the `stack up X` → bot-in-room race
 
 `stack up X` returns as soon as X's `[health]` probe passes, but the
