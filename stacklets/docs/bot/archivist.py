@@ -378,9 +378,22 @@ class ArchivistBot(MicroBot):
     def _paperless_headers(self) -> dict:
         return {"Authorization": f"Token {self.paperless_token}"}
 
-    async def _paperless_upload(self, filename: str, data: bytes) -> str | None:
+    async def _paperless_upload(self, filename: str, data: bytes,
+                                 content_type: str | None = None) -> str | None:
+        """Upload a file to Paperless. Returns the task id on success.
+
+        When `content_type` is given it's set on the multipart field —
+        important for text-like files where aiohttp's default of
+        application/octet-stream stops Paperless from matching a parser
+        and the server returns 400 with no useful chat message. On
+        failure we log the response body (truncated) so the next 400
+        isn't a mystery.
+        """
         form = aiohttp.FormData()
-        form.add_field("document", data, filename=filename)
+        field_kwargs: dict = {"filename": filename}
+        if content_type:
+            field_kwargs["content_type"] = content_type
+        form.add_field("document", data, **field_kwargs)
         try:
             async with self._http.post(
                 f"{self.paperless_url}/api/documents/post_document/",
@@ -390,9 +403,10 @@ class ArchivistBot(MicroBot):
                     task_id = (await resp.text()).strip().strip('"')
                     logger.info("[archivist] Uploaded {} → task {}", filename, task_id)
                     return task_id
-                else:
-                    logger.error("[archivist] Upload failed (HTTP {})", resp.status)
-                    return None
+                body = (await resp.text())[:400]
+                logger.error("[archivist] Upload failed (HTTP {}): {} — body: {}",
+                             resp.status, filename, body)
+                return None
         except (aiohttp.ClientConnectionError, aiohttp.ClientError, OSError) as e:
             logger.error("[archivist] Paperless unreachable: {}", e)
             return None
@@ -742,10 +756,22 @@ OCR text:
         logger.info("[archivist] Processing: {} ({} bytes)", display_name, len(file_data))
 
         # Text-based files are already readable — just upload and file them
-        # without running OCR classification or reformatting.
+        # without running OCR classification or reformatting. Paperless only
+        # registers a parser for `text/plain` (→ .txt) and `text/csv`, so
+        # everything else in this bucket is renamed to .txt and uploaded as
+        # text/plain. Preserves original content; loses only the .md/.json
+        # suffix in Paperless's UI — the mirror keeps the original name.
+        TEXT_LIKE = ("md", "txt", "csv", "json", "yaml", "yml", "toml")
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in ("md", "txt", "csv", "json", "yaml", "yml", "toml"):
-            task_id = await self._paperless_upload(filename, file_data)
+        if ext in TEXT_LIKE:
+            if ext == "csv":
+                upload_filename, upload_type = filename, "text/csv"
+            elif ext == "txt":
+                upload_filename, upload_type = filename, "text/plain"
+            else:
+                base = filename.rsplit(".", 1)[0]
+                upload_filename, upload_type = f"{base}.txt", "text/plain"
+            task_id = await self._paperless_upload(upload_filename, file_data, content_type=upload_type)
             if not task_id:
                 await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
                 return
