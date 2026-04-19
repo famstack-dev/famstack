@@ -110,6 +110,21 @@ class LLMTimeoutError(Exception):
     """LLM took too long — large documents or cold model start can cause this."""
 
 
+# ── Paperless Errors ─────────────────────────────────────────────────────────
+
+class PaperlessDuplicateError(Exception):
+    """Paperless rejected the upload as a content-hash duplicate of an
+    already-filed doc. Carries the original's id + title so the chat
+    reply can point the user at what's already there."""
+    def __init__(self, doc_id: int | None, title: str | None):
+        self.doc_id = doc_id
+        self.title = title
+        super().__init__(f"duplicate of #{doc_id}: {title}")
+
+
+_DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
+
+
 
 # ── Translations ─────────────────────────────────────────────────────────────
 
@@ -267,6 +282,20 @@ class ArchivistBot(MicroBot):
             return "🧠 **AI classification:** enabled — documents are tagged automatically."
         return "💡 **AI classification:** not configured. Run `stack up ai` to enable automatic tagging."
 
+    def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
+        """Render the 'already filed' chat reply for a Paperless duplicate.
+
+        Points the user at the original doc's Paperless page so they can
+        verify the match instead of wondering why the upload 'failed'.
+        """
+        link = (f"{self.paperless_public_url}/documents/{e.doc_id}/details"
+                if e.doc_id and self.paperless_public_url else "")
+        return self.t("already_filed",
+                      name=name,
+                      doc_id=e.doc_id if e.doc_id is not None else "?",
+                      title=e.title or "(no title)",
+                      link=link)
+
     async def on_first_sync(self) -> None:
         """Called after initial sync — send welcome message to rooms."""
         url = self.paperless_public_url or self.paperless_url
@@ -336,6 +365,10 @@ class ArchivistBot(MicroBot):
             return None
 
     async def _paperless_wait_task(self, task_id: str, timeout: int = 120) -> int | None:
+        """Poll Paperless for task completion. Raises PaperlessDuplicateError
+        when Paperless rejects the upload as a duplicate; returns None for
+        every other FAILURE / timeout / transport error so the caller can
+        render the generic `ocr_failed` message."""
         import time
         start = time.time()
         while time.time() - start < timeout:
@@ -353,7 +386,13 @@ class ArchivistBot(MicroBot):
                                 doc_id = task.get("related_document")
                                 return int(doc_id) if doc_id else None
                             elif status == "FAILURE":
-                                logger.error("[archivist] Task failed: {}", task.get("result"))
+                                result = task.get("result") or ""
+                                logger.error("[archivist] Task failed: {}", result)
+                                match = _DUPLICATE_RE.search(result)
+                                if match:
+                                    title = match.group(1).strip()
+                                    dup_id = int(match.group(2))
+                                    raise PaperlessDuplicateError(dup_id, title)
                                 return None
             except (aiohttp.ClientConnectionError, aiohttp.ClientError, OSError) as e:
                 logger.error("[archivist] Paperless unreachable while waiting for task: {}", e)
@@ -677,7 +716,11 @@ OCR text:
             if not task_id:
                 await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
                 return
-            doc_id = await self._paperless_wait_task(task_id)
+            try:
+                doc_id = await self._paperless_wait_task(task_id)
+            except PaperlessDuplicateError as e:
+                await self._send(room_id, self._duplicate_reply(display_name, e), reply_to)
+                return
             link = f"{self.paperless_public_url}/documents/{doc_id}/details" if doc_id and self.paperless_public_url else ""
             if doc_id:
                 await self._send(room_id, f"{self.t('filed', title=display_name)}\n\n  {link}", reply_to)
@@ -690,7 +733,11 @@ OCR text:
             await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
             return
 
-        doc_id = await self._paperless_wait_task(task_id)
+        try:
+            doc_id = await self._paperless_wait_task(task_id)
+        except PaperlessDuplicateError as e:
+            await self._send(room_id, self._duplicate_reply(display_name, e), reply_to)
+            return
         if not doc_id:
             await self._send(room_id, self.t("ocr_failed", name=display_name), reply_to)
             return
