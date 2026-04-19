@@ -1066,20 +1066,24 @@ OCR text:
         logger.info("[archivist] Processed: {} → doc {} [{}]",
                      filename, doc_id, ", ".join(summary) or "no-classification")
 
-        # ── Structured event — only when we have classification data ─────
+        # ── Structured event — always, once Paperless has the doc ───────
         # Element ignores unknown event types, so the event rides next to
-        # the human reply without showing up in chat. Skip when
-        # classification is empty so downstream bots don't see bare events.
-        if classification:
-            event_payload = build_document_event(
-                doc_id, classification,
-                resolved_topics=resolved_topics,
-                resolved_persons=resolved_persons,
-                resolved_correspondent=resolved_correspondent,
-                resolved_type=resolved_type,
-                paperless_url=self.paperless_public_url or self.paperless_url,
-            )
-            await self.emit_event(room_id, event_payload["type"], event_payload["body"])
+        # the human reply without showing up in chat. Fires symmetrically
+        # with the mirror: every Paperless-filed doc produces an event,
+        # even when classification returned nothing. Downstream bots
+        # deciding whether to act on an event filter on the fields they
+        # care about — empty `topics` / `correspondent` is a valid
+        # "filed-but-uninterpreted" signal, not a reason to hide the
+        # event.
+        event_payload = build_document_event(
+            doc_id, classification,
+            resolved_topics=resolved_topics,
+            resolved_persons=resolved_persons,
+            resolved_correspondent=resolved_correspondent,
+            resolved_type=resolved_type,
+            paperless_url=self.paperless_public_url or self.paperless_url,
+        )
+        await self.emit_event(room_id, event_payload["type"], event_payload["body"])
 
     # ── Event handlers ───────────────────────────────────────────────────
 
