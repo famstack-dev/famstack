@@ -755,39 +755,28 @@ OCR text:
         """
         logger.info("[archivist] Processing: {} ({} bytes)", display_name, len(file_data))
 
-        # Text-based files are already readable — just upload and file them
-        # without running OCR classification or reformatting. Paperless only
-        # registers a parser for `text/plain` (→ .txt) and `text/csv`, so
-        # everything else in this bucket is renamed to .txt and uploaded as
-        # text/plain. Preserves original content; loses only the .md/.json
-        # suffix in Paperless's UI — the mirror keeps the original name.
+        # Text-like extensions skip reformat (the content is already clean)
+        # but still run classification + mirror like every other document.
+        # Paperless only has parsers registered for text/plain and text/csv,
+        # so everything else in the text-like set is renamed to .txt at
+        # upload time. The Paperless-side filename loses its source suffix,
+        # but the mirror keeps `display_name` as its fallback title, so the
+        # original `.md` / `.yaml` / ... shows up in the archive.
         TEXT_LIKE = ("md", "txt", "csv", "json", "yaml", "yml", "toml")
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in TEXT_LIKE:
+        is_text = ext in TEXT_LIKE
+        if is_text:
             if ext == "csv":
                 upload_filename, upload_type = filename, "text/csv"
             elif ext == "txt":
                 upload_filename, upload_type = filename, "text/plain"
             else:
-                base = filename.rsplit(".", 1)[0]
+                base = filename.rsplit(".", 1)[0] or "document"
                 upload_filename, upload_type = f"{base}.txt", "text/plain"
-            task_id = await self._paperless_upload(upload_filename, file_data, content_type=upload_type)
-            if not task_id:
-                await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
-                return
-            try:
-                doc_id = await self._paperless_wait_task(task_id)
-            except PaperlessDuplicateError as e:
-                await self._send(room_id, self._duplicate_reply(display_name, e), reply_to)
-                return
-            link = f"{self.paperless_public_url}/documents/{doc_id}/details" if doc_id and self.paperless_public_url else ""
-            if doc_id:
-                await self._send(room_id, f"{self.t('filed', title=display_name)}\n\n  {link}", reply_to)
-            else:
-                await self._send(room_id, self.t("ocr_failed", name=display_name), reply_to)
-            return
+        else:
+            upload_filename, upload_type = filename, None
 
-        task_id = await self._paperless_upload(filename, file_data)
+        task_id = await self._paperless_upload(upload_filename, file_data, content_type=upload_type)
         if not task_id:
             await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
             return
@@ -938,11 +927,13 @@ OCR text:
             if updates:
                 await self._paperless_update_doc(doc_id, updates)
 
-        # ── Reformat (only when we had a classification) ─────────────────
+        # ── Reformat (only when we had a classification, and only for
+        #               non-text files — a .md is already clean, reformatting
+        #               would re-LLM content that's already in its final shape).
         await self._set_typing(room_id)
         reformat_failed = False
         formatted: str | None = None
-        if classification and self.reformat_enabled:
+        if classification and self.reformat_enabled and not is_text:
             formatted = await self._reformat(ocr_text)
             if formatted:
                 await self._paperless_update_doc(doc_id, {"content": formatted})
@@ -954,12 +945,24 @@ OCR text:
         # preceded by a committed mirror entry. Merging resolved_* into
         # `enriched` keeps the mirror frontmatter in lockstep with the
         # tag names actually written to Paperless.
-        body_text = formatted or ocr_text
-        processing = "ai" if formatted else "ocr_only"
-        try:
-            model = resolve_model(f"{self.name}/reformat") if formatted else None
-        except ValueError:
+        #
+        # For text files the mirror body is the original bytes decoded —
+        # preserves the source exactly (markdown stays markdown, JSON stays
+        # JSON) instead of whatever Paperless's text parser produced.
+        if is_text:
+            try:
+                body_text = file_data.decode("utf-8")
+            except UnicodeDecodeError:
+                body_text = file_data.decode("utf-8", errors="replace")
+            processing = "ocr_only"
             model = None
+        else:
+            body_text = formatted or ocr_text
+            processing = "ai" if formatted else "ocr_only"
+            try:
+                model = resolve_model(f"{self.name}/reformat") if formatted else None
+            except ValueError:
+                model = None
         enriched = dict(classification) if classification else {}
         enriched["topics"] = resolved_topics
         enriched["persons"] = resolved_persons
