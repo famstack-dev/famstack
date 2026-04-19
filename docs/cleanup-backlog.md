@@ -104,6 +104,42 @@ manually." Not a shipping-quality behaviour.
 
 ---
 
+## Paperless libmagic sniffing rejects many markdown files
+
+Paperless validates uploads by running libmagic on the bytes, not by
+trusting the HTTP Content-Type. A markdown file containing a
+`def foo(...):` code block gets sniffed as `text/x-script.python`
+and rejected with HTTP 400 — Paperless has no parser registered for
+that MIME. Same fate for markdown that looks like shell, C, or
+anything libmagic recognises outside the narrow supported list
+(`text/plain`, `text/csv`, office via Tika, PDF, images).
+
+Today the archivist renames `.md` → `.txt` + sets
+`content_type=text/plain`, but libmagic overrides both. The upload
+fails with the chat-user seeing `upload_failed` even though the file
+is perfectly valid markdown.
+
+**Scope when picked up:** pick one —
+
+- **Relax via Paperless config**: `PAPERLESS_CONSUMER_RECURSIVE` /
+  `PAPERLESS_CONSUMER_BARCODE_UPLOAD_ONLY` style env vars don't
+  cover this; may need to patch Paperless's mime-type allow-list via
+  a downstream consumer plugin. Possibly not tractable.
+- **Pre-wrap the body** so libmagic sniffs plain text regardless of
+  contents (e.g. prepend a few kB of prose). Hacky, distorts search.
+- **Skip Paperless for text files altogether** — route markdown /
+  notes to the future `brain` repo directly. Clean architecturally
+  but reopens the "Paperless fit" question and needs the brain
+  scaffolding first.
+
+**Why deferred:** working around libmagic in the hot path is gnarly;
+the real architectural answer (brain repo for notes) is a bigger
+conversation. For now the archivist surfaces the 400 body in logs
+(`_paperless_upload` logs the response), and the markdown e2e test
+stays within libmagic-safe content.
+
+---
+
 ## Bot context (ctx object for long-running bots)
 
 Hooks get a rich `ctx` with `ctx.secret`, `ctx.users`, `ctx.stack`,
