@@ -423,18 +423,26 @@ class GitMirror:
         model: str | None,
         paperless_url: str,
         tags: list[str] | None = None,
+        fallback_title: str | None = None,
     ) -> bool:
         """Create or update a document file in the git mirror.
 
         Returns True on success, False if skipped or failed. Failures are
         logged but never raised — the mirror is best-effort.
+
+        When classification produced no title (LLM flake, disabled, etc.)
+        the caller can supply `fallback_title` — typically the original
+        filename. Results in a far friendlier Obsidian entry than
+        `Paperless #42`.
         """
         if not await self.ensure_setup():
             return False
 
         client = ForgejoClient(url=self.code_url, token=self._creds.token)
 
-        title = classification.get("title") or f"Paperless #{paperless_id}"
+        title = (classification.get("title")
+                 or fallback_title
+                 or f"Paperless #{paperless_id}")
         date = classification.get("date")
         correspondent = classification.get("correspondent")
         document_type = classification.get("document_type")
