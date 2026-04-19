@@ -220,6 +220,25 @@ class ForgejoClient:
         return self._req("GET", f"/api/v1/repos/{owner}/{repo}",
                          headers=self._admin_header(), allow_404=True)
 
+    def update_repo(self, owner: str, repo: str, *,
+                    description: str | None = None,
+                    private: bool | None = None) -> None:
+        """Patch repo settings. Only fields with non-None values are sent.
+
+        Used to keep the Forgejo-side description in sync with what the
+        archivist renders, so wording changes on the product side reach
+        live instances on the next ensure_setup.
+        """
+        body: dict = {}
+        if description is not None:
+            body["description"] = description
+        if private is not None:
+            body["private"] = private
+        if not body:
+            return
+        self._req("PATCH", f"/api/v1/repos/{owner}/{repo}",
+                  headers=self._admin_header(), body=body)
+
     def create_repo(self, owner: str, repo: str, *,
                     description: str = "", private: bool = True,
                     owner_is_org: bool = False,
