@@ -71,7 +71,7 @@ async def test_archivist_files_and_mirrors_a_markdown_document(
     Then   Paperless has the doc filed (internally as .txt)
     And    `family/documents` has a mirror entry ending in `-p<id>.md`
     And    the mirror body is the original markdown content
-    And    `processing: ocr_only` in frontmatter (no reformat for text)
+    And    `processing: original` in frontmatter (body is the source bytes)
     And    no `model` key in frontmatter (reformat didn't run)
     """
     scope = mirror_scope
@@ -150,9 +150,9 @@ async def test_archivist_files_and_mirrors_a_markdown_document(
     assert "Servo A: 0–180°" in body, f"markdown content missing: {body[:300]!r}"
     assert "```python" in body, f"code fence missing: {body[:300]!r}"
 
-    bdd.and_("frontmatter says processing=ocr_only and no model is recorded")
-    assert fm.get("processing") == "ocr_only", \
-        f"expected processing=ocr_only, got {fm.get('processing')}"
+    bdd.and_("frontmatter says processing=original and no model is recorded")
+    assert fm.get("processing") == "original", \
+        f"expected processing=original, got {fm.get('processing')}"
     assert "model" not in fm, f"model key should be absent, got fm={fm}"
     assert fm.get("paperless_id") == paperless_id
     bdd.ok(f"fm: processing={fm['processing']}, paperless_id={fm['paperless_id']}")

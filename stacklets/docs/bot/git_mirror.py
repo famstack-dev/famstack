@@ -304,12 +304,14 @@ class GitMirror:
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_).strip("-").lower()
         return slug[:60] or "document"
 
-    def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_ai: bool) -> str:
+    def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_title: bool) -> str:
         """Build YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md.
 
-        The `-p<id>` suffix makes the Paperless ID recoverable from the
-        filename alone, so idempotency lookups survive cache loss without
-        needing to scan frontmatter.
+        `has_title` is True when we have a slug-worthy title (from AI
+        classification or the caller's fallback filename) — as opposed
+        to the generic `Paperless #N`. The `-p<id>` suffix always appears
+        so the Paperless ID is recoverable from the filename alone,
+        surviving cache loss without needing to scan frontmatter.
         """
         if date and re.match(r"^\d{4}-\d{2}-\d{2}$", date):
             y, m, _ = date.split("-")
@@ -317,7 +319,7 @@ class GitMirror:
         else:
             prefix = "_unfiled"
 
-        if has_ai and title:
+        if has_title and title:
             slug = self._slug(title)
             return f"{prefix}-{slug}-p{paperless_id}.md" if prefix != "_unfiled" else f"_unfiled/{slug}-p{paperless_id}.md"
         return f"{prefix}-p{paperless_id}.md" if prefix != "_unfiled" else f"_unfiled/p{paperless_id}.md"
@@ -440,9 +442,13 @@ class GitMirror:
 
         client = ForgejoClient(url=self.code_url, token=self._creds.token)
 
-        title = (classification.get("title")
-                 or fallback_title
-                 or f"Paperless #{paperless_id}")
+        # Title comes from AI classification first, then caller's fallback
+        # (usually the original filename), and only then the generic
+        # `Paperless #N`. A non-generic title is what gates the slug-style
+        # filename — *not* whether the body was AI-reformatted. Text files
+        # with `processing=original` still get a readable slug.
+        resolved_title = classification.get("title") or fallback_title
+        title = resolved_title or f"Paperless #{paperless_id}"
         date = classification.get("date")
         correspondent = classification.get("correspondent")
         document_type = classification.get("document_type")
@@ -457,8 +463,7 @@ class GitMirror:
             persons_raw = [persons_raw]
         persons = [p for p in persons_raw if isinstance(p, str) and p]
 
-        has_ai = processing == "ai"
-        target_path = self._filepath(date, paperless_id, title, has_ai)
+        target_path = self._filepath(date, paperless_id, title, bool(resolved_title))
 
         existing_path = await self._lookup_path(client, paperless_id)
         existing = None

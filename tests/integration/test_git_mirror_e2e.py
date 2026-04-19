@@ -149,7 +149,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     assert fm.get("correspondent") == expected_correspondent
     assert fm.get("document_type") == "Invoice"
     assert fm.get("persons") == ["Homer"]
-    assert fm.get("processing") == "ai"
+    assert fm.get("processing") == "ai_formatted"
     assert fm.get("source") == "paperless"
     # Resolved topic (scope-tagged) should appear in tags
     assert any(expected_topic == t for t in (fm.get("tags") or [])), \

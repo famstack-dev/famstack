@@ -803,7 +803,7 @@ OCR text:
             # Rare — still mirror a minimal entry so Paperless ⇄ mirror stay 1:1.
             await self._safe_mirror(
                 doc_id=doc_id, classification={}, body_text="",
-                processing="ocr_only", model=None,
+                processing="ocr", model=None,
                 fallback_title=display_name, paperless_tags=[],
             )
             await self._send(room_id, self.t("filed_no_details", name=display_name, link=link), reply_to)
@@ -949,16 +949,24 @@ OCR text:
         # For text files the mirror body is the original bytes decoded —
         # preserves the source exactly (markdown stays markdown, JSON stays
         # JSON) instead of whatever Paperless's text parser produced.
+        # `processing` describes the provenance of `body_text`:
+        #   ai_formatted — LLM reformat rewrote the body into clean markdown
+        #   ocr          — Paperless's OCR output, unchanged
+        #   original     — original bytes of a text-like file (markdown,
+        #                  JSON, YAML, ...) — no transformation applied
+        # Classification-ran-or-not is orthogonal: `topics`, `persons`,
+        # `correspondent`, `document_type` reflect what the LLM decided,
+        # independent of whether the body was rewritten.
         if is_text:
             try:
                 body_text = file_data.decode("utf-8")
             except UnicodeDecodeError:
                 body_text = file_data.decode("utf-8", errors="replace")
-            processing = "ocr_only"
+            processing = "original"
             model = None
         else:
             body_text = formatted or ocr_text
-            processing = "ai" if formatted else "ocr_only"
+            processing = "ai_formatted" if formatted else "ocr"
             try:
                 model = resolve_model(f"{self.name}/reformat") if formatted else None
             except ValueError:

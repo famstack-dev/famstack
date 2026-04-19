@@ -58,36 +58,36 @@ class TestSlug:
 # ── Filepath construction ──────────────────────────────────────────────────
 
 class TestFilepath:
-    def test_ai_with_date(self, mirror):
+    def test_with_title_and_date(self, mirror):
         path = mirror._filepath(
             date="2026-03-15", paperless_id=247,
-            title="ADAC Rechnung", has_ai=True,
+            title="ADAC Rechnung", has_title=True,
         )
         assert path == "2026/03/2026-03-15-adac-rechnung-p247.md"
 
-    def test_ai_without_date_goes_to_unfiled(self, mirror):
+    def test_with_title_without_date_goes_to_unfiled(self, mirror):
         path = mirror._filepath(
             date=None, paperless_id=247,
-            title="ADAC Rechnung", has_ai=True,
+            title="ADAC Rechnung", has_title=True,
         )
         assert path == "_unfiled/adac-rechnung-p247.md"
 
-    def test_ai_with_invalid_date_falls_through(self, mirror):
+    def test_with_title_invalid_date_falls_through(self, mirror):
         path = mirror._filepath(
             date="not-a-date", paperless_id=42,
-            title="A", has_ai=True,
+            title="A", has_title=True,
         )
         assert path == "_unfiled/a-p42.md"
 
-    def test_no_ai_with_date(self, mirror):
+    def test_no_title_with_date(self, mirror):
         path = mirror._filepath(
-            date="2026-03-15", paperless_id=42, title=None, has_ai=False,
+            date="2026-03-15", paperless_id=42, title=None, has_title=False,
         )
         assert path == "2026/03/2026-03-15-p42.md"
 
-    def test_no_ai_without_date(self, mirror):
+    def test_no_title_without_date(self, mirror):
         path = mirror._filepath(
-            date=None, paperless_id=42, title=None, has_ai=False,
+            date=None, paperless_id=42, title=None, has_title=False,
         )
         assert path == "_unfiled/p42.md"
 
@@ -106,12 +106,12 @@ class TestFrontmatter:
             tags=["Insurance", "Person: Homer"],
             paperless_id=247,
             paperless_url="http://docs.home.local/documents/247",
-            processing="ai",
+            processing="ai_formatted",
             model="qwen2.5:14b",
         )
         assert fm["title"] == "ADAC Rechnung März 2026"
         assert fm["paperless_id"] == 247
-        assert fm["processing"] == "ai"
+        assert fm["processing"] == "ai_formatted"
         assert fm["model"] == "qwen2.5:14b"
         assert fm["paperless_version"] == "2.14.5"
         assert fm["source"] == "paperless"
@@ -120,17 +120,29 @@ class TestFrontmatter:
         assert list(fm.keys())[0] == "title"
         assert list(fm.keys())[-1] == "added"
 
-    def test_ocr_only_omits_model(self, mirror):
+    def test_ocr_omits_model(self, mirror):
         fm = mirror._frontmatter(
             title="Untitled", date=None,
             correspondent=None, document_type=None, category=None,
             persons=[], tags=[], paperless_id=99,
-            paperless_url="", processing="ocr_only", model=None,
+            paperless_url="", processing="ocr", model=None,
         )
-        assert fm["processing"] == "ocr_only"
+        assert fm["processing"] == "ocr"
         assert "model" not in fm
         assert "correspondent" not in fm
         assert "persons" not in fm
+
+    def test_original_processing_is_text_file_provenance(self, mirror):
+        """`original` is the provenance for text-like files (.md, .json…)
+        whose body is the source bytes, not any LLM/OCR output."""
+        fm = mirror._frontmatter(
+            title="recipes", date=None,
+            correspondent=None, document_type=None, category=None,
+            persons=[], tags=[], paperless_id=5,
+            paperless_url="", processing="original", model=None,
+        )
+        assert fm["processing"] == "original"
+        assert "model" not in fm
 
     def test_no_paperless_version_when_unset(self, tmp_path):
         m = GitMirror(
@@ -141,7 +153,7 @@ class TestFrontmatter:
             title="t", date=None,
             correspondent=None, document_type=None, category=None,
             persons=[], tags=[], paperless_id=1,
-            paperless_url="", processing="ai", model="x",
+            paperless_url="", processing="ai_formatted", model="x",
         )
         assert "paperless_version" not in fm
 
@@ -152,23 +164,23 @@ class TestCommitMessage:
     def test_learn_with_model(self, mirror):
         msg = mirror._commit_message(
             verb="learn", title="ADAC Rechnung",
-            paperless_id=247, processing="ai", model="qwen2.5:14b",
+            paperless_id=247, processing="ai_formatted", model="qwen2.5:14b",
         )
         lines = msg.split("\n")
         assert lines[0] == "learn: ADAC Rechnung"
         assert lines[1] == ""
         assert "Paperless-Id: 247" in lines
-        assert "Processing: ai" in lines
+        assert "Processing: ai_formatted" in lines
         assert "Model: qwen2.5:14b" in lines
 
     def test_update_without_model(self, mirror):
         msg = mirror._commit_message(
             verb="update", title="x", paperless_id=1,
-            processing="ocr_only", model=None,
+            processing="ocr", model=None,
         )
         assert msg.startswith("update: x\n\n")
         assert "Paperless-Id: 1" in msg
-        assert "Processing: ocr_only" in msg
+        assert "Processing: ocr" in msg
         assert "Model:" not in msg
 
 
@@ -178,7 +190,7 @@ class TestRender:
     def test_full_document(self, mirror):
         fm = {
             "title": "ADAC Rechnung", "paperless_id": 247,
-            "processing": "ai", "source": "paperless",
+            "processing": "ai_formatted", "source": "paperless",
         }
         out = mirror._render(
             frontmatter=fm,
