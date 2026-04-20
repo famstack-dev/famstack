@@ -104,6 +104,112 @@ manually." Not a shipping-quality behaviour.
 
 ---
 
+## Paperless libmagic sniffing rejects many markdown files
+
+Paperless validates uploads by running libmagic on the bytes, not by
+trusting the HTTP Content-Type. A markdown file containing a
+`def foo(...):` code block gets sniffed as `text/x-script.python`
+and rejected with HTTP 400 — Paperless has no parser registered for
+that MIME. Same fate for markdown that looks like shell, C, or
+anything libmagic recognises outside the narrow supported list
+(`text/plain`, `text/csv`, office via Tika, PDF, images).
+
+Today the archivist renames `.md` → `.txt` + sets
+`content_type=text/plain`, but libmagic overrides both. The upload
+fails with the chat-user seeing `upload_failed` even though the file
+is perfectly valid markdown.
+
+**Scope when picked up:** pick one —
+
+- **Relax via Paperless config**: `PAPERLESS_CONSUMER_RECURSIVE` /
+  `PAPERLESS_CONSUMER_BARCODE_UPLOAD_ONLY` style env vars don't
+  cover this; may need to patch Paperless's mime-type allow-list via
+  a downstream consumer plugin. Possibly not tractable.
+- **Pre-wrap the body** so libmagic sniffs plain text regardless of
+  contents (e.g. prepend a few kB of prose). Hacky, distorts search.
+- **Skip Paperless for text files altogether** — route markdown /
+  notes to the future `brain` repo directly. Clean architecturally
+  but reopens the "Paperless fit" question and needs the brain
+  scaffolding first.
+
+**Why deferred:** working around libmagic in the hot path is gnarly;
+the real architectural answer (brain repo for notes) is a bigger
+conversation. For now the archivist surfaces the 400 body in logs
+(`_paperless_upload` logs the response), and the markdown e2e test
+stays within libmagic-safe content.
+
+---
+
+## Bot context (ctx object for long-running bots)
+
+Hooks get a rich `ctx` with `ctx.secret`, `ctx.users`, `ctx.stack`,
+`ctx.http_*`, `ctx.shell`, `ctx.step`. Bots get env vars + a settings
+dict + session_dir. The asymmetry forces every new bot need to be
+plumbed as an env template in `core/stacklet.toml` or a bot-local
+state file.
+
+Concrete friction points already felt:
+- Archivist mirrors Forgejo creds to `/data/docs/bot/forgejo-creds.json`
+  because `.stack/secrets.toml` is mounted read-only.
+- Admin usernames arrive parsed out of `STACK_ADMIN_USER_IDS`; native
+  access to `users.toml` would be cleaner.
+- No way for a bot to invoke another stacklet's CLI plugin without
+  duplicating the operation locally.
+
+**Scope when picked up:**
+- `lib/stack/context.py` with a `BotContext` class (or a shared base
+  with `HookContext`).
+- `core/bot-runner/main.py` builds ctx per bot; `MicroBot.__init__`
+  accepts it.
+- Compose mount adds `stack.toml` + `users.toml` to `/setup-state/`
+  (secrets.toml already there).
+- Per-plugin `api.py` / `cli.py` split so `ctx.cli("code", "org",
+  "create", "family")` can import-and-call without subprocess.
+
+**Why deferred:** touches framework, bot-runner, compose, and every
+plugin's shape — worth doing when we have a second bot that wants
+cross-stacklet access (deriver, scribe-on-commit, morning briefing).
+Today only the archivist would benefit.
+
+**Dependency on this item:** the "Option 3" Forgejo-client collapse
+in feat/docs-git-mirror (sync client under `stack.forgejo`, bot
+wraps in `asyncio.to_thread`) is fine without ctx — but
+`ctx.cli(...)` is what unlocks cleaner Phase 2 if we ever want the
+bot to stop touching HTTP directly.
+
+---
+
+## Bot readiness marker — close the `stack up X` → bot-in-room race
+
+`stack up X` returns as soon as X's `[health]` probe passes, but the
+archivist (and any future bot) lives in the `core/bot-runner` container
+and has its own async startup: log in → initial sync → join its
+declared room. Today there's a ~5–15s window after `stack up` returns
+where a user who immediately drops a file in `#documents` gets ignored
+because the bot hasn't joined yet. The test rig surfaces the same race
+whenever core's `.env` changes (e.g. a new stacklet adds an env entry
+and the bot-runner restarts).
+
+**Scope:**
+- `microbot.py` — write a per-bot readiness marker to
+  `{session_dir}/{name}.ready` at the end of `on_first_sync`.
+- `lib/stack/stack.py` / `cli.py` — extend `wait_for_healthy` to also
+  wait for each declared bot's marker when the stacklet ships a
+  `bot/bot.toml`.
+- `docs/stack-reference.md` — document the bot readiness contract
+  alongside the existing `setup-done` marker.
+
+**Why deferred:** real but mild in production (humans don't type that
+fast); test rig mitigated with a `wait_for_room` helper in
+`tests/integration/matrix.py`. The refactor touches cross-stacklet
+startup orchestration — better as its own PR than folded into a
+feature.
+
+**When picking up:** the test helper becomes redundant for the common
+case but is worth keeping for scenarios that restart core mid-session.
+
+---
+
 ## `on_install.sh` hardcoded-default pattern
 
 Shell hooks read `${FAMSTACK_DATA_DIR:-$HOME/famstack-data}`. The

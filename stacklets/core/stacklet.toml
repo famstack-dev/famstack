@@ -49,6 +49,12 @@ PAPERLESS_URL        = "http://stack-docs-paperless:8000"
 PAPERLESS_PUBLIC_URL = "{docs_url}"
 PAPERLESS_TOKEN      = "{docs__API_TOKEN}"
 
+# Forgejo — archivist bot mirrors classified documents here. The
+# container URL is a literal (no template) so this resolves even when
+# the code stacklet hasn't been installed yet — the mirror just fails
+# its reachability probe and soft-skips.
+CODE_URL = "http://stack-code:3000"
+
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"
 IMMICH_API_KEY = "{photos__API_KEY}"

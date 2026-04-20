@@ -1,18 +1,24 @@
 """Integration test fixtures.
 
-The rig is a dedicated stack instance at tests/integration/instance/.
+The rig now runs against the *repo root* as a test instance — same
+layout as a real famstack (`stack.toml`, `users.toml`, `.stack/` at
+the repo root). A sentinel file `.stack/.test-instance` marks the
+repo as test-owned; `_seed_secrets.seed()` refuses to clobber a
+non-test setup, so running the rig over a real user's stack errors
+out with a cleanup hint instead of silently overwriting it.
+
 Stacklets are spun up on demand by the fixtures below — `paperless`
-brings up `docs`, `matrix` brings up `messages`. They stay running
-across pytest invocations; stop them between coding sessions with
-`tests/integration/test-env-down.sh`.
+brings up `docs`, `matrix` brings up `messages`, `code` brings up
+Forgejo. They stay running across pytest invocations; tear them down
+between coding sessions with `tests/integration/stacktests cleanup`.
 
 Per-test isolation is by prefix: every entity a test creates in a
 backend carries its scope uid, and teardown deletes only what matches.
 Tests run in parallel as long as they each ask for the same scope.
 
 External services exercised for real: Paperless, Postgres, Redis,
-Synapse. Only OpenAI is mocked (determinism trumps realism for
-classification output).
+Synapse, Forgejo. Only OpenAI is mocked (determinism trumps realism
+for classification output).
 """
 
 from __future__ import annotations
@@ -28,14 +34,20 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-INSTANCE_DIR = REPO_ROOT / "tests" / "integration" / "instance"
+# The test instance IS the repo root. Kept as a distinct name so
+# `.stack/` / `stack.toml` / `users.toml` references stay readable.
+INSTANCE_DIR = REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 from tests.integration.paperless import PaperlessAPI, cleanup_prefix
 from tests.integration.matrix import MatrixCreds, login
+from tests.integration.forgejo import ForgejoAPI, cleanup_mirror_files
 from tests.integration.bdd import BDDLog
-from tests.integration._seed_secrets import seed as _seed_test_instance_secrets
+from tests.integration._seed_secrets import (
+    seed as _seed_test_instance_secrets,
+    TestInstanceConflict,
+)
 
 
 # ── Pin the OpenAI mock to the port baked into stack.toml ────────────────
@@ -68,14 +80,18 @@ def openai(httpserver):
 
 @dataclass
 class TestStack:
-    """Thin wrapper around the CLI pointed at the test instance."""
+    """Thin wrapper around the CLI pointed at the test instance.
+
+    The test instance IS the repo root, so we don't set STACK_DIR.
+    `_seed_test_instance_secrets()` installs the test-owned stack.toml
+    and sentinel marker up front.
+    """
 
     instance_dir: Path = INSTANCE_DIR
 
     def _env(self) -> dict:
         return {
             **os.environ,
-            "STACK_DIR": str(self.instance_dir),
             "PYTHONPATH": str(REPO_ROOT / "lib"),
         }
 
@@ -108,9 +124,10 @@ def test_stack() -> TestStack:
 @pytest.fixture(scope="session")
 def stack():
     """A Stack instance pointed at the test instance — for tests that
-    need to exercise the framework API directly (is_healthy, etc.)."""
+    need to exercise the framework API directly (is_healthy, etc.).
+    Repo root and instance dir are the same in the repo-root rig."""
     from stack.cli import create_stack
-    return create_stack(REPO_ROOT, INSTANCE_DIR)
+    return create_stack(REPO_ROOT, REPO_ROOT)
 
 
 # ── Per-test prefix + cleanup ────────────────────────────────────────────
@@ -149,10 +166,15 @@ def bdd() -> BDDLog:
 
 # ── Sample files for upload ──────────────────────────────────────────────
 
-@pytest.fixture(scope="session")
-def sample_invoice_pdf() -> bytes:
+@pytest.fixture
+def sample_invoice_pdf(scope) -> bytes:
     """A minimal single-page PDF with extractable text — enough for
-    Paperless OCR to produce recognizable content the LLM can classify."""
+    Paperless OCR to produce recognizable content the LLM can classify.
+
+    Function-scoped with the test's scope uid baked into the rendered
+    text. Different bytes per run → Paperless's content-hash duplicate
+    check doesn't fire on re-runs against a retained instance (where
+    the prior doc is sitting in the trash)."""
     from PIL import Image, ImageDraw
     import io as _io
 
@@ -164,7 +186,8 @@ def sample_invoice_pdf() -> bytes:
               "Jahresbeitrag: EUR 340,00\n"
               "Versicherungsnehmer: Homer Simpson\n"
               "Vertragsnummer: KFZ-2026-000123\n"
-              "Zahlungsziel: 15.03.2026",
+              "Zahlungsziel: 15.03.2026\n\n"
+              f"Ref: {scope.uid}",
               fill="black")
     buf = _io.BytesIO()
     img.save(buf, format="PDF")
@@ -181,7 +204,10 @@ def paperless(test_stack) -> PaperlessAPI:
     Subsequent: no-op. Not torn down at session end — stop the test stack
     manually with tests/integration/test-env-down.sh.
     """
-    _seed_test_instance_secrets()
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
     result = test_stack.run("up", "docs", timeout=240)
     if "_stderr" in result and not result.get("ok"):
         pytest.fail(
@@ -219,7 +245,10 @@ def matrix(test_stack) -> dict:
     the first test pays the ~40s Synapse boot and the rest pay nothing.
     Not torn down — stop with tests/integration/test-env-down.sh.
     """
-    _seed_test_instance_secrets()
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
     result = test_stack.run("up", "messages", timeout=240)
     if "_stderr" in result and not result.get("ok"):
         pytest.fail(
@@ -254,3 +283,60 @@ async def homer(matrix):
         yield client
     finally:
         await client.close()
+
+
+# ── Forgejo / code stacklet (shared, session-scoped) ─────────────────────
+
+# The documents repo now lives under the Forgejo org the archivist
+# provisions (`mirror_org` in `stacklets/docs/bot/bot.toml`, default
+# "family"). The bot keeps its own Forgejo user identity for commit
+# authorship, but the repo owner is the org so admins see it in their
+# dashboards.
+FORGEJO_DOCS_OWNER = "family"
+FORGEJO_DOCS_REPO = "documents"
+
+
+@pytest.fixture(scope="session")
+def code(test_stack) -> ForgejoAPI:
+    """Brings up the code stacklet (Forgejo) and returns an admin API client.
+
+    `up core` first so any new core env (e.g. CODE_URL for the bot
+    runner) is rendered into the .env file and the bot-runner restarts
+    with it. `up code` then boots Forgejo itself.
+
+    First call per coding session: ~40s. Subsequent: no-op.
+    """
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
+    for target, timeout in (("core", 60), ("code", 240)):
+        result = test_stack.run("up", target, timeout=timeout)
+        if "_stderr" in result and not result.get("ok"):
+            pytest.fail(
+                f"`stack up {target}` failed (code {result.get('_code')}):\n"
+                f"{result.get('_stderr', '')}\n{result.get('_stdout', '')}"
+            )
+
+    from stack.secrets import TomlSecretStore
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    admin_password = store.get("_", "ADMIN_PASSWORD") or store.get("global", "ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.fail("No ADMIN_PASSWORD in test instance secrets for Forgejo.")
+
+    return ForgejoAPI(
+        url="http://localhost:42040",
+        admin_user="stackadmin",
+        admin_password=admin_password,
+    )
+
+
+@pytest.fixture
+def mirror_scope(code, scope) -> Scope:
+    """Scope bound to mirror cleanup — on teardown, every file in the
+    `documents` repo whose frontmatter title starts with scope.uid is
+    deleted. The repo + bot user + README survive between tests."""
+    scope.on_cleanup.append(
+        lambda uid: cleanup_mirror_files(code, FORGEJO_DOCS_OWNER, FORGEJO_DOCS_REPO, uid)
+    )
+    return scope

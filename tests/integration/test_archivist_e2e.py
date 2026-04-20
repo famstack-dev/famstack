@@ -102,9 +102,10 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     async def _find_doc():
         # The archivist uploads → Paperless Celery OCRs → archivist
         # PATCHes title + tags. Poll for the renamed title so we see
-        # the post-classification state, not the raw upload.
+        # the post-classification state, not the raw upload. 45s is
+        # plenty for a small invoice PDF — longer just delays failure.
         import asyncio
-        for _ in range(120):
+        for _ in range(45):
             docs = paperless.list_documents()
             match = next((d for d in docs if d.get("title") == expected_title), None)
             if match:

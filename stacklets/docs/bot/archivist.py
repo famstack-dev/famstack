@@ -47,6 +47,7 @@ from nio import (
     RoomMessageText,
 )
 
+from git_mirror import GitMirror
 from matching import (
     _is_empty, fuzzy_match_entity, match_persons, match_topics,
     build_document_event, deduplicate_hashtags, MAX_TITLE_LENGTH,
@@ -107,6 +108,21 @@ class LLMModelNotFoundError(Exception):
 
 class LLMTimeoutError(Exception):
     """LLM took too long — large documents or cold model start can cause this."""
+
+
+# ── Paperless Errors ─────────────────────────────────────────────────────────
+
+class PaperlessDuplicateError(Exception):
+    """Paperless rejected the upload as a content-hash duplicate of an
+    already-filed doc. Carries the original's id + title so the chat
+    reply can point the user at what's already there."""
+    def __init__(self, doc_id: int | None, title: str | None):
+        self.doc_id = doc_id
+        self.title = title
+        super().__init__(f"duplicate of #{doc_id}: {title}")
+
+
+_DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
 
 
 
@@ -188,8 +204,14 @@ class ArchivistBot(MicroBot):
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
+        # Mirror is opt-in while we validate the invariant in real use.
+        # Flip `mirror_to_git = true` in bot.toml to enable.
+        self.mirror_to_git = settings.get("mirror_to_git", False)
+        self.mirror_org = settings.get("mirror_org", "family")
         self._scan_sessions: dict[str, dict] = {}
         self._http: aiohttp.ClientSession | None = None
+        self._mirror: GitMirror | None = None
+        self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
         return _t(self.language, key, **kwargs)
@@ -199,9 +221,12 @@ class ArchivistBot(MicroBot):
         self.add_event_callback(self._on_text, RoomMessageText)
 
     async def start(self) -> None:
-        logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={}",
+        logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={} mirror_to_git={}",
                      self.paperless_url, self.openai_url, self.language,
-                     self.classify_enabled, self.reformat_enabled)
+                     self.classify_enabled, self.reformat_enabled, self.mirror_to_git)
+        if not self.mirror_to_git:
+            logger.info("[archivist] Git mirror (BETA): disabled. "
+                         "Flip `mirror_to_git = true` in stacklets/docs/bot/bot.toml to enable.")
         try:
             default_model = resolve_model(f"{self.name}/classifier")
             logger.info("[archivist] Model (classifier): {}", default_model)
@@ -210,14 +235,104 @@ class ArchivistBot(MicroBot):
 
         self._http = aiohttp.ClientSession()
         try:
+            if self.mirror_to_git:
+                self._init_mirror()
             await super().start()
         finally:
             await self._http.close()
+
+    def _init_mirror(self) -> None:
+        """Build a GitMirror if all required env is present.
+
+        Soft-fails: missing env just disables the mirror for this run.
+        The live reachability check happens inside `GitMirror.ensure_setup`
+        on first publish.
+        """
+        code_url = os.environ.get("CODE_URL", "")
+        admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+        admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+        admin_ids = os.environ.get("STACK_ADMIN_USER_IDS", "")
+
+        if not (code_url and admin_user and admin_password):
+            logger.info("[archivist] Git mirror disabled — CODE_URL or admin creds missing")
+            return
+
+        # @arthur:homestead.me → arthur
+        admin_usernames = []
+        for raw in admin_ids.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            name = raw.lstrip("@").split(":", 1)[0]
+            if name and name != admin_user:
+                admin_usernames.append(name)
+
+        # `self._session_dir` is already the in-container path the bot
+        # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
+        # that env var carries the host path and would dump mirror state
+        # outside the container's volume mount.
+        self._mirror = GitMirror(
+            code_url=code_url,
+            admin_user=admin_user,
+            admin_password=admin_password,
+            admin_usernames=admin_usernames,
+            data_dir=self._session_dir,
+            org_name=self.mirror_org,
+        )
+        logger.info("[archivist] Git mirror configured: {} org={} (admins: {})",
+                    code_url, self.mirror_org, ", ".join(admin_usernames) or "-")
 
     def _ai_status(self) -> str:
         if self.openai_url:
             return "🧠 **AI classification:** enabled — documents are tagged automatically."
         return "💡 **AI classification:** not configured. Run `stack up ai` to enable automatic tagging."
+
+    async def _safe_mirror(
+        self, *,
+        doc_id: int,
+        classification: dict,
+        body_text: str,
+        processing: str,
+        model: str | None,
+        fallback_title: str,
+        paperless_tags: list[str],
+    ) -> None:
+        """Mirror a filed doc to Forgejo — never raises, never blocks the reply.
+
+        Runs for every Paperless-accepted doc, regardless of whether AI
+        classification or reformat succeeded. That way the Forgejo archive
+        stays 1:1 with Paperless: an LLM flake or OCR miss can reduce the
+        richness of a mirror entry but can't make it disappear.
+        """
+        if not self._mirror:
+            return
+        try:
+            await self._mirror.publish(
+                paperless_id=doc_id,
+                classification=classification,
+                body_text=body_text,
+                processing=processing,
+                model=model,
+                paperless_url=self.paperless_public_url or self.paperless_url,
+                tags=paperless_tags,
+                fallback_title=fallback_title,
+            )
+        except Exception as e:
+            logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)
+
+    def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
+        """Render the 'already filed' chat reply for a Paperless duplicate.
+
+        Points the user at the original doc's Paperless page so they can
+        verify the match instead of wondering why the upload 'failed'.
+        """
+        link = (f"{self.paperless_public_url}/documents/{e.doc_id}/details"
+                if e.doc_id and self.paperless_public_url else "")
+        return self.t("already_filed",
+                      name=name,
+                      doc_id=e.doc_id if e.doc_id is not None else "?",
+                      title=e.title or "(no title)",
+                      link=link)
 
     async def on_first_sync(self) -> None:
         """Called after initial sync — send welcome message to rooms."""
@@ -268,9 +383,22 @@ class ArchivistBot(MicroBot):
     def _paperless_headers(self) -> dict:
         return {"Authorization": f"Token {self.paperless_token}"}
 
-    async def _paperless_upload(self, filename: str, data: bytes) -> str | None:
+    async def _paperless_upload(self, filename: str, data: bytes,
+                                 content_type: str | None = None) -> str | None:
+        """Upload a file to Paperless. Returns the task id on success.
+
+        When `content_type` is given it's set on the multipart field —
+        important for text-like files where aiohttp's default of
+        application/octet-stream stops Paperless from matching a parser
+        and the server returns 400 with no useful chat message. On
+        failure we log the response body (truncated) so the next 400
+        isn't a mystery.
+        """
         form = aiohttp.FormData()
-        form.add_field("document", data, filename=filename)
+        field_kwargs: dict = {"filename": filename}
+        if content_type:
+            field_kwargs["content_type"] = content_type
+        form.add_field("document", data, **field_kwargs)
         try:
             async with self._http.post(
                 f"{self.paperless_url}/api/documents/post_document/",
@@ -280,14 +408,19 @@ class ArchivistBot(MicroBot):
                     task_id = (await resp.text()).strip().strip('"')
                     logger.info("[archivist] Uploaded {} → task {}", filename, task_id)
                     return task_id
-                else:
-                    logger.error("[archivist] Upload failed (HTTP {})", resp.status)
-                    return None
+                body = (await resp.text())[:400]
+                logger.error("[archivist] Upload failed (HTTP {}): {} — body: {}",
+                             resp.status, filename, body)
+                return None
         except (aiohttp.ClientConnectionError, aiohttp.ClientError, OSError) as e:
             logger.error("[archivist] Paperless unreachable: {}", e)
             return None
 
     async def _paperless_wait_task(self, task_id: str, timeout: int = 120) -> int | None:
+        """Poll Paperless for task completion. Raises PaperlessDuplicateError
+        when Paperless rejects the upload as a duplicate; returns None for
+        every other FAILURE / timeout / transport error so the caller can
+        render the generic `ocr_failed` message."""
         import time
         start = time.time()
         while time.time() - start < timeout:
@@ -305,7 +438,13 @@ class ArchivistBot(MicroBot):
                                 doc_id = task.get("related_document")
                                 return int(doc_id) if doc_id else None
                             elif status == "FAILURE":
-                                logger.error("[archivist] Task failed: {}", task.get("result"))
+                                result = task.get("result") or ""
+                                logger.error("[archivist] Task failed: {}", result)
+                                match = _DUPLICATE_RE.search(result)
+                                if match:
+                                    title = match.group(1).strip()
+                                    dup_id = int(match.group(2))
+                                    raise PaperlessDuplicateError(dup_id, title)
                                 return None
             except (aiohttp.ClientConnectionError, aiohttp.ClientError, OSError) as e:
                 logger.error("[archivist] Paperless unreachable while waiting for task: {}", e)
@@ -621,248 +760,326 @@ OCR text:
         """
         logger.info("[archivist] Processing: {} ({} bytes)", display_name, len(file_data))
 
-        # Text-based files are already readable — just upload and file them
-        # without running OCR classification or reformatting.
+        # Text-like extensions skip reformat (the content is already clean)
+        # but still run classification + mirror like every other document.
+        # Paperless only has parsers registered for text/plain and text/csv,
+        # so everything else in the text-like set is renamed to .txt at
+        # upload time. The Paperless-side filename loses its source suffix,
+        # but the mirror keeps `display_name` as its fallback title, so the
+        # original `.md` / `.yaml` / ... shows up in the archive.
+        TEXT_LIKE = ("md", "txt", "csv", "json", "yaml", "yml", "toml")
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in ("md", "txt", "csv", "json", "yaml", "yml", "toml"):
-            task_id = await self._paperless_upload(filename, file_data)
-            if not task_id:
-                await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
-                return
-            doc_id = await self._paperless_wait_task(task_id)
-            link = f"{self.paperless_public_url}/documents/{doc_id}/details" if doc_id and self.paperless_public_url else ""
-            if doc_id:
-                await self._send(room_id, f"{self.t('filed', title=display_name)}\n\n  {link}", reply_to)
+        is_text = ext in TEXT_LIKE
+        if is_text:
+            if ext == "csv":
+                upload_filename, upload_type = filename, "text/csv"
+            elif ext == "txt":
+                upload_filename, upload_type = filename, "text/plain"
             else:
-                await self._send(room_id, self.t("ocr_failed", name=display_name), reply_to)
-            return
+                base = filename.rsplit(".", 1)[0] or "document"
+                upload_filename, upload_type = f"{base}.txt", "text/plain"
+        else:
+            upload_filename, upload_type = filename, None
 
-        task_id = await self._paperless_upload(filename, file_data)
+        task_id = await self._paperless_upload(upload_filename, file_data, content_type=upload_type)
         if not task_id:
             await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
             return
 
-        doc_id = await self._paperless_wait_task(task_id)
+        try:
+            doc_id = await self._paperless_wait_task(task_id)
+        except PaperlessDuplicateError as e:
+            await self._send(room_id, self._duplicate_reply(display_name, e), reply_to)
+            return
         if not doc_id:
             await self._send(room_id, self.t("ocr_failed", name=display_name), reply_to)
             return
 
+        # Everything past this line runs with a Paperless-filed doc. The
+        # mirror is reached unconditionally before we return: classification
+        # and reformat are *enrichment*, not gates, so a flaky LLM reduces
+        # the richness of the mirror entry rather than dropping it entirely.
+
         link = f"{self.paperless_public_url}/documents/{doc_id}/details" if self.paperless_public_url else ""
         doc = await self._paperless_get_doc(doc_id)
+
         if not doc:
+            # Paperless accepted the upload but we can't read the doc back.
+            # Rare — still mirror a minimal entry so Paperless ⇄ mirror stay 1:1.
+            await self._safe_mirror(
+                doc_id=doc_id, classification={}, body_text="",
+                processing="ocr", model=None,
+                fallback_title=display_name, paperless_tags=[],
+            )
             await self._send(room_id, self.t("filed_no_details", name=display_name, link=link), reply_to)
             return
 
-        ocr_text = doc.get("content", "")
-        if not ocr_text or len(ocr_text.strip()) < 10:
-            await self._send(room_id, self.t("filed_no_text", name=display_name, link=link), reply_to)
-            return
+        ocr_text = doc.get("content", "") or ""
+        has_text = len(ocr_text.strip()) >= 10
 
-        # Classification disabled — just file with the link
-        if not self.classify_enabled:
-            await self._send(room_id, f"{self.t('filed', title=display_name)}\n\n  {link}", reply_to)
-            return
+        # ── Enrichment state ─────────────────────────────────────────────
+        # Populated when classification succeeds, untouched otherwise so
+        # the mirror and chat-reply branches read the same outcome.
+        classification: dict = {}
+        llm_error: tuple[str, dict] | None = None
+        resolved_topics: list[str] = []
+        resolved_persons: list[str] = []
+        resolved_correspondent: str | None = None
+        resolved_type: str | None = None
+        summary: list[str] = []
+        created_new: list[str] = []
+        updates: dict = {}
+        title: str | None = None
 
-        # Classify
-        tags = await self._paperless_get_tags()
-        doc_types = await self._paperless_get_doc_types()
-        correspondents = await self._paperless_get_correspondents()
+        # ── Classify (only if enabled and we have text) ──────────────────
+        if self.classify_enabled and has_text:
+            tags = await self._paperless_get_tags()
+            doc_types = await self._paperless_get_doc_types()
+            correspondents = await self._paperless_get_correspondents()
 
-        try:
-            classification = await self._classify(ocr_text, tags, doc_types, correspondents)
-        except LLMUnavailableError:
-            await self._send(room_id, self.t("llm_unavailable", name=display_name, url=self.openai_url, link=link), reply_to)
-            return
-        except LLMModelNotFoundError as e:
-            await self._send(room_id, self.t("llm_model_missing", name=display_name, model=str(e), link=link), reply_to)
-            return
-        except LLMTimeoutError:
-            await self._send(room_id, self.t("llm_timeout", name=display_name, link=link), reply_to)
-            return
+            try:
+                classification = await self._classify(ocr_text, tags, doc_types, correspondents)
+            except LLMUnavailableError:
+                llm_error = ("llm_unavailable",
+                             {"name": display_name, "url": self.openai_url, "link": link})
+            except LLMModelNotFoundError as e:
+                llm_error = ("llm_model_missing",
+                             {"name": display_name, "model": str(e), "link": link})
+            except LLMTimeoutError:
+                llm_error = ("llm_timeout",
+                             {"name": display_name, "link": link})
 
-        if not classification:
-            await self._send(room_id, self.t("classify_failed", name=display_name, link=link), reply_to)
-            return
+        # ── Apply classification to Paperless (if we got one) ────────────
+        if classification:
+            title = classification.get("title")
+            if title and isinstance(title, str):
+                updates["title"] = title[:MAX_TITLE_LENGTH]
 
-        # Apply classification.
-        # resolved_* vars track the matched Paperless names (not raw LLM output)
-        # so hashtags in the summary show what was actually applied.
-        updates = {}
-        summary = []
-        created_new = []
-
-        title = classification.get("title")
-        if title and isinstance(title, str):
-            updates["title"] = title[:MAX_TITLE_LENGTH]
-
-        # ── Topic tags ───────────────────────────────────────────────────
-        # LLM returns "topics": ["Insurance", "Medical"] (usually 1, max 2).
-        # match_topics fuzzy-matches against category tags (excludes "Person: "
-        # tags) and splits into matched vs new-to-create.
-        tag_ids = list(doc.get("tags", []))
-        category_tags_dict = {t: tags[t] for t in tags if not t.startswith("Person: ")}
-        resolved_topics = []
-        topics_raw = classification.get("topics") or classification.get("topic")
-        matched_topics, new_topics = match_topics(topics_raw, category_tags_dict)
-        for mt in matched_topics:
-            tag_ids.append(tags[mt])
-            resolved_topics.append(mt)
-            summary.append(self.t("category", value=mt))
-        for nt in new_topics:
-            new_id = await self._paperless_create_tag(nt, "#4caf50")
-            if new_id:
-                tag_ids.append(new_id)
-                resolved_topics.append(nt)
-                summary.append(self.t("category_new", value=nt))
-                created_new.append(f"tag \"{nt}\"")
-
-        # ── Person tags -- closed set, never create ──────────────────────
-        # LLM returns "Homer" or ["Homer", "Marge"] for joint documents.
-        # match_persons handles strings, lists, full names, prefixed forms.
-        resolved_persons = []
-        persons_raw = classification.get("persons") or classification.get("person")
-        person_tags_matched = match_persons(persons_raw, tags)
-        for pt in person_tags_matched:
-            tag_ids.append(tags[pt])
-            name = pt.replace("Person: ", "")
-            resolved_persons.append(name)
-            summary.append(self.t("person", value=name))
-
-        if tag_ids:
-            updates["tags"] = list(set(tag_ids))
-
-        # ── Document type ───────────────────────────────────────────────
-        # Respect existing: if Homer manually set the type, don't overwrite.
-        resolved_type = None
-        doc_type = classification.get("document_type")
-        if not _is_empty(doc_type):
-            existing_type = doc.get("document_type")
-            if existing_type:
-                summary.append(self.t("type", value=doc_type))
-            else:
-                matched = fuzzy_match_entity(doc_type, doc_types)
-                if matched:
-                    updates["document_type"] = doc_types[matched]
-                    resolved_type = matched
-                    summary.append(self.t("type", value=matched))
-                else:
-                    new_id = await self._paperless_create_doc_type(doc_type)
-                    if new_id:
-                        updates["document_type"] = new_id
-                        resolved_type = doc_type
-                        summary.append(self.t("type_new", value=doc_type))
-                        created_new.append(f"document type \"{doc_type}\"")
-
-        # ── Correspondent ───────────────────────────────────────────────
-        # Always overwrite. Paperless's auto-classifier (matching_algorithm 6)
-        # may have guessed wrong with limited training data -- e.g. assigning
-        # "Denny Gunawan" to all documents because it was the first correspondent
-        # created. The LLM reads the actual document text and knows better.
-        resolved_correspondent = None
-        correspondent = classification.get("correspondent")
-        if not _is_empty(correspondent):
-            matched = fuzzy_match_entity(correspondent, correspondents)
-            if matched:
-                updates["correspondent"] = correspondents[matched]
-                resolved_correspondent = matched
-                summary.append(self.t("from", value=matched))
-            else:
-                new_id = await self._paperless_create_correspondent(correspondent)
+            # Topic tags — LLM returns 1-2 topics; match_topics splits
+            # against existing tags (ignoring "Person: " ones) and flags
+            # the rest for creation.
+            tag_ids = list(doc.get("tags", []))
+            category_tags_dict = {t: tags[t] for t in tags if not t.startswith("Person: ")}
+            topics_raw = classification.get("topics") or classification.get("topic")
+            matched_topics, new_topics = match_topics(topics_raw, category_tags_dict)
+            for mt in matched_topics:
+                tag_ids.append(tags[mt])
+                resolved_topics.append(mt)
+                summary.append(self.t("category", value=mt))
+            for nt in new_topics:
+                new_id = await self._paperless_create_tag(nt, "#4caf50")
                 if new_id:
-                    updates["correspondent"] = new_id
-                    resolved_correspondent = correspondent
-                    summary.append(self.t("from_new", value=correspondent))
-                    created_new.append(f"correspondent \"{correspondent}\"")
+                    tag_ids.append(new_id)
+                    resolved_topics.append(nt)
+                    summary.append(self.t("category_new", value=nt))
+                    created_new.append(f"tag \"{nt}\"")
 
-        date = classification.get("date")
-        if date and isinstance(date, str) and re.match(r'^\d{4}-\d{2}-\d{2}$', date):
-            updates["created"] = date
-            summary.append(self.t("date", value=date))
+            # Person tags — closed set, never create. match_persons handles
+            # strings, lists, full names, and "Person: X" prefixes.
+            persons_raw = classification.get("persons") or classification.get("person")
+            person_tags_matched = match_persons(persons_raw, tags)
+            for pt in person_tags_matched:
+                tag_ids.append(tags[pt])
+                name = pt.replace("Person: ", "")
+                resolved_persons.append(name)
+                summary.append(self.t("person", value=name))
 
-        if updates:
-            await self._paperless_update_doc(doc_id, updates)
+            if tag_ids:
+                updates["tags"] = list(set(tag_ids))
 
-        # Reformat OCR text into clean markdown
+            # Document type — respect a manual type; otherwise apply/create.
+            doc_type = classification.get("document_type")
+            if not _is_empty(doc_type):
+                existing_type = doc.get("document_type")
+                if existing_type:
+                    summary.append(self.t("type", value=doc_type))
+                else:
+                    matched = fuzzy_match_entity(doc_type, doc_types)
+                    if matched:
+                        updates["document_type"] = doc_types[matched]
+                        resolved_type = matched
+                        summary.append(self.t("type", value=matched))
+                    else:
+                        new_id = await self._paperless_create_doc_type(doc_type)
+                        if new_id:
+                            updates["document_type"] = new_id
+                            resolved_type = doc_type
+                            summary.append(self.t("type_new", value=doc_type))
+                            created_new.append(f"document type \"{doc_type}\"")
+
+            # Correspondent — always overwrite Paperless's auto-classifier
+            # guess; the LLM has read the actual text and knows better.
+            correspondent = classification.get("correspondent")
+            if not _is_empty(correspondent):
+                matched = fuzzy_match_entity(correspondent, correspondents)
+                if matched:
+                    updates["correspondent"] = correspondents[matched]
+                    resolved_correspondent = matched
+                    summary.append(self.t("from", value=matched))
+                else:
+                    new_id = await self._paperless_create_correspondent(correspondent)
+                    if new_id:
+                        updates["correspondent"] = new_id
+                        resolved_correspondent = correspondent
+                        summary.append(self.t("from_new", value=correspondent))
+                        created_new.append(f"correspondent \"{correspondent}\"")
+
+            date = classification.get("date")
+            if date and isinstance(date, str) and re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+                updates["created"] = date
+                summary.append(self.t("date", value=date))
+
+            if updates:
+                await self._paperless_update_doc(doc_id, updates)
+
+        # ── Reformat (only when we had a classification, and only for
+        #               non-text files — a .md is already clean, reformatting
+        #               would re-LLM content that's already in its final shape).
         await self._set_typing(room_id)
         reformat_failed = False
-        if self.reformat_enabled:
+        formatted: str | None = None
+        if classification and self.reformat_enabled and not is_text:
             formatted = await self._reformat(ocr_text)
             if formatted:
                 await self._paperless_update_doc(doc_id, {"content": formatted})
             else:
                 reformat_failed = True
 
-        # ── Build chat summary ───────────────────────────────────────────
+        # ── Mirror to Forgejo (always, when configured) ─────────────────
+        # Runs before the chat reply so failure-path replies are still
+        # preceded by a committed mirror entry. Merging resolved_* into
+        # `enriched` keeps the mirror frontmatter in lockstep with the
+        # tag names actually written to Paperless.
         #
-        # Layout optimized for scanning in Element:
-        #
-        #   Filed: Cursor - Pro Subscription USD 192.00 (#10)
-        #
-        #   Subscription | Invoice | Cursor | 2025-03-27
-        #
-        #   Summary text from LLM...
-        #
-        #   - Invoice number: 4182A976 0001
-        #   - Amount due: USD 192.00
-        #
-        #   Payment of USD 192.00 due (due 2025-03-27)
-        #
-        #   #Subscription #Cursor
-        #   http://...
+        # For text files the mirror body is the original bytes decoded —
+        # preserves the source exactly (markdown stays markdown, JSON stays
+        # JSON) instead of whatever Paperless's text parser produced.
+        # `processing` describes the provenance of `body_text`:
+        #   ai_formatted — LLM reformat rewrote the body into clean markdown
+        #   ocr          — Paperless's OCR output, unchanged
+        #   original     — original bytes of a text-like file (markdown,
+        #                  JSON, YAML, ...) — no transformation applied
+        # Classification-ran-or-not is orthogonal: `topics`, `persons`,
+        # `correspondent`, `document_type` reflect what the LLM decided,
+        # independent of whether the body was rewritten.
+        if is_text:
+            try:
+                body_text = file_data.decode("utf-8")
+            except UnicodeDecodeError:
+                body_text = file_data.decode("utf-8", errors="replace")
+            processing = "original"
+            model = None
+        else:
+            body_text = formatted or ocr_text
+            processing = "ai_formatted" if formatted else "ocr"
+            try:
+                model = resolve_model(f"{self.name}/reformat") if formatted else None
+            except ValueError:
+                model = None
+        enriched = dict(classification) if classification else {}
+        enriched["topics"] = resolved_topics
+        enriched["persons"] = resolved_persons
+        enriched["correspondent"] = resolved_correspondent
+        enriched["document_type"] = resolved_type
+        paperless_tags = [
+            *resolved_topics,
+            *(f"Person: {p}" for p in resolved_persons),
+        ]
+        await self._safe_mirror(
+            doc_id=doc_id,
+            classification=enriched,
+            body_text=body_text,
+            processing=processing,
+            model=model,
+            fallback_title=display_name,
+            paperless_tags=paperless_tags,
+        )
 
-        display_title = title or display_name
-        lines = [self.t("filed", title=display_title, doc_id=doc_id)]
+        # ── Chat reply ───────────────────────────────────────────────────
+        # Priority order:
+        #   LLM error > no-text > classify-disabled > classify-returned-nothing > happy path
+        if llm_error:
+            key, kwargs = llm_error
+            await self._send(room_id, self.t(key, **kwargs), reply_to)
+        elif not has_text:
+            await self._send(room_id, self.t("filed_no_text", name=display_name, link=link), reply_to)
+        elif not self.classify_enabled:
+            await self._send(room_id, f"{self.t('filed', title=display_name)}\n\n  {link}", reply_to)
+        elif not classification:
+            await self._send(room_id, self.t("classify_failed", name=display_name, link=link), reply_to)
+        else:
+            # Happy path — rich summary. Layout optimised for scanning in
+            # Element:
+            #
+            #   Filed: Cursor - Pro Subscription USD 192.00 (#10)
+            #
+            #   Subscription | Invoice | Cursor | 2025-03-27
+            #
+            #   Summary text from LLM...
+            #
+            #   - Invoice number: 4182A976 0001
+            #   - Amount due: USD 192.00
+            #
+            #   Payment of USD 192.00 due (due 2025-03-27)
+            #
+            #   http://...
 
-        # Compact metadata line: topic | type | from | date
-        # Separated by pipes for scannability instead of dense "Key: Value" pairs.
-        meta_parts = []
-        for s in summary:
-            # Strip "Category: ", "Type: ", "From: ", "Date: " prefixes
-            # to keep just the values for the compact line.
-            value = s.split(": ", 1)[-1] if ": " in s else s
-            meta_parts.append(value)
-        if meta_parts:
-            lines.extend(["", "  " + " | ".join(meta_parts)])
+            display_title = title or display_name
+            lines = [self.t("filed", title=display_title, doc_id=doc_id)]
 
-        doc_summary = classification.get("summary", "")
-        if doc_summary and isinstance(doc_summary, str):
-            lines.extend(["", f"  {doc_summary}"])
+            # Compact metadata line: topic | type | from | date
+            meta_parts = []
+            for s in summary:
+                value = s.split(": ", 1)[-1] if ": " in s else s
+                meta_parts.append(value)
+            if meta_parts:
+                lines.extend(["", "  " + " | ".join(meta_parts)])
 
-        # Facts as bullet points
-        facts = classification.get("facts", [])
-        if facts and isinstance(facts, list):
-            fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
-            if fact_lines:
-                lines.append("")
-                for f in fact_lines[:5]:
-                    lines.append(f"  - {f}")
+            doc_summary = classification.get("summary", "")
+            if doc_summary and isinstance(doc_summary, str):
+                lines.extend(["", f"  {doc_summary}"])
 
-        # Action items with due dates
-        action_items = classification.get("action_items", [])
-        if action_items and isinstance(action_items, list):
-            valid_actions = [a for a in action_items if isinstance(a, dict) and a.get("action")]
-            if valid_actions:
-                lines.append("")
-                for a in valid_actions[:3]:
-                    due = a.get("due", "")
-                    due_str = f" (due {due})" if due else ""
-                    lines.append(f"  {a['action']}{due_str}")
+            facts = classification.get("facts", [])
+            if facts and isinstance(facts, list):
+                fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
+                if fact_lines:
+                    lines.append("")
+                    for f in fact_lines[:5]:
+                        lines.append(f"  - {f}")
 
-        if created_new:
-            lines.extend(["", f"  {self.t('new_in_paperless', items=', '.join(created_new))}"])
+            action_items = classification.get("action_items", [])
+            if action_items and isinstance(action_items, list):
+                valid_actions = [a for a in action_items if isinstance(a, dict) and a.get("action")]
+                if valid_actions:
+                    lines.append("")
+                    for a in valid_actions[:3]:
+                        due = a.get("due", "")
+                        due_str = f" (due {due})" if due else ""
+                        lines.append(f"  {a['action']}{due_str}")
 
-        if reformat_failed:
-            lines.extend(["", f"  {self.t('reformat_failed')}"])
+            if created_new:
+                lines.extend(["", f"  {self.t('new_in_paperless', items=', '.join(created_new))}"])
 
-        if link:
-            lines.extend(["", f"  {link}"])
+            if reformat_failed:
+                lines.extend(["", f"  {self.t('reformat_failed')}"])
 
-        await self._send(room_id, "\n".join(lines), reply_to)
-        logger.info("[archivist] Processed: {} → doc {} [{}]", filename, doc_id, ", ".join(summary))
+            if link:
+                lines.extend(["", f"  {link}"])
 
-        # Structured event for downstream bots — Element ignores unknown
-        # event types, so this rides alongside the human-readable message
-        # without showing up in chat.
+            await self._send(room_id, "\n".join(lines), reply_to)
+
+        logger.info("[archivist] Processed: {} → doc {} [{}]",
+                     filename, doc_id, ", ".join(summary) or "no-classification")
+
+        # ── Structured event — always, once Paperless has the doc ───────
+        # Element ignores unknown event types, so the event rides next to
+        # the human reply without showing up in chat. Fires symmetrically
+        # with the mirror: every Paperless-filed doc produces an event,
+        # even when classification returned nothing. Downstream bots
+        # deciding whether to act on an event filter on the fields they
+        # care about — empty `topics` / `correspondent` is a valid
+        # "filed-but-uninterpreted" signal, not a reason to hide the
+        # event.
         event_payload = build_document_event(
             doc_id, classification,
             resolved_topics=resolved_topics,

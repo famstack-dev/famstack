@@ -101,6 +101,27 @@ async def resolve_room(client, alias: str) -> str:
     return resp.room_id
 
 
+async def wait_for_room(client, alias: str, timeout: float = 60.0) -> str:
+    """Poll room_resolve_alias until the room exists or timeout elapses.
+
+    Bot-created rooms (e.g. #documents) appear asynchronously after the
+    bot-runner restarts. `wait_for_room` absorbs that startup race so
+    tests don't have to special-case it.
+    """
+    import asyncio
+    from nio import RoomResolveAliasResponse
+
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        resp = await client.room_resolve_alias(alias)
+        if isinstance(resp, RoomResolveAliasResponse):
+            return resp.room_id
+        last = resp
+        await asyncio.sleep(2)
+    raise RuntimeError(f"Room {alias} did not appear within {timeout}s: {last}")
+
+
 async def ensure_joined(client, room_id: str) -> None:
     """Join the room if we're not already in it. Idempotent."""
     # client.rooms populates via /sync — a cheap initial sync guarantees

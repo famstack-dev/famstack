@@ -7,3 +7,14 @@ room_topic  = "Drop photos, PDFs, or links here. They get filed and tagged autom
 [settings]
 classify = true
 reformat = true
+
+# BETA — opt-in. Mirror every classified document into a Forgejo repo
+# as markdown (original content + YAML frontmatter), so the archive is
+# browsable and git-versioned alongside Paperless. Needs the `code`
+# stacklet installed. Flip to `true` to enable.
+mirror_to_git = false
+
+# Forgejo organisation the archivist owns the `documents` repo under
+# when `mirror_to_git` is enabled. Admins are added to the org's
+# Owners team so the repo shows up on their dashboard.
+mirror_org = "family"
