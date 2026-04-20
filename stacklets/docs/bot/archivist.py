@@ -204,7 +204,9 @@ class ArchivistBot(MicroBot):
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
-        self.mirror_to_git = settings.get("mirror_to_git", True)
+        # Mirror is opt-in while we validate the invariant in real use.
+        # Flip `mirror_to_git = true` in bot.toml to enable.
+        self.mirror_to_git = settings.get("mirror_to_git", False)
         self.mirror_org = settings.get("mirror_org", "family")
         self._scan_sessions: dict[str, dict] = {}
         self._http: aiohttp.ClientSession | None = None
@@ -222,6 +224,9 @@ class ArchivistBot(MicroBot):
         logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={} mirror_to_git={}",
                      self.paperless_url, self.openai_url, self.language,
                      self.classify_enabled, self.reformat_enabled, self.mirror_to_git)
+        if not self.mirror_to_git:
+            logger.info("[archivist] Git mirror (BETA): disabled. "
+                         "Flip `mirror_to_git = true` in stacklets/docs/bot/bot.toml to enable.")
         try:
             default_model = resolve_model(f"{self.name}/classifier")
             logger.info("[archivist] Model (classifier): {}", default_model)
