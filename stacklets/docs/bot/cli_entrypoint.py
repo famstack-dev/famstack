@@ -15,6 +15,14 @@ Commands:
     show <id> [--content]       pretty-print Paperless state
     classify <id> [--json]      dry classify — LLM JSON output, no writes
     reformat <id> [--raw]       dry reformat — clean markdown, no writes
+    reclassify <id> [<id>...]   re-run the pipeline + apply to Paperless.
+                                reformat + mirror default to bot.toml's
+                                [settings] — flags below only override.
+                                flags: --[no-]reformat --[no-]mirror --dry-run
+    mirror <id> [<id>...]       push docs to the Forgejo mirror using their
+                                current Paperless state (no LLM). Useful for
+                                backfilling after enabling mirror_to_git.
+                                flags: --dry-run
 """
 
 from __future__ import annotations
@@ -30,7 +38,13 @@ sys.path.insert(0, "/app")  # stack.resolve_model, stack.prompt
 
 import aiohttp
 
-from pipeline import Classifier, PaperlessAPI
+from pipeline import (
+    Classifier,
+    EnrichResult,
+    PaperlessAPI,
+    enrich_document,
+    reformat_document,
+)
 
 
 def _err(msg: str) -> None:
@@ -47,6 +61,8 @@ async def main(argv: list[str]) -> int:
         "show": _show,
         "classify": _classify,
         "reformat": _reformat,
+        "reclassify": _reclassify,
+        "mirror": _mirror_cmd,
     }
     fn = handlers.get(cmd)
     if not fn:
@@ -263,6 +279,510 @@ def _print_reformat_result(formatted: str | None, source_chars: int) -> None:
     print(formatted)
     print(f"\n  {DIM}{'─' * 60}{RESET}")
     print(f"  {DIM}--dry-run: no changes made to Paperless.{RESET}\n")
+
+
+# ── reclassify ──────────────────────────────────────────────────────────
+
+async def _reclassify(paperless: PaperlessAPI, classifier: Classifier,
+                      argv: list[str]) -> int:
+    dry_run = "--dry-run" in argv
+
+    # Defaults come from the archivist's bot.toml so the CLI behaves the
+    # same way the bot does for a new upload. Explicit flags override.
+    settings = _read_bot_toml_settings()
+    reformat = settings.get("reformat", True)
+    if "--no-reformat" in argv:
+        reformat = False
+    elif "--reformat" in argv:
+        reformat = True
+    mirror_enabled = settings.get("mirror_to_git", False)
+    if "--no-mirror" in argv:
+        mirror_enabled = False
+    elif "--mirror" in argv:
+        mirror_enabled = True
+
+    flag_tokens = {"--dry-run", "--reformat", "--no-reformat",
+                   "--mirror", "--no-mirror"}
+    positional = [a for a in argv if a not in flag_tokens]
+    unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
+    if unknown:
+        _err(f"Unknown flag(s): {' '.join(unknown)}")
+        return 2
+    if not positional:
+        _err("Usage: reclassify <id> [<id>...] [--[no-]reformat] [--[no-]mirror] [--dry-run]")
+        return 2
+
+    doc_ids: list[int] = []
+    for p in positional:
+        parsed = _parse_doc_id(p)
+        if parsed is None:
+            return 2
+        doc_ids.append(parsed)
+
+    mirror = _build_mirror_like_bot() if mirror_enabled else None
+    if mirror_enabled and mirror is None:
+        _err("Mirror enabled but required env (CODE_URL / admin creds) is missing. "
+             "Bring up `code` or pass --no-mirror.")
+        return 1
+
+    successes = 0
+    failures = 0
+    for doc_id in doc_ids:
+        ok = await _reclassify_one(
+            paperless, classifier, mirror,
+            doc_id=doc_id, reformat=reformat, dry_run=dry_run,
+        )
+        if ok:
+            successes += 1
+        else:
+            failures += 1
+
+    _print_reclassify_summary(successes, failures, dry_run=dry_run)
+    return 0 if failures == 0 else 1
+
+
+async def _reclassify_one(
+    paperless: PaperlessAPI, classifier: Classifier, mirror,
+    *, doc_id: int, reformat: bool, dry_run: bool,
+) -> bool:
+    """Re-enrich one Paperless doc. Returns True on success, False on any failure."""
+    doc = await paperless.get_doc(doc_id)
+    if not doc:
+        _err(f"Document #{doc_id} not found")
+        return False
+
+    tags = await paperless.get_tags()
+    doc_types = await paperless.get_doc_types()
+    correspondents = await paperless.get_correspondents()
+    before = _snapshot_doc(doc, tags, doc_types, correspondents)
+
+    pipeline_paperless = _DryRunPaperless(paperless) if dry_run else paperless
+    result = await enrich_document(
+        paperless=pipeline_paperless, classifier=classifier, doc=doc,
+    )
+    if result.llm_error:
+        kind, detail = result.llm_error
+        _err(f"#{doc_id}: LLM {kind} — {detail}")
+        return False
+    if not result.classification:
+        _err(f"#{doc_id}: classifier returned nothing")
+        return False
+
+    # Reformat — only meaningful on binary-origin docs; Paperless doesn't
+    # distinguish, so we always offer it as opt-in and trust the user.
+    formatted: str | None = None
+    if reformat:
+        ocr_text = (doc.get("content") or "").strip()
+        if dry_run:
+            formatted = await classifier.reformat(ocr_text)
+            if formatted and len(formatted) <= 20:
+                formatted = None
+        else:
+            formatted = await reformat_document(
+                paperless=paperless, classifier=classifier,
+                doc_id=doc_id, ocr_text=ocr_text,
+            )
+
+    # Mirror — refetch to get the post-PATCH state; skip for dry-run.
+    mirror_path: str | None = None
+    if mirror and not dry_run:
+        refreshed = await paperless.get_doc(doc_id) or doc
+        mirror_path = await _publish_mirror(
+            mirror, refreshed, result, formatted=formatted,
+        )
+
+    _print_reclassify_diff(
+        doc_id=doc_id, before=before, result=result,
+        reformatted=bool(formatted), mirror_path=mirror_path,
+        mirror_enabled=mirror is not None, dry_run=dry_run,
+    )
+    return True
+
+
+# ── reclassify: no-op writer for --dry-run ──────────────────────────────
+
+class _DryRunPaperless:
+    """Read-through wrapper that stubs every write so `enrich_document`
+    computes its plan without touching Paperless.
+
+    Reads delegate to the real PaperlessAPI. Writes return synthetic ids
+    (so `tag_ids.append(new_id)` still works downstream) and True for
+    updates. Safe to pass wherever pipeline expects a PaperlessAPI.
+    """
+
+    def __init__(self, real: PaperlessAPI):
+        self._real = real
+        self._fake_id = 10_000_000
+
+    async def get_doc(self, doc_id): return await self._real.get_doc(doc_id)
+    async def get_tags(self): return await self._real.get_tags()
+    async def get_doc_types(self): return await self._real.get_doc_types()
+    async def get_correspondents(self): return await self._real.get_correspondents()
+
+    async def update_doc(self, *a, **kw): return True
+
+    async def create_tag(self, *a, **kw):
+        self._fake_id += 1
+        return self._fake_id
+
+    async def create_doc_type(self, *a, **kw):
+        self._fake_id += 1
+        return self._fake_id
+
+    async def create_correspondent(self, *a, **kw):
+        self._fake_id += 1
+        return self._fake_id
+
+
+# ── reclassify: mirror bootstrap ────────────────────────────────────────
+
+def _read_bot_toml_settings() -> dict:
+    """Read [settings] from the archivist's bot.toml (same file the bot reads)."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        from stack._compat import tomllib
+    path = Path("/stacklets/docs/bot/bot.toml")
+    if not path.exists():
+        return {}
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+    return data.get("settings", {})
+
+
+def _mirror_enabled_in_bot_toml() -> bool:
+    return bool(_read_bot_toml_settings().get("mirror_to_git", False))
+
+
+def _build_mirror_like_bot():
+    """Build a GitMirror exactly like the archivist bot's `_init_mirror`.
+
+    Reuses the bot's creds file at /data/docs/bot/forgejo-creds.json so
+    the CLI and the bot authenticate as the same Forgejo user. Returns
+    None when required env is missing (typically code stacklet down).
+    """
+    code_url = os.environ.get("CODE_URL", "")
+    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+    admin_ids = os.environ.get("STACK_ADMIN_USER_IDS", "")
+    if not (code_url and admin_user and admin_password):
+        return None
+
+    admin_usernames: list[str] = []
+    for raw in admin_ids.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        name = raw.lstrip("@").split(":", 1)[0]
+        if name and name != admin_user:
+            admin_usernames.append(name)
+
+    from git_mirror import GitMirror
+    settings = _read_bot_toml_settings()
+    return GitMirror(
+        code_url=code_url,
+        admin_user=admin_user,
+        admin_password=admin_password,
+        admin_usernames=admin_usernames,
+        data_dir=Path("/data/docs/bot"),
+        org_name=settings.get("mirror_org", "family"),
+    )
+
+
+async def _publish_mirror(
+    mirror, doc: dict, result: EnrichResult,
+    *, formatted: str | None,
+) -> str | None:
+    """Publish a mirror entry for the re-enriched doc. Returns path or None."""
+    from stack import resolve_model
+
+    ocr_text = doc.get("content") or ""
+    if formatted:
+        body_text = formatted
+        processing = "ai_formatted"
+        try:
+            model = resolve_model("archivist-bot/reformat")
+        except ValueError:
+            model = None
+    else:
+        body_text = ocr_text
+        processing = "ocr"
+        model = None
+
+    enriched = dict(result.classification) if result.classification else {}
+    enriched["topics"] = result.resolved_topics
+    enriched["persons"] = result.resolved_persons
+    enriched["correspondent"] = result.resolved_correspondent
+    enriched["document_type"] = result.resolved_type
+    paperless_tags = [
+        *result.resolved_topics,
+        *(f"Person: {p}" for p in result.resolved_persons),
+    ]
+
+    paperless_url = (os.environ.get("PAPERLESS_PUBLIC_URL")
+                     or os.environ.get("PAPERLESS_URL", ""))
+    try:
+        ok = await mirror.publish(
+            paperless_id=doc["id"],
+            classification=enriched,
+            body_text=body_text,
+            processing=processing,
+            model=model,
+            paperless_url=paperless_url,
+            tags=paperless_tags,
+            fallback_title=doc.get("title"),
+        )
+    except Exception as e:
+        _err(f"#{doc['id']}: mirror publish failed — {e}")
+        return None
+    return mirror._cache.get(doc["id"]) if ok else None
+
+
+# ── reclassify: state snapshot + diff rendering ─────────────────────────
+
+def _snapshot_doc(doc: dict, tags: dict, doc_types: dict,
+                  correspondents: dict) -> dict:
+    """Capture the human-readable state of a doc as a flat dict."""
+    tag_name = {tid: name for name, tid in tags.items()}
+    type_name = {tid: name for name, tid in doc_types.items()}
+    corr_name = {tid: name for name, tid in correspondents.items()}
+
+    current_tags = [tag_name.get(t, f"#{t}") for t in (doc.get("tags") or [])]
+    topics = sorted(t for t in current_tags if not t.startswith("Person: "))
+    persons = sorted(t.replace("Person: ", "") for t in current_tags
+                     if t.startswith("Person: "))
+
+    return {
+        "title": doc.get("title") or "",
+        "topics": topics,
+        "persons": persons,
+        "correspondent": corr_name.get(doc.get("correspondent")),
+        "document_type": type_name.get(doc.get("document_type")),
+        "date": (doc.get("created") or "")[:10],
+    }
+
+
+def _print_reclassify_diff(*, doc_id: int, before: dict, result: EnrichResult,
+                            reformatted: bool, mirror_path: str | None,
+                            mirror_enabled: bool, dry_run: bool) -> None:
+    from stack.prompt import BOLD, DIM, GREEN, ORANGE, RESET, TEAL
+
+    after_title = result.classification.get("title") or before["title"]
+    after_date = result.updates_applied.get("created") or before["date"]
+
+    marker = f"  {DIM}(DRY RUN){RESET}" if dry_run else ""
+    print()
+    print(f"  {ORANGE}#{doc_id}{RESET}  {BOLD}{after_title}{RESET}{marker}")
+
+    _diff_row("title", before["title"], after_title)
+    _diff_row("topic", ", ".join(before["topics"]),
+              ", ".join(sorted(_union(before["topics"], result.resolved_topics))))
+    _diff_row("person", ", ".join(before["persons"]),
+              ", ".join(sorted(_union(before["persons"], result.resolved_persons))))
+    _diff_row("correspondent", before["correspondent"],
+              result.resolved_correspondent or before["correspondent"])
+    _diff_row("document_type", before["document_type"],
+              result.resolved_type or before["document_type"])
+    _diff_row("date", before["date"], after_date)
+
+    if reformatted:
+        verb = "would reformat" if dry_run else "reformatted"
+        print(f"    {DIM}reformat:{RESET}       {TEAL}{verb}{RESET}")
+
+    if dry_run:
+        if mirror_enabled:
+            print(f"    {DIM}mirror:{RESET}         {DIM}skipped (--dry-run){RESET}")
+    elif mirror_enabled:
+        status = f"{GREEN}{mirror_path}{RESET}" if mirror_path else f"{ORANGE}failed{RESET}"
+        print(f"    {DIM}mirror:{RESET}         {status}")
+
+    if result.created_new:
+        print(f"    {DIM}created:{RESET}        {TEAL}{', '.join(result.created_new)}{RESET}")
+
+
+def _diff_row(label: str, before_value, after_value) -> None:
+    from stack.prompt import DIM, RESET, TEAL
+    before_disp = before_value if before_value else "(none)"
+    after_disp = after_value if after_value else "(none)"
+    if str(before_disp) == str(after_disp):
+        return
+    print(f"    {DIM}{label + ':':<15}{RESET} {before_disp}  {DIM}→{RESET}  {TEAL}{after_disp}{RESET}")
+
+
+def _union(a: list[str], b: list[str]) -> list[str]:
+    """Preserve order-insensitive union for diff rendering."""
+    seen = set()
+    out = []
+    for item in [*a, *b]:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _print_reclassify_summary(successes: int, failures: int, *, dry_run: bool) -> None:
+    from stack.prompt import DIM, GREEN, ORANGE, RESET
+    total = successes + failures
+    verb = "would reclassify" if dry_run else "reclassified"
+    print()
+    icon = f"{GREEN}✓{RESET}" if failures == 0 else f"{ORANGE}!{RESET}"
+    print(f"  {icon} {verb} {successes}/{total}" + (
+        f" ({failures} failed)" if failures else ""))
+    if dry_run:
+        print(f"  {DIM}--dry-run: no changes made to Paperless or the mirror.{RESET}")
+    print()
+
+
+# ── mirror (push existing docs, no LLM) ────────────────────────────────
+
+async def _mirror_cmd(paperless: PaperlessAPI, classifier: Classifier,
+                      argv: list[str]) -> int:
+    dry_run = "--dry-run" in argv
+    flag_tokens = {"--dry-run"}
+    positional = [a for a in argv if a not in flag_tokens]
+    unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
+    if unknown:
+        _err(f"Unknown flag(s): {' '.join(unknown)}")
+        return 2
+    if not positional:
+        _err("Usage: mirror <id> [<id>...] [--dry-run]")
+        return 2
+
+    doc_ids: list[int] = []
+    for p in positional:
+        parsed = _parse_doc_id(p)
+        if parsed is None:
+            return 2
+        doc_ids.append(parsed)
+
+    settings = _read_bot_toml_settings()
+    if not settings.get("mirror_to_git", False):
+        _err("Mirror is disabled in stacklets/docs/bot/bot.toml (mirror_to_git = false). "
+             "Flip it to true first, then `stack up core` to reboot the bot.")
+        return 1
+
+    mirror = _build_mirror_like_bot()
+    if mirror is None:
+        _err("Mirror env missing — bring up `code` so CODE_URL / admin creds are set.")
+        return 1
+
+    tags = await paperless.get_tags()
+    doc_types = await paperless.get_doc_types()
+    correspondents = await paperless.get_correspondents()
+
+    successes = 0
+    failures = 0
+    for doc_id in doc_ids:
+        doc = await paperless.get_doc(doc_id)
+        if not doc:
+            _err(f"#{doc_id}: not found")
+            failures += 1
+            continue
+
+        if dry_run:
+            _print_mirror_row(doc, path=None, dry_run=True)
+            successes += 1
+            continue
+
+        path = await _mirror_existing(mirror, doc, tags, doc_types, correspondents)
+        _print_mirror_row(doc, path, dry_run=False)
+        if path:
+            successes += 1
+        else:
+            failures += 1
+
+    _print_mirror_summary(successes, failures, dry_run=dry_run)
+    return 0 if failures == 0 else 1
+
+
+async def _mirror_existing(mirror, doc: dict, tags: dict, doc_types: dict,
+                           correspondents: dict) -> str | None:
+    """Publish a mirror entry from the doc's current Paperless state.
+
+    No LLM call, no reclassification. `processing` is set to "ocr" because
+    we're shipping whatever Paperless's content field currently holds —
+    could be raw OCR, could be an earlier ai_formatted body. We don't
+    track provenance for backfill; the important thing is the mirror entry
+    exists and matches Paperless.
+    """
+    classification = _classification_from_doc(doc, tags, doc_types, correspondents)
+    paperless_tag_names = [
+        *classification.get("topics", []),
+        *(f"Person: {p}" for p in classification.get("persons", [])),
+    ]
+    body_text = doc.get("content") or ""
+    paperless_url = (os.environ.get("PAPERLESS_PUBLIC_URL")
+                     or os.environ.get("PAPERLESS_URL", ""))
+
+    try:
+        ok = await mirror.publish(
+            paperless_id=doc["id"],
+            classification=classification,
+            body_text=body_text,
+            processing="ocr",
+            model=None,
+            paperless_url=paperless_url,
+            tags=paperless_tag_names,
+            fallback_title=doc.get("title"),
+        )
+    except Exception as e:
+        _err(f"#{doc['id']}: mirror publish failed — {e}")
+        return None
+    return mirror._cache.get(doc["id"]) if ok else None
+
+
+def _classification_from_doc(doc: dict, tags: dict, doc_types: dict,
+                              correspondents: dict) -> dict:
+    """Reshape a Paperless doc's current fields into classification form.
+
+    Mirror.publish expects topics / persons / correspondent / document_type
+    as human-readable strings (not ids) — same shape the LLM produces.
+    """
+    tag_name = {tid: name for name, tid in tags.items()}
+    type_name = {tid: name for name, tid in doc_types.items()}
+    corr_name = {tid: name for name, tid in correspondents.items()}
+
+    doc_tag_names = [tag_name[t] for t in (doc.get("tags") or []) if t in tag_name]
+    topics = [t for t in doc_tag_names if not t.startswith("Person: ")]
+    persons = [t.replace("Person: ", "") for t in doc_tag_names
+               if t.startswith("Person: ")]
+    date = (doc.get("created") or "")[:10] or None
+
+    return {
+        "title": doc.get("title") or "",
+        "date": date,
+        "topics": topics,
+        "persons": persons,
+        "correspondent": corr_name.get(doc.get("correspondent")),
+        "document_type": type_name.get(doc.get("document_type")),
+    }
+
+
+def _print_mirror_row(doc: dict, path: str | None, *, dry_run: bool) -> None:
+    from stack.prompt import BOLD, DIM, GREEN, ORANGE, RESET, TEAL
+    title = doc.get("title") or "(no title)"
+    marker = f"  {DIM}(DRY RUN){RESET}" if dry_run else ""
+    print()
+    print(f"  {ORANGE}#{doc.get('id')}{RESET}  {BOLD}{title}{RESET}{marker}")
+    if dry_run:
+        print(f"    {DIM}mirror:{RESET} {TEAL}would publish{RESET}")
+    elif path:
+        print(f"    {DIM}mirror:{RESET} {GREEN}{path}{RESET}")
+    else:
+        print(f"    {DIM}mirror:{RESET} {ORANGE}failed{RESET}")
+
+
+def _print_mirror_summary(successes: int, failures: int, *, dry_run: bool) -> None:
+    from stack.prompt import DIM, GREEN, ORANGE, RESET
+    total = successes + failures
+    verb = "would mirror" if dry_run else "mirrored"
+    icon = f"{GREEN}✓{RESET}" if failures == 0 else f"{ORANGE}!{RESET}"
+    print()
+    print(f"  {icon} {verb} {successes}/{total}" + (
+        f" ({failures} failed)" if failures else ""))
+    if dry_run:
+        print(f"  {DIM}--dry-run: no commits to Forgejo.{RESET}")
+    print()
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
