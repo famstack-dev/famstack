@@ -39,6 +39,12 @@ Commands:
                                 delete seeded tags + types from the given
                                 language section that have zero documents.
                                 Safe cleanup for cold-start duplicates.
+    tags delete <name> [--type] [--dry]
+                                delete a single tag. Refuses to delete a
+                                tag that has documents attached — use
+                                merge instead to preserve assignments.
+                                With --type the operation runs on
+                                document_types.
 
 All dry flags accept `--dry` and `--dry-run` interchangeably.
 """
@@ -897,18 +903,20 @@ def _read_taxonomy() -> dict:
 
 # ── tags (dispatcher) ──────────────────────────────────────────────────
 
-_TAGS_SUBCOMMANDS = {"merge", "prune"}
+_TAGS_SUBCOMMANDS = {"merge", "prune", "delete"}
 
 
 async def _tags(paperless: PaperlessAPI, classifier: Classifier,
                 argv: list[str]) -> int:
-    """Dispatch `tags [merge|prune|...]`. Bare `tags` lists."""
+    """Dispatch `tags [merge|prune|delete|...]`. Bare `tags` lists."""
     if argv and argv[0] in _TAGS_SUBCOMMANDS:
         sub, rest = argv[0], argv[1:]
         if sub == "merge":
             return await _tags_merge(paperless, rest)
         if sub == "prune":
             return await _tags_prune(paperless, rest)
+        if sub == "delete":
+            return await _tags_delete(paperless, rest)
     return await _tags_list(paperless, argv)
 
 
@@ -1186,6 +1194,55 @@ def _print_merge_summary(src_name: str, dst_name: str, retagged: int,
     print(f"  {GREEN}✓{RESET} merged {kind} {src_name} → {dst_name} "
           f"({retagged} doc(s) retagged, source deleted)")
     print()
+
+
+# ── tags delete ────────────────────────────────────────────────────────
+
+async def _tags_delete(paperless: PaperlessAPI, argv: list[str]) -> int:
+    dry_run = _is_dry(argv)
+    is_type = "--type" in argv or "--types" in argv
+
+    flag_tokens = {"--type", "--types", *_DRY_FLAGS}
+    positional = [a for a in argv if a not in flag_tokens]
+    unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
+    if unknown:
+        _err(f"Unknown flag(s): {' '.join(unknown)}")
+        return 2
+    if len(positional) != 1:
+        _err("Usage: tags delete <name> [--type] [--dry|--dry-run]")
+        return 2
+    name = positional[0]
+
+    endpoint = "document_types" if is_type else "tags"
+    kind = "type" if is_type else "tag"
+    records = await _paperless_list_full(paperless, endpoint)
+    by_name = {r["name"]: r for r in records}
+
+    entity = by_name.get(name)
+    if not entity:
+        _err(f"{kind.capitalize()} not found: {name!r}")
+        return 1
+    if (entity.get("document_count") or 0) > 0:
+        _err(f"{kind.capitalize()} {name!r} has {entity['document_count']} "
+             f"document(s) — use `tags merge` instead.")
+        return 1
+
+    from stack.prompt import BOLD, DIM, GREEN, ORANGE, RESET
+    marker = f"  {DIM}(DRY RUN){RESET}" if dry_run else ""
+    verb = "Would delete" if dry_run else "Deleting"
+    print()
+    print(f"  {BOLD}{verb} {kind}: {name}{RESET}{marker}")
+    print(f"    {ORANGE}#{entity['id']}{RESET}  "
+          f"{DIM}(owner={entity.get('owner')}){RESET}")
+
+    if dry_run:
+        print()
+        return 0
+
+    if not await _paperless_delete(paperless, endpoint, entity["id"]):
+        return 1
+    print(f"  {GREEN}✓{RESET} deleted {kind} {name}\n")
+    return 0
 
 
 if __name__ == "__main__":
