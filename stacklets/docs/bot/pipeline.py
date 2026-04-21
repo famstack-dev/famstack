@@ -1,7 +1,7 @@
 """Document enrichment pipeline — shared by the archivist bot and the docs CLI.
 
 The archivist bot runs this on every new Paperless upload; the
-`stack docs reclassify` CLI runs the same pipeline against already-filed
+`stack docs reprocess` CLI runs the same pipeline against already-filed
 documents when the operator wants to re-tag, re-title, or refresh a stale
 classification after taxonomy changes.
 

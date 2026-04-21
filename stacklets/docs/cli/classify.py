@@ -1,18 +1,22 @@
-"""stack docs classify <id> — dry-run classifier against a filed document.
+"""stack docs classify <id> — classify a filed document and apply to Paperless.
 
-Runs the archivist's classify prompt against the doc's OCR text and prints
-the LLM's JSON output. Paperless is not touched, mirror is not updated.
+Runs the archivist's classify prompt against the doc's OCR text and
+applies the result (title, topic/person tags, type, correspondent, date)
+to Paperless. No reformat, no mirror — scoped to classification only.
 
-Useful for:
-  - Tuning the prompt (compare outputs across tweaks)
-  - Debugging a misclassification (what did the LLM actually see?)
-  - Validating a new model before switching the default
+Use `--dry-run` (or `--dry`) to preview without writes. Use `--json` for
+pipe-friendly raw LLM output (implies dry).
 
 Usage:
-    stack docs classify <id> [--json]    --json prints raw JSON (pipe-friendly).
+    stack docs classify <id> [--dry | --dry-run] [--json]
+
+Examples:
+    stack docs classify 42                  # apply classification
+    stack docs classify 42 --dry-run        # preview, no writes
+    stack docs classify 42 --json | jq      # raw JSON, pipeable
 """
 
-HELP = "Run the classifier on a filed document (dry, no writes)"
+HELP = "Classify a filed document and apply to Paperless"
 
 import sys
 from pathlib import Path

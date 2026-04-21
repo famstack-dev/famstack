@@ -1,7 +1,7 @@
 """Unit tests for the archivist enrichment pipeline.
 
 The pipeline is the shared classify + apply-to-Paperless + reformat core
-used by the archivist bot (live uploads) and the `stack docs reclassify`
+used by the archivist bot (live uploads) and the `stack docs reprocess`
 CLI (reprocessing filed documents). Tests use in-memory stub versions of
 PaperlessAPI and Classifier so the unit exercises matching + update
 assembly without HTTP or LLM calls.

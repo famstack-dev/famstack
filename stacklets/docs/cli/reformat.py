@@ -1,14 +1,21 @@
-"""stack docs reformat <id> — dry-run reformatter against a filed document.
+"""stack docs reformat <id> — reformat a doc's OCR body and apply to Paperless.
 
-Runs the archivist's OCR-to-markdown prompt and prints the result. Paperless
-is not touched, mirror is not updated. Useful for previewing what the
-reformat pass would do and for debugging reformats that seem to drop content.
+Runs the archivist's OCR-to-markdown prompt on the doc's current content
+and replaces the Paperless body with the clean markdown.
+
+Use `--dry-run` (or `--dry`) to preview without writes. Use `--raw` for
+pipe-friendly raw markdown output (implies dry).
 
 Usage:
-    stack docs reformat <id> [--raw]     --raw prints markdown only (pipe-friendly).
+    stack docs reformat <id> [--dry | --dry-run] [--raw]
+
+Examples:
+    stack docs reformat 42                  # reformat + apply
+    stack docs reformat 42 --dry-run        # preview, no writes
+    stack docs reformat 42 --raw > doc.md   # raw markdown, pipeable
 """
 
-HELP = "Run the reformatter on a filed document (dry, no writes)"
+HELP = "Reformat a document's OCR body and apply to Paperless"
 
 import sys
 from pathlib import Path

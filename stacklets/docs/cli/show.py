@@ -1,7 +1,7 @@
 """stack docs show <id> — inspect a document's current Paperless state.
 
 Read-only: title, date, type, correspondent, tags, and a content preview.
-Useful for sanity-checking a doc before reclassify, and for comparing
+Useful for sanity-checking a doc before reprocess, and for comparing
 before/after when tuning prompts or seeding new taxonomy.
 
 Usage:

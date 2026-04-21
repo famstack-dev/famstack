@@ -12,17 +12,24 @@ dispatcher on the host. Beats either "install aiohttp on the host" or
 "duplicate HTTP code in urllib".
 
 Commands:
-    show <id> [--content]       pretty-print Paperless state
-    classify <id> [--json]      dry classify — LLM JSON output, no writes
-    reformat <id> [--raw]       dry reformat — clean markdown, no writes
-    reclassify <id> [<id>...]   re-run the pipeline + apply to Paperless.
-                                reformat + mirror default to bot.toml's
-                                [settings] — flags below only override.
-                                flags: --[no-]reformat --[no-]mirror --dry-run
+    show <id> [--content]           pretty-print Paperless state
+    classify <id>   [--dry] [--json]
+                                classify + apply (title, tags, type,
+                                correspondent, date). --dry skips writes;
+                                --json prints raw LLM output (implies --dry).
+    reformat <id>   [--dry] [--raw]
+                                reformat OCR + apply content to Paperless.
+                                --dry skips writes; --raw prints the raw
+                                markdown (implies --dry).
+    reprocess <id> [<id>...]    full pipeline (classify + reformat + mirror)
+                                respecting archivist bot.toml [settings].
+                                flags: --[no-]reformat --[no-]mirror --dry
     mirror <id> [<id>...]       push docs to the Forgejo mirror using their
                                 current Paperless state (no LLM). Useful for
                                 backfilling after enabling mirror_to_git.
-                                flags: --dry-run
+                                flags: --dry
+
+All dry flags accept `--dry` and `--dry-run` interchangeably.
 """
 
 from __future__ import annotations
@@ -61,7 +68,7 @@ async def main(argv: list[str]) -> int:
         "show": _show,
         "classify": _classify,
         "reformat": _reformat,
-        "reclassify": _reclassify,
+        "reprocess": _reprocess,
         "mirror": _mirror_cmd,
     }
     fn = handlers.get(cmd)
@@ -157,36 +164,69 @@ def _render_show(doc: dict, tags: dict, doc_types: dict,
     print()
 
 
+# ── dry-run flag set (shared by every write-capable command) ───────────
+
+_DRY_FLAGS = ("--dry-run", "--dry")
+
+
+def _is_dry(argv: list[str]) -> bool:
+    return any(f in argv for f in _DRY_FLAGS)
+
+
 # ── classify ────────────────────────────────────────────────────────────
 
 async def _classify(paperless: PaperlessAPI, classifier: Classifier,
                     argv: list[str]) -> int:
     raw_json = "--json" in argv
-    positional = [a for a in argv if a != "--json"]
+    dry_run = _is_dry(argv) or raw_json  # --json implies no-writes
+
+    flag_tokens = {"--json", *_DRY_FLAGS}
+    positional = [a for a in argv if a not in flag_tokens]
+    unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
+    if unknown:
+        _err(f"Unknown flag(s): {' '.join(unknown)}")
+        return 2
     if not positional:
-        _err("Usage: classify <id> [--json]")
+        _err("Usage: classify <id> [--dry|--dry-run] [--json]")
         return 2
     doc_id = _parse_doc_id(positional[0])
     if doc_id is None:
         return 2
 
+    if raw_json:
+        return await _classify_raw_json(paperless, classifier, doc_id)
+
+    # Default / --dry-run: classify + apply (or plan) via the shared pipeline,
+    # rendered as a before/after diff. No reformat, no mirror — classify is
+    # scoped to classification only.
+    ok = await _reprocess_one(
+        paperless, classifier, mirror=None,
+        doc_id=doc_id, reformat=False, dry_run=dry_run,
+    )
+    if ok:
+        from stack.prompt import DIM, GREEN, RESET
+        verb = "would classify" if dry_run else "classified"
+        print(f"  {GREEN}✓{RESET} {verb}")
+        if dry_run:
+            print(f"  {DIM}--dry-run: no changes made to Paperless.{RESET}")
+        print()
+    return 0 if ok else 1
+
+
+async def _classify_raw_json(paperless: PaperlessAPI, classifier: Classifier,
+                             doc_id: int) -> int:
+    """--json mode: call the classifier directly and dump raw JSON. No writes."""
     doc = await paperless.get_doc(doc_id)
     if not doc:
         _err(f"Document #{doc_id} not found")
         return 1
-
     ocr_text = (doc.get("content") or "").strip()
     if len(ocr_text) < 10:
         _err(f"Document #{doc_id} has no usable OCR text ({len(ocr_text)} chars)")
         return 1
-
     tags = await paperless.get_tags()
     doc_types = await paperless.get_doc_types()
     correspondents = await paperless.get_correspondents()
-
-    if not raw_json:
-        _print_classify_header(doc, ocr_text)
-
     try:
         result = await classifier.classify(
             ocr_text=ocr_text, tags=tags,
@@ -195,32 +235,9 @@ async def _classify(paperless: PaperlessAPI, classifier: Classifier,
     except Exception as e:
         _err(f"Classifier failed: {e}")
         return 1
-
-    if raw_json:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        print()
-    else:
-        _print_classification(result)
+    json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+    print()
     return 0
-
-
-def _print_classify_header(doc: dict, ocr_text: str) -> None:
-    from stack.prompt import BOLD, DIM, ORANGE, RESET
-    print()
-    print(f"  {ORANGE}#{doc.get('id')}{RESET}  {BOLD}{doc.get('title') or '(no title)'}{RESET}")
-    print(f"  {DIM}Classifying {len(ocr_text):,} chars of OCR text...{RESET}")
-    print()
-
-
-def _print_classification(result: dict) -> None:
-    from stack.prompt import DIM, GREEN, RESET, TEAL
-    if not result:
-        print(f"  {DIM}LLM returned no classification (empty dict).{RESET}\n")
-        return
-    print(f"  {GREEN}✓{RESET}  Classification:\n")
-    for line in json.dumps(result, indent=2, ensure_ascii=False).splitlines():
-        print(f"    {TEAL}{line}{RESET}")
-    print(f"\n  {DIM}--dry-run: no changes made to Paperless.{RESET}\n")
 
 
 # ── reformat ────────────────────────────────────────────────────────────
@@ -228,9 +245,16 @@ def _print_classification(result: dict) -> None:
 async def _reformat(paperless: PaperlessAPI, classifier: Classifier,
                     argv: list[str]) -> int:
     raw = "--raw" in argv
-    positional = [a for a in argv if a != "--raw"]
+    dry_run = _is_dry(argv) or raw  # --raw implies no-writes
+
+    flag_tokens = {"--raw", *_DRY_FLAGS}
+    positional = [a for a in argv if a not in flag_tokens]
+    unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
+    if unknown:
+        _err(f"Unknown flag(s): {' '.join(unknown)}")
+        return 2
     if not positional:
-        _err("Usage: reformat <id> [--raw]")
+        _err("Usage: reformat <id> [--dry|--dry-run] [--raw]")
         return 2
     doc_id = _parse_doc_id(positional[0])
     if doc_id is None:
@@ -246,46 +270,67 @@ async def _reformat(paperless: PaperlessAPI, classifier: Classifier,
         _err(f"Document #{doc_id} has no usable OCR text ({len(ocr_text)} chars)")
         return 1
 
-    if not raw:
-        _print_reformat_header(doc, ocr_text)
-
-    formatted = await classifier.reformat(ocr_text)
-
     if raw:
+        # Pipe-friendly: direct classifier call, raw markdown, no writes.
+        formatted = await classifier.reformat(ocr_text)
         if formatted:
             sys.stdout.write(formatted)
             sys.stdout.write("\n")
         return 0 if formatted else 1
 
-    _print_reformat_result(formatted, len(ocr_text))
+    _print_reformat_header(doc, ocr_text, dry_run=dry_run)
+
+    # apply or plan through reformat_document (_DryRunPaperless swallows the
+    # PATCH so dry-run and real runs share the same code path).
+    pipeline_paperless = _DryRunPaperless(paperless) if dry_run else paperless
+    formatted = await reformat_document(
+        paperless=pipeline_paperless, classifier=classifier,
+        doc_id=doc_id, ocr_text=ocr_text,
+    )
+
+    _print_reformat_result(formatted, len(ocr_text), dry_run=dry_run)
     return 0 if formatted else 1
 
 
-def _print_reformat_header(doc: dict, ocr_text: str) -> None:
+def _print_reformat_header(doc: dict, ocr_text: str, *, dry_run: bool) -> None:
     from stack.prompt import BOLD, DIM, ORANGE, RESET
+    marker = f"  {DIM}(DRY RUN){RESET}" if dry_run else ""
     print()
-    print(f"  {ORANGE}#{doc.get('id')}{RESET}  {BOLD}{doc.get('title') or '(no title)'}{RESET}")
-    print(f"  {DIM}Reformatting {len(ocr_text):,} chars of OCR text...{RESET}")
+    print(f"  {ORANGE}#{doc.get('id')}{RESET}  {BOLD}{doc.get('title') or '(no title)'}{RESET}{marker}")
+    verb = "Would reformat" if dry_run else "Reformatting"
+    print(f"  {DIM}{verb} {len(ocr_text):,} chars of OCR text...{RESET}")
     print()
 
 
-def _print_reformat_result(formatted: str | None, source_chars: int) -> None:
+def _print_reformat_result(formatted: str | None, source_chars: int,
+                           *, dry_run: bool) -> None:
     from stack.prompt import DIM, GREEN, ORANGE, RESET
     if not formatted:
         print(f"  {ORANGE}✗{RESET}  Reformat returned nothing — LLM may be down or too short a response.\n")
         return
-    print(f"  {GREEN}✓{RESET}  Reformatted ({source_chars:,} → {len(formatted):,} chars):")
-    print(f"  {DIM}{'─' * 60}{RESET}\n")
-    print(formatted)
-    print(f"\n  {DIM}{'─' * 60}{RESET}")
-    print(f"  {DIM}--dry-run: no changes made to Paperless.{RESET}\n")
+    verb = "Would reformat" if dry_run else "Reformatted"
+    print(f"  {GREEN}✓{RESET}  {verb} ({source_chars:,} → {len(formatted):,} chars)")
+    if dry_run:
+        # Show the full markdown so the operator can sanity-check before
+        # a non-dry run overwrites the Paperless body.
+        print(f"  {DIM}{'─' * 60}{RESET}\n")
+        print(formatted)
+        print(f"\n  {DIM}{'─' * 60}{RESET}")
+        print(f"  {DIM}--dry-run: no changes made to Paperless.{RESET}")
+    else:
+        # Applied. The new content is already in Paperless — `stack docs
+        # show <id> --content` retrieves it if the user wants to inspect.
+        print(f"  {DIM}applied to Paperless. `stack docs show <id> --content` to view.{RESET}")
+    print()
 
 
-# ── reclassify ──────────────────────────────────────────────────────────
 
-async def _reclassify(paperless: PaperlessAPI, classifier: Classifier,
+
+# ── reprocess ──────────────────────────────────────────────────────────
+
+async def _reprocess(paperless: PaperlessAPI, classifier: Classifier,
                       argv: list[str]) -> int:
-    dry_run = "--dry-run" in argv
+    dry_run = _is_dry(argv)
 
     # Defaults come from the archivist's bot.toml so the CLI behaves the
     # same way the bot does for a new upload. Explicit flags override.
@@ -301,7 +346,7 @@ async def _reclassify(paperless: PaperlessAPI, classifier: Classifier,
     elif "--mirror" in argv:
         mirror_enabled = True
 
-    flag_tokens = {"--dry-run", "--reformat", "--no-reformat",
+    flag_tokens = {*_DRY_FLAGS, "--reformat", "--no-reformat",
                    "--mirror", "--no-mirror"}
     positional = [a for a in argv if a not in flag_tokens]
     unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
@@ -309,7 +354,7 @@ async def _reclassify(paperless: PaperlessAPI, classifier: Classifier,
         _err(f"Unknown flag(s): {' '.join(unknown)}")
         return 2
     if not positional:
-        _err("Usage: reclassify <id> [<id>...] [--[no-]reformat] [--[no-]mirror] [--dry-run]")
+        _err("Usage: reprocess <id> [<id>...] [--[no-]reformat] [--[no-]mirror] [--dry|--dry-run]")
         return 2
 
     doc_ids: list[int] = []
@@ -328,7 +373,7 @@ async def _reclassify(paperless: PaperlessAPI, classifier: Classifier,
     successes = 0
     failures = 0
     for doc_id in doc_ids:
-        ok = await _reclassify_one(
+        ok = await _reprocess_one(
             paperless, classifier, mirror,
             doc_id=doc_id, reformat=reformat, dry_run=dry_run,
         )
@@ -337,11 +382,11 @@ async def _reclassify(paperless: PaperlessAPI, classifier: Classifier,
         else:
             failures += 1
 
-    _print_reclassify_summary(successes, failures, dry_run=dry_run)
+    _print_reprocess_summary(successes, failures, dry_run=dry_run)
     return 0 if failures == 0 else 1
 
 
-async def _reclassify_one(
+async def _reprocess_one(
     paperless: PaperlessAPI, classifier: Classifier, mirror,
     *, doc_id: int, reformat: bool, dry_run: bool,
 ) -> bool:
@@ -391,7 +436,7 @@ async def _reclassify_one(
             mirror, refreshed, result, formatted=formatted,
         )
 
-    _print_reclassify_diff(
+    _print_reprocess_diff(
         doc_id=doc_id, before=before, result=result,
         reformatted=bool(formatted), mirror_path=mirror_path,
         mirror_enabled=mirror is not None, dry_run=dry_run,
@@ -399,7 +444,7 @@ async def _reclassify_one(
     return True
 
 
-# ── reclassify: no-op writer for --dry-run ──────────────────────────────
+# ── reprocess: no-op writer for --dry-run ──────────────────────────────
 
 class _DryRunPaperless:
     """Read-through wrapper that stubs every write so `enrich_document`
@@ -434,7 +479,7 @@ class _DryRunPaperless:
         return self._fake_id
 
 
-# ── reclassify: mirror bootstrap ────────────────────────────────────────
+# ── reprocess: mirror bootstrap ────────────────────────────────────────
 
 def _read_bot_toml_settings() -> dict:
     """Read [settings] from the archivist's bot.toml (same file the bot reads)."""
@@ -538,7 +583,7 @@ async def _publish_mirror(
     return mirror._cache.get(doc["id"]) if ok else None
 
 
-# ── reclassify: state snapshot + diff rendering ─────────────────────────
+# ── reprocess: state snapshot + diff rendering ─────────────────────────
 
 def _snapshot_doc(doc: dict, tags: dict, doc_types: dict,
                   correspondents: dict) -> dict:
@@ -562,7 +607,7 @@ def _snapshot_doc(doc: dict, tags: dict, doc_types: dict,
     }
 
 
-def _print_reclassify_diff(*, doc_id: int, before: dict, result: EnrichResult,
+def _print_reprocess_diff(*, doc_id: int, before: dict, result: EnrichResult,
                             reformatted: bool, mirror_path: str | None,
                             mirror_enabled: bool, dry_run: bool) -> None:
     from stack.prompt import BOLD, DIM, GREEN, ORANGE, RESET, TEAL
@@ -620,10 +665,10 @@ def _union(a: list[str], b: list[str]) -> list[str]:
     return out
 
 
-def _print_reclassify_summary(successes: int, failures: int, *, dry_run: bool) -> None:
+def _print_reprocess_summary(successes: int, failures: int, *, dry_run: bool) -> None:
     from stack.prompt import DIM, GREEN, ORANGE, RESET
     total = successes + failures
-    verb = "would reclassify" if dry_run else "reclassified"
+    verb = "would reprocess" if dry_run else "reprocessed"
     print()
     icon = f"{GREEN}✓{RESET}" if failures == 0 else f"{ORANGE}!{RESET}"
     print(f"  {icon} {verb} {successes}/{total}" + (
@@ -637,15 +682,15 @@ def _print_reclassify_summary(successes: int, failures: int, *, dry_run: bool) -
 
 async def _mirror_cmd(paperless: PaperlessAPI, classifier: Classifier,
                       argv: list[str]) -> int:
-    dry_run = "--dry-run" in argv
-    flag_tokens = {"--dry-run"}
+    dry_run = _is_dry(argv)
+    flag_tokens = set(_DRY_FLAGS)
     positional = [a for a in argv if a not in flag_tokens]
     unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
     if unknown:
         _err(f"Unknown flag(s): {' '.join(unknown)}")
         return 2
     if not positional:
-        _err("Usage: mirror <id> [<id>...] [--dry-run]")
+        _err("Usage: mirror <id> [<id>...] [--dry|--dry-run]")
         return 2
 
     doc_ids: list[int] = []
@@ -699,7 +744,7 @@ async def _mirror_existing(mirror, doc: dict, tags: dict, doc_types: dict,
                            correspondents: dict) -> str | None:
     """Publish a mirror entry from the doc's current Paperless state.
 
-    No LLM call, no reclassification. `processing` is set to "ocr" because
+    No LLM call, no classification run. `processing` is set to "ocr" because
     we're shipping whatever Paperless's content field currently holds —
     could be raw OCR, could be an earlier ai_formatted body. We don't
     track provenance for backfill; the important thing is the mirror entry
