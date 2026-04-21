@@ -17,12 +17,13 @@ tags = [
     "Steuer",              # returns, assessments, deductions
     "Finanzamt",           # tax office correspondence, Steuerbescheid
     "Gesundheit",          # doctors, prescriptions, lab results
-    "Schule",              # report cards, enrollment, school letters
+    "Bildung",             # school, university, courses, further education
     "Kind",                # daycare, activities, allowances, Kindergeld
     "Ehe",                 # marriage certificate, divorce, joint documents
     "Fahrzeug",            # registration, inspections, repairs, fuel
     "Wohnen",              # rent, mortgage, renovations, maintenance
     "Immobilien",          # property purchase, Grundbuch, Makler
+    "Architektur",         # floor plans, drawings, building designs
     "Nebenkosten",         # electricity, water, gas, heating
     "Arbeit",              # contracts, pay slips, references
     "Recht",               # legal contracts, notary, court
@@ -75,12 +76,13 @@ tags = [
     "Tax",                 # returns, assessments, deductions
     "Tax Office",          # IRS/HMRC correspondence, tax notices
     "Medical",             # doctors, prescriptions, lab results
-    "School",              # report cards, enrollment, school letters
+    "Education",           # school, university, courses, further education
     "Child",               # daycare, activities, allowances, child benefit
     "Marriage",            # marriage certificate, divorce, joint documents
     "Vehicle",             # registration, inspections, repairs, fuel
     "Housing",             # rent, mortgage, renovations, maintenance
     "Property",            # property purchase, deed, real estate agent
+    "Architecture",        # floor plans, drawings, building designs
     "Utility",             # electricity, water, gas, heating
     "Employment",          # contracts, pay slips, references
     "Legal",               # contracts, notary, court
