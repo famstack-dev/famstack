@@ -15,12 +15,12 @@ from seed import _load_taxonomy, TAXONOMY_PATH
 class TestLoadTaxonomy:
 
     def test_taxonomy_file_exists(self):
-        assert TAXONOMY_PATH.exists(), "taxonomy.yaml must exist"
+        assert TAXONOMY_PATH.exists(), "taxonomy.toml must exist"
 
     def test_german_tags_loaded(self):
         t = _load_taxonomy("de")
         assert "Versicherung" in t["tags"]
-        assert "Steuern" in t["tags"]
+        assert "Steuer" in t["tags"]
         assert "Wohnen" in t["tags"]
         assert "Nebenkosten" in t["tags"]
 
@@ -33,9 +33,9 @@ class TestLoadTaxonomy:
     def test_english_tags_loaded(self):
         t = _load_taxonomy("en")
         assert "Insurance" in t["tags"]
-        assert "Taxes" in t["tags"]
+        assert "Tax" in t["tags"]
         assert "Housing" in t["tags"]
-        assert "Utilities" in t["tags"]
+        assert "Utility" in t["tags"]
 
     def test_english_types_loaded(self):
         t = _load_taxonomy("en")
