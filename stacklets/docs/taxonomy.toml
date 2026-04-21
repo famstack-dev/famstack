@@ -14,11 +14,11 @@ tags = [
     "Finanzen",            # bank statements, retirement, accounts
     "Investments",         # stocks, funds, portfolios, dividends
     "Einkommen",           # salary, freelance income, side jobs
-    "Steuern",             # returns, assessments, deductions
+    "Steuer",              # returns, assessments, deductions
     "Finanzamt",           # tax office correspondence, Steuerbescheid
     "Gesundheit",          # doctors, prescriptions, lab results
     "Schule",              # report cards, enrollment, school letters
-    "Kinder",              # daycare, activities, allowances, Kindergeld
+    "Kind",                # daycare, activities, allowances, Kindergeld
     "Ehe",                 # marriage certificate, divorce, joint documents
     "Fahrzeug",            # registration, inspections, repairs, fuel
     "Wohnen",              # rent, mortgage, renovations, maintenance
@@ -26,22 +26,22 @@ tags = [
     "Nebenkosten",         # electricity, water, gas, heating
     "Arbeit",              # contracts, pay slips, references
     "Recht",               # legal contracts, notary, court
-    "Behörden",            # ID, permits, registrations, Meldebescheinigung
+    "Behörde",             # ID, permits, registrations, Meldebescheinigung
     "Mitgliedschaft",      # clubs, associations, memberships
     "Abonnement",          # streaming, software, magazines
     "Einkauf",             # general shopping, warranties, returns
     "Elektronik",          # computers, phones, gadgets, tech purchases
     "Lebensmittel",        # groceries, supermarket receipts
     "Reise",               # bookings, tickets, travel insurance
-    "Haustiere",           # vet, registration, insurance
+    "Haustier",            # vet, registration, insurance
     "Telekommunikation",   # phone, internet, mobile contracts
-    "Rezepte",             # family recipes, grandma's classics, cooking and baking
-    "Erinnerungen",        # kids' artwork, letters, postcards, milestone docs
-    "Urkunden",            # birth/death certificates, passports, wills, Vollmacht
+    "Rezept",              # family recipes, grandma's classics, cooking and baking
+    "Erinnerung",          # kids' artwork, letters, postcards, milestone docs
+    "Urkunde",             # birth/death certificates, passports, wills, Vollmacht
     "Rente",               # state pension, Riester, company pension, Altersvorsorge
-    "Spenden",             # charity donations, tax-deductible receipts
+    "Spende",              # charity donations, tax-deductible receipts
     "Garantie",            # warranty cards, proof of purchase for claims
-    "Impfungen",           # vaccination records, allergy passes, blood type
+    "Impfung",             # vaccination records, allergy passes, blood type
     "Zugangsdaten",        # WiFi passwords, serial numbers, access codes
 ]
 types = [
@@ -72,16 +72,16 @@ tags = [
     "Finance",             # bank statements, retirement, accounts
     "Investments",         # stocks, funds, portfolios, dividends
     "Income",              # salary, freelance income, side jobs
-    "Taxes",               # returns, assessments, deductions
+    "Tax",                 # returns, assessments, deductions
     "Tax Office",          # IRS/HMRC correspondence, tax notices
     "Medical",             # doctors, prescriptions, lab results
     "School",              # report cards, enrollment, school letters
-    "Children",            # daycare, activities, allowances, child benefit
+    "Child",               # daycare, activities, allowances, child benefit
     "Marriage",            # marriage certificate, divorce, joint documents
     "Vehicle",             # registration, inspections, repairs, fuel
     "Housing",             # rent, mortgage, renovations, maintenance
     "Property",            # property purchase, deed, real estate agent
-    "Utilities",           # electricity, water, gas, heating
+    "Utility",             # electricity, water, gas, heating
     "Employment",          # contracts, pay slips, references
     "Legal",               # contracts, notary, court
     "Government",          # ID, permits, registrations
@@ -91,16 +91,16 @@ tags = [
     "Electronics",         # computers, phones, gadgets, tech purchases
     "Groceries",           # supermarket receipts
     "Travel",              # bookings, tickets, travel insurance
-    "Pets",                # vet, registration, insurance
+    "Pet",                 # vet, registration, insurance
     "Telecom",             # phone, internet, mobile contracts
-    "Recipes",             # family recipes, grandma's classics, cooking and baking
-    "Memories",            # kids' artwork, letters, postcards, milestone docs
-    "Personal Records",    # birth/death certificates, passports, wills, power of attorney
+    "Recipe",              # family recipes, grandma's classics, cooking and baking
+    "Memory",              # kids' artwork, letters, postcards, milestone docs
+    "Personal Record",     # birth/death certificates, passports, wills, power of attorney
     "Pension",             # state pension, 401k, company pension, retirement
-    "Donations",           # charity donations, tax-deductible receipts
+    "Donation",            # charity donations, tax-deductible receipts
     "Warranty",            # warranty cards, proof of purchase for claims
-    "Vaccinations",        # vaccination records, allergy passes, blood type
-    "Credentials",         # WiFi passwords, serial numbers, access codes
+    "Vaccination",         # vaccination records, allergy passes, blood type
+    "Credential",          # WiFi passwords, serial numbers, access codes
 ]
 types = [
     "Invoice",
