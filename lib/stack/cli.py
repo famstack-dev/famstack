@@ -1082,10 +1082,12 @@ def main():
         handle_install(stck, None)
         return
 
-    # --json: machine-readable output for read-only queries (list, env)
+    # --json: machine-readable output for the bare `stack` / status / list /
+    # env paths. The flag is *detected* here but left in argv — stacklet CLI
+    # plugins (stack docs classify --json, ...) are free to define --json
+    # as their own option. parser.parse_known_args() below is tolerant of
+    # unknown flags, so leaving --json in doesn't disrupt top-level parsing.
     json_mode = "--json" in sys.argv
-    while "--json" in sys.argv:
-        sys.argv.remove("--json")
 
     parser = argparse.ArgumentParser(
         prog="stack", add_help=False,
