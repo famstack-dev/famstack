@@ -93,6 +93,23 @@ The archivist bot creates a **Documents** room in your chat. Send it a photo of 
 
 On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml) for the full list.
 
+**Mirror to git (beta).** Flip `mirror_to_git = true` in `stacklets/docs/bot/bot.toml` to get a markdown mirror of every filed doc in your Forgejo repo (`family/documents`). Paperless stays the canonical store; the mirror is the browsable, git-versioned human view. Requires the `code` stacklet.
+
+**Command line.** Every doc has an id (visible in Paperless). Operator commands:
+
+```bash
+./stack docs show 42                     # current state
+./stack docs classify 42                 # re-run AI tagging
+./stack docs reformat 42                 # re-run OCR to clean markdown
+./stack docs reprocess 42                # full pipeline, respects bot.toml
+./stack docs mirror 42                   # publish to Forgejo mirror
+./stack docs tags                        # list tags with document counts
+./stack docs tags merge Auto Fahrzeug    # merge duplicate tags
+./stack docs tags prune --lang de        # drop unused seeded tags
+```
+
+Every write command accepts `--dry` (or `--dry-run`) to preview. `reprocess` is clean-slate: running it twice won't accumulate old tags.
+
 **Port:** 42020
 **Data:** `~/famstack-data/docs/paperless/` (documents, media), `~/famstack-data/docs/postgres/` (database), `~/famstack-data/docs/consume/` (inbox folder)
 
