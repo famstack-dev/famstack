@@ -567,9 +567,16 @@ async def enrich_document(
     if title and isinstance(title, str):
         updates["title"] = title[:MAX_TITLE_LENGTH]
 
+    # Fresh-filed semantics: the classification result IS the full state
+    # of the doc after this call. We don't merge with whatever was there
+    # before — that would accumulate tags on every re-run (the "Haushalt
+    # sticks around after reprocess" bug). The bot's new-upload path is
+    # unaffected: a just-filed doc has no prior tags or type, so starting
+    # from a blank slate is a no-op.
+    tag_ids: list[int] = []
+
     # Topics — open set. matching.py splits into existing vs new; new tags
     # are created in Paperless and treated as resolved.
-    tag_ids = list(doc.get("tags", []))
     category_tags = {t: tid for t, tid in tags.items() if not t.startswith("Person: ")}
     topics_raw = classification.get("topics") or classification.get("topic")
     matched_topics, new_topics = match_topics(topics_raw, category_tags)
@@ -592,27 +599,27 @@ async def enrich_document(
         tag_ids.append(tags[pt])
         result.resolved_persons.append(pt.replace("Person: ", ""))
 
-    if tag_ids:
-        updates["tags"] = list(set(tag_ids))
+    # Always write the tag set — even an empty list. A reprocess that
+    # yields no topics/persons should leave the doc with no tags, matching
+    # the state a fresh upload would produce from the same LLM output.
+    updates["tags"] = list(set(tag_ids))
 
-    # Document type — respect a manually-set type on the doc: the user
-    # curated it and the LLM shouldn't overwrite. When unset, apply the
-    # LLM's call (matching existing or creating new).
+    # Document type — LLM-decided, no manual-type preservation. "Fresh
+    # reprocess" means the LLM's pick wins; a user who curated a type
+    # manually before should reprocess knowing they're asking for the
+    # AI's verdict.
     doc_type = classification.get("document_type")
     if not _is_empty(doc_type):
-        if doc.get("document_type"):
-            result.resolved_type = doc_type
+        matched = fuzzy_match_entity(doc_type, doc_types)
+        if matched:
+            updates["document_type"] = doc_types[matched]
+            result.resolved_type = matched
         else:
-            matched = fuzzy_match_entity(doc_type, doc_types)
-            if matched:
-                updates["document_type"] = doc_types[matched]
-                result.resolved_type = matched
-            else:
-                new_id = await paperless.create_doc_type(doc_type)
-                if new_id:
-                    updates["document_type"] = new_id
-                    result.resolved_type = doc_type
-                    result.created_new.append(f'document type "{doc_type}"')
+            new_id = await paperless.create_doc_type(doc_type)
+            if new_id:
+                updates["document_type"] = new_id
+                result.resolved_type = doc_type
+                result.created_new.append(f'document type "{doc_type}"')
 
     # Correspondent — always overwrite. Paperless's auto-classifier guesses
     # wrong with few samples; the LLM has read the actual text.

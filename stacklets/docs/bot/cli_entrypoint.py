@@ -620,14 +620,16 @@ def _print_reprocess_diff(*, doc_id: int, before: dict, result: EnrichResult,
     print(f"  {ORANGE}#{doc_id}{RESET}  {BOLD}{after_title}{RESET}{marker}")
 
     _diff_row("title", before["title"], after_title)
+    # Fresh-reprocess semantics: the resolved_* lists ARE the new full
+    # state for topics and persons, not additions to the prior set.
     _diff_row("topic", ", ".join(before["topics"]),
-              ", ".join(sorted(_union(before["topics"], result.resolved_topics))))
+              ", ".join(sorted(result.resolved_topics)))
     _diff_row("person", ", ".join(before["persons"]),
-              ", ".join(sorted(_union(before["persons"], result.resolved_persons))))
+              ", ".join(sorted(result.resolved_persons)))
     _diff_row("correspondent", before["correspondent"],
-              result.resolved_correspondent or before["correspondent"])
+              result.resolved_correspondent)
     _diff_row("document_type", before["document_type"],
-              result.resolved_type or before["document_type"])
+              result.resolved_type)
     _diff_row("date", before["date"], after_date)
 
     if reformatted:
@@ -652,17 +654,6 @@ def _diff_row(label: str, before_value, after_value) -> None:
     if str(before_disp) == str(after_disp):
         return
     print(f"    {DIM}{label + ':':<15}{RESET} {before_disp}  {DIM}→{RESET}  {TEAL}{after_disp}{RESET}")
-
-
-def _union(a: list[str], b: list[str]) -> list[str]:
-    """Preserve order-insensitive union for diff rendering."""
-    seen = set()
-    out = []
-    for item in [*a, *b]:
-        if item not in seen:
-            seen.add(item)
-            out.append(item)
-    return out
 
 
 def _print_reprocess_summary(successes: int, failures: int, *, dry_run: bool) -> None:

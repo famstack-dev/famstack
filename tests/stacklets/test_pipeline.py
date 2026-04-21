@@ -365,26 +365,61 @@ class TestEnrichCreateNew:
         assert all(not name.startswith("Person: ") for name, _ in seeded_paperless.created_tags)
 
 
-# ── Document type invariant ───────────────────────────────────────────────
+# ── Fresh-reprocess semantics ─────────────────────────────────────────────
 
-class TestEnrichDocTypeRespectsExisting:
-    """A manually-assigned document_type on the doc is never overwritten."""
+class TestEnrichFreshReprocess:
+    """enrich_document treats each run as a full fresh classification:
+    prior tags are dropped, prior document_type is overwritten."""
 
     @pytest.mark.asyncio
-    async def test_manual_type_not_overwritten(self, seeded_paperless):
+    async def test_prior_tags_cleared(self, seeded_paperless):
+        """Old classified tags don't accumulate on reprocess."""
         classifier = StubClassifier(payload={
-            "title": "x", "document_type": "Letter",
+            "title": "x", "topics": ["Insurance"], "persons": ["Homer"],
         })
-        doc = _doc(document_type=100)  # existing type id
+        # Doc had an old classification ("Shopping" + Person: Marge) plus a
+        # tag id the user added by hand (#999). All three should go; only
+        # the new classification remains.
+        doc = _doc(tags=[2, 11, 999])  # Shopping, Person: Marge, stray
 
         result = await enrich_document(
             paperless=seeded_paperless, classifier=classifier, doc=doc,
         )
 
-        # Type is resolved for the chat-reply/mirror summary but not PATCHed
-        assert result.resolved_type == "Letter"
         _, updates = seeded_paperless.updates[0]
-        assert "document_type" not in updates
+        assert set(updates["tags"]) == {1, 10}  # Insurance, Person: Homer
+        assert result.resolved_topics == ["Insurance"]
+        assert result.resolved_persons == ["Homer"]
+
+    @pytest.mark.asyncio
+    async def test_tags_cleared_when_llm_returns_no_categories(self, seeded_paperless):
+        """LLM returned a classification but no topics/persons — doc ends
+        up with no tags. Matches what a fresh upload with the same LLM
+        output would produce."""
+        classifier = StubClassifier(payload={"title": "x"})
+        doc = _doc(tags=[2, 11])  # had old classification
+
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=doc,
+        )
+        _, updates = seeded_paperless.updates[0]
+        assert updates["tags"] == []
+
+    @pytest.mark.asyncio
+    async def test_document_type_overwritten(self, seeded_paperless):
+        """A prior document_type is replaced with the LLM's pick, not preserved."""
+        classifier = StubClassifier(payload={
+            "title": "x", "document_type": "Letter",
+        })
+        doc = _doc(document_type=100)  # Invoice id
+
+        result = await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=doc,
+        )
+
+        _, updates = seeded_paperless.updates[0]
+        assert updates["document_type"] == 102  # Letter id
+        assert result.resolved_type == "Letter"
 
 
 # ── Title / date edge cases ───────────────────────────────────────────────
