@@ -57,6 +57,13 @@ types = [
     "Bedienungsanleitung",
     "Protokoll",
     "Buchung",
+    "Antrag",
+    "Mahnung",
+    "Attest",
+    "Merkblatt",
+    "Verschreibung",
+    "Steuerbescheid",
+    "Lohnabrechnung",
 ]
 
 [en]
@@ -108,4 +115,11 @@ types = [
     "Manual",
     "Protocol",
     "Booking",
+    "Application",
+    "Payment Reminder",
+    "Medical Certificate",
+    "Fact Sheet",
+    "Prescription",
+    "Tax Assessment",
+    "Pay Slip",
 ]
