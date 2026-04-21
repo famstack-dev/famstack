@@ -121,6 +121,82 @@ def test_stack() -> TestStack:
     return TestStack()
 
 
+# ── Beta features — enable before any container comes up ────────────────
+#
+# Some stacklets ship beta-grade features as opt-in (false by default in
+# bot.toml / stacklet.toml). For tests we want the full feature set
+# exercised, so flags are flipped in `pytest_sessionstart` before any
+# fixture runs. A fresh test run gets its first `stack up <stacklet>`
+# already picking up the beta flag; if a container is already running
+# with the stale default (previous session, no cleanup) we restart the
+# affected container so the in-memory state catches up with the file.
+#
+# Each flag declares the container(s) it lives inside — restart those
+# if and only if the flag actually changed on disk.
+#
+# Current beta flags:
+#   - stacklets/docs/bot/bot.toml : mirror_to_git (Forgejo markdown mirror)
+
+_BETA_FLAGS: list[tuple[Path, str, str, tuple[str, ...]]] = [
+    (
+        REPO_ROOT / "stacklets" / "docs" / "bot" / "bot.toml",
+        "mirror_to_git = false", "mirror_to_git = true",
+        ("stack-core-bot-runner",),
+    ),
+]
+_BETA_BACKUPS: dict[Path, str] = {}
+
+
+def _set_beta_flags(enable: bool) -> None:
+    """Flip flags to `true` (enable=True) or restore the committed default.
+
+    Tracks containers whose in-memory config depends on the flag and
+    restarts them if they're currently running — so a stale bot-runner
+    from a previous session picks up the new bot.toml without the test
+    having to tear down core first.
+    """
+    containers_to_restart: set[str] = set()
+    for path, off, on, containers in _BETA_FLAGS:
+        if not path.exists():
+            continue
+        current = path.read_text()
+        if enable:
+            if off in current:
+                _BETA_BACKUPS[path] = current
+                path.write_text(current.replace(off, on))
+                containers_to_restart.update(containers)
+        else:
+            original = _BETA_BACKUPS.pop(path, None)
+            if original is not None and current != original:
+                path.write_text(original)
+                containers_to_restart.update(containers)
+
+    for container in containers_to_restart:
+        _restart_if_running(container)
+
+
+def _restart_if_running(container: str) -> None:
+    running = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", container],
+        capture_output=True, text=True,
+    )
+    if running.returncode == 0 and running.stdout.strip() == "true":
+        subprocess.run(
+            ["docker", "restart", container],
+            capture_output=True, timeout=30,
+        )
+
+
+def pytest_sessionstart(session):  # noqa: D401 - pytest hook
+    """Pre-flight: enable beta features before any fixture boots a container."""
+    _set_beta_flags(enable=True)
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: D401 - pytest hook
+    """Restore on-disk flags regardless of how the session ended."""
+    _set_beta_flags(enable=False)
+
+
 @pytest.fixture(scope="session")
 def stack():
     """A Stack instance pointed at the test instance — for tests that
