@@ -27,7 +27,6 @@ and the sync loop — this file focuses purely on document processing logic.
 
 import asyncio
 import io
-import json
 import os
 import re
 import time
@@ -48,11 +47,16 @@ from nio import (
 )
 
 from git_mirror import GitMirror
-from matching import (
-    _is_empty, fuzzy_match_entity, match_persons, match_topics,
-    build_document_event, deduplicate_hashtags, MAX_TITLE_LENGTH,
-)
+from matching import build_document_event
 from microbot import MicroBot
+from pipeline import (
+    Classifier,
+    EnrichResult,
+    PaperlessAPI,
+    PaperlessDuplicateError,
+    enrich_document,
+    reformat_document,
+)
 from stack import resolve_model
 
 
@@ -78,6 +82,29 @@ def _timed(operation: str):
         elapsed = time.monotonic() - t0
         logger.info("[archivist] {} completed in {:.1f}s", operation, elapsed)
 
+def _llm_error_for_chat(
+    pipeline_error: tuple[str, str] | None,
+    *, name: str, openai_url: str, link: str,
+) -> tuple[str, dict] | None:
+    """Map a pipeline llm_error tuple to (translation-key, format-kwargs).
+
+    The pipeline speaks in transport terms ("unavailable", "model_missing",
+    "timeout"); the chat reply needs translation keys that already know
+    how to render the document's name and a link back to Paperless.
+    Returns None when there was no error.
+    """
+    if not pipeline_error:
+        return None
+    kind, detail = pipeline_error
+    if kind == "unavailable":
+        return ("llm_unavailable", {"name": name, "url": openai_url, "link": link})
+    if kind == "model_missing":
+        return ("llm_model_missing", {"name": name, "model": detail, "link": link})
+    if kind == "timeout":
+        return ("llm_timeout", {"name": name, "link": link})
+    return None
+
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SUPPORTED_MSGTYPES = {"m.file", "m.image"}
@@ -96,34 +123,6 @@ GOOGLE_DOC_PATTERNS = {
     re.compile(r'https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)'): "spreadsheets",
     re.compile(r'https://docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)'): "presentation",
 }
-
-
-# ── LLM Errors ───────────────────────────────────────────────────────────────
-
-class LLMUnavailableError(Exception):
-    """LLM service is not reachable — oMLX/Ollama might not be running."""
-
-class LLMModelNotFoundError(Exception):
-    """The configured model is not loaded on the LLM server."""
-
-class LLMTimeoutError(Exception):
-    """LLM took too long — large documents or cold model start can cause this."""
-
-
-# ── Paperless Errors ─────────────────────────────────────────────────────────
-
-class PaperlessDuplicateError(Exception):
-    """Paperless rejected the upload as a content-hash duplicate of an
-    already-filed doc. Carries the original's id + title so the chat
-    reply can point the user at what's already there."""
-    def __init__(self, doc_id: int | None, title: str | None):
-        self.doc_id = doc_id
-        self.title = title
-        super().__init__(f"duplicate of #{doc_id}: {title}")
-
-
-_DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
-
 
 
 # ── Translations ─────────────────────────────────────────────────────────────
@@ -210,6 +209,8 @@ class ArchivistBot(MicroBot):
         self.mirror_org = settings.get("mirror_org", "family")
         self._scan_sessions: dict[str, dict] = {}
         self._http: aiohttp.ClientSession | None = None
+        self._paperless: PaperlessAPI | None = None
+        self._classifier: Classifier | None = None
         self._mirror: GitMirror | None = None
         self._paperless_version: str = ""
 
@@ -234,6 +235,10 @@ class ArchivistBot(MicroBot):
             logger.warning("[archivist] {}", e)
 
         self._http = aiohttp.ClientSession()
+        self._paperless = PaperlessAPI(self._http, self.paperless_url, self.paperless_token)
+        self._classifier = Classifier(
+            self._http, self.openai_url, self.openai_key, bot_name=self.name,
+        )
         try:
             if self.mirror_to_git:
                 self._init_mirror()
@@ -378,371 +383,6 @@ class ArchivistBot(MicroBot):
                 logger.error("[archivist] Download failed (HTTP {}): {}", resp.status, body)
                 return None
 
-    # ── Paperless API ────────────────────────────────────────────────────
-
-    def _paperless_headers(self) -> dict:
-        return {"Authorization": f"Token {self.paperless_token}"}
-
-    async def _paperless_upload(self, filename: str, data: bytes,
-                                 content_type: str | None = None) -> str | None:
-        """Upload a file to Paperless. Returns the task id on success.
-
-        When `content_type` is given it's set on the multipart field —
-        important for text-like files where aiohttp's default of
-        application/octet-stream stops Paperless from matching a parser
-        and the server returns 400 with no useful chat message. On
-        failure we log the response body (truncated) so the next 400
-        isn't a mystery.
-        """
-        form = aiohttp.FormData()
-        field_kwargs: dict = {"filename": filename}
-        if content_type:
-            field_kwargs["content_type"] = content_type
-        form.add_field("document", data, **field_kwargs)
-        try:
-            async with self._http.post(
-                f"{self.paperless_url}/api/documents/post_document/",
-                headers=self._paperless_headers(), data=form,
-            ) as resp:
-                if resp.status == 200:
-                    task_id = (await resp.text()).strip().strip('"')
-                    logger.info("[archivist] Uploaded {} → task {}", filename, task_id)
-                    return task_id
-                body = (await resp.text())[:400]
-                logger.error("[archivist] Upload failed (HTTP {}): {} — body: {}",
-                             resp.status, filename, body)
-                return None
-        except (aiohttp.ClientConnectionError, aiohttp.ClientError, OSError) as e:
-            logger.error("[archivist] Paperless unreachable: {}", e)
-            return None
-
-    async def _paperless_wait_task(self, task_id: str, timeout: int = 120) -> int | None:
-        """Poll Paperless for task completion. Raises PaperlessDuplicateError
-        when Paperless rejects the upload as a duplicate; returns None for
-        every other FAILURE / timeout / transport error so the caller can
-        render the generic `ocr_failed` message."""
-        import time
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                async with self._http.get(
-                    f"{self.paperless_url}/api/tasks/?task_id={task_id}",
-                    headers=self._paperless_headers(),
-                ) as resp:
-                    if resp.status == 200:
-                        tasks = await resp.json()
-                        if tasks:
-                            task = tasks[0] if isinstance(tasks, list) else tasks
-                            status = task.get("status", "")
-                            if status == "SUCCESS":
-                                doc_id = task.get("related_document")
-                                return int(doc_id) if doc_id else None
-                            elif status == "FAILURE":
-                                result = task.get("result") or ""
-                                logger.error("[archivist] Task failed: {}", result)
-                                match = _DUPLICATE_RE.search(result)
-                                if match:
-                                    title = match.group(1).strip()
-                                    dup_id = int(match.group(2))
-                                    raise PaperlessDuplicateError(dup_id, title)
-                                return None
-            except (aiohttp.ClientConnectionError, aiohttp.ClientError, OSError) as e:
-                logger.error("[archivist] Paperless unreachable while waiting for task: {}", e)
-                return None
-            await asyncio.sleep(3)
-        logger.error("[archivist] Task {} timed out", task_id)
-        return None
-
-    async def _paperless_get_doc(self, doc_id: int) -> dict | None:
-        async with self._http.get(
-            f"{self.paperless_url}/api/documents/{doc_id}/",
-            headers=self._paperless_headers(),
-        ) as resp:
-            return await resp.json() if resp.status == 200 else None
-
-    async def _paperless_get_tags(self) -> dict:
-        async with self._http.get(
-            f"{self.paperless_url}/api/tags/?page_size=1000",
-            headers=self._paperless_headers(),
-        ) as resp:
-            if resp.status == 200:
-                return {t["name"]: t["id"] for t in (await resp.json()).get("results", [])}
-            return {}
-
-    async def _paperless_get_doc_types(self) -> dict:
-        async with self._http.get(
-            f"{self.paperless_url}/api/document_types/?page_size=1000",
-            headers=self._paperless_headers(),
-        ) as resp:
-            if resp.status == 200:
-                return {t["name"]: t["id"] for t in (await resp.json()).get("results", [])}
-            return {}
-
-    async def _paperless_get_correspondents(self) -> dict:
-        async with self._http.get(
-            f"{self.paperless_url}/api/correspondents/?page_size=1000",
-            headers=self._paperless_headers(),
-        ) as resp:
-            if resp.status == 200:
-                return {c["name"]: c["id"] for c in (await resp.json()).get("results", [])}
-            return {}
-
-    # ── Paperless entity creation ──────────────────────────────────────
-    #
-    # All entities use matching_algorithm=0 (disabled). The LLM classifies
-    # every document; Paperless just stores what the LLM decides.
-    #
-    # Why not auto-learn (algorithm 6)?
-    #
-    # Paperless auto-assigns during document consumption -- BEFORE the LLM
-    # runs. With algorithm 6, Paperless learns from the first few LLM-assigned
-    # documents, then starts pre-assigning based on that tiny sample:
-    #
-    #   1. LLM tags three invoices as "Shopping"
-    #   2. Paperless learns: "Shopping" = common tag
-    #   3. Paperless auto-assigns "Shopping" to every new document at ingest
-    #   4. LLM adds the correct tag, but "Shopping" is already there too
-    #   5. Result: every document gets "Shopping" regardless of content
-    #
-    # Same failure mode hit correspondents: "Denny Gunawan" (first correspondent
-    # created) got auto-assigned to all subsequent documents.
-    #
-    # Algorithm 0 means: Paperless never guesses. The LLM reads the actual
-    # document text and makes the call. If the LLM is unavailable, documents
-    # get filed without tags -- the user can classify manually in the UI.
-
-    async def _paperless_create_tag(self, name: str, color: str = "#9e9e9e") -> int | None:
-        async with self._http.post(
-            f"{self.paperless_url}/api/tags/",
-            headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json={
-                "name": name,
-                "color": color,
-                "matching_algorithm": 0,
-                "is_insensitive": True,
-            },
-        ) as resp:
-            if resp.status == 201:
-                data = await resp.json()
-                logger.info("[archivist] Created tag: {} (id={})", name, data["id"])
-                return data["id"]
-            return None
-
-    async def _paperless_create_doc_type(self, name: str) -> int | None:
-        async with self._http.post(
-            f"{self.paperless_url}/api/document_types/",
-            headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json={
-                "name": name,
-                "matching_algorithm": 0,
-                "is_insensitive": True,
-            },
-        ) as resp:
-            if resp.status == 201:
-                return (await resp.json())["id"]
-            return None
-
-    async def _paperless_create_correspondent(self, name: str) -> int | None:
-        # matching_algorithm 0 (none): don't let Paperless auto-assign
-        # correspondents. The LLM reads the document and decides who sent
-        # it. Paperless's auto-learn (6) guesses wrong with few samples
-        # (e.g. assigns the first correspondent to every new document).
-        async with self._http.post(
-            f"{self.paperless_url}/api/correspondents/",
-            headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json={
-                "name": name,
-                "matching_algorithm": 0,
-            },
-        ) as resp:
-            if resp.status == 201:
-                return (await resp.json())["id"]
-            return None
-
-    async def _paperless_update_doc(self, doc_id: int, updates: dict) -> bool:
-        async with self._http.patch(
-            f"{self.paperless_url}/api/documents/{doc_id}/",
-            headers={**self._paperless_headers(), "Content-Type": "application/json"},
-            json=updates,
-        ) as resp:
-            return resp.status == 200
-
-    async def _paperless_search(self, query: str, limit: int = 5) -> list[dict]:
-        async with self._http.get(
-            f"{self.paperless_url}/api/documents/",
-            headers=self._paperless_headers(),
-            params={"query": query, "page_size": limit, "ordering": "-created"},
-        ) as resp:
-            if resp.status == 200:
-                return (await resp.json()).get("results", [])
-            return []
-
-    # ── LLM (OpenAI-compatible API) ──────────────────────────────────────
-
-    async def _llm_request(self, task: str, prompt: str, json_mode: bool = False) -> str:
-        """Send a prompt to the LLM and return the response text.
-
-        The task name (e.g. "classifier", "reformat") is resolved to a
-        concrete model via resolve_model("archivist/{task}"). This walks:
-          1. [ai.models] archivist.classifier — task-specific
-          2. [ai.models] archivist            — bot-level
-          3. [ai] default                     — global fallback
-
-        Uses the OpenAI-compatible chat completions API — works with oMLX,
-        Ollama, LM Studio, or any provider that serves /v1/chat/completions.
-        """
-        model = resolve_model(f"{self.name}/{task}")
-
-        headers = {"Content-Type": "application/json"}
-        if self.openai_key:
-            headers["Authorization"] = f"Bearer {self.openai_key}"
-
-        body = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if json_mode:
-            body["response_format"] = {"type": "json_object"}
-
-        url = self.openai_url.rstrip("/")
-        if not url:
-            raise LLMUnavailableError("No AI endpoint configured — set up AI with 'stack up ai'")
-        if not url.endswith("/chat/completions"):
-            url = url.rstrip("/") + "/chat/completions"
-
-        with _timed(f"LLM {task} (model={model})"):
-            try:
-                async with self._http.post(
-                    url, headers=headers, json=body,
-                    timeout=aiohttp.ClientTimeout(total=300),
-                ) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        return result["choices"][0]["message"]["content"]
-                    elif resp.status == 401:
-                        raise LLMUnavailableError("Authentication failed — check [ai].openai_key in stack.toml")
-                    elif resp.status == 404:
-                        body_text = await resp.text()
-                        if "not found" in body_text.lower():
-                            raise LLMModelNotFoundError(f"{model} — is it loaded in oMLX?")
-                        raise LLMUnavailableError(f"HTTP 404: {body_text[:200]}")
-                    else:
-                        raise LLMUnavailableError(f"HTTP {resp.status}")
-            except asyncio.TimeoutError:
-                raise LLMTimeoutError(f"{model} — model may still be loading, try again")
-            except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
-                raise
-            except Exception as e:
-                raise LLMUnavailableError(f"{e}")
-
-    async def _classify(self, ocr_text: str, tags: dict, doc_types: dict, correspondents: dict) -> dict:
-        """Ask the LLM to classify a document based on its OCR text.
-
-        Returns structured JSON with:
-        - topics: subject areas (1-2 tags, e.g. ["Insurance", "Medical"])
-        - persons: which family members this belongs to
-        - correspondent: who sent/issued this document
-        - document_type: optional format (Invoice, Receipt, etc.)
-        """
-        person_tags = [t for t in tags if t.startswith("Person: ")]
-        # Strip "Person: " prefix for the prompt so the LLM sees clean
-        # first names like "Homer", "Marge" -- not "Person: Homer".
-        person_names = [t.replace("Person: ", "") for t in person_tags]
-        category_tags = [t for t in tags if not t.startswith("Person: ")]
-        truncated = ocr_text[:3000]
-
-        # ── Classification prompt ────────────────────────────────────────
-        #
-        # Simplified to three clear axes:
-        #   topic         = what is this about?   "Insurance", "Shopping"
-        #   person        = which family member?   "Homer", "Bart", or null
-        #   correspondent = who sent it?           "Springfield Nuclear", "Kwik-E-Mart"
-        #
-        # A Kwik-E-Mart receipt for Homer:
-        #   topic="Shopping", person="Homer", correspondent="Kwik-E-Mart"
-        # A school letter about Bart:
-        #   topics=["School"], person="Bart", correspondent="Springfield Elementary"
-        # A health insurance invoice for Homer:
-        #   topics=["Insurance", "Medical"], person="Homer", correspondent="AOK"
-
-        prompt = f"""Classify this document. Return ONLY a JSON object.
-
-IMPORTANT: Always prefer existing values from the lists below. Only suggest
-a new value when NOTHING in the list is a reasonable match.
-
-Family members: {json.dumps(person_names, ensure_ascii=False)}
-Existing topic tags: {json.dumps(category_tags, ensure_ascii=False)}
-Existing document types: {json.dumps(list(doc_types.keys()), ensure_ascii=False)}
-Existing correspondents: {json.dumps(list(correspondents.keys()), ensure_ascii=False)}
-
-Return this exact JSON structure:
-{{
-  "title": "scannable title: [Correspondent] - [what] [key amount]. E.g. 'Anthropic - Max Plan EUR 90.00', 'ADAC - Kfz-Versicherung 2026 EUR 340'. Must be useful when scanning a list of 500 documents. Max 128 chars. Document's language.",
-  "date": "YYYY-MM-DD or null",
-  "topics": ["what is this document about? One or two subject areas. E.g. ['Insurance'], ['Insurance', 'Vehicle'], ['Shopping']. A health insurance bill is ['Insurance', 'Medical']. A car repair invoice is ['Vehicle']. Pick from existing topic tags when possible. Usually one topic, two only when the document genuinely spans two areas."],
-  "persons": ["which family members does this belong to? Pick from the family members list by first name. Can be multiple for joint documents (marriage, family insurance). Empty list if unclear. These are who the document is FOR or ABOUT, not who sent it."],
-  "document_type": "optional: what format is this? Invoice, Receipt, Contract, Letter, Certificate, or null if unclear.",
-  "correspondent": "the SENDER or ISSUING ORGANIZATION, or null if unclear. Who wrote or sent this? NOT the recipient. On an invoice, this is the company that billed, not the customer. Use the shortest recognizable name. null is better than guessing.",
-  "summary": "2-3 sentence summary with key facts: amounts, dates, names, deadlines",
-  "facts": ["key structured facts, e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'"],
-  "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
-}}
-
-Rules:
-- LANGUAGE: use the document's original language for title, summary, facts, and action_items. A German document gets a German title and German facts. Never translate.
-- topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas.
-- persons: match by first name from the family members list. Can be multiple for joint documents. A marriage certificate for Homer and Marge: ["Homer", "Marge"]. A personal invoice for Homer only: ["Homer"].
-- correspondent: always the SENDER, never the addressee/customer/recipient. Use null if the sender is not clearly identifiable. Do not guess from fragments.
-- facts: concrete numbers, dates, account numbers, amounts. Empty list if none.
-- action_items: deadlines, payments due, forms to return. Empty list if none.
-
-Document text:
----
-{truncated}
----"""
-
-        response = await self._llm_request("classifier", prompt, json_mode=True)
-        try:
-            return json.loads(response) if response else {}
-        except json.JSONDecodeError:
-            logger.warning("[archivist] LLM returned invalid JSON: {}", response[:200])
-            return {}
-
-    async def _reformat(self, ocr_text: str) -> str | None:
-        """Reformat raw OCR text into clean, readable Markdown.
-
-        OCR output is often messy: broken lines, garbled characters, no
-        structure. The LLM fixes artifacts while preserving all factual
-        content. The reformatted text replaces the original in Paperless,
-        making documents actually readable. Non-critical — if it fails,
-        the original OCR text is kept.
-        """
-        prompt = f"""Reformat this OCR-scanned document into clean, well-structured Markdown.
-
-Rules:
-- Fix OCR artifacts, broken lines, and garbled text
-- Correct obvious OCR errors in names and words
-- Preserve ALL factual content: numbers, dates, names, amounts, addresses
-- Structure with appropriate headings, lists, and tables
-- Do NOT summarize, translate, or add any content not in the original
-- NEVER guess or invent values — mark unreadable text as [unreadable]
-- If something is unreadable garbage (TSE signatures, hash strings), omit it
-- Keep the document language as-is
-- Output ONLY the formatted markdown, nothing else
-
-OCR text:
----
-{ocr_text[:6000]}
----"""
-
-        try:
-            result = await self._llm_request("reformat", prompt)
-            if result and len(result.strip()) > 20:
-                return result.strip()
-            return None
-        except (LLMUnavailableError, LLMTimeoutError):
-            return None
-
     # ── Document processing pipeline ─────────────────────────────────────
 
     async def _process_document(
@@ -781,13 +421,13 @@ OCR text:
         else:
             upload_filename, upload_type = filename, None
 
-        task_id = await self._paperless_upload(upload_filename, file_data, content_type=upload_type)
+        task_id = await self._paperless.upload(upload_filename, file_data, content_type=upload_type)
         if not task_id:
             await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
             return
 
         try:
-            doc_id = await self._paperless_wait_task(task_id)
+            doc_id = await self._paperless.wait_task(task_id)
         except PaperlessDuplicateError as e:
             await self._send(room_id, self._duplicate_reply(display_name, e), reply_to)
             return
@@ -801,7 +441,7 @@ OCR text:
         # the richness of the mirror entry rather than dropping it entirely.
 
         link = f"{self.paperless_public_url}/documents/{doc_id}/details" if self.paperless_public_url else ""
-        doc = await self._paperless_get_doc(doc_id)
+        doc = await self._paperless.get_doc(doc_id)
 
         if not doc:
             # Paperless accepted the upload but we can't read the doc back.
@@ -817,120 +457,29 @@ OCR text:
         ocr_text = doc.get("content", "") or ""
         has_text = len(ocr_text.strip()) >= 10
 
-        # ── Enrichment state ─────────────────────────────────────────────
-        # Populated when classification succeeds, untouched otherwise so
-        # the mirror and chat-reply branches read the same outcome.
-        classification: dict = {}
-        llm_error: tuple[str, dict] | None = None
-        resolved_topics: list[str] = []
-        resolved_persons: list[str] = []
-        resolved_correspondent: str | None = None
-        resolved_type: str | None = None
-        summary: list[str] = []
-        created_new: list[str] = []
-        updates: dict = {}
-        title: str | None = None
-
-        # ── Classify (only if enabled and we have text) ──────────────────
+        # ── Enrich via the shared pipeline ───────────────────────────────
+        # Pipeline hands back structured data; this function renders it for
+        # Matrix. When classification is disabled or the doc has no text,
+        # we skip the LLM call entirely by handing back an empty result.
         if self.classify_enabled and has_text:
-            tags = await self._paperless_get_tags()
-            doc_types = await self._paperless_get_doc_types()
-            correspondents = await self._paperless_get_correspondents()
+            result = await enrich_document(
+                paperless=self._paperless,
+                classifier=self._classifier,
+                doc=doc,
+            )
+        else:
+            result = EnrichResult()
 
-            try:
-                classification = await self._classify(ocr_text, tags, doc_types, correspondents)
-            except LLMUnavailableError:
-                llm_error = ("llm_unavailable",
-                             {"name": display_name, "url": self.openai_url, "link": link})
-            except LLMModelNotFoundError as e:
-                llm_error = ("llm_model_missing",
-                             {"name": display_name, "model": str(e), "link": link})
-            except LLMTimeoutError:
-                llm_error = ("llm_timeout",
-                             {"name": display_name, "link": link})
-
-        # ── Apply classification to Paperless (if we got one) ────────────
-        if classification:
-            title = classification.get("title")
-            if title and isinstance(title, str):
-                updates["title"] = title[:MAX_TITLE_LENGTH]
-
-            # Topic tags — LLM returns 1-2 topics; match_topics splits
-            # against existing tags (ignoring "Person: " ones) and flags
-            # the rest for creation.
-            tag_ids = list(doc.get("tags", []))
-            category_tags_dict = {t: tags[t] for t in tags if not t.startswith("Person: ")}
-            topics_raw = classification.get("topics") or classification.get("topic")
-            matched_topics, new_topics = match_topics(topics_raw, category_tags_dict)
-            for mt in matched_topics:
-                tag_ids.append(tags[mt])
-                resolved_topics.append(mt)
-                summary.append(self.t("category", value=mt))
-            for nt in new_topics:
-                new_id = await self._paperless_create_tag(nt, "#4caf50")
-                if new_id:
-                    tag_ids.append(new_id)
-                    resolved_topics.append(nt)
-                    summary.append(self.t("category_new", value=nt))
-                    created_new.append(f"tag \"{nt}\"")
-
-            # Person tags — closed set, never create. match_persons handles
-            # strings, lists, full names, and "Person: X" prefixes.
-            persons_raw = classification.get("persons") or classification.get("person")
-            person_tags_matched = match_persons(persons_raw, tags)
-            for pt in person_tags_matched:
-                tag_ids.append(tags[pt])
-                name = pt.replace("Person: ", "")
-                resolved_persons.append(name)
-                summary.append(self.t("person", value=name))
-
-            if tag_ids:
-                updates["tags"] = list(set(tag_ids))
-
-            # Document type — respect a manual type; otherwise apply/create.
-            doc_type = classification.get("document_type")
-            if not _is_empty(doc_type):
-                existing_type = doc.get("document_type")
-                if existing_type:
-                    summary.append(self.t("type", value=doc_type))
-                else:
-                    matched = fuzzy_match_entity(doc_type, doc_types)
-                    if matched:
-                        updates["document_type"] = doc_types[matched]
-                        resolved_type = matched
-                        summary.append(self.t("type", value=matched))
-                    else:
-                        new_id = await self._paperless_create_doc_type(doc_type)
-                        if new_id:
-                            updates["document_type"] = new_id
-                            resolved_type = doc_type
-                            summary.append(self.t("type_new", value=doc_type))
-                            created_new.append(f"document type \"{doc_type}\"")
-
-            # Correspondent — always overwrite Paperless's auto-classifier
-            # guess; the LLM has read the actual text and knows better.
-            correspondent = classification.get("correspondent")
-            if not _is_empty(correspondent):
-                matched = fuzzy_match_entity(correspondent, correspondents)
-                if matched:
-                    updates["correspondent"] = correspondents[matched]
-                    resolved_correspondent = matched
-                    summary.append(self.t("from", value=matched))
-                else:
-                    new_id = await self._paperless_create_correspondent(correspondent)
-                    if new_id:
-                        updates["correspondent"] = new_id
-                        resolved_correspondent = correspondent
-                        summary.append(self.t("from_new", value=correspondent))
-                        created_new.append(f"correspondent \"{correspondent}\"")
-
-            date = classification.get("date")
-            if date and isinstance(date, str) and re.match(r'^\d{4}-\d{2}-\d{2}$', date):
-                updates["created"] = date
-                summary.append(self.t("date", value=date))
-
-            if updates:
-                await self._paperless_update_doc(doc_id, updates)
+        classification = result.classification
+        resolved_topics = result.resolved_topics
+        resolved_persons = result.resolved_persons
+        resolved_correspondent = result.resolved_correspondent
+        resolved_type = result.resolved_type
+        created_new = result.created_new
+        llm_error = _llm_error_for_chat(
+            result.llm_error,
+            name=display_name, openai_url=self.openai_url, link=link,
+        )
 
         # ── Reformat (only when we had a classification, and only for
         #               non-text files — a .md is already clean, reformatting
@@ -939,10 +488,13 @@ OCR text:
         reformat_failed = False
         formatted: str | None = None
         if classification and self.reformat_enabled and not is_text:
-            formatted = await self._reformat(ocr_text)
-            if formatted:
-                await self._paperless_update_doc(doc_id, {"content": formatted})
-            else:
+            formatted = await reformat_document(
+                paperless=self._paperless,
+                classifier=self._classifier,
+                doc_id=doc_id,
+                ocr_text=ocr_text,
+            )
+            if not formatted:
                 reformat_failed = True
 
         # ── Mirror to Forgejo (always, when configured) ─────────────────
@@ -1024,14 +576,24 @@ OCR text:
             #
             #   http://...
 
+            title = classification.get("title")
             display_title = title or display_name
             lines = [self.t("filed", title=display_title, doc_id=doc_id)]
 
-            # Compact metadata line: topic | type | from | date
-            meta_parts = []
-            for s in summary:
-                value = s.split(": ", 1)[-1] if ": " in s else s
-                meta_parts.append(value)
+            # Compact metadata line: topic(s) | person(s) | type | from | date.
+            # Built from EnrichResult.resolved_* so the values on screen match
+            # exactly what was written to Paperless — no translation-key
+            # round-trip needed.
+            meta_parts: list[str] = []
+            meta_parts.extend(resolved_topics)
+            meta_parts.extend(resolved_persons)
+            if resolved_type:
+                meta_parts.append(resolved_type)
+            if resolved_correspondent:
+                meta_parts.append(resolved_correspondent)
+            date_applied = result.updates_applied.get("created")
+            if date_applied:
+                meta_parts.append(date_applied)
             if meta_parts:
                 lines.extend(["", "  " + " | ".join(meta_parts)])
 
@@ -1068,8 +630,13 @@ OCR text:
 
             await self._send(room_id, "\n".join(lines), reply_to)
 
+        processed_parts = [*resolved_topics, *resolved_persons]
+        if resolved_type:
+            processed_parts.append(resolved_type)
+        if resolved_correspondent:
+            processed_parts.append(resolved_correspondent)
         logger.info("[archivist] Processed: {} → doc {} [{}]",
-                     filename, doc_id, ", ".join(summary) or "no-classification")
+                     filename, doc_id, ", ".join(processed_parts) or "no-classification")
 
         # ── Structured event — always, once Paperless has the doc ───────
         # Element ignores unknown event types, so the event rides next to
@@ -1276,7 +843,7 @@ OCR text:
     # ── Search ───────────────────────────────────────────────────────────
 
     async def _handle_search(self, room_id: str, query: str, reply_to: str | None = None):
-        results = await self._paperless_search(query)
+        results = await self._paperless.search(query)
         if not results:
             await self._send(room_id, self.t("search_no_results", query=query), reply_to)
             return
@@ -1295,7 +862,7 @@ OCR text:
 
     async def _handle_show(self, room_id: str, doc_id: int, reply_to: str | None = None):
         """Fetch a document's content from Paperless and return it as Markdown."""
-        doc = await self._paperless_get_doc(doc_id)
+        doc = await self._paperless.get_doc(doc_id)
         if not doc:
             await self._send(room_id, f"Document #{doc_id} not found.", reply_to)
             return

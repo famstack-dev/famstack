@@ -14,10 +14,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from archivist import _DUPLICATE_RE, PaperlessDuplicateError  # noqa: E402
+from pipeline import _DUPLICATE_RE, PaperlessDuplicateError  # noqa: E402
 
 
 class TestDuplicateRegex:
