@@ -23,6 +23,7 @@ test = [
     "loguru",
     "pyyaml",
     "markdown",
+    "pypdf>=4.0",
 ]
 
 [tool.pytest.ini_options]

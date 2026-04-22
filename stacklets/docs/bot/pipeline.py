@@ -395,7 +395,7 @@ class Classifier:
         person_names = [t.replace("Person: ", "") for t in person_tags]
         category_tags = [t for t in tags if not t.startswith("Person: ")]
         prompt = _build_classify_prompt(
-            ocr_text=ocr_text[:3000],
+            ocr_text=ocr_text,
             person_names=person_names,
             category_tags=category_tags,
             doc_types=list(doc_types.keys()),
@@ -523,22 +523,40 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _NEW_TOPIC_COLOR = "#4caf50"
 
 
+DEFAULT_CLASSIFY_MAX_CHARS = 20000
+
+
 async def enrich_document(
     *,
     paperless: PaperlessAPI,
     classifier: Classifier,
     doc: dict,
+    classify_max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
-    No HTTP assumptions about the caller — collaborators are injected.
-    No stdout / Matrix concerns — caller renders the result. Never raises:
+    No HTTP assumptions about the caller: collaborators are injected.
+    No stdout / Matrix concerns: caller renders the result. Never raises:
     LLM / Paperless failures arrive through `EnrichResult.llm_error` or as
     empty resolved_* lists.
+
+    `classify_max_chars` bounds what the classifier sees. The default is
+    deliberately well above what a typical contract or receipt reaches;
+    deployments with larger-context models can lift it further via the
+    bot setting. Truncation, when it happens, is logged loudly. A silent
+    3000-char cap used to live inside Classifier.classify and lost the
+    tail of every long document.
     """
     ocr_text = (doc.get("content") or "").strip()
     if not ocr_text:
         return EnrichResult()
+
+    if len(ocr_text) > classify_max_chars:
+        logger.warning(
+            "[pipeline] doc #{} ocr_text truncated for classify: {} > {} chars",
+            doc.get("id"), len(ocr_text), classify_max_chars,
+        )
+        ocr_text = ocr_text[:classify_max_chars]
 
     tags = await paperless.get_tags()
     doc_types = await paperless.get_doc_types()

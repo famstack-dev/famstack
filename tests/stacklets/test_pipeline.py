@@ -449,6 +449,59 @@ class TestEnrichTitleAndDate:
         assert "created" not in updates
 
 
+# ── Classify input cap ────────────────────────────────────────────────────
+
+class TestEnrichClassifyMaxChars:
+    """The classify input cap is configurable and enforced in enrich_document.
+
+    Truncation used to live silently inside Classifier.classify at a
+    hardcoded 3000 chars, which quietly chopped long docs (contracts,
+    research papers) before the LLM ever saw the bulk of the content.
+    The cap is now a pipeline-level concern with a generous default, so
+    a deployment with a bigger-context model can lift it in bot.toml.
+    """
+
+    @pytest.mark.asyncio
+    async def test_long_content_truncated_to_explicit_cap(self, seeded_paperless):
+        classifier = StubClassifier(payload={"title": "x"})
+        doc = _doc(content="y" * 10000)
+
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=doc,
+            classify_max_chars=500,
+        )
+
+        (call,) = classifier.classify_calls
+        assert len(call["ocr_text"]) == 500
+
+    @pytest.mark.asyncio
+    async def test_short_content_passes_through_unchanged(self, seeded_paperless):
+        classifier = StubClassifier(payload={"title": "x"})
+        doc = _doc(content="Invoice from ADAC")
+
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=doc,
+            classify_max_chars=500,
+        )
+
+        (call,) = classifier.classify_calls
+        assert call["ocr_text"] == "Invoice from ADAC"
+
+    @pytest.mark.asyncio
+    async def test_default_cap_is_generous(self, seeded_paperless):
+        """Default must be well above the old 3000 so typical contracts and
+        multi-page receipts reach the classifier whole."""
+        classifier = StubClassifier(payload={"title": "x"})
+        doc = _doc(content="z" * 15000)
+
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=doc,
+        )
+
+        (call,) = classifier.classify_calls
+        assert len(call["ocr_text"]) == 15000
+
+
 # ── Reformat ──────────────────────────────────────────────────────────────
 
 class TestReformatDocument:

@@ -8,6 +8,13 @@ room_topic  = "Drop photos, PDFs, or links here. They get filed and tagged autom
 classify = true
 reformat = true
 
+# Max OCR chars passed to the classifier. Anything past this is
+# truncated (logged loudly) before the LLM sees it. The default is
+# comfortable for local quantised models (~5K tokens). Raise it when
+# running a larger-context model and classification of long docs
+# (contracts, research papers) matters more than the extra latency.
+classify_max_chars = 20000
+
 # BETA — opt-in. Mirror every classified document into a Forgejo repo
 # as markdown (original content + YAML frontmatter), so the archive is
 # browsable and git-versioned alongside Paperless. Needs the `code`
