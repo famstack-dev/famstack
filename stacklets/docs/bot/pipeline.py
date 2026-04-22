@@ -92,6 +92,12 @@ class EnrichResult:
     resolved_type: str | None = None
     created_new: list[str] = field(default_factory=list)
     updates_applied: dict = field(default_factory=dict)
+    # The Markdown summary written to Paperless as a note (Summary /
+    # Facts / Parties / Action). None when the classifier produced
+    # nothing worth recording — callers can use this both as "was
+    # anything written" and as the rendered text to echo back to the
+    # user. "Note" is Paperless's storage concept; "summary" is ours.
+    summary: str | None = None
     # When classify raised, ("unavailable" | "model_missing" | "timeout", detail)
     llm_error: tuple[str, str] | None = None
 
@@ -111,6 +117,7 @@ class PaperlessAPI:
         self.http = http
         self.url = url.rstrip("/")
         self.token = token
+        self._user_id_cache: int | None = None
 
     @property
     def _headers(self) -> dict:
@@ -120,30 +127,57 @@ class PaperlessAPI:
     def _json_headers(self) -> dict:
         return {**self._headers, "Content-Type": "application/json"}
 
+    # ── HTTP helper ──────────────────────────────────────────────────
+    #
+    # One request method instead of an `async with` block per endpoint.
+    # Returns (parsed_body, status). parsed_body is JSON when the server
+    # returned JSON, raw text otherwise, and None on 204 / non-success.
+    # Callers decide what counts as success via `expect` so the method
+    # stays neutral about retry / fallback policy.
+
+    async def _req(
+        self, method: str, path: str, *,
+        json_body: dict | None = None,
+        params: dict | None = None,
+        expect: tuple[int, ...] = (200,),
+    ) -> tuple[Any, int]:
+        headers = self._json_headers if json_body is not None else self._headers
+        try:
+            async with self.http.request(
+                method, f"{self.url}{path}",
+                headers=headers, json=json_body, params=params,
+            ) as resp:
+                if resp.status not in expect:
+                    return None, resp.status
+                if resp.status == 204:
+                    return None, 204
+                ctype = resp.headers.get("Content-Type", "")
+                body = await resp.json() if "application/json" in ctype else await resp.text()
+                return body, resp.status
+        except (aiohttp.ClientError, OSError) as e:
+            logger.debug("[pipeline] {} {} failed: {}", method, path, e)
+            return None, 0
+
     # ── Document reads ───────────────────────────────────────────────
 
     async def get_doc(self, doc_id: int) -> dict | None:
-        async with self.http.get(
-            f"{self.url}/api/documents/{doc_id}/", headers=self._headers,
-        ) as resp:
-            return await resp.json() if resp.status == 200 else None
+        body, _ = await self._req("GET", f"/api/documents/{doc_id}/")
+        return body if isinstance(body, dict) else None
 
     async def search(self, query: str, limit: int = 5) -> list[dict]:
-        async with self.http.get(
-            f"{self.url}/api/documents/", headers=self._headers,
+        body, _ = await self._req(
+            "GET", "/api/documents/",
             params={"query": query, "page_size": limit, "ordering": "-created"},
-        ) as resp:
-            if resp.status == 200:
-                return (await resp.json()).get("results", [])
-            return []
+        )
+        return body.get("results", []) if isinstance(body, dict) else []
 
     async def _list_entity(self, endpoint: str) -> dict:
-        async with self.http.get(
-            f"{self.url}/api/{endpoint}/?page_size=1000", headers=self._headers,
-        ) as resp:
-            if resp.status == 200:
-                return {t["name"]: t["id"] for t in (await resp.json()).get("results", [])}
+        body, _ = await self._req(
+            "GET", f"/api/{endpoint}/", params={"page_size": "1000"},
+        )
+        if not isinstance(body, dict):
             return {}
+        return {t["name"]: t["id"] for t in body.get("results", [])}
 
     async def get_tags(self) -> dict:
         return await self._list_entity("tags")
@@ -155,11 +189,10 @@ class PaperlessAPI:
         return await self._list_entity("correspondents")
 
     async def update_doc(self, doc_id: int, updates: dict) -> bool:
-        async with self.http.patch(
-            f"{self.url}/api/documents/{doc_id}/",
-            headers=self._json_headers, json=updates,
-        ) as resp:
-            return resp.status == 200
+        _, status = await self._req(
+            "PATCH", f"/api/documents/{doc_id}/", json_body=updates,
+        )
+        return status == 200
 
     # ── Upload + OCR ─────────────────────────────────────────────────
 
@@ -261,36 +294,77 @@ class PaperlessAPI:
     # documents get filed without tags — the user can classify manually in
     # the UI.
 
+    async def _create_entity(self, endpoint: str, body: dict) -> int | None:
+        data, _ = await self._req(
+            "POST", f"/api/{endpoint}/", json_body=body, expect=(201,),
+        )
+        return data["id"] if isinstance(data, dict) and "id" in data else None
+
     async def create_tag(self, name: str, color: str = "#9e9e9e") -> int | None:
-        async with self.http.post(
-            f"{self.url}/api/tags/", headers=self._json_headers,
-            json={
-                "name": name, "color": color,
-                "matching_algorithm": 0, "is_insensitive": True,
-            },
-        ) as resp:
-            if resp.status == 201:
-                data = await resp.json()
-                return data["id"]
-            return None
+        return await self._create_entity("tags", {
+            "name": name, "color": color,
+            "matching_algorithm": 0, "is_insensitive": True,
+        })
 
     async def create_doc_type(self, name: str) -> int | None:
-        async with self.http.post(
-            f"{self.url}/api/document_types/", headers=self._json_headers,
-            json={"name": name, "matching_algorithm": 0, "is_insensitive": True},
-        ) as resp:
-            if resp.status == 201:
-                return (await resp.json())["id"]
-            return None
+        return await self._create_entity("document_types", {
+            "name": name, "matching_algorithm": 0, "is_insensitive": True,
+        })
 
     async def create_correspondent(self, name: str) -> int | None:
-        async with self.http.post(
-            f"{self.url}/api/correspondents/", headers=self._json_headers,
-            json={"name": name, "matching_algorithm": 0},
-        ) as resp:
-            if resp.status == 201:
-                return (await resp.json())["id"]
-            return None
+        return await self._create_entity("correspondents", {
+            "name": name, "matching_algorithm": 0,
+        })
+
+    # ── Notes ────────────────────────────────────────────────────────
+    #
+    # Paperless notes are free-form Markdown attached to a document and
+    # included in Paperless's full-text search index. The classifier
+    # writes a structured note (Summary / Facts / Parties / Action) so
+    # the search backend can answer "which doc mentioned the EUR 440
+    # invoice" without re-running the LLM at query time.
+    #
+    # Idempotency: every note carries a `user` foreign key set to whoever
+    # authenticated the POST. The bot uses its own Paperless account, so
+    # on reclassify we fetch /users/me/ once, then delete only notes whose
+    # owner matches — human-added notes (different user) survive.
+
+    async def get_current_user_id(self) -> int | None:
+        """Return the Paperless user id behind this token, cached.
+
+        Falls back to None if the endpoint is unreachable or returns an
+        unexpected shape — callers treat that as "can't tell mine from
+        human's" and skip the prior-note delete sweep.
+        """
+        if self._user_id_cache is not None:
+            return self._user_id_cache
+        body, _ = await self._req("GET", "/api/users/me/")
+        if isinstance(body, dict) and isinstance(body.get("id"), int):
+            self._user_id_cache = body["id"]
+            return body["id"]
+        return None
+
+    async def list_notes(self, doc_id: int) -> list[dict]:
+        body, _ = await self._req("GET", f"/api/documents/{doc_id}/notes/")
+        if isinstance(body, list):
+            return body
+        if isinstance(body, dict):
+            return body.get("results", []) or []
+        return []
+
+    async def add_note(self, doc_id: int, text: str) -> bool:
+        _, status = await self._req(
+            "POST", f"/api/documents/{doc_id}/notes/",
+            json_body={"note": text}, expect=(200, 201),
+        )
+        return status in (200, 201)
+
+    async def delete_note(self, doc_id: int, note_id: int) -> bool:
+        _, status = await self._req(
+            "DELETE", f"/api/documents/{doc_id}/notes/",
+            params={"id": str(note_id)}, expect=(200, 204),
+        )
+        return status in (200, 204)
 
 
 # ── LLM client ───────────────────────────────────────────────────────────
@@ -517,6 +591,88 @@ OCR text:
 ---"""
 
 
+# ── Classifier summary ───────────────────────────────────────────────────
+#
+# After a document is classified we write a structured Markdown summary
+# back to Paperless (stored as a Paperless "note", which is its storage
+# concept — we call the thing a summary in this module). The summary is
+# FTS-indexed by Paperless, so headline facts become searchable
+# alongside the raw OCR text. That's the groundwork for a future "ask a
+# question about my archive" path: a shallow keyword hit against the
+# bot's summaries is the baseline retrieval before any embedding index
+# enters the picture.
+#
+# Empty short-circuit: when the classifier returned a shape with no
+# summary prose, no facts, no actions, _format_classifier_summary
+# returns None and the caller skips the write — a doc with nothing
+# interesting should not get a stub "## Summary\n" line on its record.
+
+def _format_classifier_summary(
+    classification: dict,
+    *,
+    resolved_persons: list[str],
+    resolved_correspondent: str | None,
+) -> str | None:
+    """Render the classifier payload as the Markdown summary body.
+
+    Sections are conditional; the caller never sees empty `## Summary\n`
+    placeholders. Returns None when there is nothing to record — the
+    caller should then not write anything at all.
+    """
+    parts: list[str] = []
+
+    summary = (classification.get("summary") or "").strip()
+    if summary:
+        parts.append(f"## Summary\n{summary}")
+
+    facts = [str(f).strip() for f in (classification.get("facts") or []) if str(f).strip()]
+    if facts:
+        parts.append("## Facts\n" + "\n".join(f"- {f}" for f in facts))
+
+    parties = _format_parties(
+        correspondent=resolved_correspondent,
+        persons=resolved_persons,
+    )
+    if parties:
+        parts.append(f"## Parties\n{parties}")
+
+    return "\n\n".join(parts) if parts else None
+
+
+def _format_parties(*, correspondent: str | None, persons: list[str]) -> str:
+    """"Sender → recipients" one-liner, with either side omitted if empty."""
+    left = correspondent.strip() if correspondent else ""
+    right = ", ".join(p for p in persons if p) if persons else ""
+    if left and right:
+        return f"{left} → {right}"
+    return left or right
+
+
+async def _replace_classifier_summary(
+    paperless: PaperlessAPI, doc_id: int, summary_text: str,
+) -> None:
+    """Write `summary_text` as the bot's summary, replacing any prior one.
+
+    Idempotency strategy: the bot's Paperless user owns every note it
+    writes. We fetch /users/me/ once (cached), then drop notes whose
+    owner matches before posting the new one. Human-added notes have a
+    different owner and stay put.
+
+    Fallback: if we can't determine our own user id (endpoint 500, token
+    lacks permission), we post the new summary without deleting anything
+    — a duplicate is better than losing human edits to an optimistic
+    sweep.
+    """
+    user_id = await paperless.get_current_user_id()
+    if user_id is not None:
+        for note in await paperless.list_notes(doc_id):
+            owner = note.get("user")
+            owner_id = owner.get("id") if isinstance(owner, dict) else owner
+            if owner_id == user_id and isinstance(note.get("id"), int):
+                await paperless.delete_note(doc_id, note["id"])
+    await paperless.add_note(doc_id, summary_text)
+
+
 # ── Enrichment ───────────────────────────────────────────────────────────
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -661,6 +817,20 @@ async def enrich_document(
     if updates:
         await paperless.update_doc(doc["id"], updates)
         result.updates_applied = updates
+
+    # Summary note — written after entities are patched so any newly
+    # created correspondent / tags are reflected in the rendered body.
+    # Failure here doesn't poison the return: a doc without its summary
+    # is still a correctly-classified doc, and the next reclassify will
+    # get another chance.
+    summary_text = _format_classifier_summary(
+        classification,
+        resolved_persons=result.resolved_persons,
+        resolved_correspondent=result.resolved_correspondent,
+    )
+    if summary_text:
+        await _replace_classifier_summary(paperless, doc["id"], summary_text)
+        result.summary = summary_text
 
     return result
 

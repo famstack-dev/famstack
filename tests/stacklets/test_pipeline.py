@@ -33,7 +33,8 @@ from pipeline import (  # noqa: E402
 class StubPaperless:
     """In-memory PaperlessAPI stand-in. Records calls for assertions."""
 
-    def __init__(self, tags=None, doc_types=None, correspondents=None):
+    def __init__(self, tags=None, doc_types=None, correspondents=None,
+                 user_id: int | None = 7):
         self.tags = dict(tags or {})
         self.doc_types = dict(doc_types or {})
         self.correspondents = dict(correspondents or {})
@@ -42,6 +43,12 @@ class StubPaperless:
         self.created_tags: list[tuple[str, str]] = []  # (name, color)
         self.created_doc_types: list[str] = []
         self.created_correspondents: list[str] = []
+        # Notes ledger: {doc_id: [{"id": int, "note": str, "user": int}]}.
+        # `user_id` is "whoami" for the bot's token — set to None to
+        # simulate /users/me/ being unavailable.
+        self.user_id = user_id
+        self.notes: dict[int, list[dict]] = {}
+        self._next_note_id = 5000
 
     async def get_tags(self):
         return dict(self.tags)
@@ -76,6 +83,34 @@ class StubPaperless:
         self.correspondents[name] = tid
         self.created_correspondents.append(name)
         return tid
+
+    # ── Notes (used by the summary sink) ─────────────────────────────
+
+    async def get_current_user_id(self):
+        return self.user_id
+
+    async def list_notes(self, doc_id):
+        return [dict(n) for n in self.notes.get(doc_id, [])]
+
+    async def add_note(self, doc_id, text):
+        entry = {"id": self._next_note_id, "note": text, "user": self.user_id}
+        self._next_note_id += 1
+        self.notes.setdefault(doc_id, []).append(entry)
+        return True
+
+    async def delete_note(self, doc_id, note_id):
+        bucket = self.notes.get(doc_id, [])
+        self.notes[doc_id] = [n for n in bucket if n["id"] != note_id]
+        return True
+
+    def seed_note(self, doc_id: int, text: str, user: int | None) -> int:
+        """Insert a pre-existing note with an explicit owner. Returns its id."""
+        nid = self._next_note_id
+        self._next_note_id += 1
+        self.notes.setdefault(doc_id, []).append(
+            {"id": nid, "note": text, "user": user},
+        )
+        return nid
 
 
 class StubClassifier:
@@ -536,3 +571,153 @@ class TestReformatDocument:
         )
         assert updated is None
         assert seeded_paperless.updates == []
+
+
+# ── Summary formatter ─────────────────────────────────────────────────────
+
+class TestSummaryFormatter:
+    """_format_classifier_summary is a pure function: classification dict
+    plus resolved-parties context → Markdown or None.
+    """
+
+    def _fmt(self, classification, *, persons=None, correspondent=None):
+        from pipeline import _format_classifier_summary
+        return _format_classifier_summary(
+            classification,
+            resolved_persons=persons or [],
+            resolved_correspondent=correspondent,
+        )
+
+    def test_full_payload_renders_all_sections(self):
+        text = self._fmt(
+            {
+                "summary": "Kfz-Versicherung Jahresbeitrag.",
+                "facts": ["Total: EUR 340", "Policy: #12345"],
+                # action_items deliberately included — must NOT appear in output.
+                "action_items": [{"action": "pay", "due": "2026-04-30"}],
+            },
+            persons=["Homer"],
+            correspondent="ADAC",
+        )
+        assert "## Summary\nKfz-Versicherung Jahresbeitrag." in text
+        assert "## Facts\n- Total: EUR 340\n- Policy: #12345" in text
+        assert "## Parties\nADAC → Homer" in text
+        assert "Action" not in text
+        assert "pay" not in text
+
+    def test_summary_only(self):
+        text = self._fmt({"summary": "Kurze Notiz."})
+        assert text == "## Summary\nKurze Notiz."
+
+    def test_facts_skip_empty_strings(self):
+        text = self._fmt({"summary": "x", "facts": ["Total: EUR 5", "", "  "]})
+        assert text.count("- ") == 1
+        assert "Total: EUR 5" in text
+
+    def test_parties_correspondent_only(self):
+        text = self._fmt({"summary": "x"}, correspondent="ADAC")
+        assert "## Parties\nADAC" in text
+        assert "→" not in text
+
+    def test_parties_persons_only(self):
+        text = self._fmt({"summary": "x"}, persons=["Homer", "Marge"])
+        assert "## Parties\nHomer, Marge" in text
+        assert "→" not in text
+
+    def test_returns_none_when_nothing_to_say(self):
+        assert self._fmt({}) is None
+        assert self._fmt({"summary": "", "facts": []}) is None
+
+    def test_parties_alone_still_writes(self):
+        """Even with no summary prose, a sender → recipient line is useful
+        context on a bare doc."""
+        text = self._fmt({}, persons=["Homer"], correspondent="ADAC")
+        assert text == "## Parties\nADAC → Homer"
+
+
+# ── Summary write path ────────────────────────────────────────────────────
+
+class TestSummaryWrite:
+    """enrich_document writes the summary as a Paperless note and replaces
+    the bot's prior summary on reclassify without touching human notes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_summary_written_on_classify(self, seeded_paperless):
+        classifier = StubClassifier(payload={
+            "title": "x",
+            "summary": "Annual premium renewal.",
+            "facts": ["Total: EUR 340"],
+            "correspondent": "ADAC",
+            "persons": ["Homer"],
+        })
+        result = await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+        assert result.summary is not None
+        assert "## Summary\nAnnual premium renewal." in result.summary
+        notes = seeded_paperless.notes[42]
+        assert len(notes) == 1
+        assert notes[0]["note"] == result.summary
+
+    @pytest.mark.asyncio
+    async def test_no_summary_when_formatter_returns_none(self, seeded_paperless):
+        """Thin classification (no summary, no facts, no parties) writes nothing."""
+        classifier = StubClassifier(payload={"title": "x"})
+        result = await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+        assert result.summary is None
+        assert seeded_paperless.notes.get(42, []) == []
+
+    @pytest.mark.asyncio
+    async def test_reclassify_replaces_bot_summary(self, seeded_paperless):
+        """A prior bot-owned summary is deleted; the new one lands fresh."""
+        # Seed a prior bot note (same user id as the stub's "whoami" = 7)
+        old_id = seeded_paperless.seed_note(42, "## Summary\nOld take.", user=7)
+
+        classifier = StubClassifier(payload={
+            "title": "x", "summary": "New take.",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+
+        notes = seeded_paperless.notes[42]
+        assert len(notes) == 1
+        assert notes[0]["id"] != old_id
+        assert "New take." in notes[0]["note"]
+
+    @pytest.mark.asyncio
+    async def test_reclassify_leaves_human_notes(self, seeded_paperless):
+        """A note written by a different user (human) must survive reclassify."""
+        human_id = seeded_paperless.seed_note(42, "My personal note.", user=99)
+        bot_old_id = seeded_paperless.seed_note(42, "Old bot summary.", user=7)
+
+        classifier = StubClassifier(payload={
+            "title": "x", "summary": "Fresh summary.",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+
+        ids = {n["id"] for n in seeded_paperless.notes[42]}
+        assert human_id in ids          # human note survived
+        assert bot_old_id not in ids    # bot's prior summary was swept
+
+    @pytest.mark.asyncio
+    async def test_posts_without_sweep_when_user_id_unknown(self, seeded_paperless):
+        """If /users/me/ fails, we can't tell bot notes from human ones —
+        post the new summary without touching existing notes."""
+        seeded_paperless.user_id = None
+        seeded_paperless.seed_note(42, "Existing note.", user=99)
+
+        classifier = StubClassifier(payload={
+            "title": "x", "summary": "New summary.",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+
+        notes = seeded_paperless.notes[42]
+        assert len(notes) == 2  # both the pre-existing and the new one

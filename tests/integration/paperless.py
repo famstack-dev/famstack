@@ -62,6 +62,16 @@ class PaperlessAPI:
             path += f"&query={urllib.parse.quote(query)}"
         return self._req("GET", path)["results"]
 
+    def list_notes(self, doc_id: int) -> list[dict]:
+        """Notes Paperless has for a document. The archivist writes a
+        structured Markdown summary here after classification."""
+        body = self._req("GET", f"/api/documents/{doc_id}/notes/")
+        if isinstance(body, list):
+            return body
+        if isinstance(body, dict):
+            return body.get("results", []) or []
+        return []
+
     # ── Writes ───────────────────────────────────────────────────────────
 
     def create_tag(self, name: str, color: str = "#9e9e9e") -> dict:
