@@ -123,6 +123,27 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     assert expected_topic in tag_names, f"expected topic tag, got {tag_names}"
     assert "Person: Homer" in tag_names, f"expected person tag, got {tag_names}"
 
+    # ── Then: Paperless has the classifier summary as a note ────────
+    # The archivist writes the structured summary (Summary / Facts /
+    # Parties) as a Paperless note after the title/tags PATCH. Notes
+    # feed Paperless's full-text search, so asserting here also proves
+    # the search-indexed copy of the summary is in place.
+    bdd.then("Paperless has the classifier summary stored as a note")
+    import asyncio as _asyncio
+    notes: list[dict] = []
+    for _ in range(15):
+        notes = paperless.list_notes(doc["id"])
+        if notes:
+            break
+        await _asyncio.sleep(1)
+    assert notes, f"no classifier note on doc #{doc['id']} after 15s"
+    body = "\n".join(n.get("note", "") for n in notes)
+    assert "## Summary" in body, f"missing Summary section in: {body!r}"
+    assert "Annual car insurance renewal at ADAC" in body, body
+    assert "EUR 340.00/year" in body, body
+    assert f"## Parties\n{expected_correspondent} → Homer" in body, body
+    bdd.ok(f"summary note present ({len(body)} chars)")
+
     # ── Then: room receives classification summary + structured event ──
     # Gather everything Homer saw in the room for a bounded window, then
     # filter. Single sync sweep covers both events even though they were
