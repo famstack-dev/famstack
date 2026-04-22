@@ -114,6 +114,7 @@ async def publish_enriched(
             paperless_url=paperless_url,
             tags=paperless_tags,
             fallback_title=doc.get("title"),
+            summary=result.summary,
         )
     except Exception as e:
         err(f"#{doc['id']}: mirror publish failed — {e}")
