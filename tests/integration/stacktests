@@ -35,6 +35,14 @@ cd "$REPO_ROOT"
 # - code: Forgejo — archivist mirrors classified documents here.
 REQUIRED_STACKLETS=(core messages docs code)
 
+# Stacklets that `down` and `cleanup` deliberately leave alone. The
+# ai stacklet downloads large models on install, which costs minutes
+# of wall time and gigabytes of disk on every reinstall; across a day
+# of iterative test runs that adds up. When an e2e test actually
+# needs a fresh ai state, tear it down explicitly with
+# `stacktests down ai` or `stack destroy ai --yes`.
+PRESERVED_STACKLETS=(ai)
+
 # Bootstrap the repo root as a test instance and seed global secrets.
 # Fails loudly if the repo root already holds a non-test stack.toml —
 # see _seed_secrets.py's TestInstanceConflict message for the cleanup
@@ -60,10 +68,16 @@ case "${1:-}" in
     ;;
 
   down)
-    # Stop everything the tests care about.
+    # Stop everything the tests care about, leaving PRESERVED_STACKLETS
+    # (notably ai) running so their heavy state isn't thrown away. A
+    # specific target on the command line is forwarded verbatim, so
+    # `stacktests down ai` still works when a fresh ai state is wanted.
     shift || true
     if [[ -z "${1:-}" ]]; then
-      exec python3 -m stack down all
+      for sid in "${REQUIRED_STACKLETS[@]}"; do
+        echo "==> stack down $sid"
+        python3 -m stack down "$sid" || true
+      done
     else
       exec python3 -m stack down "$@"
     fi
@@ -146,9 +160,19 @@ case "${1:-}" in
     done
 
     # Only remove repo root state if we own it (sentinel present).
+    # Setup markers and data for PRESERVED_STACKLETS are kept so the
+    # heavy state (ai's model downloads) survives a cleanup cycle.
     if [[ -f "$REPO_ROOT/.stack/.test-instance" ]]; then
-      echo "==> rm -rf $REPO_ROOT/.stack"
-      rm -rf "$REPO_ROOT/.stack"
+      # Build a find exclusion list for the preserved-stacklet markers
+      # plus the .test-instance sentinel itself. Every other entry
+      # under .stack/ (global secrets, other setup markers) is wiped.
+      preserve_args=(! -name '.test-instance')
+      for sid in "${PRESERVED_STACKLETS[@]}"; do
+        preserve_args+=(! -name "${sid}.*")
+      done
+      echo "==> clean $REPO_ROOT/.stack (preserving: ${PRESERVED_STACKLETS[*]})"
+      find "$REPO_ROOT/.stack" -mindepth 1 -maxdepth 1 \
+        "${preserve_args[@]}" -exec rm -rf {} +
       for f in stack.toml users.toml; do
         if [[ -f "$REPO_ROOT/$f" ]]; then
           echo "==> rm $REPO_ROOT/$f"
@@ -160,12 +184,18 @@ case "${1:-}" in
     fi
 
     if [[ -d "$TEST_DATA_DIR" ]]; then
-      echo "==> rm -rf $TEST_DATA_DIR"
-      rm -rf "$TEST_DATA_DIR"
+      data_preserve_args=()
+      for sid in "${PRESERVED_STACKLETS[@]}"; do
+        data_preserve_args+=(! -name "$sid")
+      done
+      echo "==> clean $TEST_DATA_DIR (preserving: ${PRESERVED_STACKLETS[*]})"
+      find "$TEST_DATA_DIR" -mindepth 1 -maxdepth 1 \
+        "${data_preserve_args[@]}" -exec rm -rf {} + 2>/dev/null || true
     fi
 
     echo ""
     echo "✓ Test stack cleaned. Next 'stacktests up' starts fresh."
+    echo "   (preserved across cleanup: ${PRESERVED_STACKLETS[*]})"
     ;;
 
   "")
