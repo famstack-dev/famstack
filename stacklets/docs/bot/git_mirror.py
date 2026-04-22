@@ -309,7 +309,11 @@ class GitMirror:
             "    learn: <title>         new document\n"
             "    update: <title>        reprocessed existing document\n"
             "    rename: <old> → <new>  title-driven filename change\n\n"
-            "Each commit message carries a `Paperless-Id: <N>` trailer.\n\n"
+            "When the classifier produced a summary it rides in the commit\n"
+            "body as `## Summary` / `## Facts` / `## Parties` sections, so\n"
+            "`git log` reads like a narrated archive log and `git log --grep`\n"
+            "searches across summaries out of the box. Each commit message\n"
+            "carries a `Paperless-Id: <N>` trailer.\n\n"
             "## Deletions\n\n"
             "Documents deleted in Paperless stay in this repo until a future\n"
             "`stack docs reconcile` pass tombstones them. Until then, the\n"
@@ -476,9 +480,19 @@ class GitMirror:
         verb: str, title: str,
         paperless_id: int,
         processing: str, model: str | None,
+        summary: str | None = None,
     ) -> str:
-        """Build a commit with trailers. verb = 'learn' | 'update'."""
+        """Build a commit with trailers. verb = 'learn' | 'update'.
+
+        When a classifier summary is available it rides in the commit body
+        between the subject and the trailers — turns `git log` on the
+        mirror into a browsable archive log, and gives `git log --grep`
+        a searchable index without a separate tool.
+        """
         lines = [f"{verb}: {title}", ""]
+        if summary:
+            lines.append(summary.strip())
+            lines.append("")
         lines.append(f"Paperless-Id: {paperless_id}")
         lines.append(f"Processing: {processing}")
         if model:
@@ -498,6 +512,7 @@ class GitMirror:
         paperless_url: str,
         tags: list[str] | None = None,
         fallback_title: str | None = None,
+        summary: str | None = None,
     ) -> bool:
         """Create or update a document file in the git mirror.
 
@@ -559,7 +574,7 @@ class GitMirror:
         verb = "update" if existing else "learn"
         message = self._commit_message(
             verb=verb, title=title, paperless_id=paperless_id,
-            processing=processing, model=model,
+            processing=processing, model=model, summary=summary,
         )
 
         try:

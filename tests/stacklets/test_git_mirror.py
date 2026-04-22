@@ -183,6 +183,36 @@ class TestCommitMessage:
         assert "Processing: ocr" in msg
         assert "Model:" not in msg
 
+    def test_summary_rides_between_subject_and_trailers(self, mirror):
+        # The body sits in its own paragraph so `git log` renders it as a
+        # readable summary and trailers stay parseable as trailers.
+        summary = "## Summary\nADAC car insurance EUR 340/year.\n\n## Parties\nADAC → Homer"
+        msg = mirror._commit_message(
+            verb="learn", title="ADAC", paperless_id=42,
+            processing="ai_formatted", model="qwen2.5:14b",
+            summary=summary,
+        )
+        lines = msg.split("\n")
+        assert lines[0] == "learn: ADAC"
+        assert lines[1] == ""
+        # Summary block follows, ends with a blank line, then trailers.
+        body_start = 2
+        assert lines[body_start] == "## Summary"
+        trailer_idx = lines.index("Paperless-Id: 42")
+        assert lines[trailer_idx - 1] == ""
+        assert "## Parties" in lines[body_start:trailer_idx]
+        # Trailers still present and parseable.
+        assert "Processing: ai_formatted" in lines
+        assert "Model: qwen2.5:14b" in lines
+
+    def test_no_summary_keeps_old_layout(self, mirror):
+        msg = mirror._commit_message(
+            verb="learn", title="t", paperless_id=1,
+            processing="ocr", model=None, summary=None,
+        )
+        # Subject, blank, trailers — no extra blank lines from a missing body.
+        assert msg == "learn: t\n\nPaperless-Id: 1\nProcessing: ocr"
+
 
 # ── Render (full markdown) ─────────────────────────────────────────────────
 

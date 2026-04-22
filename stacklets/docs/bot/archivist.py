@@ -337,6 +337,7 @@ class ArchivistBot(MicroBot):
         model: str | None,
         fallback_title: str,
         paperless_tags: list[str],
+        summary: str | None = None,
     ) -> None:
         """Mirror a filed doc to Forgejo — never raises, never blocks the reply.
 
@@ -357,6 +358,7 @@ class ArchivistBot(MicroBot):
                 paperless_url=self.paperless_public_url or self.paperless_url,
                 tags=paperless_tags,
                 fallback_title=fallback_title,
+                summary=summary,
             )
         except Exception as e:
             logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)
@@ -598,6 +600,7 @@ class ArchivistBot(MicroBot):
             model=model,
             fallback_title=display_name,
             paperless_tags=paperless_tags,
+            summary=result.summary,
         )
 
         # ── Chat reply ───────────────────────────────────────────────────
