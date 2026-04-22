@@ -40,3 +40,12 @@ class DryRunPaperless:
     async def create_correspondent(self, *a, **kw):
         self._fake_id += 1
         return self._fake_id
+
+    # Notes — stubbed so the summary write path is exercised but nothing
+    # lands on Paperless. list_notes returns empty so the idempotent
+    # delete sweep is a no-op; get_current_user_id mirrors the real one
+    # so the planner takes the same branch it would in a live run.
+    async def get_current_user_id(self): return await self._real.get_current_user_id()
+    async def list_notes(self, doc_id): return []
+    async def add_note(self, *a, **kw): return True
+    async def delete_note(self, *a, **kw): return True
