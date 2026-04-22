@@ -884,9 +884,32 @@ def handle_install(stck, args):
         restore()
 
 
+def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
+    """True when a .stack/ entry belongs to one of the named stacklets.
+
+    Setup markers look like `<sid>.setup-done`; any future per-stacklet
+    state under .stack/ is expected to use the same `<sid>.` prefix so
+    it gets preserved automatically when the user excludes that sid.
+    The .test-instance sentinel and global secrets (ADMIN_PASSWORD,
+    user passwords) don't carry a stacklet prefix and therefore get
+    wiped as part of the full-stack teardown, which is correct.
+    """
+    return any(entry_name.startswith(f"{sid}.") for sid in sids)
+
+
 def handle_uninstall(stck, args):
-    # 'stack uninstall chatai' is a common mistake — catch it early
+    # `--not X [Y ...]` excludes one or more stacklets from the uninstall.
+    # The state of excluded stacklets (container, setup marker, data dir)
+    # is preserved across this call so expensive state — most notably the
+    # ai stacklet's downloaded model weights — can survive a teardown
+    # without a multi-gigabyte re-download on the next install.
+    exclude = list(getattr(args, "exclude", None) or [])
+
+    # 'stack uninstall chatai' is a common mistake — catch it early. The
+    # values consumed by `--not` are intentional and must be filtered out
+    # before we treat a bare token as a "did you mean destroy?" signal.
     remaining = [a for a in sys.argv[2:] if not a.startswith("-")]
+    remaining = [a for a in remaining if a not in exclude]
     if remaining:
         sid = remaining[0]
         print(f"\n  {RED}✗{RESET}  'uninstall' removes the entire stack, not a single stacklet.")
@@ -921,11 +944,17 @@ def handle_uninstall(stck, args):
             print(f"  {DIM}Aborted{RESET}")
             return
 
-    # Only destroy stacklets that actually have state
+    # Only destroy stacklets that actually have state, and never touch
+    # the excluded set. An excluded stacklet keeps its container, data
+    # dir, and setup marker: everything needed to survive the uninstall
+    # and resume on the next `stack up`.
     cli = CLI(stck)
     container_ids = docker.all_project_ids()
     for s in stck.discover():
         sid = s["id"]
+        if sid in exclude:
+            print(f"  {DIM}Preserving {s['name']} (excluded via --not){RESET}", file=sys.stderr)
+            continue
         has_data = (stck.data / sid).exists()
         has_marker = s.get("enabled")
         has_container = sid in container_ids
@@ -942,12 +971,25 @@ def handle_uninstall(stck, args):
             path.unlink()
             print(f"  {GREEN}\u2713{RESET} Removed {name}")
 
-    # Remove runtime state
+    # Remove runtime state. With exclusions, wipe entry by entry so the
+    # setup markers of the preserved stacklets (and anything else they
+    # own under .stack/) survive. Without exclusions, the whole directory
+    # goes as before.
     state_dir = stck.root / ".stack"
     if state_dir.exists():
         import shutil
-        shutil.rmtree(state_dir)
-        print(f"  {GREEN}\u2713{RESET} Removed .stack/")
+        if exclude:
+            for item in state_dir.iterdir():
+                if _belongs_to_stacklet(item.name, exclude):
+                    continue
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            print(f"  {GREEN}\u2713{RESET} Cleaned .stack/ (kept: {', '.join(exclude)})")
+        else:
+            shutil.rmtree(state_dir)
+            print(f"  {GREEN}\u2713{RESET} Removed .stack/")
 
     # Offer to remove data
     if stck.data.exists():
@@ -962,8 +1004,18 @@ def handle_uninstall(stck, args):
             rm_data = ""
         if rm_data == "delete":
             import shutil
-            shutil.rmtree(stck.data)
-            print(f"  {GREEN}\u2713{RESET} Removed {display}")
+            if exclude:
+                for item in stck.data.iterdir():
+                    if item.name in exclude:
+                        continue
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+                print(f"  {GREEN}\u2713{RESET} Removed {display} (kept: {', '.join(exclude)})")
+            else:
+                shutil.rmtree(stck.data)
+                print(f"  {GREEN}\u2713{RESET} Removed {display}")
         else:
             print(f"  {DIM}Data kept at {display}{RESET}")
 
@@ -1097,7 +1149,12 @@ def main():
 
     sub = parser.add_subparsers(dest="command")
     p = sub.add_parser("install"); p.add_argument("--full", action="store_true")
-    p = sub.add_parser("uninstall"); p.add_argument("--yes", action="store_true")
+    p = sub.add_parser("uninstall")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument(
+        "--not", dest="exclude", nargs="+", default=[], metavar="STACKLET",
+        help="Stacklets to preserve (state, data, setup marker all stay)",
+    )
     sub.add_parser("init")
     sub.add_parser("status")
     sub.add_parser("list")
