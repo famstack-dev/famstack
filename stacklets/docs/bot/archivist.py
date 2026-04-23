@@ -463,12 +463,17 @@ class ArchivistBot(MicroBot):
         TEXT_LIKE = ("md", "txt", "csv", "json", "yaml", "yml", "toml")
         # Image extensions get the multimodal classify path when the
         # model has vision — the binary rides alongside the OCR text as
-        # supplementary context. PDFs are deliberately excluded for now
-        # (rendering pages to images would need a new system dep).
-        IMAGE_EXTS = ("png", "jpg", "jpeg", "webp", "gif")
+        # supplementary context. Scanned PDFs go a separate route (page
+        # render via pypdfium2).
+        IMAGE_MIMES = {
+            "png": "image/png",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "webp": "image/webp",
+            "gif": "image/gif",
+        }
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         is_text = ext in TEXT_LIKE
-        is_image = ext in IMAGE_EXTS
+        is_image = ext in IMAGE_MIMES
         # A PDF that already carries an embedded text layer is, by
         # definition, readable without OCR. Reformat's job is cleaning up
         # OCR artifacts; running it on a native-text PDF risks degrading
@@ -538,7 +543,9 @@ class ArchivistBot(MicroBot):
             # per-call gating needed.
             images: list[ImageAttachment] | None = None
             if is_image:
-                images = [ImageAttachment(data=file_data, mime=mime_type)]
+                images = [ImageAttachment(
+                    data=file_data, mime=IMAGE_MIMES[ext],
+                )]
             elif ext == "pdf" and not is_pdf_with_text:
                 # Scan-mode PDF — only worth rendering when the model
                 # can actually use the images. Skipping the render saves
