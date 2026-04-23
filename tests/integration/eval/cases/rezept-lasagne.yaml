@@ -1,0 +1,9 @@
+# rezept-lasagne.pdf — Lasagne recipe, no date, no correspondent.
+# Bare recipe page — tests that the model resists inventing a date or
+# sender when the document genuinely lacks one. We deliberately don't
+# assert correspondent/date here.
+
+expected:
+  title_keywords:    [lasagne]
+  document_type:     [Recipe]
+  topics:            [Cooking, Recipes]

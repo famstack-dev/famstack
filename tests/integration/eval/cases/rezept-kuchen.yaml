@@ -1,0 +1,10 @@
+# rezept-kuchen.pdf — Johannisbeer-Baiser-Kuchen recipe from LECKER.
+# No date, has a publisher correspondent. Tests recipe-domain
+# classification + that the model doesn't hallucinate financial fields
+# on a non-financial doc.
+
+expected:
+  title_keywords:    [johannisbeer]
+  document_type:     [Recipe]
+  correspondent:     LECKER
+  topics:            [Cooking, Recipes]

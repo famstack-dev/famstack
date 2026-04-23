@@ -1,0 +1,11 @@
+# kassenbon-obst.pdf — grocery receipt from Maria Hänsler Obst & Gemüse,
+# 19.03.2026, EUR 26.20. Tests classification of a small-shop till receipt.
+
+expected:
+  title_keywords:    [obst]
+  document_type:     [Receipt]
+  date:              "2026-03-19"
+  correspondent:     Hänsler
+  topics:            [Groceries, Shopping]
+  summary_keywords:  ["26.20"]
+  facts_keywords:    ["26.20", EUR]

@@ -39,6 +39,10 @@ __pycache__/
 htmlcov/
 .pytest_cache/
 
+# Pipeline-eval per-run artifacts (OCR text, classification JSON,
+# scorecards) — written by `stacktests eval`, never committed.
+tests/integration/eval/runs/
+
 # AI assistant
 .claude/
 

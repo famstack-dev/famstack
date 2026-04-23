@@ -28,6 +28,9 @@ test = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Pipeline-quality evals (real model, real Paperless, slow) are opt-in via
+# `tests/integration/stacktests eval` — never collected by `pytest tests/`.
+norecursedirs = ["tests/integration/eval"]
 markers = [
     "v2_only: tests for the lifecycle v2 refactor (will fail until migration is complete)",
 ]

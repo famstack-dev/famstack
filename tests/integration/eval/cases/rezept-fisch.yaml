@@ -1,0 +1,8 @@
+# rezept-fisch.pdf — Pangasiusfilets mit Spekulatiuskruste recipe,
+# no date, no correspondent. Same shape as rezept-lasagne — confirms
+# recipe handling generalises beyond a single sample.
+
+expected:
+  title_keywords:    [pangasius]
+  document_type:     [Recipe]
+  topics:            [Cooking, Recipes]

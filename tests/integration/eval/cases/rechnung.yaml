@@ -1,0 +1,13 @@
+# rechnung.png — Anzahlungsrechnung BSP Ausbildung (boat-license training
+# down payment), Bodenseeschifferpatent Kat. A & D, 20.11.2025, EUR 480.
+# German invoice from a niche correspondent — tests handling of long
+# institutional names and education-domain topics.
+
+expected:
+  title_keywords:    [bsp]
+  document_type:     [Invoice, Anzahlungsrechnung]
+  date:              "2025-11-20"
+  correspondent:     Bodenseeschifferpatent
+  topics:            [Education, Training]
+  summary_keywords:  ["480"]
+  facts_keywords:    ["480", EUR]

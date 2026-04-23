@@ -1,0 +1,15 @@
+# tankbeleg-esso.pdf — fuel receipt from ESSO Sulger station, 03.03.2026.
+#
+# Hand-curated against what the document actually contains. Field-level
+# ground truth — every key under `expected:` is independently optional;
+# the scorer skips fields the case omits, so add only assertions you're
+# confident in.
+
+expected:
+  title_keywords:    [esso]
+  document_type:     [Receipt, Fuel Receipt]
+  date:              "2026-03-03"
+  correspondent:     ESSO
+  topics:            [Vehicle, Fuel]
+  summary_keywords:  [esso, diesel, "50.07"]
+  facts_keywords:    ["50.07", EUR]
