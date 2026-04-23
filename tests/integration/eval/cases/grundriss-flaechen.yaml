@@ -1,0 +1,11 @@
+# grundriss-flaechen.png — Wohnflächenberechnung Erdgeschoss
+# (residential floor-area calculation, ground floor) by architect
+# Eckhard Albrecht, 16.05.2003. Tests floor-plan classification —
+# a domain the archivist sees rarely but real households accumulate.
+
+expected:
+  title_keywords:    [wohnflächen]
+  document_type:     [Floor Plan, Plan, Drawing]
+  date:              "2003-05-16"
+  correspondent:     Albrecht
+  topics:            [Real Estate, Architecture]

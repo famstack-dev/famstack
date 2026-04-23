@@ -14,6 +14,8 @@
 #   tests/integration/stacktests cleanup         — nuke every test stacklet +
 #                                                  instance state + test data
 #   tests/integration/stacktests e2e [args]      — run every e2e test
+#   tests/integration/stacktests eval [args]     — pipeline quality eval
+#                                                  (real model, report-only)
 #   tests/integration/stacktests pytest [args]   — pytest with env + deps
 #   tests/integration/stacktests <any stack cmd> — forward: logs, status...
 
@@ -122,6 +124,41 @@ case "${1:-}" in
       python3 -m stack up "$sid" > /dev/null
     done
     exec uv run --extra test pytest tests/integration/ -k "_e2e" "$@"
+    ;;
+
+  eval)
+    # Pipeline quality eval — uploads each case to a real Paperless,
+    # waits for OCR, runs `enrich_document` against the live AI stacklet,
+    # and prints a per-field scorecard. Report-only by design (always
+    # passes) so prompt iteration is friction-free.
+    #
+    # Excluded from default pytest collection (see pyproject.toml's
+    # `norecursedirs`). The only way in is this subcommand.
+    #
+    # Required env (set in your shell before running):
+    #   AI_DEFAULT_MODEL — concrete model name to evaluate (e.g. "qwen3-14b")
+    # Optional env:
+    #   EVAL_AI_URL=http://localhost:42060/v1   AI endpoint (default shown)
+    #   EVAL_AI_KEY=                            empty for unauthenticated local AI
+    #   EVAL_KEEP_DOCS=1                        keep uploaded docs in Paperless
+    #                                           after the run for inspection
+    #
+    # Per-run artifacts (OCR text, classification JSON, scorecard) are
+    # always written to tests/integration/eval/runs/<stamp>_<model>/.
+    #
+    # Pre-flight: requires `ai` to be up — fails fast with a clear
+    # message rather than auto-installing models on someone's machine.
+    #
+    # Pytest args forward verbatim, so case selection is just `-k <expr>`:
+    #   stacktests eval -k rechnung           one case
+    #   stacktests eval -k 'rezept or kassenbon'   subset by substring
+    #   stacktests eval --collect-only -q     list available cases
+    shift || true
+    seed_secrets
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      python3 -m stack up "$sid" > /dev/null
+    done
+    exec uv run --extra test pytest -s -v tests/integration/eval/ "$@"
     ;;
 
   cleanup)
