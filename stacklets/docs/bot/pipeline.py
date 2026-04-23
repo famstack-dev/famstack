@@ -96,6 +96,19 @@ _DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
 
 # ── Enrichment result ────────────────────────────────────────────────────
 
+@dataclass(frozen=True)
+class ImageAttachment:
+    """A single image to attach to a multimodal classify call.
+
+    Carries the raw bytes plus the MIME type — both are required to
+    construct the OpenAI-style `image_url` data URL the wire format
+    expects. Frozen because the bytes shouldn't be mutated after the
+    caller hands them off to the pipeline.
+    """
+    data: bytes
+    mime: str
+
+
 @dataclass
 class EnrichResult:
     """Structured outcome of enrich_document().
@@ -487,20 +500,27 @@ class Classifier:
     # ── Multimodal helpers ───────────────────────────────────────────
 
     @staticmethod
-    def _multimodal_content(prompt: str, image_data: bytes,
-                            image_mime: str) -> list[dict]:
-        """Build OpenAI-style multimodal content: text + one image.
+    def _multimodal_content(prompt: str,
+                            images: list[ImageAttachment]) -> list[dict]:
+        """Build OpenAI-style multimodal content: text + N images.
 
-        Encoded as a `data:` URL so we don't have to expose a public
+        Each ImageAttachment becomes one `image_url` part — the model
+        processes each at native resolution rather than us pre-stacking
+        into one tall image. Verified end-to-end against oMLX + Qwen3.5
+        VL with a 2-image probe.
+
+        Encoded as `data:` URLs so we don't have to expose a public
         image URL — every backend that supports vision (oMLX, Ollama,
         OpenAI, Anthropic via OpenAI-compat) accepts this form.
         """
-        b64 = base64.b64encode(image_data).decode("ascii")
-        return [
-            {"type": "text", "text": prompt},
-            {"type": "image_url",
-             "image_url": {"url": f"data:{image_mime};base64,{b64}"}},
-        ]
+        parts: list[dict] = [{"type": "text", "text": prompt}]
+        for img in images:
+            b64 = base64.b64encode(img.data).decode("ascii")
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{img.mime};base64,{b64}"},
+            })
+        return parts
 
     async def has_vision(self, model: str | None = None) -> bool:
         """Does this model accept image inputs? Cached after first probe.
@@ -523,8 +543,10 @@ class Classifier:
                 "classifier",
                 self._multimodal_content(
                     "Reply with the single word 'ok'.",
-                    base64.b64decode(_PROBE_PNG_B64),
-                    "image/png",
+                    [ImageAttachment(
+                        data=base64.b64decode(_PROBE_PNG_B64),
+                        mime="image/png",
+                    )],
                 ),
                 model_override=model,
             )
@@ -553,17 +575,21 @@ class Classifier:
         tags: dict,
         doc_types: dict,
         correspondents: dict,
-        image_data: bytes | None = None,
-        image_mime: str | None = None,
+        images: list[ImageAttachment] | None = None,
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
-        When `image_data` + `image_mime` are supplied AND the model has
-        vision capability (cached probe), the image rides alongside the
-        text prompt as a multimodal message. The text prompt is
-        unchanged — the image is supplementary context, not a
-        replacement for OCR. Belt-and-braces: image catches layout and
-        logos, OCR catches small print and numbers.
+        When `images` is supplied AND the model has vision capability
+        (cached probe), each (bytes, mime) becomes its own image_url
+        part in the multimodal message. The text prompt is unchanged —
+        images are supplementary context, not a replacement for OCR.
+        Belt-and-braces: vision catches layout and logos, OCR catches
+        small print and numbers.
+
+        Multi-image is per-page for scanned PDFs and one-image for
+        photo uploads — the caller decides what counts as a "page".
+        Each image rides at native resolution; we don't pre-stack so
+        the model can downscale each independently.
 
         Returns structured JSON with:
           - topics: subject areas (1-2 tags, e.g. ["Insurance", "Medical"])
@@ -588,13 +614,17 @@ class Classifier:
         )
 
         content: Any = prompt
-        if image_data and image_mime and image_mime.startswith("image/"):
-            if await self.has_vision():
-                content = self._multimodal_content(prompt, image_data, image_mime)
-                logger.info(
-                    "[pipeline] classify: attaching image ({} bytes, {})",
-                    len(image_data), image_mime,
-                )
+        valid_images = [
+            img for img in (images or [])
+            if img.data and img.mime and img.mime.startswith("image/")
+        ]
+        if valid_images and await self.has_vision():
+            content = self._multimodal_content(prompt, valid_images)
+            total = sum(len(img.data) for img in valid_images)
+            logger.info(
+                "[pipeline] classify: attaching {} image(s), {} bytes total",
+                len(valid_images), total,
+            )
 
         response = await self._request("classifier", content, json_mode=True)
         if not response:
@@ -808,8 +838,7 @@ async def enrich_document(
     classifier: Classifier,
     doc: dict,
     classify_max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
-    image_data: bytes | None = None,
-    image_mime: str | None = None,
+    images: list[ImageAttachment] | None = None,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -825,12 +854,12 @@ async def enrich_document(
     3000-char cap used to live inside Classifier.classify and lost the
     tail of every long document.
 
-    `image_data` + `image_mime` are forwarded to the classifier and used
-    only when the model has vision capability (probed lazily, cached on
-    disk). The caller decides whether to supply them — typically yes for
-    image uploads (PNG/JPG), no for PDFs and text files. Vision is
-    additive: the OCR-text prompt is unchanged, the image rides
-    alongside as supplementary context.
+    `images` is forwarded to the classifier and used only when the
+    model has vision capability (probed lazily, cached on disk). The
+    caller decides what to supply — one ImageAttachment for a photo
+    upload, N for the rendered pages of a scanned PDF. Vision is
+    additive: the OCR-text prompt is unchanged, images ride alongside
+    as supplementary context.
     """
     ocr_text = (doc.get("content") or "").strip()
     if not ocr_text:
@@ -851,7 +880,7 @@ async def enrich_document(
         classification = await classifier.classify(
             ocr_text=ocr_text, tags=tags,
             doc_types=doc_types, correspondents=correspondents,
-            image_data=image_data, image_mime=image_mime,
+            images=images,
         )
     except LLMUnavailableError as e:
         return EnrichResult(llm_error=("unavailable", str(e)))

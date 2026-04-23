@@ -24,6 +24,8 @@ test = [
     "pyyaml",
     "markdown",
     "pypdf>=4.0",
+    # PDF page rendering for vision-aware classifiers (scanned PDFs).
+    "pypdfium2>=4.0",
 ]
 
 [tool.pytest.ini_options]

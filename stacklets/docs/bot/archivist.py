@@ -51,10 +51,12 @@ from git_mirror import GitMirror
 from matching import build_document_event
 from microbot import MicroBot
 from capabilities import ModelCapabilities
+from pdf_render import render_pages
 from pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
     EnrichResult,
+    ImageAttachment,
     PaperlessAPI,
     PaperlessDuplicateError,
     enrich_document,
@@ -524,20 +526,34 @@ class ArchivistBot(MicroBot):
         # Matrix. When classification is disabled or the doc has no text,
         # we skip the LLM call entirely by handing back an empty result.
         if self.classify_enabled and has_text:
-            # Image uploads carry the raw bytes alongside OCR text — the
-            # classifier only attaches the image when the model has
-            # vision capability (lazily probed, cached on disk). For
-            # PDFs and text uploads `image_data` stays None, so the
-            # classifier takes the historic text-only path.
-            image_data = file_data if is_image else None
-            image_mime = mime_type if is_image else None
+            # Decide what (if anything) to attach alongside the OCR text.
+            # Three branches:
+            #   image upload (PNG/JPG/...) → one ImageAttachment
+            #   scanned PDF (no text layer) → one per rendered page
+            #   text-layer PDF / md / txt → no images (text-only)
+            # The classifier silently drops images when the model lacks
+            # vision, so attaching is harmless on text-only models — no
+            # per-call gating needed.
+            images: list[ImageAttachment] | None = None
+            if is_image:
+                images = [ImageAttachment(data=file_data, mime=mime_type)]
+            elif ext == "pdf" and not is_pdf_with_text:
+                # Scan-mode PDF — only worth rendering when the model
+                # can actually use the images. Skipping the render saves
+                # the Pillow round-trip on text-only setups.
+                if await self._classifier.has_vision():
+                    rendered = render_pages(file_data)
+                    if rendered:
+                        images = [
+                            ImageAttachment(data=p, mime="image/png")
+                            for p in rendered
+                        ]
             result = await enrich_document(
                 paperless=self._paperless,
                 classifier=self._classifier,
                 doc=doc,
                 classify_max_chars=self.classify_max_chars,
-                image_data=image_data,
-                image_mime=image_mime,
+                images=images,
             )
         else:
             result = EnrichResult()

@@ -90,19 +90,33 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
 
     doc = await eval_upload(doc_path)
 
-    # When the case is an image, hand the bytes to enrich_document so
-    # the multimodal path is exercised (gated by the classifier's
-    # cached vision-capability probe). PDFs stay text-only.
-    image_data: bytes | None = None
-    image_mime: str | None = None
+    # When the case has visual content, hand attachments to
+    # enrich_document so the multimodal path is exercised (gated by
+    # the classifier's cached vision-capability probe).
+    #   image cases → one attachment, file bytes as-is
+    #   scanned PDF → one per rendered page (mirrors archivist's
+    #                 on_file logic so eval and prod take the same path)
+    #   text-layer PDF → no attachments (text-only classify, as in prod)
+    from pipeline import ImageAttachment
+
+    images: list[ImageAttachment] | None = None
     suffix = doc_path.suffix.lower()
     if suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-        image_data = doc_path.read_bytes()
-        image_mime = {
+        mime = {
             ".png": "image/png",
             ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             ".webp": "image/webp", ".gif": "image/gif",
         }[suffix]
+        images = [ImageAttachment(data=doc_path.read_bytes(), mime=mime)]
+    elif suffix == ".pdf":
+        from archivist import _has_pdf_text_layer
+        from pdf_render import render_pages
+        pdf_bytes = doc_path.read_bytes()
+        if not _has_pdf_text_layer(pdf_bytes):
+            rendered = render_pages(pdf_bytes)
+            if rendered:
+                images = [ImageAttachment(data=p, mime="image/png")
+                          for p in rendered]
 
     # Run only the classify half of the pipeline. Reformat + summary
     # writes are exercised by the e2e; the eval is about classification
@@ -111,8 +125,7 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
         paperless=_PassthroughPaperless(paperless),
         classifier=ai_classifier,
         doc=doc,
-        image_data=image_data,
-        image_mime=image_mime,
+        images=images,
     )
 
     if result.llm_error:

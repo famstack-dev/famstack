@@ -5,3 +5,6 @@ Pillow>=10.0,<12.0
 PyYAML>=6.0,<7.0
 markdown>=3.5,<4.0
 pypdf>=4.0,<6.0
+# Render scanned PDFs to PNG for vision-capable classifiers. Pure-Python
+# wheel, no system deps. See stacklets/docs/bot/pdf_render.py.
+pypdfium2>=4.0,<6.0

@@ -126,11 +126,11 @@ class StubClassifier:
         self.reformat_calls: list[str] = []
 
     async def classify(self, *, ocr_text, tags, doc_types, correspondents,
-                       image_data=None, image_mime=None):
+                       images=None):
         self.classify_calls.append({
             "ocr_text": ocr_text, "tags": tags,
             "doc_types": doc_types, "correspondents": correspondents,
-            "image_data": image_data, "image_mime": image_mime,
+            "images": images,
         })
         if self.classify_raises:
             raise self.classify_raises
@@ -735,7 +735,7 @@ class TestSummaryWrite:
 import json as _json  # noqa: E402
 
 from capabilities import ModelCapabilities  # noqa: E402
-from pipeline import Classifier  # noqa: E402
+from pipeline import Classifier, ImageAttachment  # noqa: E402
 
 
 def _make_classifier(*, request_results: list, capabilities=None) -> Classifier:
@@ -781,14 +781,16 @@ class TestMultimodalContentBuilder:
 
     def test_text_part_first_image_second(self):
         out = Classifier._multimodal_content(
-            "describe", b"\x89PNG\r\n", "image/png",
+            "describe",
+            [ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")],
         )
         assert out[0] == {"type": "text", "text": "describe"}
         assert out[1]["type"] == "image_url"
 
     def test_image_url_is_data_url_with_correct_mime(self):
         out = Classifier._multimodal_content(
-            "x", b"hello", "image/jpeg",
+            "x",
+            [ImageAttachment(data=b"hello", mime="image/jpeg")],
         )
         url = out[1]["image_url"]["url"]
         assert url.startswith("data:image/jpeg;base64,")
@@ -796,6 +798,22 @@ class TestMultimodalContentBuilder:
         import base64
         b64 = url.split(",", 1)[1]
         assert base64.b64decode(b64) == b"hello"
+
+    def test_multiple_images_become_separate_parts(self):
+        # Each ImageAttachment gets its own image_url part — the model
+        # processes pages independently rather than stacking on our side.
+        out = Classifier._multimodal_content(
+            "describe",
+            [
+                ImageAttachment(data=b"page1", mime="image/png"),
+                ImageAttachment(data=b"page2", mime="image/png"),
+                ImageAttachment(data=b"page3", mime="image/png"),
+            ],
+        )
+        # 1 text + 3 images = 4 parts.
+        assert len(out) == 4
+        assert out[0]["type"] == "text"
+        assert all(p["type"] == "image_url" for p in out[1:])
 
 
 class TestHasVision:
@@ -856,11 +874,11 @@ class TestHasVision:
 
 
 class TestClassifyWithImage:
-    """`classify` attaches an image only when vision is available."""
+    """`classify` attaches images only when vision is available."""
 
     @pytest.mark.asyncio
-    async def test_text_only_when_no_image(self, patched_resolve_model):
-        # Baseline — no image → string content as before.
+    async def test_text_only_when_no_images(self, patched_resolve_model):
+        # Baseline — no images → string content as before.
         c = _make_classifier(request_results=['{"title": "t"}'])
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
@@ -869,7 +887,7 @@ class TestClassifyWithImage:
         assert "some text" in c.calls[0]["content"]
 
     @pytest.mark.asyncio
-    async def test_image_attached_when_vision_supported(self, patched_resolve_model):
+    async def test_images_attached_when_vision_supported(self, patched_resolve_model):
         # Pre-cache vision=True so classify takes the multimodal path
         # without having to probe in this test.
         caps = ModelCapabilities()
@@ -880,15 +898,35 @@ class TestClassifyWithImage:
         )
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
-            image_data=b"\x89PNG\r\n", image_mime="image/png",
+            images=[ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")],
         )
         assert isinstance(c.calls[0]["content"], list)
         assert c.calls[0]["content"][0]["type"] == "text"
         assert c.calls[0]["content"][1]["type"] == "image_url"
 
     @pytest.mark.asyncio
-    async def test_image_dropped_when_vision_unsupported(self, patched_resolve_model):
-        # Cached vision=False → image is silently dropped, request is
+    async def test_multiple_images_all_attached(self, patched_resolve_model):
+        # N pages → N image_url parts in the request, alongside the prompt.
+        caps = ModelCapabilities()
+        caps.record_vision("stub-model", True)
+        c = _make_classifier(
+            request_results=['{"title": "t"}'],
+            capabilities=caps,
+        )
+        await c.classify(
+            ocr_text="some text", tags={}, doc_types={}, correspondents={},
+            images=[
+                ImageAttachment(data=b"p1", mime="image/png"),
+                ImageAttachment(data=b"p2", mime="image/png"),
+            ],
+        )
+        parts = c.calls[0]["content"]
+        assert len(parts) == 3  # text + 2 images
+        assert sum(1 for p in parts if p["type"] == "image_url") == 2
+
+    @pytest.mark.asyncio
+    async def test_images_dropped_when_vision_unsupported(self, patched_resolve_model):
+        # Cached vision=False → images are silently dropped, request is
         # text-only. The intent is degradation, not error.
         caps = ModelCapabilities()
         caps.record_vision("stub-model", False)
@@ -898,15 +936,15 @@ class TestClassifyWithImage:
         )
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
-            image_data=b"\x89PNG\r\n", image_mime="image/png",
+            images=[ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")],
         )
         assert isinstance(c.calls[0]["content"], str)
 
     @pytest.mark.asyncio
-    async def test_non_image_mime_ignored(self, patched_resolve_model):
-        # Defensive: caller passes image_data but mime says it isn't an
-        # image — fall back to text-only rather than risk a malformed
-        # multimodal payload.
+    async def test_non_image_mime_filtered(self, patched_resolve_model):
+        # Defensive: caller passes an attachment but mime says it isn't
+        # an image — that single attachment is filtered out, falling back
+        # to text-only rather than risk a malformed multimodal payload.
         caps = ModelCapabilities()
         caps.record_vision("stub-model", True)
         c = _make_classifier(
@@ -915,6 +953,6 @@ class TestClassifyWithImage:
         )
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
-            image_data=b"binary", image_mime="application/pdf",
+            images=[ImageAttachment(data=b"binary", mime="application/pdf")],
         )
         assert isinstance(c.calls[0]["content"], str)
