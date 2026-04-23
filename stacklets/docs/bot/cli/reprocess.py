@@ -196,6 +196,11 @@ def _print_diff(*, doc_id: int, before: dict, result: EnrichResult,
         verb = "would reformat" if dry_run else "reformatted"
         print(f"    {DIM}reformat:{RESET}       {TEAL}{verb}{RESET}")
 
+    if result.summary:
+        verb = "would write" if dry_run else "written"
+        chars = len(result.summary)
+        print(f"    {DIM}summary:{RESET}        {TEAL}{verb} ({chars} chars){RESET}")
+
     if dry_run:
         if mirror_enabled:
             print(f"    {DIM}mirror:{RESET}         {DIM}skipped (--dry-run){RESET}")
