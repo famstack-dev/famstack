@@ -104,14 +104,15 @@ en:
     **💡 Tips:**
 
     - Use your phone's document scanner for best results!
-      - iPhone: Notes app → Camera → Scan Documents
-      - Android: Google Drive → + → Scan
+        - iPhone: Notes app → Camera → Scan Documents
+        - Android: Google Drive → + → Scan
     - The scanner auto-crops and enhances contrast: much better than a regular photo
     - For regular photos: good lighting, straight angle, full document in frame
 
     {ai_status}
 
     📂 **All documents:** {url}
+
     ❓ Type **help** or **hilfe** to see this message again.
 
     **Ready to try? Drop a document here and let's see it in action!**
@@ -216,14 +217,15 @@ de:
     **💡 Tipps:**
 
     - Nutzt den Dokumentenscanner eures Handys!
-      - iPhone: Notizen-App → Kamera → Dokumente scannen
-      - Android: Google Drive → + → Scannen
+        - iPhone: Notizen-App → Kamera → Dokumente scannen
+        - Android: Google Drive → + → Scannen
     - Der Scanner schneidet automatisch aus und verbessert den Kontrast: viel besser als ein normales Foto
     - Bei normalen Fotos: gutes Licht, gerader Winkel, ganzes Dokument im Bild
 
     {ai_status}
 
     📂 **Alle Dokumente:** {url}
+
     ❓ **help** oder **hilfe** tippen für diese Nachricht.
 
     **Bereit zum Testen? Wirf einfach ein Dokument hier rein!**
