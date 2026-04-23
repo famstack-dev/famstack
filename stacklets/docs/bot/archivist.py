@@ -50,6 +50,7 @@ from pypdf import PdfReader
 from git_mirror import GitMirror
 from matching import build_document_event
 from microbot import MicroBot
+from capabilities import ModelCapabilities
 from pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
@@ -272,8 +273,13 @@ class ArchivistBot(MicroBot):
 
         self._http = aiohttp.ClientSession()
         self._paperless = PaperlessAPI(self._http, self.paperless_url, self.paperless_token)
+        # Vision-capability cache lives in the bot's data dir so a probe
+        # done in one container restart isn't repeated by the next one.
         self._classifier = Classifier(
             self._http, self.openai_url, self.openai_key, bot_name=self.name,
+            capabilities=ModelCapabilities(
+                path=self._session_dir / "model-capabilities.json",
+            ),
         )
         try:
             if self.mirror_to_git:
@@ -378,11 +384,18 @@ class ArchivistBot(MicroBot):
                       link=link)
 
     async def on_first_sync(self) -> None:
-        """Called after initial sync — send welcome message to rooms."""
+        """Called after initial sync — send welcome message to rooms.
+
+        Also kicks off a background vision-capability probe so the cache
+        is warm before the first user upload. Fire-and-forget: probe
+        failures already log + degrade to text-only inside has_vision().
+        """
         url = self.paperless_public_url or self.paperless_url
         welcome = self.t("welcome", url=url, ai_status=self._ai_status())
         for room_id in self._client.rooms:
             await self._send(room_id, welcome)
+        if self.classify_enabled and self.openai_url:
+            asyncio.create_task(self._classifier.has_vision())
 
     # ── Matrix helpers ───────────────────────────────────────────────────
 
@@ -446,8 +459,14 @@ class ArchivistBot(MicroBot):
         # but the mirror keeps `display_name` as its fallback title, so the
         # original `.md` / `.yaml` / ... shows up in the archive.
         TEXT_LIKE = ("md", "txt", "csv", "json", "yaml", "yml", "toml")
+        # Image extensions get the multimodal classify path when the
+        # model has vision — the binary rides alongside the OCR text as
+        # supplementary context. PDFs are deliberately excluded for now
+        # (rendering pages to images would need a new system dep).
+        IMAGE_EXTS = ("png", "jpg", "jpeg", "webp", "gif")
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         is_text = ext in TEXT_LIKE
+        is_image = ext in IMAGE_EXTS
         # A PDF that already carries an embedded text layer is, by
         # definition, readable without OCR. Reformat's job is cleaning up
         # OCR artifacts; running it on a native-text PDF risks degrading
@@ -507,11 +526,20 @@ class ArchivistBot(MicroBot):
         # Matrix. When classification is disabled or the doc has no text,
         # we skip the LLM call entirely by handing back an empty result.
         if self.classify_enabled and has_text:
+            # Image uploads carry the raw bytes alongside OCR text — the
+            # classifier only attaches the image when the model has
+            # vision capability (lazily probed, cached on disk). For
+            # PDFs and text uploads `image_data` stays None, so the
+            # classifier takes the historic text-only path.
+            image_data = file_data if is_image else None
+            image_mime = mime_type if is_image else None
             result = await enrich_document(
                 paperless=self._paperless,
                 classifier=self._classifier,
                 doc=doc,
                 classify_max_chars=self.classify_max_chars,
+                image_data=image_data,
+                image_mime=image_mime,
             )
         else:
             result = EnrichResult()

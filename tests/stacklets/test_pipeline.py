@@ -125,10 +125,12 @@ class StubClassifier:
         self.classify_calls: list[dict] = []
         self.reformat_calls: list[str] = []
 
-    async def classify(self, *, ocr_text, tags, doc_types, correspondents):
+    async def classify(self, *, ocr_text, tags, doc_types, correspondents,
+                       image_data=None, image_mime=None):
         self.classify_calls.append({
             "ocr_text": ocr_text, "tags": tags,
             "doc_types": doc_types, "correspondents": correspondents,
+            "image_data": image_data, "image_mime": image_mime,
         })
         if self.classify_raises:
             raise self.classify_raises
@@ -721,3 +723,198 @@ class TestSummaryWrite:
 
         notes = seeded_paperless.notes[42]
         assert len(notes) == 2  # both the pre-existing and the new one
+
+
+# ── Vision multimodal ─────────────────────────────────────────────────────
+#
+# These tests exercise the multimodal call construction and the lazy
+# vision-capability probe in isolation — no live LLM, no aiohttp. We
+# patch `_request` to return whatever a fake backend would, and assert
+# on the content shape the Classifier would have sent on the wire.
+
+import json as _json  # noqa: E402
+
+from capabilities import ModelCapabilities  # noqa: E402
+from pipeline import Classifier  # noqa: E402
+
+
+def _make_classifier(*, request_results: list, capabilities=None) -> Classifier:
+    """Build a Classifier whose `_request` returns canned values in order.
+
+    Each entry is either a string (returned as-is) or an Exception
+    instance (raised). Records every (task, content, model_override)
+    triple in `c.calls` for assertions.
+    """
+    c = Classifier(http=None, url="http://stub", key="",
+                   bot_name="archivist-bot",
+                   capabilities=capabilities or ModelCapabilities())
+    c.calls = []  # type: ignore[attr-defined]
+
+    queue = list(request_results)
+
+    async def _stub_request(task, content, *, json_mode=False, model_override=None):
+        c.calls.append({"task": task, "content": content,
+                        "model_override": model_override})
+        if not queue:
+            raise AssertionError("Stub _request called more times than seeded")
+        nxt = queue.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
+    c._request = _stub_request  # type: ignore[assignment]
+    return c
+
+
+# `resolve_model("archivist-bot/classifier")` reads stack.models at call
+# time — patch it module-side so tests don't need AI_DEFAULT_MODEL set.
+@pytest.fixture
+def patched_resolve_model(monkeypatch):
+    import stack.models
+    monkeypatch.setattr(stack.models, "_DEFAULT_MODEL", "stub-model")
+    monkeypatch.setattr(stack.models, "_MODELS", {})
+    return "stub-model"
+
+
+class TestMultimodalContentBuilder:
+    """`_multimodal_content` is pure — exercise it directly."""
+
+    def test_text_part_first_image_second(self):
+        out = Classifier._multimodal_content(
+            "describe", b"\x89PNG\r\n", "image/png",
+        )
+        assert out[0] == {"type": "text", "text": "describe"}
+        assert out[1]["type"] == "image_url"
+
+    def test_image_url_is_data_url_with_correct_mime(self):
+        out = Classifier._multimodal_content(
+            "x", b"hello", "image/jpeg",
+        )
+        url = out[1]["image_url"]["url"]
+        assert url.startswith("data:image/jpeg;base64,")
+        # Base64 decodes back to the original bytes.
+        import base64
+        b64 = url.split(",", 1)[1]
+        assert base64.b64decode(b64) == b"hello"
+
+
+class TestHasVision:
+    """`has_vision` cache + probe behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_returns_cached_true_without_probing(self, patched_resolve_model):
+        caps = ModelCapabilities()
+        caps.record_vision("stub-model", True)
+        c = _make_classifier(request_results=[], capabilities=caps)
+        assert await c.has_vision() is True
+        assert c.calls == []  # no probe — cache hit
+
+    @pytest.mark.asyncio
+    async def test_returns_cached_false_without_probing(self, patched_resolve_model):
+        caps = ModelCapabilities()
+        caps.record_vision("stub-model", False)
+        c = _make_classifier(request_results=[], capabilities=caps)
+        assert await c.has_vision() is False
+        assert c.calls == []
+
+    @pytest.mark.asyncio
+    async def test_probe_success_caches_true(self, patched_resolve_model):
+        caps = ModelCapabilities()
+        c = _make_classifier(request_results=["ok"], capabilities=caps)
+        assert await c.has_vision() is True
+        assert caps.supports_vision("stub-model") is True
+        # Probe sent multimodal content with one text + one image part.
+        assert isinstance(c.calls[0]["content"], list)
+        assert len(c.calls[0]["content"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_probe_rejection_caches_false(self, patched_resolve_model):
+        # Backend complains about images → that's a definitive "no vision".
+        caps = ModelCapabilities()
+        err = LLMUnavailableError("HTTP 400: model does not support image input")
+        c = _make_classifier(request_results=[err], capabilities=caps)
+        assert await c.has_vision() is False
+        assert caps.supports_vision("stub-model") is False
+
+    @pytest.mark.asyncio
+    async def test_inconclusive_failure_does_not_cache(self, patched_resolve_model):
+        # A generic HTTP 500 doesn't tell us anything about capability —
+        # don't poison the cache, just say no for this run.
+        caps = ModelCapabilities()
+        err = LLMUnavailableError("HTTP 500: internal error")
+        c = _make_classifier(request_results=[err], capabilities=caps)
+        assert await c.has_vision() is False
+        assert caps.supports_vision("stub-model") is None  # not cached
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_cache(self, patched_resolve_model):
+        caps = ModelCapabilities()
+        err = LLMTimeoutError("model loading")
+        c = _make_classifier(request_results=[err], capabilities=caps)
+        assert await c.has_vision() is False
+        assert caps.supports_vision("stub-model") is None
+
+
+class TestClassifyWithImage:
+    """`classify` attaches an image only when vision is available."""
+
+    @pytest.mark.asyncio
+    async def test_text_only_when_no_image(self, patched_resolve_model):
+        # Baseline — no image → string content as before.
+        c = _make_classifier(request_results=['{"title": "t"}'])
+        await c.classify(
+            ocr_text="some text", tags={}, doc_types={}, correspondents={},
+        )
+        assert isinstance(c.calls[0]["content"], str)
+        assert "some text" in c.calls[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_image_attached_when_vision_supported(self, patched_resolve_model):
+        # Pre-cache vision=True so classify takes the multimodal path
+        # without having to probe in this test.
+        caps = ModelCapabilities()
+        caps.record_vision("stub-model", True)
+        c = _make_classifier(
+            request_results=['{"title": "t"}'],
+            capabilities=caps,
+        )
+        await c.classify(
+            ocr_text="some text", tags={}, doc_types={}, correspondents={},
+            image_data=b"\x89PNG\r\n", image_mime="image/png",
+        )
+        assert isinstance(c.calls[0]["content"], list)
+        assert c.calls[0]["content"][0]["type"] == "text"
+        assert c.calls[0]["content"][1]["type"] == "image_url"
+
+    @pytest.mark.asyncio
+    async def test_image_dropped_when_vision_unsupported(self, patched_resolve_model):
+        # Cached vision=False → image is silently dropped, request is
+        # text-only. The intent is degradation, not error.
+        caps = ModelCapabilities()
+        caps.record_vision("stub-model", False)
+        c = _make_classifier(
+            request_results=['{"title": "t"}'],
+            capabilities=caps,
+        )
+        await c.classify(
+            ocr_text="some text", tags={}, doc_types={}, correspondents={},
+            image_data=b"\x89PNG\r\n", image_mime="image/png",
+        )
+        assert isinstance(c.calls[0]["content"], str)
+
+    @pytest.mark.asyncio
+    async def test_non_image_mime_ignored(self, patched_resolve_model):
+        # Defensive: caller passes image_data but mime says it isn't an
+        # image — fall back to text-only rather than risk a malformed
+        # multimodal payload.
+        caps = ModelCapabilities()
+        caps.record_vision("stub-model", True)
+        c = _make_classifier(
+            request_results=['{"title": "t"}'],
+            capabilities=caps,
+        )
+        await c.classify(
+            ocr_text="some text", tags={}, doc_types={}, correspondents={},
+            image_data=b"binary", image_mime="application/pdf",
+        )
+        assert isinstance(c.calls[0]["content"], str)
