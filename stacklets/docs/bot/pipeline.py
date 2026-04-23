@@ -26,6 +26,7 @@ which makes the contract visible in every call site.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ from typing import Any
 import aiohttp
 from loguru import logger
 
+from capabilities import ModelCapabilities
 from matching import (
     MAX_TITLE_LENGTH,
     _is_empty,
@@ -42,6 +44,25 @@ from matching import (
     match_topics,
 )
 from stack import resolve_model
+
+
+# A 32×32 white PNG — small enough to be cheap on the wire, large enough
+# to satisfy vision-tower patch-size requirements (14×14 / 16×16 ViTs).
+# A 1×1 PNG triggers HTTP 500 in mlx_vlm because the image is smaller
+# than one patch — that surfaced as "vision unsupported" in early probes.
+_PROBE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lE"
+    "QVR4nO3RwQ0AMAjDwJT9d05HMB9+vgGCZF7bXJrT9XhgwR8gEyET"
+    "IRMhEyETIRMhEyEThXzH8QM9OMM6fAAAAABJRU5ErkJggg=="
+)
+
+# Substrings that show up in error responses from text-only models when
+# they reject a multimodal request — used to distinguish "no vision" (a
+# definitive answer worth caching) from "transport flaked" (don't cache).
+_NO_VISION_HINTS = (
+    "image", "vision", "multimodal", "modality",
+    "image_url", "unsupported content",
+)
 
 
 # ── Errors ───────────────────────────────────────────────────────────────
@@ -385,19 +406,34 @@ class Classifier:
     """
 
     def __init__(self, http: aiohttp.ClientSession, url: str,
-                 key: str = "", bot_name: str = "archivist-bot"):
+                 key: str = "", bot_name: str = "archivist-bot",
+                 capabilities: ModelCapabilities | None = None):
         self.http = http
         self.url = url.rstrip("/")
         self.key = key
         self.bot_name = bot_name
+        # Capabilities default to in-memory only — bots inject a
+        # disk-backed instance so the probe survives container restarts.
+        self.capabilities = capabilities or ModelCapabilities()
 
     def _endpoint(self) -> str:
         if not self.url:
             raise LLMUnavailableError("No AI endpoint configured — set up AI with 'stack up ai'")
         return self.url if self.url.endswith("/chat/completions") else f"{self.url}/chat/completions"
 
-    async def _request(self, task: str, prompt: str, *, json_mode: bool = False) -> str:
-        """Send a prompt to the LLM and return the response text.
+    async def _request(self, task: str, content: Any, *,
+                       json_mode: bool = False,
+                       model_override: str | None = None) -> str:
+        """Send content to the LLM and return the response text.
+
+        `content` is either a plain string (text-only call, the historic
+        path) or a list of OpenAI-style content parts (multimodal — see
+        `_multimodal_content`). Both shapes go through the same wire
+        format; the chat completions API accepts either as `content`.
+
+        `model_override` skips `resolve_model` — used by the vision
+        probe so we test the *actual* model the classifier would use,
+        not a different model the resolver might return.
 
         The task name (e.g. "classifier", "reformat") is resolved to a
         concrete model via resolve_model("<bot>/<task>"). The fallback chain:
@@ -409,7 +445,7 @@ class Classifier:
         Uses the OpenAI-compatible chat completions API — works with oMLX,
         Ollama, LM Studio, or any provider that serves /v1/chat/completions.
         """
-        model = resolve_model(f"{self.bot_name}/{task}")
+        model = model_override or resolve_model(f"{self.bot_name}/{task}")
 
         headers = {"Content-Type": "application/json"}
         if self.key:
@@ -417,7 +453,7 @@ class Classifier:
 
         body: dict = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
@@ -437,7 +473,10 @@ class Classifier:
                     if "not found" in body_text.lower():
                         raise LLMModelNotFoundError(f"{model} — is it loaded in oMLX?")
                     raise LLMUnavailableError(f"HTTP 404: {body_text[:200]}")
-                raise LLMUnavailableError(f"HTTP {resp.status}")
+                # Other 4xx/5xx — let the caller see the body so probes
+                # can tell "model rejected the image" from "transport flake".
+                body_text = await resp.text()
+                raise LLMUnavailableError(f"HTTP {resp.status}: {body_text[:300]}")
         except asyncio.TimeoutError:
             raise LLMTimeoutError(f"{model} — model may still be loading, try again")
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
@@ -445,14 +484,86 @@ class Classifier:
         except Exception as e:
             raise LLMUnavailableError(f"{e}")
 
+    # ── Multimodal helpers ───────────────────────────────────────────
+
+    @staticmethod
+    def _multimodal_content(prompt: str, image_data: bytes,
+                            image_mime: str) -> list[dict]:
+        """Build OpenAI-style multimodal content: text + one image.
+
+        Encoded as a `data:` URL so we don't have to expose a public
+        image URL — every backend that supports vision (oMLX, Ollama,
+        OpenAI, Anthropic via OpenAI-compat) accepts this form.
+        """
+        b64 = base64.b64encode(image_data).decode("ascii")
+        return [
+            {"type": "text", "text": prompt},
+            {"type": "image_url",
+             "image_url": {"url": f"data:{image_mime};base64,{b64}"}},
+        ]
+
+    async def has_vision(self, model: str | None = None) -> bool:
+        """Does this model accept image inputs? Cached after first probe.
+
+        On the first call for a given model: send a 1×1 PNG with a
+        trivial text prompt. A 200 response → vision works. An error
+        whose body mentions the multimodal vocabulary ("image",
+        "vision", "multimodal", "modality") → text-only, cache as such.
+        Anything else (timeout, network flake) → return False without
+        caching, so we'll retry next session.
+        """
+        model = model or resolve_model(f"{self.bot_name}/classifier")
+
+        cached = self.capabilities.supports_vision(model)
+        if cached is not None:
+            return cached
+
+        try:
+            await self._request(
+                "classifier",
+                self._multimodal_content(
+                    "Reply with the single word 'ok'.",
+                    base64.b64decode(_PROBE_PNG_B64),
+                    "image/png",
+                ),
+                model_override=model,
+            )
+            self.capabilities.record_vision(model, True)
+            logger.info("[pipeline] vision probe: {} → supported", model)
+            return True
+        except (LLMUnavailableError, LLMModelNotFoundError) as e:
+            msg = str(e).lower()
+            if any(hint in msg for hint in _NO_VISION_HINTS):
+                self.capabilities.record_vision(model, False)
+                logger.info("[pipeline] vision probe: {} → text-only", model)
+                return False
+            # Inconclusive — don't poison the cache, just say no for now.
+            logger.warning(
+                "[pipeline] vision probe inconclusive for {}: {} — "
+                "treating as text-only this run", model, e,
+            )
+            return False
+        except LLMTimeoutError:
+            logger.warning("[pipeline] vision probe timed out for {}", model)
+            return False
+
     async def classify(
         self, *,
         ocr_text: str,
         tags: dict,
         doc_types: dict,
         correspondents: dict,
+        image_data: bytes | None = None,
+        image_mime: str | None = None,
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
+
+        When `image_data` + `image_mime` are supplied AND the model has
+        vision capability (cached probe), the image rides alongside the
+        text prompt as a multimodal message. The text prompt is
+        unchanged — the image is supplementary context, not a
+        replacement for OCR. Belt-and-braces: image catches layout and
+        logos, OCR catches small print and numbers.
 
         Returns structured JSON with:
           - topics: subject areas (1-2 tags, e.g. ["Insurance", "Medical"])
@@ -476,7 +587,16 @@ class Classifier:
             correspondents=list(correspondents.keys()),
         )
 
-        response = await self._request("classifier", prompt, json_mode=True)
+        content: Any = prompt
+        if image_data and image_mime and image_mime.startswith("image/"):
+            if await self.has_vision():
+                content = self._multimodal_content(prompt, image_data, image_mime)
+                logger.info(
+                    "[pipeline] classify: attaching image ({} bytes, {})",
+                    len(image_data), image_mime,
+                )
+
+        response = await self._request("classifier", content, json_mode=True)
         if not response:
             return {}
         try:
@@ -688,6 +808,8 @@ async def enrich_document(
     classifier: Classifier,
     doc: dict,
     classify_max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
+    image_data: bytes | None = None,
+    image_mime: str | None = None,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -702,6 +824,13 @@ async def enrich_document(
     bot setting. Truncation, when it happens, is logged loudly. A silent
     3000-char cap used to live inside Classifier.classify and lost the
     tail of every long document.
+
+    `image_data` + `image_mime` are forwarded to the classifier and used
+    only when the model has vision capability (probed lazily, cached on
+    disk). The caller decides whether to supply them — typically yes for
+    image uploads (PNG/JPG), no for PDFs and text files. Vision is
+    additive: the OCR-text prompt is unchanged, the image rides
+    alongside as supplementary context.
     """
     ocr_text = (doc.get("content") or "").strip()
     if not ocr_text:
@@ -722,6 +851,7 @@ async def enrich_document(
         classification = await classifier.classify(
             ocr_text=ocr_text, tags=tags,
             doc_types=doc_types, correspondents=correspondents,
+            image_data=image_data, image_mime=image_mime,
         )
     except LLMUnavailableError as e:
         return EnrichResult(llm_error=("unavailable", str(e)))

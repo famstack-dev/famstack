@@ -90,6 +90,20 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
 
     doc = await eval_upload(doc_path)
 
+    # When the case is an image, hand the bytes to enrich_document so
+    # the multimodal path is exercised (gated by the classifier's
+    # cached vision-capability probe). PDFs stay text-only.
+    image_data: bytes | None = None
+    image_mime: str | None = None
+    suffix = doc_path.suffix.lower()
+    if suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        image_data = doc_path.read_bytes()
+        image_mime = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif",
+        }[suffix]
+
     # Run only the classify half of the pipeline. Reformat + summary
     # writes are exercised by the e2e; the eval is about classification
     # quality, where prompt changes have the biggest signal.
@@ -97,6 +111,8 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
         paperless=_PassthroughPaperless(paperless),
         classifier=ai_classifier,
         doc=doc,
+        image_data=image_data,
+        image_mime=image_mime,
     )
 
     if result.llm_error:
