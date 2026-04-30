@@ -108,3 +108,25 @@ class TestDockerCommand:
             docker._docker("info", capture_output=True)
             cmd = run.call_args[0][0]
         assert cmd == ["docker", "info"]
+
+
+class TestComposeUpForceRecreate:
+    """compose_up always passes --force-recreate. Compose's service-config
+    hash does not cover env_file *contents*, so a token written into a
+    stacklet's .env between runs is invisible to a plain `up -d` and the
+    running container stays on stale env. `stack up` is a deliberate
+    user action, so unconditional bounce is the right trade for a
+    reliable config-propagation contract."""
+
+    def test_force_recreate_is_unconditional(self):
+        from stack import docker
+        docker._context = None
+
+        mock = MagicMock()
+        mock.returncode = 0
+        mock.stderr = ""
+        with patch("subprocess.run", return_value=mock) as run:
+            docker.compose_up("/tmp/compose.yml")
+            cmd = run.call_args[0][0]
+        assert "--force-recreate" in cmd
+        assert cmd.index("up") < cmd.index("--force-recreate")

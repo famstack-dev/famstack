@@ -34,21 +34,27 @@ def _refresh_core(stck, stacklet_id):
 
     Core's env references secrets from other stacklets (API tokens etc.)
     that only exist after those stacklets run on_install_success.
-    Must use compose up (not docker restart) so containers pick up
-    the new env vars — docker restart reuses the old environment.
+    `compose_up` force-recreates unconditionally, so the bot-runner
+    picks up a freshly-written token even though compose's service-
+    config hash doesn't cover env_file contents.
+
+    Failures here used to be swallowed by a bare-except, which masked
+    real bugs (a render error in core's env left the bot-runner stale
+    and the user with no signal). We now surface failures via the
+    output channel — the parent `up` succeeded, so we don't abort, but
+    we don't pretend nothing went wrong either.
     """
     if stacklet_id == "core":
         return
     from .docker import running_project_ids
     if "core" not in running_project_ids():
         return
-    try:
-        stck.refresh_env("core")
-        core_compose = docker.find_compose_file(stck.root / "stacklets" / "core")
-        if core_compose:
-            docker.compose_up(core_compose)
-    except Exception:
-        pass
+    stck.refresh_env("core")
+    core_compose = docker.find_compose_file(stck.root / "stacklets" / "core")
+    if core_compose:
+        code, err = docker.compose_up(core_compose)
+        if code != 0 and err:
+            stck.output.step(f"core refresh failed: {err.strip().splitlines()[-1] if err.strip() else 'unknown error'}")
 
 
 def _notify(stck, message):

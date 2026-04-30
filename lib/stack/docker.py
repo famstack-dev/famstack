@@ -52,10 +52,18 @@ def compose(compose_file: str | Path, *args) -> tuple[int, str, str]:
 
 
 def compose_up(compose_file: str | Path, env: dict = None) -> tuple[int, str]:
-    """Start containers. Returns (exit_code, error_output)."""
+    """Start containers, always force-recreating. Returns (exit_code, error_output).
+
+    `--force-recreate` is unconditional because compose's service-config
+    hash does not cover env_file *contents*: tokens or settings written
+    into a stacklet's .env between runs are invisible to a plain
+    `up -d`, leaving running containers stuck on stale env. `stack up`
+    is a deliberate user action, so bouncing healthy containers is an
+    acceptable cost for a reliable config-propagation contract.
+    """
     full_env = {**__import__("os").environ, **(env or {})}
     result = _docker(
-        "compose", "-f", str(compose_file), "up", "-d",
+        "compose", "-f", str(compose_file), "up", "-d", "--force-recreate",
         capture_output=True, text=True, timeout=300, env=full_env,
     )
     return result.returncode, result.stderr
