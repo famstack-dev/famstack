@@ -55,9 +55,7 @@ The fastest way to get Immich and Paperless running on your Mac.
 
 
 <p align="center">
-  <video src="docs/assets/docs-install.mp4" alt="famstack docs in chat" width="700" autoplay loop muted playsinline>
-    <img src="docs/assets/docs-install.gif" alt="famstack docs in chat" width="500">
-  </video>
+  <img src="docs/assets/docs-install.gif" alt="famstack docs in chat" width="500">
 </p>
 
 ---
