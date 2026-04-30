@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/version-0.2.0-orange?style=flat-square" alt="Version">
 </p>
 
-**Turn your Mac into the brain of your household and operate it from your phone.**
+**Turn your Mac into the brain of your household and operate it from your phone. That is the idea.**
 Photos, memories, documents, chat, local AI: local and private by default, gets smarter over time. Open source.
 
 *"I built this because our photos, our voices, our documents: That's our life. It belongs on our hardware, not in someone else's cloud."*
