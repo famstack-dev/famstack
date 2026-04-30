@@ -48,7 +48,16 @@ Works on any Mac with Apple Silicon. Twenty minutes from clone to a working fami
 The fastest way to get Immich and Paperless running on your Mac.
 
 <p align="center">
-  <img src="docs/assets/install.gif" alt="famstack install" width="700">
+  <img src="docs/assets/install.gif" alt="famstack install" width="500">
+</p>
+
+<p align="center"><em>Then explore your stack in your family messaging</em></p>
+
+
+<p align="center">
+  <video src="docs/assets/docs-install.mp4" alt="famstack docs in chat" width="700" autoplay loop muted playsinline>
+    <img src="docs/assets/docs-install.gif" alt="famstack docs in chat" width="500">
+  </video>
 </p>
 
 ---
