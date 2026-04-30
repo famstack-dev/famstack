@@ -173,7 +173,7 @@ config = {
     'brand': (server_name.capitalize() if server_name.lower().endswith('s') else server_name.capitalize() + 's') + ' Chat',
     'disable_guests': True,
     'disable_3pid_login': True,
-    'default_theme': 'system',
+    'default_theme': 'dark',
     'room_directory': {
         'servers': [server_name]
     },
