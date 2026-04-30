@@ -128,6 +128,80 @@ class TestSetupDoneMarkerGating:
         assert not marker.exists()
 
 
+class TestRefreshCore:
+    """`_refresh_core` re-renders core's env after a sibling stacklet
+    populates a secret core consumes (e.g. docs__API_TOKEN) and runs
+    `compose up` against core. Because `compose_up` itself is now
+    unconditionally force-recreate (compose's hash doesn't cover
+    env_file *contents*), the bot-runner reliably picks up the fresh
+    token — the bug that previously left 'Documents Room' invisible
+    until the user manually bounced core."""
+
+    def _setup(self, tmp_path):
+        """A stack root with a core stacklet that has a docker-compose.yml,
+        plus a sibling whose `_refresh_core` call we want to test."""
+        from stack import Stack
+        from stack.output import CollectorOutput
+
+        (tmp_path / "stack.toml").write_text("[core]\ntimezone = \"Europe/Berlin\"\n")
+        (tmp_path / ".stack").mkdir(exist_ok=True)
+        (tmp_path / ".stack" / "secrets.toml").write_text('global__ADMIN_PASSWORD = "test"\n')
+
+        for sid in ("core", "docs"):
+            sdir = tmp_path / "stacklets" / sid
+            (sdir / "hooks").mkdir(parents=True, exist_ok=True)
+            (sdir / "stacklet.toml").write_text(
+                f'id = "{sid}"\nname = "{sid.title()}"\nversion = "0.1.0"\ncategory = "test"\n'
+            )
+        (tmp_path / "stacklets" / "core" / "docker-compose.yml").write_text(
+            "name: stack-core\nservices: {}\n"
+        )
+
+        return Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
+
+    def test_calls_compose_up_against_core_when_core_running(self, tmp_path, monkeypatch):
+        from stack.cli import _refresh_core
+        stck = self._setup(tmp_path)
+
+        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"core", "docs"})
+        calls = []
+
+        def fake_up(compose_file, env=None):
+            calls.append(str(compose_file))
+            return (0, "")
+
+        monkeypatch.setattr("stack.docker.compose_up", fake_up)
+
+        _refresh_core(stck, "docs")
+
+        assert len(calls) == 1, "expected one compose_up call against core"
+        assert calls[0].endswith("stacklets/core/docker-compose.yml")
+
+    def test_skips_when_core_not_running(self, tmp_path, monkeypatch):
+        from stack.cli import _refresh_core
+        stck = self._setup(tmp_path)
+
+        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"docs"})
+        calls = []
+        monkeypatch.setattr("stack.docker.compose_up",
+                            lambda *a, **kw: (calls.append(a), (0, ""))[1])
+
+        _refresh_core(stck, "docs")
+        assert calls == []
+
+    def test_skips_when_target_is_core(self, tmp_path, monkeypatch):
+        from stack.cli import _refresh_core
+        stck = self._setup(tmp_path)
+
+        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"core"})
+        calls = []
+        monkeypatch.setattr("stack.docker.compose_up",
+                            lambda *a, **kw: (calls.append(a), (0, ""))[1])
+
+        _refresh_core(stck, "core")
+        assert calls == []
+
+
 class TestCLIDown:
     """CLI.down() runs Stack.down() then Docker compose stop."""
 

@@ -11,7 +11,11 @@ name: stack-core
 
 services:
   stack-core-watchtower:
-    image: containrrr/watchtower:latest
+    # nickfedor/watchtower is the actively maintained fork. The original
+    # containrrr/watchtower was archived in 2024 and ships an old Docker
+    # SDK pinned to API v1.25, which modern daemons (incl. OrbStack)
+    # reject — the container crashlooped and poisoned core's health.
+    image: nickfedor/watchtower:latest
     container_name: stack-core-watchtower
     restart: unless-stopped
     environment:
