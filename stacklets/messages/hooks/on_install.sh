@@ -108,6 +108,11 @@ config = {
     # Media — families share lots of photos and videos
     "max_upload_size": "100M",
 
+    # Element Web (<=1.12.17) still requests the legacy unauthenticated
+    # /_matrix/media/v3/download/ path and shows a black square when Synapse
+    # 1.100+ refuses it. LAN-only family server, so serving media unauth is fine.
+    "enable_authenticated_media": False,
+
     # URL previews — show link thumbnails in Element
     "url_preview_enabled": True,
     "url_preview_ip_range_blacklist": [],
