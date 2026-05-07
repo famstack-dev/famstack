@@ -34,6 +34,17 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
+## What you get today
+
+- **Private family chat** with native iOS, Android, macOS, Windows and web apps (Matrix + Element X).
+- **Photo library and mobile backup** that replaces iCloud Photos for the whole family (Immich).
+- **Document archive with OCR** that you photograph from your phone and the local AI files for you (Paperless-ngx).
+- **Local AI engine** on Apple Metal GPU: voice transcription, text-to-speech, document classification (oMLX + Whisper + Piper).
+- **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
+- **One CLI to operate it all**: `./stack up <thing>` and it is running.
+
+Everything runs on your Mac. Nothing leaves your network unless you tell it to.
+
 ## Quick Start
 
 ```bash
