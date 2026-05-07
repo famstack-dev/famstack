@@ -25,6 +25,15 @@ data_dir = "~/famstack-data"
 # Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 timezone = "UTC"
 
+# Household language. Drives the seeded document taxonomy (Paperless tags
+# and document types) and other localized strings.
+# The installer auto-detects this from your timezone:
+#   Europe/Berlin, Europe/Vienna, Europe/Zurich → "de"
+#   everything else                              → "en"
+# Supported: "en", "de" (for now).
+# Change it and run: stack restart docs  (re-seeds missing tags, might require a tag cleanup)
+language = "en"
+
 [updates]
 # When Watchtower runs its nightly image update check.
 # Format: 6-field cron (seconds minutes hours day-of-month month day-of-week)
