@@ -34,12 +34,6 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
-## What do you get? The current feature list
-
- - Automatic document management.
-   * Take photos or use your document scanner on your smartphone, share it in your local
-     instant messanger. The local AI extracts facts, metadata and files it for you.
-
 ## Quick Start
 
 ```bash
