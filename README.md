@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS_Apple_Silicon-000?style=flat-square&logo=apple" alt="macOS">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="AGPLv3 License">
-  <img src="https://img.shields.io/badge/version-0.2.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.1-orange?style=flat-square" alt="Version">
 </p>
 
 **The vision: Turn your Mac into the brain of your household and operate it from your phone.**

@@ -8,7 +8,7 @@
 id          = "chatai"
 name        = "ChatAI"
 description = "Chat with your AI in the browser (Open WebUI)"
-version     = "0.2.0"
+version     = "0.2.1"
 category    = "ai"
 port        = 42050
 

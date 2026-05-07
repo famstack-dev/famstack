@@ -11,7 +11,7 @@
 id          = "ai"
 name        = "AI"
 description = "Local AI engine for voice, text, and speech"
-version     = "0.2.0"
+version     = "0.2.1"
 category    = "ai"
 type        = "host"
 port        = 42060

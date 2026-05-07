@@ -36,7 +36,7 @@ IMMICH_API_KEY = os.environ.get("IMMICH_API_KEY", "")
 app = FastAPI(
     title="famstack Tools",
     description="Family server tools for AI assistants — search documents, find photos, check server status.",
-    version="0.2.0",
+    version="0.2.1",
 )
 
 

@@ -20,7 +20,7 @@
 id          = "messages"
 name        = "Messages"
 description = "Family chat and notification backbone (Matrix + Element)"
-version     = "0.2.0"
+version     = "0.2.1"
 category    = "communication"
 port        = 42030
 

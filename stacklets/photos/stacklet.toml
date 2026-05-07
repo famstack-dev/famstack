@@ -9,7 +9,7 @@
 id          = "photos"
 name        = "Photos"
 description = "Your private photo library (Immich)"
-version     = "0.2.0"
+version     = "0.2.1"
 category    = "media"
 port        = 42010
 

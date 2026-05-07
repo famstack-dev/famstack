@@ -10,7 +10,7 @@
 id          = "infra"
 name        = "Infrastructure"
 description = "DNS + reverse proxy for domain mode"
-version     = "0.2.0"
+version     = "0.2.1"
 category    = "infrastructure"
 always_on   = true
 

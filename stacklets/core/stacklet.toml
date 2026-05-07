@@ -7,7 +7,7 @@
 id          = "core"
 name        = "Core"
 description = "Auto-updates, bot runner, and API socket"
-version     = "0.2.0"
+version     = "0.2.1"
 category    = "infrastructure"
 type        = "host"
 always_on   = true
