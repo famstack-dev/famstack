@@ -1,15 +1,15 @@
 # Documentation
 
-## Getting Started
+## For users
 
-- [User Guide](guide.md) - Install, configure, day-to-day operations, troubleshooting
+- **[User Guide](user-guide.md)**: install, stacklets, day-to-day operations, troubleshooting. One page on purpose.
+- [Creating Stacklets](creating-stacklets.md): build your own stacklet.
 
-## Reference
+## Technical reference
 
-- [Stack Reference](stack-reference.md) - How famstack works: stacklets, lifecycle, hooks, config, secrets
-- [Creating Stacklets](creating-stacklets.md) - Build your own stacklet from scratch
+- [Stack Reference](stack-reference.md): stacklet model, lifecycle, hooks, config, secrets.
 
-## Architecture Decisions
+## Architecture decisions
 
 - [ADR-001](adr/adr-001-user-seeding.md) User seeding
 - [ADR-002](adr/adr-002-port-mode-first.md) Port mode first

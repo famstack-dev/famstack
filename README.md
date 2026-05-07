@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/version-0.2.0-orange?style=flat-square" alt="Version">
 </p>
 
-**Turn your Mac into the brain of your household and operate it from your phone. That is the idea.**
+**The vision: Turn your Mac into the brain of your household and operate it from your phone.**
 Photos, memories, documents, chat, local AI: local and private by default, gets smarter over time. Open source.
 
 *"I built this because our photos, our voices, our documents: That's our life. It belongs on our hardware, not in someone else's cloud."*
@@ -27,12 +27,18 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> **v0.2.0** is about to be tagged (Week 3 of April) Back in the day we would have called it "Beta". 
+> **v0.2.0** is tagged (Week 3 of April) as "Beta". 
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
 > or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
+
+## What do you get? The current feature list
+
+ - Automatic document management.
+   * Take photos or use your document scanner on your smartphone, share it in your local
+     instant messanger. The local AI extracts facts, metadata and files it for you.
 
 ## Quick Start
 
@@ -41,7 +47,10 @@ git clone https://github.com/famstack-dev/famstack.git && cd famstack
 ./stack         # Starts the Installer
 ```
 
-- [User Guide](docs/guide.md) - Install, configure, day-to-day operations, troubleshooting
+
+
+- [User Guide](docs/user-guide.md) - Quick start, install, stacklets, operations, troubleshooting
+- [Documentation Index](docs/README.md) - Full docs map and references
 
 Works on any Mac with Apple Silicon. Twenty minutes from clone to a working family server on your machine.
 
