@@ -6,6 +6,10 @@ This guide covers everything: hardware, install, the stacklets, day-to-day opera
 
 If you get stuck, jump into [Discord](https://discord.gg/hfutdmmfBe) or open an issue on [GitHub](https://github.com/famstack-dev/famstack/issues).
 
+[![famstack install walkthrough on YouTube](https://img.youtube.com/vi/2trwwigKyEY/maxresdefault.jpg)](https://www.youtube.com/watch?v=2trwwigKyEY)
+
+Prefer to watch? [Full install walkthrough on YouTube](https://www.youtube.com/watch?v=2trwwigKyEY): 19 minutes, clone to a working document archive with mobile access. The whole [famstack channel](https://www.youtube.com/@famstacker) has the short clips too.
+
 ---
 
 ## Quick Start

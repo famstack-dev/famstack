@@ -8,8 +8,8 @@
   <a href="https://famstack.dev"><img src="https://img.shields.io/badge/website-famstack.dev-161F24?style=for-the-badge" alt="Website"></a>
   <a href="https://discord.gg/hfutdmmfBe"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://bsky.app/profile/famstack.dev"><img src="https://img.shields.io/badge/Bluesky-famstack.dev-0285FF?style=for-the-badge&logo=bluesky&logoColor=white" alt="Bluesky"></a>
-  <a href="https://github.com/famstack-dev"><img src="https://img.shields.io/badge/GitHub-famstack--dev-181717?style=for-the-badge&logo=github" alt="GitHub"></a>
   <a href="https://x.com/arthwaredev"><img src="https://img.shields.io/badge/X-@arthwaredev-000000?style=for-the-badge&logo=x&logoColor=white" alt="X"></a>
+  <a href="https://www.youtube.com/@famstacker"><img src="https://img.shields.io/badge/YouTube-@famstacker-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube"></a>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> **v0.2.0** is tagged (Week 3 of April) as "Beta". 
+> **v0.2.1** is tagged as "Beta". 
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
