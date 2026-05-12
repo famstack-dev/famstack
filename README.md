@@ -44,7 +44,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
 
 <p align="center">
-  <video src="docs/assets/archivist-demo.mp4" width="280" controls muted></video>
+  <video src="https://github.com/user-attachments/assets/9242ab58-2c0f-4fc2-bcc9-e7ce618caca8" width="280" controls muted></video>
 </p>
 
 <p align="center"><em>The archivist files and finds documents from your phone, in chat</em></p>
