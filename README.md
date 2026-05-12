@@ -43,6 +43,13 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
 
+<p align="center">
+  <video src="docs/assets/archivist-demo.mp4" width="280" controls muted></video>
+</p>
+
+<p align="center"><em>The archivist files and finds documents from your phone, in chat</em></p>
+
+
 Everything runs on your Mac. Nothing leaves your network unless you tell it to.
 
 ## Quick Start
