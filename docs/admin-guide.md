@@ -542,15 +542,67 @@ All commands output JSON when piped. Use `--json` to force it, `--pretty` to for
 
 ## Backups
 
-This is the part everyone skips and regrets. famstack puts every byte of user data under one directory:
+This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet for the irreplaceable file-level data (photo originals, scanned documents). It does not yet cover stacklet databases or your config files; for those, layer it with Time Machine or a periodic tar.
+
+### The backup stacklet
+
+Run `stack up backup`. You need an APFS-formatted external drive plugged in. The setup wizard asks for the disk name, encryption (default: plain APFS), and a nightly time (default 02:00). It then installs a small `.app` wrapper, asks you to grant it Full Disk Access, and adds a cron entry.
+
+**What gets backed up**
+
+| Source | Path on the vault disk |
+|---|---|
+| Immich photo originals | `/Volumes/<disk>/data/photos-library/` |
+| Paperless archived PDFs | `/Volumes/<disk>/data/docs-media/` |
+
+Postgres databases for both are not backed up yet. You get your files back but lose albums, tags, custom fields, and saved views. Pg-dump snapshots will ship as `[[backup.snapshot]]` in a later release.
+
+**How the protection works**
+
+Every file written to the vault gets the kernel `uchg` flag. macOS refuses to modify or delete uchg files, even with `sudo`. `rsync --ignore-existing` means existing vault files are skipped on every run, so the backup is append-only by design and accidental `rm -rf` on your main system cannot propagate. A canary file is checked before every sync; if ransomware has touched `~/famstack-data`, the canary won't match and the sync aborts before opening the vault.
+
+**Daily operation**
 
 ```bash
-ls ~/famstack-data
+stack backup sync         # run a sync now (from any context)
+stack backup status       # last run, source counts, current mount state
+stack down backup         # remove the cron entry, keep .app and vault data
+stack destroy backup      # also remove the .app; vault and Keychain are preserved
 ```
 
-That is what you back up. Time Machine works. So does `restic`, `rsync`, or copying it to an external drive every Sunday. Pick one and do it.
+The scheduled nightly run leaves the disk mounted between runs (cron cannot trigger eject under the macOS sandbox; files are kernel-locked regardless). Manual `stack backup sync` from Terminal does eject when it finishes. Results post to the `#famstack` Matrix room via stacker-bot.
 
-What is **not** in `~/famstack-data` and therefore needs separate handling:
+**Recovery (no special tooling needed)**
+
+Plug the vault disk into any Mac and browse the files in Finder. To copy locked files out:
+
+```bash
+sudo chflags -R nouchg /Volumes/<disk>/data/photos-library/<folder>/
+cp -R /Volumes/<disk>/data/photos-library/<folder>/ ~/recovered/
+```
+
+A `stack backup restore` command and `on_restore` hooks for database recovery are planned but not yet shipped.
+
+**What it protects you from**
+
+| Threat | Covered |
+|---|---|
+| Ransomware encrypts your Mac | Yes (uchg + canary) |
+| Accidental `rm -rf` on `~/famstack-data` | Yes (rsync never deletes from the vault) |
+| You delete a photo on your phone | Yes (Immich propagates the delete to disk; vault keeps the original) |
+| Vault drive stolen from your house | Only if you opted in to APFS encryption |
+| Vault drive hardware failure | No (single physical copy; offsite engine planned) |
+| Fire or flood | No (vault is in the same building; offsite engine planned) |
+
+**Limitations to know about**
+
+Only APFS or HFS+ disks attached via USB or Thunderbolt. Network shares (SMB/NFS/Synology) are refused at probe time because the kernel cannot enforce `uchg` over a network filesystem. One target only; encrypted offsite via restic is planned, not shipped.
+
+### Everything else
+
+`~/famstack-data` holds every byte of user data. Even with the backup stacklet running you may want Time Machine or `restic` against this directory for full coverage (databases, AI model caches).
+
+What is **not** in `~/famstack-data` and needs separate handling:
 
 - `stack.toml`, `users.toml`, `.stack/secrets.toml` in the repo. Small but irreplaceable. Gitignored on purpose, so they will not survive a fresh `git clone`.
 - oMLX models (in `~/.omlx/models`). Re-downloadable.

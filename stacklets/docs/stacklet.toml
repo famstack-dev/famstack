@@ -50,3 +50,19 @@ LANGUAGE             = "{language}"
 [health]
 url    = "http://localhost:42020/api/"
 expect = "200"
+
+# Backup sources declared by this stacklet. See stacklets/backup/README.md
+# for how sources flow to configured targets.
+#
+# We back up paperless/media — the archived PDFs themselves. These are
+# the irreplaceable part: scanned letters, contracts, bills.
+#
+# Postgres is NOT yet backed up here. On host failure you'd recover the
+# PDFs but lose tag assignments, correspondents, custom field values,
+# manually edited titles, ASNs, saved views, and permissions. Re-running
+# OCR rebuilds the search index but not the organization. Pg-dump
+# snapshots land via [[backup.snapshot]] later.
+[[backup.archive]]
+name      = "media"
+path      = "{data_dir}/docs/paperless/media"
+min_files = 10

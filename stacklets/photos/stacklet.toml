@@ -53,3 +53,22 @@ IMMICH_VERSION   = "release"
 url  = "http://localhost:42010/api/server/ping"
 path = "$.res"
 expect = "pong"
+
+# Backup sources declared by this stacklet. The backup stacklet discovers
+# every [[backup.archive]] entry from every enabled stacklet and routes
+# them through configured targets. An archive is an append-only store:
+# files are added, never modified, never deleted. min_files is a coarse
+# ransomware smoke test; the canary file is the precise tripwire.
+#
+# We back up the originals only — UPLOAD_LOCATION contains library/
+# (originals), encoded-video/, thumbs/, backups/, upload/, profile/.
+# Everything except library/ is regenerable from the originals (Immich
+# re-encodes and re-thumbnails on import).
+#
+# Postgres is NOT yet backed up here. On host failure you'd recover the
+# photo files but lose albums, shares, user accounts, faces, and memory
+# definitions. Pg-dump snapshots land via [[backup.snapshot]] later.
+[[backup.archive]]
+name      = "library"
+path      = "{data_dir}/photos/library/library"
+min_files = 10

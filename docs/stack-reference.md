@@ -331,6 +331,44 @@ Subscribing to custom events on the bot side isn't wired yet — that
 comes with the first consumer bot. The emit contract is stable and
 tested end-to-end (see `tests/integration/test_archivist_e2e.py`).
 
+### Backup
+
+A stacklet declares the data it wants backed up. The `backup` stacklet
+discovers these declarations across all enabled stacklets and routes them
+through configured targets (see `stack.toml` → `[backup.targets.*]`).
+The stacklet itself never reads the manifest — discovery is the runtime's
+job.
+
+```toml
+# stacklets/photos/stacklet.toml
+[[backup.archive]]
+name      = "library"
+path      = "{data_dir}/photos/library/library"
+min_files = 10
+```
+
+| Field | Description |
+|---|---|
+| `name` | Short slug for this source. Combined with the stacklet id, this becomes the global source id (`photos/library`). Used in `stack backup status` output and (future) `--source=` selection. |
+| `path` | Filesystem path to sync. Template variables from the rendered environment are available (`{data_dir}`, etc.). |
+| `min_files` | Coarse ransomware smoke test. The engine counts files at `path` before syncing and refuses if the count is below this. The canary file is the precise tripwire; this is the dumb-and-cheap secondary check. Keep low enough that fresh installs don't trip it. |
+
+**`[[backup.archive]]`** declares an append-only store: files are added,
+never modified, never deleted. The engine commits to kernel-enforced
+immutability where the filesystem supports it. If a stacklet's data is
+genuinely append-only (photo originals, archived PDFs), this is the
+right section. (Storage-industry vocabulary calls this WORM — Write
+Once Read Many.)
+
+**`[[backup.snapshot]]`** is reserved for time-stamped point-in-time
+captures of mutable state (Postgres dumps, Docker volume tarballs). Not
+yet implemented — declare an `archive` section today; a `snapshot`
+section will be added later when DB-restore semantics ship.
+
+A stacklet may declare zero, one, or several entries of each kind. Sources
+flow to every configured target whose engine supports the declared
+section type.
+
 ---
 
 ## Lifecycle
@@ -472,6 +510,7 @@ stack destroy:
 | `on_start_ready` | Every up | **Runs after health checks pass.** The service is healthy and accepting API calls. Seed data, sync accounts, anything that needs the service running. Must be idempotent. |
 | `on_stop` | Every down | Stop native services. Only stops services we manage (.state/ markers). |
 | `on_destroy` | Once | Remove native services entirely (unload plists, uninstall). |
+| `on_restore` | On `stack backup restore` | **Reserved — not yet invoked.** Runs after the backup engine has put a stacklet's files back on disk. Owns stacklet-specific recovery: DB import, search-index rebuild, account re-seed. Photos can ship an empty stub (Immich re-indexes from the library on its own); Docs needs `pg_restore` + Paperless reindex. Hook signature will match the other `run(ctx)` hooks. |
 
 **File resolution:** for each hook, the runtime looks for `.py` first,
 then `.sh`. Only one can exist — not both. Python is preferred.
@@ -893,7 +932,21 @@ openai_key = "local"
 default    = "mlx-community/Qwen2.5-14B-Instruct-4bit"
 whisper_url = "http://localhost:6111/v1"
 language   = "en"
+
+[backup]
+# One block per destination. Engine name selects the implementation.
+[backup.targets.vault]
+engine   = "external-disk"
+disk     = "backup-vault"
+schedule = "0 2 * * *"
 ```
+
+`[backup.targets.<name>]` defines one destination. `<name>` is the user's
+label for that destination (any string). The required `engine` field
+picks the implementation under `stacklets/backup/engines/`. Today only
+`external-disk` ships. Engine-specific fields (`disk`, `schedule`,
+future `repository`, `password`) live alongside `engine` in the same
+block.
 
 Stacklets never read `stack.toml` directly. The runtime resolves
 template variables and passes everything through the rendered `.env`.
