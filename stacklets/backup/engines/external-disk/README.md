@@ -50,12 +50,15 @@ SMB/S3 alike.
 
 ## Sandbox notes
 
-`diskutil` operations (mount, eject, unlock) are restricted by macOS TCC
-when called from `cron`, `launchd`, or any binary that hasn't been
-granted Full Disk Access. The fix is the `.app` wrapper: a minimal app
-bundle whose only purpose is to receive the FDA grant. Cron invokes it
-via `open /path/to/FamstackVaultSync.app`, which routes through the
-proper macOS app lifecycle and inherits the FDA permission.
+`diskutil` operations (mount, eject, unlock) and writes to `/Volumes/*`
+are restricted by macOS TCC when called from `cron` or `launchd`
+unless the calling binary holds Full Disk Access. The current
+install hook tells the user to grant FDA to `/usr/sbin/cron` itself
+— one drag-and-drop in System Settings, after which every cron
+job on the system inherits the access. The trade-off is scope:
+that grant is system-wide, not scoped to famstack. Scoping it via
+a dedicated `.app` bundle is a planned alternative if users
+push back on the broad permission.
 
 `diskutil eject` from cron is sandbox-blocked even with FDA. The disk
 stays mounted after scheduled runs (uchg flags still protect the data);

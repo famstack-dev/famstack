@@ -546,11 +546,11 @@ This is the part everyone skips and regrets. famstack ships an opt-in backup sta
 
 ### The backup stacklet
 
-Run `stack up backup`. You need an APFS-formatted external drive plugged in. The setup wizard asks for the disk name, encryption (default: plain APFS), and a nightly time (default 02:00). It then installs a small `.app` wrapper, asks you to grant it Full Disk Access, and adds a cron entry.
+Run `stack up backup`. You need an APFS-formatted external drive plugged in. The setup wizard asks for the disk name, encryption (default: plain APFS), and a nightly time (default 02:00). It then installs a cron entry that runs `stack backup sync` at that hour, and walks you through granting Full Disk Access to `/usr/sbin/cron` in System Settings. The FDA grant is what lets the scheduled sync reach the archive disk; without it, cron jobs are sandbox-blocked from `/Volumes/*` on macOS Catalina and later. One drag-and-drop, then every cron job on this Mac inherits the access.
 
 **What gets backed up**
 
-| Source | Path on the vault disk |
+| Source | Path on the archive disk |
 |---|---|
 | Immich photo originals | `/Volumes/<disk>/data/photos-library/` |
 | Paperless archived PDFs | `/Volumes/<disk>/data/docs-media/` |
@@ -559,22 +559,24 @@ Postgres databases for both are not backed up yet. You get your files back but l
 
 **How the protection works**
 
-Every file written to the vault gets the kernel `uchg` flag. macOS refuses to modify or delete uchg files, even with `sudo`. `rsync --ignore-existing` means existing vault files are skipped on every run, so the backup is append-only by design and accidental `rm -rf` on your main system cannot propagate. A canary file is checked before every sync; if ransomware has touched `~/famstack-data`, the canary won't match and the sync aborts before opening the vault.
+Every file written to the archive gets the kernel `uchg` flag. macOS refuses to modify or delete uchg files, even with `sudo`. `rsync --ignore-existing` means files already in the archive are skipped on every run, so the backup is append-only by design and accidental `rm -rf` on your main system cannot propagate.
+
+A **canary file** is a tripwire (named after the canary miners used to take underground to detect bad air). famstack plants a small file with known contents inside `~/famstack-data`; before every sync the engine reads it and refuses to proceed if the contents have changed. If something has been encrypting or modifying files under the data directory, the canary will not match what was planted and the sync aborts before opening the archive, so the corrupted state cannot propagate.
 
 **Daily operation**
 
 ```bash
 stack backup sync         # run a sync now (from any context)
 stack backup status       # last run, source counts, current mount state
-stack down backup         # remove the cron entry, keep .app and vault data
-stack destroy backup      # also remove the .app; vault and Keychain are preserved
+stack down backup         # remove the cron entry; canary, logs and archive contents stay
+stack destroy backup      # also remove BACKUP_DATA_DIR; archive disk and Keychain are preserved
 ```
 
 The scheduled nightly run leaves the disk mounted between runs (cron cannot trigger eject under the macOS sandbox; files are kernel-locked regardless). Manual `stack backup sync` from Terminal does eject when it finishes. Results post to the `#famstack` Matrix room via stacker-bot.
 
 **Recovery (no special tooling needed)**
 
-Plug the vault disk into any Mac and browse the files in Finder. To copy locked files out:
+Plug the archive disk into any Mac and browse the files in Finder. To copy locked files out:
 
 ```bash
 sudo chflags -R nouchg /Volumes/<disk>/data/photos-library/<folder>/
@@ -588,11 +590,11 @@ A `stack backup restore` command and `on_restore` hooks for database recovery ar
 | Threat | Covered |
 |---|---|
 | Ransomware encrypts your Mac | Yes (uchg + canary) |
-| Accidental `rm -rf` on `~/famstack-data` | Yes (rsync never deletes from the vault) |
-| You delete a photo on your phone | Yes (Immich propagates the delete to disk; vault keeps the original) |
+| Accidental `rm -rf` on `~/famstack-data` | Yes (rsync never deletes from the archive) |
+| You delete a photo on your phone | Yes (Immich propagates the delete to disk; the archive keeps the original) |
 | Vault drive stolen from your house | Only if you opted in to APFS encryption |
 | Vault drive hardware failure | No (single physical copy; offsite engine planned) |
-| Fire or flood | No (vault is in the same building; offsite engine planned) |
+| Fire or flood | No (archive is in the same building; offsite engine planned) |
 
 **Limitations to know about**
 

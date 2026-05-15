@@ -1,15 +1,13 @@
 """Crontab install/remove helpers for the backup stacklet.
 
-Backup's nightly run is a cron entry rather than a launchd job because
-launchd's sandbox blocks ``diskutil`` operations even with Full Disk
-Access — the only combination macOS actually allows is cron invoking
-an .app bundle via ``open`` (see
-``family-server/backup/docs/MACOS-SANDBOX-BACKUP-SCRIPT.md`` for the
-full history of approaches that didn't work).
+Backup's nightly run is a cron entry rather than a launchd job:
+launchd's sandbox blocks ``diskutil`` and ``/Volumes/`` access even
+with Full Disk Access, while cron inherits the FDA grant on
+``/usr/sbin/cron`` once the user adds it in System Settings.
 
 Entries are identified by an inline marker comment::
 
-    0 2 * * * open /Volumes/...  # famstack-backup-vault
+    0 2 * * * /path/to/stack backup sync ...  # famstack-backup-vault
 
 The marker has the target name appended so multiple targets (vault,
 offsite) can coexist without one's removal touching the other's entry.

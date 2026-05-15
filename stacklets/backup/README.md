@@ -67,14 +67,16 @@ contract has been exercised on at least one production sync.
 `stack destroy backup` removes the backup *tooling* — never the
 *backups*. Specifically:
 
-- **Removed:** cron entry, FamstackVaultSync.app bundle, local logs,
-  canary file under BACKUP_DATA_DIR.
-- **Preserved:** every file on the vault disk. The whole point of an
+- **Removed:** cron entry, local logs, canary file under BACKUP_DATA_DIR.
+- **Preserved:** every file on the archive disk. The whole point of an
   append-only archive is that it outlives the system that wrote it.
 - **Preserved:** the macOS Keychain entry for the disk passphrase
-  (encrypted vaults only). The user may want manual disk access after
+  (encrypted archives only). The user may want manual disk access after
   uninstall; the command to remove it is surfaced if they want a fully
   clean state.
+- **Preserved:** the Full Disk Access grant on `/usr/sbin/cron`. It
+  also covers any other cron jobs on the system; the user can remove
+  it manually if they prefer.
 
 Defensive measure: `on_configure` refuses to let `BACKUP_DATA_DIR`
 point at a path under `/Volumes/`. That way the framework's automatic
@@ -88,7 +90,7 @@ restore CLI exists yet — but you don't need one to get your photos
 back:
 
 ```bash
-# 1. Plug the vault disk into any Mac and unlock it (Finder prompts
+# 1. Plug the archive disk into any Mac and unlock it (Finder prompts
 #    for the passphrase if encrypted)
 
 # 2. Browse to the originals

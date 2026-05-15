@@ -29,22 +29,23 @@ category    = "infrastructure"
 type        = "host"
 
 # Backup runs once per night via a host-installed cron entry. The cron
-# entry launches an .app bundle via `open` so that macOS Full Disk Access
-# applies — required to read external volumes from a background process.
+# command invokes ``stack backup sync`` directly. macOS sandboxes cron
+# from reading external volumes unless ``/usr/sbin/cron`` itself has
+# Full Disk Access — on_install walks the user through granting it.
 # See engines/external-disk/README.md for the sandboxing rationale.
 
 hints = [
     "Run 'stack backup sync' to test a backup now",
-    "Run 'stack backup status' to see the last run and vault size",
+    "Run 'stack backup status' to see the last run and archive size",
 ]
 
 [env.defaults]
 # BACKUP_DATA_DIR is this stacklet's own state directory (canary file,
-# audit log, run history, the FDA-granted .app bundle). It is NOT the
-# source data being backed up, and NOT the target vault disk — both of
-# those have separate names elsewhere. The form here follows the
-# framework convention {STACKLET}_DATA_DIR = "{data_dir}/{stacklet_id}"
-# that other stacklets use (cf. PAPERLESS_DATA_DIR in docs/stacklet.toml).
+# audit log, run history). It is NOT the source data being backed up,
+# and NOT the archive disk where backups land — both of those have
+# separate names elsewhere. The form here follows the framework
+# convention {STACKLET}_DATA_DIR = "{data_dir}/{stacklet_id}" that
+# other stacklets use (cf. PAPERLESS_DATA_DIR in docs/stacklet.toml).
 # The name is confusing because "backup" is both a stacklet name and a
 # verb; the contents are state, not backups.
 BACKUP_DATA_DIR = "{data_dir}/backup"

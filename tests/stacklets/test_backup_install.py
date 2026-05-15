@@ -1,14 +1,13 @@
-"""Unit tests for on_install's pure helpers: canary planting and .app
-bundle generation.
+"""Unit tests for on_install's pure helpers: canary planting and the
+cron command builder.
 
-The interactive FDA walkthrough and crontab plumbing are tested
-elsewhere (test_backup_cron).
+The interactive FDA walkthrough is integration-only (requires a TTY +
+System Settings) and isn't covered here. Crontab plumbing has its own
+tests in test_backup_cron.
 """
 
 from __future__ import annotations
 
-import os
-import stat
 import sys
 from pathlib import Path
 
@@ -19,84 +18,6 @@ sys.path.insert(0, str(REPO_ROOT / "stacklets" / "backup" / "hooks"))
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 import on_install  # noqa: E402
-
-
-class TestGenerateAppBundle:
-    @pytest.fixture
-    def bundle(self, tmp_path):
-        """Generate an .app bundle into tmp_path and return its path."""
-        return on_install.generate_app_bundle(
-            target_dir=tmp_path,
-            stack_executable=Path("/path/to/stack"),
-            log_path=tmp_path / "logs" / "cron.log",
-        )
-
-    def test_bundle_directory_structure(self, bundle):
-        # Classic macOS .app layout — Contents/{Info.plist, MacOS/<exec>}
-        assert bundle.is_dir()
-        assert bundle.name == "FamstackVaultSync.app"
-        assert (bundle / "Contents" / "Info.plist").is_file()
-        assert (bundle / "Contents" / "MacOS" / "vault-sync").is_file()
-
-    def test_info_plist_identifies_bundle(self, bundle):
-        plist = (bundle / "Contents" / "Info.plist").read_text()
-        # macOS looks these up when launching the bundle.
-        assert "<key>CFBundleExecutable</key>" in plist
-        assert "<string>vault-sync</string>" in plist
-        assert "<key>CFBundleIdentifier</key>" in plist
-        assert "<string>dev.famstack.backup</string>" in plist
-
-    def test_info_plist_is_background_app(self, bundle):
-        # LSUIElement=true keeps the bundle out of the dock and
-        # Cmd-Tab — there's no UI, no reason to surface it as a
-        # foreground app.
-        plist = (bundle / "Contents" / "Info.plist").read_text()
-        assert "<key>LSUIElement</key>" in plist
-        assert "<true/>" in plist
-
-    def test_info_plist_has_valid_xml_header(self, bundle):
-        plist = (bundle / "Contents" / "Info.plist").read_text()
-        # macOS is picky about the DOCTYPE; missing or malformed
-        # headers cause silent launch failures.
-        assert plist.startswith('<?xml version="1.0"')
-        assert "<!DOCTYPE plist PUBLIC" in plist
-        assert plist.rstrip().endswith("</plist>")
-
-    def test_executable_is_executable(self, bundle):
-        wrapper = bundle / "Contents" / "MacOS" / "vault-sync"
-        mode = wrapper.stat().st_mode
-        # User, group, and other all need x bit; cron may run with a
-        # narrower umask and the .app must still launch.
-        assert mode & stat.S_IXUSR
-        assert mode & stat.S_IXGRP
-        assert mode & stat.S_IXOTH
-
-    def test_wrapper_invokes_stack_backup_sync(self, bundle):
-        wrapper = (bundle / "Contents" / "MacOS" / "vault-sync").read_text()
-        assert "/path/to/stack" in wrapper
-        assert "backup sync" in wrapper
-
-    def test_wrapper_redirects_output_to_log(self, bundle, tmp_path):
-        wrapper = (bundle / "Contents" / "MacOS" / "vault-sync").read_text()
-        # Cron output is invisible by default — the wrapper must redirect
-        # to a known log path so a misbehaving scheduled run leaves a
-        # trail the user can inspect.
-        assert str(tmp_path / "logs" / "cron.log") in wrapper
-        assert "2>&1" in wrapper
-
-    def test_idempotent_regeneration(self, tmp_path):
-        # Running install twice should leave the same bundle, not pile
-        # up duplicates or stale state.
-        on_install.generate_app_bundle(
-            tmp_path, Path("/p/stack"), tmp_path / "logs" / "cron.log"
-        )
-        on_install.generate_app_bundle(
-            tmp_path, Path("/p/stack"), tmp_path / "logs" / "cron.log"
-        )
-        # Still one .app, structure intact.
-        bundles = list(tmp_path.glob("*.app"))
-        assert len(bundles) == 1
-        assert (bundles[0] / "Contents" / "Info.plist").is_file()
 
 
 class TestPlantCanary:
@@ -123,3 +44,29 @@ class TestPlantCanary:
         sys.path.insert(0, str(engine_dir))
         from sync import CANARY_STRING as ENGINE_CANARY
         assert on_install.CANARY_STRING == ENGINE_CANARY
+
+
+class TestCronCommand:
+    def test_invokes_stack_backup_sync(self):
+        cmd = on_install._cron_command(Path("/repo"), Path("/data/backup"))
+        # The cron command must call the right CLI on the right repo.
+        assert "/repo/stack" in cmd
+        assert "backup sync" in cmd
+
+    def test_redirects_output_to_cron_log(self):
+        # Cron output is invisible by default; the redirect ensures a
+        # misbehaving scheduled run leaves a trail the user can inspect.
+        cmd = on_install._cron_command(Path("/repo"), Path("/data/backup"))
+        assert "/data/backup/logs/cron.log" in cmd
+        assert ">>" in cmd
+        assert "2>&1" in cmd
+
+    def test_uses_absolute_paths(self):
+        # cron's PATH is minimal; relative paths break. Both the binary
+        # and the log destination must be absolute.
+        cmd = on_install._cron_command(Path("/repo"), Path("/data/backup"))
+        for token in cmd.split():
+            # Skip the redirect operators and 2>&1
+            if token in (">>", "2>&1", "backup", "sync"):
+                continue
+            assert token.startswith("/"), f"non-absolute token in cron line: {token!r}"
