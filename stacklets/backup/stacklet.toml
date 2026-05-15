@@ -1,0 +1,51 @@
+# stacklet.toml — backup stacklet (append-only archives)
+#
+# Coordinates backups of stacklet data to attached external disks. The
+# protection model is layered:
+#
+#   1. Files locked with chflags uchg (kernel refuses modify or delete).
+#   2. rsync --ignore-existing (append-only: never overwrites existing).
+#   3. Canary + min-file-count preflight (ransomware tripwire).
+#   4. APFS encryption optional (defends physical theft only).
+#   5. Eject after sync — works from Terminal, sandbox-blocked from cron.
+#      Treat as a bonus, not a guarantee: the disk usually stays mounted
+#      between scheduled runs, with files kernel-immutable.
+#
+# Sources are discovered, not hardcoded: every enabled stacklet that
+# declares [[backup.archive]] in its own stacklet.toml contributes to
+# the next sync. Targets are configured in stack.toml under
+# [backup.targets].
+#
+# Engines:
+#   external-disk — rsync + chflags uchg on attached APFS disk (refuses
+#                   to run on filesystems that don't honor uchg)
+#   restic        — encrypted offsite (planned, not implemented)
+
+id          = "backup"
+name        = "Backup"
+description = "Append-only backup of stacklet data to attached disks"
+version     = "0.1.0"
+category    = "infrastructure"
+type        = "host"
+
+# Backup runs once per night via a host-installed cron entry. The cron
+# entry launches an .app bundle via `open` so that macOS Full Disk Access
+# applies — required to read external volumes from a background process.
+# See engines/external-disk/README.md for the sandboxing rationale.
+
+hints = [
+    "Run 'stack backup sync' to test a backup now",
+    "Run 'stack backup status' to see the last run and vault size",
+]
+
+[env.defaults]
+# BACKUP_DATA_DIR is this stacklet's own state directory (canary file,
+# audit log, run history, the FDA-granted .app bundle). It is NOT the
+# source data being backed up, and NOT the target vault disk — both of
+# those have separate names elsewhere. The form here follows the
+# framework convention {STACKLET}_DATA_DIR = "{data_dir}/{stacklet_id}"
+# that other stacklets use (cf. PAPERLESS_DATA_DIR in docs/stacklet.toml).
+# The name is confusing because "backup" is both a stacklet name and a
+# verb; the contents are state, not backups.
+BACKUP_DATA_DIR = "{data_dir}/backup"
+TZ              = "{timezone}"
