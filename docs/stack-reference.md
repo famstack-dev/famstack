@@ -10,6 +10,19 @@ Think Spring Boot for self-hosted services on a Mac.
 
 ---
 
+## Stacklet vs core
+
+The distinction is **infrastructure vs feature**. Core hosts cross-cutting
+infrastructure that every running stack needs: Watchtower (auto-updates),
+the bot runtime, the API socket, the LLM tools server. Vertical stacklets
+host features a user might rationally decline: photos, documents, backup,
+the AI stack. The test: could a user legitimately want this off? If yes,
+it belongs in its own stacklet, even when multiple other stacklets opt
+into it via manifest contracts (e.g. `[[backup.archive]]` declared by
+photos and docs, consumed by the `backup` stacklet).
+
+---
+
 ## Directory Structure
 
 A stacklet is a directory under `stacklets/` containing at minimum a
