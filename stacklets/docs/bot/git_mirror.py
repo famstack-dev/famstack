@@ -450,9 +450,24 @@ class GitMirror:
         body: str,
         correspondent: str | None,
         persons: list[str],
+        summary: str | None = None,
+        facts: list | None = None,
+        action_items: list | None = None,
         wiki_header: bool = True,
     ) -> str:
-        """Assemble frontmatter + optional wiki-link header + body."""
+        """Assemble the mirror file.
+
+        Layout, from top to bottom:
+
+          - YAML frontmatter (machine view: structured metadata)
+          - H1 title
+          - wiki-link header  (`**From:** [[ADAC]] · **About:** [[Homer]]`)
+          - **briefing block** — `## Summary / ## Facts / ## Action items`
+            sections built from the classifier's output. Obsidian
+            renders action items as native checkboxes; readers see
+            the briefing before the OCR body.
+          - the OCR-cleaned document body
+        """
         fm_yaml = yaml.safe_dump(
             frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
         ).strip()
@@ -470,9 +485,82 @@ class GitMirror:
             parts.append("> " + " · ".join(bits))
             parts.append("")
 
+        briefing = self._briefing_block(
+            summary=summary, facts=facts, action_items=action_items,
+        )
+        if briefing:
+            parts.append(briefing)
+            parts.append("")
+
         parts.append(body.strip())
         parts.append("")
         return "\n".join(parts)
+
+    # ── Briefing block ───────────────────────────────────────────────────
+    #
+    # The briefing is the classifier's per-document take, rendered as
+    # human-friendly Markdown rather than YAML strings. Sits between
+    # the wiki-link header and the OCR body so Obsidian's reading view
+    # shows it first. Action items use the standard task checkbox so
+    # the Tasks plugin (and Obsidian's native task query) pick them up.
+
+    def _briefing_block(
+        self,
+        *,
+        summary: str | None,
+        facts: list | None,
+        action_items: list | None,
+    ) -> str:
+        """Render Summary / Facts / Action items sections. Empty when
+        the classifier produced nothing — leaves no stale headings."""
+        blocks: list[str] = []
+
+        if summary and isinstance(summary, str) and summary.strip():
+            blocks.append(f"## Summary\n{summary.strip()}")
+
+        fact_lines = self._fact_lines(facts or [])
+        if fact_lines:
+            blocks.append("## Facts\n" + "\n".join(fact_lines))
+
+        task_lines = self._action_item_lines(action_items or [])
+        if task_lines:
+            blocks.append("## Action items\n" + "\n".join(task_lines))
+
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def _fact_lines(facts: list) -> list[str]:
+        out = []
+        for f in facts:
+            if isinstance(f, str) and f.strip():
+                out.append(f"- {f.strip()}")
+        return out
+
+    @staticmethod
+    def _action_item_lines(items: list) -> list[str]:
+        out: list[str] = []
+        for ai in items:
+            line = GitMirror._format_action_item(ai)
+            if line:
+                out.append(line)
+        return out
+
+    @staticmethod
+    def _format_action_item(ai) -> str | None:
+        """`{action, due}` → `- [ ] action — YYYY-MM-DD` or `- [ ] action`."""
+        if isinstance(ai, str):
+            return f"- [ ] {ai.strip()}" if ai.strip() else None
+        if not isinstance(ai, dict):
+            return None
+        action = (ai.get("action") or "").strip()
+        if not action:
+            return None
+        due = ai.get("due")
+        if isinstance(due, str):
+            due_clean = due.strip()
+            if due_clean and due_clean.lower() not in ("null", "none", "n/a"):
+                return f"- [ ] {action} — {due_clean}"
+        return f"- [ ] {action}"
 
     def _commit_message(
         self,
@@ -566,9 +654,22 @@ class GitMirror:
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
         )
+
+        # Briefing block inputs come from the classifier. We prefer the
+        # caller-supplied `summary` (already shaped for the commit
+        # message) but pull the raw classification.summary as fallback
+        # so re-classify paths that don't pre-render a summary still
+        # land a useful briefing in the file.
+        briefing_summary = summary or classification.get("summary")
+        briefing_facts = classification.get("facts") or []
+        briefing_actions = classification.get("action_items") or []
+
         content = self._render(
             frontmatter=fm, body=body_text,
             correspondent=correspondent, persons=persons,
+            summary=briefing_summary,
+            facts=briefing_facts,
+            action_items=briefing_actions,
         )
 
         verb = "update" if existing else "learn"
