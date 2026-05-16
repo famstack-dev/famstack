@@ -2,7 +2,7 @@
 
 > Target release: 0.3.0
 > Branch: `feat/brain-base` (off `main`)
-> Status: planning → ready to start
+> Status: Phase 0 done → Phase 1 next
 > Sibling design docs in this directory:
 >   - [knowledge-architecture.md](knowledge-architecture.md) — vision and end-state
 >   - [knowledge-implementation.md](knowledge-implementation.md) — layered build order
@@ -13,226 +13,258 @@
 
 ## Goal
 
-Add a knowledge layer to famstack that:
+Add a memory layer to famstack that:
 
-1. Defines a shared **ontology** (topics, types, knowledge kinds) usable by every stacklet.
-2. Stores **facts** with provenance, hand-seeded at install and machine-extended over time.
+1. Defines a shared **ontology** (topics, types, knowledge kinds) reachable from every stacklet.
+2. Stores **facts** with provenance — hand-seeded at install via interview, machine-extended over time.
 3. Captures content beyond Paperless documents (URLs, voice memos, text notes) with **source-aware classification** (Matrix sender, room, DM).
 4. Synthesizes an **Obsidian-compatible wiki** of entity pages (correspondents, persons, topics, stories) grown from the captured stream.
 5. Answers questions in Element grounded in facts + documents + wiki, with cited sources.
 
+The "Family Brain" is the system as a whole — LLM + bots + capture + this new memory layer. What we are building in 0.3.0 is the **memory** part. It lives in its own stacklet.
+
 Non-goals for 0.3.0:
-- Active decay/supersede/promotion logic (those wait for the dream cycle in 0.4.0+).
-- Matrix conversation extraction (the Deriver bot — 0.4.0+).
+
+- Active decay / supersede / promotion logic (wait for dream cycle in 0.4.0+).
+- Matrix conversation extraction beyond what Archivist already emits (Deriver bot — 0.4.0+).
 - Vector / semantic retrieval. Keyword + ontology expansion is enough at family scale.
-- Cross-stack ontology sharing with future products. Famstack-only for now.
+- Cross-product ontology sharing (famstack vs deskstack via published artifact). Same code path, different seeds.
 
-## Invariants we preserve
+## Invariants
 
-- `stacklets/docs/taxonomy.toml` stays put and continues seeding Paperless. Zero risk of regression on the working classifier and seed flow.
-- `<stack_root>/ontology.toml` is the new file. Hand-authored, mirrors taxonomy.toml entries, adds ids + synonyms + keywords + cross-refs. Sync enforced by test.
-- Framework code (`lib/stack/`) is product-agnostic. Ontology vocabulary, knowledge kinds with decay windows, family-specific dataclasses live at the stack-instance level, not in the framework.
+- **`stacklets/docs/taxonomy.toml` stays put** and keeps seeding Paperless tags. Zero regression risk on the working classifier.
+- **Memory is instance data**, not product policy. It lives in **Forgejo** as a `memory` repo. Famstack upgrades never overwrite it.
+- **Famstack-product ships seeds** under `stacklets/memory/seeds/`. On first install the stacklet creates the Forgejo repo and pushes seeds. From then on the instance owns it. Hand edits via the Forgejo web UI (or a local Obsidian clone) are first-class and appear in the commit log.
+- **Framework code (`lib/stack/`) stays generic.** Ontology dataclasses, `FactStore` protocol, decay-window field schema — yes. Family vocabulary, household roles, "Recipe is also Memory" cross-refs — no, those live in famstack-product seeds.
+- **Why Forgejo:** the commit log is the learning history. Reverts are free. External editability for free. Same backend Archivist already uses for document mirrors.
 
 ## Architecture in one diagram
 
 ```
-  Capture (Matrix)
+  Capture (Matrix, future: web, voice)
      │
      ▼
-  Archivist  ──── classify ──── Ontology ────  classifier prompt
-     │             │              │
-     │             │              ├──── ontology.toml (vocabulary)
-     │             │              └──── users.toml (people + aliases)
-     │             │
-     │             └──── extract facts ──── FactStore
-     │                                         │
-     ├──── L1 mirror ────────────────────► <knowledge>/documents/
+  Archivist  ── classify ──► Memory.get_ontology(lang)
+     │                            │
+     │                            └─ reads working copy under <data_dir>/memory/repo/ontology.toml
+     │                                                           │
+     │                                                           ▼
+     │                                                  Forgejo: <user>/memory.git
+     │                                                  ├── ontology.toml
+     │                                                  ├── facts.toml
+     │                                                  ├── facts.jsonl
+     │                                                  ├── wiki/{family,arthur,...}/*.md
+     │                                                  └── meta/index.md     (Phase 5)
      │
-     └──── eager stub + Timeline update ─► <knowledge>/{family,arthur,...}/<entity>.md
-                                                  │
-                                                  ▼
-                                       wiki-rebuild CLI re-synthesizes
-                                                  │
-                                                  ▼
-                                       <knowledge>/meta/index.md  (L4)
+     ├── L1 mirror ──► Forgejo: <user>/documents.git/YYYY/MM/*.md   (exists today)
+     │
+     └── emit fact ──► Memory.FactStore  ──► commit + push to memory.git
+
+
+  stacklets/memory/  (new stacklet, no user-facing bot)
+     ├── seeds/         version-controlled, scenario-specific (family today, office later)
+     ├── hooks/         on_install → create repo + push seeds; on_start_ready → pull working copy
+     ├── lib.py         in-process API: get_ontology(), FactStore, query_plan() (Phase 4)
+     └── cli/           stack facts (Phase 2), stack memory wiki-rebuild (Phase 5)
 ```
 
 ## Phases
 
-Each phase is its own PR (or two small commits inside one).
+Each phase is its own commit set inside the `feat/brain-base` branch. Each ships value independently — cut at any boundary.
 
-### Phase 0 — Branch + scaffold
+### Phase 0 — Branch + foundation docs (DONE)
 
-```
-git checkout main
-git pull
-git checkout -b feat/brain-base
-```
+- Branch `feat/brain-base` created off `main`.
+- Design docs committed in `docs/design/brain/`.
+- Commit: `be8369c docs(brain): seed Family Brain design docs and implementation plan`.
 
-Add this plan to `docs/design/brain/plan.md` (this file) and the sibling design docs. No other code yet — Phase 0 lands the foundation, Phase 1 starts the build.
+### Phase 1 — Memory stacklet skeleton + Ontology
 
-### Phase 1 — Ontology foundation
-
-**Goal:** the `Ontology` class loads, the new `ontology.toml` mirrors taxonomy.toml with enrichment, the archivist classifier prompt uses it.
+**Goal:** the `memory` stacklet exists. On install it creates a Forgejo `memory` repo and pushes seeds. Working copy clones into the stacklet's data dir on start. The Archivist classifier reads the ontology via the memory stacklet's in-process API.
 
 Files:
-- `lib/stack/ontology.py` (new): `Ontology` class, dataclasses (`Topic`, `DocType`, `Person`, `KnowledgeKind`, `QueryPlan`), TOML loader, resolvers (`resolve_topics`, `resolve_person`, `expand_query`), `classifier_prompt_section(lang)`.
-- `lib/stack/paths.py` (new or extend existing): `stack_config_dir()` helper. Verify whether the framework already exposes the stack root before adding.
-- `<stack_root>/ontology.toml` (new): top-level `[types.<id>]` lookup with localized names, `[[topic]]` array with id + localized names + synonyms + keywords + types cross-refs. One entry per taxonomy.toml name. Preserves all current entries including `Architektur`/`Architecture`, `Bildung`/`Education`, `Application`, `Payment Reminder`, etc.
-- `stacklets/docs/bot/archivist.py`: classify prompt switches from `json.dumps(category_tags)` to `ontology.classifier_prompt_section(self.language)`.
+
+- `lib/stack/ontology.py` (NEW) — generic: `Ontology` class, `Topic`, `DocType`, `Person`, `KnowledgeKind`, TOML loader, resolvers (`resolve_topics`, `resolve_person`, `expand_query`), `classifier_prompt_section(lang)`. No vocabulary inside.
+- `lib/stack/facts.py` (NEW, protocol-only in this phase) — `Fact` dataclass, `FactStore` `Protocol`. Concrete impl lands in Phase 2.
+- `lib/stack/paths.py` (NEW or extended) — `stack_config_dir()`, `stack_data_dir(stacklet)`. Verify existing helpers first; add only what's missing.
+- `stacklets/memory/stacklet.toml` (NEW) — declares the stacklet, lifecycle hooks, depends on `infra` (Forgejo).
+- `stacklets/memory/seeds/ontology.toml` (NEW) — hand-authored. One entry per current taxonomy.toml name, enriched with id, synonyms, keywords, type cross-refs.
+- `stacklets/memory/seeds/facts.toml` (NEW) — near-empty template, commented examples.
+- `stacklets/memory/seeds/wiki/README.md` (NEW) — minimal scaffolding for the wiki tree.
+- `stacklets/memory/hooks/on_install.py` (NEW) — create `memory` repo in Forgejo via API, initial commit pushing seeds. Idempotent: if repo exists, skip.
+- `stacklets/memory/hooks/on_start_ready.py` (NEW) — clone or `git pull` the working copy into `<data_dir>/memory/repo/`.
+- `stacklets/memory/lib.py` (NEW) — in-process API: `get_ontology(lang)` returns an `Ontology` loaded from the working copy. Imported by Archivist.
+- `stacklets/docs/bot/archivist.py` (MODIFIED) — classify prompt switches from inline `json.dumps(category_tags)` to `memory_lib.get_ontology(self.language).classifier_prompt_section()`.
 
 Tests:
-- `tests/stacklets/test_ontology_taxonomy_sync.py` — every name in `stacklets/docs/taxonomy.toml` has an entry in `<stack_root>/ontology.toml` (and vice versa). Fails loudly on drift.
+
+- `tests/stacklets/test_ontology_taxonomy_sync.py` — every name in `stacklets/docs/taxonomy.toml` has a matching id in `stacklets/memory/seeds/ontology.toml` (and vice versa). Fails loudly on drift.
 - `tests/stacklets/test_ontology_loader.py` — load, resolve_topics, resolve_person, expand_query happy paths.
-- `tests/integration/test_archivist_e2e.py` — already exists; assert classification still produces equivalent Paperless tags.
-
-Out of scope here:
-- `seed.py` keeps reading `taxonomy.toml`. Do NOT switch its source.
-- No facts, no wiki, no Q&A.
-
-Time: ~6–8h.
-
-### Phase 2 — Facts foundation
-
-**Goal:** the `FactStore` class can read/write facts, the `stack facts` CLI lets you manage them by hand.
-
-Files:
-- `lib/stack/facts.py` (new): `Fact` dataclass, `FactStore` (read both toml + jsonl, write to jsonl only, query by persons/topics/kinds/story).
-- `<stack_root>/facts.toml` (new, can ship empty — seeded by Phase 3).
-- `<data_dir>/knowledge/facts.jsonl` — created on first append.
-- `stack facts` CLI (new, in core stacklet): `list`, `add`, `edit`, `remove`, `show`. Writes to facts.toml or facts.jsonl depending on hand vs machine origin.
-
-Tests:
-- `tests/stacklets/test_facts_store.py` — append, query by various dimensions, persistence across loads.
-- Round-trip a Fact through TOML and JSONL.
+- `tests/stacklets/test_memory_install.py` — `on_install` creates the repo and pushes seeds against a test Forgejo (real, not mocked, per project rules).
+- `tests/integration/test_archivist_e2e.py` — already exists; must stay green with the new ontology source.
 
 Out of scope:
-- Decay enforcement, supersede automation. Fields exist and persist; they're not yet acted on.
 
-Time: ~4–6h.
+- `stacklets/docs/seed.py` keeps reading `taxonomy.toml` (still seeds Paperless). Do **not** switch its source.
+- No `stack facts` CLI, no Q&A, no wiki rebuild yet.
 
-### Phase 3 — Stacker install interview
+Time: ~8–10h.
 
-**Goal:** during `stack init` (or first `stack up`), Stacker interviews the user and seeds `facts.toml` + initial entity stubs.
+### Phase 2 — Facts CLI against the memory repo
+
+**Goal:** `stack facts` works end-to-end. Reads `facts.toml` + `facts.jsonl` from the working copy, writes back, commits, pushes.
 
 Files:
-- `stacklets/core/cli/interview.py` (new) or extend `stacklets/core/bot/stacker.py`. Decision pending: see Open Decisions.
-- Question script with 6–8 prompts:
-  1. Household members + ages
-  2. Nicknames / aliases per person
-  3. Allergies and medical rules
-  4. Shared interests (cooking, hobbies, hiking, …)
-  5. Open household stories (renovation, planned trip, big event)
-  6. Primary contacts (doctor, school, main insurance)
-  7. Anything else to remember?
-- Renders answers to `<stack_root>/facts.toml` (rule facts for allergies, preference facts for interests, etc.).
-- Creates entity stubs in `<knowledge>/family/` for each named person, correspondent, and story.
+
+- `stacklets/memory/lib.py` (EXTENDED) — concrete `FactStore`: read both files, append to jsonl for machine-origin facts, edit toml for hand-origin, commit + push each change.
+- `stacklets/memory/cli/facts.py` (NEW) — `stack facts list | add | edit | remove | show`. Sets Git author from `users.toml`.
 
 Tests:
-- `tests/stacklets/test_interview_seed.py` — given mocked answers, asserts expected facts and entity stubs are produced.
+
+- `tests/stacklets/test_facts_store.py` — read/write round-trip against a temp memory repo.
+- `tests/stacklets/test_facts_cli.py` — `stack facts add` produces the expected commit in the working copy.
+
+Time: ~5–7h.
+
+### Phase 3 — Install interview
+
+**Goal:** `stack init` interviews the user and seeds `facts.toml` + initial entity stubs into the memory repo.
+
+Files:
+
+- `stacklets/core/cli/interview.py` (NEW) — 6–8 question script:
+  1. Household members + ages
+  2. Nicknames / aliases per person
+  3. Allergies, medical rules
+  4. Shared interests (cooking, hobbies, …)
+  5. Open stories (renovation, planned trip, big event)
+  6. Primary contacts (doctor, school, main insurance)
+  7. Anything else worth remembering?
+- Answers flow through `FactStore` + write stub `wiki/family/<entity>.md` pages. All committed.
+- Hookup: `stack init` calls the interview after users.toml is finalized. Gated by `--no-interview` for CI / scripted installs.
+
+Tests:
+
+- `tests/stacklets/test_interview_seed.py` — mocked answers produce the expected facts and stubs in the memory repo.
 
 Time: ~4–6h.
 
 ### Phase 4 — Q&A in Element
 
-**Goal:** ask the Archivist a real question in `#documents`, get a grounded answer with citations.
+**Goal:** ask the Archivist a question in `#documents`, get a grounded answer with citations.
 
 Files:
-- `stacklets/docs/bot/archivist.py`: new `_handle_question` branch in `_on_text`. Detects question shape (ends with `?`, wh-word prefix, or > 5 words). Pipeline: `Ontology.expand_query` → `FactStore.query` → Paperless filtered search → LLM reader → reply with citations.
-- New LLM prompt: "Answer this question using only the facts and documents below. Cite by fact id and doc id. Say 'I don't know' rather than invent."
-- Fallback: short/keyword queries route to the existing `_paperless_search` path.
+
+- `stacklets/memory/lib.py` (EXTENDED) — `query_plan(text)` returns structured context: expanded topic ids, candidate persons, relevant facts.
+- `stacklets/docs/bot/archivist.py` (MODIFIED) — new `_handle_question` branch in `_on_text`. Question-shape heuristic (ends with `?`, wh-word prefix, >5 words). Pipeline: `memory.query_plan(text)` → Paperless filtered search → LLM reader → cited reply.
+- Reader prompt: "Answer using only the facts and documents below. Cite by fact id and doc id. Say 'I don't know' rather than guess."
+- Fallback: short/keyword queries keep the existing `_paperless_search` path.
 
 Tests:
-- `tests/stacklets/test_qa_handler.py` — unit test the routing heuristic and the prompt assembly.
-- `tests/integration/test_archivist_qa_e2e.py` — file a doc, ask a question, assert citation appears in reply.
 
-Time: ~4–6h.
+- `tests/stacklets/test_qa_handler.py` — routing heuristic + prompt assembly.
+- `tests/integration/test_archivist_qa_e2e.py` — file a doc, ask a question, assert the citation appears in the reply.
 
-### Phase 5 — Wiki rebuild CLI
+Time: ~5–7h.
 
-**Goal:** synthesize entity wiki pages from L1 document mirrors. `stack docs wiki-rebuild` is idempotent and re-runnable.
+### Phase 5 — Wiki rebuild + eager stubs
+
+**Goal:** synthesize entity wiki pages from L1 document mirrors. `stack memory wiki-rebuild` is idempotent.
 
 Files:
-- `stacklets/docs/cli/wiki_rebuild.py` (new): reads `<knowledge>/documents/**/*.md`, groups by correspondent / person / topic / story (via frontmatter), sends each group to LLM with a synthesis prompt, writes one entity page per group.
-- `stacklets/docs/bot/archivist.py`: eager-stub creation in classification — when a new correspondent/topic/story is first seen, write a stub entity page; subsequent docs append to its Timeline.
-- The Q&A retriever from Phase 4 starts reading L3 wiki pages first (small + dense), falling back to Paperless for doc details.
+
+- `stacklets/memory/cli/wiki_rebuild.py` (NEW) — reads doc mirrors from the documents repo, groups by correspondent / person / topic / story (frontmatter), LLM-synthesizes each group, writes one entity page per group to `wiki/`, commits to memory repo.
+- `stacklets/docs/bot/archivist.py` (MODIFIED) — eager stub creation in classification: when a new correspondent/topic/story first appears, write a stub entity page; subsequent docs append to its Timeline.
+- The Q&A retriever (Phase 4) starts reading L3 wiki pages first (small + dense), falling back to Paperless for doc details.
 
 Tests:
-- `tests/stacklets/test_wiki_rebuild.py` — given a corpus of mirror files, rebuild produces the expected entity pages.
-- Idempotency test: re-running rebuild on unchanged input produces byte-identical output (after timestamp normalization).
+
+- `tests/stacklets/test_wiki_rebuild.py` — given a corpus of mirrors, rebuild produces the expected pages.
+- Idempotency: re-running on unchanged input produces byte-identical output (after timestamp normalization).
 
 Time: ~6–10h.
 
 ## Total estimate
 
-~25–40h across five phases. Each phase ships independently and adds value. Cut at any phase boundary.
+~28–40h across five phases. Cut at any phase boundary.
 
 ## Open decisions before code
 
-1. **Branch name.** `feat/brain-base` — confirmed.
-2. **Auto-derivation vs hand-authoring of `ontology.toml`.** Plan assumes hand-authored with a sync test against taxonomy.toml. If you prefer auto-derivation (taxonomy.toml is canonical, ontology.toml is generated), the test becomes the generator.
-3. **Interview entry point.** `stack init` adds an interview step after users.toml? Or `stack up` first time? Or separate `stack interview` command? Proposal: `stack init`, immediately after the user list is set.
-4. **Interview lives in code where.** Extend `stacklets/core/bot/stacker.py` (existing) or new `stacklets/core/cli/interview.py`? Proposal: new CLI file — the interview is install-time, not bot-driven.
-5. **`stack_config_dir()` helper.** Verify whether the framework already exposes the stack root path before adding. If yes, reuse. If no, add in Phase 1.
-6. **Where the example facts.toml lives.** Famstack defaults dir (so new families have a starting point) vs only in the user's stack instance. Proposal: famstack ships a tiny example as a default; the user's real one lives in their stack instance and is git-private.
+1. **Hand-authored vs auto-derived seed `ontology.toml`.** Plan assumes hand-authored, guarded by a sync test against `taxonomy.toml`. If you prefer auto-derivation (taxonomy is canonical, ontology is generated), the test becomes the generator.
+2. **Cross-stacklet read pattern.** Archivist reads memory's ontology via in-process library import (`from stacklets.memory.lib import get_ontology`) reading the shared working-copy path. Both stacklets run on the same machine so this is fine in v1. HTTP boundary deferred. Confirm or override.
+3. **Interview entry point.** Proposal: `stack init` runs the interview immediately after users.toml is finalized; `--no-interview` for CI / scripted installs.
+4. **`stack_config_dir()` / `stack_data_dir()` helpers.** Verify whether the framework already exposes these before adding. If yes, reuse. If no, add in Phase 1.
+5. **Cross-scenario seeds.** Famstack ships family seeds in `stacklets/memory/seeds/`. Deskstack later overrides via its own stacklet (replacing the `memory/` directory or pointing at different seed paths). Mechanism is TBD for 0.4.0+; for 0.3.0 we ship family seeds only.
+6. **Forgejo repo name.** Proposal: `memory` (simple, matches the stacklet name). Alternative: `family-memory` or `brain`.
 
 ## File layout summary
 
 ```
-# Stack-instance config (hand-edited)
-<stack_root>/
-├── stack.toml
-├── users.toml                  # extended with aliases per user
-├── ontology.toml               # NEW — vocabulary
-└── facts.toml                  # NEW — hand-authored seed
-
-# Runtime state (machine-written)
-<data_dir>/knowledge/
-├── facts.jsonl                 # NEW — machine-appended
-└── (future) wiki/              # synthesized entity pages
-
-# Forgejo "knowledge" repo (canonical wiki storage; reachable from stack)
-<knowledge>/
-├── family/                     # shared bucket
-├── arthur/, marge/, ...        # personal buckets
-├── documents/YYYY/MM/...       # L1 doc mirrors (exists today)
-└── meta/index.md               # L4 master index (Phase 5)
-
-# Framework code (generic, product-agnostic)
+# Famstack source (this repo, feat/brain-base branch)
 lib/stack/
-├── ontology.py                 # NEW — Ontology, Topic, DocType, etc.
-├── facts.py                    # NEW — FactStore, Fact
-└── paths.py                    # NEW or extended — stack_config_dir()
+├── ontology.py            # NEW — generic Ontology, Topic, DocType, KnowledgeKind, QueryPlan
+├── facts.py               # NEW — Fact, FactStore Protocol (impl in stacklet)
+└── paths.py               # NEW or extended — stack_config_dir(), stack_data_dir()
 
-# Famstack-specific code
-stacklets/docs/bot/archivist.py # updated classify prompt, new Q&A handler, eager stub
-stacklets/docs/cli/wiki_rebuild.py  # NEW — Phase 5
-stacklets/core/cli/interview.py # NEW — install-time interview (Phase 3)
-stacklets/core/cli/facts.py     # NEW — `stack facts` CLI (Phase 2)
+stacklets/memory/          # NEW stacklet — no user-facing bot
+├── stacklet.toml
+├── seeds/
+│   ├── ontology.toml      # family-scenario seed
+│   ├── facts.toml         # empty template
+│   └── wiki/README.md     # initial wiki scaffolding
+├── hooks/
+│   ├── on_install.py      # create Forgejo memory repo, push seeds (idempotent)
+│   └── on_start_ready.py  # clone or pull working copy into <data_dir>/memory/repo/
+├── lib.py                 # in-process API: get_ontology, FactStore, query_plan
+└── cli/
+    ├── facts.py           # stack facts ... (Phase 2)
+    └── wiki_rebuild.py    # stack memory wiki-rebuild (Phase 5)
+
+stacklets/core/cli/
+└── interview.py           # NEW — install-time interview (Phase 3)
+
+stacklets/docs/
+├── bot/archivist.py       # MODIFIED — classify via memory.get_ontology, Q&A handler (Phase 4), eager stubs (Phase 5)
+└── (seed.py, taxonomy.toml unchanged)
+
+# Stack instance (a user's running stack)
+<data_dir>/memory/repo/    # working copy of Forgejo `memory` repo
+                           # ├── ontology.toml          (seeded; hand- + system-edited)
+                           # ├── facts.toml             (hand-authored; interview seeds it)
+                           # ├── facts.jsonl            (machine-appended)
+                           # ├── wiki/family/...
+                           # ├── wiki/<person>/...
+                           # └── meta/index.md          (Phase 5)
+
+# Forgejo (truth)
+<forgejo>/<user>/memory.git     # all memory commits — the learning history
+<forgejo>/<user>/documents.git  # existing — Archivist writes L1 mirrors
 ```
 
 ## Verification at each phase
 
 | Phase | Pass criteria |
 |---|---|
-| 1 | Existing `test_archivist_e2e` still green. New sync test green. Classifier prompt visibly uses ontology context. |
-| 2 | `stack facts add/list/edit/remove` round-trips. FactStore query returns expected results. |
-| 3 | Running `stack init` on a fresh stack instance produces a populated `facts.toml` and ≥5 entity stubs. |
+| 1 | `test_archivist_e2e` stays green. Ontology sync test green. Fresh `stack up memory` creates a Forgejo memory repo with the seeds; restart pulls the working copy. |
+| 2 | `stack facts add/list/edit/remove` round-trips. Each operation produces a commit in the memory repo. |
+| 3 | `stack init` on a fresh instance produces a populated `facts.toml` and ≥5 entity stubs, all committed. |
 | 4 | In a test Matrix room, asking the Archivist a known-answer question returns the answer with a citation. |
-| 5 | After running `wiki-rebuild`, `<knowledge>/family/` contains one page per correspondent with non-empty Timeline. Re-running is idempotent. |
+| 5 | After `stack memory wiki-rebuild`, the memory repo contains one page per correspondent with non-empty Timeline. Re-running is byte-identical (after timestamp normalization). |
 
 ## What we're explicitly NOT building in 0.3.0
 
 | Capability | When | Why deferred |
 |---|---|---|
-| Active decay of expired facts | 0.4.0 | Needs dream cycle infrastructure; staleness is acceptable in v1 |
-| Auto-supersede when newer fact contradicts older | 0.4.0 | Same |
-| Promotion (event → habit after 3 occurrences) | 0.4.0 | Same |
-| Matrix conversation extraction (Deriver bot) | 0.4.0 | Larger lift; needs opt-in room config + LLM compute budget |
+| Active decay of expired facts | 0.4.0 | Needs dream cycle; staleness is acceptable in v1 |
+| Auto-supersede on contradiction | 0.4.0 | Same |
+| Promotion (event → habit after N occurrences) | 0.4.0 | Same |
+| Matrix conversation extraction (Deriver bot) | 0.4.0 | Bigger lift; needs opt-in room config + compute budget |
 | Vector / semantic retrieval | 0.5.0+ | Keyword + ontology expansion sufficient at family scale |
-| Real-time Deriver replacing wiki-rebuild CLI | 0.5.0+ | One-shot regeneration is fine for ~500 docs/yr volume |
-| Proactive morning briefings | 0.5.0+ | Needs calendar integration and notification policy |
+| facts.jsonl rotation / fold-into-wiki | 0.4.0 | Append-only fine for first year |
+| Real-time Deriver replacing wiki-rebuild CLI | 0.5.0+ | One-shot regeneration fits ~500 docs/yr volume |
+| Proactive morning briefings | 0.5.0+ | Needs calendar integration + notification policy |
 | Cross-domain Kit Bot in `#assistant` | 0.5.0+ | After Archivist Q&A proves the pattern |
+| Ontology refresh on famstack upgrade | 0.5.0+ | Instance owns it; manual `git pull` from seed branch suffices in v1 |
 
 ## Where to look in sibling docs
 
@@ -240,6 +272,6 @@ stacklets/core/cli/facts.py     # NEW — `stack facts` CLI (Phase 2)
 - For the **vocabulary shape**: [ontology-design.md](ontology-design.md) (older), refined in [ontology-v1.md](ontology-v1.md).
 - For the **layered build order**: [knowledge-implementation.md](knowledge-implementation.md).
 - For the **concrete shapes and templates**: [knowledge-structure.md](knowledge-structure.md) (most current).
-- For **the engram-as-backend exploration**: [engram-prototype.md](engram-prototype.md).
+- For the **engram-as-backend exploration**: [engram-prototype.md](engram-prototype.md).
 
 When the docs disagree, `knowledge-structure.md` wins. It's the distillation.
