@@ -20,6 +20,7 @@ test = [
     "Pillow>=10",
     "loguru",
     "pyyaml",
+    "python-frontmatter>=1.0",
     "markdown",
     "pypdf>=4.0",
     # PDF page rendering for vision-aware classifiers (scanned PDFs).

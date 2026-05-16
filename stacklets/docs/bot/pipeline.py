@@ -577,6 +577,7 @@ class Classifier:
         correspondents: dict,
         images: list[ImageAttachment] | None = None,
         ontology_section: str = "",
+        correspondents_section: str = "",
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
@@ -613,6 +614,7 @@ class Classifier:
             doc_types=list(doc_types.keys()),
             correspondents=list(correspondents.keys()),
             ontology_section=ontology_section,
+            correspondents_section=correspondents_section,
         )
 
         content: Any = prompt
@@ -668,13 +670,14 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
                            category_tags: list[str],
                            doc_types: list[str],
                            correspondents: list[str],
-                           ontology_section: str = "") -> str:
+                           ontology_section: str = "",
+                           correspondents_section: str = "") -> str:
     """The classification prompt.
 
     Simplified to three clear axes:
       topic         = what is this about?   "Insurance", "Shopping"
       person        = which family member?  "Homer", "Bart", or null
-      correspondent = who sent it?          "Springfield Nuclear", "Kwik-E-Mart"
+      correspondent = who sent it?          "ADAC", "Kwik-E-Mart"
 
     Worked examples — a Kwik-E-Mart receipt for Homer:
       topic="Shopping", person="Homer", correspondent="Kwik-E-Mart"
@@ -693,6 +696,13 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
     ("policy" → Insurance, "Police" → Versicherung). Without it (e.g.
     when memory isn't reachable on first classify), we fall back to the
     flat lists pulled from Paperless.
+
+    Correspondent context comes from the memory wiki when
+    `correspondents_section` is supplied — canonical names with their
+    learned aliases inline ("ADAC (ADAC Ortsverband Manzell)"). This
+    teaches the LLM what to canonicalize before Paperless ever sees a
+    duplicate. Without it, we fall back to the flat Paperless list,
+    which has no alias signal.
     """
     if ontology_section:
         vocabulary_block = ontology_section
@@ -702,6 +712,13 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
             f"Existing document types: {json.dumps(doc_types, ensure_ascii=False)}"
         )
 
+    if correspondents_section:
+        correspondents_block = correspondents_section
+    else:
+        correspondents_block = (
+            f"Existing correspondents: {json.dumps(correspondents, ensure_ascii=False)}"
+        )
+
     return f"""Classify this document. Return ONLY a JSON object.
 
 IMPORTANT: Always prefer existing values from the lists below. Only suggest
@@ -709,27 +726,31 @@ a new value when NOTHING in the list is a reasonable match.
 
 Family members: {json.dumps(person_names, ensure_ascii=False)}
 {vocabulary_block}
-Existing correspondents: {json.dumps(correspondents, ensure_ascii=False)}
+{correspondents_block}
 
 Return this exact JSON structure:
 {{
   "title": "scannable title: [Correspondent] - [what] [key amount]. E.g. 'Anthropic - Max Plan EUR 90.00', 'ADAC - Kfz-Versicherung 2026 EUR 340'. Must be useful when scanning a list of 500 documents. Max 128 chars. Document's language.",
   "date": "YYYY-MM-DD or null",
-  "topics": ["what is this document about? One or two subject areas. E.g. ['Insurance'], ['Insurance', 'Vehicle'], ['Shopping']. A health insurance bill is ['Insurance', 'Medical']. A car repair invoice is ['Vehicle']. Pick from existing topic tags when possible. Usually one topic, two only when the document genuinely spans two areas."],
+  "topics": ["what is this document about? One or two subject areas. E.g. ['Insurance'], ['Insurance', 'Vehicle'], ['Shopping']. A health insurance bill is ['Insurance', 'Medical']. A car repair invoice is ['Vehicle']. Pick the canonical name from existing topic tags. Usually one topic, two only when the document genuinely spans two areas."],
   "persons": ["which family members does this belong to? Pick from the family members list by first name. Can be multiple for joint documents (marriage, family insurance). Empty list if unclear. These are who the document is FOR or ABOUT, not who sent it."],
-  "document_type": "optional: what format is this? Invoice, Receipt, Contract, Letter, Certificate, or null if unclear.",
-  "correspondent": "the SENDER or ISSUING ORGANIZATION, or null if unclear. Who wrote or sent this? NOT the recipient. On an invoice, this is the company that billed, not the customer. Use the shortest recognizable name. null is better than guessing.",
+  "document_type": "optional: the document's format. Pick the canonical name from existing document types. null if unclear.",
+  "correspondent": "the SENDER's CANONICAL short name. If the printed sender matches one of the Existing correspondents (or one of its aliases in parens), return the canonical exactly. Otherwise return the cleanest short form — strip regional, branch, and legal-form suffixes. 'ADAC Ortsverband Manzell' → 'ADAC'. 'Burns Industries LLC' → 'Burns Industries'. 'Springfield Nuclear Power Plant Division 7' → 'Springfield Nuclear'. null is better than guessing from fragments.",
+  "correspondent_aliases": ["full names as printed on THIS document, useful for growing the wiki. Include only when the printed name differs from the canonical you returned above. Empty list when the printed name matches the canonical exactly."],
+  "correspondent_facts": ["STABLE facts about the SENDER organization that are useful on every future document from them: address, phone, email, website, IBAN, your customer/membership/policy number with them. NOT facts about THIS document (totals, invoice numbers, dates — those go in facts). Empty list if none visible."],
   "summary": "2-3 sentence summary with key facts: amounts, dates, names, deadlines",
-  "facts": ["key structured facts, e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'"],
+  "facts": ["key structured facts about THIS document, e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'"],
   "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
 }}
 
 Rules:
 - LANGUAGE: use the document's original language for title, summary, facts, and action_items. A German document gets a German title and German facts. Never translate.
-- topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas.
+- topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. When the document uses a synonym of a listed topic (the list shows synonyms in parentheses), return the canonical name. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas.
 - persons: match by first name from the family members list. Can be multiple for joint documents. A marriage certificate for Homer and Marge: ["Homer", "Marge"]. A personal invoice for Homer only: ["Homer"].
-- correspondent: always the SENDER, never the addressee/customer/recipient. Use null if the sender is not clearly identifiable. Do not guess from fragments.
-- facts: concrete numbers, dates, account numbers, amounts. Empty list if none.
+- correspondent: always the SENDER, never the addressee/customer/recipient. When the existing list shows aliases in parentheses, those are previous spellings of the same correspondent — use the canonical (the name OUTSIDE the parentheses). Strip regional/branch/legal-form suffixes for new correspondents. Use null if the sender is not clearly identifiable. Do not guess from fragments.
+- correspondent_aliases: only when the printed sender name on THIS document differs from your canonical answer. Single-element list is fine.
+- correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
+- facts: concrete numbers, dates, account numbers, amounts that describe THIS document. Empty list if none.
 - action_items: deadlines, payments due, forms to return. Empty list if none.
 
 Document text:
@@ -858,6 +879,7 @@ async def enrich_document(
     classify_max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
     images: list[ImageAttachment] | None = None,
     ontology_section: str = "",
+    correspondents_section: str = "",
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -901,6 +923,7 @@ async def enrich_document(
             doc_types=doc_types, correspondents=correspondents,
             images=images,
             ontology_section=ontology_section,
+            correspondents_section=correspondents_section,
         )
     except LLMUnavailableError as e:
         return EnrichResult(llm_error=("unavailable", str(e)))

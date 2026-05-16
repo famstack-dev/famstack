@@ -87,6 +87,52 @@ class TestOntologyAware:
         assert 'Existing correspondents: ["AOK"]' in prompt
 
 
+class TestCorrespondentsBlock:
+    """When a correspondents section is supplied (canonical + aliases
+    from the wiki), it replaces the flat `Existing correspondents:`
+    json line and teaches the LLM canonical names + their aliases."""
+
+    def test_embeds_section_verbatim(self):
+        section = (
+            "Existing correspondents (canonical; aliases in parens):\n"
+            "  - ADAC (ADAC Ortsverband Manzell)\n"
+            "  - AOK\n"
+        )
+        prompt = _build_classify_prompt(**COMMON, correspondents_section=section)
+        assert section in prompt
+
+    def test_drops_legacy_existing_correspondents_line(self):
+        section = "Existing correspondents (canonical; aliases in parens):\n  - ADAC\n"
+        prompt = _build_classify_prompt(**COMMON, correspondents_section=section)
+        # The flat `Existing correspondents: ["AOK"]` line is suppressed.
+        assert 'Existing correspondents: ["AOK"]' not in prompt
+
+    def test_falls_back_to_legacy_line_when_empty(self):
+        prompt = _build_classify_prompt(**COMMON, correspondents_section="")
+        assert 'Existing correspondents: ["AOK"]' in prompt
+
+
+class TestNewSchemaFields:
+    """The schema gained correspondent_aliases and correspondent_facts.
+    The strip-suffix examples and the wiki-aware rule need to be
+    visible in the prompt so the LLM is teachable."""
+
+    def test_schema_advertises_correspondent_aliases(self):
+        prompt = _build_classify_prompt(**COMMON)
+        assert "correspondent_aliases" in prompt
+
+    def test_schema_advertises_correspondent_facts(self):
+        prompt = _build_classify_prompt(**COMMON)
+        assert "correspondent_facts" in prompt
+
+    def test_prompt_includes_strip_suffix_examples(self):
+        prompt = _build_classify_prompt(**COMMON)
+        # The strip-suffix rule must be concrete to be useful.
+        assert "ADAC Ortsverband Manzell" in prompt
+        assert "ADAC" in prompt
+        assert "Burns Industries" in prompt
+
+
 class TestRealOntologyShape:
     """End-to-end-ish: build an Ontology from the same TOML shape memory
     ships and feed its rendered section through the prompt. Catches any
