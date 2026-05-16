@@ -1,0 +1,38 @@
+# facts.toml — hand-authored facts about the household
+#
+# The memory stacklet pushes this template to the Forgejo `memory` repo
+# on first install. The Stacker install interview (Phase 3) populates
+# it from a short Q&A.  After that the file is yours to edit — in
+# Forgejo's web UI, an Obsidian clone, or via `stack facts ...`.
+#
+# Each fact is a row in a typed array.  Kinds carry implicit semantics:
+#
+#   rule        — household rule or hard constraint (allergies, no nuts)
+#   fact        — durable truth (date of birth, blood type)
+#   habit       — recurring pattern (Friday is pizza night)
+#   preference  — soft inclination (likes spicy food)
+#   goal        — current ambition (learn Spanish in 2026)
+#   context     — situational note (kitchen renovation in progress)
+#   event       — one-off occurrence (took the kids to the dentist on …)
+#
+# Examples are commented out — uncomment, edit, or add your own.
+
+# [[fact]]
+# kind    = "rule"
+# subject = "maggie"
+# text    = "Severe peanut allergy — EpiPen in the kitchen drawer."
+
+# [[fact]]
+# kind    = "habit"
+# subject = "family"
+# text    = "Friday evening is pizza night."
+
+# [[fact]]
+# kind    = "preference"
+# subject = "homer"
+# text    = "Prefers strong coffee, no sugar."
+
+# [[fact]]
+# kind    = "goal"
+# subject = "marge"
+# text    = "Learn intermediate Spanish by end of 2026."

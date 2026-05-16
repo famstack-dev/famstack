@@ -1,0 +1,27 @@
+# stacklet.toml — memory stacklet (the persistent layer of the Family Brain)
+#
+# Memory keeps the stack's curated knowledge — the ontology, the facts,
+# the wiki of entity pages. Data lives in Forgejo as a `memory` repo so
+# the commit log doubles as the learning history: every fact added,
+# every wiki edit, every reclassification is a diff you can revert.
+#
+# Today memory is a host stacklet with no container. It ships seeds and
+# a few hooks. Bots and CLIs talk to its lib in-process; reads and writes
+# round-trip through Forgejo so there is one source of truth.
+#
+# A service (e.g. a deriver bot that consumes structured Matrix events
+# and synthesises wiki pages) may join later. The stacklet shape is
+# ready for that — just add hooks/on_start_ready.py and a service
+# definition when needed.
+
+id          = "memory"
+name        = "Memory"
+description = "Persistent knowledge — ontology, facts, and wiki — backed by Forgejo"
+version     = "0.3.0"
+category    = "infrastructure"
+type        = "host"
+requires    = ["code"]
+
+hints = [
+    "Memory lives in the Forgejo `memory` repo — edit ontology.toml or wiki/*.md in the web UI to grow it",
+]
