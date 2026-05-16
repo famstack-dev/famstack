@@ -29,6 +29,7 @@ import asyncio
 import io
 import os
 import re
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -63,6 +64,14 @@ from pipeline import (
     reformat_document,
 )
 from stack import resolve_model
+
+# Make sibling stacklets importable. In the bot-runner container,
+# `/stacklets/` is mounted read-only and holds all stacklets; locally
+# it's the source tree. Either way, the path resolves the same way.
+_STACKLETS_DIR = Path(__file__).resolve().parents[2]
+if str(_STACKLETS_DIR) not in sys.path:
+    sys.path.insert(0, str(_STACKLETS_DIR))
+from memory.lib import get_ontology as _get_memory_ontology  # noqa: E402
 
 
 @contextmanager
@@ -252,6 +261,10 @@ class ArchivistBot(MicroBot):
         self._classifier: Classifier | None = None
         self._mirror: GitMirror | None = None
         self._paperless_version: str = ""
+        # Ontology vocabulary block for the classifier prompt — loaded
+        # once at startup from the memory stacklet's repo (Forgejo) with
+        # fallback to the shipped seed. Bot restart picks up live edits.
+        self._ontology_section: str = ""
 
     def t(self, key: str, **kwargs) -> str:
         return _t(self.language, key, **kwargs)
@@ -286,9 +299,35 @@ class ArchivistBot(MicroBot):
         try:
             if self.mirror_to_git:
                 self._init_mirror()
+            self._load_ontology_section()
             await super().start()
         finally:
             await self._http.close()
+
+    def _load_ontology_section(self) -> None:
+        """Render the classifier vocabulary block from the memory ontology.
+
+        Reads `ontology.toml` from the memory stacklet's vault working
+        copy (cloned + pulled by memory's own hooks). The bot-runner
+        mounts the host data dir at `/data`, so the vault lives at
+        `/data/memory/vault/` and `MEMORY_VAULT_DIR` points at it.
+
+        Falls back to the shipped seed when the vault is missing
+        (memory not installed yet, or first run on a host without a
+        working copy). Cached for the bot's lifetime — restart picks
+        up new pulls.
+        """
+        vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
+        vault_path = Path(vault_env) if vault_env else None
+
+        ont = _get_memory_ontology(vault_path)
+        self._ontology_section = ont.classifier_prompt_section(self.language)
+
+        source = "vault" if vault_path and (vault_path / "ontology.toml").exists() else "seed"
+        logger.info(
+            "[archivist] memory ontology loaded from {} ({} topics, {} doctypes, lang={})",
+            source, len(ont.topics), len(ont.doctypes), self.language,
+        )
 
     def _init_mirror(self) -> None:
         """Build a GitMirror if all required env is present.
@@ -563,6 +602,7 @@ class ArchivistBot(MicroBot):
                 doc=doc,
                 classify_max_chars=self.classify_max_chars,
                 images=images,
+                ontology_section=self._ontology_section,
             )
         else:
             result = EnrichResult()

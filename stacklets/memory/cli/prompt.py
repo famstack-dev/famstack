@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import load_seed_ontology  # noqa: E402
+from lib import get_ontology, vault_path_for  # noqa: E402
 
 HELP = "Render the classifier prompt section for a language"
 
@@ -29,9 +29,14 @@ def _parse_args(args):
     return lang
 
 
+def _vault_path(config):
+    data_dir = config.get("data_dir") if config else None
+    return vault_path_for(Path(data_dir)) if data_dir else None
+
+
 def run(args, stacklet, config):
     lang = _parse_args(args or [])
-    ont = load_seed_ontology()
+    ont = get_ontology(_vault_path(config))
     section = ont.classifier_prompt_section(lang)
     print(section)
     return {"ok": True, "lang": lang, "length": len(section)}

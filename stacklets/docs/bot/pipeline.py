@@ -576,6 +576,7 @@ class Classifier:
         doc_types: dict,
         correspondents: dict,
         images: list[ImageAttachment] | None = None,
+        ontology_section: str = "",
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
@@ -611,6 +612,7 @@ class Classifier:
             category_tags=category_tags,
             doc_types=list(doc_types.keys()),
             correspondents=list(correspondents.keys()),
+            ontology_section=ontology_section,
         )
 
         content: Any = prompt
@@ -665,7 +667,8 @@ class Classifier:
 def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
                            category_tags: list[str],
                            doc_types: list[str],
-                           correspondents: list[str]) -> str:
+                           correspondents: list[str],
+                           ontology_section: str = "") -> str:
     """The classification prompt.
 
     Simplified to three clear axes:
@@ -682,15 +685,30 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
 
     Person names arrive stripped of the "Person: " prefix so the LLM sees
     clean first names like "Homer" rather than "Person: Homer".
+
+    Topic and doctype context comes from the memory stacklet's ontology
+    when `ontology_section` is supplied — a richer block that lists
+    canonical names with their synonyms, so the LLM can pick a single
+    canonical id even when the OCR text uses an alternative phrasing
+    ("policy" → Insurance, "Police" → Versicherung). Without it (e.g.
+    when memory isn't reachable on first classify), we fall back to the
+    flat lists pulled from Paperless.
     """
+    if ontology_section:
+        vocabulary_block = ontology_section
+    else:
+        vocabulary_block = (
+            f"Existing topic tags: {json.dumps(category_tags, ensure_ascii=False)}\n"
+            f"Existing document types: {json.dumps(doc_types, ensure_ascii=False)}"
+        )
+
     return f"""Classify this document. Return ONLY a JSON object.
 
 IMPORTANT: Always prefer existing values from the lists below. Only suggest
 a new value when NOTHING in the list is a reasonable match.
 
 Family members: {json.dumps(person_names, ensure_ascii=False)}
-Existing topic tags: {json.dumps(category_tags, ensure_ascii=False)}
-Existing document types: {json.dumps(doc_types, ensure_ascii=False)}
+{vocabulary_block}
 Existing correspondents: {json.dumps(correspondents, ensure_ascii=False)}
 
 Return this exact JSON structure:
@@ -839,6 +857,7 @@ async def enrich_document(
     doc: dict,
     classify_max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
     images: list[ImageAttachment] | None = None,
+    ontology_section: str = "",
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -881,6 +900,7 @@ async def enrich_document(
             ocr_text=ocr_text, tags=tags,
             doc_types=doc_types, correspondents=correspondents,
             images=images,
+            ontology_section=ontology_section,
         )
     except LLMUnavailableError as e:
         return EnrichResult(llm_error=("unavailable", str(e)))

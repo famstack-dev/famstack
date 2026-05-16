@@ -17,6 +17,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# Make the framework importable for in-process tests (CLI subprocess
+# calls already set PYTHONPATH; this is for tests that import lib.py
+# directly to exercise pure logic against pytest-httpserver).
+_LIB_DIR = REPO_ROOT / "lib"
+if str(_LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(_LIB_DIR))
+
 
 @pytest.fixture
 def stack_cli():
