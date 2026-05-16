@@ -1,0 +1,263 @@
+# ontology.toml — family ontology shipped by famstack
+#
+# This is the seed the memory stacklet pushes to the Forgejo `memory`
+# repo on first install. From then on, the instance owns the live copy:
+# hand edits in Forgejo (or a local Obsidian clone) are first-class and
+# appear in the commit log alongside system-generated additions.
+#
+# Schema is documented in lib/stack/ontology.py:
+#   [topic.<id>]  names = { <lang> = "..." }
+#                 synonyms = { <lang> = ["..."] }   # optional
+#                 keywords = { <lang> = ["..."] }   # optional
+#                 types    = ["<doctype_id>", ...]  # optional cross-ref
+#
+#   [doctype.<id>]  names = { <lang> = "..." }
+#                   synonyms = { <lang> = ["..."] }  # optional
+#
+# Every entry here must mirror a name in stacklets/docs/taxonomy.toml.
+# tests/stacklets/test_ontology_taxonomy_sync.py enforces no-drift in
+# both directions.
+
+# ──────────────────────────────────────────────────────────────────────
+# Topics — what the document or fact is *about*.
+# ──────────────────────────────────────────────────────────────────────
+
+[topic.insurance]
+names    = { de = "Versicherung", en = "Insurance" }
+synonyms = { de = ["Versicherungspolice"], en = ["policy", "coverage"] }
+keywords = { de = ["versichert", "Schadensfall", "Beitrag", "Selbstbeteiligung"], en = ["insured", "claim", "premium", "deductible"] }
+types    = ["policy", "invoice", "letter", "statement"]
+
+[topic.finance]
+names    = { de = "Finanzen", en = "Finance" }
+synonyms = { en = ["banking"] }
+keywords = { de = ["Bank", "Konto", "Überweisung"], en = ["bank", "account", "transfer", "balance"] }
+types    = ["statement", "letter"]
+
+[topic.investments]
+names    = { de = "Investments", en = "Investments" }
+synonyms = { de = ["Wertpapiere", "Aktien"], en = ["stocks", "portfolio", "securities"] }
+types    = ["statement", "letter"]
+
+[topic.income]
+names    = { de = "Einkommen", en = "Income" }
+synonyms = { en = ["salary", "wages"] }
+types    = ["pay_slip", "statement"]
+
+[topic.tax]
+names    = { de = "Steuer", en = "Tax" }
+synonyms = { en = ["taxation"] }
+keywords = { de = ["Steuererklärung", "Abzug"], en = ["return", "deduction"] }
+types    = ["tax_assessment", "letter", "notice"]
+
+[topic.tax_office]
+names = { de = "Finanzamt", en = "Tax Office" }
+types = ["letter", "notice", "tax_assessment"]
+
+[topic.medical]
+names    = { de = "Gesundheit", en = "Medical" }
+synonyms = { de = ["Arzt"], en = ["health", "healthcare"] }
+keywords = { de = ["Diagnose", "Behandlung", "Rezept"], en = ["diagnosis", "treatment", "prescription"] }
+types    = ["medical_certificate", "prescription", "invoice", "letter"]
+
+[topic.education]
+names = { de = "Bildung", en = "Education" }
+synonyms = { de = ["Schule", "Universität"], en = ["school", "university", "training"] }
+types = ["certificate", "letter", "invoice"]
+
+[topic.child]
+names = { de = "Kind", en = "Child" }
+synonyms = { de = ["Kinder"], en = ["children", "kids"] }
+
+[topic.marriage]
+names = { de = "Ehe", en = "Marriage" }
+types = ["certificate", "personal_record"]
+
+[topic.vehicle]
+names    = { de = "Fahrzeug", en = "Vehicle" }
+synonyms = { de = ["Auto"], en = ["car", "automobile"] }
+keywords = { de = ["TÜV", "KFZ"], en = ["registration", "inspection"] }
+types    = ["contract", "invoice", "certificate"]
+
+[topic.housing]
+names    = { de = "Wohnen", en = "Housing" }
+synonyms = { de = ["Miete"], en = ["rent", "mortgage"] }
+keywords = { de = ["Vermieter", "Hausverwaltung"], en = ["landlord", "lease"] }
+types    = ["contract", "invoice", "statement", "letter"]
+
+[topic.property]
+names = { de = "Immobilien", en = "Property" }
+synonyms = { de = ["Grundbuch"], en = ["real estate", "deed"] }
+types = ["contract", "letter"]
+
+[topic.architecture]
+names = { de = "Architektur", en = "Architecture" }
+synonyms = { de = ["Bauplan"], en = ["floor plan", "blueprint"] }
+
+[topic.utility]
+names    = { de = "Nebenkosten", en = "Utility" }
+synonyms = { de = ["Strom", "Gas", "Wasser"], en = ["electricity", "gas", "water", "heating"] }
+types    = ["invoice", "statement"]
+
+[topic.employment]
+names = { de = "Arbeit", en = "Employment" }
+synonyms = { de = ["Job"], en = ["work", "job"] }
+types = ["contract", "pay_slip", "letter", "certificate"]
+
+[topic.legal]
+names = { de = "Recht", en = "Legal" }
+synonyms = { de = ["Anwalt"], en = ["lawyer", "court"] }
+types = ["contract", "letter"]
+
+[topic.government]
+names = { de = "Behörde", en = "Government" }
+synonyms = { de = ["Amt"], en = ["authority", "agency"] }
+types = ["letter", "notice", "certificate", "application"]
+
+[topic.membership]
+names = { de = "Mitgliedschaft", en = "Membership" }
+synonyms = { de = ["Verein"], en = ["club", "association"] }
+
+[topic.subscription]
+names = { de = "Abonnement", en = "Subscription" }
+synonyms = { de = ["Abo"], en = ["subscription"] }
+
+[topic.shopping]
+names = { de = "Einkauf", en = "Shopping" }
+
+[topic.electronics]
+names = { de = "Elektronik", en = "Electronics" }
+synonyms = { de = ["Computer", "Telefon"], en = ["computer", "phone", "gadget"] }
+types = ["invoice", "warranty", "manual"]
+
+[topic.groceries]
+names = { de = "Lebensmittel", en = "Groceries" }
+synonyms = { de = ["Supermarkt"], en = ["supermarket"] }
+types = ["receipt"]
+
+[topic.travel]
+names = { de = "Reise", en = "Travel" }
+synonyms = { de = ["Urlaub"], en = ["holiday", "trip", "vacation"] }
+types = ["booking", "invoice"]
+
+[topic.pet]
+names = { de = "Haustier", en = "Pet" }
+synonyms = { de = ["Tierarzt"], en = ["vet"] }
+
+[topic.telecom]
+names = { de = "Telekommunikation", en = "Telecom" }
+synonyms = { de = ["Internet", "Handy"], en = ["phone", "internet", "mobile"] }
+types = ["contract", "invoice"]
+
+[topic.recipe]
+names = { de = "Rezept", en = "Recipe" }
+synonyms = { de = ["Kochrezept"], en = ["cooking", "baking"] }
+
+[topic.memory]
+names = { de = "Erinnerung", en = "Memory" }
+synonyms = { de = ["Erinnerungsstück"], en = ["keepsake", "milestone"] }
+
+[topic.personal_record]
+names = { de = "Urkunde", en = "Personal Record" }
+synonyms = { de = ["Geburtsurkunde", "Sterbeurkunde"], en = ["birth certificate", "death certificate", "passport"] }
+types = ["certificate", "personal_record"]
+
+[topic.pension]
+names = { de = "Rente", en = "Pension" }
+synonyms = { de = ["Altersvorsorge"], en = ["retirement"] }
+types = ["statement", "letter"]
+
+[topic.donation]
+names = { de = "Spende", en = "Donation" }
+types = ["receipt", "letter"]
+
+[topic.warranty]
+names = { de = "Garantie", en = "Warranty" }
+synonyms = { en = ["guarantee"] }
+types = ["warranty", "receipt"]
+
+[topic.vaccination]
+names = { de = "Impfung", en = "Vaccination" }
+synonyms = { de = ["Impfpass"], en = ["immunization"] }
+types = ["medical_certificate", "certificate"]
+
+[topic.credential]
+names = { de = "Zugangsdaten", en = "Credential" }
+synonyms = { de = ["Passwort"], en = ["password", "access code"] }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Document types — the *shape* of the document, independent of subject.
+# ──────────────────────────────────────────────────────────────────────
+
+[doctype.invoice]
+names    = { de = "Rechnung", en = "Invoice" }
+synonyms = { en = ["bill"] }
+
+[doctype.receipt]
+names = { de = "Quittung", en = "Receipt" }
+
+[doctype.contract]
+names = { de = "Vertrag", en = "Contract" }
+synonyms = { en = ["agreement"] }
+
+[doctype.letter]
+names = { de = "Brief", en = "Letter" }
+synonyms = { de = ["Schreiben"], en = ["correspondence"] }
+
+[doctype.certificate]
+names = { de = "Bescheinigung", en = "Certificate" }
+
+[doctype.statement]
+names = { de = "Kontoauszug", en = "Statement" }
+synonyms = { en = ["account statement"] }
+
+[doctype.notice]
+names = { de = "Bescheid", en = "Notice" }
+
+[doctype.cancellation]
+names = { de = "Kündigung", en = "Cancellation" }
+synonyms = { en = ["termination"] }
+
+[doctype.policy]
+names = { de = "Police", en = "Policy" }
+synonyms = { de = ["Versicherungsschein"] }
+
+[doctype.manual]
+names = { de = "Bedienungsanleitung", en = "Manual" }
+synonyms = { en = ["instructions"] }
+
+[doctype.protocol]
+names = { de = "Protokoll", en = "Protocol" }
+synonyms = { en = ["minutes"] }
+
+[doctype.booking]
+names = { de = "Buchung", en = "Booking" }
+synonyms = { en = ["reservation"] }
+
+[doctype.application]
+names = { de = "Antrag", en = "Application" }
+synonyms = { en = ["form"] }
+
+[doctype.payment_reminder]
+names = { de = "Mahnung", en = "Payment Reminder" }
+synonyms = { en = ["dunning", "reminder"] }
+
+[doctype.medical_certificate]
+names = { de = "Attest", en = "Medical Certificate" }
+synonyms = { de = ["Krankschreibung"], en = ["sick note"] }
+
+[doctype.fact_sheet]
+names = { de = "Merkblatt", en = "Fact Sheet" }
+synonyms = { en = ["info sheet"] }
+
+[doctype.prescription]
+names = { de = "Verschreibung", en = "Prescription" }
+synonyms = { de = ["Rezept"] }
+
+[doctype.tax_assessment]
+names = { de = "Steuerbescheid", en = "Tax Assessment" }
+
+[doctype.pay_slip]
+names = { de = "Lohnabrechnung", en = "Pay Slip" }
+synonyms = { de = ["Gehaltsabrechnung"], en = ["payslip", "wage statement"] }
