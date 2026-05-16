@@ -248,3 +248,96 @@ class TestRender:
         assert "[[" not in out
         assert "# t" in out
         assert "body" in out
+
+
+class TestBriefingBlock:
+    """The classifier's briefing — Summary / Facts / Action items —
+    sits between the wiki-link header and the OCR body as
+    human-readable Markdown."""
+
+    def test_full_briefing_in_rendered_output(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "ADAC Rechnung"},
+            body="(OCR body)",
+            correspondent="ADAC", persons=["Homer"],
+            summary="Annual renewal of comprehensive auto insurance.",
+            facts=["Total: EUR 340.00", "Policy: KH-2026-987"],
+            action_items=[
+                {"action": "Confirm SEPA balance", "due": "2026-03-14"},
+                {"action": "File for tax", "due": None},
+            ],
+        )
+
+        assert "## Summary" in out
+        assert "Annual renewal of comprehensive auto insurance." in out
+        assert "## Facts" in out
+        assert "- Total: EUR 340.00" in out
+        assert "- Policy: KH-2026-987" in out
+        assert "## Action items" in out
+        assert "- [ ] Confirm SEPA balance — 2026-03-14" in out
+        assert "- [ ] File for tax" in out
+
+    def test_briefing_appears_before_body(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="OCR PAYLOAD",
+            correspondent=None, persons=[],
+            summary="One liner.",
+            facts=[], action_items=[],
+        )
+        assert out.index("## Summary") < out.index("OCR PAYLOAD")
+
+    def test_omitted_entirely_when_classifier_returned_nothing(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="body",
+            correspondent=None, persons=[],
+            summary=None, facts=None, action_items=None,
+        )
+        assert "## Summary" not in out
+        assert "## Facts" not in out
+        assert "## Action items" not in out
+
+    def test_individual_sections_drop_when_empty(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="body",
+            correspondent=None, persons=[],
+            summary="Just a summary.", facts=[], action_items=[],
+        )
+        assert "## Summary" in out
+        assert "## Facts" not in out
+        assert "## Action items" not in out
+
+    def test_string_action_item_renders_as_task(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="body",
+            correspondent=None, persons=[],
+            summary=None, facts=None,
+            action_items=["Just a string item"],
+        )
+        assert "- [ ] Just a string item" in out
+
+    def test_null_string_due_is_treated_as_no_due(self, mirror):
+        # LLMs sometimes return the string "null" instead of true null.
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="body",
+            correspondent=None, persons=[],
+            summary=None, facts=None,
+            action_items=[{"action": "Pay bill", "due": "null"}],
+        )
+        # No trailing "— null"
+        assert "- [ ] Pay bill" in out
+        assert "null" not in out.split("## Action items")[1]
+
+    def test_skips_blank_facts_and_empty_actions(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="body",
+            correspondent=None, persons=[],
+            summary=None,
+            facts=["", "  ", "Real fact"],
+            action_items=[{"action": "", "due": "2026-01-01"}, {"action": "Real action"}],
+        )
+        # Only the real fact + real action survive.
+        assert "- Real fact" in out
+        assert "- [ ] Real action" in out
+        # No empty bullets / checkboxes.
+        assert "- \n" not in out
+        assert "- [ ] \n" not in out
