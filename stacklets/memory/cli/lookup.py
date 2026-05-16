@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import load_seed_ontology  # noqa: E402
+from lib import get_ontology, vault_path_for  # noqa: E402
 
 HELP = "Resolve a term against the memory ontology"
 
@@ -40,12 +40,17 @@ def _parse_args(args):
     return " ".join(text_parts).strip(), lang
 
 
+def _vault_path(config):
+    data_dir = config.get("data_dir") if config else None
+    return vault_path_for(Path(data_dir)) if data_dir else None
+
+
 def run(args, stacklet, config):
     text, lang = _parse_args(args or [])
     if not text:
         return {"error": "usage: stack memory lookup <text> [--lang=en]"}
 
-    ont = load_seed_ontology()
+    ont = get_ontology(_vault_path(config))
 
     topic = ont.resolve_topic(text, lang=lang)
     if topic is not None:

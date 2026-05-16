@@ -55,6 +55,14 @@ PAPERLESS_TOKEN      = "{docs__API_TOKEN}"
 # its reachability probe and soft-skips.
 CODE_URL = "http://stack-code:3000"
 
+# Memory — the archivist reads its classifier vocabulary (ontology
+# topics + doctypes with synonyms) from the local vault working copy
+# the memory stacklet maintains under <data_dir>/memory/vault/. The
+# bot-runner container mounts <data_dir> at /data, so the in-container
+# path is /data/memory/vault. Missing → seed-only fallback, safe by
+# design before memory is installed.
+MEMORY_VAULT_DIR = "/data/memory/vault"
+
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"
 IMMICH_API_KEY = "{photos__API_KEY}"

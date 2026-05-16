@@ -118,8 +118,20 @@ class Ontology:
         ontology may have only topics defined, or only doctypes.
         """
         with open(path, "rb") as f:
-            data = tomllib.load(f)
+            return cls._from_data(tomllib.load(f))
 
+    @classmethod
+    def loads(cls, text: str) -> "Ontology":
+        """Parse TOML text and return an Ontology.
+
+        Used by the live loader after fetching `ontology.toml` from
+        Forgejo (where the content comes back as a base64-decoded
+        string, not a path on disk).
+        """
+        return cls._from_data(tomllib.loads(text))
+
+    @classmethod
+    def _from_data(cls, data: dict) -> "Ontology":
         topics = {
             tid: _parse_topic(tid, raw)
             for tid, raw in (data.get("topic") or {}).items()

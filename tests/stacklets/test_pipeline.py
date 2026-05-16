@@ -126,11 +126,11 @@ class StubClassifier:
         self.reformat_calls: list[str] = []
 
     async def classify(self, *, ocr_text, tags, doc_types, correspondents,
-                       images=None):
+                       images=None, ontology_section=""):
         self.classify_calls.append({
             "ocr_text": ocr_text, "tags": tags,
             "doc_types": doc_types, "correspondents": correspondents,
-            "images": images,
+            "images": images, "ontology_section": ontology_section,
         })
         if self.classify_raises:
             raise self.classify_raises

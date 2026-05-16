@@ -25,3 +25,11 @@ requires    = ["code"]
 hints = [
     "Memory lives in the Forgejo `memory` repo — edit ontology.toml or wiki/*.md in the web UI to grow it",
 ]
+
+# Memory has no container of its own — hooks run on the host and talk
+# to Forgejo over HTTP. These env vars are what `on_install_success.py`
+# reads to find the code stacklet and authenticate as the tech admin.
+[env.defaults]
+CODE_URL       = "{code_url}"
+ADMIN_USER     = "{admin_username}"
+ADMIN_PASSWORD = "{admin_password}"
