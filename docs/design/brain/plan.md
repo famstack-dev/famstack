@@ -36,8 +36,9 @@ Non-goals for 0.3.0:
 - **Memory is instance data**, not product policy. It lives in **Forgejo** as a `memory` repo. Famstack upgrades never overwrite it.
 - **Famstack-product ships seeds** under `stacklets/memory/seeds/`. On first install the stacklet creates the Forgejo repo and pushes seeds. From then on the instance owns it. Hand edits via the Forgejo web UI (or a local Obsidian clone) are first-class and appear in the commit log.
 - **Framework code (`lib/stack/`) stays generic.** Ontology dataclasses, `FactStore` protocol, decay-window field schema — yes. Family vocabulary, household roles, "Recipe is also Memory" cross-refs — no, those live in famstack-product seeds.
-- **Forgejo is the only source of truth.** No working-copy contract under `<data_dir>/memory/`. Every reader (Archivist, Stacker, CLI) goes through `ForgejoClient` (same path Archivist already uses for document mirrors) and caches in-process. A service could be added later — the stacklet declares `type = "host"` for now.
-- **Why Forgejo:** the commit log is the learning history. Reverts are free. External editability for free. One client (`lib/stack/forgejo.py`) is already battle-tested by the document mirror.
+- **Forgejo is the canonical source of truth.** Every write that matters ends up there: the install seed push, hand edits via the Forgejo web UI, Obsidian clones, future system-extended facts. The commit log is the learning history; reverts are free.
+- **A local working copy under `<data_dir>/memory/vault/`** is the read surface. Cloned from Forgejo on install, pulled on every `stack up memory` and on `stack memory pull`. Filesystem-backed on purpose: the Obsidian ecosystem (obsidiantools, Dataview, Smart Connections) all expect to walk a directory of markdown. We don't reinvent vault traversal — we use what's there.
+- **The stacklet declares `type = "host"`** — no container in v1. Sync happens via subprocess git, no GitPython dep. A service can join later if reads from container-side bots need finer-grained refresh.
 
 ## Architecture in one diagram
 
@@ -45,29 +46,32 @@ Non-goals for 0.3.0:
   Capture (Matrix, future: web, voice)
      │
      ▼
-  Archivist  ── classify ──► memory.get_ontology(lang)
-     │                            │
-     │                            └─ ForgejoClient.get_file("memory", "ontology.toml")
-     │                               cached in-process; refresh on bot restart
-     │                                                           │
-     │                                                           ▼
-     │                                                  Forgejo: <owner>/memory.git
-     │                                                  ├── ontology.toml
-     │                                                  ├── facts.toml
-     │                                                  ├── facts.jsonl
-     │                                                  ├── wiki/{family,arthur,...}/*.md
-     │                                                  └── meta/index.md     (Phase 5)
+  Forgejo: family/memory.git          (truth — commit log, web UI edits, Obsidian clones)
      │
-     ├── L1 mirror ──► Forgejo: <owner>/documents.git/YYYY/MM/*.md   (exists today)
+     │  git clone / git pull
+     ▼
+  <data_dir>/memory/vault/            (working copy — every reader walks this)
+     ├── ontology.toml                 ← archivist + Stacker + CLI
+     ├── facts.toml / facts.jsonl      ← FactStore (Phase 2)
+     └── wiki/correspondents/*.md      ← obsidiantools (Phase 5)
      │
-     └── emit fact ──► memory.FactStore  ──► ForgejoClient.put_file → memory.git
+     │  bot-runner mount: ${DATA_DIR}:/data
+     ▼
+  Archivist (in container)  ── classify ──► memory.get_ontology(vault_path)
+                                                  ├─ live: read /data/memory/vault/ontology.toml
+                                                  └─ fallback: stacklets/memory/seeds/ontology.toml
+
+  Writes (Phase 2 facts, Phase 5 wiki rebuild)
+     ── edit working copy ── git add/commit ── git push → Forgejo
 
 
   stacklets/memory/  (new host-type stacklet, no container, no bot in v1)
      ├── seeds/         version-controlled, scenario-specific (family today, office later)
-     ├── hooks/         on_install_success → create repo + push seeds (idempotent)
-     ├── lib.py         in-process API over ForgejoClient: get_ontology(), FactStore, query_plan() (Phase 4)
-     └── cli/           stack facts (Phase 2), stack memory wiki-rebuild (Phase 5)
+     ├── hooks/
+     │   ├── on_install_success → ensure repo, push seeds, clone vault locally
+     │   └── on_start_ready     → pull vault (best-effort, never blocks startup)
+     ├── lib.py         vault sync + Ontology / FactStore / query_plan readers
+     └── cli/           stack memory check/lookup/prompt/pull (today), facts (Phase 2), wiki-rebuild (Phase 5)
 ```
 
 ## Phases
@@ -227,16 +231,22 @@ stacklets/docs/
 ├── bot/archivist.py       # MODIFIED — classify via memory.get_ontology, Q&A handler (Phase 4), eager stubs (Phase 5)
 └── (seed.py, taxonomy.toml unchanged)
 
-# Forgejo (the only source of truth)
+# Forgejo (truth)
 <forgejo>/<owner>/memory.git
 ├── ontology.toml          # seeded; hand- + system-edited (commit log = learning history)
 ├── facts.toml             # hand-authored; interview seeds it (Phase 3)
 ├── facts.jsonl            # machine-appended (Phase 2)
-├── wiki/family/...        # entity pages (Phase 5)
+├── wiki/correspondents/*.md  # entity pages (Phase 5)
+├── wiki/family/...
 ├── wiki/<person>/...
 └── meta/index.md          # master pointer (Phase 5)
 
 <forgejo>/<owner>/documents.git  # existing — Archivist writes L1 mirrors
+
+# Local working copy (the read surface)
+<data_dir>/memory/vault/   # git clone of the above
+                           # bot-runner mounts <data_dir>:/data, so the
+                           # in-container vault path is /data/memory/vault.
 ```
 
 ## Verification at each phase
