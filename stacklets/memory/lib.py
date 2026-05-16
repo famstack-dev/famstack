@@ -30,8 +30,11 @@ Forgejo was unreachable on install).
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+
+import frontmatter
 
 from stack.forgejo import ForgejoClient
 from stack.ontology import Ontology
@@ -163,6 +166,130 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
     if not ontology_file.exists():
         return None
     return Ontology.load(ontology_file)
+
+
+# ─── Correspondents (wiki entity layer) ──────────────────────────────────
+#
+# Correspondents are organizations the family corresponds with (banks,
+# insurers, schools, councils, online services). Unlike topics, they
+# grow organically per instance — every new sender is a new entry. We
+# store them as individual markdown pages under `wiki/correspondents/`
+# so they are Obsidian-editable, Forgejo-revisable, and human-readable
+# end-to-end. The frontmatter is the machine view; the body is for
+# notes (a `<!-- begin: generated -->` block is the only thing the
+# wiki-rebuild touches).
+#
+# Example shape (wiki/correspondents/adac.md):
+#
+#     ---
+#     kind: correspondent
+#     canonical: ADAC
+#     aliases:
+#       - "ADAC Ortsverband Manzell"
+#     topics: [insurance, vehicle]
+#     address: "Hansastraße 19, 80686 München"
+#     website: "https://www.adac.de"
+#     ---
+#
+#     # ADAC
+#     [free-form notes]
+#
+# `aliases` rolls up everything the classifier has seen as the
+# `correspondent_aliases` field on documents from this sender. The
+# classifier prompt embeds the (canonical, aliases) pairs so the LLM
+# can canonicalize new variants before they hit Paperless.
+
+WIKI_CORRESPONDENTS_DIR = "wiki/correspondents"
+
+
+@dataclass
+class Correspondent:
+    """A single correspondent wiki entry."""
+
+    canonical: str
+    aliases: List[str] = field(default_factory=list)
+    topics: List[str] = field(default_factory=list)
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    # Path on disk, useful for `stack memory correspondents show`.
+    source_path: Optional[Path] = None
+
+    def all_known_names(self) -> List[str]:
+        """Canonical + every alias, no duplicates, canonical first."""
+        seen = {self.canonical}
+        out = [self.canonical]
+        for a in self.aliases:
+            if a and a not in seen:
+                seen.add(a)
+                out.append(a)
+        return out
+
+
+def load_correspondents_from_vault(vault_path: Path) -> List[Correspondent]:
+    """Walk `<vault>/wiki/correspondents/*.md` and return the parsed entries.
+
+    Pages without a `kind: correspondent` frontmatter or without a
+    canonical name (frontmatter `canonical:`, falling back to the file
+    stem) are skipped — keeps the loader robust against partial edits.
+    """
+    folder = Path(vault_path) / WIKI_CORRESPONDENTS_DIR
+    if not folder.exists():
+        return []
+
+    result: List[Correspondent] = []
+    for md_path in sorted(folder.glob("*.md")):
+        try:
+            with open(md_path, "r", encoding="utf-8") as f:
+                post = frontmatter.load(f)
+        except (OSError, ValueError):
+            continue
+        meta = post.metadata or {}
+        if not meta:
+            # No frontmatter at all — likely a README or stray note, skip.
+            continue
+        if meta.get("kind") and meta.get("kind") != "correspondent":
+            continue
+        canonical = meta.get("canonical") or md_path.stem
+        if not canonical:
+            continue
+        result.append(Correspondent(
+            canonical=str(canonical),
+            aliases=[str(a) for a in (meta.get("aliases") or [])],
+            topics=[str(t) for t in (meta.get("topics") or [])],
+            address=meta.get("address"),
+            phone=meta.get("phone"),
+            email=meta.get("email"),
+            website=meta.get("website"),
+            source_path=md_path,
+        ))
+    return result
+
+
+def correspondents_prompt_section(correspondents: List[Correspondent]) -> str:
+    """Render the correspondents block embedded in the classifier prompt.
+
+    Output shape:
+
+        Existing correspondents (canonical; aliases in parens):
+          - ADAC (ADAC Ortsverband Manzell, ADAC Versicherung AG)
+          - AOK
+          - Anthropic
+
+    Returns an empty string when no correspondents are known yet —
+    the prompt builder falls back to the flat Paperless list in that
+    case.
+    """
+    if not correspondents:
+        return ""
+    lines = ["Existing correspondents (canonical; aliases in parens):"]
+    for c in correspondents:
+        if c.aliases:
+            lines.append(f"  - {c.canonical} ({', '.join(c.aliases)})")
+        else:
+            lines.append(f"  - {c.canonical}")
+    return "\n".join(lines)
 
 
 def get_ontology(vault_path: Optional[Path] = None) -> Ontology:

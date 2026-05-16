@@ -71,7 +71,11 @@ from stack import resolve_model
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.lib import get_ontology as _get_memory_ontology  # noqa: E402
+from memory.lib import (  # noqa: E402
+    correspondents_prompt_section as _memory_correspondents_section,
+    get_ontology as _get_memory_ontology,
+    load_correspondents_from_vault as _load_memory_correspondents,
+)
 
 
 @contextmanager
@@ -265,6 +269,11 @@ class ArchivistBot(MicroBot):
         # once at startup from the memory stacklet's repo (Forgejo) with
         # fallback to the shipped seed. Bot restart picks up live edits.
         self._ontology_section: str = ""
+        # Correspondents block (canonical names + learned aliases) from
+        # the memory vault's wiki/correspondents/. Empty when the wiki
+        # doesn't exist yet — the prompt falls back to the flat
+        # Paperless list.
+        self._correspondents_section: str = ""
 
     def t(self, key: str, **kwargs) -> str:
         return _t(self.language, key, **kwargs)
@@ -300,6 +309,7 @@ class ArchivistBot(MicroBot):
             if self.mirror_to_git:
                 self._init_mirror()
             self._load_ontology_section()
+            self._load_correspondents_section()
             await super().start()
         finally:
             await self._http.close()
@@ -327,6 +337,30 @@ class ArchivistBot(MicroBot):
         logger.info(
             "[archivist] memory ontology loaded from {} ({} topics, {} doctypes, lang={})",
             source, len(ont.topics), len(ont.doctypes), self.language,
+        )
+
+    def _load_correspondents_section(self) -> None:
+        """Build the correspondents block from the memory wiki.
+
+        Each `wiki/correspondents/*.md` page contributes a (canonical,
+        aliases) line. Empty when the vault has no wiki yet — the
+        prompt falls back to the flat Paperless correspondents list,
+        which carries no alias signal.
+
+        Cached for the bot's lifetime — bot restart picks up new pages.
+        """
+        vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
+        if not vault_env:
+            self._correspondents_section = ""
+            return
+
+        correspondents = _load_memory_correspondents(Path(vault_env))
+        self._correspondents_section = _memory_correspondents_section(correspondents)
+
+        logger.info(
+            "[archivist] memory correspondents loaded ({} entries, {} with aliases)",
+            len(correspondents),
+            sum(1 for c in correspondents if c.aliases),
         )
 
     def _init_mirror(self) -> None:
@@ -603,6 +637,7 @@ class ArchivistBot(MicroBot):
                 classify_max_chars=self.classify_max_chars,
                 images=images,
                 ontology_section=self._ontology_section,
+                correspondents_section=self._correspondents_section,
             )
         else:
             result = EnrichResult()
