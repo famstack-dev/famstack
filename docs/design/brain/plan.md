@@ -36,7 +36,8 @@ Non-goals for 0.3.0:
 - **Memory is instance data**, not product policy. It lives in **Forgejo** as a `memory` repo. Famstack upgrades never overwrite it.
 - **Famstack-product ships seeds** under `stacklets/memory/seeds/`. On first install the stacklet creates the Forgejo repo and pushes seeds. From then on the instance owns it. Hand edits via the Forgejo web UI (or a local Obsidian clone) are first-class and appear in the commit log.
 - **Framework code (`lib/stack/`) stays generic.** Ontology dataclasses, `FactStore` protocol, decay-window field schema — yes. Family vocabulary, household roles, "Recipe is also Memory" cross-refs — no, those live in famstack-product seeds.
-- **Why Forgejo:** the commit log is the learning history. Reverts are free. External editability for free. Same backend Archivist already uses for document mirrors.
+- **Forgejo is the only source of truth.** No working-copy contract under `<data_dir>/memory/`. Every reader (Archivist, Stacker, CLI) goes through `ForgejoClient` (same path Archivist already uses for document mirrors) and caches in-process. A service could be added later — the stacklet declares `type = "host"` for now.
+- **Why Forgejo:** the commit log is the learning history. Reverts are free. External editability for free. One client (`lib/stack/forgejo.py`) is already battle-tested by the document mirror.
 
 ## Architecture in one diagram
 
@@ -44,27 +45,28 @@ Non-goals for 0.3.0:
   Capture (Matrix, future: web, voice)
      │
      ▼
-  Archivist  ── classify ──► Memory.get_ontology(lang)
+  Archivist  ── classify ──► memory.get_ontology(lang)
      │                            │
-     │                            └─ reads working copy under <data_dir>/memory/repo/ontology.toml
+     │                            └─ ForgejoClient.get_file("memory", "ontology.toml")
+     │                               cached in-process; refresh on bot restart
      │                                                           │
      │                                                           ▼
-     │                                                  Forgejo: <user>/memory.git
+     │                                                  Forgejo: <owner>/memory.git
      │                                                  ├── ontology.toml
      │                                                  ├── facts.toml
      │                                                  ├── facts.jsonl
      │                                                  ├── wiki/{family,arthur,...}/*.md
      │                                                  └── meta/index.md     (Phase 5)
      │
-     ├── L1 mirror ──► Forgejo: <user>/documents.git/YYYY/MM/*.md   (exists today)
+     ├── L1 mirror ──► Forgejo: <owner>/documents.git/YYYY/MM/*.md   (exists today)
      │
-     └── emit fact ──► Memory.FactStore  ──► commit + push to memory.git
+     └── emit fact ──► memory.FactStore  ──► ForgejoClient.put_file → memory.git
 
 
-  stacklets/memory/  (new stacklet, no user-facing bot)
+  stacklets/memory/  (new host-type stacklet, no container, no bot in v1)
      ├── seeds/         version-controlled, scenario-specific (family today, office later)
-     ├── hooks/         on_install → create repo + push seeds; on_start_ready → pull working copy
-     ├── lib.py         in-process API: get_ontology(), FactStore, query_plan() (Phase 4)
+     ├── hooks/         on_install_success → create repo + push seeds (idempotent)
+     ├── lib.py         in-process API over ForgejoClient: get_ontology(), FactStore, query_plan() (Phase 4)
      └── cli/           stack facts (Phase 2), stack memory wiki-rebuild (Phase 5)
 ```
 
@@ -87,20 +89,19 @@ Files:
 - `lib/stack/ontology.py` (NEW) — generic: `Ontology` class, `Topic`, `DocType`, `Person`, `KnowledgeKind`, TOML loader, resolvers (`resolve_topics`, `resolve_person`, `expand_query`), `classifier_prompt_section(lang)`. No vocabulary inside.
 - `lib/stack/facts.py` (NEW, protocol-only in this phase) — `Fact` dataclass, `FactStore` `Protocol`. Concrete impl lands in Phase 2.
 - `lib/stack/paths.py` (NEW or extended) — `stack_config_dir()`, `stack_data_dir(stacklet)`. Verify existing helpers first; add only what's missing.
-- `stacklets/memory/stacklet.toml` (NEW) — declares the stacklet, lifecycle hooks, depends on `infra` (Forgejo).
+- `stacklets/memory/stacklet.toml` (NEW) — declares the stacklet: `type = "host"`, `requires = ["code"]` (Forgejo lives in the code stacklet), no container, no port. Health check optional in v1.
 - `stacklets/memory/seeds/ontology.toml` (NEW) — hand-authored. One entry per current taxonomy.toml name, enriched with id, synonyms, keywords, type cross-refs.
 - `stacklets/memory/seeds/facts.toml` (NEW) — near-empty template, commented examples.
 - `stacklets/memory/seeds/wiki/README.md` (NEW) — minimal scaffolding for the wiki tree.
-- `stacklets/memory/hooks/on_install.py` (NEW) — create `memory` repo in Forgejo via API, initial commit pushing seeds. Idempotent: if repo exists, skip.
-- `stacklets/memory/hooks/on_start_ready.py` (NEW) — clone or `git pull` the working copy into `<data_dir>/memory/repo/`.
-- `stacklets/memory/lib.py` (NEW) — in-process API: `get_ontology(lang)` returns an `Ontology` loaded from the working copy. Imported by Archivist.
+- `stacklets/memory/hooks/on_install_success.py` (NEW) — `ForgejoClient.create_repo("memory")` then `put_file` for each seed under `seeds/`. Idempotent: skips files that already exist (sha check).
+- `stacklets/memory/lib.py` (NEW) — in-process API over `ForgejoClient`: `get_ontology(stack, lang)` fetches `ontology.toml` from the memory repo and parses it into an `Ontology`. Caches the parsed object in-process; refresh on process restart. Imported by Archivist via `from stacklets.memory.lib import get_ontology`.
 - `stacklets/docs/bot/archivist.py` (MODIFIED) — classify prompt switches from inline `json.dumps(category_tags)` to `memory_lib.get_ontology(self.language).classifier_prompt_section()`.
 
 Tests:
 
 - `tests/stacklets/test_ontology_taxonomy_sync.py` — every name in `stacklets/docs/taxonomy.toml` has a matching id in `stacklets/memory/seeds/ontology.toml` (and vice versa). Fails loudly on drift.
 - `tests/stacklets/test_ontology_loader.py` — load, resolve_topics, resolve_person, expand_query happy paths.
-- `tests/stacklets/test_memory_install.py` — `on_install` creates the repo and pushes seeds against a test Forgejo (real, not mocked, per project rules).
+- `tests/stacklets/test_memory_install.py` — `on_install_success` creates the repo and pushes seeds against a real Forgejo from the test harness (per project rules: no library mocks).
 - `tests/integration/test_archivist_e2e.py` — already exists; must stay green with the new ontology source.
 
 Out of scope:
@@ -206,16 +207,15 @@ lib/stack/
 ├── facts.py               # NEW — Fact, FactStore Protocol (impl in stacklet)
 └── paths.py               # NEW or extended — stack_config_dir(), stack_data_dir()
 
-stacklets/memory/          # NEW stacklet — no user-facing bot
-├── stacklet.toml
+stacklets/memory/          # NEW stacklet — type="host", no container, no bot (in v1)
+├── stacklet.toml          # type="host", requires=["code"]
 ├── seeds/
 │   ├── ontology.toml      # family-scenario seed
 │   ├── facts.toml         # empty template
 │   └── wiki/README.md     # initial wiki scaffolding
 ├── hooks/
-│   ├── on_install.py      # create Forgejo memory repo, push seeds (idempotent)
-│   └── on_start_ready.py  # clone or pull working copy into <data_dir>/memory/repo/
-├── lib.py                 # in-process API: get_ontology, FactStore, query_plan
+│   └── on_install_success.py  # create Forgejo memory repo, push seeds (idempotent)
+├── lib.py                 # in-process API over ForgejoClient: get_ontology, FactStore, query_plan
 └── cli/
     ├── facts.py           # stack facts ... (Phase 2)
     └── wiki_rebuild.py    # stack memory wiki-rebuild (Phase 5)
@@ -227,25 +227,23 @@ stacklets/docs/
 ├── bot/archivist.py       # MODIFIED — classify via memory.get_ontology, Q&A handler (Phase 4), eager stubs (Phase 5)
 └── (seed.py, taxonomy.toml unchanged)
 
-# Stack instance (a user's running stack)
-<data_dir>/memory/repo/    # working copy of Forgejo `memory` repo
-                           # ├── ontology.toml          (seeded; hand- + system-edited)
-                           # ├── facts.toml             (hand-authored; interview seeds it)
-                           # ├── facts.jsonl            (machine-appended)
-                           # ├── wiki/family/...
-                           # ├── wiki/<person>/...
-                           # └── meta/index.md          (Phase 5)
+# Forgejo (the only source of truth)
+<forgejo>/<owner>/memory.git
+├── ontology.toml          # seeded; hand- + system-edited (commit log = learning history)
+├── facts.toml             # hand-authored; interview seeds it (Phase 3)
+├── facts.jsonl            # machine-appended (Phase 2)
+├── wiki/family/...        # entity pages (Phase 5)
+├── wiki/<person>/...
+└── meta/index.md          # master pointer (Phase 5)
 
-# Forgejo (truth)
-<forgejo>/<user>/memory.git     # all memory commits — the learning history
-<forgejo>/<user>/documents.git  # existing — Archivist writes L1 mirrors
+<forgejo>/<owner>/documents.git  # existing — Archivist writes L1 mirrors
 ```
 
 ## Verification at each phase
 
 | Phase | Pass criteria |
 |---|---|
-| 1 | `test_archivist_e2e` stays green. Ontology sync test green. Fresh `stack up memory` creates a Forgejo memory repo with the seeds; restart pulls the working copy. |
+| 1 | `test_archivist_e2e` stays green. Ontology sync test green. Fresh `stack up memory` creates a Forgejo `memory` repo and pushes the seeds (idempotent on re-up). |
 | 2 | `stack facts add/list/edit/remove` round-trips. Each operation produces a commit in the memory repo. |
 | 3 | `stack init` on a fresh instance produces a populated `facts.toml` and ≥5 entity stubs, all committed. |
 | 4 | In a test Matrix room, asking the Archivist a known-answer question returns the answer with a citation. |
