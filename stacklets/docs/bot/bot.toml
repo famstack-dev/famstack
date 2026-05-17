@@ -25,3 +25,11 @@ mirror_to_git = false
 # when `mirror_to_git` is enabled. Admins are added to the org's
 # Owners team so the repo shows up on their dashboard.
 mirror_org = "family"
+
+# Captures (URLs pasted in non-documents rooms) default to "bookmark"
+# mode: only the LLM summary + tags + source URL are stored. Set
+# `capture_keep_body = true` to also archive the extracted Markdown
+# body alongside the digest — useful for content that might disappear
+# or while experimenting with retrieval quality.
+# Notes (pasted text) always keep the body regardless.
+capture_keep_body = false

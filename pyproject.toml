@@ -25,6 +25,9 @@ test = [
     "pypdf>=4.0",
     # PDF page rendering for vision-aware classifiers (scanned PDFs).
     "pypdfium2>=4.0",
+    # URL → Markdown for the archivist's capture pipeline. Tests run
+    # trafilatura against fixture HTML in-process — no network calls.
+    "trafilatura>=1.12,<3.0",
 ]
 
 [tool.pytest.ini_options]

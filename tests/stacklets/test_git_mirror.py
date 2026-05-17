@@ -341,3 +341,216 @@ class TestBriefingBlock:
         # No empty bullets / checkboxes.
         assert "- \n" not in out
         assert "- [ ] \n" not in out
+
+
+# ── Captures ─────────────────────────────────────────────────────────────
+#
+# A capture is a non-Paperless source (today: a pasted URL processed by
+# trafilatura). It lives in the same mirror repo as Paperless documents
+# but under `captures/YYYY/MM/<slug>-<hash>.md`. Paperless-shaped
+# frontmatter fields (paperless_id, paperless_url) are absent;
+# source/source_uri identify the origin. The hash suffix disambiguates
+# re-pastes of different URLs that resolve to the same slug, and makes
+# the same URL re-paste idempotent (same path → update, not duplicate).
+
+
+class TestCapturePath:
+    """`captures/YYYY/MM/<slug>-<hash>.md` shape.
+
+    `hash_key` is the stable identity string the caller hashes into the
+    filename suffix — typically the source URL for URL/paste captures,
+    or a content hash when the paste has no source URL. The mirror
+    doesn't care what's in the string, only that the same key yields
+    the same path on re-publish."""
+
+    def test_path_uses_captured_date(self, mirror):
+        path = mirror._capture_filepath(
+            captured_at="2026-05-17",
+            title="Why local LLMs matter",
+            hash_key="https://example.com/llms",
+        )
+        assert path.startswith("captures/2026/05/")
+        assert path.endswith(".md")
+
+    def test_slug_in_filename(self, mirror):
+        path = mirror._capture_filepath(
+            captured_at="2026-05-17",
+            title="Why local LLMs matter",
+            hash_key="https://example.com/llms",
+        )
+        # slug lives between "captures/YYYY/MM/" and the "-<hash>.md" tail.
+        assert "why-local-llms-matter" in path
+
+    def test_same_key_yields_same_path(self, mirror):
+        a = mirror._capture_filepath(
+            captured_at="2026-05-17", title="t",
+            hash_key="https://example.com/a",
+        )
+        b = mirror._capture_filepath(
+            captured_at="2026-05-17", title="t",
+            hash_key="https://example.com/a",
+        )
+        assert a == b
+
+    def test_different_keys_yield_different_paths(self, mirror):
+        a = mirror._capture_filepath(
+            captured_at="2026-05-17", title="Same Title",
+            hash_key="https://example.com/article-1",
+        )
+        b = mirror._capture_filepath(
+            captured_at="2026-05-17", title="Same Title",
+            hash_key="https://example.com/article-2",
+        )
+        # Same slug, same date — only the hash distinguishes.
+        assert a != b
+
+    def test_no_title_falls_back_to_capture(self, mirror):
+        path = mirror._capture_filepath(
+            captured_at="2026-05-17", title=None,
+            hash_key="https://example.com/x",
+        )
+        # No useful title → generic slug. Hash still disambiguates.
+        assert "captures/2026/05/" in path
+        assert path.endswith(".md")
+
+    def test_invalid_date_lands_in_unfiled(self, mirror):
+        path = mirror._capture_filepath(
+            captured_at="not-a-date", title="hi",
+            hash_key="https://example.com/x",
+        )
+        assert path.startswith("_unfiled/")
+
+
+class TestCaptureFrontmatter:
+    """Captures carry `kind: bookmark|note` + optional `source_uri`.
+    Bookmark = URL pointer; Note = pasted body the user typed.
+
+    Document-shaped fields (correspondent, document_type, category) are
+    intentionally absent — captures aren't part of the Paperless
+    ontology. Persons + tags are present (load-bearing for interest
+    derivation in the dream-cycle rebuild)."""
+
+    def test_bookmark_minimum_shape(self, mirror):
+        fm = mirror._capture_frontmatter(
+            title="Why local LLMs matter",
+            captured_at="2026-05-17",
+            kind="bookmark",
+            source_uri="https://example.com/llms",
+            persons=[], tags=[], model=None,
+        )
+        assert fm["title"] == "Why local LLMs matter"
+        assert fm["kind"] == "bookmark"
+        assert fm["source_uri"] == "https://example.com/llms"
+        # Document-shaped fields are gone from captures.
+        assert "correspondent" not in fm
+        assert "document_type" not in fm
+        assert "category" not in fm
+        assert "paperless_id" not in fm
+        assert "paperless_url" not in fm
+        assert fm["added"].endswith("Z")
+
+    def test_note_with_source_uri(self, mirror):
+        # Pasted Reddit thread with the URL in the body — kind=note,
+        # source_uri kept for round-tripping back to the original.
+        fm = mirror._capture_frontmatter(
+            title="Reddit thread title",
+            captured_at="2026-05-17",
+            kind="note",
+            source_uri="https://reddit.com/r/x/comments/y",
+            persons=["Arthur"], tags=["LLMs"], model=None,
+        )
+        assert fm["kind"] == "note"
+        assert fm["source_uri"] == "https://reddit.com/r/x/comments/y"
+        assert fm["tags"] == ["LLMs"]
+
+    def test_note_without_source_uri(self, mirror):
+        # Pure paste — no URL anywhere. Frontmatter omits source_uri so
+        # Dataview queries can `where source_uri` filter to "captures
+        # that link back to a source" cleanly.
+        fm = mirror._capture_frontmatter(
+            title="Some pasted thought",
+            captured_at="2026-05-17",
+            kind="note",
+            source_uri=None,
+            persons=["Arthur"], tags=[], model=None,
+        )
+        assert fm["kind"] == "note"
+        assert "source_uri" not in fm
+
+    def test_full_shape(self, mirror):
+        fm = mirror._capture_frontmatter(
+            title="Why local LLMs matter",
+            captured_at="2026-05-17",
+            kind="bookmark",
+            source_uri="https://example.com/llms",
+            persons=["Arthur"],
+            tags=["LLMs", "Local Inference", "Person: Arthur"],
+            model="qwen2.5:14b",
+        )
+        assert fm["persons"] == ["Arthur"]
+        assert fm["tags"] == ["LLMs", "Local Inference", "Person: Arthur"]
+        assert fm["model"] == "qwen2.5:14b"
+        # date echoes the capture date, not the article's publish date.
+        assert fm["date"] == "2026-05-17"
+
+    def test_no_model_omits_field(self, mirror):
+        fm = mirror._capture_frontmatter(
+            title="t", captured_at="2026-05-17",
+            kind="bookmark", source_uri="https://x/y",
+            persons=[], tags=[], model=None,
+        )
+        assert "model" not in fm
+
+
+class TestCaptureRender:
+    """The captures use the same _render() as Paperless docs — same
+    briefing block, same wiki-link header — but no document-shaped
+    fields. Bookmarks drop the body section (the LLM summary IS the
+    content); notes keep the body."""
+
+    def test_bookmark_renders_without_body(self, mirror):
+        # When the caller passes an empty body, the file ends at the
+        # briefing block. That's the bookmark shape — the summary is
+        # the content, the URL is the source.
+        fm = mirror._capture_frontmatter(
+            title="Why local LLMs matter",
+            captured_at="2026-05-17",
+            kind="bookmark",
+            source_uri="https://example.com/llms",
+            persons=["Arthur"], tags=["LLMs"], model="qwen2.5:14b",
+        )
+        out = mirror._render(
+            frontmatter=fm, body="",
+            correspondent=None, persons=["Arthur"],
+            summary="A 200-word digest of the article's main points.",
+            facts=["Mac Mini idles under 10W"],
+            action_items=[],
+        )
+        assert "kind: bookmark" in out
+        assert "source_uri: https://example.com/llms" in out
+        assert "# Why local LLMs matter" in out
+        assert "**About:** [[Arthur]]" in out
+        assert "## Summary" in out
+        assert "A 200-word digest" in out
+        # No trailing empty body section — file ends after briefing.
+
+    def test_note_renders_with_body(self, mirror):
+        # Notes preserve the pasted body the user typed.
+        fm = mirror._capture_frontmatter(
+            title="Reddit thread on benchmarks",
+            captured_at="2026-05-17",
+            kind="note",
+            source_uri="https://reddit.com/r/x/y",
+            persons=["Arthur"], tags=["Benchmarks"], model=None,
+        )
+        out = mirror._render(
+            frontmatter=fm,
+            body="Top comment quotes 60 tok/s on M2 Pro.\n\nRest of thread...",
+            correspondent=None, persons=["Arthur"],
+            summary="Comment thread comparing on-device inference speeds.",
+            facts=[], action_items=[],
+        )
+        assert "kind: note" in out
+        assert "## Summary" in out
+        assert "Comment thread comparing" in out
+        assert "Top comment quotes 60 tok/s" in out
