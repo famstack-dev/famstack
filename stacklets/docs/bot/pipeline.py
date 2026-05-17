@@ -639,6 +639,43 @@ class Classifier:
             logger.warning("[pipeline] LLM returned invalid JSON: {}", response[:200])
             return {}
 
+    async def classify_capture(
+        self, *,
+        text: str,
+        person_names: list[str],
+        existing_tags: list[str] | None = None,
+    ) -> dict:
+        """Capture-specific classification.
+
+        Returns a smaller payload than `classify`: title, summary,
+        facts, tags, persons, action_items. No correspondent, no
+        document_type, no ontology coupling. The summary is the
+        load-bearing artifact — captures are bookmarks/notes, not
+        archives, and the user reads the summary later to remember
+        what this was about.
+
+        Existing tags are fed as a vocabulary hint so the LLM reuses
+        what's already in the system ("LLMs" not "llm", "Apple
+        Silicon" not "M-series chips"). New tags are still allowed
+        when nothing existing fits.
+        """
+        prompt = _build_capture_prompt(
+            text=text,
+            person_names=person_names,
+            existing_tags=existing_tags or [],
+        )
+        response = await self._request("classifier", prompt, json_mode=True)
+        if not response:
+            return {}
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            logger.warning(
+                "[pipeline] capture: LLM returned invalid JSON: {}",
+                response[:200],
+            )
+            return {}
+
     async def reformat(self, ocr_text: str) -> str | None:
         """Reformat raw OCR text into clean, readable Markdown.
 
@@ -756,6 +793,68 @@ Rules:
 Document text:
 ---
 {ocr_text}
+---"""
+
+
+def _build_capture_prompt(
+    *,
+    text: str,
+    person_names: list[str],
+    existing_tags: list[str] | None = None,
+) -> str:
+    """The capture prompt — smaller and focused on summary + tags.
+
+    Captures are bookmarks (URL pointers with a digest) and notes
+    (pasted text with a digest). Unlike documents, they don't carry a
+    sender, a document type, or a place in the Paperless taxonomy.
+    The user's question at retrieval time is "what was this about?"
+    The summary answers it; tags index it.
+
+    `existing_tags` is the vocabulary the system already uses for
+    captures. Feeding it in biases the LLM toward consistency — the
+    second time someone saves something about LLMs, it lands under
+    the same tag as the first. New tags are still allowed when
+    nothing existing fits; the dream-cycle wiki rebuild canonicalizes
+    synonyms across the whole corpus later.
+    """
+    existing_tags = existing_tags or []
+    tags_hint = (
+        f"Existing tags in use: {json.dumps(existing_tags, ensure_ascii=False)}\n"
+        "Prefer these when they fit. Only invent new tags when nothing existing matches.\n"
+        if existing_tags
+        else
+        "No existing tags yet — invent useful single-word or two-word topic tags.\n"
+    )
+
+    return f"""Summarize and tag this content for a personal knowledge vault.
+Return ONLY a JSON object.
+
+The user is bookmarking or noting this content to find it later. Your
+job: produce a digest they can scan in 10 seconds and tags that
+position this content among their interests.
+
+Family members: {json.dumps(person_names, ensure_ascii=False)}
+{tags_hint}
+Return this exact JSON structure:
+{{
+  "title": "scannable title under 80 chars. Use the content's language. Capture what this is *about*, not just the source name.",
+  "summary": "200-400 word extended summary in Markdown. Cover key points, claims, named entities, and conclusions. The user reads this later instead of reopening the source, so make it self-contained.",
+  "facts": ["3-6 concrete facts, numbers, dates, names extracted from the content"],
+  "tags": ["3-7 topic tags. Free-form (single words or short phrases). Reuse existing tags from the list above when they fit. Tags should signal stable interest areas, not one-off specifics — prefer 'LLMs' over 'Llama-3.1-8B-Instruct'."],
+  "persons": ["which family members this is for or about. Pick from the family members list. Empty list if unclear — the caller will default to the sender."],
+  "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
+}}
+
+Rules:
+- LANGUAGE: use the content's original language for title, summary, facts, action_items. German content → German output.
+- summary: write a real digest, not a teaser. Aim for 200-400 words on substantive content; less for short notes.
+- tags: prefer the existing tag list above. A new tag must be clearly absent from the list, not just spelled differently.
+- persons: only if the content explicitly names a family member. Don't guess from sender.
+- action_items: include only when there's a concrete next step. Empty list for pure reading material.
+
+Content:
+---
+{text}
 ---"""
 
 

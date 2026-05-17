@@ -48,6 +48,8 @@ from nio import (
 )
 from pypdf import PdfReader
 
+from capture_tags import CaptureTagCache
+from extractors import SourceContent, TextExtractor, UrlExtractor
 from git_mirror import GitMirror
 from matching import build_document_event
 from microbot import MicroBot
@@ -58,6 +60,9 @@ from pipeline import (
     DEFAULT_CLASSIFY_MAX_CHARS,
     EnrichResult,
     ImageAttachment,
+    LLMModelNotFoundError,
+    LLMTimeoutError,
+    LLMUnavailableError,
     PaperlessAPI,
     PaperlessDuplicateError,
     enrich_document,
@@ -259,10 +264,34 @@ class ArchivistBot(MicroBot):
         # Flip `mirror_to_git = true` in bot.toml to enable.
         self.mirror_to_git = settings.get("mirror_to_git", False)
         self.mirror_org = settings.get("mirror_org", "family")
+        # Routing model: one room is the "documents" room and feeds the
+        # Paperless pipeline. Every other room the bot is in — DMs,
+        # per-person notes rooms, ad-hoc invites — runs the capture
+        # pipeline instead. Alias is read from bot.toml so a deployment
+        # that renames the docs room can update one line.
+        self.documents_room_alias = self._normalize_alias(
+            settings.get("documents_room_alias", "documents"),
+        )
+        self._documents_room_id: str | None = None
+        # Captures are bookmarks (URL pointer + LLM summary) by default —
+        # the source URL is the truth, the digest is the marker. Flip
+        # `capture_keep_body = true` in bot.toml to also archive the
+        # extracted body alongside the digest. Notes (pasted text)
+        # always keep the body regardless.
+        self.capture_keep_body = bool(settings.get("capture_keep_body", False))
+        # Top N capture tags fed into the capture prompt as a vocabulary
+        # hint. 50 covers the long tail of a year-old vault; smaller
+        # values would risk losing useful niche tags.
+        self.capture_tag_prompt_size = int(
+            settings.get("capture_tag_prompt_size", 50),
+        )
+        self._capture_tags: CaptureTagCache | None = None
         self._scan_sessions: dict[str, dict] = {}
         self._http: aiohttp.ClientSession | None = None
         self._paperless: PaperlessAPI | None = None
         self._classifier: Classifier | None = None
+        self._url_extractor: UrlExtractor | None = None
+        self._text_extractor: TextExtractor | None = None
         self._mirror: GitMirror | None = None
         self._paperless_version: str = ""
         # Ontology vocabulary block for the classifier prompt — loaded
@@ -304,6 +333,17 @@ class ArchivistBot(MicroBot):
             capabilities=ModelCapabilities(
                 path=self._session_dir / "model-capabilities.json",
             ),
+        )
+        self._url_extractor = UrlExtractor(self._http)
+        self._text_extractor = TextExtractor()
+        self._capture_tags = CaptureTagCache(
+            self._session_dir / "capture-tags.json",
+        )
+        self._capture_tags.load()
+        logger.info(
+            "[archivist] capture tag cache: {} tags (keep_body={})",
+            len(self._capture_tags.top(10_000)),
+            self.capture_keep_body,
         )
         try:
             if self.mirror_to_git:
@@ -465,12 +505,77 @@ class ArchivistBot(MicroBot):
         is warm before the first user upload. Fire-and-forget: probe
         failures already log + degrade to text-only inside has_vision().
         """
+        self._resolve_documents_room()
         url = self.paperless_public_url or self.paperless_url
         welcome = self.t("welcome", url=url, ai_status=self._ai_status())
         for room_id in self._client.rooms:
             await self._send(room_id, welcome)
         if self.classify_enabled and self.openai_url:
             asyncio.create_task(self._classifier.has_vision())
+
+    # ── Documents-room routing ───────────────────────────────────────────
+    #
+    # One room is the documents room: file uploads + URL pastes go through
+    # Paperless. Every other room the bot is joined to runs the capture
+    # pipeline — URLs become summarized markdown entries in the mirror's
+    # `captures/` tree, no Paperless write.
+    #
+    # Family members can spin up their own per-person rooms ("arthur
+    # notes", "sabrina notes") or DM the bot directly. As soon as the
+    # bot accepts the invite, that room is in capture mode by default.
+    # No allowlist to curate.
+    #
+    # If the bot can't find a room matching `documents_room_alias` at
+    # first sync, every room is capture mode. That's a sensible default
+    # for instances that don't run Paperless at all.
+
+    @staticmethod
+    def _normalize_alias(alias: str | None) -> str:
+        """Strip leading `#` and trailing `:server` so we can match the
+        local part regardless of how the user wrote it."""
+        if not alias:
+            return ""
+        a = alias.strip().lstrip("#")
+        return a.split(":", 1)[0]
+
+    def _resolve_documents_room(self) -> None:
+        """Find the joined room whose canonical alias matches the
+        configured documents alias. Logged once at startup."""
+        target = self.documents_room_alias
+        if not target:
+            return
+        for room_id, room in self._client.rooms.items():
+            canonical = getattr(room, "canonical_alias", None) or ""
+            if self._normalize_alias(canonical) == target:
+                self._documents_room_id = room_id
+                logger.info(
+                    "[archivist] Documents room: {} ({})", canonical, room_id,
+                )
+                return
+        logger.info(
+            "[archivist] No room matches alias '{}' — every room is capture mode",
+            target,
+        )
+
+    def _is_capture_room(self, room_id: str) -> bool:
+        """Capture mode is the default — only the documents room is special."""
+        if self._documents_room_id is None:
+            return True
+        return room_id != self._documents_room_id
+
+    _PASTE_MIN_CHARS = 100
+
+    @staticmethod
+    def _looks_like_paste(text: str) -> bool:
+        """Heuristic: distinguish a paste from short chat in a capture room.
+
+        Length-based threshold (~100 stripped chars). Deliberate
+        undershoot: users who want short notes captured will pad them
+        with context. Chat ("ok", "thanks!", "yes\\nno") falls below
+        the gate and is ignored. A bare URL is handled by the URL
+        path before this predicate runs.
+        """
+        return len(text.strip()) >= ArchivistBot._PASTE_MIN_CHARS
 
     # ── Matrix helpers ───────────────────────────────────────────────────
 
@@ -910,7 +1015,29 @@ class ArchivistBot(MicroBot):
                 await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
 
             elif URL_PATTERN.match(query):
-                await self._handle_url(room.room_id, query, reply_to)
+                if self._is_capture_room(room.room_id):
+                    await self._handle_capture(
+                        room.room_id, query, event.sender, reply_to,
+                    )
+                else:
+                    await self._handle_url(room.room_id, query, reply_to)
+
+            elif self._is_capture_room(room.room_id) and self._looks_like_paste(query):
+                # Capture room + paste-shaped message → file as text capture.
+                # In the documents room, free text is a Paperless search;
+                # in capture rooms, search isn't useful (the user lives in
+                # Obsidian) and free text is almost always content to file.
+                await self._handle_text_capture(
+                    room.room_id, query, event.sender, reply_to,
+                )
+
+            elif self._is_capture_room(room.room_id):
+                # Short message in a capture room — ignored. Pasting more
+                # context will trigger capture; chat-shaped messages don't.
+                logger.debug(
+                    "[archivist] capture room {} ignored short text: {!r}",
+                    room.room_id, query[:60],
+                )
 
             else:
                 await self._handle_search(room.room_id, query, reply_to)
@@ -970,7 +1097,274 @@ class ArchivistBot(MicroBot):
         finally:
             await self._set_typing(room_id, typing=False)
 
-    # ── URL archiving ────────────────────────────────────────────────────
+    # ── URL capture (knowledge rooms, DMs, per-person notes rooms) ───────
+    #
+    # Capture mode is what runs when the bot sees a URL in any room that
+    # isn't the documents room. The flow is intentionally lean compared
+    # to `_process_document`:
+    #
+    #   UrlExtractor → SourceContent → classifier → mirror.publish_capture
+    #
+    # No Paperless write, no entity reconciliation, no event emission.
+    # The classifier still uses the memory ontology + correspondents wiki
+    # so captures share a vocabulary with Paperless mirrors and can be
+    # cross-referenced in Obsidian.
+    #
+    # Person attribution: the sender's first name is the default. The
+    # classifier can return a wider `persons` list if the article body
+    # mentions multiple family members, but for v1 the sender is whose
+    # capture this is — the rule is "you pasted it, it's yours."
+
+    async def _handle_capture(
+        self, room_id: str, url: str, sender_mxid: str,
+        reply_to: str | None = None,
+    ) -> None:
+        await self._send(room_id, self.t("capture_fetching", url=url), reply_to)
+        await self._set_typing(room_id)
+        try:
+            source = await self._url_extractor.extract(url)
+            if source is None:
+                await self._send(room_id, self.t("capture_failed"), reply_to)
+                return
+            await self._publish_capture_from_source(
+                room_id=room_id,
+                source=source,
+                kind="bookmark",
+                sender_mxid=sender_mxid,
+                display_link=url,
+                reply_to=reply_to,
+            )
+        finally:
+            await self._set_typing(room_id, typing=False)
+
+    async def _handle_text_capture(
+        self, room_id: str, text: str, sender_mxid: str,
+        reply_to: str | None = None,
+    ) -> None:
+        """Capture a pasted body of text. The Reddit-paste case: a wall
+        of content with a source URL somewhere inside it.
+
+        Unlike `_handle_capture` we don't fetch anything — the text is
+        the source. TextExtractor surfaces an embedded URL (if any) as
+        `source_uri` so the mirror keeps a pointer back to the
+        original. The body is always preserved — the user chose to
+        type/paste those exact bytes."""
+        await self._set_typing(room_id)
+        try:
+            source = await self._text_extractor.extract(text)
+            if source is None:
+                # The paste predicate gates by length; reaching here with
+                # empty content means whitespace-only — silently drop.
+                return
+            await self._publish_capture_from_source(
+                room_id=room_id,
+                source=source,
+                kind="note",
+                sender_mxid=sender_mxid,
+                display_link=source.source_uri or "(pasted text)",
+                reply_to=reply_to,
+            )
+        finally:
+            await self._set_typing(room_id, typing=False)
+
+    async def _publish_capture_from_source(
+        self, *,
+        room_id: str,
+        source: SourceContent,
+        kind: str,
+        sender_mxid: str,
+        display_link: str,
+        reply_to: str | None,
+    ) -> None:
+        """Shared tail end of both capture flows: classify, file, reply.
+
+        `kind` is "bookmark" (URL pointer; body dropped unless
+        `capture_keep_body` is true) or "note" (pasted body always
+        preserved). `display_link` is what we append to the chat
+        reply — the URL for bookmarks, the embedded URL for notes,
+        or a "(pasted text)" placeholder when the note has no source.
+        """
+        if self._mirror is None:
+            await self._send(room_id, self.t("capture_no_mirror"), reply_to)
+            return
+
+        sender_name = sender_mxid.split(":")[0].lstrip("@").capitalize()
+        classification = await self._classify_capture(source, sender_name)
+
+        try:
+            model = resolve_model(f"{self.name}/classifier")
+        except ValueError:
+            model = None
+
+        tags = self._capture_tag_list(classification)
+
+        import datetime as dt
+        captured_at = dt.date.today().isoformat()
+
+        # Bookmarks default to marker mode: body dropped, summary IS the
+        # content. Flip `capture_keep_body = true` in bot.toml to also
+        # archive the extracted body. Notes always keep the body — it's
+        # what the user pasted.
+        keep_body = kind == "note" or self.capture_keep_body
+        body_for_mirror = source.text if keep_body else ""
+
+        await self._mirror.publish_capture(
+            kind=kind,
+            source_uri=source.source_uri,
+            title_hint=source.title_hint,
+            body_text=body_for_mirror,
+            classification=classification,
+            captured_at=captured_at,
+            model=model,
+            tags=tags,
+        )
+
+        # Record the topic tags (not the Person: X derived tags) into
+        # the vocabulary cache so the next capture's prompt sees them.
+        topic_tags = [
+            t for t in (classification.get("tags") or [])
+            if isinstance(t, str) and t.strip()
+        ]
+        if self._capture_tags and topic_tags:
+            self._capture_tags.record(topic_tags, when=captured_at)
+            self._capture_tags.save()
+
+        await self._send(
+            room_id,
+            self._render_capture_reply(classification, source, display_link),
+            reply_to,
+        )
+
+    async def _classify_capture(
+        self, source, sender_name: str,
+    ) -> dict:
+        """Run the capture-specific classifier.
+
+        Uses `_build_capture_prompt` — smaller payload than the
+        document classify prompt (title, summary, facts, tags,
+        persons, action_items only). No ontology coupling — capture
+        tags grow from the existing cache, which the dream-cycle
+        rebuild can canonicalize later.
+
+        Family-member context still comes from Paperless tags so the
+        classifier matches against the configured family.
+
+        On LLM failure we degrade gracefully: a minimal classification
+        with sender as the only person and the extractor's title hint
+        as the title. The capture is still useful without a digest —
+        the source URL and (for notes) the body are filed regardless.
+        """
+        person_tags = await self._paperless.get_tags()
+        person_names = [
+            t.replace("Person: ", "")
+            for t in person_tags
+            if t.startswith("Person: ")
+        ]
+
+        existing_tags = (
+            self._capture_tags.top(self.capture_tag_prompt_size)
+            if self._capture_tags
+            else []
+        )
+
+        try:
+            classification = await self._classifier.classify_capture(
+                text=source.text[: self.classify_max_chars],
+                person_names=person_names,
+                existing_tags=existing_tags,
+            )
+        except (
+            LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError,
+        ) as e:
+            logger.warning("[archivist] capture classify failed: {}", e)
+            classification = {}
+
+        if not classification:
+            return {
+                "title": source.title_hint or "Capture",
+                "persons": [sender_name],
+                "tags": [],
+            }
+
+        persons = classification.get("persons")
+        if not persons:
+            classification["persons"] = [sender_name]
+        return classification
+
+    @staticmethod
+    def _capture_tag_list(classification: dict) -> list[str]:
+        """Build the mirror's `tags:` list — capture tags + `Person: X` per
+        person. The capture prompt returns `tags` (free-form, vocab-aware);
+        we mix in person tags so Obsidian/Dataview queries on
+        `tags contains "Person: Arthur"` work across documents and captures."""
+        raw_tags = classification.get("tags") or []
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        persons = classification.get("persons") or []
+        if isinstance(persons, str):
+            persons = [persons]
+        out: list[str] = [
+            t.strip() for t in raw_tags
+            if isinstance(t, str) and t.strip()
+        ]
+        out.extend(
+            f"Person: {p}" for p in persons
+            if isinstance(p, str) and p.strip()
+        )
+        return out
+
+    def _render_capture_reply(self, classification: dict, source, url: str) -> str:
+        """Compose the chat reply summarizing the capture.
+
+        Mirrors the document-filed reply layout: title line, optional
+        meta row (topics | persons), summary paragraph, facts bullets,
+        action items. No Paperless link — captures don't have one.
+        """
+        title = (
+            classification.get("title")
+            or source.title_hint
+            or "Capture"
+        )
+        lines = [self.t("captured", title=title)]
+
+        meta_parts: list[str] = []
+        topics = classification.get("topics") or []
+        if isinstance(topics, str):
+            topics = [topics]
+        meta_parts.extend(t for t in topics if isinstance(t, str))
+        persons = classification.get("persons") or []
+        if isinstance(persons, str):
+            persons = [persons]
+        meta_parts.extend(p for p in persons if isinstance(p, str))
+        if meta_parts:
+            lines.extend(["", "  " + " | ".join(meta_parts)])
+
+        summary = classification.get("summary")
+        if summary and isinstance(summary, str):
+            lines.extend(["", f"  {summary}"])
+
+        facts = classification.get("facts") or []
+        if isinstance(facts, list):
+            fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
+            if fact_lines:
+                lines.append("")
+                for f in fact_lines[:5]:
+                    lines.append(f"  - {f}")
+
+        action_items = classification.get("action_items") or []
+        if isinstance(action_items, list):
+            valid = [a for a in action_items if isinstance(a, dict) and a.get("action")]
+            if valid:
+                lines.append("")
+                for a in valid[:3]:
+                    due = a.get("due", "")
+                    due_str = f" (due {due})" if due else ""
+                    lines.append(f"  {a['action']}{due_str}")
+
+        lines.extend(["", f"  {url}"])
+        return "\n".join(lines)
+
+    # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
     async def _handle_url(self, room_id: str, url: str, reply_to: str | None = None):
         google_export = _google_docs_export_url(url)

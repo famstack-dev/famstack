@@ -10,3 +10,7 @@ pypdf>=4.0,<6.0
 # Render scanned PDFs to PNG for vision-capable classifiers. Pure-Python
 # wheel, no system deps. See stacklets/docs/bot/pdf_render.py.
 pypdfium2>=4.0,<6.0
+# Extract the main body of a web page and render it as Markdown.
+# Used by the archivist's URL-capture pipeline — pasted links to
+# articles get summarized + filed without going through Paperless.
+trafilatura>=1.12,<3.0

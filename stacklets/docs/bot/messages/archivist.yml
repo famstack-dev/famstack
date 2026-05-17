@@ -80,6 +80,13 @@ en:
   url_error: "\u274C Failed to download: {error}"
   url_not_pdf: "\u274C URL does not point to a PDF (Content-Type: {content_type}).\n  Currently only PDF links and Google Docs are supported."
 
+  # URL capture (knowledge rooms — links become summarized notes, not Paperless docs)
+  capture_fetching: "\U0001F50D Reading {url}..."
+  capture_failed: "\u274C Couldn't read that link. Either the host is unreachable or there's no article body to extract."
+  capture_llm_failed: "\U0001F4DD Captured the page, but classification skipped: {error}"
+  capture_no_mirror: "\u274C Capture needs a git mirror. Enable `mirror_to_git = true` in the archivist bot.toml."
+  captured: "\u2705 Captured: {title}"
+
   # Search
   search_no_results: "\U0001F50D No documents found for \"{query}\"."
   search_results: "\U0001F50D Found {count} document(s) for \"{query}\":"
@@ -192,6 +199,13 @@ de:
   url_timeout: "\u274C Download-Zeitlimit nach 60 Sekunden erreicht."
   url_error: "\u274C Download fehlgeschlagen: {error}"
   url_not_pdf: "\u274C URL zeigt nicht auf ein PDF (Content-Type: {content_type}).\n  Aktuell werden nur PDF-Links und Google Docs unterstützt."
+
+  # URL-Capture (Wissensräume — Links werden zu zusammengefassten Notizen, nicht zu Paperless-Dokumenten)
+  capture_fetching: "\U0001F50D Lese {url}..."
+  capture_failed: "\u274C Konnte den Link nicht lesen. Entweder ist die Seite nicht erreichbar, oder es gibt keinen Artikel-Inhalt zum Extrahieren."
+  capture_llm_failed: "\U0001F4DD Seite gespeichert, aber Klassifizierung übersprungen: {error}"
+  capture_no_mirror: "\u274C Capture benötigt einen Git-Mirror. Aktiviere `mirror_to_git = true` in der archivist bot.toml."
+  captured: "\u2705 Gespeichert: {title}"
 
   # Search
   search_no_results: "\U0001F50D Keine Dokumente gefunden für \"{query}\"."

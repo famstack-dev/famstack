@@ -20,6 +20,7 @@ v1 leaves deleted Paperless docs as stale markdown in git history.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -492,8 +493,12 @@ class GitMirror:
             parts.append(briefing)
             parts.append("")
 
-        parts.append(body.strip())
-        parts.append("")
+        # Empty body — bookmark captures stop at the briefing block.
+        # The LLM summary is the content; the URL is the source.
+        body_stripped = body.strip() if body else ""
+        if body_stripped:
+            parts.append(body_stripped)
+            parts.append("")
         return "\n".join(parts)
 
     # ── Briefing block ───────────────────────────────────────────────────
@@ -713,4 +718,207 @@ class GitMirror:
         self._cache[paperless_id] = target_path
         self._save_cache()
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
+        return True
+
+    # ── Captures ─────────────────────────────────────────────────────────
+    #
+    # A "capture" is a non-Paperless source filed in the same mirror repo.
+    # Today, the only producer is the URL-paste path: trafilatura extracts
+    # a web article into Markdown, the classifier returns the same shape
+    # it produces for Paperless docs, and the result lives at
+    #
+    #   captures/YYYY/MM/<slug>-<hash>.md
+    #
+    # The hash is a short prefix of sha256(source_uri). Two purposes:
+    #   - Re-paste the same URL → same path → idempotent update, not a
+    #     duplicate file.
+    #   - Two different URLs with the same title on the same day → still
+    #     resolve to different filenames.
+    #
+    # Frontmatter shape: `source: url`, `source_uri: <full URL>`. Paperless
+    # fields (paperless_id, paperless_url) are absent so Obsidian/Dataview
+    # queries can still tell capture-sourced entries from Paperless-sourced
+    # ones at a glance.
+
+    _CAPTURE_HASH_LEN = 6
+
+    def _capture_filepath(
+        self, *,
+        captured_at: str,
+        title: str | None,
+        hash_key: str,
+    ) -> str:
+        """Build the captures/YYYY/MM/<slug>-<hash>.md path.
+
+        `hash_key` is whatever stable string the caller wants to identify
+        this capture by: typically the source URL for fetched/pasted
+        captures with a link, or a content hash when the paste has no
+        embedded source URL. The same key yields the same path on
+        re-publish — idempotent update vs. duplicate.
+
+        Invalid `captured_at` falls back to `_unfiled/<slug>-<hash>.md` —
+        same convention the Paperless filepath uses for documents with
+        no usable date.
+        """
+        digest = hashlib.sha256(
+            hash_key.encode("utf-8") if hash_key else b"",
+        ).hexdigest()[: self._CAPTURE_HASH_LEN]
+
+        slug = self._slug(title) if title else "capture"
+
+        if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
+            y, m, _ = captured_at.split("-")
+            return f"captures/{y}/{m}/{slug}-{digest}.md"
+        return f"_unfiled/{slug}-{digest}.md"
+
+    def _capture_frontmatter(
+        self, *,
+        title: str,
+        captured_at: str,
+        kind: str,
+        source_uri: str | None,
+        persons: list[str],
+        tags: list[str],
+        model: str | None,
+    ) -> dict:
+        """Frontmatter for a capture entry.
+
+        `kind` is "bookmark" (URL pointer + LLM summary) or "note"
+        (pasted body the user typed). Document-shaped fields
+        (correspondent, document_type, category, paperless_id,
+        paperless_url) are intentionally absent — captures aren't part
+        of the Paperless ontology.
+
+        `source_uri` is optional — a pure text note with no embedded
+        link omits the field entirely, so a Dataview `where source_uri`
+        cleanly filters to "captures that point at a source."
+
+        `date` carries the capture date — the article's own publish
+        date (if any) lives in the briefing block. The capture log is
+        a record of *when we captured*, not when the source published.
+        """
+        import datetime as dt
+        now = (
+            dt.datetime.now(dt.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        fm: dict = {"title": title, "kind": kind}
+        if captured_at:
+            fm["date"] = captured_at
+        if persons:
+            fm["persons"] = persons
+        if tags:
+            fm["tags"] = tags
+        if source_uri:
+            fm["source_uri"] = source_uri
+        if model:
+            fm["model"] = model
+        fm["added"] = now
+        return fm
+
+    async def publish_capture(
+        self, *,
+        kind: str,
+        source_uri: str | None,
+        title_hint: str | None,
+        body_text: str,
+        classification: dict,
+        captured_at: str,
+        model: str | None,
+        tags: list[str] | None = None,
+    ) -> bool:
+        """Create or update a capture entry in the mirror.
+
+        `kind` is "bookmark" (URL pointer + LLM summary; body usually
+        empty) or "note" (pasted body the user typed; body preserved).
+        Caller decides what to pass as `body_text` — for bookmarks in
+        archival mode, that's the extracted Markdown; for bookmarks in
+        marker-only mode, "".
+
+        Identity for idempotent updates: `source_uri` when present
+        (re-pastes of the same URL update the same file), otherwise
+        the body text (re-pastes of the same text update; edits create
+        a new file).
+
+        Returns True on success, False if Forgejo is unreachable or the
+        write failed. Failures are logged but never raised — captures
+        are best-effort.
+        """
+        if not await self.ensure_setup():
+            return False
+
+        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+
+        resolved_title = classification.get("title") or title_hint
+        title = resolved_title or "Capture"
+
+        persons_raw = classification.get("persons") or classification.get("person") or []
+        if isinstance(persons_raw, str):
+            persons_raw = [persons_raw]
+        persons = [p for p in persons_raw if isinstance(p, str) and p]
+
+        hash_key = source_uri or body_text
+        target_path = self._capture_filepath(
+            captured_at=captured_at,
+            title=title if resolved_title else None,
+            hash_key=hash_key,
+        )
+
+        existing = await asyncio.to_thread(
+            client.get_file, self.repo_owner, REPO_NAME, target_path,
+        )
+
+        fm = self._capture_frontmatter(
+            title=title,
+            captured_at=captured_at,
+            kind=kind,
+            source_uri=source_uri,
+            persons=persons,
+            tags=tags or [],
+            model=model,
+        )
+
+        briefing_summary = classification.get("summary")
+        briefing_facts = classification.get("facts") or []
+        briefing_actions = classification.get("action_items") or []
+
+        content = self._render(
+            frontmatter=fm, body=body_text,
+            correspondent=None, persons=persons,
+            summary=briefing_summary,
+            facts=briefing_facts,
+            action_items=briefing_actions,
+        )
+
+        verb = "update" if existing else "capture"
+        message_lines = [f"{verb}: {title}", ""]
+        if briefing_summary:
+            message_lines.append(briefing_summary.strip())
+            message_lines.append("")
+        if source_uri:
+            message_lines.append(f"Source: {source_uri}")
+        else:
+            message_lines.append("Source: (paste)")
+        if model:
+            message_lines.append(f"Model: {model}")
+        message = "\n".join(message_lines)
+
+        try:
+            await asyncio.to_thread(
+                client.put_file,
+                self.repo_owner, REPO_NAME, target_path,
+                content=content, message=message,
+                sha=existing["sha"] if existing else None,
+                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+            )
+        except ForgejoError as e:
+            logger.warning(
+                "[git-mirror] Capture publish failed for {}: {}",
+                source_uri or "(paste)", e,
+            )
+            return False
+
+        logger.info("[git-mirror] {} → {}", verb, target_path)
         return True
