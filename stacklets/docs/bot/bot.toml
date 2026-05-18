@@ -15,15 +15,11 @@ reformat = true
 # (contracts, research papers) matters more than the extra latency.
 classify_max_chars = 20000
 
-# BETA — opt-in. Mirror every classified document into a Forgejo repo
-# as markdown (original content + YAML frontmatter), so the archive is
-# browsable and git-versioned alongside Paperless. Needs the `code`
-# stacklet installed. Flip to `true` to enable.
-mirror_to_git = false
-
-# Forgejo organisation the archivist owns the `documents` repo under
-# when `mirror_to_git` is enabled. Admins are added to the org's
-# Owners team so the repo shows up on their dashboard.
+# Forgejo organisation the archivist writes the shared knowledge vault
+# (`<org>/memory`) under. The bot joins the org's Owners team so admins
+# see the repo on their dashboard. The archivist always writes to this
+# repo when the `code` stacklet is up; if Forgejo is unreachable, the
+# write is skipped silently and the doc still lands in Paperless.
 mirror_org = "family"
 
 # Captures (URLs pasted in non-documents rooms) default to "bookmark"

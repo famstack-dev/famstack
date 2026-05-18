@@ -1,8 +1,10 @@
 """`stack docs reprocess <id>...` — full pipeline on filed documents.
 
-Honours the archivist's bot.toml [settings] (reformat / mirror_to_git)
-so the CLI behaves like the bot on a new upload. `--no-reformat`,
-`--no-mirror`, `--dry-run` opt out for a single invocation.
+Honours the archivist's bot.toml `[settings].reformat` so the CLI
+behaves like the bot on a new upload. Memory-vault mirroring is
+attempted by default and skipped if the `code` stacklet env is
+unavailable. `--no-reformat`, `--no-mirror`, `--dry-run` opt out for
+a single invocation.
 
 Also exposes `run_one()` so the `classify` subcommand can run a
 classification-only pass by calling in with `reformat=False, mirror=None`.
@@ -39,21 +41,20 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         reformat = False
     elif "--reformat" in argv:
         reformat = True
-    mirror_enabled = settings.get("mirror_to_git", False)
-    if "--no-mirror" in argv:
-        mirror_enabled = False
-    elif "--mirror" in argv:
-        mirror_enabled = True
+    # Mirror is attempted by default; `--no-mirror` skips it for a
+    # single invocation. If the env isn't there, `build_mirror_like_bot`
+    # returns None and we error out below with a pointer to `code`.
+    mirror_enabled = "--no-mirror" not in argv
 
     flag_tokens = {*_DRY_FLAGS, "--reformat", "--no-reformat",
-                   "--mirror", "--no-mirror"}
+                   "--no-mirror"}
     positional = [a for a in argv if a not in flag_tokens]
     unknown = [a for a in argv if a.startswith("--") and a not in flag_tokens]
     if unknown:
         err(f"Unknown flag(s): {' '.join(unknown)}")
         return 2
     if not positional:
-        err("Usage: reprocess <id> [<id>...] [--[no-]reformat] [--[no-]mirror] [--dry|--dry-run]")
+        err("Usage: reprocess <id> [<id>...] [--[no-]reformat] [--no-mirror] [--dry|--dry-run]")
         return 2
 
     doc_ids: list[int] = []
@@ -65,7 +66,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
 
     mirror = build_mirror_like_bot() if mirror_enabled else None
     if mirror_enabled and mirror is None:
-        err("Mirror enabled but required env (CODE_URL / admin creds) is missing. "
+        err("Memory vault writer needs the `code` stacklet up (CODE_URL / admin creds). "
             "Bring up `code` or pass --no-mirror.")
         return 1
 

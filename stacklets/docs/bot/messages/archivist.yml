@@ -84,7 +84,7 @@ en:
   capture_fetching: "\U0001F50D Reading {url}..."
   capture_failed: "\u274C Couldn't read that link. Either the host is unreachable or there's no article body to extract."
   capture_llm_failed: "\U0001F4DD Captured the page, but classification skipped: {error}"
-  capture_no_mirror: "\u274C Capture needs a git mirror. Enable `mirror_to_git = true` in the archivist bot.toml."
+  capture_no_mirror: "\u274C Captures need the `code` stacklet up so I can write to the memory vault. Run `stack up code`."
   captured: "\u2705 Captured: {title}"
 
   # Search
@@ -204,7 +204,7 @@ de:
   capture_fetching: "\U0001F50D Lese {url}..."
   capture_failed: "\u274C Konnte den Link nicht lesen. Entweder ist die Seite nicht erreichbar, oder es gibt keinen Artikel-Inhalt zum Extrahieren."
   capture_llm_failed: "\U0001F4DD Seite gespeichert, aber Klassifizierung übersprungen: {error}"
-  capture_no_mirror: "\u274C Capture benötigt einen Git-Mirror. Aktiviere `mirror_to_git = true` in der archivist bot.toml."
+  capture_no_mirror: "\u274C Captures brauchen das `code`-Stacklet, damit ich in den Memory-Vault schreiben kann. Starte `stack up code`."
   captured: "\u2705 Gespeichert: {title}"
 
   # Search

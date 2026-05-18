@@ -1,12 +1,13 @@
-"""stack docs mirror <id> [<id>...] — push existing docs to the Forgejo mirror.
+"""stack docs mirror <id> [<id>...] — push existing docs to the memory vault.
 
-Useful for backfilling the mirror after enabling `mirror_to_git` in
-bot.toml: docs already in Paperless weren't mirrored at upload time, and
-this command walks each requested id, publishing the current Paperless
-state (title, tags, correspondent, content) to Forgejo. No LLM call —
-classification stays exactly as it is in Paperless.
+Useful for backfilling existing Paperless docs into a freshly-installed
+memory vault. This command walks each requested id, publishing the
+current Paperless state (title, tags, correspondent, content) into
+`family/memory/raw/`. No LLM call — classification stays exactly as it
+is in Paperless.
 
-Fails fast when `mirror_to_git = false` in bot.toml: flip it, then run.
+Fails fast when the `code` stacklet env (CODE_URL, admin creds) is
+unavailable: bring up `code` and re-run.
 
 Usage:
     stack docs mirror <id> [<id>...] [--dry-run]

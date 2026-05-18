@@ -1,9 +1,9 @@
 """Mirror bootstrap + publish — shared by `reprocess` and `mirror` commands.
 
-Reads the archivist's bot.toml to honour `mirror_to_git` / `mirror_org`,
-builds a GitMirror using the same env the bot reads from, and publishes
-a doc to Forgejo. Separated from the commands so the two callers share
-one authoritative mirror-init path.
+Reads the archivist's bot.toml for `mirror_org`, builds a GitMirror
+using the same env the bot reads from, and publishes a doc to Forgejo.
+Separated from the commands so the two callers share one authoritative
+mirror-init path.
 """
 
 from __future__ import annotations
@@ -28,10 +28,6 @@ def read_bot_toml_settings() -> dict:
     with open(_BOT_TOML_PATH, "rb") as f:
         data = tomllib.load(f)
     return data.get("settings", {})
-
-
-def mirror_enabled_in_bot_toml() -> bool:
-    return bool(read_bot_toml_settings().get("mirror_to_git", False))
 
 
 def build_mirror_like_bot():
