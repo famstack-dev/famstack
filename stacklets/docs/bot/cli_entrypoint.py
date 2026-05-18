@@ -17,9 +17,11 @@ Commands:
                                     --json dumps raw LLM output)
     reformat <id> [--dry] [--raw]   reformat OCR + apply content
                                     (--dry previews, --raw dumps markdown)
-    reprocess <id> [<id>...]        full pipeline (classify + reformat
-                                    + mirror), respects bot.toml [settings]
-                                    flags: --[no-]reformat --[no-]mirror --dry
+    reprocess <id|range>...         full pipeline (classify + reformat
+                                    + mirror), accepts ids and ranges
+                                    like `1-13`; missing ids skipped
+                                    silently. Respects bot.toml [settings]
+                                    flags: --[no-]reformat --no-mirror --dry
     mirror <id> [<id>...] [--dry]   push current Paperless state to the
                                     family/memory vault (no LLM). Useful
                                     for backfilling existing docs into

@@ -14,7 +14,7 @@ import sys
 from pipeline import Classifier, PaperlessAPI
 
 from cli._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
-from cli.reprocess import run_one
+from cli.reprocess import RunResult, run_one
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,
@@ -41,18 +41,25 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
     # Default / --dry-run: classify + apply (or plan) via the shared
     # pipeline, rendered as a before/after diff. No reformat, no mirror
     # — classify is scoped to classification only.
-    ok = await run_one(
+    result = await run_one(
         paperless, classifier, mirror=None,
         doc_id=doc_id, reformat=False, dry_run=dry_run,
     )
-    if ok:
-        from stack.prompt import DIM, GREEN, RESET
-        verb = "would classify" if dry_run else "classified"
-        print(f"  {GREEN}✓{RESET} {verb}")
-        if dry_run:
-            print(f"  {DIM}--dry-run: no changes made to Paperless.{RESET}")
-        print()
-    return 0 if ok else 1
+    if result is RunResult.NOT_FOUND:
+        # `classify` runs on one explicit id at a time; the user should
+        # see the miss loudly (unlike `reprocess`, which silently skips
+        # gaps inside a range).
+        err(f"Document #{doc_id} not found")
+        return 1
+    if result is RunResult.FAILED:
+        return 1
+    from stack.prompt import DIM, GREEN, RESET
+    verb = "would classify" if dry_run else "classified"
+    print(f"  {GREEN}✓{RESET} {verb}")
+    if dry_run:
+        print(f"  {DIM}--dry-run: no changes made to Paperless.{RESET}")
+    print()
+    return 0
 
 
 async def _raw_json(paperless: PaperlessAPI, classifier: Classifier,
