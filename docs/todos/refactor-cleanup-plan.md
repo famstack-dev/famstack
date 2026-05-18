@@ -9,7 +9,6 @@ reduce long-term complexity.
 - We are still pre-1.0 and can change internal patterns safely.
 - `sys.path.insert(...)` import wiring is widespread and brittle.
 - Host framework and Docker bot runtimes share code without clear boundaries.
-- Python 3.9 compatibility adds drag for testing and packaging.
 - HTTP behavior is inconsistent (timeouts, TLS policy, error handling).
 
 ## Design goals
@@ -124,20 +123,9 @@ Without these wiring changes, the proposed structure will fail in containers.
 
 ## Python version policy
 
-### Direction
-
-- Move baseline to Python `>=3.11` for framework and bot runtime.
-- End active 3.9 compatibility after migration window.
-
-### Why
-
-- 3.9 is EOL and increases compatibility overhead (`pytest<9`, shims, guard code).
-- 3.11 improves performance, typing ergonomics, and dependency support.
-
-### Transition (short-lived)
-
-- One migration cycle can run dual CI (3.9 + 3.11) to catch regressions.
-- After parity, remove 3.9 constraints and simplify codepaths.
+Baseline: Python 3.11+. Enforced at launch by the `./stack` wrapper (which
+picks `python3.11`/`3.12`/`3.13` from PATH and refuses Apple's CLT 3.9).
+`tomllib` is stdlib at this baseline — no compat shim is needed.
 
 ## HTTP request conventions
 
@@ -250,7 +238,7 @@ Testing should enforce module boundaries and protect refactors from silent regre
 - Phase 3 gate:
   - HTTP wrappers validated for timeout/auth/decode/connect failure classes.
 - Phase 4 gate:
-  - Test matrix proves 3.11 baseline; 3.9 jobs removed only after parity confirmation.
+  - Baseline enforced at the wrapper level; no CI matrix needed.
 - Phase 5 gate:
   - Large-module splits preserve command/lifecycle behavior via unchanged blackbox tests.
 
@@ -301,17 +289,14 @@ Exit criteria:
 
 - Runtime HTTP callsites use consistent policy and error semantics.
 
-## Phase 4 - Python baseline lift
+## Phase 4 - Python baseline lift (DONE)
 
-- Switch project baseline to 3.11.
-- Remove 3.9-only constraints and compatibility leftovers.
-- Update CI and container base images.
-- Add explicit startup/preflight message in host CLI when interpreter is below baseline.
+- ✅ Project baseline switched to 3.11 (`pyproject.toml`).
+- ✅ Removed `_compat` shim and vendored tomli (`lib/stack/_vendor/`).
+- ✅ Containers were already on `python:3.12-slim`.
+- ✅ `./stack` wrapper enforces 3.11+ at launch with a brew hint.
 
-Exit criteria:
-
-- CI green on 3.11 baseline.
-- No remaining 3.9 compatibility blockers.
+No CI to update; baseline is enforced at the wrapper.
 
 ## Phase 5 - Structural cleanup
 
