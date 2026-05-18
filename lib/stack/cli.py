@@ -751,9 +751,9 @@ def _config_admin(stck):
         print(password)
         return
     print(f"\n  {BOLD}Tech Admin{RESET}\n")
-    print(f"  {"Username:":<12}{TEAL}{TECH_ADMIN_USERNAME}{RESET}")
-    print(f"  {"Email:":<12}{TEAL}{TECH_ADMIN_EMAIL}{RESET}")
-    print(f"  {"Password:":<12}{TEAL}{password}{RESET}\n")
+    print(f"  {'Username:':<12}{TEAL}{TECH_ADMIN_USERNAME}{RESET}")
+    print(f"  {'Email:':<12}{TEAL}{TECH_ADMIN_EMAIL}{RESET}")
+    print(f"  {'Password:':<12}{TEAL}{password}{RESET}\n")
 
 
 def handle_env(stck, args):
