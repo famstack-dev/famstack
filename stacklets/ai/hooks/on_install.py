@@ -38,8 +38,15 @@ def run(ctx):
     if provider == "managed":
         _install_omlx(ctx, state_dir)
 
-    # ── Whisper (always) ────────────────────────────────────────────
-    _install_whisper(ctx, data_dir, state_dir)
+    # ── Whisper ─────────────────────────────────────────────────────
+    # STACK_AI_NO_VOICE=1 is the local-dev opt-out: skip the whisper build +
+    # model download (slowest part of `stack up ai`) and skip Piper TTS via
+    # the compose profile (gated in on_start). Pair: stacklet.toml sets
+    # COMPOSE_PROFILES=voice; on_start clears it when the flag is set.
+    if os.environ.get("STACK_AI_NO_VOICE") == "1":
+        dim("STACK_AI_NO_VOICE=1 — skipping Whisper install")
+    else:
+        _install_whisper(ctx, data_dir, state_dir)
 
     section("Setup complete")
 

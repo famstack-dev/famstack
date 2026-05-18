@@ -5,10 +5,20 @@ configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
 """
 
-from stack.prompt import out, nl, warn, TEAL, RESET
+import os
+
+from stack.prompt import out, nl, warn, dim, TEAL, RESET
 
 
 def run(ctx):
+    # Local-dev opt-out: clear the "voice" compose profile so docker compose
+    # skips the Piper TTS container on this `stack up`. Paired with the
+    # on_install gate that skips the Whisper build. ctx.env is the same dict
+    # that the CLI then hands to compose_up, so mutating it here is enough.
+    if os.environ.get("STACK_AI_NO_VOICE") == "1":
+        ctx.env["COMPOSE_PROFILES"] = ""
+        dim("STACK_AI_NO_VOICE=1 — speech container disabled")
+
     provider = ctx.cfg("provider", default="")
 
     if not provider:
