@@ -1,12 +1,14 @@
-"""stack memory correspondents — inspect the wiki's correspondent layer.
+"""stack memory correspondents — inspect the documents-domain correspondent layer.
 
 Subcommands:
-    stack memory correspondents              List every correspondent in the wiki.
+    stack memory correspondents              List every correspondent.
     stack memory correspondents show <name>  Print one correspondent's full record.
 
 Each correspondent is a markdown page under
-`<vault>/wiki/correspondents/`. The frontmatter is the machine view —
-this command prints what the archivist's classifier prompt would see.
+`<vault>/documents/correspondents/` (the documents-domain folder at
+the vault root, sibling to `raw/` and `wiki/`). The frontmatter is
+the machine view — this command prints what the archivist's classifier
+prompt would see.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ def run(args, stacklet, config):
 
 def _list(correspondents, vault):
     if not correspondents:
-        print(f"No correspondent pages under {vault}/wiki/correspondents/")
+        print(f"No correspondent pages under {vault}/documents/correspondents/")
         return {"ok": True, "count": 0}
 
     for c in correspondents:

@@ -1,8 +1,9 @@
 """Documents-room vs. capture-room routing in the archivist.
 
 The archivist treats one room as the "documents" room — uploads + URLs
-there flow into Paperless. Every other room is capture mode: URLs
-become summarized notes in the git mirror's `captures/` tree, no
+there flow into Paperless. Every other room is capture mode: URLs and
+pasted text become summarized notes alongside documents under the
+vault's `raw/` tree (discriminated by frontmatter `kind`), no
 Paperless write.
 
 These tests cover the pure routing predicate. The end-to-end flow

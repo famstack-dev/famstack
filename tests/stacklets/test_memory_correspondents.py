@@ -1,9 +1,10 @@
-"""Correspondent wiki loader + prompt-section renderer.
+"""Correspondent loader + prompt-section renderer.
 
 Tests construct a tmp vault with markdown files under
-`wiki/correspondents/`, then load them through the same path the
-archivist uses at startup. The frontmatter shape is the contract:
-hand edits in Obsidian or the Forgejo web UI must land here.
+`documents/correspondents/` (the documents-domain folder at the vault
+root, sibling to `raw/` and `wiki/`), then load them through the same
+path the archivist uses at startup. The frontmatter shape is the
+contract: hand edits in Obsidian or the Forgejo web UI must land here.
 """
 
 from __future__ import annotations
@@ -27,13 +28,16 @@ from lib import (  # noqa: E402
 
 @pytest.fixture
 def vault(tmp_path):
-    """A vault layout with `wiki/correspondents/` ready to receive pages."""
-    (tmp_path / "wiki" / "correspondents").mkdir(parents=True)
+    """A vault layout with `documents/correspondents/` ready to receive
+    pages. Correspondents live in the documents domain (banks, schools,
+    insurers — senders of mail) but outside `raw/` so the olw container
+    (which only sees `raw/`+`wiki/`) doesn't touch them."""
+    (tmp_path / "documents" / "correspondents").mkdir(parents=True)
     return tmp_path
 
 
 def _write_page(vault, slug: str, body: str) -> Path:
-    path = vault / "wiki" / "correspondents" / f"{slug}.md"
+    path = vault / "documents" / "correspondents" / f"{slug}.md"
     path.write_text(body)
     return path
 
@@ -43,7 +47,7 @@ def _write_page(vault, slug: str, body: str) -> Path:
 class TestLoadCorrespondents:
 
     def test_returns_empty_when_directory_missing(self, tmp_path):
-        # No wiki/correspondents/ at all — clean empty result.
+        # No documents/correspondents/ at all — clean empty result.
         assert load_correspondents_from_vault(tmp_path) == []
 
     def test_loads_a_minimal_page(self, vault):
@@ -111,7 +115,7 @@ canonical: insurance
 
     def test_skips_pages_without_frontmatter(self, vault):
         # A README or stray markdown should not crash the loader.
-        (vault / "wiki" / "correspondents" / "README.md").write_text(
+        (vault / "documents" / "correspondents" / "README.md").write_text(
             "# Just a note, no frontmatter\n"
         )
         assert load_correspondents_from_vault(vault) == []

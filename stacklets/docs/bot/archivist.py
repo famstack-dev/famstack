@@ -299,8 +299,8 @@ class ArchivistBot(MicroBot):
         # fallback to the shipped seed. Bot restart picks up live edits.
         self._ontology_section: str = ""
         # Correspondents block (canonical names + learned aliases) from
-        # the memory vault's wiki/correspondents/. Empty when the wiki
-        # doesn't exist yet — the prompt falls back to the flat
+        # the memory vault's documents/correspondents/. Empty when the
+        # vault isn't seeded yet — the prompt falls back to the flat
         # Paperless list.
         self._correspondents_section: str = ""
 
@@ -380,12 +380,12 @@ class ArchivistBot(MicroBot):
         )
 
     def _load_correspondents_section(self) -> None:
-        """Build the correspondents block from the memory wiki.
+        """Build the correspondents block from the memory vault.
 
-        Each `wiki/correspondents/*.md` page contributes a (canonical,
-        aliases) line. Empty when the vault has no wiki yet — the
-        prompt falls back to the flat Paperless correspondents list,
-        which carries no alias signal.
+        Each `documents/correspondents/*.md` page contributes a
+        (canonical, aliases) line. Empty when the vault isn't seeded
+        yet — the prompt falls back to the flat Paperless
+        correspondents list, which carries no alias signal.
 
         Cached for the bot's lifetime — bot restart picks up new pages.
         """
@@ -517,8 +517,9 @@ class ArchivistBot(MicroBot):
     #
     # One room is the documents room: file uploads + URL pastes go through
     # Paperless. Every other room the bot is joined to runs the capture
-    # pipeline — URLs become summarized markdown entries in the mirror's
-    # `captures/` tree, no Paperless write.
+    # pipeline — URLs and pasted text become summarized markdown entries
+    # alongside documents under the vault's `raw/` tree (discriminated by
+    # frontmatter `kind`), no Paperless write.
     #
     # Family members can spin up their own per-person rooms ("arthur
     # notes", "sabrina notes") or DM the bot directly. As soon as the

@@ -64,9 +64,10 @@ mature problem.
 │   ontology.toml                   ours (classifier seed)             │
 │   wiki.toml                       olw config                         │
 │                                                                      │
-│   correspondents/                 ours, hand-curated                 │
-│     adac.md                       canonical + aliases + facts        │
-│     aok.md                                                           │
+│   documents/                      documents-domain reference data   │
+│     correspondents/               ours, hand-curated                 │
+│       adac.md                     canonical + aliases + facts        │
+│       aok.md                                                         │
 │                                                                      │
 │   raw/                            ← archivist writes here            │
 │     2026/05/                                                         │
@@ -213,11 +214,13 @@ stacklet with one container.
 <vault>/
   wiki.toml                  ← olw config (provider, models, pipeline)
   ontology.toml              ← ours (classifier seed)
-  correspondents/            ← ours, OUTSIDE wiki/ (see below)
-    README.md
-    adac.md
-    aok.md
-    ...
+  facts.toml                 ← ours (household facts)
+  documents/                 ← documents-domain reference data
+    correspondents/          ← ours, OUTSIDE raw/ and wiki/ (see below)
+      README.md
+      adac.md
+      aok.md
+      ...
   raw/                       ← olw reads (recursive .md glob)
     2026/05/...              ← archivist writes here from bot-runner
   wiki/                      ← olw writes (concept articles)
@@ -227,7 +230,12 @@ stacklet with one container.
   .olw/                      ← olw state (sqlite, content hashes)
 ```
 
-**Why `correspondents/` lives outside `wiki/`:**
+The `documents/` namespace scopes correspondents to where they're
+actually used (the documents pipeline reads them, the classifier
+prompt embeds them) and leaves room for future domain peers (`chat/`,
+`calendar/`, ...) without conceptual collisions.
+
+**Why `correspondents/` lives outside `raw/` and `wiki/`:**
 
 Olw has no `exclude`/`ignore` config option. Verified by reading the
 upstream source:
@@ -241,16 +249,18 @@ upstream source:
 So olw's reach is strictly `raw/` → `wiki/` + `.olw/`. Anything at
 the vault root or in other subtrees is invisible to it.
 
-Moving correspondents from `wiki/correspondents/` to `correspondents/`
-keeps it out of olw's reach without needing an exclude feature.
-Obsidian's wikilink resolution is name-based, not path-based, so
-`[[ADAC]]` still works as a cross-reference between `correspondents/adac.md`
-and the olw-generated `wiki/ADAC.md`.
+Moving correspondents from `wiki/correspondents/` to
+`documents/correspondents/` keeps it out of olw's reach without
+needing an exclude feature. Obsidian's wikilink resolution is
+name-based, not path-based, so `[[ADAC]]` still works as a
+cross-reference between `documents/correspondents/adac.md` and the
+olw-generated `wiki/ADAC.md`.
 
-Trade-off: two ADAC pages exist (`correspondents/adac.md` machine-
-readable + `wiki/ADAC.md` LLM-summarized). Different purposes, both
-discoverable in Obsidian's quick switcher. Optionally link them
-explicitly: `> See also: [[ADAC]]` at the top of `correspondents/adac.md`.
+Trade-off: two ADAC pages exist (`documents/correspondents/adac.md`
+machine-readable + `wiki/ADAC.md` LLM-summarized). Different
+purposes, both discoverable in Obsidian's quick switcher. Optionally
+link them explicitly: `> See also: [[ADAC]]` at the top of
+`documents/correspondents/adac.md`.
 
 **Two writers, one repo, coordinated via git:**
 
@@ -286,10 +296,11 @@ keeps working on the host side, unchanged.
 - `stacklets/memory/docker-compose.yml.j2` (new): one service, vault volume
 - `stacklets/memory/stacklet.toml`: switch to `type = "service"`, add env
 - `stacklets/memory/seeds/wiki.toml` (new): olw config template, oMLX endpoint
-- `stacklets/memory/seeds/correspondents/README.md` (moved from
-  `seeds/wiki/correspondents/`)
+- `stacklets/memory/seeds/documents/correspondents/README.md` (moved
+  from `seeds/wiki/correspondents/`)
 - `stacklets/memory/lib.py`: `load_correspondents_from_vault` reads
-  from `vault/correspondents/` (was `vault/wiki/correspondents/`)
+  from `vault/documents/correspondents/` (was
+  `vault/wiki/correspondents/`)
 - `stacklets/memory/cli/rebuild.py` (new): wraps `docker exec`
 - `stacklets/memory/cli/query.py` (new): wraps `docker exec`
 - `stacklets/memory/cli/lint.py` (new): wraps `docker exec`
@@ -362,7 +373,8 @@ state.
    - Paths prefixed with `raw/` (`raw/YYYY/MM/...` for both documents
      and captures, `raw/_unfiled/...` when undated)
    - README written by memory stacklet (seeds) describes unified vault
-   - `correspondents/` moves out of `wiki/` to vault root
+   - `correspondents/` moves out of `wiki/` to `documents/correspondents/`
+     (documents-domain folder at the vault root)
    - Tests adjusted for new paths
    - Smoke: archivist writes to `memory.git/raw/`, no documents.git in use
 
@@ -407,10 +419,10 @@ state.
    pinned olw version, our build pipeline. Same pattern as bot-runner.
 5. **Path exclusion.** Olw has no exclude config (verified by reading
    `watcher.py` and `pipeline/ingest.py`). Resolved by layout:
-   `correspondents/` lives at the vault root, outside `wiki/`. Olw
-   only reads `raw/`, only writes `wiki/`+`.olw/`, only commits
-   `["wiki/", "raw/", "vault-schema.md", ".olw/"]`. Everything else
-   is invisible.
+   `documents/correspondents/` lives at the vault root, outside both
+   `raw/` and `wiki/`. Olw only reads `raw/`, only writes
+   `wiki/`+`.olw/`, only commits `["wiki/", "raw/", "vault-schema.md",
+   ".olw/"]`. Everything else is invisible.
 6. **Bot user, two writers.** Reuse `memory-bot` for both archivist
    and olw container commits. Archivist commits have no prefix, olw
    commits carry `[olw]`; easy to filter in `git log --grep`.
@@ -434,11 +446,11 @@ state.
    `stacklet.toml` declares the base image (`python:3.11-slim`),
    not olw itself.
 3. **Hand-edit commits for files outside olw's reach.** When a user
-   edits `correspondents/adac.md` or `ontology.toml` in Obsidian,
-   no automatic commit happens (archivist doesn't touch those paths,
-   olw doesn't see them). For 0.3.0: users commit + push manually
-   (Obsidian Git plugin or terminal). Follow-up: a host-side cron
-   that commits dirty changes to `correspondents/` + `ontology.toml`
+   edits `documents/correspondents/adac.md` or `ontology.toml` in
+   Obsidian, no automatic commit happens (archivist doesn't touch
+   those paths, olw doesn't see them). For 0.3.0: users commit + push
+   manually (Obsidian Git plugin or terminal). Follow-up: a host-side
+   cron that commits dirty changes to `documents/` + `ontology.toml`
    on a schedule.
 
 ## Success criteria
