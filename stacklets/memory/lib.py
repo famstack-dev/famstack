@@ -34,7 +34,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-import frontmatter
+# `python-frontmatter` is intentionally not imported at module load.
+# The CLI runs on a stdlib-only `python3` (see `./stack`), so the
+# install hook would crash at import time if we pulled in a third-
+# party package up here. The one function that needs it imports it
+# lazily — the archivist and the `stack memory correspondents` CLI
+# command both run with the bot's runtime deps available.
 
 from stack.forgejo import ForgejoClient
 from stack.ontology import Ontology
@@ -241,6 +246,11 @@ def load_correspondents_from_vault(vault_path: Path) -> List[Correspondent]:
     folder = Path(vault_path) / CORRESPONDENTS_DIR
     if not folder.exists():
         return []
+
+    # Lazy import: keeps the CLI install path stdlib-only. Callers of
+    # this function (archivist, `stack memory correspondents`) bring
+    # `python-frontmatter` on their PYTHONPATH.
+    import frontmatter
 
     result: List[Correspondent] = []
     for md_path in sorted(folder.glob("*.md")):
