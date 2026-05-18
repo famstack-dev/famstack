@@ -145,6 +145,9 @@ def _ensure_brew():
         done("Homebrew installed")
         return
 
+    # PATH is inherited from the parent shell at process start, so a brew
+    # install completed in another window won't show up here even after a
+    # "check again". Exit and have the user re-launch in a fresh tab.
     warn("Homebrew is not installed.")
     nl()
     out("famstack uses Homebrew to install dependencies.")
@@ -152,15 +155,11 @@ def _ensure_brew():
     nl()
     dim('  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
     nl()
-
-    while True:
-        if not confirm("Check again?"):
-            raise KeyboardInterrupt
-        if _has_brew():
-            done("Homebrew installed")
-            return
-        warn("Still not found.")
-        nl()
+    out(f"Then open a new terminal tab ({BOLD}⌘T{RESET}) and re-run:")
+    nl()
+    dim("  ./stack")
+    nl()
+    sys.exit(1)
 
 
 def _ensure_docker():
