@@ -334,3 +334,63 @@ Exit criteria:
 3. Remove path hacks in bot runner entrypoint and one stacklet bot entrypoint.
 
 This gives immediate wins in structure and consistency without a risky big-bang rewrite.
+
+## Standalone follow-ups (2026-05)
+
+These came out of the `feat/brain-base` e2e fix. They're not in any
+phase above because each is a contained change, but both touch core
+contracts so they deserve their own commits/PRs.
+
+### Drop the archivist's `on_first_sync` vision probe
+
+`stacklets/docs/bot/archivist.py:497` does
+`asyncio.create_task(self._classifier.has_vision())` — a fire-and-forget
+HTTP call to the configured LLM endpoint that races with anything the
+bot does next. In tests it stole the first ordered `pytest-httpserver`
+stub and caused the archivist e2e to fail intermittently
+(commit `dac7fc0` patched the symptom by pre-seeding the cache file).
+
+In production the same race is mild but real: the first user upload
+arrives before the probe resolves, two concurrent classify calls hit
+oMLX, and some backends serialize.
+
+**Scope:**
+
+- Delete `on_first_sync` probe + the `model-capabilities.json` cache
+  file + the `ModelCapabilities` class (`stacklets/docs/bot/capabilities.py`).
+- Have `classify` always send images when it has them; trust the
+  backend to reject with a clean 4xx if the model can't see, and
+  catch that to retry text-only.
+- Remove the `_seed_model_capabilities` shim in
+  `tests/integration/_seed_secrets.py` once the cache is gone.
+
+**Why:** simpler bot (less state, fewer files), the test no longer
+needs a magic seed to work, and the race is gone by construction.
+
+### `_refresh_core` skip-when-unchanged
+
+`lib/stack/cli.py:_refresh_core` unconditionally
+`compose_up --force-recreate`s core after every `stack up <not-core>`.
+With the bot-runner image bigger than it used to be (trafilatura,
+pypdfium2, frontmatter, et al. — see the dep churn in
+`stacklets/core/bot-runner/requirements.txt`), the kill+recreate now
+takes 15-25s and bounces the bot mid-pipeline whenever a sibling
+stacklet is brought up.
+
+**Scope:**
+
+- Compute a content-hash fingerprint of inputs that invalidate the
+  bot-runner: rendered `.env` for core, `stacklets/core/docker-compose.yml`,
+  bot-runner Dockerfile + requirements + sources, `stacklets/*/bot/*`,
+  `lib/stack/**/*.py`.
+- Store the digest at `.stack/.core-fingerprint`. `_refresh_core`
+  compares first, only recreates on mismatch, writes the new fingerprint
+  on `compose_up` success.
+- Wire an `STACK_FORCE_REFRESH_CORE=1` escape hatch and surface
+  `compose_up` failures through the output channel (today they're
+  silently swallowed).
+
+**Why:** today every `stack up` cycle pays a startup cost it
+shouldn't; the bot also gets bounced for unrelated changes, which is
+the underlying fragility that surfaced the vision-probe race in the
+first place.
