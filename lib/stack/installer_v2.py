@@ -155,7 +155,7 @@ def _ensure_brew():
     nl()
     dim('  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
     nl()
-    out(f"Then open a new terminal tab ({BOLD}⌘T{RESET}) and re-run:")
+    out(f"Then open a {ORANGE}new terminal tab{RESET} ({BOLD}⌘T{RESET}) and re-run:")
     nl()
     dim("  ./stack")
     nl()
@@ -185,12 +185,15 @@ def _ensure_docker():
             nl()
             subprocess.run(["brew", "install", "--cask", "orbstack"], timeout=300)
             nl()
-            out("OrbStack is installed. Starting it for the first time...")
-            dim("This opens OrbStack so it can set up Docker integration.")
-            nl()
+            out("OrbStack is installed. Opening it for the first-time setup...")
             subprocess.run(["open", "-a", "OrbStack"], timeout=10)
-            _wait_for_docker()
-            return
+            nl()
+            out("Finish OrbStack's setup (allow Docker integration when it asks).")
+            out(f"Then open a {ORANGE}new terminal tab{RESET} ({BOLD}⌘T{RESET}) and re-run:")
+            nl()
+            dim("  ./stack")
+            nl()
+            sys.exit(1)
 
         raise KeyboardInterrupt
 
