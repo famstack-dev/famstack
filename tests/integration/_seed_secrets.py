@@ -23,8 +23,10 @@ so every entry point gets the same preflight + seed treatment.
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -41,6 +43,17 @@ TEST_ADMIN_PASSWORD = "testpass"
 SENTINEL = REPO_ROOT / ".stack" / ".test-instance"
 STACK_TOML = REPO_ROOT / "stack.toml"
 USERS_TOML = REPO_ROOT / "users.toml"
+
+# The fake LLM model name baked into the test stack.toml. The archivist's
+# vision probe (stacklets/docs/bot/archivist.py — on_first_sync fires
+# `asyncio.create_task(has_vision())`) makes a /chat/completions call
+# the first time a bot starts against a given model. In tests that POST
+# races against pytest-httpserver's ordered stubs and steals the first
+# one — pushing classify onto reformat's stub, which is plain markdown,
+# which the bot then fails to JSON-parse → empty classification → no
+# title PATCH → e2e fails to find its doc. Pre-seeding the cache means
+# the probe short-circuits before it ever leaves the process.
+TEST_MODEL = "test-model"
 
 
 class TestInstanceConflict(RuntimeError):
@@ -106,6 +119,25 @@ def seed() -> None:
         key = f"USER_{uid.upper()}_PASSWORD"
         if not store.get("_", key):
             store.set("global", key, uid)
+
+    # ── Model capability cache (see TEST_MODEL comment above) ───────
+    _seed_model_capabilities()
+
+
+def _seed_model_capabilities() -> None:
+    """Pre-write the archivist's vision-probe cache to head off a
+    fire-and-forget LLM call that would steal the test's first ordered
+    `/chat/completions` stub."""
+    with open(STACK_TOML, "rb") as fh:
+        data_dir_raw = tomllib.load(fh).get("core", {}).get("data_dir", "")
+    if not data_dir_raw:
+        return
+    cache = Path(data_dir_raw).expanduser() / "docs" / "bot" / "model-capabilities.json"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(
+        {TEST_MODEL: {"vision": True, "probed_at": "2026-01-01T00:00:00Z"}},
+        indent=2, sort_keys=True,
+    ))
 
 
 if __name__ == "__main__":
