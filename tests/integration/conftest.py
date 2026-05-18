@@ -363,13 +363,13 @@ async def homer(matrix):
 
 # ── Forgejo / code stacklet (shared, session-scoped) ─────────────────────
 
-# The documents repo now lives under the Forgejo org the archivist
-# provisions (`mirror_org` in `stacklets/docs/bot/bot.toml`, default
-# "family"). The bot keeps its own Forgejo user identity for commit
-# authorship, but the repo owner is the org so admins see it in their
-# dashboards.
+# The archivist writes into the shared `family/memory` vault repo
+# under `raw/`. Org name is configurable via `mirror_org` in
+# `stacklets/docs/bot/bot.toml` (default "family"). The bot keeps
+# its own Forgejo user identity for commit authorship, but the repo
+# owner is the org so admins see it in their dashboards.
 FORGEJO_DOCS_OWNER = "family"
-FORGEJO_DOCS_REPO = "documents"
+FORGEJO_DOCS_REPO = "memory"
 
 
 @pytest.fixture(scope="session")
@@ -410,8 +410,8 @@ def code(test_stack) -> ForgejoAPI:
 @pytest.fixture
 def mirror_scope(code, scope) -> Scope:
     """Scope bound to mirror cleanup — on teardown, every file in the
-    `documents` repo whose frontmatter title starts with scope.uid is
-    deleted. The repo + bot user + README survive between tests."""
+    `memory` repo whose frontmatter title starts with scope.uid is
+    deleted. The repo + bot user + seeds survive between tests."""
     scope.on_cleanup.append(
         lambda uid: cleanup_mirror_files(code, FORGEJO_DOCS_OWNER, FORGEJO_DOCS_REPO, uid)
     )

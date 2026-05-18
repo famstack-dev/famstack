@@ -168,18 +168,22 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
     return Ontology.load(ontology_file)
 
 
-# ─── Correspondents (wiki entity layer) ──────────────────────────────────
+# ─── Correspondents (documents-domain entity layer) ──────────────────────
 #
 # Correspondents are organizations the family corresponds with (banks,
-# insurers, schools, councils, online services). Unlike topics, they
-# grow organically per instance — every new sender is a new entry. We
-# store them as individual markdown pages under `wiki/correspondents/`
-# so they are Obsidian-editable, Forgejo-revisable, and human-readable
-# end-to-end. The frontmatter is the machine view; the body is for
-# notes (a `<!-- begin: generated -->` block is the only thing the
-# wiki-rebuild touches).
+# insurers, schools, councils, online services). They belong to the
+# documents domain — they're senders of mail, classifier hints,
+# Paperless canonicalisers — not vault-wide concepts. We store them as
+# individual markdown pages under `documents/correspondents/`, scoped
+# under the `documents/` namespace at the vault root. Living outside
+# `raw/` and `wiki/` keeps them out of the olw container's reach; olw
+# only reads `raw/` and writes `wiki/`, so hand-curated correspondents
+# stay sacrosanct without an exclude feature.
 #
-# Example shape (wiki/correspondents/adac.md):
+# The `documents/` namespace leaves room for future domain peers
+# (chat/, calendar/, ...) without conceptual collisions.
+#
+# Example shape (documents/correspondents/adac.md):
 #
 #     ---
 #     kind: correspondent
@@ -199,7 +203,7 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 # classifier prompt embeds the (canonical, aliases) pairs so the LLM
 # can canonicalize new variants before they hit Paperless.
 
-WIKI_CORRESPONDENTS_DIR = "wiki/correspondents"
+CORRESPONDENTS_DIR = "documents/correspondents"
 
 
 @dataclass
@@ -228,13 +232,13 @@ class Correspondent:
 
 
 def load_correspondents_from_vault(vault_path: Path) -> List[Correspondent]:
-    """Walk `<vault>/wiki/correspondents/*.md` and return the parsed entries.
+    """Walk `<vault>/documents/correspondents/*.md` and return the parsed entries.
 
     Pages without a `kind: correspondent` frontmatter or without a
     canonical name (frontmatter `canonical:`, falling back to the file
     stem) are skipped — keeps the loader robust against partial edits.
     """
-    folder = Path(vault_path) / WIKI_CORRESPONDENTS_DIR
+    folder = Path(vault_path) / CORRESPONDENTS_DIR
     if not folder.exists():
         return []
 

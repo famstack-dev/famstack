@@ -1,10 +1,16 @@
 """Git mirror — publishes classified Paperless documents to Forgejo.
 
-One file per Paperless document at `YYYY/MM/YYYY-MM-DD-<slug>.md`.
-Filename uses a title slug when AI classification produced one, falls
-back to `paperless-<id>` otherwise. The filename is stable after the
-first AI pass — a later reprocess updates content but doesn't chase
-title tweaks across the URL space.
+One file per Paperless document at `raw/YYYY/MM/YYYY-MM-DD-<slug>.md`,
+inside the shared `family/memory` repo. Filename uses a title slug
+when AI classification produced one, falls back to `paperless-<id>`
+otherwise. The filename is stable after the first AI pass — a later
+reprocess updates content but doesn't chase title tweaks across the
+URL space.
+
+Captures (URL bookmarks, pasted notes) land alongside documents under
+the same `raw/` prefix at `raw/YYYY/MM/<slug>-<hash>.md`. The two are
+discriminated by frontmatter (`kind`, `paperless_id`), not directory,
+so the olw container can ingest both with one recursive glob.
 
 The body is the best representation we have:
   - AI available → LLM-cleaned markdown from `_reformat`
@@ -15,6 +21,10 @@ a commit trailer `Paperless-Id: N` that enables git-native lookups.
 
 Delete handling is deferred to a future `stack docs reconcile` job —
 v1 leaves deleted Paperless docs as stale markdown in git history.
+
+The repo itself (description, README, `documents/`, `ontology.toml`,
+`wiki/`) is owned by the memory stacklet's install pipeline. The
+archivist treats `family/memory` as a write target for `raw/` only.
 """
 
 from __future__ import annotations
@@ -35,11 +45,22 @@ from loguru import logger
 from stack.forgejo import ForgejoClient, ForgejoError
 
 
-REPO_NAME = "documents"
+# The shared family knowledge vault. The memory stacklet creates,
+# seeds, and READMEs the repo; the archivist just writes Markdown
+# under `raw/`. If the archivist boots before memory is installed,
+# the description here is used as the create-time fallback — memory's
+# install pipeline overwrites it later (and they say the same thing).
+REPO_NAME = "memory"
 REPO_DESCRIPTION = (
-    "Read-only mirror of Paperless — written by archivist-bot. "
-    "Paperless is the database; edits here get overwritten on reprocess."
+    "The family's curated knowledge — ontology, facts, and wiki. "
+    "Hand-edit any file here; the commit log is the learning history."
 )
+
+# Captures/documents land under this prefix inside the vault. olw's
+# watcher and ingest scan `raw/` recursively, so everything the
+# archivist writes is visible to the wiki engine.
+RAW_PREFIX = "raw"
+
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
 TOKEN_NAME = "archivist-git-mirror"
@@ -191,7 +212,8 @@ class GitMirror:
         except ForgejoError as e:
             logger.warning("[git-mirror] Could not sync repo description: {}", e)
 
-        await self._ensure_readme(client)
+        # README and vault top-level files (documents/, ontology.toml,
+        # facts.toml) are seeded by the memory stacklet, not here.
 
         self._setup_done = True
         logger.info("[git-mirror] Setup complete: {}/{}", self.org_name, REPO_NAME)
@@ -221,110 +243,6 @@ class GitMirror:
             os.chmod(self.creds_path, 0o600)
         except OSError:
             pass
-
-    async def _ensure_readme(self, client: ForgejoClient) -> None:
-        """Sync the README to match the current `_render_readme()` output.
-
-        Compares the existing README byte-for-byte against the current
-        render. Writes only when they differ — keeps the README in lockstep
-        with the code, so wording changes reach live instances on the
-        next archivist boot without anyone having to delete the old file.
-        """
-        import base64
-
-        desired = self._render_readme()
-        existing = await asyncio.to_thread(
-            client.get_file, self.repo_owner, REPO_NAME, "README.md",
-        )
-        sha = None
-        verb = "seed"
-        if existing:
-            sha = existing.get("sha")
-            try:
-                body = base64.b64decode(existing.get("content", "")).decode()
-                if body == desired:
-                    return
-                verb = "refresh"
-            except Exception:
-                # Undecodable or missing content — fall through and rewrite.
-                verb = "refresh"
-
-        await asyncio.to_thread(
-            client.put_file,
-            self.repo_owner, REPO_NAME, "README.md",
-            content=desired,
-            message=f"chore: {verb} README",
-            sha=sha,
-            author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-        )
-
-    def _render_readme(self) -> str:
-        return (
-            "# Documents Archive\n\n"
-            "> **Read-only mirror.** This repo is written by `archivist-bot`.\n"
-            "> Manual edits survive only until the next reprocess — the bot\n"
-            "> rewrites the frontmatter and body whenever Paperless's doc\n"
-            "> changes or classification re-runs. To keep a change, edit the\n"
-            "> source in Paperless; the mirror will follow.\n\n"
-            "Auto-generated by **archivist-bot**. One file per document filed\n"
-            "via the docs stacklet's `#documents` Matrix room. Paperless-ngx\n"
-            "stays the canonical database — this repo is the human-browsable\n"
-            "markdown mirror.\n\n"
-            "## Layout\n\n"
-            "    YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md     one doc per file\n"
-            "    _unfiled/<slug>-p<id>.md               no classified date\n\n"
-            "The `-p<id>` suffix carries the Paperless document id. Makes\n"
-            "idempotency survive cache loss: the archivist can re-build its\n"
-            "`paperless_id → path` cache by walking the tree.\n\n"
-            "## Frontmatter\n\n"
-            "YAML, Obsidian- and Dataview-compatible:\n\n"
-            "    ---\n"
-            "    title: ADAC Rechnung März 2026\n"
-            "    date: 2026-03-15\n"
-            "    correspondent: ADAC\n"
-            "    document_type: Invoice\n"
-            "    category: Insurance\n"
-            "    persons: [Homer]\n"
-            "    tags: [Insurance, \"Person: Homer\"]\n"
-            "    paperless_id: 247\n"
-            "    paperless_url: http://docs.home/documents/247\n"
-            "    processing: ai_formatted\n"
-            "    model: qwen3.5:14b\n"
-            "    source: paperless\n"
-            "    added: 2026-04-19T10:15:00Z\n"
-            "    ---\n\n"
-            "### `processing` values\n\n"
-            "Describes where the **body** came from, independent of whether\n"
-            "AI classification ran:\n\n"
-            "- `ai_formatted` — LLM rewrote Paperless's OCR into clean\n"
-            "  markdown. `model` records the LLM used.\n"
-            "- `ocr` — Paperless's OCR output, unchanged. Used when the AI\n"
-            "  stacklet isn't up or the reformat step failed.\n"
-            "- `original` — original bytes of a text-like file (`.md`,\n"
-            "  `.json`, `.yaml`, ...). No transformation applied; round-trips\n"
-            "  byte-for-byte.\n\n"
-            "Classification (`topics`, `persons`, `correspondent`,\n"
-            "`document_type`) reflects what the LLM decided and is\n"
-            "orthogonal to `processing`.\n\n"
-            "## Commits\n\n"
-            "    learn: <title>         new document\n"
-            "    update: <title>        reprocessed existing document\n"
-            "    rename: <old> → <new>  title-driven filename change\n\n"
-            "When the classifier produced a summary it rides in the commit\n"
-            "body as `## Summary` / `## Facts` / `## Parties` sections, so\n"
-            "`git log` reads like a narrated archive log and `git log --grep`\n"
-            "searches across summaries out of the box. Each commit message\n"
-            "carries a `Paperless-Id: <N>` trailer.\n\n"
-            "## Deletions\n\n"
-            "Documents deleted in Paperless stay in this repo until a future\n"
-            "`stack docs reconcile` pass tombstones them. Until then, the\n"
-            "`paperless_url` in frontmatter will 404 when clicked through.\n\n"
-            "## Editing\n\n"
-            "Meant to be append-only from the bot's side. Manual edits\n"
-            "survive reprocesses only if they don't touch fields the\n"
-            "archivist rewrites (title, frontmatter, body). Use Forgejo's\n"
-            "web UI or clone the repo as an Obsidian vault.\n"
-        )
 
     # ── Cache (paperless_id → path) ──────────────────────────────────────
 
@@ -382,24 +300,29 @@ class GitMirror:
         return slug[:60] or "document"
 
     def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_title: bool) -> str:
-        """Build YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md.
+        """Build raw/YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md.
 
         `has_title` is True when we have a slug-worthy title (from AI
         classification or the caller's fallback filename) — as opposed
         to the generic `Paperless #N`. The `-p<id>` suffix always appears
         so the Paperless ID is recoverable from the filename alone,
         surviving cache loss without needing to scan frontmatter.
+
+        The leading `raw/` keeps the file inside the wiki engine's
+        ingest scope — olw's watcher and ingest both scan `raw/`
+        recursively.
         """
         if date and re.match(r"^\d{4}-\d{2}-\d{2}$", date):
             y, m, _ = date.split("-")
-            prefix = f"{y}/{m}/{date}"
+            prefix = f"{RAW_PREFIX}/{y}/{m}/{date}"
         else:
-            prefix = "_unfiled"
+            prefix = f"{RAW_PREFIX}/_unfiled"
 
+        unfiled = f"{RAW_PREFIX}/_unfiled"
         if has_title and title:
             slug = self._slug(title)
-            return f"{prefix}-{slug}-p{paperless_id}.md" if prefix != "_unfiled" else f"_unfiled/{slug}-p{paperless_id}.md"
-        return f"{prefix}-p{paperless_id}.md" if prefix != "_unfiled" else f"_unfiled/p{paperless_id}.md"
+            return f"{prefix}-{slug}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/{slug}-p{paperless_id}.md"
+        return f"{prefix}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/p{paperless_id}.md"
 
     def _frontmatter(
         self,
@@ -722,23 +645,32 @@ class GitMirror:
 
     # ── Captures ─────────────────────────────────────────────────────────
     #
-    # A "capture" is a non-Paperless source filed in the same mirror repo.
-    # Today, the only producer is the URL-paste path: trafilatura extracts
-    # a web article into Markdown, the classifier returns the same shape
-    # it produces for Paperless docs, and the result lives at
+    # A "capture" is a non-Paperless source filed in the same vault.
+    # Producers today:
+    #   - URL paste: trafilatura extracts a web article into Markdown,
+    #     classifier produces a digest, result is filed as kind=bookmark.
+    #   - Text paste: the user's typed body, classifier produces a digest,
+    #     result is filed as kind=note.
     #
-    #   captures/YYYY/MM/<slug>-<hash>.md
+    # Both land at:
     #
-    # The hash is a short prefix of sha256(source_uri). Two purposes:
-    #   - Re-paste the same URL → same path → idempotent update, not a
-    #     duplicate file.
-    #   - Two different URLs with the same title on the same day → still
-    #     resolve to different filenames.
+    #   raw/YYYY/MM/<slug>-<hash>.md
     #
-    # Frontmatter shape: `source: url`, `source_uri: <full URL>`. Paperless
-    # fields (paperless_id, paperless_url) are absent so Obsidian/Dataview
-    # queries can still tell capture-sourced entries from Paperless-sourced
-    # ones at a glance.
+    # Same `raw/` prefix as Paperless documents — discriminated by
+    # frontmatter (`kind`, presence of `paperless_id`), not directory.
+    # Lets the olw container ingest both with a single recursive `raw/`
+    # scan without learning two layouts.
+    #
+    # The hash is a short prefix of sha256(hash_key). Two purposes:
+    #   - Re-paste the same source → same path → idempotent update,
+    #     not a duplicate file.
+    #   - Two different sources with the same title on the same day →
+    #     still resolve to different filenames.
+    #
+    # Frontmatter shape: `kind: bookmark|note`, optional `source_uri`.
+    # Paperless fields (paperless_id, paperless_url) are absent so
+    # Obsidian/Dataview queries can still tell capture-sourced entries
+    # from Paperless-sourced ones at a glance.
 
     _CAPTURE_HASH_LEN = 6
 
@@ -748,7 +680,7 @@ class GitMirror:
         title: str | None,
         hash_key: str,
     ) -> str:
-        """Build the captures/YYYY/MM/<slug>-<hash>.md path.
+        """Build the raw/YYYY/MM/<slug>-<hash>.md path.
 
         `hash_key` is whatever stable string the caller wants to identify
         this capture by: typically the source URL for fetched/pasted
@@ -756,9 +688,9 @@ class GitMirror:
         embedded source URL. The same key yields the same path on
         re-publish — idempotent update vs. duplicate.
 
-        Invalid `captured_at` falls back to `_unfiled/<slug>-<hash>.md` —
+        Invalid `captured_at` falls back to `raw/_unfiled/<slug>-<hash>.md` —
         same convention the Paperless filepath uses for documents with
-        no usable date.
+        no usable date. Still inside `raw/` so olw sees it.
         """
         digest = hashlib.sha256(
             hash_key.encode("utf-8") if hash_key else b"",
@@ -768,8 +700,8 @@ class GitMirror:
 
         if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
             y, m, _ = captured_at.split("-")
-            return f"captures/{y}/{m}/{slug}-{digest}.md"
-        return f"_unfiled/{slug}-{digest}.md"
+            return f"{RAW_PREFIX}/{y}/{m}/{slug}-{digest}.md"
+        return f"{RAW_PREFIX}/_unfiled/{slug}-{digest}.md"
 
     def _capture_frontmatter(
         self, *,

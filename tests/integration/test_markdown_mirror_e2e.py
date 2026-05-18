@@ -9,8 +9,8 @@ classify (optional) → mirror — with two differences:
 - Reformat is skipped (the content is already clean markdown).
 
 The mirror keeps the original markdown bytes as its body and uses the
-original filename as its fallback title, so `family/documents` ends
-up with a `.md` entry that round-trips byte-for-byte.
+original filename as its fallback title, so `family/memory` ends up
+with a `.md` entry under `raw/` that round-trips byte-for-byte.
 
 Run with `-s` to stream the BDD narration live:
 
@@ -31,7 +31,7 @@ from tests.integration.openai_stub import stub_classify
 
 DOCS_ROOM_ALIAS = "#documents:test.local"
 DOCS_OWNER = "family"
-DOCS_REPO = "documents"
+DOCS_REPO = "memory"
 
 
 async def _wait_for_paperless_doc(paperless, title: str, timeout: int = 30) -> dict | None:
@@ -72,7 +72,7 @@ async def test_archivist_files_and_mirrors_a_markdown_document(
     Given  the code + docs stacklets are running and AI is stubbed
     When   Homer uploads `robot-protocol.md` to #documents
     Then   Paperless has the doc filed (internally as .txt)
-    And    `family/documents` has a mirror entry ending in `-p<id>.md`
+    And    `family/memory` has a mirror entry under `raw/` ending in `-p<id>.md`
     And    the mirror body is the original markdown content
     And    `processing: original` in frontmatter (body is the source bytes)
     And    no `model` key in frontmatter (reformat didn't run)

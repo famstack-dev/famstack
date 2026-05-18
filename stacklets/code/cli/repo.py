@@ -9,14 +9,14 @@ Subcommands:
 Examples:
     stack code repo list family
     stack code repo create family brain "Family wiki"
-    stack code repo show family documents
+    stack code repo show family memory
 
 How it works:
     Uses the site-admin API with basic auth. `create` figures out whether
     the owner is a user or an org and hits the right endpoint. The
-    `family/documents` repo is normally provisioned by the archivist bot;
-    these commands cover the cases where a human wants to inspect, seed,
-    or recover manually.
+    `family/memory` repo is normally provisioned by the memory stacklet
+    and written to by the archivist bot; these commands cover the cases
+    where a human wants to inspect, seed, or recover manually.
 """
 
 HELP = "Manage Forgejo repositories (list, create, show)"

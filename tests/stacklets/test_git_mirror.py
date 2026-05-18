@@ -58,38 +58,42 @@ class TestSlug:
 # ── Filepath construction ──────────────────────────────────────────────────
 
 class TestFilepath:
+    """Documents land under `raw/` so the olw container's recursive
+    `raw/` glob picks them up. Undated docs go to `raw/_unfiled/`
+    (still inside `raw/`, still visible to olw)."""
+
     def test_with_title_and_date(self, mirror):
         path = mirror._filepath(
             date="2026-03-15", paperless_id=247,
             title="ADAC Rechnung", has_title=True,
         )
-        assert path == "2026/03/2026-03-15-adac-rechnung-p247.md"
+        assert path == "raw/2026/03/2026-03-15-adac-rechnung-p247.md"
 
     def test_with_title_without_date_goes_to_unfiled(self, mirror):
         path = mirror._filepath(
             date=None, paperless_id=247,
             title="ADAC Rechnung", has_title=True,
         )
-        assert path == "_unfiled/adac-rechnung-p247.md"
+        assert path == "raw/_unfiled/adac-rechnung-p247.md"
 
     def test_with_title_invalid_date_falls_through(self, mirror):
         path = mirror._filepath(
             date="not-a-date", paperless_id=42,
             title="A", has_title=True,
         )
-        assert path == "_unfiled/a-p42.md"
+        assert path == "raw/_unfiled/a-p42.md"
 
     def test_no_title_with_date(self, mirror):
         path = mirror._filepath(
             date="2026-03-15", paperless_id=42, title=None, has_title=False,
         )
-        assert path == "2026/03/2026-03-15-p42.md"
+        assert path == "raw/2026/03/2026-03-15-p42.md"
 
     def test_no_title_without_date(self, mirror):
         path = mirror._filepath(
             date=None, paperless_id=42, title=None, has_title=False,
         )
-        assert path == "_unfiled/p42.md"
+        assert path == "raw/_unfiled/p42.md"
 
 
 # ── Frontmatter ────────────────────────────────────────────────────────────
@@ -346,16 +350,19 @@ class TestBriefingBlock:
 # ── Captures ─────────────────────────────────────────────────────────────
 #
 # A capture is a non-Paperless source (today: a pasted URL processed by
-# trafilatura). It lives in the same mirror repo as Paperless documents
-# but under `captures/YYYY/MM/<slug>-<hash>.md`. Paperless-shaped
-# frontmatter fields (paperless_id, paperless_url) are absent;
+# trafilatura, or pasted text the user typed). It lives in the same
+# mirror repo as Paperless documents — both under `raw/YYYY/MM/...` —
+# discriminated by frontmatter (`kind: bookmark|note`, presence of
+# `paperless_id`), not by directory. Paperless-shaped frontmatter
+# fields (paperless_id, paperless_url) are absent on captures;
 # source/source_uri identify the origin. The hash suffix disambiguates
 # re-pastes of different URLs that resolve to the same slug, and makes
 # the same URL re-paste idempotent (same path → update, not duplicate).
 
 
 class TestCapturePath:
-    """`captures/YYYY/MM/<slug>-<hash>.md` shape.
+    """`raw/YYYY/MM/<slug>-<hash>.md` shape — same `raw/` prefix as
+    documents so the olw container sees both as ingestable notes.
 
     `hash_key` is the stable identity string the caller hashes into the
     filename suffix — typically the source URL for URL/paste captures,
@@ -369,7 +376,7 @@ class TestCapturePath:
             title="Why local LLMs matter",
             hash_key="https://example.com/llms",
         )
-        assert path.startswith("captures/2026/05/")
+        assert path.startswith("raw/2026/05/")
         assert path.endswith(".md")
 
     def test_slug_in_filename(self, mirror):
@@ -378,7 +385,7 @@ class TestCapturePath:
             title="Why local LLMs matter",
             hash_key="https://example.com/llms",
         )
-        # slug lives between "captures/YYYY/MM/" and the "-<hash>.md" tail.
+        # slug lives between "raw/YYYY/MM/" and the "-<hash>.md" tail.
         assert "why-local-llms-matter" in path
 
     def test_same_key_yields_same_path(self, mirror):
@@ -410,7 +417,7 @@ class TestCapturePath:
             hash_key="https://example.com/x",
         )
         # No useful title → generic slug. Hash still disambiguates.
-        assert "captures/2026/05/" in path
+        assert "raw/2026/05/" in path
         assert path.endswith(".md")
 
     def test_invalid_date_lands_in_unfiled(self, mirror):
@@ -418,7 +425,8 @@ class TestCapturePath:
             captured_at="not-a-date", title="hi",
             hash_key="https://example.com/x",
         )
-        assert path.startswith("_unfiled/")
+        # Undated captures still live under raw/ so olw sees them.
+        assert path.startswith("raw/_unfiled/")
 
 
 class TestCaptureFrontmatter:
