@@ -394,10 +394,7 @@ async def _delete_entity(paperless: PaperlessAPI, endpoint: str,
 
 
 def _read_taxonomy() -> dict:
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        from stack._compat import tomllib
+    import tomllib
     path = Path("/stacklets/docs/taxonomy.toml")
     if not path.exists():
         return {}

@@ -20,12 +20,7 @@ import signal
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    # Python 3.9/3.10 fallback — tomli vendored in lib/stack/
-    sys.path.insert(0, "/app")
-    from stack._vendor import tomli as tomllib
+import tomllib
 
 from loguru import logger
 

@@ -113,11 +113,11 @@ But it's not just archiving. The goal is a family operating system: something th
 ### Requirements
 
 - macOS on Apple Silicon (M1+)
+- [Homebrew](https://brew.sh) — used to install Python 3.11+, OrbStack, and managed AI
 - [OrbStack](https://orbstack.dev) (recommended) or Docker Desktop
-- [Homebrew](https://brew.sh) (Optional: Only for managed AI right now)
 
-
-OrbStack has its own installer at [orbstack.dev](https://orbstack.dev).
+The installer will guide you through what's missing. If your `python3` is
+Apple's Command Line Tools build (3.9), run `brew install python` first.
 
 ### Install
 

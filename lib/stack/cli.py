@@ -20,7 +20,7 @@ import importlib.util
 import json
 import os
 import sys
-from ._compat import tomllib
+import tomllib
 from pathlib import Path
 
 from . import docker

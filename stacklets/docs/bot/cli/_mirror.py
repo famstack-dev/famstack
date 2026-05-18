@@ -22,10 +22,7 @@ _DATA_DIR = Path("/data/docs/bot")
 
 def read_bot_toml_settings() -> dict:
     """Read [settings] from the archivist's bot.toml (same file the bot reads)."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        from stack._compat import tomllib
+    import tomllib
     if not _BOT_TOML_PATH.exists():
         return {}
     with open(_BOT_TOML_PATH, "rb") as f:

@@ -6,7 +6,7 @@ Canonical way to resolve usernames and passwords from users.toml
 and secrets.toml. All code that needs user info goes through here.
 """
 
-from ._compat import tomllib
+import tomllib
 from pathlib import Path
 
 # Internal service account — used by the CLI to manage all services.
