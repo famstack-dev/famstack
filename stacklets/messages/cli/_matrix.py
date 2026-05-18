@@ -18,10 +18,7 @@ import random
 import ssl
 import sys
 import time
-try:
-    import tomllib
-except ModuleNotFoundError:
-    from stack._vendor import tomli as tomllib
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path

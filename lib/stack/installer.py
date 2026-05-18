@@ -42,7 +42,7 @@ def validate_name(value):
 
 def load_stacklets(repo_root):
     """Load stacklet definitions from stacklet.toml files."""
-    from ._compat import tomllib
+    import tomllib
 
     stacklets_dir = repo_root / "stacklets"
     stacklets = {}
@@ -342,7 +342,7 @@ def write_users_toml(users):
 
 def show_existing_config():
     """When config already exists, show what's there and how to change it."""
-    from ._compat import tomllib
+    import tomllib
 
     clear()
     banner("famstack")

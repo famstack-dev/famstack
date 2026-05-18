@@ -34,10 +34,7 @@ def _load_taxonomy(language: str) -> dict:
     Falls back to English if the requested language isn't defined.
     Returns {"tags": [...], "types": [...]}.
     """
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        from stack._compat import tomllib
+    import tomllib
 
     if not TAXONOMY_PATH.exists():
         return {"tags": [], "types": []}

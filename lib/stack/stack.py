@@ -18,7 +18,7 @@ import platform
 import shutil
 import subprocess
 import sys
-from ._compat import tomllib
+import tomllib
 from pathlib import Path
 
 from .docker import running_project_ids

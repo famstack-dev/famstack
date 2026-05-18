@@ -12,7 +12,7 @@ Reading falls back from stacklet-specific to global (global__ADMIN_PASSWORD).
 Writing always targets the stacklet namespace.
 """
 
-from ._compat import tomllib
+import tomllib
 from pathlib import Path
 
 

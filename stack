@@ -1,4 +1,46 @@
 #!/usr/bin/env bash
 # stack CLI — all logic lives in lib/stack/
+#
+# Apple's Command Line Tools ship `python3` as 3.9, which is too old for
+# stack and often takes priority over Homebrew on PATH. Prefer the
+# version-named binaries that Homebrew installs and only fall back to
+# `python3` if it's actually new enough.
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec env PYTHONPATH="$SCRIPT_DIR/lib" python3 -m stack "$@"
+
+PYTHON=
+for cand in python3.13 python3.12 python3.11 python3; do
+    if command -v "$cand" >/dev/null 2>&1; then
+        ver=$("$cand" -c 'import sys; print(sys.version_info[0]*100 + sys.version_info[1])' 2>/dev/null || echo 0)
+        if [ "$ver" -ge 311 ]; then
+            PYTHON="$cand"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    if [ -t 2 ]; then
+        RED=$'\033[38;5;203m'
+        ORANGE=$'\033[38;5;208m'
+        BOLD=$'\033[1m'
+        RESET=$'\033[0m'
+    else
+        RED= ORANGE= BOLD= RESET=
+    fi
+    cat >&2 <<EOF
+
+  ${RED}✗${RESET}  stack requires Python 3.11 or newer.
+
+  Apple's Command Line Tools ship Python 3.9, which is too old.
+  Install a newer Python via Homebrew:
+
+      brew install python
+
+  Then open a ${ORANGE}new terminal tab${RESET} (${BOLD}⌘T${RESET}) and re-run ./stack.
+
+EOF
+    exit 1
+fi
+
+exec env PYTHONPATH="$SCRIPT_DIR/lib" "$PYTHON" -m stack "$@"
