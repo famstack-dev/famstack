@@ -294,15 +294,6 @@ class ArchivistBot(MicroBot):
         self._text_extractor: TextExtractor | None = None
         self._mirror: GitMirror | None = None
         self._paperless_version: str = ""
-        # Ontology vocabulary block for the classifier prompt — loaded
-        # once at startup from the memory stacklet's repo (Forgejo) with
-        # fallback to the shipped seed. Bot restart picks up live edits.
-        self._ontology_section: str = ""
-        # Correspondents block (canonical names + learned aliases) from
-        # the memory vault's documents/correspondents/. Empty when the
-        # vault isn't seeded yet — the prompt falls back to the flat
-        # Paperless list.
-        self._correspondents_section: str = ""
 
     def t(self, key: str, **kwargs) -> str:
         return _t(self.language, key, **kwargs)
@@ -348,13 +339,20 @@ class ArchivistBot(MicroBot):
             # leaves `self._mirror = None` and logs the reason; writes
             # become silent skips.
             self._init_mirror()
-            self._load_ontology_section()
-            self._load_correspondents_section()
             await super().start()
         finally:
             await self._http.close()
 
-    def _load_ontology_section(self) -> None:
+    # ── Classifier prompt inputs (read fresh per call) ───────────────────
+    #
+    # Ontology and correspondents live on disk in the memory vault and are
+    # hand-editable: in Obsidian, in Forgejo's web UI, or via the memory
+    # CLI. We re-read both on every classification so a hand edit takes
+    # effect on the next filed document — no restart, no caching gotcha.
+    # The reads are cheap (small TOML, dozens of tiny markdown files);
+    # the LLM call that follows dwarfs them.
+
+    def _compute_ontology_section(self) -> str:
         """Render the classifier vocabulary block from the memory ontology.
 
         Reads `ontology.toml` from the memory stacklet's vault working
@@ -364,44 +362,26 @@ class ArchivistBot(MicroBot):
 
         Falls back to the shipped seed when the vault is missing
         (memory not installed yet, or first run on a host without a
-        working copy). Cached for the bot's lifetime — restart picks
-        up new pulls.
+        working copy).
         """
         vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
         vault_path = Path(vault_env) if vault_env else None
-
         ont = _get_memory_ontology(vault_path)
-        self._ontology_section = ont.classifier_prompt_section(self.language)
+        return ont.classifier_prompt_section(self.language)
 
-        source = "vault" if vault_path and (vault_path / "ontology.toml").exists() else "seed"
-        logger.info(
-            "[archivist] memory ontology loaded from {} ({} topics, {} doctypes, lang={})",
-            source, len(ont.topics), len(ont.doctypes), self.language,
-        )
-
-    def _load_correspondents_section(self) -> None:
+    def _compute_correspondents_section(self) -> str:
         """Build the correspondents block from the memory vault.
 
         Each `documents/correspondents/*.md` page contributes a
         (canonical, aliases) line. Empty when the vault isn't seeded
         yet — the prompt falls back to the flat Paperless
         correspondents list, which carries no alias signal.
-
-        Cached for the bot's lifetime — bot restart picks up new pages.
         """
         vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
         if not vault_env:
-            self._correspondents_section = ""
-            return
-
+            return ""
         correspondents = _load_memory_correspondents(Path(vault_env))
-        self._correspondents_section = _memory_correspondents_section(correspondents)
-
-        logger.info(
-            "[archivist] memory correspondents loaded ({} entries, {} with aliases)",
-            len(correspondents),
-            sum(1 for c in correspondents if c.aliases),
-        )
+        return _memory_correspondents_section(correspondents)
 
     def _init_mirror(self) -> None:
         """Build a GitMirror if all required env is present.
@@ -745,8 +725,8 @@ class ArchivistBot(MicroBot):
                 doc=doc,
                 classify_max_chars=self.classify_max_chars,
                 images=images,
-                ontology_section=self._ontology_section,
-                correspondents_section=self._correspondents_section,
+                ontology_section=self._compute_ontology_section(),
+                correspondents_section=self._compute_correspondents_section(),
             )
         else:
             result = EnrichResult()
