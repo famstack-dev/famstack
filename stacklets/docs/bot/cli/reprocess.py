@@ -1,4 +1,13 @@
-"""`stack docs reprocess <id>...` — full pipeline on filed documents.
+"""`stack docs reprocess <id|range>...` — full pipeline on filed documents.
+
+Accepts single ids and inclusive ranges:
+
+    reprocess 42
+    reprocess 1-13                 (ids 1 through 13 inclusive)
+    reprocess 1-5 7 10-12 --dry    (mixed, with dry-run)
+
+Ids missing from Paperless inside a range are silently skipped — the
+end-of-run summary reports the skipped count.
 
 Honours the archivist's bot.toml `[settings].reformat` so the CLI
 behaves like the bot on a new upload. Memory-vault mirroring is
@@ -11,6 +20,8 @@ classification-only pass by calling in with `reformat=False, mirror=None`.
 """
 
 from __future__ import annotations
+
+from enum import Enum
 
 from pipeline import (
     Classifier,
@@ -26,7 +37,20 @@ from cli._mirror import (
     publish_enriched,
     read_bot_toml_settings,
 )
-from cli._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
+from cli._shared import _DRY_FLAGS, err, is_dry, parse_id_specs
+
+
+class RunResult(Enum):
+    """Outcome of a single `run_one()` invocation.
+
+    Three buckets so range-reprocessing can distinguish "the doc isn't
+    here" (silent skip) from "the doc is here but processing failed"
+    (loud failure). The `classify` subcommand maps NOT_FOUND back to a
+    visible error since it runs on one explicit id at a time.
+    """
+    OK = "ok"
+    NOT_FOUND = "not_found"
+    FAILED = "failed"
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,
@@ -54,15 +78,12 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         err(f"Unknown flag(s): {' '.join(unknown)}")
         return 2
     if not positional:
-        err("Usage: reprocess <id> [<id>...] [--[no-]reformat] [--no-mirror] [--dry|--dry-run]")
+        err("Usage: reprocess <id|range>... [--[no-]reformat] [--no-mirror] [--dry|--dry-run]")
         return 2
 
-    doc_ids: list[int] = []
-    for p in positional:
-        parsed = parse_doc_id(p)
-        if parsed is None:
-            return 2
-        doc_ids.append(parsed)
+    doc_ids = parse_id_specs(positional)
+    if doc_ids is None:
+        return 2
 
     mirror = build_mirror_like_bot() if mirror_enabled else None
     if mirror_enabled and mirror is None:
@@ -72,31 +93,41 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
 
     successes = 0
     failures = 0
+    skipped = 0
     for doc_id in doc_ids:
-        ok = await run_one(
+        result = await run_one(
             paperless, classifier, mirror,
             doc_id=doc_id, reformat=reformat, dry_run=dry_run,
         )
-        if ok:
+        if result is RunResult.OK:
             successes += 1
+        elif result is RunResult.NOT_FOUND:
+            # Silent skip: ranges are expected to span gaps. The summary
+            # surfaces the count so missing ids aren't invisible.
+            skipped += 1
         else:
             failures += 1
 
-    _print_summary(successes, failures, dry_run=dry_run)
+    _print_summary(successes, failures, skipped, dry_run=dry_run)
     return 0 if failures == 0 else 1
 
 
 async def run_one(
     paperless: PaperlessAPI, classifier: Classifier, mirror,
     *, doc_id: int, reformat: bool, dry_run: bool,
-) -> bool:
-    """Re-enrich one Paperless doc. Shared with the `classify` command,
-    which calls in with reformat=False, mirror=None to scope the action
-    to classification only."""
+) -> RunResult:
+    """Re-enrich one Paperless doc.
+
+    Shared with the `classify` command, which calls in with
+    reformat=False, mirror=None to scope the action to classification
+    only. Returns a `RunResult` so callers can distinguish missing ids
+    from genuine processing failures — the `reprocess` command treats
+    NOT_FOUND as a silent skip when iterating a range; `classify` keeps
+    its loud per-id error message.
+    """
     doc = await paperless.get_doc(doc_id)
     if not doc:
-        err(f"Document #{doc_id} not found")
-        return False
+        return RunResult.NOT_FOUND
 
     tags = await paperless.get_tags()
     doc_types = await paperless.get_doc_types()
@@ -110,10 +141,10 @@ async def run_one(
     if result.llm_error:
         kind, detail = result.llm_error
         err(f"#{doc_id}: LLM {kind} — {detail}")
-        return False
+        return RunResult.FAILED
     if not result.classification:
         err(f"#{doc_id}: classifier returned nothing")
-        return False
+        return RunResult.FAILED
 
     # Reformat — only meaningful on binary-origin docs; Paperless doesn't
     # distinguish, so we always offer it as opt-in and trust the user.
@@ -143,7 +174,7 @@ async def run_one(
         reformatted=bool(formatted), mirror_path=mirror_path,
         mirror_enabled=mirror is not None, dry_run=dry_run,
     )
-    return True
+    return RunResult.OK
 
 
 def _snapshot_doc(doc: dict, tags: dict, doc_types: dict,
@@ -217,14 +248,20 @@ def _diff_row(label: str, before_value, after_value) -> None:
     print(f"    {DIM}{label + ':':<15}{RESET} {before_disp}  {DIM}→{RESET}  {TEAL}{after_disp}{RESET}")
 
 
-def _print_summary(successes: int, failures: int, *, dry_run: bool) -> None:
+def _print_summary(successes: int, failures: int, skipped: int,
+                   *, dry_run: bool) -> None:
     from stack.prompt import DIM, GREEN, ORANGE, RESET
     total = successes + failures
     verb = "would reprocess" if dry_run else "reprocessed"
     print()
     icon = f"{GREEN}✓{RESET}" if failures == 0 else f"{ORANGE}!{RESET}"
-    print(f"  {icon} {verb} {successes}/{total}" + (
-        f" ({failures} failed)" if failures else ""))
+    detail_bits: list[str] = []
+    if failures:
+        detail_bits.append(f"{failures} failed")
+    if skipped:
+        detail_bits.append(f"{skipped} skipped (not found)")
+    detail = f" ({', '.join(detail_bits)})" if detail_bits else ""
+    print(f"  {icon} {verb} {successes}/{total}{detail}")
     if dry_run:
         print(f"  {DIM}--dry-run: no changes made to Paperless or the mirror.{RESET}")
     print()
