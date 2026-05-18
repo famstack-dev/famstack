@@ -21,8 +21,9 @@ Commands:
                                     + mirror), respects bot.toml [settings]
                                     flags: --[no-]reformat --[no-]mirror --dry
     mirror <id> [<id>...] [--dry]   push current Paperless state to the
-                                    Forgejo mirror (no LLM). Useful for
-                                    backfilling after enabling mirror_to_git.
+                                    family/memory vault (no LLM). Useful
+                                    for backfilling existing docs into
+                                    a freshly-installed memory vault.
     tags [--types] [--used|--unused] [--owner=N]
                                     list tags or document_types
     tags merge <from> <to> [--type] [--dry]    retag docs, drop source

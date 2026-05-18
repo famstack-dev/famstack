@@ -260,9 +260,9 @@ class ArchivistBot(MicroBot):
         self.classify_max_chars = int(settings.get(
             "classify_max_chars", DEFAULT_CLASSIFY_MAX_CHARS,
         ))
-        # Mirror is opt-in while we validate the invariant in real use.
-        # Flip `mirror_to_git = true` in bot.toml to enable.
-        self.mirror_to_git = settings.get("mirror_to_git", False)
+        # Org under which the shared knowledge vault (`<org>/memory`)
+        # lives in Forgejo. The bot joins the org's Owners team so
+        # admins can browse the repo from their dashboard.
         self.mirror_org = settings.get("mirror_org", "family")
         # Routing model: one room is the "documents" room and feeds the
         # Paperless pipeline. Every other room the bot is in — DMs,
@@ -312,12 +312,9 @@ class ArchivistBot(MicroBot):
         self.add_event_callback(self._on_text, RoomMessageText)
 
     async def start(self) -> None:
-        logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={} mirror_to_git={}",
+        logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={}",
                      self.paperless_url, self.openai_url, self.language,
-                     self.classify_enabled, self.reformat_enabled, self.mirror_to_git)
-        if not self.mirror_to_git:
-            logger.info("[archivist] Git mirror (BETA): disabled. "
-                         "Flip `mirror_to_git = true` in stacklets/docs/bot/bot.toml to enable.")
+                     self.classify_enabled, self.reformat_enabled)
         try:
             default_model = resolve_model(f"{self.name}/classifier")
             logger.info("[archivist] Model (classifier): {}", default_model)
@@ -346,8 +343,11 @@ class ArchivistBot(MicroBot):
             self.capture_keep_body,
         )
         try:
-            if self.mirror_to_git:
-                self._init_mirror()
+            # Always attempt to wire the memory vault writer. If
+            # CODE_URL / admin creds aren't present, `_init_mirror`
+            # leaves `self._mirror = None` and logs the reason; writes
+            # become silent skips.
+            self._init_mirror()
             self._load_ontology_section()
             self._load_correspondents_section()
             await super().start()
@@ -416,7 +416,10 @@ class ArchivistBot(MicroBot):
         admin_ids = os.environ.get("STACK_ADMIN_USER_IDS", "")
 
         if not (code_url and admin_user and admin_password):
-            logger.info("[archivist] Git mirror disabled — CODE_URL or admin creds missing")
+            logger.info(
+                "[archivist] Memory vault writer offline — "
+                "CODE_URL or admin creds missing. Bring up `code` to enable."
+            )
             return
 
         # @arthur:homestead.me → arthur
@@ -441,7 +444,7 @@ class ArchivistBot(MicroBot):
             data_dir=self._session_dir,
             org_name=self.mirror_org,
         )
-        logger.info("[archivist] Git mirror configured: {} org={} (admins: {})",
+        logger.info("[archivist] Memory vault writer: {} org={} (admins: {})",
                     code_url, self.mirror_org, ", ".join(admin_usernames) or "-")
 
     def _ai_status(self) -> str:

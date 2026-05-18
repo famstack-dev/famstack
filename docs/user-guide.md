@@ -312,7 +312,7 @@ The archivist bot creates a `#documents` room in your chat. AI classifies and ta
 
 On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml).
 
-**Mirror to git (beta).** Flip `mirror_to_git = true` in `stacklets/docs/bot/bot.toml` to get a markdown mirror of every filed doc in your Forgejo repo (`family/documents`). Paperless stays the canonical store; the mirror is the browsable, git-versioned human view. Requires the `code` stacklet.
+**Memory vault.** With the `code` stacklet up, every filed document and every captured URL or pasted note also lands as a Markdown file in your Forgejo repo `family/memory` under `raw/`. Paperless stays the canonical store; the memory vault is the browsable, git-versioned human view and the source for the LLM wiki (coming next). Install the `memory` stacklet to seed the ontology, household facts, and a hand-curated correspondents layer.
 
 | | |
 |---|---|

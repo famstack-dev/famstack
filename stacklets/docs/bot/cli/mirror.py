@@ -1,8 +1,8 @@
 """`stack docs mirror <id>...` — backfill existing docs into the Forgejo mirror.
 
 Uses the doc's current Paperless state (title, tags, correspondent,
-content). No LLM call. Fails fast when `mirror_to_git = false` in
-bot.toml.
+content). No LLM call. Fails fast when the `code` stacklet env isn't
+available.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from pipeline import Classifier, PaperlessAPI
 from cli._mirror import (
     build_mirror_like_bot,
     publish_current_state,
-    read_bot_toml_settings,
 )
 from cli._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
 
@@ -36,12 +35,6 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         if parsed is None:
             return 2
         doc_ids.append(parsed)
-
-    settings = read_bot_toml_settings()
-    if not settings.get("mirror_to_git", False):
-        err("Mirror is disabled in stacklets/docs/bot/bot.toml (mirror_to_git = false). "
-            "Flip it to true first, then `stack up core` to reboot the bot.")
-        return 1
 
     mirror = build_mirror_like_bot()
     if mirror is None:
