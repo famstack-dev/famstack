@@ -107,7 +107,7 @@ async def test_archivist_captures_pasted_text_to_memory(
     Given  the code stacklet is up and Homer has a Matrix client
     When   Homer creates a private notes room and invites the archivist
     And    Homer pastes a wall of text into the room
-    Then   `family/memory` contains a capture entry under `raw/`
+    Then   `family/memory` contains a capture entry under `homer/notes/`
     And    the frontmatter marks it `kind: note`
     And    the body preserves the pasted text verbatim
     """
@@ -176,8 +176,11 @@ async def test_archivist_captures_pasted_text_to_memory(
     )
     bdd.ok(f"mirror path = {path}")
 
-    bdd.and_("the path lives under raw/")
-    assert path.startswith("raw/"), f"expected raw/ prefix, got {path}"
+    bdd.and_("the path lives under the sender's notes bucket")
+    # Homer pasted this — entity-rooted layout files it under his
+    # bucket, not a global captures pool.
+    assert path.startswith("homer/notes/"), \
+        f"expected homer/notes/ prefix, got {path}"
 
     bdd.then("the frontmatter marks it kind: note")
     fm, body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)

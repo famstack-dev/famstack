@@ -1,10 +1,11 @@
 """Correspondent loader + prompt-section renderer.
 
-Tests construct a tmp vault with markdown files under
-`documents/correspondents/` (the documents-domain folder at the vault
-root, sibling to `raw/` and `wiki/`), then load them through the same
-path the archivist uses at startup. The frontmatter shape is the
-contract: hand edits in Obsidian or the Forgejo web UI must land here.
+Tests construct a tmp vault with markdown files under the shared
+bucket's `correspondents/` folder (default `family/correspondents/`,
+slug configurable via stack.toml [core] shared_bucket), then load
+them through the same path the archivist uses at startup. The
+frontmatter shape is the contract: hand edits in Obsidian or the
+Forgejo web UI must land here.
 """
 
 from __future__ import annotations
@@ -28,16 +29,16 @@ from lib import (  # noqa: E402
 
 @pytest.fixture
 def vault(tmp_path):
-    """A vault layout with `documents/correspondents/` ready to receive
-    pages. Correspondents live in the documents domain (banks, schools,
-    insurers — senders of mail) but outside `raw/` so the olw container
-    (which only sees `raw/`+`wiki/`) doesn't touch them."""
-    (tmp_path / "documents" / "correspondents").mkdir(parents=True)
+    """A vault layout with `family/correspondents/` ready to receive
+    pages. The shared bucket holds institutional artifacts (banks,
+    schools, insurers — senders of mail) and stays outside the wiki
+    engine's regenerate scope."""
+    (tmp_path / "family" / "correspondents").mkdir(parents=True)
     return tmp_path
 
 
 def _write_page(vault, slug: str, body: str) -> Path:
-    path = vault / "documents" / "correspondents" / f"{slug}.md"
+    path = vault / "family" / "correspondents" / f"{slug}.md"
     path.write_text(body)
     return path
 
@@ -47,7 +48,7 @@ def _write_page(vault, slug: str, body: str) -> Path:
 class TestLoadCorrespondents:
 
     def test_returns_empty_when_directory_missing(self, tmp_path):
-        # No documents/correspondents/ at all — clean empty result.
+        # No family/correspondents/ at all — clean empty result.
         assert load_correspondents_from_vault(tmp_path) == []
 
     def test_loads_a_minimal_page(self, vault):
@@ -115,7 +116,7 @@ canonical: insurance
 
     def test_skips_pages_without_frontmatter(self, vault):
         # A README or stray markdown should not crash the loader.
-        (vault / "documents" / "correspondents" / "README.md").write_text(
+        (vault / "family" / "correspondents" / "README.md").write_text(
             "# Just a note, no frontmatter\n"
         )
         assert load_correspondents_from_vault(vault) == []

@@ -312,7 +312,7 @@ The archivist bot creates a `#documents` room in your chat. AI classifies and ta
 
 On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml).
 
-**Memory vault.** With the `code` stacklet up, every filed document and every captured URL or pasted note also lands as a Markdown file in your Forgejo repo `family/memory` under `raw/`. Paperless stays the canonical store; the memory vault is the browsable, git-versioned human view and the source for the LLM wiki (coming next). Install the `memory` stacklet to seed the ontology, household facts, and a hand-curated correspondents layer.
+**Memory vault.** With the `code` stacklet up, every filed document and every captured URL or pasted note also lands as a Markdown file in your Forgejo repo `family/memory`. Documents and correspondents live under the shared bucket (`family/` by default, configurable via `stack.toml [core] shared_bucket`). Personal captures route to the sender's own bucket — Homer's pastes end up under `homer/notes/` or `homer/bookmarks/`, Marge's under hers, etc. Paperless stays the canonical store; the memory vault is the browsable, git-versioned human view and the source for the LLM wiki (coming next). Install the `memory` stacklet to seed the ontology, household facts, and a hand-curated correspondents layer.
 
 | | |
 |---|---|

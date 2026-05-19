@@ -258,6 +258,12 @@ domain = ""
 data_dir = "~/famstack-data"
 timezone = "{timezone}"
 language = "{language}"
+# Slug for the bucket inside the memory vault that holds institutional
+# artifacts (documents, correspondents). Personal entities live at
+# <vault>/<localpart>/; the shared bucket lives at <vault>/<slug>/.
+# Defaults to "family"; rename for deskstack ("office"), surname-based
+# households, etc.
+shared_bucket = "family"
 
 [updates]
 schedule = "0 0 3 * * *"

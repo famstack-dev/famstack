@@ -146,6 +146,7 @@ Available template variables:
 | `{domain}` | `stack.toml` → `[core].domain` |
 | `{language}` | `stack.toml` → `[core].language` (falls back to `[ai].language`, then `en`) |
 | `{timezone}` | `stack.toml` → `[core].timezone` |
+| `{shared_bucket}` | `stack.toml` → `[core].shared_bucket` (defaults to `"family"`) — slug for the shared/institutional bucket inside the memory vault |
 | `{stacklet_id}` | The stacklet's own `id` field |
 | `{admin_username}` | Tech admin username (`stackadmin`) |
 | `{admin_email}` | Tech admin email (`stackadmin@home.local`) |
@@ -829,10 +830,16 @@ One file, committed to the repo. User edits it directly.
 
 ```toml
 [core]
-domain   = ""                    # empty = port mode
-data_dir = "~/famstack-data"
-timezone = "Europe/Berlin"
-language = "de"                  # document tags, UI language (de, en)
+domain        = ""                    # empty = port mode
+data_dir      = "~/famstack-data"
+timezone      = "Europe/Berlin"
+language      = "de"                  # document tags, UI language (de, en)
+shared_bucket = "family"              # slug for the shared/institutional
+                                      # bucket inside the memory vault.
+                                      # Personal entities (homer, marge, …)
+                                      # live at <vault>/<localpart>/. Default
+                                      # "family" fits famstack; deskstack or
+                                      # non-family deployments override.
 
 [updates]
 schedule = "0 0 3 * * *"        # Watchtower cron (3am nightly)

@@ -175,6 +175,12 @@ class Stack:
             "domain":                self._cfg("core", "domain"),
             "language":              self._cfg("core", "language", self._cfg("ai", "language", "en")),
             "timezone":              self._cfg("core", "timezone", "UTC"),
+            # Name of the shared/family-level bucket inside the memory
+            # vault. Personal entities (homer, marge, …) live at
+            # <vault>/<slug>/, the shared bucket at <vault>/<shared_bucket>/.
+            # Default "family" fits famstack; deskstack or non-family
+            # deployments override to "office", "household", a surname, etc.
+            "shared_bucket":         self._cfg("core", "shared_bucket", "family"),
             # AI service URLs — host-side for CLI, docker-side for containers
             "ai_openai_url":         ai_openai_url,
             "ai_openai_url_docker":  ai_openai_url.replace("://localhost", "://host.docker.internal"),

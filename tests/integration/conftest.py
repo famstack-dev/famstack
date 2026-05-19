@@ -287,11 +287,13 @@ async def homer(matrix):
 
 # ── Forgejo / code stacklet (shared, session-scoped) ─────────────────────
 
-# The archivist writes into the shared `family/memory` vault repo
-# under `raw/`. Org name is configurable via `mirror_org` in
-# `stacklets/docs/bot/bot.toml` (default "family"). The bot keeps
-# its own Forgejo user identity for commit authorship, but the repo
-# owner is the org so admins see it in their dashboards.
+# The archivist writes into the shared `family/memory` vault repo —
+# documents at `<shared_bucket>/documents/...`, captures at
+# `<sender>/<kind>s/...`. Org name is configurable via `mirror_org`
+# in `stacklets/docs/bot/bot.toml` (default "family"); shared-bucket
+# slug via `stack.toml [core] shared_bucket` (default "family"). The
+# bot keeps its own Forgejo user identity for commit authorship, but
+# the repo owner is the org so admins see it in their dashboards.
 FORGEJO_DOCS_OWNER = "family"
 FORGEJO_DOCS_REPO = "memory"
 

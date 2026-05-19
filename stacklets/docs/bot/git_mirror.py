@@ -1,18 +1,30 @@
 """Git mirror — publishes classified Paperless documents to Forgejo.
 
-One file per Paperless document at `raw/YYYY/MM/YYYY-MM-DD-<slug>.md`,
-inside the shared `family/memory` repo. Filename uses a title slug
-when AI classification produced one, falls back to `paperless-<id>`
-otherwise. The filename is stable after the first AI pass — a later
-reprocess updates content but doesn't chase title tweaks across the
-URL space.
+The vault layout is entity-rooted. Every entity — each family member
+(`homer/`, `marge/`, …) and the shared institutional bucket
+(`family/` by default, slug configurable via `stack.toml [core]
+shared_bucket`) — sits at the vault root with the same shape.
 
-Captures (URL bookmarks, pasted notes) land alongside documents under
-the same `raw/` prefix at `raw/YYYY/MM/<slug>-<hash>.md`. The two are
-discriminated by frontmatter (`kind`, `paperless_id`), not directory,
-so the olw container can ingest both with one recursive glob.
+Documents go to the shared bucket:
 
-The body is the best representation we have:
+    <shared_bucket>/documents/YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md
+    <shared_bucket>/documents/_unfiled/p<id>.md            (no date)
+
+Filename uses a title slug when AI classification produced one,
+falls back to the Paperless id otherwise. The filename is stable
+after the first AI pass — a later reprocess updates content but
+doesn't chase title tweaks across the URL space.
+
+Captures (URL bookmarks, pasted notes) route to the sender's entity:
+
+    <sender>/notes/YYYY/MM/<slug>-<hash>.md          (kind: note)
+    <sender>/bookmarks/YYYY/MM/<slug>-<hash>.md      (kind: bookmark)
+    <sender>/notes/_unfiled/<slug>-<hash>.md         (no date)
+
+The deriver compiles a per-entity wiki by globbing the entity's own
+tree and grepping the others for cross-references (`persons:`).
+
+The document body is the best representation we have:
   - AI available → LLM-cleaned markdown from `_reformat`
   - AI unavailable → raw Paperless OCR text
 
@@ -22,9 +34,10 @@ a commit trailer `Paperless-Id: N` that enables git-native lookups.
 Delete handling is deferred to a future `stack docs reconcile` job —
 v1 leaves deleted Paperless docs as stale markdown in git history.
 
-The repo itself (description, README, `documents/`, `ontology.toml`,
-`wiki/`) is owned by the memory stacklet's install pipeline. The
-archivist treats `family/memory` as a write target for `raw/` only.
+The repo itself (description, README, `<shared_bucket>/`,
+`ontology.toml`, `wiki/`) is owned by the memory stacklet's install
+pipeline. The archivist writes only to the document and capture
+paths above.
 """
 
 from __future__ import annotations
@@ -46,20 +59,16 @@ from stack.forgejo import ForgejoClient, ForgejoError
 
 
 # The shared family knowledge vault. The memory stacklet creates,
-# seeds, and READMEs the repo; the archivist just writes Markdown
-# under `raw/`. If the archivist boots before memory is installed,
-# the description here is used as the create-time fallback — memory's
-# install pipeline overwrites it later (and they say the same thing).
+# seeds, and READMEs the repo; the archivist writes Markdown under
+# entity-rooted paths (see module docstring). If the archivist boots
+# before memory is installed, the description here is used as the
+# create-time fallback — memory's install pipeline overwrites it
+# later (and they say the same thing).
 REPO_NAME = "memory"
 REPO_DESCRIPTION = (
     "The family's curated knowledge — ontology, facts, and wiki. "
     "Hand-edit any file here; the commit log is the learning history."
 )
-
-# Captures/documents land under this prefix inside the vault. olw's
-# watcher and ingest scan `raw/` recursively, so everything the
-# archivist writes is visible to the wiki engine.
-RAW_PREFIX = "raw"
 
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
@@ -93,6 +102,11 @@ class GitMirror:
     admin_usernames: list[str]
     data_dir: Path
     org_name: str = "family"
+    # Slug for the shared/institutional bucket inside the vault. Default
+    # "family" matches famstack's stock layout; deskstack or non-family
+    # deployments override via stack.toml [core] shared_bucket → env
+    # var SHARED_BUCKET → archivist → here.
+    shared_bucket: str = "family"
     paperless_version: str = ""
 
     _setup_done: bool = field(default=False, init=False)
@@ -300,7 +314,7 @@ class GitMirror:
         return slug[:60] or "document"
 
     def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_title: bool) -> str:
-        """Build raw/YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md.
+        """Build <shared_bucket>/documents/YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md.
 
         `has_title` is True when we have a slug-worthy title (from AI
         classification or the caller's fallback filename) — as opposed
@@ -308,17 +322,19 @@ class GitMirror:
         so the Paperless ID is recoverable from the filename alone,
         surviving cache loss without needing to scan frontmatter.
 
-        The leading `raw/` keeps the file inside the wiki engine's
-        ingest scope — olw's watcher and ingest both scan `raw/`
-        recursively.
+        Documents live in the shared bucket because they are institutional
+        artifacts — a marriage certificate or a family insurance bill
+        has no single personal owner. Per-person indexing happens via
+        the frontmatter `persons:` field, not the path.
         """
+        documents_root = f"{self.shared_bucket}/documents"
         if date and re.match(r"^\d{4}-\d{2}-\d{2}$", date):
             y, m, _ = date.split("-")
-            prefix = f"{RAW_PREFIX}/{y}/{m}/{date}"
+            prefix = f"{documents_root}/{y}/{m}/{date}"
         else:
-            prefix = f"{RAW_PREFIX}/_unfiled"
+            prefix = f"{documents_root}/_unfiled"
 
-        unfiled = f"{RAW_PREFIX}/_unfiled"
+        unfiled = f"{documents_root}/_unfiled"
         if has_title and title:
             slug = self._slug(title)
             return f"{prefix}-{slug}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/{slug}-p{paperless_id}.md"
@@ -727,14 +743,17 @@ class GitMirror:
     #   - Text paste: the user's typed body, classifier produces a digest,
     #     result is filed as kind=note.
     #
-    # Both land at:
+    # Both land under the sender's entity bucket:
     #
-    #   raw/YYYY/MM/<slug>-<hash>.md
+    #   <entity>/notes/YYYY/MM/<slug>-<hash>.md       (kind=note)
+    #   <entity>/bookmarks/YYYY/MM/<slug>-<hash>.md   (kind=bookmark)
     #
-    # Same `raw/` prefix as Paperless documents — discriminated by
-    # frontmatter (`kind`, presence of `paperless_id`), not directory.
-    # Lets the olw container ingest both with a single recursive `raw/`
-    # scan without learning two layouts.
+    # `<entity>` is the Matrix localpart of the sender (lowercased):
+    # @homer:test.local → `homer/`. Routing by sender matches intent —
+    # Homer chose to save this — and makes per-entity wiki compilation
+    # a single recursive glob. Cross-mentions (a Homer-authored note
+    # about Bart) stay under Homer; the `persons:` frontmatter indexes
+    # them for Bart's wiki compile.
     #
     # The hash is a short prefix of sha256(hash_key). Two purposes:
     #   - Re-paste the same source → same path → idempotent update,
@@ -751,11 +770,16 @@ class GitMirror:
 
     def _capture_filepath(
         self, *,
+        entity: str,
+        kind: str,
         captured_at: str,
         title: str | None,
         hash_key: str,
     ) -> str:
-        """Build the raw/YYYY/MM/<slug>-<hash>.md path.
+        """Build <entity>/<kind>s/YYYY/MM/<slug>-<hash>.md.
+
+        `entity` is the sender's slug (Matrix localpart, lowercased).
+        `kind` is "note" or "bookmark"; the folder is the plural.
 
         `hash_key` is whatever stable string the caller wants to identify
         this capture by: typically the source URL for fetched/pasted
@@ -763,20 +787,21 @@ class GitMirror:
         embedded source URL. The same key yields the same path on
         re-publish — idempotent update vs. duplicate.
 
-        Invalid `captured_at` falls back to `raw/_unfiled/<slug>-<hash>.md` —
-        same convention the Paperless filepath uses for documents with
-        no usable date. Still inside `raw/` so olw sees it.
+        Invalid `captured_at` falls back to
+        `<entity>/<kind>s/_unfiled/<slug>-<hash>.md` — same convention
+        the documents path uses for entries without a usable date.
         """
         digest = hashlib.sha256(
             hash_key.encode("utf-8") if hash_key else b"",
         ).hexdigest()[: self._CAPTURE_HASH_LEN]
 
         slug = self._slug(title) if title else "capture"
+        kind_dir = f"{kind}s"
 
         if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
             y, m, _ = captured_at.split("-")
-            return f"{RAW_PREFIX}/{y}/{m}/{slug}-{digest}.md"
-        return f"{RAW_PREFIX}/_unfiled/{slug}-{digest}.md"
+            return f"{entity}/{kind_dir}/{y}/{m}/{slug}-{digest}.md"
+        return f"{entity}/{kind_dir}/_unfiled/{slug}-{digest}.md"
 
     def _capture_frontmatter(
         self, *,
@@ -827,6 +852,7 @@ class GitMirror:
 
     async def publish_capture(
         self, *,
+        entity: str,
         kind: str,
         source_uri: str | None,
         title_hint: str | None,
@@ -837,6 +863,9 @@ class GitMirror:
         tags: list[str] | None = None,
     ) -> bool:
         """Create or update a capture entry in the mirror.
+
+        `entity` is the sender's slug — the Matrix localpart, lowercased.
+        Routes the capture under `<entity>/<kind>s/...`.
 
         `kind` is "bookmark" (URL pointer + LLM summary; body usually
         empty) or "note" (pasted body the user typed; body preserved).
@@ -868,6 +897,8 @@ class GitMirror:
 
         hash_key = source_uri or body_text
         target_path = self._capture_filepath(
+            entity=entity,
+            kind=kind,
             captured_at=captured_at,
             title=title if resolved_title else None,
             hash_key=hash_key,

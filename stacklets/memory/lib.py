@@ -173,22 +173,24 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
     return Ontology.load(ontology_file)
 
 
-# ─── Correspondents (documents-domain entity layer) ──────────────────────
+# ─── Correspondents (shared-bucket entity layer) ─────────────────────────
 #
 # Correspondents are organizations the family corresponds with (banks,
 # insurers, schools, councils, online services). They belong to the
-# documents domain — they're senders of mail, classifier hints,
-# Paperless canonicalisers — not vault-wide concepts. We store them as
-# individual markdown pages under `documents/correspondents/`, scoped
-# under the `documents/` namespace at the vault root. Living outside
-# `raw/` and `wiki/` keeps them out of the olw container's reach; olw
-# only reads `raw/` and writes `wiki/`, so hand-curated correspondents
-# stay sacrosanct without an exclude feature.
+# institutional layer — senders of mail, classifier hints, Paperless
+# canonicalisers — and so live under the shared bucket alongside the
+# documents they index.
 #
-# The `documents/` namespace leaves room for future domain peers
-# (chat/, calendar/, ...) without conceptual collisions.
+# Layout: `<vault>/<shared_bucket>/correspondents/<name>.md`. The
+# shared bucket slug is configured in `stack.toml [core] shared_bucket`
+# and defaults to "family". Personal correspondents (a future feature
+# for entity-specific senders, e.g. Bart's school) would live under
+# the matching entity bucket — same shape, different parent.
 #
-# Example shape (documents/correspondents/adac.md):
+# Living outside `wiki/` keeps hand-curated correspondents safe from
+# the wiki-engine's regenerate pass.
+#
+# Example shape (family/correspondents/adac.md):
 #
 #     ---
 #     kind: correspondent
@@ -208,7 +210,12 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 # classifier prompt embeds the (canonical, aliases) pairs so the LLM
 # can canonicalize new variants before they hit Paperless.
 
-CORRESPONDENTS_DIR = "documents/correspondents"
+DEFAULT_SHARED_BUCKET = "family"
+
+
+def correspondents_dir(shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
+    """Repo-relative path to the correspondents folder for a bucket."""
+    return f"{shared_bucket}/correspondents"
 
 
 @dataclass
@@ -236,14 +243,20 @@ class Correspondent:
         return out
 
 
-def load_correspondents_from_vault(vault_path: Path) -> List[Correspondent]:
-    """Walk `<vault>/documents/correspondents/*.md` and return the parsed entries.
+def load_correspondents_from_vault(
+    vault_path: Path,
+    shared_bucket: str = DEFAULT_SHARED_BUCKET,
+) -> List[Correspondent]:
+    """Walk `<vault>/<shared_bucket>/correspondents/*.md` and return the parsed entries.
+
+    `shared_bucket` defaults to "family" — the conventional name. Pass
+    the configured slug when the deployment overrides it via stack.toml.
 
     Pages without a `kind: correspondent` frontmatter or without a
     canonical name (frontmatter `canonical:`, falling back to the file
     stem) are skipped — keeps the loader robust against partial edits.
     """
-    folder = Path(vault_path) / CORRESPONDENTS_DIR
+    folder = Path(vault_path) / correspondents_dir(shared_bucket)
     if not folder.exists():
         return []
 
@@ -358,20 +371,25 @@ def install_seeds(
     commit_message: str = "seed: initial memory",
     author_name: Optional[str] = None,
     author_email: Optional[str] = None,
+    shared_bucket: str = DEFAULT_SHARED_BUCKET,
 ) -> dict:
     """Push every file under `seed_dir` to the memory repo if missing.
 
     Walks the seed directory recursively. For each file, the relative
-    path inside `seed_dir` becomes the path inside the repo. Files
-    already present in the repo are left alone (no overwrite — the
-    instance owns the live copy).
+    path inside `seed_dir` becomes the path inside the repo. A leading
+    `_shared/` segment is rewritten to the configured shared bucket
+    slug — so `seeds/_shared/correspondents/README.md` lands at
+    `family/correspondents/README.md` (or whatever the bucket is named).
+    Files already present in the repo are left alone — the instance
+    owns the live copy.
     """
     src = (seed_dir or SEEDS_DIR).resolve()
     created: list[str] = []
     skipped: list[str] = []
 
     for file_path in sorted(p for p in src.rglob("*") if p.is_file()):
-        repo_path = file_path.relative_to(src).as_posix()
+        rel = file_path.relative_to(src).as_posix()
+        repo_path = _resolve_seed_repo_path(rel, shared_bucket)
         existing = client.get_file(REPO_OWNER, REPO_NAME, repo_path)
         if existing is not None:
             skipped.append(repo_path)
@@ -388,6 +406,19 @@ def install_seeds(
     return {"created": created, "skipped": skipped}
 
 
+# Seed paths beginning with `_shared/` get retargeted to the
+# configured bucket slug. Everything else lands at the vault root
+# verbatim — keeps `ontology.toml`, `facts.toml`, `README.md` at the
+# top regardless of bucket configuration.
+_SHARED_SEED_PREFIX = "_shared/"
+
+
+def _resolve_seed_repo_path(rel_path: str, shared_bucket: str) -> str:
+    if rel_path.startswith(_SHARED_SEED_PREFIX):
+        return f"{shared_bucket}/{rel_path[len(_SHARED_SEED_PREFIX):]}"
+    return rel_path
+
+
 def install_memory_to_forgejo(
     *,
     code_url: str,
@@ -397,6 +428,7 @@ def install_memory_to_forgejo(
     bot_token: Optional[str] = None,
     seed_dir: Optional[Path] = None,
     vault_path: Optional[Path] = None,
+    shared_bucket: str = DEFAULT_SHARED_BUCKET,
 ) -> dict:
     """Run the full install pipeline against Forgejo.
 
@@ -433,6 +465,7 @@ def install_memory_to_forgejo(
         token_client, seed_dir,
         commit_message=SEED_COMMIT_MESSAGE,
         author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+        shared_bucket=shared_bucket,
     )
 
     cloned_vault = False

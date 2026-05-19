@@ -8,6 +8,20 @@
 >   - [knowledge-architecture.md](knowledge-architecture.md): original vision
 >   - [knowledge-structure.md](knowledge-structure.md): five-layer model
 
+> **Layout revision (post-design).** Phase 2 shipped with a different
+> vault layout than this doc planned. The single `raw/` tree was
+> replaced with an entity-rooted layout: documents and correspondents
+> live under the shared bucket (`<shared_bucket>/documents/...`,
+> `<shared_bucket>/correspondents/...` — defaulting to `family/`);
+> personal captures route to the sender's own bucket
+> (`<sender>/notes/...`, `<sender>/bookmarks/...`). The shared-bucket
+> slug is configurable via `stack.toml [core] shared_bucket`. The
+> architectural intent below (single repo, archivist + wiki engine
+> coordination, dedup via paperless_id) is unchanged — only the
+> directory shape moved. When this doc says "`raw/`", read it as "the
+> writer area" and consult the current layout in
+> `stacklets/docs/bot/git_mirror.py` for paths.
+
 ## Why this phase exists
 
 Phase 1 shipped the foundations: a `memory` stacklet backed by Forgejo, an
