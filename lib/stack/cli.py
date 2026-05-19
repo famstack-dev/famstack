@@ -204,7 +204,14 @@ class CLI:
         self.stack = stack
 
     def up(self, stacklet_id: str) -> dict:
-        """Full up: Stack.up() + Docker compose + health check."""
+        """Full up: Stack.up() + Docker compose + health check.
+
+        Special case: stacklet_id == "all" brings up every installed
+        stacklet in forward dependency order (deps before dependents).
+        """
+        if stacklet_id == "all":
+            return self._up_all()
+
         result = self.stack.up(stacklet_id)
         if "error" in result:
             return result
@@ -337,6 +344,34 @@ class CLI:
 
         return {"ok": not errors, "stopped": stopped, "errors": errors}
 
+    def _up_all(self) -> dict:
+        """Bring up every installed stacklet in forward dependency order.
+
+        Symmetric peer to `_down_all`. Operates on *installed* stacklets
+        (those past on_install_success); a stacklet that has never been
+        set up isn't auto-installed here — `stack up all` is a
+        refresh-everything verb, not a first-time installer.
+
+        Deps come up before their dependents so the framework's health
+        probes have something to talk to.
+        """
+        installed = {
+            s["id"] for s in self.stack.discover()
+            if self.stack.is_installed(s["id"])
+        }
+        order = _dependency_order(self.stack.discover(), installed)
+
+        started: list[str] = []
+        errors: list[dict] = []
+        for sid in order:
+            result = self.up(sid)
+            if "error" in result:
+                errors.append({"stacklet": sid, "result": result})
+            else:
+                started.append(sid)
+
+        return {"ok": not errors, "started": started, "errors": errors}
+
     def destroy(self, stacklet_id: str) -> dict:
         """Destroy: Docker compose down + Stack.destroy()."""
         stacklet = self.stack._find_stacklet(stacklet_id)
@@ -361,6 +396,45 @@ class CLI:
 
 
 # ── Topological helpers ───────────────────────────────────────────────────
+
+def _dependency_order(stacklets: list[dict], include: set[str]) -> list[str]:
+    """Return the subset of stacklet IDs in `include`, ordered so that
+    dependencies come before their dependents.
+
+    Mirror of `_reverse_dependency_order` for `up all` — Kahn's algorithm
+    on the forward graph. Stacklets with `requires` on entries NOT in
+    `include` have those edges dropped; we only order among the ones
+    we're actually bringing up.
+    """
+    by_id = {s["id"]: s for s in stacklets if s["id"] in include}
+    if not by_id:
+        return []
+
+    remaining_deps = {
+        sid: {d for d in s.get("manifest", {}).get("requires", []) if d in by_id}
+        for sid, s in by_id.items()
+    }
+
+    ready = sorted([sid for sid, d in remaining_deps.items() if not d])
+    order: list[str] = []
+    while ready:
+        sid = ready.pop(0)
+        order.append(sid)
+        for other, deps in remaining_deps.items():
+            if sid in deps:
+                deps.discard(sid)
+                if not deps and other not in order and other not in ready:
+                    ready.append(other)
+        ready.sort()
+
+    # Cycle fallback: any leftovers are appended so we still try to bring
+    # them up. A cycle is a manifest bug; we surface it by not silently
+    # dropping work.
+    for sid in by_id:
+        if sid not in order:
+            order.append(sid)
+    return order
+
 
 def _reverse_dependency_order(stacklets: list[dict], include: set[str]) -> list[str]:
     """Return the subset of stacklet IDs in `include`, ordered so that
@@ -620,6 +694,24 @@ def print_env(result: dict) -> None:
 def handle_up(stck, args):
     from .prompt import TEAL
     cli = CLI(stck)
+
+    if args.stacklet == "all":
+        print(f"\n  Bringing up {TEAL}all installed stacklets{RESET}...\n",
+              file=sys.stderr)
+        result = cli.up("all")
+        started = result.get("started", [])
+        if not result.get("ok"):
+            print_error({"error": "Some stacklets failed to start",
+                         "problems": [e["stacklet"] for e in result.get("errors", [])]})
+            sys.exit(1)
+        if not started:
+            print(f"  {DIM}Nothing is installed yet — run `stack install` first.{RESET}")
+            return
+        for sid in started:
+            print(f"  {GREEN}✓{RESET} {sid}: started")
+        _refresh_core(stck, "all")
+        return
+
     stacklet = stck._find_stacklet(args.stacklet)
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
     print(f"\n  Bringing up {TEAL}{name}{RESET}...\n", file=sys.stderr)
@@ -831,6 +923,29 @@ def handle_logs(stck, args):
 
 def handle_restart(stck, args):
     cli = CLI(stck)
+
+    if args.stacklet == "all":
+        # Whole-stack restart: stop everything running, then bring up
+        # every installed stacklet. The two phases use their own
+        # dependency orderings (reverse for down, forward for up) so
+        # services dance off and back on without talking to dead deps.
+        from .prompt import TEAL
+        print(f"\n  Restarting {TEAL}the whole stack{RESET}...\n",
+              file=sys.stderr)
+        down_result = cli.down("all")
+        if not down_result.get("ok"):
+            print_error({"error": "Some stacklets failed to stop",
+                         "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+            sys.exit(1)
+        up_result = cli.up("all")
+        if not up_result.get("ok"):
+            print_error({"error": "Some stacklets failed to start",
+                         "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
+            sys.exit(1)
+        for sid in up_result.get("started", []):
+            print(f"  {GREEN}✓{RESET} {sid}: restarted")
+        return
+
     cli.down(args.stacklet)
     result = cli.up(args.stacklet)
     if "error" in result:
@@ -1073,9 +1188,9 @@ DISPATCH = {
 
 _HELP_COMMANDS = [
     ("Lifecycle", [
-        ("up <stacklet>",      "Start a stacklet and its containers"),
-        ("down <stacklet>",    "Stop a running stacklet"),
-        ("restart <stacklet>", "Restart stacklet (includes env update)"),
+        ("up <stacklet>|all",      "Start a stacklet (or 'all' to bring up every installed stacklet)"),
+        ("down <stacklet>|all",    "Stop a running stacklet (or 'all' to stop everything running)"),
+        ("restart <stacklet>|all", "Restart stacklet (includes env update; 'all' restarts the whole stack)"),
         ("setup <stacklet>",   "Re-run first-time setup (backend detection, accounts, etc.)"),
         ("destroy <stacklet>", "Remove containers, data, and secrets (Destructive operation)"),
     ]),
@@ -1099,7 +1214,7 @@ def print_help(name="stack", plugin_cmds=None):
     print(f"\n  {ORANGE}{BOLD}{name}{RESET} {DIM}— manage your stacklets{RESET}\n")
     print(f"  {BOLD}Usage:{RESET}  {DIM}stack <command> [options]{RESET}\n")
 
-    col = 22
+    col = 25
     for group, cmds in _HELP_COMMANDS:
         print(f"  {BOLD}{group}{RESET}")
         for cmd, desc in cmds:
