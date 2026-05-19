@@ -144,6 +144,7 @@ Available template variables:
 |---|---|
 | `{data_dir}` | `stack.toml` → `[core].data_dir` |
 | `{domain}` | `stack.toml` → `[core].domain` |
+| `{ip}` | `[core].host` if set, else auto-detected LAN IP (falls back to `localhost`) — used in port-mode URLs |
 | `{language}` | `stack.toml` → `[core].language` (falls back to `[ai].language`, then `en`) |
 | `{timezone}` | `stack.toml` → `[core].timezone` |
 | `{shared_bucket}` | `stack.toml` → `[core].shared_bucket` (defaults to `"family"`) — slug for the shared/institutional bucket inside the memory vault |
@@ -831,6 +832,12 @@ One file, committed to the repo. User edits it directly.
 ```toml
 [core]
 domain        = ""                    # empty = port mode
+host          = ""                    # port-mode host override.
+                                      # Empty = auto-detect LAN IP.
+                                      # Set to "localhost" for
+                                      # single-machine testing, or a
+                                      # custom hostname for stable
+                                      # access across network changes.
 data_dir      = "~/famstack-data"
 timezone      = "Europe/Berlin"
 language      = "de"                  # document tags, UI language (de, en)

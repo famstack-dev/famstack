@@ -227,7 +227,25 @@ class Stack:
         return template_vars
 
     def _lan_ip(self) -> str:
-        """Get the LAN IP of this machine."""
+        """Resolve the host used for port-mode URLs and the `{ip}` template.
+
+        Lookup order:
+          1. `[core].host` from stack.toml — explicit override. Useful
+             when the auto-detected LAN IP isn't reachable (mobile network,
+             VPN, "localhost-only" test setup) or when a custom hostname
+             like `my-laptop.local` is preferred.
+          2. Socket-based LAN IP auto-detection — opens a UDP socket to
+             a public IP to discover which local interface the kernel
+             would route through. No packets are sent.
+          3. `"localhost"` fallback when the socket call fails (offline).
+
+        Domain mode (`[core].domain` set) doesn't reach here — see
+        `_public_url`.
+        """
+        configured = self._cfg("core", "host")
+        if configured:
+            return configured
+
         import socket
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
