@@ -127,12 +127,15 @@ class StubClassifier:
 
     async def classify(self, *, ocr_text, tags, doc_types, correspondents,
                        images=None, ontology_section="",
-                       correspondents_section=""):
+                       correspondents_section="", date_filed=None,
+                       user_hint=None):
         self.classify_calls.append({
             "ocr_text": ocr_text, "tags": tags,
             "doc_types": doc_types, "correspondents": correspondents,
             "images": images, "ontology_section": ontology_section,
             "correspondents_section": correspondents_section,
+            "date_filed": date_filed,
+            "user_hint": user_hint,
         })
         if self.classify_raises:
             raise self.classify_raises
@@ -487,6 +490,139 @@ class TestEnrichTitleAndDate:
         _, updates = seeded_paperless.updates[0]
         assert "created" not in updates
 
+    @pytest.mark.asyncio
+    async def test_reprocess_does_not_overwrite_created(self, seeded_paperless):
+        # On reprocess the LLM's date is ignored — the doc's existing
+        # `created` is either the previous pipeline pass's verdict or a
+        # human correction, both better than a fresh hallucinated guess.
+        classifier = StubClassifier(payload={
+            "title": "x", "date": "2015-02-14",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            is_reprocess=True,
+        )
+        # Either no update at all, or one with no `created` key.
+        for _, updates in seeded_paperless.updates:
+            assert "created" not in updates
+
+    @pytest.mark.asyncio
+    async def test_initial_classify_still_writes_created(self, seeded_paperless):
+        # Initial classification path is unchanged — the LLM date
+        # replaces Paperless's auto-set upload timestamp.
+        classifier = StubClassifier(payload={
+            "title": "x", "date": "2026-02-14",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+        )
+        assert any(
+            updates.get("created") == "2026-02-14"
+            for _, updates in seeded_paperless.updates
+        )
+
+    @pytest.mark.asyncio
+    async def test_date_filed_flows_to_classifier(self, seeded_paperless):
+        # The caller-supplied anchor (Matrix message timestamp for live
+        # uploads, doc.added for reprocess) must reach the classifier so
+        # the LLM resolves partial dates against the right reference.
+        classifier = StubClassifier(payload={"title": "x"})
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            date_filed="2026-02-15",
+        )
+        (call,) = classifier.classify_calls
+        assert call["date_filed"] == "2026-02-15"
+
+    @pytest.mark.asyncio
+    async def test_user_hint_flows_to_classifier(self, seeded_paperless):
+        # The user's reply-correction must reach the classifier so the
+        # reply-to-reprocess flow actually changes the LLM's output.
+        classifier = StubClassifier(payload={"title": "x"})
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            user_hint="this is Marge's, not Homer's",
+        )
+        (call,) = classifier.classify_calls
+        assert call["user_hint"] == "this is Marge's, not Homer's"
+
+
+# ── Submitter fallback ────────────────────────────────────────────────────
+
+class TestEnrichSubmitterFallback:
+    """When the classifier returns no persons, the document is attributed
+    to whoever uploaded it. Honours the prompt's `never invent names`
+    rule — the uploader is real, the LLM's guess is not.
+    """
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_submitter_when_persons_empty(self, seeded_paperless):
+        classifier = StubClassifier(payload={
+            "title": "Bergchalet Refugium Martius",
+            "persons": [],  # doc has no names, classifier obeys the rule
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            submitter_mxid="@homer:test.local",
+        )
+        # Paperless updates carry the Homer person tag from the fallback.
+        _, updates = seeded_paperless.updates[0]
+        assert seeded_paperless.tags["Person: Homer"] in updates["tags"]
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_classifier_named_persons(self, seeded_paperless):
+        # Classifier produced explicit names — the submitter fallback
+        # does NOT override the LLM's correct identification.
+        classifier = StubClassifier(payload={
+            "title": "x",
+            "persons": ["Marge"],
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            submitter_mxid="@homer:test.local",  # different from Marge
+        )
+        _, updates = seeded_paperless.updates[0]
+        assert seeded_paperless.tags["Person: Marge"] in updates["tags"]
+        assert seeded_paperless.tags["Person: Homer"] not in updates["tags"]
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_submitter_unknown(self, seeded_paperless):
+        # No submitter_mxid (CLI reprocess, legacy archivist) — empty
+        # persons stays empty rather than guessing.
+        classifier = StubClassifier(payload={
+            "title": "x",
+            "persons": [],
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+        )
+        _, updates = seeded_paperless.updates[0]
+        # No Person tags in the update set.
+        person_tag_ids = {
+            seeded_paperless.tags[t] for t in seeded_paperless.tags
+            if t.startswith("Person: ")
+        }
+        assert not (person_tag_ids & set(updates["tags"]))
+
+    @pytest.mark.asyncio
+    async def test_submitter_unrecognised_passes_through(self, seeded_paperless):
+        # An mxid for a non-family-member (e.g., a guest user with no
+        # Person tag) — the fallback returns None and persons stays empty.
+        classifier = StubClassifier(payload={
+            "title": "x",
+            "persons": [],
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            submitter_mxid="@milhouse:test.local",
+        )
+        _, updates = seeded_paperless.updates[0]
+        person_tag_ids = {
+            seeded_paperless.tags[t] for t in seeded_paperless.tags
+            if t.startswith("Person: ")
+        }
+        assert not (person_tag_ids & set(updates["tags"]))
+
 
 # ── Classify input cap ────────────────────────────────────────────────────
 
@@ -539,6 +675,123 @@ class TestEnrichClassifyMaxChars:
 
         (call,) = classifier.classify_calls
         assert len(call["ocr_text"]) == 15000
+
+
+# ── Classify prompt construction ──────────────────────────────────────────
+
+class TestClassifyPromptDateAnchor:
+    """The classify prompt carries a `Date filed:` anchor and a
+    date-resolution rule so the LLM resolves partial dates from
+    documents like a chalet booking that only prints "14 FEBRUAR"
+    without a year. Callers feed the relevant date — Matrix message
+    timestamp for live uploads, Paperless `added` for reprocess —
+    so reprocessing weeks later doesn't shift the anchor."""
+
+    def test_date_filed_appears_when_supplied(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+            date_filed="2026-02-15",
+        )
+        assert "Date filed: 2026-02-15" in prompt
+
+    def test_date_filed_defaults_to_today(self):
+        # No `date_filed=` → the prompt falls back to the system
+        # date so the LLM still has an anchor. Callers should pass a
+        # specific date when one is available.
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+        )
+        assert "Date filed:" in prompt
+
+    def test_date_resolution_rule_present(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+            date_filed="2026-05-20",
+        )
+        # Rule must tell the LLM to use the reference date for missing
+        # years and to consider forward-looking documents (bookings,
+        # reservations) vs. backward-looking ones (invoices, receipts).
+        assert "DATE:" in prompt
+        assert "forward-looking" in prompt
+        assert "backward-looking" in prompt
+
+
+class TestClassifyPromptUserHint:
+    """A user's reply-correction rides on the prompt as a `User
+    clarification` block, marked as overriding the LLM's own reading
+    so the second-pass classification respects the human input."""
+
+    def test_hint_appears_when_supplied(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+            user_hint="actually this is for Marge, not Homer",
+        )
+        assert "User clarification" in prompt
+        assert "actually this is for Marge, not Homer" in prompt
+        assert "OVERRIDES" in prompt
+
+    def test_no_block_when_hint_is_missing(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+        )
+        # Default classification path produces the same prompt as before;
+        # the clarification section only appears on a correction.
+        assert "User clarification" not in prompt
+
+    def test_blank_hint_is_treated_as_missing(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+            user_hint="   \n  ",
+        )
+        assert "User clarification" not in prompt
+
+
+class TestClassifyPromptVisionRule:
+    """When the bot attaches an image, the OCR text may contain template
+    footers or hidden text layers that conflict with what the model sees.
+    The prompt directs the model to prefer the image for conflicts."""
+
+    def test_vision_over_ocr_rule_present(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+        )
+        assert "VISION VS OCR" in prompt
+        assert "prefer the image" in prompt
+
+
+class TestClassifyPromptPersonsRule:
+    """The persons rule forbids inventing names. When the document
+    specifies a group only by count or role (e.g., '2 Erwachsene,
+    2 Kinder') the LLM must return []; the system falls back to the
+    submitter rather than letting the model guess."""
+
+    def test_no_invention_rule_present(self):
+        from pipeline import _build_classify_prompt
+        prompt = _build_classify_prompt(
+            ocr_text="x", person_names=[], category_tags=[],
+            doc_types=[], correspondents=[],
+        )
+        # Must explicitly forbid guessing — references group counts as
+        # the canonical "do not invent" case.
+        assert "NEVER guess" in prompt
+        assert "2 Erwachsene, 2 Kinder" in prompt
+        # Mentions the submitter fallback so the model knows empty
+        # is the right answer when names aren't in the text.
+        assert "fallback" in prompt.lower()
 
 
 # ── Reformat ──────────────────────────────────────────────────────────────
@@ -603,29 +856,43 @@ class TestSummaryFormatter:
             persons=["Homer"],
             correspondent="ADAC",
         )
-        assert "## Summary\nKfz-Versicherung Jahresbeitrag." in text
-        assert "## Facts\n- Total: EUR 340\n- Policy: #12345" in text
-        assert "## Parties\nADAC → Homer" in text
+        # No section headings — prose, bulleted facts, parties line all
+        # separated by blank lines. The structure is obvious from shape.
+        assert "Kfz-Versicherung Jahresbeitrag." in text
+        assert "- Total: EUR 340\n- Policy: #12345" in text
+        assert "ADAC → Homer" in text
+        # Headings the old format used must NOT appear — they forced an
+        # English label onto non-English content.
+        assert "## Summary" not in text
+        assert "## Facts" not in text
+        assert "## Parties" not in text
+        # Action items never made it into the Paperless note.
         assert "Action" not in text
         assert "pay" not in text
 
     def test_summary_only(self):
         text = self._fmt({"summary": "Kurze Notiz."})
-        assert text == "## Summary\nKurze Notiz."
+        # Prose first, marker last. Nothing else.
+        assert text == "Kurze Notiz.\n\n<!-- archivist-bot -->"
 
     def test_facts_skip_empty_strings(self):
         text = self._fmt({"summary": "x", "facts": ["Total: EUR 5", "", "  "]})
-        assert text.count("- ") == 1
+        # Only the real fact gets a bullet — empty strings drop out.
+        # Counting bullet lines in the body before the marker (the
+        # marker itself contains a dash-space and would otherwise be
+        # counted).
+        body = text.rsplit("\n\n<!--", 1)[0]
+        assert body.count("\n- ") == 1
         assert "Total: EUR 5" in text
 
     def test_parties_correspondent_only(self):
         text = self._fmt({"summary": "x"}, correspondent="ADAC")
-        assert "## Parties\nADAC" in text
+        assert "ADAC" in text
         assert "→" not in text
 
     def test_parties_persons_only(self):
         text = self._fmt({"summary": "x"}, persons=["Homer", "Marge"])
-        assert "## Parties\nHomer, Marge" in text
+        assert "Homer, Marge" in text
         assert "→" not in text
 
     def test_returns_none_when_nothing_to_say(self):
@@ -636,7 +903,28 @@ class TestSummaryFormatter:
         """Even with no summary prose, a sender → recipient line is useful
         context on a bare doc."""
         text = self._fmt({}, persons=["Homer"], correspondent="ADAC")
-        assert text == "## Parties\nADAC → Homer"
+        assert text == "ADAC → Homer\n\n<!-- archivist-bot -->"
+
+    def test_sections_separated_by_blank_lines(self):
+        # Without headings, blank lines do the work of section
+        # boundaries. Two newlines between every block.
+        text = self._fmt(
+            {"summary": "Prose.", "facts": ["A", "B"]},
+            persons=["Homer"], correspondent="ADAC",
+        )
+        # Prose → blank → facts → blank → parties → blank → marker.
+        assert text == (
+            "Prose.\n\n"
+            "- A\n- B\n\n"
+            "ADAC → Homer\n\n"
+            "<!-- archivist-bot -->"
+        )
+
+    def test_marker_trails_the_note(self):
+        # The sweep on next reprocess looks for the marker anywhere
+        # in the note (it lives on the last line in current output).
+        text = self._fmt({"summary": "x"})
+        assert text.endswith("<!-- archivist-bot -->")
 
 
 # ── Summary write path ────────────────────────────────────────────────────
@@ -659,7 +947,9 @@ class TestSummaryWrite:
             paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
         )
         assert result.summary is not None
-        assert "## Summary\nAnnual premium renewal." in result.summary
+        assert "Annual premium renewal." in result.summary
+        assert "- Total: EUR 340" in result.summary
+        assert "ADAC → Homer" in result.summary
         notes = seeded_paperless.notes[42]
         assert len(notes) == 1
         assert notes[0]["note"] == result.summary
@@ -676,9 +966,10 @@ class TestSummaryWrite:
 
     @pytest.mark.asyncio
     async def test_reclassify_replaces_bot_summary(self, seeded_paperless):
-        """A prior bot-owned summary is deleted; the new one lands fresh."""
-        # Seed a prior bot note (same user id as the stub's "whoami" = 7)
-        old_id = seeded_paperless.seed_note(42, "## Summary\nOld take.", user=7)
+        """A prior classifier-shaped note is deleted; the new one lands fresh."""
+        old_id = seeded_paperless.seed_note(
+            42, "## Summary\nOld take.", user=7,
+        )
 
         classifier = StubClassifier(payload={
             "title": "x", "summary": "New take.",
@@ -693,10 +984,34 @@ class TestSummaryWrite:
         assert "New take." in notes[0]["note"]
 
     @pytest.mark.asyncio
+    async def test_reclassify_sweeps_multiple_prior_bot_notes(self, seeded_paperless):
+        """Every classifier-shaped note is removed — not just one — so
+        repeated reprocessing can't accumulate stale summaries."""
+        first = seeded_paperless.seed_note(42, "## Summary\nFirst pass.", user=7)
+        second = seeded_paperless.seed_note(42, "## Facts\n- old", user=7)
+
+        classifier = StubClassifier(payload={
+            "title": "x", "summary": "Third pass.",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+
+        ids = {n["id"] for n in seeded_paperless.notes[42]}
+        assert first not in ids
+        assert second not in ids
+        # New summary lands.
+        assert any("Third pass." in n["note"] for n in seeded_paperless.notes[42])
+
+    @pytest.mark.asyncio
     async def test_reclassify_leaves_human_notes(self, seeded_paperless):
-        """A note written by a different user (human) must survive reclassify."""
+        """A free-text user note (no `##` heading) survives reprocessing
+        regardless of who Paperless says wrote it. The content signature
+        is the source of truth, not ownership."""
         human_id = seeded_paperless.seed_note(42, "My personal note.", user=99)
-        bot_old_id = seeded_paperless.seed_note(42, "Old bot summary.", user=7)
+        bot_old_id = seeded_paperless.seed_note(
+            42, "## Summary\nOld bot summary.", user=7,
+        )
 
         classifier = StubClassifier(payload={
             "title": "x", "summary": "Fresh summary.",
@@ -710,11 +1025,13 @@ class TestSummaryWrite:
         assert bot_old_id not in ids    # bot's prior summary was swept
 
     @pytest.mark.asyncio
-    async def test_posts_without_sweep_when_user_id_unknown(self, seeded_paperless):
-        """If /users/me/ fails, we can't tell bot notes from human ones —
-        post the new summary without touching existing notes."""
+    async def test_sweep_is_independent_of_user_field(self, seeded_paperless):
+        """Even when Paperless returns no usable user_id (the ownership
+        check is offline), classifier-shaped notes are still swept.
+        That's the fix for the bug where repeated reprocessing piled
+        up stale summaries."""
         seeded_paperless.user_id = None
-        seeded_paperless.seed_note(42, "Existing note.", user=99)
+        seeded_paperless.seed_note(42, "## Summary\nOld summary.", user=99)
 
         classifier = StubClassifier(payload={
             "title": "x", "summary": "New summary.",
@@ -724,7 +1041,41 @@ class TestSummaryWrite:
         )
 
         notes = seeded_paperless.notes[42]
-        assert len(notes) == 2  # both the pre-existing and the new one
+        # Old swept, new added — exactly one note remains.
+        assert len(notes) == 1
+        assert "New summary." in notes[0]["note"]
+
+    @pytest.mark.asyncio
+    async def test_marker_tagged_notes_are_swept(self, seeded_paperless):
+        """A note carrying the marker is removed even when its content
+        doesn't match the legacy heading shape — the marker is the
+        forward-compatible signal."""
+        marker_id = seeded_paperless.seed_note(
+            42,
+            "Some new shape we might add later.\n\n<!-- archivist-bot -->",
+            user=7,
+        )
+        classifier = StubClassifier(payload={
+            "title": "x", "summary": "Fresh take.",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+        ids = {n["id"] for n in seeded_paperless.notes[42]}
+        assert marker_id not in ids
+
+    @pytest.mark.asyncio
+    async def test_new_notes_carry_the_marker(self, seeded_paperless):
+        """Fresh classifier notes ship with the marker so the next
+        reprocess can identify and sweep them."""
+        classifier = StubClassifier(payload={
+            "title": "x", "summary": "First pass.",
+        })
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(doc_id=42),
+        )
+        (note,) = seeded_paperless.notes[42]
+        assert note["note"].endswith("<!-- archivist-bot -->")
 
 
 # ── Vision multimodal ─────────────────────────────────────────────────────

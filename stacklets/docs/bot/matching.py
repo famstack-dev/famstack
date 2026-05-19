@@ -183,9 +183,38 @@ def match_persons(names: str | list | None, tags: dict[str, Any]) -> list[str]:
     return matched_tags
 
 
+def submitter_person_tag(
+    mxid: str | None, tags: dict[str, Any],
+) -> str | None:
+    """Resolve a Matrix sender MXID to a `Person: <Name>` tag.
+
+    Used as the fallback when the classifier returns no persons —
+    the document was uploaded by someone, and attributing it to the
+    uploader is the honest answer when no names appear in the text.
+
+    Matches case-insensitively on the localpart: `@homer:test.local`
+    against a `Person: Homer` tag. Returns None when the mxid is
+    malformed, the localpart doesn't match any family member, or no
+    `Person:` tags exist.
+    """
+    if not mxid or not isinstance(mxid, str) or not mxid.startswith("@"):
+        return None
+    localpart = mxid[1:].split(":", 1)[0]
+    if not localpart:
+        return None
+    needle = f"person: {localpart.lower()}"
+    for tag in tags:
+        if isinstance(tag, str) and tag.lower() == needle:
+            return tag
+    return None
+
+
 def match_topics(
     topics: str | list | None,
     category_tags: dict[str, Any],
+    *,
+    ontology: "Ontology | None" = None,
+    lang: str = "en",
 ) -> TopicResult:
     """Match LLM-returned topic(s) to existing Paperless category tags.
 
@@ -195,9 +224,18 @@ def match_topics(
     - Literal null:  "null"                   -> []
     - None:          None                     -> []
 
-    Each topic is fuzzy-matched against existing category tags (excludes
-    "Person: " tags). Matched names are returned; unmatched originals are
-    returned as-is so the caller can create them in Paperless.
+    When an `ontology` is supplied, each topic string is first passed
+    through `ontology.canonicalize_topic` to normalize cross-language
+    emissions (LLM said "Insurance" but household runs in German → use
+    "Versicherung") and to drop cross-field hallucinations (LLM put a
+    doctype name in the topic field). This stops the matcher from
+    growing the Paperless tag set with junk like a fresh English
+    "Booking" tag on a German household just because the model picked
+    a word from its training distribution.
+
+    After ontology normalisation, the resolved name is fuzzy-matched
+    against existing Paperless tags. Unmatched survivors are returned
+    in `new` so the caller can create them.
 
     Returns (matched, new) tuple:
     - matched: list of existing tag names that fuzzy-matched
@@ -241,13 +279,28 @@ def match_topics(
             continue
         seen.add(topic_clean.lower())
 
-        existing = fuzzy_match_entity(topic_clean, category_tags)
+        # Ontology canonicalisation — when available — overrides the
+        # LLM's exact string with the household-language canonical and
+        # filters cross-field hallucinations. When the ontology has no
+        # opinion the original LLM string flows through for fuzzy match.
+        target = topic_clean
+        if ontology is not None:
+            resolution = ontology.canonicalize_topic(topic_clean, lang)
+            if resolution.cross_field:
+                # LLM emitted a doctype name in the topic field. Drop it.
+                continue
+            if resolution.canonical:
+                target = resolution.canonical
+            # `target` stays as the LLM's string when canonical is None
+            # and cross_field is False — unknown vocabulary, let it grow.
+
+        existing = fuzzy_match_entity(target, category_tags)
         if existing:
             if existing not in matched:
                 matched.append(existing)
         else:
-            if topic_clean not in new:
-                new.append(topic_clean)
+            if target not in new:
+                new.append(target)
 
     return matched, new
 
@@ -261,25 +314,42 @@ def build_document_event(
     resolved_correspondent: str | None = None,
     resolved_type: str | None = None,
     paperless_url: str = "",
+    actor: str | None = None,
+    ts: str | None = None,
 ) -> dict:
-    """Build a structured event payload for a classified document.
+    """Build a `dev.famstack.event` envelope for a classified document.
 
-    Attaches full metadata as a custom Matrix event (dev.famstack.document)
-    so downstream bots can consume it without parsing human-readable text.
+    Matrix is the canonical event ledger — every classification ships as
+    a `dev.famstack.event`-shaped payload riding on the filing's
+    `m.room.message`. One event in the timeline, one fetch to read it,
+    the whole archive can be replayed from Matrix history alone.
+
+    Envelope shape (from `knowledge-architecture.md`):
+
+        {source, type, summary, data, actor, ts}
+
+    `summary` is the one-line activity description ("ADAC … filed
+    (#42)"); the LLM's prose summary lives inside `data.summary`.
+    `actor` is the human who triggered the filing when known, else the
+    bot itself; callers pass it in because the matching module has no
+    Matrix context.
 
     >>> evt = build_document_event(42, {"title": "ADAC - Kfz EUR 340", "summary": "Insurance renewal"}, resolved_topics=["Insurance"], resolved_persons=["Homer"], resolved_correspondent="ADAC")
+    >>> evt["source"]
+    'docs'
     >>> evt["type"]
-    'dev.famstack.document'
-    >>> evt["body"]["doc_id"]
+    'document.filed'
+    >>> evt["data"]["paperless_id"]
     42
-    >>> evt["body"]["topics"]
+    >>> evt["data"]["topics"]
     ['Insurance']
-    >>> evt["body"]["persons"]
+    >>> evt["data"]["persons"]
     ['Homer']
     """
-    body = {
-        "doc_id": doc_id,
-        "title": classification.get("title", ""),
+    title = classification.get("title", "")
+    data = {
+        "paperless_id": doc_id,
+        "title": title,
         "date": classification.get("date"),
         "topics": resolved_topics or [],
         "persons": resolved_persons or [],
@@ -290,12 +360,21 @@ def build_document_event(
         "action_items": classification.get("action_items", []),
     }
     if paperless_url:
-        body["url"] = f"{paperless_url}/documents/{doc_id}/details"
+        data["url"] = f"{paperless_url}/documents/{doc_id}/details"
 
-    return {
-        "type": "dev.famstack.document",
-        "body": body,
+    summary = f"{title} filed (#{doc_id})" if title else f"Document #{doc_id} filed"
+
+    envelope: dict = {
+        "source": "docs",
+        "type": "document.filed",
+        "summary": summary,
+        "data": data,
     }
+    if actor:
+        envelope["actor"] = actor
+    if ts:
+        envelope["ts"] = ts
+    return envelope
 
 
 def deduplicate_hashtags(*labels: str | None) -> list[str]:

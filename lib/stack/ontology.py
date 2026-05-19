@@ -95,6 +95,21 @@ class DocType:
         return self.synonyms.get(_lang_key(lang), [])
 
 
+@dataclass(frozen=True)
+class Resolution:
+    """Outcome of `Ontology.canonicalize_topic` / `canonicalize_doctype`.
+
+    Three states:
+      `Resolution("Reise", cross_field=False)` — matched, use canonical.
+      `Resolution(None,   cross_field=True)`   — wrong field (topic↔doctype).
+      `Resolution(None,   cross_field=False)`  — unknown; caller may
+                                                 fall back to fuzzy match
+                                                 or accept as new vocabulary.
+    """
+    canonical: Optional[str]
+    cross_field: bool
+
+
 # ─── Ontology container ──────────────────────────────────────────────────
 
 @dataclass
@@ -169,6 +184,75 @@ class Ontology:
             if any(syn.lower() == norm for syn in dt.synonyms_for(lang)):
                 return dt
         return None
+
+    @property
+    def languages(self) -> List[str]:
+        """All language codes the ontology carries names in.
+
+        Derived dynamically from the entries so a household that adds a
+        third language ('fr', 'es', …) on a topic doesn't need any code
+        change to be cross-language-canonicalized.
+        """
+        langs: set[str] = set()
+        for t in self.topics.values():
+            langs.update(t.names.keys())
+        for dt in self.doctypes.values():
+            langs.update(dt.names.keys())
+        return sorted(langs)
+
+    # ─── Cross-language canonicalisation ─────────────────────────────
+    #
+    # The classifier prompt sends one language at a time. A weak model
+    # may still emit a name in a different language (training-data
+    # bias) or drop a doctype-shaped name into the topic field.
+    # `canonicalize_topic` and `canonicalize_doctype` normalize the
+    # LLM's output back to a single canonical in the household language
+    # — by trying every language the ontology knows — and flag
+    # cross-field hallucinations so the matcher can reject them
+    # instead of silently growing the tag set with garbage.
+
+    def canonicalize_topic(self, text: str, lang: str) -> "Resolution":
+        """Resolve an LLM topic string to a canonical topic name.
+
+        Tries `lang` first, then every other language the ontology
+        knows — a German household with `topic.travel.names.de = "Reise"`
+        still recognizes the LLM's "Travel" as the same concept and
+        returns "Reise" (the household-language canonical).
+
+        When `text` resolves to a doctype instead of a topic, returns
+        `Resolution(canonical=None, cross_field=True)` so the caller
+        can drop it (a Paperless invoice shape doesn't belong in the
+        topic field).
+        """
+        return self._canonicalize(text, lang, primary=self.resolve_topic,
+                                  secondary=self.resolve_doctype,
+                                  pick_name=lambda t: t.name(lang))
+
+    def canonicalize_doctype(self, text: str, lang: str) -> "Resolution":
+        """Resolve an LLM doctype string to a canonical doctype name.
+
+        Mirror of `canonicalize_topic` — same cross-language and
+        cross-field semantics, but the kinds are swapped: a topic name
+        landing in the doctype field is the cross-field signal.
+        """
+        return self._canonicalize(text, lang, primary=self.resolve_doctype,
+                                  secondary=self.resolve_topic,
+                                  pick_name=lambda dt: dt.name(lang))
+
+    def _canonicalize(self, text, lang, *, primary, secondary, pick_name):
+        """Shared cross-language canonicalisation walk."""
+        if not text or not text.strip():
+            return Resolution(canonical=None, cross_field=False)
+        langs = [lang] + [l for l in self.languages if l != lang]
+        for try_lang in langs:
+            hit = primary(text, try_lang)
+            if hit:
+                return Resolution(canonical=pick_name(hit), cross_field=False)
+        for try_lang in langs:
+            if secondary(text, try_lang):
+                return Resolution(canonical=None, cross_field=True)
+        return Resolution(canonical=None, cross_field=False)
+
 
     # ─── Prompt rendering ─────────────────────────────────────────────
 

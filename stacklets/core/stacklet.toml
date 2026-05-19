@@ -77,7 +77,10 @@ IMMICH_API_KEY = "{photos__API_KEY}"
 # Tools server port — Open WebUI connects here for tool calling
 TOOLS_PORT = "42000"
 
-# Language and models
-LANGUAGE         = "{ai_language}"
+# Household language — drives bot-side i18n, ontology rendering, and
+# any prompt that should be in the family's primary language. Distinct
+# from `[ai].language` (`{ai_language}`), which controls AI subsystem
+# settings like TTS voice and Whisper transcription language.
+LANGUAGE         = "{language}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"

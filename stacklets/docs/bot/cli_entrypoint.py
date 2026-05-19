@@ -17,11 +17,14 @@ Commands:
                                     --json dumps raw LLM output)
     reformat <id> [--dry] [--raw]   reformat OCR + apply content
                                     (--dry previews, --raw dumps markdown)
-    reprocess <id|range>...         full pipeline (classify + reformat
+    reprocess <id|range>... [--msg "hint"]
+                                    full pipeline (classify + reformat
                                     + mirror), accepts ids and ranges
                                     like `1-13`; missing ids skipped
-                                    silently. Respects bot.toml [settings]
-                                    flags: --[no-]reformat --no-mirror --dry
+                                    silently. --msg adds a user
+                                    clarification to the classify prompt.
+                                    Respects bot.toml [settings] flags:
+                                    --[no-]reformat --no-mirror --dry
     mirror <id> [<id>...] [--dry]   push current Paperless state to the
                                     family/memory vault (no LLM). Useful
                                     for backfilling existing docs into
@@ -48,6 +51,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))  # pipeline, matching, cli/
 sys.path.insert(0, "/app")  # stack.resolve_model, stack.prompt
+# Sibling stacklets — for `memory.lib` (ontology + correspondents) so
+# the CLI's reprocess path sees the same vocabulary the archivist bot
+# uses at upload time.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aiohttp
 

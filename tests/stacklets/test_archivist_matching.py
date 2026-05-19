@@ -21,6 +21,7 @@ from matching import (
     build_person_lookup,
     build_document_event,
     deduplicate_hashtags,
+    submitter_person_tag,
     MAX_TITLE_LENGTH,
 )
 
@@ -430,22 +431,124 @@ class TestMatchTopics:
         assert new == ["Insurance", "School"]
 
 
+class TestMatchTopicsWithOntology:
+    """When the ontology is passed in, `match_topics` normalizes LLM
+    output through `Ontology.canonicalize_topic` before fuzzy-matching
+    Paperless tags. This stops cross-language tags (LLM emitting
+    'Booking' on a German household) from sneaking into the tag set
+    and rejects doctype-shaped names that the LLM stuffed into the
+    topic field.
+    """
+
+    @staticmethod
+    def _bilingual_ontology():
+        # Minimal real Ontology — one topic + one doctype with paired
+        # de/en names. Lets us exercise cross-language and cross-field
+        # paths without rendering TOML.
+        from stack.ontology import Ontology, Topic, DocType
+        return Ontology(
+            topics={
+                "travel": Topic(
+                    id="travel",
+                    names={"de": "Reise", "en": "Travel"},
+                    synonyms={"en": ["holiday", "trip"], "de": ["Urlaub"]},
+                ),
+            },
+            doctypes={
+                "booking": DocType(
+                    id="booking",
+                    names={"de": "Buchung", "en": "Booking"},
+                ),
+            },
+        )
+
+    def test_cross_language_normalises_to_household_canonical(self):
+        # LLM emitted English 'Travel' on a German household.
+        # Expected: matcher normalises to 'Reise' and goes to `new`
+        # (no fuzzy match against a tags dict that lacks it).
+        ont = self._bilingual_ontology()
+        matched, new = match_topics(
+            ["Travel"], {},
+            ontology=ont, lang="de",
+        )
+        assert matched == []
+        assert new == ["Reise"]
+
+    def test_cross_language_matches_existing_canonical_tag(self):
+        # When Paperless already has the canonical, fuzzy match hits.
+        ont = self._bilingual_ontology()
+        matched, new = match_topics(
+            ["Travel"], {"Reise": 7},
+            ontology=ont, lang="de",
+        )
+        assert matched == ["Reise"]
+        assert new == []
+
+    def test_cross_field_topic_is_dropped(self):
+        # 'Booking' is a doctype, not a topic. The matcher must drop
+        # it instead of creating a junk topic tag.
+        ont = self._bilingual_ontology()
+        matched, new = match_topics(
+            ["Booking", "Reise"], {},
+            ontology=ont, lang="de",
+        )
+        assert matched == []
+        assert new == ["Reise"]
+        assert "Booking" not in new
+
+    def test_synonym_resolves_through_canonical(self):
+        # LLM said 'Urlaub' (German synonym of Travel) — canonical 'Reise'.
+        ont = self._bilingual_ontology()
+        matched, new = match_topics(
+            ["Urlaub"], {},
+            ontology=ont, lang="de",
+        )
+        assert matched == []
+        assert new == ["Reise"]
+
+    def test_unknown_topic_passes_through_as_new(self):
+        # When the ontology has no opinion, the LLM string flows through
+        # to fuzzy match / new-creation unchanged.
+        ont = self._bilingual_ontology()
+        matched, new = match_topics(
+            ["Badminton"], {},
+            ontology=ont, lang="de",
+        )
+        assert matched == []
+        assert new == ["Badminton"]
+
+    def test_no_ontology_behaves_as_before(self):
+        # Backward-compat: callers that don't pass ontology get the
+        # original passthrough behaviour.
+        matched, new = match_topics(["Booking", "Reise"], {})
+        assert matched == []
+        # Without ontology guarding, both strings flow through as new.
+        assert new == ["Booking", "Reise"]
+
+
 # ── Document event payload ─────────────────────────────────────────────
 
 class TestBuildDocumentEvent:
-    """build_document_event creates structured metadata for Matrix events.
+    """`build_document_event` produces the `dev.famstack.event` envelope
+    that rides on every filing's m.room.message.
 
-    The event type dev.famstack.document is invisible to Element but
-    consumable by bots for the knowledge architecture event bus.
+    Matrix is the canonical ledger — the envelope IS the durable record
+    of a filing. The shape (`source`, `type`, `summary`, `data`, optional
+    `actor` / `ts`) matches the schema in
+    `docs/design/brain/knowledge-architecture.md` so the deriver (when
+    built) can consume filings the same way it consumes pure-signal
+    events on other stacklets.
     """
 
-    def test_basic_event_structure(self):
+    def test_envelope_shape(self):
         evt = build_document_event(42, {"title": "ADAC - Kfz EUR 340"})
-        assert evt["type"] == "dev.famstack.document"
-        assert evt["body"]["doc_id"] == 42
-        assert evt["body"]["title"] == "ADAC - Kfz EUR 340"
+        assert evt["source"] == "docs"
+        assert evt["type"] == "document.filed"
+        assert evt["summary"] == "ADAC - Kfz EUR 340 filed (#42)"
+        assert evt["data"]["paperless_id"] == 42
+        assert evt["data"]["title"] == "ADAC - Kfz EUR 340"
 
-    def test_resolved_fields(self):
+    def test_resolved_fields_land_in_data(self):
         evt = build_document_event(
             42,
             {"title": "Test", "summary": "A test doc"},
@@ -454,21 +557,21 @@ class TestBuildDocumentEvent:
             resolved_correspondent="ADAC",
             resolved_type="Invoice",
         )
-        assert evt["body"]["topics"] == ["Insurance", "Vehicle"]
-        assert evt["body"]["persons"] == ["Homer"]
-        assert evt["body"]["correspondent"] == "ADAC"
-        assert evt["body"]["document_type"] == "Invoice"
+        assert evt["data"]["topics"] == ["Insurance", "Vehicle"]
+        assert evt["data"]["persons"] == ["Homer"]
+        assert evt["data"]["correspondent"] == "ADAC"
+        assert evt["data"]["document_type"] == "Invoice"
 
     def test_includes_paperless_url(self):
         evt = build_document_event(
             42, {},
             paperless_url="http://localhost:42020",
         )
-        assert evt["body"]["url"] == "http://localhost:42020/documents/42/details"
+        assert evt["data"]["url"] == "http://localhost:42020/documents/42/details"
 
     def test_no_url_when_empty(self):
         evt = build_document_event(42, {})
-        assert "url" not in evt["body"]
+        assert "url" not in evt["data"]
 
     def test_facts_and_actions_passthrough(self):
         classification = {
@@ -476,18 +579,39 @@ class TestBuildDocumentEvent:
             "action_items": [{"action": "Pay invoice", "due": "2026-05-01"}],
         }
         evt = build_document_event(42, classification)
-        assert evt["body"]["facts"] == ["Total: EUR 340", "Policy: 12345"]
-        assert evt["body"]["action_items"][0]["action"] == "Pay invoice"
+        assert evt["data"]["facts"] == ["Total: EUR 340", "Policy: 12345"]
+        assert evt["data"]["action_items"][0]["action"] == "Pay invoice"
 
     def test_defaults_for_missing_fields(self):
         evt = build_document_event(42, {})
-        assert evt["body"]["topics"] == []
-        assert evt["body"]["persons"] == []
-        assert evt["body"]["correspondent"] is None
-        assert evt["body"]["document_type"] is None
-        assert evt["body"]["summary"] == ""
-        assert evt["body"]["facts"] == []
-        assert evt["body"]["action_items"] == []
+        assert evt["data"]["topics"] == []
+        assert evt["data"]["persons"] == []
+        assert evt["data"]["correspondent"] is None
+        assert evt["data"]["document_type"] is None
+        assert evt["data"]["summary"] == ""
+        assert evt["data"]["facts"] == []
+        assert evt["data"]["action_items"] == []
+
+    def test_summary_fallback_when_title_missing(self):
+        # No title → envelope-level summary still names the doc by id
+        # so the activity line in the ledger is never blank.
+        evt = build_document_event(42, {})
+        assert evt["summary"] == "Document #42 filed"
+
+    def test_actor_and_ts_only_appear_when_supplied(self):
+        # Both fields are optional — the matching module has no Matrix
+        # context. The archivist supplies them at emission time.
+        bare = build_document_event(42, {"title": "x"})
+        assert "actor" not in bare
+        assert "ts" not in bare
+
+        rich = build_document_event(
+            42, {"title": "x"},
+            actor="@archivist-bot:famstack.test",
+            ts="2026-05-20T14:23:00Z",
+        )
+        assert rich["actor"] == "@archivist-bot:famstack.test"
+        assert rich["ts"] == "2026-05-20T14:23:00Z"
 
 
 # ── Constants ───────────────────────────────────────────────────────────
@@ -496,3 +620,47 @@ class TestConstants:
 
     def test_paperless_title_limit(self):
         assert MAX_TITLE_LENGTH == 128
+
+
+# ── Submitter fallback ────────────────────────────────────────────────────
+
+class TestSubmitterPersonTag:
+    """Resolve an mxid like `@homer:test.local` to a `Person: Homer` tag.
+
+    Used by enrich_document as the fallback when the classifier returns
+    no named persons — the document was uploaded by *someone*, and
+    attributing it to the uploader is the honest answer when no names
+    appear in the text."""
+
+    TAGS = {
+        "Insurance": 1,
+        "Person: Homer": 10,
+        "Person: Marge": 11,
+        "Person: Bart": 12,
+        "Person: Lisa": 13,
+    }
+
+    def test_resolves_localpart_to_person_tag(self):
+        assert submitter_person_tag("@homer:test.local", self.TAGS) == "Person: Homer"
+
+    def test_case_insensitive(self):
+        # MXIDs are lowercased by Synapse; tags are title-cased.
+        assert submitter_person_tag("@MARGE:test.local", self.TAGS) == "Person: Marge"
+
+    def test_returns_none_when_no_match(self):
+        # No Person tag for "milhouse" — fall through.
+        assert submitter_person_tag("@milhouse:test.local", self.TAGS) is None
+
+    def test_returns_none_for_malformed_mxid(self):
+        assert submitter_person_tag("homer", self.TAGS) is None
+        assert submitter_person_tag("@:test.local", self.TAGS) is None
+        assert submitter_person_tag("", self.TAGS) is None
+        assert submitter_person_tag(None, self.TAGS) is None
+
+    def test_returns_none_when_tags_empty(self):
+        assert submitter_person_tag("@homer:test.local", {}) is None
+
+    def test_ignores_non_person_tags(self):
+        # An "Insurance" tag shouldn't ever match an mxid.
+        only_categories = {"Insurance": 1, "Shopping": 2}
+        assert submitter_person_tag("@insurance:test.local", only_categories) is None

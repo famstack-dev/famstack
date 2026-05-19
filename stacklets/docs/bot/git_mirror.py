@@ -307,7 +307,14 @@ class GitMirror:
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
     def _slug(self, text: str) -> str:
-        """Filesystem-safe slug: ASCII-ish, lowercase, hyphen-separated."""
+        """Filesystem-safe slug: ASCII-ish, lowercase, hyphen-separated.
+
+        The cap is a defensive ceiling, not a primary length control —
+        the classifier title prompt asks for short identifying titles
+        (no dates, no amounts), so well-shaped inputs land far under
+        this cap. The slice is hard at 60 chars; the title prompt is
+        responsible for keeping titles human-scannable, not the slug.
+        """
         normalized = unicodedata.normalize("NFKD", text)
         ascii_ = normalized.encode("ascii", "ignore").decode()
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_).strip("-").lower()
@@ -393,6 +400,7 @@ class GitMirror:
         summary: str | None = None,
         facts: list | None = None,
         action_items: list | None = None,
+        source_link: tuple[str, str] | None = None,
         wiki_header: bool = True,
     ) -> str:
         """Assemble the mirror file.
@@ -402,10 +410,11 @@ class GitMirror:
           - YAML frontmatter (machine view: structured metadata)
           - H1 title
           - wiki-link header  (`**From:** [[ADAC]] · **About:** [[Homer]]`)
-          - **briefing block** — `## Summary / ## Facts / ## Action items`
-            sections built from the classifier's output. Obsidian
-            renders action items as native checkboxes; readers see
-            the briefing before the OCR body.
+          - **briefing callout** — `> [!summary]` with prose, optional
+            source link, facts, and action items. Wrapped in a callout
+            so the briefing reads as a distinct block from the OCR body
+            (Obsidian renders a tinted box; Forgejo falls back to a
+            labeled blockquote).
           - the OCR-cleaned document body
         """
         fm_yaml = yaml.safe_dump(
@@ -427,6 +436,7 @@ class GitMirror:
 
         briefing = self._briefing_block(
             summary=summary, facts=facts, action_items=action_items,
+            source_link=source_link,
         )
         if briefing:
             parts.append(briefing)
@@ -517,11 +527,20 @@ class GitMirror:
 
     # ── Briefing block ───────────────────────────────────────────────────
     #
-    # The briefing is the classifier's per-document take, rendered as
-    # human-friendly Markdown rather than YAML strings. Sits between
-    # the wiki-link header and the OCR body so Obsidian's reading view
-    # shows it first. Action items use the standard task checkbox so
-    # the Tasks plugin (and Obsidian's native task query) pick them up.
+    # The briefing is the classifier's per-document take, rendered as an
+    # Obsidian `> [!summary]` callout so it reads as a distinct block —
+    # not "yet another H2 section that looks identical to the body". The
+    # callout's tinted styling in Obsidian (and labeled blockquote in
+    # Forgejo) keeps the LLM-extracted view visually separate from the
+    # OCR-cleaned content that follows.
+    #
+    # `source_link`, when present, surfaces a direct link inside the
+    # callout — for documents that's the Paperless web URL, so the user
+    # is one click from the original PDF without scrolling the YAML
+    # frontmatter or opening the file menu.
+    #
+    # Action items stay as standard task checkboxes (work inside callouts
+    # in Obsidian and remain Tasks-plugin-queryable).
 
     def _briefing_block(
         self,
@@ -529,23 +548,43 @@ class GitMirror:
         summary: str | None,
         facts: list | None,
         action_items: list | None,
+        source_link: tuple[str, str] | None = None,
     ) -> str:
-        """Render Summary / Facts / Action items sections. Empty when
-        the classifier produced nothing — leaves no stale headings."""
-        blocks: list[str] = []
+        """Render the briefing as a `> [!summary]` callout.
+
+        Sections are conditional: an empty prose summary, empty facts,
+        or empty action items all drop out. When everything is empty the
+        callout itself is suppressed — no stale `> [!summary]` shell.
+
+        `source_link` is `(label, url)`; when both are non-empty it
+        renders as `[label](url)` directly under the prose.
+        """
+        sections: list[str] = []
 
         if summary and isinstance(summary, str) and summary.strip():
-            blocks.append(f"## Summary\n{summary.strip()}")
+            sections.append(summary.strip())
+
+        if source_link:
+            label, url = source_link
+            if label and url:
+                sections.append(f"[{label}]({url})")
 
         fact_lines = self._fact_lines(facts or [])
         if fact_lines:
-            blocks.append("## Facts\n" + "\n".join(fact_lines))
+            sections.append("**Facts**\n" + "\n".join(fact_lines))
 
         task_lines = self._action_item_lines(action_items or [])
         if task_lines:
-            blocks.append("## Action items\n" + "\n".join(task_lines))
+            sections.append("**Action items**\n" + "\n".join(task_lines))
 
-        return "\n\n".join(blocks)
+        if not sections:
+            return ""
+
+        inner = "\n\n".join(sections)
+        lines = ["> [!summary]"]
+        for ln in inner.split("\n"):
+            lines.append(f"> {ln}" if ln else ">")
+        return "\n".join(lines)
 
     @staticmethod
     def _fact_lines(facts: list) -> list[str]:
@@ -674,14 +713,30 @@ class GitMirror:
             processing=processing, model=model,
         )
 
-        # Briefing block inputs come from the classifier. We prefer the
-        # caller-supplied `summary` (already shaped for the commit
-        # message) but pull the raw classification.summary as fallback
-        # so re-classify paths that don't pre-render a summary still
-        # land a useful briefing in the file.
-        briefing_summary = summary or classification.get("summary")
+        # The briefing's "Show Document" link wants the per-document
+        # details page, not the instance root the caller hands us.
+        # Frontmatter keeps the base URL — that's the canonical
+        # `paperless_url` field; scripts compose deeper paths off it.
+        paperless_doc_url = (
+            f"{paperless_url.rstrip('/')}/documents/{paperless_id}/details"
+            if paperless_url else ""
+        )
+
+        # Briefing block inputs come straight from the classifier. The
+        # `summary` parameter on `publish()` is the multi-section
+        # Markdown that goes into Paperless and the commit body — it
+        # already contains its own `## Summary` / `## Facts` headings,
+        # so feeding it into `_briefing_block` (which would wrap it in
+        # ANOTHER `## Summary`) double-nests headings and duplicates the
+        # facts list. The briefing block expects prose; that lives on
+        # `classification["summary"]`.
+        briefing_summary = classification.get("summary")
         briefing_facts = classification.get("facts") or []
         briefing_actions = classification.get("action_items") or []
+
+        source_link: tuple[str, str] | None = None
+        if paperless_doc_url:
+            source_link = ("Show Document", paperless_doc_url)
 
         content = self._render(
             frontmatter=fm, body=body_text,
@@ -689,6 +744,7 @@ class GitMirror:
             summary=briefing_summary,
             facts=briefing_facts,
             action_items=briefing_actions,
+            source_link=source_link,
         )
 
         verb = "update" if existing else "learn"
