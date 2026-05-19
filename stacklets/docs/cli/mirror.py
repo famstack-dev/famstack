@@ -3,8 +3,8 @@
 Useful for backfilling existing Paperless docs into a freshly-installed
 memory vault. This command walks each requested id, publishing the
 current Paperless state (title, tags, correspondent, content) into
-`family/memory/raw/`. No LLM call — classification stays exactly as it
-is in Paperless.
+`family/memory/<shared_bucket>/documents/`. No LLM call — classification
+stays exactly as it is in Paperless.
 
 Fails fast when the `code` stacklet env (CODE_URL, admin creds) is
 unavailable: bring up `code` and re-run.

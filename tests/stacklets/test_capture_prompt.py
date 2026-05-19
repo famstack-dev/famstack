@@ -5,14 +5,16 @@ job for the dream-cycle wiki rebuild. At capture time we want a
 focused prompt that returns:
 
   - title       (scannable, under 80 chars)
-  - summary     (extended, 200-400 words, the load-bearing artifact)
+  - summary     (length scales with input: short paste → 1-2 sentences,
+                long content → 200-400 words)
   - facts       (3-6 key facts)
   - tags        (free-form, biased toward existing tags in use)
   - persons     (family members this is for/about)
-  - action_items (optional)
 
-No `correspondent`, no `document_type`, no `category`, no ontology
-section. The capture prompt is its own thing.
+Deliberately absent: `correspondent`, `document_type`, `category`,
+`action_items`. No ontology section either. Action items in
+particular stay out: a pasted Reddit thread should not manufacture
+a todo for the household.
 """
 
 from __future__ import annotations
@@ -54,9 +56,12 @@ class TestPromptStructure:
         prompt = _build_capture_prompt(**COMMON)
         assert "persons" in prompt
 
-    def test_advertises_action_items_field(self):
+    def test_does_not_advertise_action_items_field(self):
+        """A bookmarked Reddit thread or saved article is not a todo.
+        Dropping `action_items` from the capture schema means the LLM
+        can't manufacture chores from passive reading material."""
         prompt = _build_capture_prompt(**COMMON)
-        assert "action_items" in prompt
+        assert "action_items" not in prompt
 
     def test_no_correspondent_field(self):
         """Captures don't fit the Paperless correspondent model — an

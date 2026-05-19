@@ -264,6 +264,13 @@ class ArchivistBot(MicroBot):
         # lives in Forgejo. The bot joins the org's Owners team so
         # admins can browse the repo from their dashboard.
         self.mirror_org = settings.get("mirror_org", "family")
+        # Slug for the institutional bucket inside the vault (default
+        # "family"). Sourced from stack.toml [core] shared_bucket and
+        # rendered into the env as SHARED_BUCKET. Documents land at
+        # <vault>/<shared_bucket>/documents/, correspondents at
+        # <vault>/<shared_bucket>/correspondents/. Personal captures
+        # route to the sender's own bucket.
+        self.shared_bucket = os.environ.get("SHARED_BUCKET", "family")
         # Routing model: one room is the "documents" room and feeds the
         # Paperless pipeline. Every other room the bot is in — DMs,
         # per-person notes rooms, ad-hoc invites — runs the capture
@@ -372,7 +379,7 @@ class ArchivistBot(MicroBot):
     def _compute_correspondents_section(self) -> str:
         """Build the correspondents block from the memory vault.
 
-        Each `documents/correspondents/*.md` page contributes a
+        Each `<shared_bucket>/correspondents/*.md` page contributes a
         (canonical, aliases) line. Empty when the vault isn't seeded
         yet — the prompt falls back to the flat Paperless
         correspondents list, which carries no alias signal.
@@ -380,7 +387,9 @@ class ArchivistBot(MicroBot):
         vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
         if not vault_env:
             return ""
-        correspondents = _load_memory_correspondents(Path(vault_env))
+        correspondents = _load_memory_correspondents(
+            Path(vault_env), self.shared_bucket,
+        )
         return _memory_correspondents_section(correspondents)
 
     def _init_mirror(self) -> None:
@@ -423,6 +432,7 @@ class ArchivistBot(MicroBot):
             admin_usernames=admin_usernames,
             data_dir=self._session_dir,
             org_name=self.mirror_org,
+            shared_bucket=self.shared_bucket,
         )
         logger.info("[archivist] Memory vault writer: {} org={} (admins: {})",
                     code_url, self.mirror_org, ", ".join(admin_usernames) or "-")
@@ -501,8 +511,8 @@ class ArchivistBot(MicroBot):
     # One room is the documents room: file uploads + URL pastes go through
     # Paperless. Every other room the bot is joined to runs the capture
     # pipeline — URLs and pasted text become summarized markdown entries
-    # alongside documents under the vault's `raw/` tree (discriminated by
-    # frontmatter `kind`), no Paperless write.
+    # filed under the sender's own entity bucket (`<sender>/notes/...`
+    # or `<sender>/bookmarks/...`), no Paperless write.
     #
     # Family members can spin up their own per-person rooms ("arthur
     # notes", "sabrina notes") or DM the bot directly. As soon as the
@@ -1172,7 +1182,12 @@ class ArchivistBot(MicroBot):
             await self._send(room_id, self.t("capture_no_mirror"), reply_to)
             return
 
-        sender_name = sender_mxid.split(":")[0].lstrip("@").capitalize()
+        # `sender_name` (capitalized) is the human-facing form fed to
+        # the classifier prompt. `entity_slug` (lowercased localpart) is
+        # the filesystem-safe routing key for `<entity>/<kind>s/...`.
+        localpart = sender_mxid.split(":")[0].lstrip("@")
+        sender_name = localpart.capitalize()
+        entity_slug = localpart.lower()
         classification = await self._classify_capture(source, sender_name)
 
         try:
@@ -1193,6 +1208,7 @@ class ArchivistBot(MicroBot):
         body_for_mirror = source.text if keep_body else ""
 
         await self._mirror.publish_capture(
+            entity=entity_slug,
             kind=kind,
             source_uri=source.source_uri,
             title_hint=source.title_hint,

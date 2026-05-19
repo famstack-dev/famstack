@@ -23,6 +23,7 @@ from pathlib import Path
 # lib.py is one level up from hooks/
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
+    DEFAULT_SHARED_BUCKET,
     REPO_NAME,
     REPO_OWNER,
     install_memory_to_forgejo,
@@ -48,6 +49,7 @@ def run(ctx):
     bot_token = ctx.secret("MEMORY_BOT_TOKEN")
 
     vault = vault_path_for(ctx.stack.data)
+    shared_bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
 
     result = install_memory_to_forgejo(
         code_url=code_url,
@@ -56,6 +58,7 @@ def run(ctx):
         bot_password=bot_password,
         bot_token=bot_token,
         vault_path=vault,
+        shared_bucket=shared_bucket,
     )
 
     if result.get("skipped_reason"):

@@ -1,13 +1,14 @@
-"""stack memory correspondents — inspect the documents-domain correspondent layer.
+"""stack memory correspondents — inspect the shared-bucket correspondent layer.
 
 Subcommands:
     stack memory correspondents              List every correspondent.
     stack memory correspondents show <name>  Print one correspondent's full record.
 
 Each correspondent is a markdown page under
-`<vault>/documents/correspondents/` (the documents-domain folder at
-the vault root, sibling to `raw/` and `wiki/`). The frontmatter is
-the machine view — this command prints what the archivist's classifier
+`<vault>/<shared_bucket>/correspondents/` — the shared bucket's
+institutional layer. The slug is configured in `stack.toml [core]
+shared_bucket` and defaults to "family". The frontmatter is the
+machine view — this command prints what the archivist's classifier
 prompt would see.
 """
 
@@ -18,6 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
+    DEFAULT_SHARED_BUCKET,
+    correspondents_dir,
     load_correspondents_from_vault,
     vault_path_for,
 )
@@ -30,24 +33,32 @@ def _vault(config):
     return vault_path_for(Path(data_dir)) if data_dir else None
 
 
+def _shared_bucket(config) -> str:
+    if not config:
+        return DEFAULT_SHARED_BUCKET
+    stack_cfg = config.get("stack") or {}
+    return (stack_cfg.get("core") or {}).get("shared_bucket") or DEFAULT_SHARED_BUCKET
+
+
 def run(args, stacklet, config):
     vault = _vault(config)
     if vault is None:
         return {"error": "stack data_dir not configured"}
 
-    correspondents = load_correspondents_from_vault(vault)
+    bucket = _shared_bucket(config)
+    correspondents = load_correspondents_from_vault(vault, bucket)
 
     if args and args[0] == "show":
         if len(args) < 2:
             return {"error": "usage: stack memory correspondents show <name>"}
         return _show(correspondents, args[1])
 
-    return _list(correspondents, vault)
+    return _list(correspondents, vault, bucket)
 
 
-def _list(correspondents, vault):
+def _list(correspondents, vault, bucket):
     if not correspondents:
-        print(f"No correspondent pages under {vault}/documents/correspondents/")
+        print(f"No correspondent pages under {vault}/{correspondents_dir(bucket)}/")
         return {"ok": True, "count": 0}
 
     for c in correspondents:

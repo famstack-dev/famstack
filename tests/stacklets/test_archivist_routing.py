@@ -2,8 +2,8 @@
 
 The archivist treats one room as the "documents" room — uploads + URLs
 there flow into Paperless. Every other room is capture mode: URLs and
-pasted text become summarized notes alongside documents under the
-vault's `raw/` tree (discriminated by frontmatter `kind`), no
+pasted text become summarized notes filed under the sender's own
+entity bucket (`<sender>/notes/...` or `<sender>/bookmarks/...`), no
 Paperless write.
 
 These tests cover the pure routing predicate. The end-to-end flow

@@ -6,11 +6,15 @@
 # about than abstract test users.
 
 [core]
-name     = "stack"
-domain   = ""
-data_dir = "~/famstack-test-data"
-timezone = "Europe/Berlin"
-language = "en"
+name          = "stack"
+domain        = ""
+data_dir      = "~/famstack-test-data"
+timezone      = "Europe/Berlin"
+language      = "en"
+# Memory vault's institutional bucket — documents and correspondents
+# live under <vault>/family/. Personal captures (Homer, Bart, ...) live
+# at <vault>/<localpart>/. Defaults to "family" if unset.
+shared_bucket = "family"
 
 [updates]
 schedule = "0 0 3 * * *"

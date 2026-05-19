@@ -3,19 +3,20 @@
 One markdown page per organization the family corresponds with — your
 bank, the kids' school, the insurance company, an online service.
 
-Pages live here, in `documents/correspondents/` (the documents-domain
-folder at the vault root, sibling to `raw/` and `wiki/`). The file
-stem is the correspondent's identifier (`adac.md`, `aok.md`). The
-frontmatter is the machine view — the archivist reads it on startup
-to canonicalize new correspondents before they hit Paperless.
+Pages live here, in the shared bucket's `correspondents/` folder
+(typically `family/correspondents/` — the slug is configurable via
+`stack.toml [core] shared_bucket`). The file stem is the
+correspondent's identifier (`adac.md`, `aok.md`). The frontmatter
+is the machine view — the archivist reads it on startup to
+canonicalize new correspondents before they hit Paperless.
 
 Two things this layout buys us:
 
-- **Domain scope.** Correspondents belong to the documents pipeline.
-  Putting them under `documents/` leaves room for future domain
-  peers (`chat/`, `calendar/`, ...) without conceptual collisions.
-- **Wiki immunity.** The olw container regenerates `wiki/*.md` from
-  `raw/` and only ever reads `raw/`. Living outside both keeps
+- **Bucket symmetry.** The shared bucket holds institutional artifacts
+  (documents, correspondents). Personal entities (homer, marge, …)
+  follow the same shape under their own folders.
+- **Wiki immunity.** The wiki engine regenerates `wiki/*.md` from
+  raw sources and only ever reads them. Living outside both keeps
   hand-curated correspondent pages sacrosanct.
 
 ## Shape

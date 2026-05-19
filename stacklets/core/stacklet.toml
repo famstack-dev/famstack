@@ -63,6 +63,13 @@ CODE_URL = "http://stack-code:3000"
 # design before memory is installed.
 MEMORY_VAULT_DIR = "/data/memory/vault"
 
+# Shared-bucket slug — the entity that owns institutional artifacts
+# (documents, correspondents) inside the memory vault. Personal
+# entities (homer, marge, …) live at <vault>/<slug>/. Defaults to
+# "family"; deskstack or non-family deployments override via
+# stack.toml [core] shared_bucket.
+SHARED_BUCKET = "{shared_bucket}"
+
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"
 IMMICH_API_KEY = "{photos__API_KEY}"

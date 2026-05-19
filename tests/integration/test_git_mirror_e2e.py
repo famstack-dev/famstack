@@ -3,8 +3,9 @@
 Real Paperless, real Synapse, real bot-runner, real Forgejo, mocked
 OpenAI. Homer uploads a document; the archivist classifies it, emits
 its Matrix event, and mirrors the result into the `family/memory`
-Forgejo repo (org name is configurable via `bot.toml`) under the
-`raw/` prefix, with YAML frontmatter and a commit trailer.
+Forgejo repo (org name is configurable via `bot.toml`) under
+`<shared_bucket>/documents/YYYY/MM/...`, with YAML frontmatter and a
+commit trailer.
 
 Reprocessing the same Paperless document produces an `update:` commit
 at the same filepath — idempotency via the `-p<id>` filename suffix.
@@ -78,7 +79,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     Given  the code stacklet is running and the archivist is configured
     When   Homer uploads an ADAC invoice to #documents
     Then   Paperless has the classified document
-    And    Forgejo has a mirror file at raw/YYYY/MM/<slug>-p<id>.md
+    And    Forgejo has a mirror file at family/documents/YYYY/MM/<slug>-p<id>.md
     And    the file's frontmatter carries the full classification
     And    the commit message contains a Paperless-Id trailer
     And    Homer and Marge are collaborators on the memory repo
@@ -136,9 +137,9 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     assert path, f"No mirror file for paperless #{paperless_id} within 60s."
     bdd.ok(f"mirror path = {path}")
 
-    bdd.and_(f"path follows raw/YYYY/MM/YYYY-MM-DD-<slug>-p{paperless_id}.md")
+    bdd.and_(f"path follows family/documents/YYYY/MM/YYYY-MM-DD-<slug>-p{paperless_id}.md")
     y, m, _ = expected_date.split("-")
-    assert path.startswith(f"raw/{y}/{m}/{expected_date}-"), \
+    assert path.startswith(f"family/documents/{y}/{m}/{expected_date}-"), \
         f"unexpected path prefix: {path}"
     assert path.endswith(f"-p{paperless_id}.md"), \
         f"unexpected path suffix: {path}"

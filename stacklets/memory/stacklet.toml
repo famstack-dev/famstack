@@ -33,3 +33,8 @@ hints = [
 CODE_URL       = "{code_url}"
 ADMIN_USER     = "{admin_username}"
 ADMIN_PASSWORD = "{admin_password}"
+# Slug for the bucket inside the vault that holds institutional
+# artifacts (documents, correspondents). Personal entities (homer,
+# marge, ...) live at <vault>/<localpart>/. Sourced from stack.toml
+# [core] shared_bucket, defaults to "family".
+SHARED_BUCKET  = "{shared_bucket}"
