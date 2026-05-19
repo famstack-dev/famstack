@@ -42,6 +42,7 @@ from matching import (
     fuzzy_match_entity,
     match_persons,
     match_topics,
+    submitter_person_tag,
 )
 from stack import resolve_model
 
@@ -578,6 +579,8 @@ class Classifier:
         images: list[ImageAttachment] | None = None,
         ontology_section: str = "",
         correspondents_section: str = "",
+        date_filed: str | None = None,
+        user_hint: str | None = None,
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
@@ -615,6 +618,8 @@ class Classifier:
             correspondents=list(correspondents.keys()),
             ontology_section=ontology_section,
             correspondents_section=correspondents_section,
+            date_filed=date_filed,
+            user_hint=user_hint,
         )
 
         content: Any = prompt
@@ -704,12 +709,34 @@ class Classifier:
 # for debugging (`--dry-run --show-prompt` may land in v1.1) without
 # depending on classifier internals.
 
+def _user_hint_block(user_hint: str | None) -> str:
+    """Render the user's clarification as a high-priority prompt block.
+
+    Returned empty when the hint is missing or blank so well-formed
+    initial classifications produce the same prompt as before — the
+    extra section only appears when a human is actively correcting
+    the bot. The hint is wrapped in unambiguous fences so a chatty
+    user message can't be mistaken for the document text below.
+    """
+    if not user_hint or not user_hint.strip():
+        return ""
+    hint = user_hint.strip()
+    return (
+        "\n\nUser clarification — this human note OVERRIDES your own "
+        "reading of the document when they conflict (the user has seen "
+        "the previous classification and is correcting it):\n"
+        f"---\n{hint}\n---"
+    )
+
+
 def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
                            category_tags: list[str],
                            doc_types: list[str],
                            correspondents: list[str],
                            ontology_section: str = "",
-                           correspondents_section: str = "") -> str:
+                           correspondents_section: str = "",
+                           date_filed: str | None = None,
+                           user_hint: str | None = None) -> str:
     """The classification prompt.
 
     Simplified to three clear axes:
@@ -757,7 +784,19 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
             f"Existing correspondents: {json.dumps(correspondents, ensure_ascii=False)}"
         )
 
+    # `date_filed` is the document's filing date — for initial Matrix
+    # uploads, the message's server timestamp; for the reprocess CLI,
+    # Paperless's immutable `added` field. The LLM uses it to resolve
+    # partial dates on the document. System date is only a fallback
+    # when neither is available — using it for reprocess would silently
+    # shift the anchor to "today" and re-hallucinate dates.
+    if date_filed is None:
+        import datetime as _dt
+        date_filed = _dt.date.today().isoformat()
+
     return f"""Classify this document. Return ONLY a JSON object.
+
+Date filed: {date_filed}{_user_hint_block(user_hint)}
 
 IMPORTANT: Always prefer existing values from the lists below. Only suggest
 a new value when NOTHING in the list is a reasonable match.
@@ -768,10 +807,10 @@ Family members: {json.dumps(person_names, ensure_ascii=False)}
 
 Return this exact JSON structure:
 {{
-  "title": "scannable title: [Correspondent] - [what] [key amount]. E.g. 'Anthropic - Max Plan EUR 90.00', 'ADAC - Kfz-Versicherung 2026 EUR 340'. Must be useful when scanning a list of 500 documents. Max 128 chars. Document's language.",
-  "date": "YYYY-MM-DD or null",
+  "title": "short identifying title — 3 to 6 words, max ~50 chars. What this document IS, not how much or when. Amounts live in facts, the date lives in `date`, the sender lives in `correspondent`. Include the year ONLY when it disambiguates an annually-recurring document ('Kfz-Versicherung 2026'). Include the sender's name only when it's part of the natural identifier ('Bergchalet Refugium Martius', 'Anthropic Max Plan'). NEVER include amounts, full dates, invoice numbers, or addresses. This title becomes the Paperless title AND the filename slug, so keep it stable across reprocessing. Document's language. Examples: 'Bergchalet Refugium Martius', 'Anthropic Max Plan', 'Kfz-Versicherung 2026', 'Kwik-E-Mart Kassenbon'.",
+  "date": "YYYY-MM-DD or null — the document's own date (issue / booking / invoice date), not the date you read it. Apply the date-resolution rule below.",
   "topics": ["what is this document about? One or two subject areas. E.g. ['Insurance'], ['Insurance', 'Vehicle'], ['Shopping']. A health insurance bill is ['Insurance', 'Medical']. A car repair invoice is ['Vehicle']. Pick the canonical name from existing topic tags. Usually one topic, two only when the document genuinely spans two areas."],
-  "persons": ["which family members does this belong to? Pick from the family members list by first name. Can be multiple for joint documents (marriage, family insurance). Empty list if unclear. These are who the document is FOR or ABOUT, not who sent it."],
+  "persons": ["which NAMED family members does this belong to? Pick from the family members list by first name. Names MUST appear in the document text (or be inferable from a labeled field like 'Customer: John Doe', 'Versicherter: Homer Simpson'). When the document specifies a group only by count or role ('2 Erwachsene, 2 Kinder', 'die Familie', '4 Personen') WITHOUT naming individuals, return an empty list — the system has a separate fallback to attribute the doc to whoever uploaded it. Can be multiple for joint documents where everyone is named (a marriage certificate listing both spouses)."],
   "document_type": "optional: the document's format. Pick the canonical name from existing document types. null if unclear.",
   "correspondent": "the SENDER's CANONICAL short name. If the printed sender matches one of the Existing correspondents (or one of its aliases in parens), return the canonical exactly. Otherwise return the cleanest short form — strip regional, branch, and legal-form suffixes. 'ADAC Ortsverband Manzell' → 'ADAC'. 'Burns Industries LLC' → 'Burns Industries'. 'Springfield Nuclear Power Plant Division 7' → 'Springfield Nuclear'. null is better than guessing from fragments.",
   "correspondent_aliases": ["full names as printed on THIS document, useful for growing the wiki. Include only when the printed name differs from the canonical you returned above. Empty list when the printed name matches the canonical exactly."],
@@ -782,9 +821,15 @@ Return this exact JSON structure:
 }}
 
 Rules:
+- VISION VS OCR: when an image of the document is attached AND the OCR text below conflicts with what you see in the image, prefer the image. The OCR pass may pick up template footers, hidden text layers, watermarks, or unrelated PDF metadata that don't reflect the document's actual content — dates, proper nouns, and numeric fields are the usual victims. The image is the source of truth; OCR is supplementary context, not a higher authority.
+- DATE: this applies to the top-level `date` field AND to any date you put in `facts` / `action_items`.
+  - When the document shows a full date (year included), use it verbatim.
+  - When only a partial date is visible (no year), pick the year closest in time to `Date filed` — past for backward-looking documents (invoices, receipts, statements, letters confirming past events), future for forward-looking documents (booking confirmations, reservations, appointments, event tickets). A chalet booking confirmation filed in December 2025 mentioning "14 FEBRUAR" means 2026-02-14 (next February), not 2025-02-14 (last February). An invoice filed in December 2025 mentioning "14 FEBRUAR" means 2025-02-14 (this year's February).
+  - Never invent a year that isn't visible and isn't derivable from `Date filed`. When even the month is unclear, return null (or omit the date from a fact).
+  - Do NOT pull dates from sample texts, legal disclaimers, copyright footers, or unrelated logos.
 - LANGUAGE: use the document's original language for title, summary, facts, and action_items. A German document gets a German title and German facts. Never translate.
 - topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. When the document uses a synonym of a listed topic (the list shows synonyms in parentheses), return the canonical name. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas.
-- persons: match by first name from the family members list. Can be multiple for joint documents. A marriage certificate for Homer and Marge: ["Homer", "Marge"]. A personal invoice for Homer only: ["Homer"].
+- persons: only return names that EXPLICITLY appear in the document text. Match by first name against the family members list. A marriage certificate naming "Homer Simpson" and "Marge Simpson": ["Homer", "Marge"]. A booking confirmation that says "2 Erwachsene, 2 Kinder (0 und 6 Jahre alt)" with no actual names: []. A health insurance bill in Marge's name only: ["Marge"]. NEVER guess based on group counts ("2 Personen" is not "Homer + Marge"), document type ("Kinderarztrechnung" doesn't mean "Bart" or "Lisa"), or who you think the doc is "probably for". When no names appear, return [] — the system attributes the doc to the uploader as a fallback.
 - correspondent: always the SENDER, never the addressee/customer/recipient. When the existing list shows aliases in parentheses, those are previous spellings of the same correspondent — use the canonical (the name OUTSIDE the parentheses). Strip regional/branch/legal-form suffixes for new correspondents. Use null if the sender is not clearly identifiable. Do not guess from fragments.
 - correspondent_aliases: only when the printed sender name on THIS document differs from your canonical answer. Single-element list is fine.
 - correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
@@ -840,15 +885,16 @@ Return this exact JSON structure:
 {{
   "title": "scannable title under 80 chars. Use the content's language. Capture what this is *about*, not just the source name.",
   "summary": "Markdown summary. Length scales with input — short paste (under ~300 chars): 1-2 sentences. Long content (articles, threads, posts): 200-400 words covering key points, claims, named entities, and conclusions. The user reads this instead of reopening the source.",
-  "facts": ["3-6 concrete facts, numbers, dates, names extracted from the content"],
-  "tags": ["3-7 topic tags. Free-form (single words or short phrases). Reuse existing tags from the list above when they fit. Tags should signal stable interest areas, not one-off specifics — prefer 'LLMs' over 'Llama-3.1-8B-Instruct'."],
+  "facts": ["Concrete facts extracted from the content. Each fact MUST anchor on a number, date, named entity, or proper noun — a sentence without one of those is filler and belongs in the summary instead. Count scales with content: 0 for a short note with nothing to extract, 1-3 for a homepage bookmark, 4-8 for a typical article, more for data-heavy content. Don't pad, don't cap."],
+  "tags": ["3-5 topic tags. Format: lowercase, hyphen-separated (kebab-case), e.g. 'open-source', 'digital-sovereignty', 'local-llms'. Tag the stable interest area, not every concept mentioned. One tag per domain — pick 'gov-tech' OR 'government-tools' OR 'ai-in-government', not all three. Reuse existing tags from the list above when a near-fit exists; a new tag is justified only when no existing tag is within two synonyms."],
   "persons": ["which family members this is for or about. Pick from the family members list. Empty list if unclear — the caller will default to the sender."]
 }}
 
 Rules:
 - LANGUAGE: use the content's original language for title, summary, facts. German content → German output.
 - summary: write a real digest, not a teaser. Match length to input — terse for short pastes, fuller for long-form. Do NOT include the source URL; it's surfaced separately in the vault entry.
-- tags: prefer the existing tag list above. A new tag must be clearly absent from the list, not just spelled differently.
+- facts: each fact carries an anchor (number, date, named entity, proper noun). "X is widely used" is not a fact; "X is used by 600K+ agents" is. Don't pad to hit a count; an empty list beats invented facts.
+- tags: lowercase, hyphen-separated, 1-3 words each. Drop redundancy — never emit two tags about the same domain. Prefer existing tags from the list whenever a near-fit exists.
 - persons: only if the content explicitly names a family member. Don't guess from sender.
 
 Content:
@@ -900,30 +946,44 @@ def _format_classifier_summary(
     resolved_persons: list[str],
     resolved_correspondent: str | None,
 ) -> str | None:
-    """Render the classifier payload as the Markdown summary body.
+    """Render the classifier payload as a Paperless note body.
 
-    Sections are conditional; the caller never sees empty `## Summary\n`
-    placeholders. Returns None when there is nothing to record — the
-    caller should then not write anything at all.
+    Sections are conditional and untitled — separated by blank lines
+    rather than `## Summary` / `## Facts` / `## Parties` headings.
+    The titles forced an English label onto German (or any non-English)
+    content; without them the note reads natively in whatever language
+    the document is in, and the structure is still obvious: prose,
+    then bulleted facts, then the parties line.
+
+    A trailing `<!-- archivist-bot -->` marker tags the note as
+    bot-written so the sweep on the next classify can identify and
+    delete prior versions without depending on Paperless's `user`
+    field. The marker sits at the bottom so the note opens with its
+    actual content; it's invisible in rendered Markdown either way.
+
+    Returns None when there is nothing to record — the caller skips
+    the write entirely rather than posting an empty stub.
     """
     parts: list[str] = []
 
     summary = (classification.get("summary") or "").strip()
     if summary:
-        parts.append(f"## Summary\n{summary}")
+        parts.append(summary)
 
     facts = [str(f).strip() for f in (classification.get("facts") or []) if str(f).strip()]
     if facts:
-        parts.append("## Facts\n" + "\n".join(f"- {f}" for f in facts))
+        parts.append("\n".join(f"- {f}" for f in facts))
 
     parties = _format_parties(
         correspondent=resolved_correspondent,
         persons=resolved_persons,
     )
     if parties:
-        parts.append(f"## Parties\n{parties}")
+        parts.append(parties)
 
-    return "\n\n".join(parts) if parts else None
+    if not parts:
+        return None
+    return "\n\n".join(parts) + f"\n\n{_BOT_NOTE_MARKER}"
 
 
 def _format_parties(*, correspondent: str | None, persons: list[str]) -> str:
@@ -935,28 +995,55 @@ def _format_parties(*, correspondent: str | None, persons: list[str]) -> str:
     return left or right
 
 
+# HTML comment marker — invisible in Paperless's rendered Markdown,
+# trivially detectable in raw text. Every classifier-written note
+# carries this so the sweep on the next reprocess can identify and
+# remove prior versions without inspecting ownership. The label is
+# the bot's id ("archivist-bot", matching `Archivist.name`) so any
+# future bot writing Paperless notes uses its own marker rather than
+# stomping on this one.
+_BOT_NOTE_MARKER = "<!-- archivist-bot -->"
+
+# Legacy section-heading prefixes — fallback for notes written before
+# the marker was introduced. Safe to remove once vaults have been
+# reprocessed at least once and only marker-tagged notes remain.
+_LEGACY_BOT_NOTE_PREFIXES = ("## Summary", "## Facts", "## Parties")
+
+
+def _looks_like_bot_note(text: str) -> bool:
+    """True when a note is one the archivist wrote.
+
+    Primary signal: the `_BOT_NOTE_MARKER` HTML comment appears in the
+    note (currently appended as the last line). Doesn't depend on
+    Paperless's `user` serialization, doesn't get fooled by reformatted
+    content, doesn't accidentally sweep a free-text user note. Plain
+    `in` rather than a positional check so the sweep stays correct if
+    the marker ever moves back to the top, or if the user (intentionally
+    or not) prepends a header line before it.
+
+    Legacy fallback: pre-marker notes still match by their section
+    heading shape so accumulated stale summaries from previous deploys
+    get swept on the next reprocess.
+    """
+    if _BOT_NOTE_MARKER in text:
+        return True
+    return text.lstrip().startswith(_LEGACY_BOT_NOTE_PREFIXES)
+
+
 async def _replace_classifier_summary(
     paperless: PaperlessAPI, doc_id: int, summary_text: str,
 ) -> None:
-    """Write `summary_text` as the bot's summary, replacing any prior one.
+    """Write `summary_text` as the bot's summary, replacing prior ones.
 
-    Idempotency strategy: the bot's Paperless user owns every note it
-    writes. We fetch /users/me/ once (cached), then drop notes whose
-    owner matches before posting the new one. Human-added notes have a
-    different owner and stay put.
-
-    Fallback: if we can't determine our own user id (endpoint 500, token
-    lacks permission), we post the new summary without deleting anything
-    — a duplicate is better than losing human edits to an optimistic
-    sweep.
+    Bot notes carry an HTML comment marker so the sweep is independent
+    of Paperless's user-ownership field (which varies in shape across
+    versions and silently let stale notes pile up on every reprocess
+    in the previous implementation).
     """
-    user_id = await paperless.get_current_user_id()
-    if user_id is not None:
-        for note in await paperless.list_notes(doc_id):
-            owner = note.get("user")
-            owner_id = owner.get("id") if isinstance(owner, dict) else owner
-            if owner_id == user_id and isinstance(note.get("id"), int):
-                await paperless.delete_note(doc_id, note["id"])
+    for note in await paperless.list_notes(doc_id):
+        text = note.get("note") or ""
+        if _looks_like_bot_note(text) and isinstance(note.get("id"), int):
+            await paperless.delete_note(doc_id, note["id"])
     await paperless.add_note(doc_id, summary_text)
 
 
@@ -978,6 +1065,12 @@ async def enrich_document(
     images: list[ImageAttachment] | None = None,
     ontology_section: str = "",
     correspondents_section: str = "",
+    ontology: "Ontology | None" = None,
+    lang: str = "en",
+    is_reprocess: bool = False,
+    date_filed: str | None = None,
+    user_hint: str | None = None,
+    submitter_mxid: str | None = None,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -1022,6 +1115,8 @@ async def enrich_document(
             images=images,
             ontology_section=ontology_section,
             correspondents_section=correspondents_section,
+            date_filed=date_filed,
+            user_hint=user_hint,
         )
     except LLMUnavailableError as e:
         return EnrichResult(llm_error=("unavailable", str(e)))
@@ -1053,7 +1148,9 @@ async def enrich_document(
     # are created in Paperless and treated as resolved.
     category_tags = {t: tid for t, tid in tags.items() if not t.startswith("Person: ")}
     topics_raw = classification.get("topics") or classification.get("topic")
-    matched_topics, new_topics = match_topics(topics_raw, category_tags)
+    matched_topics, new_topics = match_topics(
+        topics_raw, category_tags, ontology=ontology, lang=lang,
+    )
     for mt in matched_topics:
         tag_ids.append(tags[mt])
         result.resolved_topics.append(mt)
@@ -1073,6 +1170,19 @@ async def enrich_document(
         tag_ids.append(tags[pt])
         result.resolved_persons.append(pt.replace("Person: ", ""))
 
+    # Submitter fallback: when the classifier returned no persons, the
+    # prompt rules tell it to refuse guessing — but the document still
+    # belongs to whoever uploaded it. Attribute the doc to the
+    # submitter's Person tag instead of leaving it un-personed.
+    # Live archivist passes `event.sender` here; CLI reprocess and the
+    # reply-to-reprocess path don't (we don't know who originally
+    # uploaded a doc Paperless has had for weeks, so we don't pretend).
+    if not result.resolved_persons and submitter_mxid:
+        fallback = submitter_person_tag(submitter_mxid, tags)
+        if fallback:
+            tag_ids.append(tags[fallback])
+            result.resolved_persons.append(fallback.replace("Person: ", ""))
+
     # Always write the tag set — even an empty list. A reprocess that
     # yields no topics/persons should leave the doc with no tags, matching
     # the state a fresh upload would produce from the same LLM output.
@@ -1081,19 +1191,31 @@ async def enrich_document(
     # Document type — LLM-decided, no manual-type preservation. "Fresh
     # reprocess" means the LLM's pick wins; a user who curated a type
     # manually before should reprocess knowing they're asking for the
-    # AI's verdict.
+    # AI's verdict. Ontology canonicalisation runs first so a German
+    # household doesn't accumulate English "Invoice" doctypes when the
+    # LLM emits the wrong language (or stuffs a topic name in the
+    # doctype field).
     doc_type = classification.get("document_type")
     if not _is_empty(doc_type):
-        matched = fuzzy_match_entity(doc_type, doc_types)
-        if matched:
-            updates["document_type"] = doc_types[matched]
-            result.resolved_type = matched
-        else:
-            new_id = await paperless.create_doc_type(doc_type)
-            if new_id:
-                updates["document_type"] = new_id
-                result.resolved_type = doc_type
-                result.created_new.append(f'document type "{doc_type}"')
+        target_doctype = doc_type
+        skip_doctype = False
+        if ontology is not None:
+            resolution = ontology.canonicalize_doctype(doc_type, lang)
+            if resolution.cross_field:
+                skip_doctype = True  # LLM put a topic in the doctype field.
+            elif resolution.canonical:
+                target_doctype = resolution.canonical
+        if not skip_doctype:
+            matched = fuzzy_match_entity(target_doctype, doc_types)
+            if matched:
+                updates["document_type"] = doc_types[matched]
+                result.resolved_type = matched
+            else:
+                new_id = await paperless.create_doc_type(target_doctype)
+                if new_id:
+                    updates["document_type"] = new_id
+                    result.resolved_type = target_doctype
+                    result.created_new.append(f'document type "{target_doctype}"')
 
     # Correspondent — always overwrite. Paperless's auto-classifier guesses
     # wrong with few samples; the LLM has read the actual text.
@@ -1110,8 +1232,15 @@ async def enrich_document(
                 result.resolved_correspondent = correspondent
                 result.created_new.append(f'correspondent "{correspondent}"')
 
+    # The classifier's date overwrites Paperless's auto-set `created`
+    # on first classification (the auto-set value is just the upload
+    # timestamp; the document's actual date is far more useful for
+    # browsing and the mirror's filepath). On reprocess we leave the
+    # existing `created` alone — by then it's either the previous
+    # pipeline's verdict or a human correction, both better than
+    # whatever a fresh LLM pass guesses today.
     date = classification.get("date")
-    if date and isinstance(date, str) and _ISO_DATE.match(date):
+    if not is_reprocess and date and isinstance(date, str) and _ISO_DATE.match(date):
         updates["created"] = date
 
     if updates:

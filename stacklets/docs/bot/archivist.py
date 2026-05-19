@@ -195,6 +195,46 @@ def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
     return pdf_buffer.getvalue()
 
 
+def _utc_now_isoformat() -> str:
+    """Current UTC time as an ISO-8601 string with second precision.
+
+    Used as the `ts` field on emitted `dev.famstack.event` envelopes —
+    the wall-clock moment the event entered the ledger. Distinct from
+    `date_filed` (the document's own date for date-resolution).
+    """
+    import datetime as _dt
+    return (
+        _dt.datetime.now(_dt.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _strip_reply_fallback(body: str) -> str:
+    """Drop Matrix's reply-quote fallback from a message body.
+
+    A reply in Element/most clients arrives as:
+
+        > <@homer:test.local> first line of the quoted message
+        > second line of the quoted message
+
+        the user's actual reply
+
+    The leading `>`-prefixed block is the fallback Matrix injects so
+    clients without rich-reply support still show the context. We
+    want only the user's real text — what comes after the first
+    blank line that follows the quoted block.
+    """
+    lines = body.split("\n")
+    idx = 0
+    while idx < len(lines) and lines[idx].startswith(">"):
+        idx += 1
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    return "\n".join(lines[idx:]).strip()
+
+
 def _google_docs_export_url(url: str) -> tuple[str, str] | None:
     """If URL is a Google Docs link, return (export_url, doc_type). None otherwise."""
     for pattern, doc_type in GOOGLE_DOC_PATTERNS.items():
@@ -232,6 +272,87 @@ def _has_pdf_text_layer(file_data: bytes) -> bool:
         except Exception:
             continue
     return False
+
+
+# Producer / Creator strings written by tools that build a text layer by
+# running OCR over rendered page images. Their text is searchable but
+# routinely garbled (jumbled reading order, dropped characters) — we
+# can't trust it the way we trust a native-text PDF authored in Word,
+# LaTeX, or a CMS-generated invoice. When detected, we attach vision
+# so the model can override the text layer with what it actually sees.
+_OCR_LAYER_TOOLS = ("ocrmypdf", "tesseract")
+
+# Past this length, we skip vision even on OCR'd text-layer PDFs and
+# trust the (possibly imperfect) text layer. A 30-page contract scanned
+# and re-OCR'd would otherwise cost 30 image tokens — disproportionate
+# to the classification value. Short docs (booking confirmations,
+# receipts, single-page letters) stay under this and get vision.
+_VISION_MAX_PDF_PAGES = 5
+
+
+def _has_pdf_ocr_text_layer(file_data: bytes) -> bool:
+    """Best-effort: does the text layer look machine-OCR'd, not authored?
+
+    Checks the PDF's `/Producer` and `/Creator` metadata for known OCR
+    tools (OCRmyPDF, Tesseract). Both ride in the file's `DocumentInfo`
+    dictionary and survive Paperless's own ingestion — OCRmyPDF stamps
+    itself when it inserts the searchable text layer.
+
+    Any parsing error returns False so we fall through to trusting the
+    text layer (the conservative choice — better an occasional bad
+    classification than re-rendering every research-paper PDF).
+    """
+    try:
+        reader = PdfReader(io.BytesIO(file_data))
+        info = reader.metadata or {}
+    except Exception as e:
+        logger.debug("[archivist] pdf metadata read failed: {}", e)
+        return False
+    blob = " ".join(
+        str(v or "") for v in (info.get("/Producer"), info.get("/Creator"))
+    ).lower()
+    return any(tool in blob for tool in _OCR_LAYER_TOOLS)
+
+
+def _should_attach_vision(
+    *, has_text_layer: bool, has_ocr_text_layer: bool, page_count: int,
+) -> bool:
+    """Single decision point for PDF vision-attach policy.
+
+    Three cases:
+      - No text layer (true scan) → attach vision; it's the only signal.
+      - Text layer present AND machine-OCR'd (OCRmyPDF stamp) AND short
+        enough to be worth the tokens → attach vision so the model can
+        override the garbled OCR via the `VISION VS OCR` prompt rule.
+      - Otherwise (native-text PDF, or long OCR'd PDF) → no vision.
+        Native text layers are trustworthy; long OCR'd PDFs cost too
+        many image tokens to be worth the override on each page.
+
+    `page_count` is only consulted when there IS a text layer — for
+    scans we render whatever's there (partial classification on a long
+    scan beats none).
+    """
+    if not has_text_layer:
+        return True
+    if has_ocr_text_layer and page_count <= _VISION_MAX_PDF_PAGES:
+        return True
+    return False
+
+
+def _pdf_page_count(file_data: bytes) -> int:
+    """Number of pages in the PDF, or 0 on parse failure.
+
+    Used to gate the vision-attach decision: a long OCR'd PDF would
+    otherwise burn one image token per page. Returns 0 for unreadable
+    files so the caller's `<= _VISION_MAX_PDF_PAGES` comparison treats
+    them as "short enough" — vision still attaches and render_pages
+    handles its own failures gracefully.
+    """
+    try:
+        return len(PdfReader(io.BytesIO(file_data)).pages)
+    except Exception as e:
+        logger.debug("[archivist] pdf page count failed: {}", e)
+        return 0
 
 
 # ── ArchivistBot ─────────────────────────────────────────────────────────────
@@ -371,10 +492,20 @@ class ArchivistBot(MicroBot):
         (memory not installed yet, or first run on a host without a
         working copy).
         """
+        return self._load_ontology().classifier_prompt_section(self.language)
+
+    def _load_ontology(self):
+        """Load the memory ontology (cached read; cheap TOML).
+
+        Returned alongside the rendered prompt section so the pipeline
+        can use the bilingual canonicals — `match_topics` /
+        `match_doctype` normalize LLM output back to the household
+        language and reject cross-field hallucinations through
+        `Ontology.canonicalize_topic` / `canonicalize_doctype`.
+        """
         vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
         vault_path = Path(vault_env) if vault_env else None
-        ont = _get_memory_ontology(vault_path)
-        return ont.classifier_prompt_section(self.language)
+        return _get_memory_ontology(vault_path)
 
     def _compute_correspondents_section(self) -> str:
         """Build the correspondents block from the memory vault.
@@ -579,7 +710,19 @@ class ArchivistBot(MicroBot):
         except Exception:
             pass
 
-    async def _send(self, room_id: str, text: str, reply_to: str | None = None):
+    async def _send(
+        self, room_id: str, text: str, reply_to: str | None = None,
+        *, metadata: dict | None = None,
+    ):
+        """Send an m.room.message. `metadata` merges into the content dict.
+
+        Matrix content is a JSON object; custom keys (e.g.
+        `dev.famstack.event`) are invisible to clients but readable
+        by the bot when it fetches the event back. The reply-to-reprocess
+        flow rides on this — a filing notification carries a
+        `dev.famstack.event` envelope on the same m.room.message, so a
+        user reply traces straight back to the paperless_id in one fetch.
+        """
         html = markdown.markdown(text, extensions=["tables", "fenced_code"])
         content = {
             "msgtype": "m.text",
@@ -589,6 +732,8 @@ class ArchivistBot(MicroBot):
         }
         if reply_to:
             content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+        if metadata:
+            content.update(metadata)
         await self._client.room_send(room_id=room_id, message_type="m.room.message", content=content)
 
     async def _download_matrix_file(self, mxc_url: str) -> bytes | None:
@@ -610,9 +755,175 @@ class ArchivistBot(MicroBot):
 
     # ── Document processing pipeline ─────────────────────────────────────
 
+    @staticmethod
+    def _event_date(event) -> str | None:
+        """YYYY-MM-DD from a matrix-nio event's `server_timestamp`.
+
+        Returned date is UTC. Used as the LLM's anchor for resolving
+        partial dates on the document (the doc itself usually carries
+        a date close to when the user uploaded it). Returns None when
+        the event lacks a usable timestamp — caller falls back to the
+        system date.
+        """
+        ts_ms = getattr(event, "server_timestamp", None)
+        if not isinstance(ts_ms, (int, float)) or ts_ms <= 0:
+            return None
+        import datetime as _dt
+        return _dt.datetime.fromtimestamp(
+            ts_ms / 1000, tz=_dt.timezone.utc,
+        ).date().isoformat()
+
+    async def _reply_target_doc_id(self, room_id: str, event) -> int | None:
+        """Return the paperless_id when `event` replies to one of OUR filings.
+
+        Detection: the event carries `m.relates_to.m.in_reply_to.event_id`
+        pointing at a prior bot message that carries a `dev.famstack.event`
+        envelope of `type: document.filed`. We fetch the parent event
+        from the homeserver and read `data.paperless_id` straight off it —
+        Matrix is the ledger, so no local cache is involved.
+
+        Returns None when the message isn't a reply, the parent fetch
+        fails, the parent isn't ours, or the envelope is missing /
+        wrong type. Caller falls back to normal routing.
+        """
+        in_reply_to = (
+            event.source.get("content", {})
+            .get("m.relates_to", {})
+            .get("m.in_reply_to", {})
+            .get("event_id")
+        )
+        if not in_reply_to:
+            return None
+        try:
+            resp = await self._client.room_get_event(room_id, in_reply_to)
+        except Exception as e:
+            logger.debug("[archivist] reply parent fetch failed: {}", e)
+            return None
+        parent_event = getattr(resp, "event", None)
+        if parent_event is None:
+            return None
+        # Only act on replies to OUR own messages; a reply to another
+        # user that happens to carry a matching field shouldn't fire.
+        if getattr(parent_event, "sender", None) != self.user_id:
+            return None
+        envelope = parent_event.source.get("content", {}).get("dev.famstack.event")
+        if not isinstance(envelope, dict):
+            return None
+        if envelope.get("type") != "document.filed":
+            return None
+        paperless_id = envelope.get("data", {}).get("paperless_id")
+        return paperless_id if isinstance(paperless_id, int) else None
+
+    async def _handle_reply_reprocess(
+        self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
+        *, date_filed: str | None = None,
+    ) -> None:
+        """Re-run the pipeline on `doc_id` with the user's reply as a hint.
+
+        The hint becomes a high-priority block in the classify prompt —
+        the LLM treats it as a correction that overrides its prior
+        reading. The mirror's existing idempotent publish path
+        overwrites the old markdown entry on the same paperless_id.
+        `is_reprocess=True` preserves the document's filing date in
+        Paperless.
+        """
+        await self._set_typing(room_id)
+        try:
+            doc = await self._paperless.get_doc(doc_id)
+            if not doc:
+                await self._send(
+                    room_id, self.t("reprocess_doc_missing", doc_id=doc_id),
+                    reply_to,
+                )
+                return
+
+            ontology = self._load_ontology()
+            result = await enrich_document(
+                paperless=self._paperless,
+                classifier=self._classifier,
+                doc=doc,
+                classify_max_chars=self.classify_max_chars,
+                ontology_section=ontology.classifier_prompt_section(self.language),
+                correspondents_section=self._compute_correspondents_section(),
+                ontology=ontology,
+                lang=self.language,
+                is_reprocess=True,
+                date_filed=date_filed,
+                user_hint=user_hint,
+            )
+            if result.llm_error:
+                kind, detail = result.llm_error
+                await self._send(
+                    room_id,
+                    self.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
+                    reply_to,
+                )
+                return
+
+            # Refetch so the mirror sees the post-PATCH title/tags.
+            refreshed = await self._paperless.get_doc(doc_id) or doc
+            paperless_tags = [
+                *result.resolved_topics,
+                *(f"Person: {p}" for p in result.resolved_persons),
+            ]
+            await self._safe_mirror(
+                doc_id=doc_id,
+                classification=dict(result.classification, **{
+                    "topics": result.resolved_topics,
+                    "persons": result.resolved_persons,
+                    "correspondent": result.resolved_correspondent,
+                    "document_type": result.resolved_type,
+                }),
+                body_text=refreshed.get("content", "") or "",
+                processing="ai_formatted" if result.classification else "ocr",
+                model=None,
+                fallback_title=refreshed.get("title") or f"Paperless #{doc_id}",
+                paperless_tags=paperless_tags,
+                summary=result.summary,
+            )
+
+            # Echo back a confirmation carrying a fresh envelope so the
+            # user can chain another correction by replying to THIS
+            # message too. The envelope `type` is `document.reclassified`
+            # so the deriver can distinguish the corrective pass from
+            # the original filing in the ledger.
+            title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
+            meta_parts: list[str] = []
+            meta_parts.extend(result.resolved_topics)
+            meta_parts.extend(result.resolved_persons)
+            if result.resolved_type:
+                meta_parts.append(result.resolved_type)
+            if result.resolved_correspondent:
+                meta_parts.append(result.resolved_correspondent)
+            lines = [self.t("reprocessed", title=title, doc_id=doc_id)]
+            if meta_parts:
+                lines.extend(["", "  " + " | ".join(meta_parts)])
+
+            envelope = build_document_event(
+                doc_id, result.classification,
+                resolved_topics=result.resolved_topics,
+                resolved_persons=result.resolved_persons,
+                resolved_correspondent=result.resolved_correspondent,
+                resolved_type=result.resolved_type,
+                paperless_url=self.paperless_public_url or self.paperless_url,
+                actor=self.user_id,
+                ts=_utc_now_isoformat(),
+            )
+            envelope["type"] = "document.reclassified"
+            envelope["summary"] = f"{title} reclassified (#{doc_id})"
+            envelope["data"]["user_hint"] = user_hint
+            await self._send(
+                room_id, "\n".join(lines), reply_to,
+                metadata={"dev.famstack.event": envelope},
+            )
+        finally:
+            await self._set_typing(room_id, typing=False)
+
     async def _process_document(
         self, room_id: str, filename: str, display_name: str,
         file_data: bytes, reply_to: str | None = None,
+        date_filed: str | None = None,
+        submitter_mxid: str | None = None,
     ):
         """The core pipeline: upload → OCR → classify → tag → report → emit event.
 
@@ -653,6 +964,11 @@ class ArchivistBot(MicroBot):
         # papers. Scan-mode PDFs (built from photographed pages) have no
         # text layer and still reformat normally.
         is_pdf_with_text = ext == "pdf" and _has_pdf_text_layer(file_data)
+        # A text layer that came from a machine-OCR tool (OCRmyPDF /
+        # Tesseract) shouldn't be trusted the way we'd trust a native
+        # authored layer — vision should still attach so the model can
+        # override jumbled / partial text.
+        is_pdf_ocr_layer = is_pdf_with_text and _has_pdf_ocr_text_layer(file_data)
         if is_text:
             if ext == "csv":
                 upload_filename, upload_type = filename, "text/csv"
@@ -718,10 +1034,11 @@ class ArchivistBot(MicroBot):
                 images = [ImageAttachment(
                     data=file_data, mime=IMAGE_MIMES[ext],
                 )]
-            elif ext == "pdf" and not is_pdf_with_text:
-                # Scan-mode PDF — only worth rendering when the model
-                # can actually use the images. Skipping the render saves
-                # the Pillow round-trip on text-only setups.
+            elif ext == "pdf" and _should_attach_vision(
+                has_text_layer=is_pdf_with_text,
+                has_ocr_text_layer=is_pdf_ocr_layer,
+                page_count=_pdf_page_count(file_data) if is_pdf_with_text else 0,
+            ):
                 if await self._classifier.has_vision():
                     rendered = render_pages(file_data)
                     if rendered:
@@ -729,14 +1046,19 @@ class ArchivistBot(MicroBot):
                             ImageAttachment(data=p, mime="image/png")
                             for p in rendered
                         ]
+            ontology = self._load_ontology()
             result = await enrich_document(
                 paperless=self._paperless,
                 classifier=self._classifier,
                 doc=doc,
                 classify_max_chars=self.classify_max_chars,
                 images=images,
-                ontology_section=self._compute_ontology_section(),
+                ontology_section=ontology.classifier_prompt_section(self.language),
                 correspondents_section=self._compute_correspondents_section(),
+                ontology=ontology,
+                lang=self.language,
+                date_filed=date_filed,
+                submitter_mxid=submitter_mxid,
             )
         else:
             result = EnrichResult()
@@ -909,7 +1231,28 @@ class ArchivistBot(MicroBot):
             if link:
                 lines.extend(["", f"  {link}"])
 
-            await self._send(room_id, "\n".join(lines), reply_to)
+            # The `dev.famstack.event` envelope rides on the visible
+            # message content — single event in the timeline, full
+            # picture in one fetch. Matrix is famstack's canonical
+            # ledger, so every filing must be replayable from the
+            # m.room.message alone. The reply-to-reprocess handler
+            # reads `data.paperless_id` straight off this field; the
+            # deriver (future) will filter for m.room.message events
+            # carrying this envelope.
+            envelope = build_document_event(
+                doc_id, classification,
+                resolved_topics=resolved_topics,
+                resolved_persons=resolved_persons,
+                resolved_correspondent=resolved_correspondent,
+                resolved_type=resolved_type,
+                paperless_url=self.paperless_public_url or self.paperless_url,
+                actor=self.user_id,
+                ts=_utc_now_isoformat(),
+            )
+            await self._send(
+                room_id, "\n".join(lines), reply_to,
+                metadata={"dev.famstack.event": envelope},
+            )
 
         processed_parts = [*resolved_topics, *resolved_persons]
         if resolved_type:
@@ -918,25 +1261,6 @@ class ArchivistBot(MicroBot):
             processed_parts.append(resolved_correspondent)
         logger.info("[archivist] Processed: {} → doc {} [{}]",
                      filename, doc_id, ", ".join(processed_parts) or "no-classification")
-
-        # ── Structured event — always, once Paperless has the doc ───────
-        # Element ignores unknown event types, so the event rides next to
-        # the human reply without showing up in chat. Fires symmetrically
-        # with the mirror: every Paperless-filed doc produces an event,
-        # even when classification returned nothing. Downstream bots
-        # deciding whether to act on an event filter on the fields they
-        # care about — empty `topics` / `correspondent` is a valid
-        # "filed-but-uninterpreted" signal, not a reason to hide the
-        # event.
-        event_payload = build_document_event(
-            doc_id, classification,
-            resolved_topics=resolved_topics,
-            resolved_persons=resolved_persons,
-            resolved_correspondent=resolved_correspondent,
-            resolved_type=resolved_type,
-            paperless_url=self.paperless_public_url or self.paperless_url,
-        )
-        await self.emit_event(room_id, event_payload["type"], event_payload["body"])
 
     # ── Event handlers ───────────────────────────────────────────────────
 
@@ -975,7 +1299,11 @@ class ArchivistBot(MicroBot):
             else:
                 await self._send(room.room_id, self.t("received_document", sender=sender_name), reply_to)
 
-            await self._process_document(room.room_id, raw_filename, display_name, file_data, reply_to)
+            await self._process_document(
+                room.room_id, raw_filename, display_name, file_data, reply_to,
+                date_filed=self._event_date(event),
+                submitter_mxid=event.sender,
+            )
         finally:
             await self._set_typing(room.room_id, typing=False)
 
@@ -990,6 +1318,23 @@ class ArchivistBot(MicroBot):
         reply_to = event.event_id
 
         try:
+            # ── Reply-to-classification: user is correcting a prior filing ──
+            # When the user replies to a bot's doc-filing message we can
+            # trace back the doc_id from the parent event's metadata,
+            # then re-run the classifier with the user's message as an
+            # authoritative hint. Short-circuits before the rest of the
+            # parser so a reply that happens to look like a search
+            # ("ADAC") doesn't get routed to free-text search.
+            doc_id = await self._reply_target_doc_id(room.room_id, event)
+            if doc_id is not None:
+                hint = _strip_reply_fallback(event.body)
+                if hint:
+                    await self._handle_reply_reprocess(
+                        room.room_id, doc_id, hint, reply_to,
+                        date_filed=self._event_date(event),
+                    )
+                    return
+
             if query_lower in HELP_COMMANDS:
                 url = self.paperless_public_url or self.paperless_url
                 await self._send(room.room_id, self.t("welcome", url=url, ai_status=self._ai_status()), reply_to)
@@ -1001,7 +1346,10 @@ class ArchivistBot(MicroBot):
 
             elif query_lower in SCAN_END:
                 if event.sender in self._scan_sessions:
-                    await self._handle_scan_complete(room.room_id, event.sender, reply_to)
+                    await self._handle_scan_complete(
+                        room.room_id, event.sender, reply_to,
+                        date_filed=self._event_date(event),
+                    )
                 else:
                     await self._send(room.room_id, self.t("no_active_scan"), reply_to)
 
@@ -1014,7 +1362,11 @@ class ArchivistBot(MicroBot):
                         room.room_id, query, event.sender, reply_to,
                     )
                 else:
-                    await self._handle_url(room.room_id, query, reply_to)
+                    await self._handle_url(
+                        room.room_id, query, reply_to,
+                        date_filed=self._event_date(event),
+                        submitter_mxid=event.sender,
+                    )
 
             elif self._is_capture_room(room.room_id) and self._looks_like_paste(query):
                 # Capture room + paste-shaped message → file as text capture.
@@ -1058,7 +1410,10 @@ class ArchivistBot(MicroBot):
         page_num = len(session["files"])
         await self._send(room_id, self.t("page_received", num=page_num), reply_to)
 
-    async def _handle_scan_complete(self, room_id: str, sender: str, reply_to: str | None = None):
+    async def _handle_scan_complete(
+        self, room_id: str, sender: str, reply_to: str | None = None,
+        *, date_filed: str | None = None,
+    ):
         session = self._scan_sessions.pop(sender)
         files = session["files"]
         sender_name = sender.split(":")[0].replace("@", "").capitalize()
@@ -1073,7 +1428,11 @@ class ArchivistBot(MicroBot):
                 filename, file_data = files[0]
                 display_name = _clean_filename(filename)
                 await self._send(room_id, self.t("scan_complete_single"), reply_to)
-                await self._process_document(room_id, filename, display_name, file_data, reply_to)
+                await self._process_document(
+                    room_id, filename, display_name, file_data, reply_to,
+                    date_filed=date_filed,
+                    submitter_mxid=sender,
+                )
                 return
 
             page_count = len(files)
@@ -1087,7 +1446,11 @@ class ArchivistBot(MicroBot):
 
             filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
             display_name = f"scan ({page_count} pages)"
-            await self._process_document(room_id, filename, display_name, pdf_data, reply_to)
+            await self._process_document(
+                room_id, filename, display_name, pdf_data, reply_to,
+                date_filed=date_filed,
+                submitter_mxid=sender,
+            )
         finally:
             await self._set_typing(room_id, typing=False)
 
@@ -1366,7 +1729,10 @@ class ArchivistBot(MicroBot):
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
-    async def _handle_url(self, room_id: str, url: str, reply_to: str | None = None):
+    async def _handle_url(
+        self, room_id: str, url: str, reply_to: str | None = None,
+        *, date_filed: str | None = None, submitter_mxid: str | None = None,
+    ):
         google_export = _google_docs_export_url(url)
         if google_export:
             download_url, doc_type = google_export
@@ -1412,7 +1778,11 @@ class ArchivistBot(MicroBot):
                 await self._send(room_id, self.t("url_not_pdf", content_type=content_type), reply_to)
                 return
 
-            await self._process_document(room_id, filename, display_name, file_data, reply_to)
+            await self._process_document(
+                room_id, filename, display_name, file_data, reply_to,
+                date_filed=date_filed,
+                submitter_mxid=submitter_mxid,
+            )
         finally:
             await self._set_typing(room_id, typing=False)
 

@@ -216,3 +216,97 @@ class TestCaptureTagList:
         assert ArchivistBot._capture_tag_list(c) == [
             "AI", "Productivity", "Person: Arthur",
         ]
+
+
+# ── Reply fallback stripping ──────────────────────────────────────────────
+
+class TestStripReplyFallback:
+    """Matrix injects a `>`-quoted fallback at the top of a reply body so
+    clients without rich-reply support still see context. The bot wants
+    only the user's actual text — what comes after the fallback."""
+
+    def test_strips_single_line_quoted_fallback(self):
+        from archivist import _strip_reply_fallback
+        body = (
+            "> <@bot:test.local> Filed: ADAC Kfz-Versicherung (#42)\n"
+            "\n"
+            "this is for Sabrina, not Homer"
+        )
+        assert _strip_reply_fallback(body) == "this is for Sabrina, not Homer"
+
+    def test_strips_multi_line_quoted_fallback(self):
+        from archivist import _strip_reply_fallback
+        body = (
+            "> <@bot:test.local> Filed: ADAC (#42)\n"
+            "> \n"
+            "> Insurance | Homer | Invoice | ADAC | 2026-03-15\n"
+            "\n"
+            "wrong year, it's actually 2025"
+        )
+        assert _strip_reply_fallback(body) == "wrong year, it's actually 2025"
+
+    def test_no_quoted_block_returns_body_as_is(self):
+        # A direct message without a reply — strip should leave it alone.
+        from archivist import _strip_reply_fallback
+        assert _strip_reply_fallback("plain question") == "plain question"
+
+    def test_only_quoted_block_returns_empty(self):
+        # If the body has no content after the fallback, the user's reply
+        # is empty. Handler upstream should ignore an empty hint.
+        from archivist import _strip_reply_fallback
+        assert _strip_reply_fallback("> <@bot> Filed (#42)") == ""
+
+
+# ── Vision-attach policy ──────────────────────────────────────────────────
+
+class TestShouldAttachVision:
+    """The single decision point for whether the archivist attaches
+    rendered PDF pages alongside the OCR text. Policy is pure logic
+    over three inputs so it's safe to unit-test without containers."""
+
+    @staticmethod
+    def _decide(**kw):
+        from archivist import _should_attach_vision
+        return _should_attach_vision(**kw)
+
+    def test_scan_without_text_layer_attaches_vision(self):
+        # No text layer → vision is the only signal. Render anything
+        # available, regardless of length.
+        assert self._decide(
+            has_text_layer=False, has_ocr_text_layer=False, page_count=0,
+        ) is True
+
+    def test_native_text_short_skips_vision(self):
+        # A 2-page generated invoice — trustworthy text layer, vision
+        # would waste tokens.
+        assert self._decide(
+            has_text_layer=True, has_ocr_text_layer=False, page_count=2,
+        ) is False
+
+    def test_native_text_long_skips_vision(self):
+        # A 30-page research paper — same reasoning, more emphasis.
+        assert self._decide(
+            has_text_layer=True, has_ocr_text_layer=False, page_count=30,
+        ) is False
+
+    def test_ocr_text_layer_short_attaches_vision(self):
+        # A Booking.com / OCRmyPDF-routed scan — text layer is jumbled,
+        # vision must override.
+        assert self._decide(
+            has_text_layer=True, has_ocr_text_layer=True, page_count=2,
+        ) is True
+
+    def test_ocr_text_layer_at_cap_still_attaches(self):
+        # The cap is inclusive: exactly 5 pages → still vision.
+        from archivist import _VISION_MAX_PDF_PAGES
+        assert self._decide(
+            has_text_layer=True, has_ocr_text_layer=True,
+            page_count=_VISION_MAX_PDF_PAGES,
+        ) is True
+
+    def test_ocr_text_layer_long_skips_vision(self):
+        # A 30-page contract re-OCR'd by Paperless — trust the (imperfect)
+        # text layer rather than burn one image token per page.
+        assert self._decide(
+            has_text_layer=True, has_ocr_text_layer=True, page_count=30,
+        ) is False

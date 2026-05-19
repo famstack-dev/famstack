@@ -256,9 +256,9 @@ class TestRender:
 
 
 class TestBriefingBlock:
-    """The classifier's briefing — Summary / Facts / Action items —
-    sits between the wiki-link header and the OCR body as
-    human-readable Markdown."""
+    """The classifier's briefing — prose summary, optional source link,
+    facts, and action items — is wrapped in a `> [!summary]` callout so
+    it reads visually distinct from the OCR-cleaned body that follows."""
 
     def test_full_briefing_in_rendered_output(self, mirror):
         out = mirror._render(
@@ -273,14 +273,14 @@ class TestBriefingBlock:
             ],
         )
 
-        assert "## Summary" in out
-        assert "Annual renewal of comprehensive auto insurance." in out
-        assert "## Facts" in out
-        assert "- Total: EUR 340.00" in out
-        assert "- Policy: KH-2026-987" in out
-        assert "## Action items" in out
-        assert "- [ ] Confirm SEPA balance — 2026-03-14" in out
-        assert "- [ ] File for tax" in out
+        assert "> [!summary]" in out
+        assert "> Annual renewal of comprehensive auto insurance." in out
+        assert "> **Facts**" in out
+        assert "> - Total: EUR 340.00" in out
+        assert "> - Policy: KH-2026-987" in out
+        assert "> **Action items**" in out
+        assert "> - [ ] Confirm SEPA balance — 2026-03-14" in out
+        assert "> - [ ] File for tax" in out
 
     def test_briefing_appears_before_body(self, mirror):
         out = mirror._render(
@@ -289,7 +289,7 @@ class TestBriefingBlock:
             summary="One liner.",
             facts=[], action_items=[],
         )
-        assert out.index("## Summary") < out.index("OCR PAYLOAD")
+        assert out.index("> [!summary]") < out.index("OCR PAYLOAD")
 
     def test_omitted_entirely_when_classifier_returned_nothing(self, mirror):
         out = mirror._render(
@@ -297,9 +297,9 @@ class TestBriefingBlock:
             correspondent=None, persons=[],
             summary=None, facts=None, action_items=None,
         )
-        assert "## Summary" not in out
-        assert "## Facts" not in out
-        assert "## Action items" not in out
+        assert "> [!summary]" not in out
+        assert "**Facts**" not in out
+        assert "**Action items**" not in out
 
     def test_individual_sections_drop_when_empty(self, mirror):
         out = mirror._render(
@@ -307,9 +307,10 @@ class TestBriefingBlock:
             correspondent=None, persons=[],
             summary="Just a summary.", facts=[], action_items=[],
         )
-        assert "## Summary" in out
-        assert "## Facts" not in out
-        assert "## Action items" not in out
+        assert "> [!summary]" in out
+        assert "> Just a summary." in out
+        assert "**Facts**" not in out
+        assert "**Action items**" not in out
 
     def test_string_action_item_renders_as_task(self, mirror):
         out = mirror._render(
@@ -318,7 +319,7 @@ class TestBriefingBlock:
             summary=None, facts=None,
             action_items=["Just a string item"],
         )
-        assert "- [ ] Just a string item" in out
+        assert "> - [ ] Just a string item" in out
 
     def test_null_string_due_is_treated_as_no_due(self, mirror):
         # LLMs sometimes return the string "null" instead of true null.
@@ -329,8 +330,8 @@ class TestBriefingBlock:
             action_items=[{"action": "Pay bill", "due": "null"}],
         )
         # No trailing "— null"
-        assert "- [ ] Pay bill" in out
-        assert "null" not in out.split("## Action items")[1]
+        assert "> - [ ] Pay bill" in out
+        assert "null" not in out.split("**Action items**")[1]
 
     def test_skips_blank_facts_and_empty_actions(self, mirror):
         out = mirror._render(
@@ -341,11 +342,35 @@ class TestBriefingBlock:
             action_items=[{"action": "", "due": "2026-01-01"}, {"action": "Real action"}],
         )
         # Only the real fact + real action survive.
-        assert "- Real fact" in out
-        assert "- [ ] Real action" in out
+        assert "> - Real fact" in out
+        assert "> - [ ] Real action" in out
         # No empty bullets / checkboxes.
         assert "- \n" not in out
         assert "- [ ] \n" not in out
+
+    def test_source_link_appears_inside_callout(self, mirror):
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="(body)",
+            correspondent=None, persons=[],
+            summary="Prose.",
+            facts=[], action_items=[],
+            source_link=("Show Document", "https://paperless.local/documents/42/details"),
+        )
+        # Link sits inside the callout (prefixed with `> `) and points
+        # at the Paperless doc details page.
+        assert "> [Show Document](https://paperless.local/documents/42/details)" in out
+
+    def test_source_link_dropped_when_url_missing(self, mirror):
+        # Half-supplied source_link tuple (label without url, or vice versa)
+        # must not produce a malformed `[label]()` link.
+        out = mirror._render(
+            frontmatter={"title": "t"}, body="(body)",
+            correspondent=None, persons=[],
+            summary="Prose.",
+            facts=[], action_items=[],
+            source_link=("Show Document", ""),
+        )
+        assert "Show Document" not in out
 
 
 # ── Captures ─────────────────────────────────────────────────────────────
@@ -571,7 +596,7 @@ class TestCaptureRender:
         assert "source_uri: https://example.com/llms" in out
         assert "# Why local LLMs matter" in out
         assert "**About:** [[Arthur]]" in out
-        assert "## Summary" in out
+        assert "> [!summary]" in out
         assert "A 200-word digest" in out
         # No trailing empty body section — file ends after briefing.
 
@@ -592,6 +617,6 @@ class TestCaptureRender:
             facts=[], action_items=[],
         )
         assert "kind: note" in out
-        assert "## Summary" in out
+        assert "> [!summary]" in out
         assert "Comment thread comparing" in out
         assert "Top comment quotes 60 tok/s" in out

@@ -9,6 +9,12 @@ Accepts single ids and inclusive ranges:
 Ids missing from Paperless inside a range are silently skipped — the
 end-of-run summary reports the skipped count.
 
+A `--msg "your hint"` flag attaches a user clarification to the
+classify prompt, same lever as the Matrix reply-to-reprocess flow:
+
+    reprocess 7 --msg "Der Urlaub ist im Februar 2026"
+    reprocess 1-5 --msg "filed for tax year 2025"
+
 Honours the archivist's bot.toml `[settings].reformat` so the CLI
 behaves like the bot on a new upload. Memory-vault mirroring is
 attempted by default and skipped if the `code` stacklet env is
@@ -21,7 +27,35 @@ classification-only pass by calling in with `reformat=False, mirror=None`.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
+from pathlib import Path
+
+# `memory.lib` is imported lazily inside `run_one` — it depends on the
+# bot-runner's sys.path (which adds the stacklets parent dir) so a unit
+# test that imports `cli.reprocess` for argv-helper coverage doesn't
+# need the live container's path setup.
+
+
+def _extract_msg(argv: list[str]) -> tuple[list[str], str | None]:
+    """Strip a `--msg <text>` pair out of argv and return (rest, msg).
+
+    The user hint piggy-backs on the same plumbing as the Matrix
+    reply-to-reprocess flow — it lands in the classifier prompt as a
+    `User clarification` block. Quoting comes from the shell; argv
+    arrives with the message as a single token.
+
+    Returns `(argv_without_msg, msg)`. When `--msg` isn't supplied, msg
+    is None and argv is returned unchanged.
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--msg":
+            if i + 1 >= len(argv):
+                return argv, None  # caller treats trailing --msg as a usage error
+            return argv[:i] + argv[i + 2:], argv[i + 1]
+        if arg.startswith("--msg="):
+            return argv[:i] + argv[i + 1:], arg[len("--msg="):]
+    return argv, None
 
 from pipeline import (
     Classifier,
@@ -55,6 +89,20 @@ class RunResult(Enum):
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,
               argv: list[str]) -> int:
+    # `--msg "text"` lands in the classify prompt as a `User
+    # clarification` block — the same lever the Matrix reply-to-reprocess
+    # flow uses. Examples:
+    #
+    #   stack docs reprocess 7 --msg "Der Urlaub ist im Februar 2026"
+    #   stack docs reprocess 1-5 --msg "this is for Sabrina"
+    #
+    # Stripped from argv before flag/positional parsing so the rest of
+    # the parser only sees id specs and known flags.
+    argv, user_hint = _extract_msg(argv)
+    if "--msg" in argv:
+        err("--msg requires a value: --msg \"your hint\"")
+        return 2
+
     dry_run = is_dry(argv)
 
     # Defaults come from bot.toml so the CLI behaves like a new upload.
@@ -78,7 +126,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         err(f"Unknown flag(s): {' '.join(unknown)}")
         return 2
     if not positional:
-        err("Usage: reprocess <id|range>... [--[no-]reformat] [--no-mirror] [--dry|--dry-run]")
+        err("Usage: reprocess <id|range>... [--msg \"hint\"] [--[no-]reformat] [--no-mirror] [--dry|--dry-run]")
         return 2
 
     doc_ids = parse_id_specs(positional)
@@ -98,6 +146,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         result = await run_one(
             paperless, classifier, mirror,
             doc_id=doc_id, reformat=reformat, dry_run=dry_run,
+            user_hint=user_hint,
         )
         if result is RunResult.OK:
             successes += 1
@@ -115,6 +164,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
 async def run_one(
     paperless: PaperlessAPI, classifier: Classifier, mirror,
     *, doc_id: int, reformat: bool, dry_run: bool,
+    user_hint: str | None = None,
 ) -> RunResult:
     """Re-enrich one Paperless doc.
 
@@ -134,9 +184,28 @@ async def run_one(
     correspondents = await paperless.get_correspondents()
     before = _snapshot_doc(doc, tags, doc_types, correspondents)
 
+    # Anchor partial-date resolution to Paperless's immutable filing
+    # date (`added`). System date would silently shift the anchor to
+    # "today" and re-hallucinate years on a reprocess weeks later.
+    added = (doc.get("added") or "")[:10] or None
+    # Load the same memory ontology the live bot uses so cross-language
+    # canonicalisation (and cross-field rejection) applies to CLI
+    # reprocess too. The vault path and the household language ride on
+    # the same env vars as in the bot. Imported lazily so unit tests
+    # that only exercise argv helpers don't need memory.lib's sys.path.
+    from memory.lib import get_ontology as _get_memory_ontology
+    vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
+    ontology = _get_memory_ontology(Path(vault_env) if vault_env else None)
+    lang = os.environ.get("LANGUAGE", "en")
     pipeline_paperless = DryRunPaperless(paperless) if dry_run else paperless
     result = await enrich_document(
         paperless=pipeline_paperless, classifier=classifier, doc=doc,
+        ontology_section=ontology.classifier_prompt_section(lang),
+        ontology=ontology,
+        lang=lang,
+        is_reprocess=True,
+        date_filed=added,
+        user_hint=user_hint,
     )
     if result.llm_error:
         kind, detail = result.llm_error

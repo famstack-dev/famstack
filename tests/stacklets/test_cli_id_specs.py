@@ -98,3 +98,47 @@ class TestErrors:
         # Even if other tokens are valid, a single garbage token taints
         # the run — better to fail loudly than to half-process.
         assert parse_id_specs(["1", "abc", "5"]) is None
+
+
+# ── --msg extraction ──────────────────────────────────────────────────────
+
+class TestExtractMsg:
+    """The reprocess CLI accepts an optional `--msg "text"` hint that
+    rides into the classifier prompt as a User clarification block
+    (same lever as the Matrix reply-to-reprocess flow)."""
+
+    @staticmethod
+    def _extract(argv):
+        from cli.reprocess import _extract_msg
+        return _extract_msg(argv)
+
+    def test_extracts_msg_value(self):
+        rest, msg = self._extract(["7", "--msg", "Urlaub Feb 2026"])
+        assert rest == ["7"]
+        assert msg == "Urlaub Feb 2026"
+
+    def test_no_msg_returns_argv_unchanged(self):
+        rest, msg = self._extract(["7", "--no-reformat"])
+        assert rest == ["7", "--no-reformat"]
+        assert msg is None
+
+    def test_msg_in_middle(self):
+        # --msg can appear anywhere in argv; only its own value is
+        # consumed, other flags survive.
+        rest, msg = self._extract(["7", "--msg", "hint", "--dry"])
+        assert rest == ["7", "--dry"]
+        assert msg == "hint"
+
+    def test_msg_with_equals(self):
+        # `--msg=text` form lets shells that don't like long quoted
+        # args still pass a hint.
+        rest, msg = self._extract(["7", "--msg=urlaub"])
+        assert rest == ["7"]
+        assert msg == "urlaub"
+
+    def test_trailing_msg_without_value(self):
+        # --msg as the last arg with nothing after — caller's responsibility
+        # to detect (msg None + --msg still in argv).
+        rest, msg = self._extract(["7", "--msg"])
+        assert "--msg" in rest
+        assert msg is None

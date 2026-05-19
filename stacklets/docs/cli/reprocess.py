@@ -10,15 +10,17 @@ upload. Pass the `--no-*` form to opt out for a single run.
 
 Usage:
     stack docs reprocess <id> [<id>...] \\
+        [--msg "your hint"]          \\
         [--reformat | --no-reformat] \\
         [--mirror   | --no-mirror]   \\
         [--dry-run | --dry]
 
 Examples:
-    stack docs reprocess 42                 # respect bot.toml, apply
-    stack docs reprocess 42 43 44           # batch, one at a time
-    stack docs reprocess 42 --dry-run       # plan only, no writes
-    stack docs reprocess 42 --no-reformat   # skip the reformat LLM call
+    stack docs reprocess 42                          # respect bot.toml, apply
+    stack docs reprocess 42 43 44                    # batch, one at a time
+    stack docs reprocess 42 --dry-run                # plan only, no writes
+    stack docs reprocess 42 --no-reformat            # skip the reformat LLM call
+    stack docs reprocess 7 --msg "Urlaub Feb 2026"   # nudge with a user hint
 """
 
 HELP = "Re-run the archivist pipeline on filed documents (apply + mirror)"

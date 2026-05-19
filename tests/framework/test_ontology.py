@@ -113,6 +113,99 @@ class TestResolveTopic:
         assert ontology.resolve_topic("badminton", lang="en") is None
 
 
+# ─── Languages ───────────────────────────────────────────────────────────
+
+class TestLanguages:
+    """The `languages` property powers cross-language canonicalisation —
+    the matcher walks every known language when normalising LLM output."""
+
+    def test_collects_languages_across_topics_and_doctypes(self, ontology):
+        assert ontology.languages == ["de", "en"]
+
+    def test_languages_on_empty_ontology(self, tmp_path):
+        (tmp_path / "empty.toml").write_text("")
+        ont = Ontology.load(tmp_path / "empty.toml")
+        assert ont.languages == []
+
+
+# ─── Cross-language canonicalisation ─────────────────────────────────────
+
+class TestCanonicalizeTopic:
+    """A weak classifier model may emit the wrong language or stuff a
+    doctype name into the topic field. `canonicalize_topic` normalises
+    to a canonical name in the household language and flags cross-field
+    confusion so the caller can drop hallucinated values."""
+
+    def test_household_language_passthrough(self, ontology):
+        # German household, German topic name — direct canonical hit.
+        r = ontology.canonicalize_topic("Versicherung", lang="de")
+        assert r.canonical == "Versicherung"
+        assert r.cross_field is False
+
+    def test_cross_language_normalises_to_household_canonical(self, ontology):
+        # LLM emitted English "Insurance" but household runs in German —
+        # resolver should return the German canonical "Versicherung".
+        r = ontology.canonicalize_topic("Insurance", lang="de")
+        assert r.canonical == "Versicherung"
+        assert r.cross_field is False
+
+    def test_synonym_resolves_through_canonical(self, ontology):
+        # "coverage" is an English synonym of Insurance; with a German
+        # household it should still land on "Versicherung".
+        r = ontology.canonicalize_topic("coverage", lang="de")
+        assert r.canonical == "Versicherung"
+        assert r.cross_field is False
+
+    def test_doctype_in_topic_field_is_cross_field(self, ontology):
+        # LLM put a doctype name ("Invoice") in the topic field —
+        # signal cross-field so the caller drops it instead of creating
+        # a junk topic tag.
+        r = ontology.canonicalize_topic("Invoice", lang="de")
+        assert r.canonical is None
+        assert r.cross_field is True
+
+    def test_doctype_in_topic_field_cross_language_is_cross_field(self, ontology):
+        # Cross-field detection works across languages too: German
+        # doctype name ("Rechnung") in the English topic field.
+        r = ontology.canonicalize_topic("Rechnung", lang="en")
+        assert r.canonical is None
+        assert r.cross_field is True
+
+    def test_unknown_returns_neither(self, ontology):
+        # A term the ontology has never heard of — caller decides whether
+        # to accept it as new vocabulary or reject.
+        r = ontology.canonicalize_topic("badminton", lang="en")
+        assert r.canonical is None
+        assert r.cross_field is False
+
+    def test_empty_text_returns_neither(self, ontology):
+        r = ontology.canonicalize_topic("", lang="en")
+        assert r.canonical is None
+        assert r.cross_field is False
+
+
+class TestCanonicalizeDoctype:
+    """Mirror of `canonicalize_topic` — same cross-language and
+    cross-field semantics on the doctype axis."""
+
+    def test_household_language_passthrough(self, ontology):
+        r = ontology.canonicalize_doctype("Rechnung", lang="de")
+        assert r.canonical == "Rechnung"
+        assert r.cross_field is False
+
+    def test_cross_language_normalises(self, ontology):
+        # English "Invoice" → German "Rechnung" in a German household.
+        r = ontology.canonicalize_doctype("Invoice", lang="de")
+        assert r.canonical == "Rechnung"
+        assert r.cross_field is False
+
+    def test_topic_in_doctype_field_is_cross_field(self, ontology):
+        # "Insurance" is a topic, not a doctype — cross-field signal.
+        r = ontology.canonicalize_doctype("Insurance", lang="de")
+        assert r.canonical is None
+        assert r.cross_field is True
+
+
 # ─── Classifier prompt ───────────────────────────────────────────────────
 
 class TestClassifierPromptSection:

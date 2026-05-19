@@ -47,7 +47,9 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     Then   Paperless has the document tagged 'Insurance' and
            'Person: Homer', with correspondent 'ADAC' and type 'Invoice'
     And    the #documents room contains a classification summary
-    And    a dev.famstack.document event is emitted with the metadata
+    And    the summary m.room.message carries a dev.famstack.event
+           envelope (Matrix is the canonical ledger — one event per
+           filing, full payload on the visible message)
     """
     scope = paperless_scope
     bdd.scenario("Homer uploads an ADAC invoice; archivist classifies it")
@@ -138,10 +140,13 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
         await _asyncio.sleep(1)
     assert notes, f"no classifier note on doc #{doc['id']} after 15s"
     body = "\n".join(n.get("note", "") for n in notes)
-    assert "## Summary" in body, f"missing Summary section in: {body!r}"
+    # The note carries the archivist marker so the next reprocess can
+    # sweep it; sections are untitled (no '## Summary' label) so the
+    # language stays native to the document.
+    assert "<!-- archivist-bot -->" in body, f"missing marker in: {body!r}"
     assert "Annual car insurance renewal at ADAC" in body, body
     assert "EUR 340.00/year" in body, body
-    assert f"## Parties\n{expected_correspondent} → Homer" in body, body
+    assert f"{expected_correspondent} → Homer" in body, body
     bdd.ok(f"summary note present ({len(body)} chars)")
 
     # ── Then: room receives classification summary + structured event ──
@@ -149,7 +154,7 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     # filter. Single sync sweep covers both events even though they were
     # posted back-to-back.
     bdd.then("the #documents room receives a classification summary")
-    bdd.and_("a dev.famstack.document event is emitted with full metadata")
+    bdd.and_("the m.room.message carries a dev.famstack.event envelope")
     events = await fetch_room_events(homer, room_id, duration=10)
 
     summary = next(
@@ -161,14 +166,15 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     assert summary, f"no classification summary among {[event_type(e) for e in events]}"
     bdd.ok(f"summary event {summary.event_id}")
 
-    structured = next(
-        (e for e in events if event_type(e) == "dev.famstack.document"),
-        None,
-    )
-    assert structured, f"no dev.famstack.document event among {[event_type(e) for e in events]}"
-    body = structured.source.get("content", {})
-    assert body.get("topics") == [expected_topic], body
-    assert body.get("persons") == ["Homer"], body
-    assert body.get("correspondent") == expected_correspondent, body
-    bdd.ok(f"event body: topics={body['topics']}, persons={body['persons']}, "
-           f"correspondent={body['correspondent']}")
+    # Single event per filing: the visible m.room.message is also the
+    # ledger record, with `dev.famstack.event` riding as a content field.
+    envelope = summary.source.get("content", {}).get("dev.famstack.event")
+    assert envelope, f"missing dev.famstack.event on summary content: {summary.source!r}"
+    assert envelope["source"] == "docs", envelope
+    assert envelope["type"] == "document.filed", envelope
+    data = envelope.get("data") or {}
+    assert data.get("topics") == [expected_topic], data
+    assert data.get("persons") == ["Homer"], data
+    assert data.get("correspondent") == expected_correspondent, data
+    bdd.ok(f"envelope: type={envelope['type']}, topics={data['topics']}, "
+           f"persons={data['persons']}, correspondent={data['correspondent']}")

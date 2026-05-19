@@ -265,31 +265,67 @@ passwords from `.stack/secrets.toml` on startup.
 
 ### Bot Events
 
-Bots communicate peer-to-peer by emitting structured Matrix events
-alongside human-readable messages. Element ignores unknown event types,
-so these events stay invisible in chat while acting as a bus other bots
-subscribe to.
+Matrix is famstack's canonical event ledger — every stacklet emits
+typed envelopes into the room timeline, and any state in the system
+must be derivable from replaying those events. Two delivery shapes:
 
-Convention: `dev.famstack.<name>` for event types. Examples shipping
-today:
+1. **Visible event** — `m.room.message` carrying a `dev.famstack.event`
+   content field. The body renders for humans in Element; bots and
+   the deriver read the structured envelope alongside it. One event,
+   full picture.
+2. **Silent event** — `dev.famstack.event`-typed message. Element
+   ignores unknown event types, so the event acts as a pure machine
+   signal with no chat noise.
 
-| Type | Emitter | Body |
-|---|---|---|
-| `dev.famstack.document` | `archivist-bot` | `{doc_id, title, date, topics[], persons[], correspondent, document_type, summary, facts[], action_items[], url}` |
+Both shapes carry the same envelope schema:
 
-To emit an event from a bot, call the `MicroBot.emit_event` helper:
+```
+{
+  "source": "<stacklet id>",     // "docs", "messages", "photos", …
+  "type":   "<verb.noun>",       // "document.filed", "voice.transcribed"
+  "summary": "<one-liner>",      // human-readable activity description
+  "data":   { … },               // structured payload
+  "actor":  "@user:home" | "bot",
+  "ts":     "<ISO-8601 UTC>"
+}
+```
+
+Examples shipping today:
+
+| Type | Delivery | Emitter | `data` keys |
+|---|---|---|---|
+| `document.filed` | visible (on m.room.message) | `archivist-bot` | `paperless_id, title, date, topics[], persons[], correspondent, document_type, summary, facts[], action_items[], url` |
+| `document.reclassified` | visible | `archivist-bot` | same as `document.filed` + `user_hint` |
+
+Finding famstack events in a room: enumerate the timeline and treat any
+event whose content has a `dev.famstack.event` key OR whose Matrix
+`type` is `dev.famstack.event` as a ledger entry. Both deliver the
+same envelope.
+
+To send a silent event from a bot, call `MicroBot.emit_event`:
 
 ```python
 await self.emit_event(
     room_id,
-    "dev.famstack.my_event",
-    {"key": "value"},
+    "dev.famstack.event",
+    {"source": "docs", "type": "service.started", "summary": "…",
+     "data": {…}, "actor": "archivist-bot", "ts": "…"},
 )
 ```
 
-The helper returns `True` on success and `False` on failure — failures
-are logged but never raised. The bus is best-effort: a downstream bot
-being offline must not take the emitter's main path with it.
+To attach an envelope to a visible message, pass `metadata` on a
+text-sending helper (see `archivist.py`'s `_send`):
+
+```python
+await self._send(
+    room_id, body_text, reply_to,
+    metadata={"dev.famstack.event": envelope},
+)
+```
+
+Both paths are best-effort; transport failures are logged but never
+raised. A downstream bot being offline must not take the emitter's
+main path with it.
 
 Subscribing to custom events on the bot side isn't wired yet — that
 comes with the first consumer bot. The emit contract is stable and
