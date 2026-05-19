@@ -255,6 +255,11 @@ def write_stack_toml(family_name, server_name, timezone, language="en"):
 [core]
 stack_owner = "{family_name}"
 domain = ""
+# Hostname used in port-mode URLs and the `{{ip}}` template var. Empty
+# = auto-detect this machine's LAN IP (the LAN-friendly default).
+# Set to "localhost" for single-machine testing, or to a custom
+# hostname like "mac-mini.local" when the LAN IP shifts.
+host = ""
 data_dir = "~/famstack-data"
 timezone = "{timezone}"
 language = "{language}"
