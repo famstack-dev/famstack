@@ -648,11 +648,12 @@ class Classifier:
         """Capture-specific classification.
 
         Returns a smaller payload than `classify`: title, summary,
-        facts, tags, persons, action_items. No correspondent, no
-        document_type, no ontology coupling. The summary is the
+        facts, tags, persons. No correspondent, no document_type, no
+        action_items, no ontology coupling. The summary is the
         load-bearing artifact — captures are bookmarks/notes, not
         archives, and the user reads the summary later to remember
-        what this was about.
+        what this was about. Action items deliberately stay out:
+        we don't want every Reddit paste manufacturing a todo.
 
         Existing tags are fed as a vocabulary hint so the LLM reuses
         what's already in the system ("LLMs" not "llm", "Apple
@@ -838,19 +839,17 @@ Family members: {json.dumps(person_names, ensure_ascii=False)}
 Return this exact JSON structure:
 {{
   "title": "scannable title under 80 chars. Use the content's language. Capture what this is *about*, not just the source name.",
-  "summary": "200-400 word extended summary in Markdown. Cover key points, claims, named entities, and conclusions. The user reads this later instead of reopening the source, so make it self-contained.",
+  "summary": "Markdown summary. Length scales with input — short paste (under ~300 chars): 1-2 sentences. Long content (articles, threads, posts): 200-400 words covering key points, claims, named entities, and conclusions. The user reads this instead of reopening the source.",
   "facts": ["3-6 concrete facts, numbers, dates, names extracted from the content"],
   "tags": ["3-7 topic tags. Free-form (single words or short phrases). Reuse existing tags from the list above when they fit. Tags should signal stable interest areas, not one-off specifics — prefer 'LLMs' over 'Llama-3.1-8B-Instruct'."],
-  "persons": ["which family members this is for or about. Pick from the family members list. Empty list if unclear — the caller will default to the sender."],
-  "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
+  "persons": ["which family members this is for or about. Pick from the family members list. Empty list if unclear — the caller will default to the sender."]
 }}
 
 Rules:
-- LANGUAGE: use the content's original language for title, summary, facts, action_items. German content → German output.
-- summary: write a real digest, not a teaser. Aim for 200-400 words on substantive content; less for short notes.
+- LANGUAGE: use the content's original language for title, summary, facts. German content → German output.
+- summary: write a real digest, not a teaser. Match length to input — terse for short pastes, fuller for long-form. Do NOT include the source URL; it's surfaced separately in the vault entry.
 - tags: prefer the existing tag list above. A new tag must be clearly absent from the list, not just spelled differently.
 - persons: only if the content explicitly names a family member. Don't guess from sender.
-- action_items: include only when there's a concrete next step. Empty list for pure reading material.
 
 Content:
 ---

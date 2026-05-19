@@ -193,8 +193,21 @@ async def test_archivist_captures_pasted_text_to_memory(
         f"expected 'Person: Homer' in tags, got {tags}"
     bdd.ok(f"tags = {tags}")
 
-    bdd.and_("the body preserves the pasted text verbatim")
-    assert pasted_text in body, (
-        f"body missing pasted text — first 200 chars: {body[:200]!r}"
+    bdd.and_("no action items section is rendered")
+    # Captures must never grow a `## Action items` block — a Reddit
+    # paste is not a todo. Drop the prompt field and the section
+    # together so the system doesn't manufacture chores.
+    assert "## Action items" not in body, \
+        f"captures must not render action items, body[:400]={body[:400]!r}"
+
+    bdd.and_("the original paste is preserved in a collapsible callout")
+    # `> [!quote]- Original paste` is the Obsidian-native collapsed
+    # callout. The paste is line-prefixed with `> `; this is a single
+    # line in the test, so the assertion is on the prefixed form.
+    assert "> [!quote]- Original paste" in body, (
+        f"missing callout header — first 400 chars: {body[:400]!r}"
+    )
+    assert f"> {pasted_text}" in body, (
+        f"body missing prefixed paste — first 400 chars: {body[:400]!r}"
     )
     bdd.ok(f"body length = {len(body)} chars")

@@ -424,6 +424,81 @@ class GitMirror:
             parts.append("")
         return "\n".join(parts)
 
+    # ── Capture render ───────────────────────────────────────────────────
+    #
+    # Captures diverge from documents in three ways and so render
+    # through their own path rather than overloading `_render`:
+    #
+    #   1. The meta block uses Captured/Kind/Source instead of the
+    #      document's From/About/Date/Type/Category. Frontmatter is
+    #      hidden in viewers; the meta block puts the same facts in
+    #      reading view.
+    #   2. No `## Action items` block. A bookmark to a Reddit thread
+    #      is not a todo. We don't want the LLM manufacturing chores
+    #      out of every paste.
+    #   3. `kind: note` keeps the user's pasted text but tucks it inside
+    #      an Obsidian collapsible callout. The summary is what the eye
+    #      lands on; verifying the original is one click away.
+    #      `kind: bookmark` has no body at all — the URL plus the
+    #      summary IS the entry.
+
+    def _render_capture(
+        self, *,
+        frontmatter: dict,
+        body: str,
+        kind: str,
+        captured_at: str | None,
+        source_uri: str | None,
+        persons: list[str],
+        summary: str | None = None,
+        facts: list | None = None,
+    ) -> str:
+        """Assemble a capture mirror file (kind=note|bookmark)."""
+        fm_yaml = yaml.safe_dump(
+            frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
+        ).strip()
+        parts = ["---", fm_yaml, "---", ""]
+
+        parts.append(f"# {frontmatter.get('title', 'Untitled')}")
+        parts.append("")
+
+        meta_lines: list[str] = []
+        if persons:
+            meta_lines.append(
+                "**About** " + ", ".join(f"[[{p}]]" for p in persons)
+            )
+        line2_bits = []
+        if captured_at:
+            line2_bits.append(f"**Captured** {captured_at}")
+        line2_bits.append(f"**Kind** {kind}")
+        meta_lines.append(" · ".join(line2_bits))
+        if source_uri:
+            meta_lines.append(f"**Source** <{source_uri}>")
+        parts.extend(f"> {ln}" for ln in meta_lines)
+        parts.append("")
+
+        # Briefing — summary + facts only. Action items are intentionally
+        # omitted for captures (see header comment).
+        briefing = self._briefing_block(
+            summary=summary, facts=facts, action_items=None,
+        )
+        if briefing:
+            parts.append(briefing)
+            parts.append("")
+
+        # Notes: collapsible callout around the verbatim paste. The `-`
+        # after [!quote] tells Obsidian to default-collapse the section.
+        # Forgejo's renderer falls back to a labeled blockquote.
+        if kind == "note":
+            body_stripped = body.strip() if body else ""
+            if body_stripped:
+                parts.append("> [!quote]- Original paste")
+                for ln in body_stripped.split("\n"):
+                    parts.append(f"> {ln}" if ln else ">")
+                parts.append("")
+
+        return "\n".join(parts)
+
     # ── Briefing block ───────────────────────────────────────────────────
     #
     # The briefing is the classifier's per-document take, rendered as
@@ -814,14 +889,16 @@ class GitMirror:
 
         briefing_summary = classification.get("summary")
         briefing_facts = classification.get("facts") or []
-        briefing_actions = classification.get("action_items") or []
 
-        content = self._render(
-            frontmatter=fm, body=body_text,
-            correspondent=None, persons=persons,
+        content = self._render_capture(
+            frontmatter=fm,
+            body=body_text,
+            kind=kind,
+            captured_at=captured_at,
+            source_uri=source_uri,
+            persons=persons,
             summary=briefing_summary,
             facts=briefing_facts,
-            action_items=briefing_actions,
         )
 
         verb = "update" if existing else "capture"
