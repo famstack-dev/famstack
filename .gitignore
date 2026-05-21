@@ -19,6 +19,9 @@ users.toml
 .DS_Store
 **/.DS_Store
 
+# Design docs (work in progress)
+design/
+
 # Python
 __pycache__/
 *.pyc
