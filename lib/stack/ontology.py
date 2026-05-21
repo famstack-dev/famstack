@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from ._compat import tomllib
+import tomllib
 
 
 # ─── Language helpers ────────────────────────────────────────────────────

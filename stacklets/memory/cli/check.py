@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import load_seed_ontology  # noqa: E402
 
 # The taxonomy lives in another stacklet; we read it by path, not import.
-from stack._compat import tomllib  # noqa: E402
+import tomllib  # noqa: E402
 
 HELP = "Check that the memory ontology mirrors the docs taxonomy"
 
