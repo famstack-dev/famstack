@@ -13,6 +13,9 @@ Commands:
   {"cmd": "list"}                       → stack list --json
   {"cmd": "up", "stacklet": "photos"}   → stack up photos --json
   {"cmd": "down", "stacklet": "photos"} → stack down photos --json
+  {"cmd": "logs", "stacklet": "photos"}  → stack logs photos --json --tail 200
+  {"cmd": "logs", "stacklet": "photos", "grep": "ERROR"}
+                                        → stack logs photos --json --tail 200 --grep ERROR
 
 The socket path defaults to /tmp/famstack.sock. Bind-mount it into
 containers that need host access.
@@ -32,7 +35,7 @@ STACK_BIN = REPO_ROOT / "stack"
 API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
-ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs"}
+ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "discover"}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 
 
@@ -47,6 +50,22 @@ def handle_request(data):
     if cmd not in ALLOWED_COMMANDS:
         return {"error": f"Unknown command: {cmd}", "allowed": sorted(ALLOWED_COMMANDS)}
 
+    # Discover — return the API surface (no auth, no stacklet needed)
+    if cmd == "discover":
+        return {
+            "version": "0.2.1",
+            "commands": {
+                "status":   {"needs_stacklet": False, "description": "Server status overview"},
+                "list":     {"needs_stacklet": False, "description": "List all stacklets and their state"},
+                "config":   {"needs_stacklet": False, "description": "Show stack.toml configuration"},
+                "up":       {"needs_stacklet": True,  "description": "Start a stacklet"},
+                "down":     {"needs_stacklet": True,  "description": "Stop a stacklet"},
+                "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
+                "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
+                "logs":     {"needs_stacklet": True,  "description": "Get container logs", "options": ["tail", "grep"]},
+            },
+        }
+
     sid = req.get("stacklet", "")
     if cmd in NEEDS_STACKLET and not sid:
         return {"error": f"'{cmd}' requires a 'stacklet' field"}
@@ -55,6 +74,15 @@ def handle_request(data):
     args = [str(STACK_BIN), cmd, "--json"]
     if sid:
         args.insert(2, sid)
+
+    # Logs-specific options
+    if cmd == "logs":
+        tail = req.get("tail", 200)
+        if tail:
+            args += ["--tail", str(tail)]
+        grep = req.get("grep")
+        if grep:
+            args += ["--grep", grep]
 
     try:
         result = subprocess.run(

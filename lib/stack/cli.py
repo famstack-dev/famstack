@@ -918,7 +918,19 @@ def handle_logs(stck, args):
         print_error({"error": f"No compose file for {args.stacklet}"}); sys.exit(1)
     code, stdout, stderr = docker.compose(
         compose_file, "logs", "--tail", str(args.tail), "--no-color")
-    print(stdout or stderr)
+
+    output = stdout or stderr
+
+    if args.grep:
+        output = "\n".join(
+            line for line in output.splitlines()
+            if args.grep in line
+        )
+
+    if args.json:
+        print(json.dumps({"ok": True, "lines": output.splitlines() if output else [], "count": len(output.splitlines()) if output else 0}))
+    else:
+        print(output)
 
 
 def handle_restart(stck, args):
@@ -1291,7 +1303,11 @@ def main():
     p = sub.add_parser("restart"); p.add_argument("stacklet")
     p = sub.add_parser("setup"); p.add_argument("stacklet")
     p = sub.add_parser("env"); p.add_argument("stacklet")
-    p = sub.add_parser("logs"); p.add_argument("stacklet"); p.add_argument("--tail", default=50, type=int)
+    p = sub.add_parser("logs")
+    p.add_argument("stacklet")
+    p.add_argument("--tail", default=200, type=int)
+    p.add_argument("--grep", default=None, help="Filter log lines with grep pattern")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
 
     # Stacklet CLI plugins
     stacklet_cmds = {}
