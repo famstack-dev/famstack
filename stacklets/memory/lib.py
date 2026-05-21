@@ -483,3 +483,62 @@ def install_memory_to_forgejo(
         "seeds": seeds,
         "cloned_vault": cloned_vault,
     }
+
+
+def install_memory_to_forgejo_admin(
+    *,
+    code_url: str,
+    admin_user: str,
+    admin_password: str,
+    seed_dir: Optional[Path] = None,
+    vault_path: Optional[Path] = None,
+    shared_bucket: str = DEFAULT_SHARED_BUCKET,
+) -> dict:
+    """Run the install pipeline using admin credentials directly.
+
+    No bot user is created. All repo operations (org/repo creation,
+    seed push, vault clone) go through the admin account. The
+    archivist-bot (created by the docs stacklet) is the sole bot
+    account for day-to-day writes.
+
+    Idempotent across every step. When `vault_path` is supplied, the
+    pipeline also clones the freshly-seeded repo locally so readers
+    can use the working copy.
+
+    Returns a dict describing what changed. On `forgejo unreachable`,
+    returns `{\"skipped_reason\": \"...\"}` and makes no further calls.
+    """
+    admin = ForgejoClient(
+        url=code_url,
+        admin_user=admin_user, admin_password=admin_password,
+    )
+    if not admin.ping():
+        return {"skipped_reason": "forgejo unreachable"}
+
+    repo_state = ensure_memory_repo(admin)
+
+    # Use admin token for file writes (admin has write:repository scope).
+    admin_token = admin.issue_token(
+        admin_user, admin_password, "memory-install", TOKEN_SCOPES,
+    )
+    admin_token_client = ForgejoClient(url=code_url, token=admin_token)
+    seeds = install_seeds(
+        admin_token_client, seed_dir,
+        commit_message=SEED_COMMIT_MESSAGE,
+        shared_bucket=shared_bucket,
+    )
+
+    cloned_vault = False
+    if vault_path is not None:
+        remote = authenticated_remote(
+            vault_remote_url(code_url),
+            admin_user, admin_token,
+        )
+        cloned_vault = ensure_vault_cloned(vault_path, remote)
+
+    return {
+        "created_org": repo_state["created_org"],
+        "created_repo": repo_state["created_repo"],
+        "seeds": seeds,
+        "cloned_vault": cloned_vault,
+    }

@@ -108,11 +108,7 @@ class ForgejoClient:
                          headers=self._admin_header(), allow_404=True) is not None
 
     def create_user(self, username: str, email: str, password: str) -> None:
-        """Create a regular (non-admin) user. Idempotent on 'already exists'.
-
-        If the user exists, updates the password so callers that rotate
-        or regenerate bot passwords never hit a 401 on token issuance.
-        """
+        """Create a regular (non-admin) user. Idempotent on 'already exists'."""
         try:
             self._req("POST", "/api/v1/admin/users",
                       headers=self._admin_header(),
@@ -126,13 +122,14 @@ class ForgejoClient:
                       })
         except ForgejoError as e:
             if "already exists" in str(e).lower():
-                # User exists — ensure password matches so token issuance
-                # doesn't 401 after a reinstall or secret rotation.
-                self._req("PATCH", f"/api/v1/users/{username}",
-                          headers=self._admin_header(),
-                          body={"password": password})
                 return
             raise
+
+    def update_user_password(self, username: str, password: str) -> None:
+        """Update an existing user's password. Admin-only."""
+        self._req("PUT", f"/api/v1/users/{username}",
+                  headers=self._admin_header(),
+                  body={"password": password})
 
     def issue_token(self, username: str, password: str,
                     name: str, scopes: list[str]) -> str:
