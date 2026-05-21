@@ -48,11 +48,14 @@ def _error(msg: str, status: int = 503) -> JSONResponse:
 # Reuses the existing TCP socket API on the host. Same protocol the
 # bot runner uses — proven path, no socket file mounting needed.
 
-def _stack_api(cmd: str, stacklet: str = "") -> dict:
+def _stack_api(cmd: str, stacklet: str = "", **kwargs) -> dict:
     """Send a command to the famstack TCP API on the host."""
     request = {"cmd": cmd}
     if stacklet:
         request["stacklet"] = stacklet
+    for k, v in kwargs.items():
+        if v is not None:
+            request[k] = v
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(30)
     try:
@@ -77,6 +80,50 @@ def _stack_api(cmd: str, stacklet: str = "") -> dict:
         return {"error": f"Cannot reach famstack API: {e}"}
     finally:
         s.close()
+
+
+# ── Discovery ──────────────────────────────────────────────────────────────
+
+DISCOVERY = {
+    "version": "0.2.1",
+    "commands": {
+        "status":   {"needs_stacklet": False, "description": "Server status overview"},
+        "list":     {"needs_stacklet": False, "description": "List all stacklets and their state"},
+        "config":   {"needs_stacklet": False, "description": "Show stack.toml configuration"},
+        "up":       {"needs_stacklet": True,  "description": "Start a stacklet", "params": ["stacklet"]},
+        "down":     {"needs_stacklet": True,  "description": "Stop a stacklet", "params": ["stacklet"]},
+        "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet", "params": ["stacklet"]},
+        "env":      {"needs_stacklet": True,  "description": "Render environment variables", "params": ["stacklet"]},
+        "logs":     {"needs_stacklet": True,  "description": "Get container logs", "params": ["stacklet", "tail", "grep"]},
+    },
+}
+
+
+@app.get("/", summary="API discovery")
+async def discover():
+    """Return the API surface — commands, their signatures, and requirements."""
+    return DISCOVERY
+
+
+# ── Logs ───────────────────────────────────────────────────────────────────
+
+@app.get("/logs", summary="Get container logs")
+async def logs(stacklet: str, tail: int = 200, grep: str = ""):
+    """Get recent container logs for a stacklet, optionally filtered by grep."""
+    if not stacklet:
+        return _error("'stacklet' query parameter is required", status=400)
+
+    result = _stack_api("logs", stacklet, tail=tail, grep=grep or None)
+    if "error" in result:
+        return _error(result["error"], status=503)
+
+    return {
+        "stacklet": stacklet,
+        "tail": tail,
+        "grep": grep or None,
+        "lines": result.get("lines", []),
+        "count": result.get("count", 0),
+    }
 
 
 @app.get("/tools/stack/status", summary="Get server status",
