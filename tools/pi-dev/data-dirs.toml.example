@@ -1,0 +1,19 @@
+# Opt-in data directories for pi-dev sessions.
+#
+# Copy this file to data-dirs.toml (gitignored) and list paths you
+# want to be able to mount into pi sessions on this machine. Nothing
+# is mounted by default; --with <name> opts a directory in.
+#
+# default_mode: "ro" (default) or "rw". --rw <name> overrides to rw.
+
+[vault]
+path = "/Users/arthur/famstack-data/memory/vault"
+default_mode = "ro"
+
+[paperless]
+path = "/Users/arthur/famstack-data/paperless/consume"
+default_mode = "ro"
+
+[immich-thumbs]
+path = "/Users/arthur/famstack-data/immich/library/thumbs"
+default_mode = "ro"
