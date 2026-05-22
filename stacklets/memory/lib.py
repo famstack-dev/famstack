@@ -29,6 +29,7 @@ Forgejo was unreachable on install).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -563,6 +564,204 @@ def install_memory_to_forgejo(
         "seeds": seeds,
         "cloned_vault": cloned_vault,
     }
+
+
+# ─── Memory vault search ────────────────────────────────────────────────
+#
+# Full-text query over the curated vault. Pure-Python regex walk over
+# `*.md` files, post-filtered by YAML frontmatter (`persons`, `tags`).
+# Two callers today: `stack memory search` (CLI argparse + formatter
+# wrapper) and the archivist bot (formats results into Matrix). The
+# CLI is the agent-facing surface; the lib function is the in-process
+# call for code that already imports `memory.lib`.
+#
+# `refresh_vault_if_stale` is the caller's concern -- `search_memory`
+# is the search itself, not the sync policy. The CLI calls refresh
+# before dispatch; the archivist does the same before each query.
+
+
+def _parse_frontmatter(text: str) -> dict:
+    """Stdlib-only YAML subset for archivist-emitted frontmatter.
+
+    Supports the two shapes the classifier actually writes: top-level
+    scalars (`key: value`) and one-deep lists of scalars (`key:`
+    followed by `  - item` lines). Anything fancier is silently
+    skipped so malformed files still surface in body grep, just
+    without enriched metadata.
+    """
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return {}
+
+    data: dict = {}
+    current_list: Optional[List[str]] = None
+    for raw in text[4:end].splitlines():
+        line = raw.rstrip()
+        if not line:
+            continue
+        if line.startswith("  - ") or line.startswith("- "):
+            if current_list is not None:
+                token = line.split("- ", 1)[1].strip().strip("'\"")
+                current_list.append(token)
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip(), value.strip()
+        if value == "":
+            current_list = []
+            data[key] = current_list
+        else:
+            data[key] = value.strip("'\"")
+            current_list = None
+    return data
+
+
+def _fm_list(fm: dict, key: str) -> List[str]:
+    """Read a frontmatter field as a list of strings, regardless of shape."""
+    v = fm.get(key)
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    if isinstance(v, str):
+        return [v]
+    return []
+
+
+def _norm_tag(value: str) -> str:
+    """Collapse whitespace and lower-case for tag comparison.
+
+    Writers and queriers disagree on spacing: `'Person: Homer'`,
+    `Person:Homer`, and `PERSON :HOMER` all normalize to the same
+    token so the filter doesn't care which spelling was used.
+    """
+    return re.sub(r"\s+", "", value).lower()
+
+
+def _excerpt(text: str, query: str, max_len: int = 200) -> str:
+    """First non-empty body line that mentions `query` (case-insensitive).
+
+    Body starts after the *closing* `---` of the frontmatter block --
+    otherwise hits on `title:` or `persons:` lines would surface as
+    excerpts, which is noisy and misleading.
+    """
+    needle = query.lower()
+    body = text
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end >= 0:
+            body = text[end + len("\n---\n"):]
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if needle in stripped.lower():
+            if len(stripped) > max_len:
+                stripped = stripped[:max_len] + "…"
+            return stripped
+    return ""
+
+
+def search_memory(
+    query: str,
+    vault: Path,
+    persons: Optional[List[str]] = None,
+    tags: Optional[List[str]] = None,
+    scopes: Optional[List[str]] = None,
+    limit: int = 20,
+) -> List[dict]:
+    """Walk the vault, return result dicts sorted newest-first.
+
+    `query` is a Python regex matched case-insensitively against the
+    full file content (frontmatter included). `persons` and `tags`
+    narrow the result set: a doc passes when, for every supplied
+    axis, at least one of its frontmatter values matches at least
+    one requested value. Persons compare case-insensitively; tags
+    through `_norm_tag` (whitespace-and-case normalized).
+
+    `scopes` is a list of allowed path prefixes (entity-rooted, e.g.
+    `["family/", "marge/"]`). A doc passes when its vault-relative
+    path starts with any prefix. `None` means no scope filter (all
+    docs allowed); an empty list means no docs allowed -- the
+    archivist passes a closed scope set for unknown senders so they
+    can't read personal notes by accident.
+
+    Returns dicts with keys `path`, `rel`, `title`, `date`,
+    `persons`, `tags`, `excerpt`. Sorted by frontmatter `date`
+    descending; files without a date sort to the end.
+
+    On a missing vault directory or invalid regex, returns `[]`
+    rather than raising -- callers decide how to surface the
+    failure.
+    """
+    if not vault.exists():
+        return []
+
+    try:
+        pattern = re.compile(query, re.IGNORECASE)
+    except re.error:
+        return []
+
+    persons = persons or []
+    tags = tags or []
+    want_persons = {p.lower() for p in persons}
+    want_tags = {_norm_tag(t) for t in tags}
+
+    # Normalize scopes: ensure each prefix ends with "/" so "marge"
+    # doesn't accidentally match "margery/...". `None` keeps the
+    # historic open behavior; `[]` denies everything.
+    if scopes is None:
+        scope_prefixes: Optional[List[str]] = None
+    else:
+        scope_prefixes = [s if s.endswith("/") else f"{s}/" for s in scopes]
+
+    results: List[dict] = []
+    for md_path in vault.rglob("*.md"):
+        if not md_path.is_file():
+            continue
+        try:
+            rel = str(md_path.relative_to(vault))
+        except ValueError:
+            rel = str(md_path)
+        if scope_prefixes is not None and not any(
+            rel.startswith(p) for p in scope_prefixes
+        ):
+            continue
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not pattern.search(text):
+            continue
+
+        fm = _parse_frontmatter(text)
+        doc_persons = _fm_list(fm, "persons")
+        if persons and not any(p.lower() in want_persons for p in doc_persons):
+            continue
+        doc_tags = _fm_list(fm, "tags")
+        if tags:
+            doc_norm = {_norm_tag(t) for t in doc_tags}
+            if not (doc_norm & want_tags):
+                continue
+
+        results.append({
+            "path": md_path,
+            "rel": rel,
+            "title": fm.get("title") or md_path.stem,
+            "date": fm.get("date") or "",
+            "persons": doc_persons,
+            "tags": doc_tags,
+            "excerpt": _excerpt(text, query),
+        })
+
+    results.sort(
+        key=lambda r: (str(r.get("date") or ""), r["rel"]),
+        reverse=True,
+    )
+    return results[:limit]
 
 
 def install_memory_to_forgejo_admin(

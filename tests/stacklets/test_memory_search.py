@@ -20,10 +20,18 @@ machine-friendly escapes.
 
 from __future__ import annotations
 
+import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+
+# In-process import for the lib-level test class. The CLI tests below
+# exercise the same engine via subprocess; these pin the API shape the
+# archivist bot consumes directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
+                       / "stacklets" / "memory"))
+from lib import search_memory  # noqa: E402
 
 
 # ─── Fixture vault ───────────────────────────────────────────────────────
@@ -271,3 +279,168 @@ class TestOrdering:
         # filename to assert the order is monotonically descending.
         dates = [ln.split("/")[-1][:10] for ln in lines]
         assert dates == sorted(dates, reverse=True)
+
+
+# ─── In-process engine (archivist call path) ─────────────────────────────
+
+class TestSearchMemoryLib:
+    """The `search_memory` lib function — what the archivist bot calls.
+
+    The CLI tests above exercise the same engine via subprocess. This
+    class pins the in-process API shape directly: argument names, the
+    fields each result dict carries, and the empty-list return on
+    failure modes (vs the CLI's exit-3 + stderr message).
+    """
+
+    def test_returns_result_dicts_with_expected_keys(self, vault):
+        results = search_memory("Brummen", vault)
+        assert len(results) == 1
+        r = results[0]
+        assert set(r.keys()) == {
+            "path", "rel", "title", "date", "persons", "tags", "excerpt",
+        }
+        assert r["rel"].endswith("radlager.md")
+        assert r["persons"] == ["Homer"]
+        assert "Brummen" in r["excerpt"]
+
+    def test_returns_empty_list_when_no_match(self, vault):
+        assert search_memory("spaceship", vault) == []
+
+    def test_returns_empty_list_when_vault_missing(self, tmp_path):
+        assert search_memory("anything", tmp_path / "nope") == []
+
+    def test_returns_empty_list_on_invalid_regex(self, vault):
+        # Unclosed character class — re.compile raises, search swallows.
+        assert search_memory("[unclosed", vault) == []
+
+    def test_person_filter_is_kwarg_named_persons(self, vault):
+        # The archivist passes positional args today; this test guards
+        # the keyword shape so future kwargs callers don't drift.
+        results = search_memory("Hoover", vault, persons=["Lisa"])
+        assert len(results) == 1
+        assert results[0]["rel"].endswith("elternabend.md")
+
+    def test_tag_filter_normalizes_whitespace(self, vault):
+        # 'Person: Marge' in the file, 'Person:Marge' in the filter.
+        results = search_memory("Hoover", vault, tags=["Person:Marge"])
+        assert len(results) == 1
+        assert results[0]["rel"].endswith("elternabend.md")
+
+    def test_results_sorted_by_date_desc(self, vault):
+        # "title" matches every fixture doc — same trick the CLI
+        # ordering test uses, applied to the in-process surface.
+        results = search_memory("title", vault)
+        dates = [r["date"] for r in results]
+        assert dates == sorted(dates, reverse=True)
+
+    def test_limit_truncates(self, vault):
+        results = search_memory("title", vault, limit=2)
+        assert len(results) == 2
+
+
+class TestSearchMemoryScopes:
+    """Scoping by allowed path prefix.
+
+    The vault is entity-rooted: shared docs under `family/`, each
+    person's private notes under their own slug. Scopes are how the
+    archivist enforces who-sees-what. The fixture vault has docs in
+    `family/`, `homer/`, and `marge/` -- enough to assert that the
+    filter keeps the right files and drops the rest.
+    """
+
+    def test_none_scope_keeps_historic_open_behavior(self, vault):
+        # No scopes argument == "search every entity tree", matching
+        # behaviour before the parameter existed.
+        results = search_memory("title", vault)
+        rels = [r["rel"] for r in results]
+        assert any(r.startswith("family/") for r in rels)
+        assert any(r.startswith("homer/") for r in rels)
+        assert any(r.startswith("marge/") for r in rels)
+
+    def test_empty_scope_denies_everything(self, vault):
+        # Empty list != None: the caller explicitly said "no prefixes
+        # allowed". This is the safety-net branch for an unmapped
+        # sender on a stack with no shared bucket configured.
+        assert search_memory("title", vault, scopes=[]) == []
+
+    def test_family_only_scope(self, vault):
+        # The MMR doc (family/...) is the only shared file in the
+        # fixture; Homer/Marge notes must drop out.
+        results = search_memory("title", vault, scopes=["family/"])
+        rels = [r["rel"] for r in results]
+        assert all(r.startswith("family/") for r in rels)
+        assert len(rels) == 1
+
+    def test_marge_asking_sees_family_plus_marge(self, vault):
+        # Marge's scope is the archivist's default for a sender
+        # whose Matrix localpart is "marge". Homer's notes must
+        # not leak; family/ and marge/ both visible.
+        results = search_memory(
+            "title", vault, scopes=["family/", "marge/"],
+        )
+        rels = [r["rel"] for r in results]
+        assert all(
+            r.startswith("family/") or r.startswith("marge/")
+            for r in rels
+        )
+        assert not any(r.startswith("homer/") for r in rels)
+
+    def test_trailing_slash_optional(self, vault):
+        # The contract: callers don't need to remember the trailing
+        # slash. Equally important: a prefix without a slash must
+        # not match "margery/..." if such a sibling slug existed.
+        with_slash = search_memory("title", vault, scopes=["marge/"])
+        without = search_memory("title", vault, scopes=["marge"])
+        assert [r["rel"] for r in with_slash] == [r["rel"] for r in without]
+
+    def test_prefix_does_not_match_longer_sibling(self, tmp_path):
+        # The bug we're guarding against: "marge" must not match
+        # "margery/...". Build a tiny vault with a deliberate
+        # margery-like sibling to pin the boundary.
+        v = tmp_path / "vault"
+        _write(v / "marge/notes/a.md", """
+            ---
+            title: real-marge
+            ---
+            shared body keyword zzz
+        """)
+        _write(v / "margery/notes/b.md", """
+            ---
+            title: not-marge
+            ---
+            shared body keyword zzz
+        """)
+        results = search_memory("zzz", v, scopes=["marge"])
+        rels = [r["rel"] for r in results]
+        assert any("marge/notes/a.md" in r for r in rels)
+        assert not any("margery" in r for r in rels)
+
+
+class TestScopeCli:
+    """The `--scope` flag mirrors the lib's `scopes` argument."""
+
+    def test_scope_flag_narrows_results(self, stack_cli, vault):
+        # All four fixture docs match "title" in their frontmatter
+        # key. Scoping to `family/` keeps only the MMR doc.
+        code, out, _ = stack_cli(
+            "memory", "search", "title",
+            "--scope", "family/",
+            "--paths", "--vault", str(vault),
+        )
+        assert code == 0
+        lines = [ln for ln in out.strip().splitlines() if ln]
+        assert all(ln.startswith("family/") for ln in lines)
+        assert len(lines) == 1
+
+    def test_scope_flag_repeats_or_within_axis(self, stack_cli, vault):
+        # Marge's two docs (notes + bookmarks) + the family MMR doc
+        # = three hits; Homer's radlager must not appear.
+        code, out, _ = stack_cli(
+            "memory", "search", "title",
+            "--scope", "family/", "--scope", "marge/",
+            "--paths", "--vault", str(vault),
+        )
+        assert code == 0
+        lines = [ln for ln in out.strip().splitlines() if ln]
+        assert not any(ln.startswith("homer/") for ln in lines)
+        assert len(lines) == 3
