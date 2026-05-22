@@ -394,3 +394,26 @@ stacklet is brought up.
 shouldn't; the bot also gets bounced for unrelated changes, which is
 the underlying fragility that surfaced the vision-probe race in the
 first place.
+
+### Matrix feedback when a bot fails to boot
+
+A bot that fails to import or crashes during startup currently
+disappears silently from the chat — the family only notices when
+they send a message and nothing happens. Today the only signal is
+`docker logs stack-core-bot-runner`, which the family doesn't read.
+
+**Scope:**
+
+- After bot account setup but before launching the per-bot tasks,
+  send a short status message ("archivist-bot online") into a
+  designated room. Either from the bot-runner using a dedicated
+  runner identity, or from each bot using its own session.
+- On import failure, post an `m.notice` with the bot id and the
+  exception head (no full traceback in chat) to the same room.
+- Consider piggy-backing on `stack status` instead of chat for
+  the alive signal — chat for the failure case is the urgent path.
+
+**Why:** a silently-dead bot is the worst failure mode for a
+family product. The 2026-05-22 `room_context` import miss (Dockerfile
+COPY missing the new module) only surfaced when a family member
+sent a message and got nothing back.
