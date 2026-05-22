@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""pi-dev: run the pi coding agent in a sandboxed container.
+
+The current git repo is mounted as the workspace (read-write). Data
+directories from data-dirs.toml are opt-in via --with (read-only by
+default) or --rw (read-write). The host ~/.pi config is bind-mounted so
+pi inherits your provider settings and session history.
+
+Threat model: this protects the host from malicious npm packages bundled
+into pi or its transitive dependencies. It does not restrict the
+container's network. If you mount a data directory while running an
+untrusted package snapshot, that data can be exfiltrated.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+IMAGE = "pi-dev:latest"
+
+
+def load_data_dirs() -> dict:
+    """Read the (gitignored) data-dirs.toml registry.
+
+    Missing file is not an error; most invocations don't opt into any
+    data directories.
+    """
+    toml_path = SCRIPT_DIR / "data-dirs.toml"
+    if not toml_path.exists():
+        return {}
+    with toml_path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def git_toplevel() -> Path:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
+        )
+        return Path(out.decode().strip())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        sys.exit("error: not inside a git repo (cd into one or pass --cwd)")
+
+
+def image_exists() -> bool:
+    r = subprocess.run(
+        ["docker", "image", "inspect", IMAGE],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return r.returncode == 0
+
+
+def build_image() -> None:
+    print(f"building {IMAGE} ...", file=sys.stderr)
+    subprocess.check_call(["docker", "build", "-t", IMAGE, str(SCRIPT_DIR)])
+
+
+def parse_csv(value: str | None) -> list[str]:
+    return [x.strip() for x in value.split(",") if x.strip()] if value else []
+
+
+def cmd_list_data(data_dirs: dict) -> int:
+    if not data_dirs:
+        print("no data dirs configured.")
+        print(
+            f"copy {SCRIPT_DIR}/data-dirs.toml.example "
+            f"to {SCRIPT_DIR}/data-dirs.toml and edit."
+        )
+        return 0
+    for name, cfg in data_dirs.items():
+        mode = cfg.get("default_mode", "ro")
+        path = cfg.get("path", "?")
+        print(f"  {name:20s} {mode:3s}  {path}")
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        prog="pi-dev",
+        description="Run pi in a sandboxed container against the current repo.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="extra args after `--` are passed to pi.",
+    )
+    p.add_argument("--with", dest="with_", metavar="name[,name...]",
+                   help="opt-in data dirs (mode from data-dirs.toml)")
+    p.add_argument("--rw", metavar="name[,name...]",
+                   help="opt-in data dirs forced read-write")
+    p.add_argument("--cwd", help="repo to mount (default: git toplevel of $PWD)")
+    p.add_argument("--list-data", action="store_true",
+                   help="list configured data dirs and exit")
+    p.add_argument("--rebuild", action="store_true",
+                   help="rebuild the docker image before running")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the docker command without running it")
+    args, pi_args = p.parse_known_args()
+
+    data_dirs = load_data_dirs()
+
+    if args.list_data:
+        return cmd_list_data(data_dirs)
+
+    requested = parse_csv(args.with_)
+    rw = parse_csv(args.rw)
+    unknown = [n for n in requested + rw if n not in data_dirs]
+    if unknown:
+        sys.exit(f"error: unknown data dir(s): {', '.join(unknown)} (try --list-data)")
+
+    repo = Path(args.cwd).resolve() if args.cwd else git_toplevel()
+    if not repo.is_dir():
+        sys.exit(f"error: {repo} is not a directory")
+
+    pi_config = Path.home() / ".pi"
+    if not pi_config.is_dir():
+        sys.exit(
+            f"error: {pi_config} does not exist. "
+            "run pi once on the host to initialize, or `mkdir -p ~/.pi/agent` "
+            "and drop a models.json there."
+        )
+
+    if args.rebuild or not image_exists():
+        build_image()
+
+    mounts: list[tuple[str, str, str]] = [
+        (str(repo), "/workspace", "rw"),
+        (str(pi_config), "/home/node/.pi", "rw"),
+    ]
+    for name in requested:
+        cfg = data_dirs[name]
+        mode = "rw" if name in rw else cfg.get("default_mode", "ro")
+        mounts.append((cfg["path"], f"/data/{name}", mode))
+    for name in rw:
+        if name in requested:
+            continue
+        mounts.append((data_dirs[name]["path"], f"/data/{name}", "rw"))
+
+    cmd: list[str] = [
+        "docker", "run", "--rm",
+        "--user", "1000:1000",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp:rw,size=64m,mode=1777",
+        "--tmpfs", "/home/node/.cache:rw,size=128m,uid=1000,gid=1000",
+        "-w", "/workspace",
+    ]
+    if sys.stdin.isatty():
+        cmd += ["-it"]
+    for host, container, mode in mounts:
+        cmd += ["-v", f"{host}:{container}:{mode}"]
+    cmd.append(IMAGE)
+    cmd += pi_args
+
+    if args.dry_run:
+        print(" ".join(cmd))
+        return 0
+
+    os.execvp("docker", cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
