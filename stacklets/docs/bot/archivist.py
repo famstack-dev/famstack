@@ -1894,71 +1894,79 @@ class ArchivistBot(MicroBot):
             sender, query[:80],
         )
 
-        search_query, keywords = await _resolve_search_query(
-            query,
-            classifier=self._classifier,
-            ontology_section=self._compute_ontology_section(),
-            language=self.language,
-        )
-        if keywords:
+        # Typing indicator wraps the whole search. Question-mode adds an
+        # LLM round-trip (multiple seconds) and the memory walk can fast-
+        # forward a Forgejo checkout before scanning — without a typing
+        # signal the user has no feedback that the bot is working.
+        await self._set_typing(room_id)
+        try:
+            search_query, keywords = await _resolve_search_query(
+                query,
+                classifier=self._classifier,
+                ontology_section=self._compute_ontology_section(),
+                language=self.language,
+            )
+            if keywords:
+                logger.info(
+                    "[archivist] search rewritten: {!r} -> {}",
+                    query[:60], keywords,
+                )
+
+            paperless_results = await self._paperless.search(search_query)
             logger.info(
-                "[archivist] search rewritten: {!r} -> {}",
-                query[:60], keywords,
+                "[archivist] paperless: {} hit(s)", len(paperless_results),
             )
 
-        paperless_results = await self._paperless.search(search_query)
-        logger.info(
-            "[archivist] paperless: {} hit(s)", len(paperless_results),
-        )
+            memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
+            memory_results: list[dict] = []
+            if memory_dir:
+                memory_path = Path(memory_dir)
+                await asyncio.to_thread(_refresh_memory_vault, memory_path)
+                scopes = self._search_scopes_for_sender(sender)
+                memory_results = await asyncio.to_thread(
+                    _search_memory, search_query, memory_path,
+                    None, None, scopes, 10,
+                )
+                logger.info(
+                    "[archivist] memory: {} hit(s) scopes={}",
+                    len(memory_results), scopes,
+                )
+            else:
+                logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
 
-        memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
-        memory_results: list[dict] = []
-        if memory_dir:
-            memory_path = Path(memory_dir)
-            await asyncio.to_thread(_refresh_memory_vault, memory_path)
-            scopes = self._search_scopes_for_sender(sender)
-            memory_results = await asyncio.to_thread(
-                _search_memory, search_query, memory_path,
-                None, None, scopes, 10,
-            )
-            logger.info(
-                "[archivist] memory: {} hit(s) scopes={}",
-                len(memory_results), scopes,
-            )
-        else:
-            logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
+            if not memory_results and not paperless_results:
+                await self._send(room_id, self.t("search_no_results", query=query), reply_to)
+                return
 
-        if not memory_results and not paperless_results:
-            await self._send(room_id, self.t("search_no_results", query=query), reply_to)
-            return
-
-        lines: list[str] = []
-        if keywords:
-            # Question-mode header: surface the rewritten keywords so the
-            # family can spot a bad rewrite that hides results.
-            lines.append(self.t(
-                "search_rewritten", query=query, keywords=", ".join(keywords),
-            ))
-        if memory_results:
-            lines.append(self.t("search_memory_results", query=query))
-            for n, r in enumerate(memory_results, start=1):
-                lines.append(_format_memory_hit(
-                    r, n,
-                    code_public_url=self.code_public_url or self.code_url,
-                    mirror_org=self.mirror_org,
+            lines: list[str] = []
+            if keywords:
+                # Question-mode header: surface the rewritten keywords so
+                # the family can spot a bad rewrite that hides results.
+                lines.append(self.t(
+                    "search_rewritten", query=query, keywords=", ".join(keywords),
                 ))
-
-        if paperless_results:
             if memory_results:
-                lines.append("")
-            lines.append(self.t("search_paperless_results", query=query))
-            for n, doc in enumerate(paperless_results, start=1):
-                lines.append(_format_paperless_hit(
-                    doc, n,
-                    public_url=self.paperless_public_url or self.paperless_url,
-                ))
+                lines.append(self.t("search_memory_results", query=query))
+                for n, r in enumerate(memory_results, start=1):
+                    lines.append(_format_memory_hit(
+                        r, n,
+                        code_public_url=self.code_public_url or self.code_url,
+                        mirror_org=self.mirror_org,
+                    ))
 
-        await self._send(room_id, "\n".join(lines), reply_to)
+            if paperless_results:
+                if memory_results:
+                    lines.append("")
+                lines.append(self.t("search_paperless_results", query=query))
+                for n, doc in enumerate(paperless_results, start=1):
+                    lines.append(_format_paperless_hit(
+                        doc, n,
+                        public_url=self.paperless_public_url or self.paperless_url,
+                    ))
+
+            await self._send(room_id, "\n".join(lines), reply_to)
+        finally:
+            await self._set_typing(room_id, typing=False)
 
     # ── Show document content ─────────────────────────────────────────
 
