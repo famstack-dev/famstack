@@ -702,6 +702,30 @@ class Classifier:
             return None
         return result.strip() if result else None
 
+    async def rewrite_query(
+        self, question: str, ontology_section: str, lang: str = "en",
+    ) -> list[str]:
+        """Extract search keywords from a natural-language question.
+
+        Used by the archivist when a message ends with `?`. The LLM
+        reads the family's topic + doctype ontology and produces 2-4
+        keywords that would literally appear in a matching document --
+        translation and synonym expansion happen here, so the regex
+        walker downstream stays dumb.
+
+        Best-effort: any LLM transport failure or parse error returns
+        an empty list, which the caller treats as "no rewrite, search
+        the question verbatim." Synonym selection is the LLM's job;
+        we don't second-guess it here, but we do strip empties and
+        cap the list length so a chatty model can't blow the regex up.
+        """
+        prompt = _build_rewrite_prompt(question, ontology_section, lang)
+        try:
+            raw = await self._request("recall", prompt, json_mode=True)
+        except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
+            return []
+        return _parse_rewrite_response(raw)
+
 
 # ── Prompts ──────────────────────────────────────────────────────────────
 #
@@ -922,6 +946,75 @@ OCR text:
 ---
 {ocr_text}
 ---"""
+
+
+# ── Query rewrite ────────────────────────────────────────────────────────
+#
+# The recall-mode entry point. When a family member asks a question
+# (anything ending in `?`), the archivist asks the LLM to extract 2-4
+# keywords that would literally appear in a matching document. The
+# regex walker then OR-alternates them into a single search pattern.
+# Two wins: (1) "When did Bart get vaccinated?" becomes a search for
+# Impfung/MMR/Auffrischung, which actually hits the German vaccination
+# record; (2) the ontology block primes synonym + translation knowledge
+# without us having to ship a thesaurus.
+
+def _build_rewrite_prompt(
+    question: str, ontology_section: str, lang: str,
+) -> str:
+    """Recall-mode prompt: question → JSON list of search keywords."""
+    return f"""You extract search keywords from a question, so a regex walker can look up family documents.
+
+The family classifies their documents under these topics and forms:
+
+{ontology_section}
+
+Language hint: {lang}.
+- If the question is in German, prefer German keywords.
+- If it is in English, prefer English keywords.
+- For an ambiguous or generic question, include the most likely topic name plus one or two synonyms in the document language.
+
+Question: {question}
+
+Reply with a JSON object: {{"keywords": ["word1", "word2", "word3"]}}.
+2 to 4 keywords. Each keyword is a literal word that would appear in
+the document (a noun, a name, a topic). No phrases, no quotes, no
+prose around the JSON. Output ONLY the JSON object."""
+
+
+def _parse_rewrite_response(raw: str) -> list[str]:
+    """Pull a keyword list out of the rewrite LLM's response.
+
+    Accepts the requested object form `{"keywords": [...]}` and the
+    bare-array fallback that some smaller models produce when they
+    forget the wrapper. Empty list on any parse failure -- the caller
+    treats empty as "no rewrite, search the question verbatim." Caps
+    at 6 entries so a chatty model can't blow up the alternation
+    regex; trims whitespace and drops empties so a stray `""` doesn't
+    poison the join.
+    """
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+
+    if isinstance(data, dict):
+        v = data.get("keywords")
+        candidates = v if isinstance(v, list) else []
+    elif isinstance(data, list):
+        candidates = data
+    else:
+        candidates = []
+
+    cleaned: list[str] = []
+    for x in candidates:
+        if isinstance(x, (str, int, float)):
+            s = str(x).strip()
+            if s:
+                cleaned.append(s)
+        if len(cleaned) >= 6:
+            break
+    return cleaned
 
 
 # ── Classifier summary ───────────────────────────────────────────────────

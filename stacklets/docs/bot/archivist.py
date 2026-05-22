@@ -80,6 +80,13 @@ from memory.lib import (  # noqa: E402
     correspondents_prompt_section as _memory_correspondents_section,
     get_ontology as _get_memory_ontology,
     load_correspondents_from_vault as _load_memory_correspondents,
+    refresh_vault_if_stale as _refresh_memory_vault,
+    search_memory as _search_memory,
+)
+from recall import resolve_search_query as _resolve_search_query  # noqa: E402
+from search_format import (  # noqa: E402
+    format_memory_hit as _format_memory_hit,
+    format_paperless_hit as _format_paperless_hit,
 )
 
 
@@ -369,6 +376,14 @@ class ArchivistBot(MicroBot):
         self.paperless_url = os.environ.get("PAPERLESS_URL", "")
         self.paperless_token = os.environ.get("PAPERLESS_TOKEN", "")
         self.paperless_public_url = os.environ.get("PAPERLESS_PUBLIC_URL", "")
+        # Forgejo URLs: the container-network address is used for git
+        # operations (mirror push, ls-remote, clone); the public one,
+        # when set, becomes the basis for clickable source links in
+        # search results. Falls back to the container URL if no public
+        # one is configured -- on a LAN deployment that's still usable
+        # from the same machine, just not from outside the network.
+        self.code_url = os.environ.get("CODE_URL", "")
+        self.code_public_url = os.environ.get("CODE_PUBLIC_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
         self.openai_key = os.environ.get("OPENAI_KEY", "")
         self.language = os.environ.get("LANGUAGE", "en")
@@ -1386,7 +1401,10 @@ class ArchivistBot(MicroBot):
                 )
 
             else:
-                await self._handle_search(room.room_id, query, reply_to)
+                await self._handle_search(
+                    room.room_id, query, reply_to,
+                    sender=event.sender,
+                )
 
         except Exception as e:
             logger.error("[archivist] Error handling message: {}", e, exc_info=True)
@@ -1788,19 +1806,108 @@ class ArchivistBot(MicroBot):
 
     # ── Search ───────────────────────────────────────────────────────────
 
-    async def _handle_search(self, room_id: str, query: str, reply_to: str | None = None):
-        results = await self._paperless.search(query)
-        if not results:
+    def _search_scopes_for_sender(self, sender: str | None) -> list[str]:
+        """Vault-path prefixes the asker is allowed to see.
+
+        The vault is entity-rooted: shared/family docs live under
+        `<shared_bucket>/`, each person's private notes under their
+        own slug. The Matrix localpart is the canonical entity slug
+        across famstack (`@marge:home → marge`), matching `users.toml`
+        ids — so we don't need a separate identity mapping.
+
+        Default closed: an unknown sender gets the shared bucket only.
+        Personal notes never leak to an unmapped Matrix ID.
+        """
+        scopes = [f"{self.shared_bucket}/"]
+        if sender:
+            # @marge:home.local → "marge". The bot uses this same
+            # extraction at line ~553 for admin discovery.
+            entity = sender.lstrip("@").split(":", 1)[0]
+            if entity and entity != self.shared_bucket:
+                scopes.append(f"{entity}/")
+        return scopes
+
+    async def _handle_search(
+        self, room_id: str, query: str, reply_to: str | None = None,
+        *, sender: str | None = None,
+    ):
+        """Search both Paperless (source docs) and the memory vault (curated
+        layer: notes, bookmarks, wiki entries).
+
+        Memory search runs in a thread to keep the event loop free —
+        it's pure file I/O + regex but the memory tree can grow
+        large. Refresh is best-effort: if Forgejo is reachable and
+        has new commits, the local checkout fast-forwards before
+        the walk; otherwise we search the local copy as-is.
+
+        Memory results are scoped by the asker's identity (the Matrix
+        sender's localpart). Marge sees the shared bucket plus her
+        own entity tree (`family/...` + `marge/...`); she does not
+        see Homer's or Bart's private notes. An unmapped sender (no
+        match in the Matrix ID → entity mapping) gets the shared
+        bucket only — default closed, never leak personal notes.
+
+        Format is deliberately terse — one line per hit — so a reply
+        with many matches stays within Matrix's friendly message
+        size and within the bot's own context budget when fed back
+        to a recall agent.
+
+        Questions (anything ending with `?`) get an LLM keyword
+        extraction step via the recall module before the search. The
+        rewrite is best-effort: any failure falls back to the literal
+        query so a misbehaving model can't block recall. When the
+        rewrite runs, the keywords are surfaced in the reply header
+        so the family can tell what was actually searched.
+        """
+        search_query, keywords = await _resolve_search_query(
+            query,
+            classifier=self._classifier,
+            ontology_section=self._compute_ontology_section(),
+            language=self.language,
+        )
+
+        paperless_results = await self._paperless.search(search_query)
+
+        memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
+        memory_results: list[dict] = []
+        if memory_dir:
+            memory_path = Path(memory_dir)
+            await asyncio.to_thread(_refresh_memory_vault, memory_path)
+            scopes = self._search_scopes_for_sender(sender)
+            memory_results = await asyncio.to_thread(
+                _search_memory, search_query, memory_path,
+                None, None, scopes, 10,
+            )
+
+        if not memory_results and not paperless_results:
             await self._send(room_id, self.t("search_no_results", query=query), reply_to)
             return
 
-        base_url = self.paperless_public_url or self.paperless_url
-        lines = [self.t("search_results", count=len(results), query=query)]
-        for doc in results:
-            title = doc.get("title", "Untitled")
-            doc_id = doc.get("id")
-            created = doc.get("created", "")[:10]
-            lines.append(f"  #{doc_id} {created} — {title} → {base_url}/documents/{doc_id}/details")
+        lines: list[str] = []
+        if keywords:
+            # Question-mode header: surface the rewritten keywords so the
+            # family can spot a bad rewrite that hides results.
+            lines.append(self.t(
+                "search_rewritten", query=query, keywords=", ".join(keywords),
+            ))
+        if memory_results:
+            lines.append(self.t("search_memory_results", query=query))
+            for n, r in enumerate(memory_results, start=1):
+                lines.append(_format_memory_hit(
+                    r, n,
+                    code_public_url=self.code_public_url or self.code_url,
+                    mirror_org=self.mirror_org,
+                ))
+
+        if paperless_results:
+            if memory_results:
+                lines.append("")
+            lines.append(self.t("search_paperless_results", query=query))
+            for n, doc in enumerate(paperless_results, start=1):
+                lines.append(_format_paperless_hit(
+                    doc, n,
+                    public_url=self.paperless_public_url or self.paperless_url,
+                ))
 
         await self._send(room_id, "\n".join(lines), reply_to)
 

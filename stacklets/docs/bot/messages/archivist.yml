@@ -93,6 +93,9 @@ en:
   # Search
   search_no_results: "\U0001F50D No documents found for \"{query}\"."
   search_results: "\U0001F50D Found {count} document(s) for \"{query}\":"
+  search_memory_results: "\U0001F9E0 **Memory** (notes, bookmarks, wiki) for \"{query}\":"
+  search_paperless_results: "\U0001F4C1 **Paperless** (source documents) for \"{query}\":"
+  search_rewritten: "✨ _Searched for: {keywords}_"
 
   # Error
   error_processing: "\u274C Error processing file: {error}"
@@ -216,6 +219,9 @@ de:
   # Search
   search_no_results: "\U0001F50D Keine Dokumente gefunden für \"{query}\"."
   search_results: "\U0001F50D {count} Dokument(e) gefunden für \"{query}\":"
+  search_memory_results: "\U0001F9E0 **Memory** (Notizen, Lesezeichen, Wiki) für \"{query}\":"
+  search_paperless_results: "\U0001F4C1 **Paperless** (Quelldokumente) für \"{query}\":"
+  search_rewritten: "✨ _Gesucht nach: {keywords}_"
 
   # Error
   error_processing: "\u274C Fehler bei der Verarbeitung: {error}"

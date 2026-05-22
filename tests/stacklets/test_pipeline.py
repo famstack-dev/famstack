@@ -1309,3 +1309,96 @@ class TestClassifyWithImage:
             images=[ImageAttachment(data=b"binary", mime="application/pdf")],
         )
         assert isinstance(c.calls[0]["content"], str)
+
+
+# ── Query rewrite (recall mode) ────────────────────────────────────────
+
+class TestBuildRewritePrompt:
+    """The recall prompt: question + ontology section in, prompt string out."""
+
+    @staticmethod
+    def _build(question="Wann hatte Bart MMR?", section="(...topics...)", lang="de"):
+        from pipeline import _build_rewrite_prompt
+        return _build_rewrite_prompt(question, section, lang)
+
+    def test_question_appears_verbatim(self):
+        # The LLM needs the literal phrasing to pick the right keywords;
+        # any rewriting on our side would defeat the point.
+        prompt = self._build(question="Was kostet die Auto-Versicherung?")
+        assert "Was kostet die Auto-Versicherung?" in prompt
+
+    def test_ontology_section_embedded(self):
+        # Synonym and translation expansion is the ontology's job, so
+        # the rendered section has to land inside the prompt.
+        prompt = self._build(section="- Insurance (Versicherung)")
+        assert "- Insurance (Versicherung)" in prompt
+
+    def test_language_hint_present(self):
+        # The hint primes the model to answer in the document language;
+        # without it we'd get English keywords for a German vault.
+        prompt = self._build(lang="de")
+        assert "de" in prompt
+
+    def test_json_output_contract_present(self):
+        # The parser only knows two shapes. The prompt has to ask for
+        # one of them explicitly.
+        prompt = self._build()
+        assert "JSON" in prompt
+        assert "keywords" in prompt
+
+
+class TestParseRewriteResponse:
+    """The keyword extractor parser — what the recall layer trusts."""
+
+    @staticmethod
+    def _parse(raw):
+        from pipeline import _parse_rewrite_response
+        return _parse_rewrite_response(raw)
+
+    def test_object_form(self):
+        # The contract shape: {"keywords": [...]} -- the format the
+        # prompt explicitly asks for.
+        assert self._parse('{"keywords": ["Auto", "KFZ"]}') == ["Auto", "KFZ"]
+
+    def test_bare_array_fallback(self):
+        # Some smaller models forget the wrapper. Honoring a bare
+        # array means a question doesn't lose recall just because
+        # the model skipped the keys.
+        assert self._parse('["Auto", "KFZ"]') == ["Auto", "KFZ"]
+
+    def test_strips_empty_strings(self):
+        # An empty string in the alternation regex matches every line.
+        # Drop them before the join — better to lose a slot than to
+        # turn the search into a "match everything" query.
+        assert self._parse('{"keywords": ["Auto", "", "  ", "KFZ"]}') == ["Auto", "KFZ"]
+
+    def test_strips_whitespace_around_keywords(self):
+        # Models occasionally pad with spaces; not worth a re-prompt.
+        assert self._parse('{"keywords": ["  Auto  ", "KFZ\\n"]}') == ["Auto", "KFZ"]
+
+    def test_coerces_numbers_to_strings(self):
+        # A year keyword like 2026 comes back as a JSON number. Recall
+        # against a date is legitimate ("documents from 2026"), so
+        # accept and stringify rather than drop.
+        assert self._parse('{"keywords": [2026, "Steuer"]}') == ["2026", "Steuer"]
+
+    def test_caps_at_six(self):
+        # A runaway model that returns twenty keywords would build an
+        # absurd alternation; cap defensively so the regex compile
+        # stays cheap.
+        many = '{"keywords": ["a","b","c","d","e","f","g","h","i","j"]}'
+        assert self._parse(many) == ["a", "b", "c", "d", "e", "f"]
+
+    def test_invalid_json_returns_empty(self):
+        # No keywords means: literal-query fallback. The recall layer
+        # is best-effort, never a gate.
+        assert self._parse("not json") == []
+        assert self._parse("") == []
+        assert self._parse("{") == []
+
+    def test_wrong_shape_returns_empty(self):
+        # Object without "keywords" key, scalar response — same outcome
+        # as a parse failure. Don't try to guess the model's intent.
+        assert self._parse('{"foo": "bar"}') == []
+        assert self._parse('"just a string"') == []
+        assert self._parse('42') == []
