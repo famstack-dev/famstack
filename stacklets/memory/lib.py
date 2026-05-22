@@ -158,6 +158,86 @@ def pull_vault(vault_path: Path, *, timeout: int = 30) -> bool:
     return result.returncode == 0
 
 
+def vault_remote_head(vault_path: Path, *, timeout: int = 5) -> Optional[str]:
+    """Return upstream HEAD SHA via `git ls-remote`, or None if unavailable.
+
+    This is the cheap probe used by `refresh_vault_if_stale`: one
+    network round-trip that returns a single ref, an order of
+    magnitude faster than fetching packs. Auth is baked into the
+    `origin` URL by `authenticated_remote` at clone time, so we don't
+    pass credentials here.
+    """
+    vault_path = Path(vault_path)
+    if not (vault_path / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(vault_path), "ls-remote", "origin", "HEAD"],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    first_line = result.stdout.strip().split("\n", 1)[0]
+    return first_line.split("\t", 1)[0] if first_line else None
+
+
+def vault_local_head(vault_path: Path) -> Optional[str]:
+    """Return local HEAD SHA via `git rev-parse`, or None if not a clone."""
+    vault_path = Path(vault_path)
+    if not (vault_path / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(vault_path), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def refresh_vault_if_stale(
+    vault_path: Path, *, timeout: int = 5,
+) -> str:
+    """Pull only when the remote's HEAD differs from the local HEAD.
+
+    Reads pay one cheap `git ls-remote` round-trip (~50-150ms for the
+    memory repo's size) and only the full `git pull --ff-only` when
+    there's actually a new commit to merge. The common interactive
+    case — searching repeatedly in the same minute — almost always
+    hits the "up_to_date" fast path.
+
+    Return values, terse so callers can log them verbatim:
+
+        "up_to_date"  — heads match; no work done.
+        "pulled"      — heads differed; pull succeeded.
+        "unreachable" — couldn't read the remote (offline, wrong auth,
+                        or vault is not a clone). Reads proceed
+                        against the local cache.
+        "pull_failed" — heads differed but the pull didn't apply
+                        (non-fast-forward, local edits). Reads proceed
+                        against the stale local cache.
+
+    Best-effort: this function never raises. The caller decides
+    whether to surface the status to the user — typically: warn on
+    "pulled" once, silently ignore "up_to_date" and "unreachable",
+    print a warning on "pull_failed".
+    """
+    remote = vault_remote_head(vault_path, timeout=timeout)
+    if remote is None:
+        return "unreachable"
+    local = vault_local_head(vault_path)
+    if local == remote:
+        return "up_to_date"
+    if pull_vault(vault_path, timeout=timeout):
+        return "pulled"
+    return "pull_failed"
+
+
 # ─── Vault readers ───────────────────────────────────────────────────────
 
 def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
