@@ -6,10 +6,12 @@ pasted text become summarized notes filed under the sender's own
 entity bucket (`<sender>/notes/...` or `<sender>/bookmarks/...`), no
 Paperless write.
 
-These tests cover the pure routing predicate. The end-to-end flow
-(extractor → classifier → mirror) is exercised by `test_extractors.py`
-and `test_git_mirror.py`; here we pin that the predicate makes the
-right call across the four interesting configurations.
+These tests cover the integration glue between the bot and the
+`room_context` builder: that the configured alias survives init, and
+that `_room_context()` returns a snapshot whose `is_documents_room`
+flag matches the alias on the room. The pure builder is exercised in
+`test_room_context.py`; the end-to-end flow (extractor → classifier →
+mirror) is exercised by `test_extractors.py` and `test_git_mirror.py`.
 """
 
 from __future__ import annotations
@@ -30,46 +32,40 @@ from archivist import ArchivistBot  # noqa: E402
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+BOT_ID = "@archivist-bot:server"
+
+
 def _build_bot(tmp_path, **overrides) -> ArchivistBot:
     """Build an ArchivistBot without touching Matrix.
 
     Constructor reads env + settings only; no network/IO. The instance
-    is fine for testing pure methods like `_normalize_alias` and
-    `_is_capture_room`.
+    is fine for testing pure methods like `_room_context`.
     """
     return ArchivistBot(
         homeserver="http://homeserver",
-        user_id="@archivist-bot:server",
+        user_id=BOT_ID,
         password="x",
         session_dir=tmp_path,
         **overrides,
     )
 
 
+def _room(*, canonical_alias=None, members=None, room_id="!r:server", name=None):
+    return SimpleNamespace(
+        room_id=room_id,
+        canonical_alias=canonical_alias,
+        name=name,
+        users={uid: object() for uid in (members or [])},
+    )
+
+
 # ── Tests ────────────────────────────────────────────────────────────────
-
-class TestAliasNormalization:
-    """`#documents:home.local` and `documents` should both match — the
-    bot.toml setting carries just the local part and the canonical
-    alias from the homeserver carries the full form."""
-
-    def test_strips_hash_and_server(self):
-        assert ArchivistBot._normalize_alias("#documents:home.local") == "documents"
-
-    def test_local_only_passes_through(self):
-        assert ArchivistBot._normalize_alias("documents") == "documents"
-
-    def test_whitespace_stripped(self):
-        assert ArchivistBot._normalize_alias("  documents  ") == "documents"
-
-    def test_none_returns_empty(self):
-        assert ArchivistBot._normalize_alias(None) == ""
-
 
 class TestDefaultDocumentsAlias:
     """`documents_room_alias` defaults to "documents" so existing
     bot.toml configs need no edits — the alias matches `room =
-    "documents"` already declared there."""
+    "documents"` already declared there. Init normalizes the setting
+    once so per-event lookups can do a cheap string equality check."""
 
     def test_default_is_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
@@ -84,68 +80,198 @@ class TestDefaultDocumentsAlias:
         assert bot.documents_room_alias == "archive"
 
 
-class TestCaptureRoomPredicate:
-    """`_is_capture_room` is the routing gate. The contract:
-       - documents room id matches → False (Paperless path)
-       - any other id → True (capture path)
-       - no documents room found at startup → True everywhere
-    """
+class TestIsDocumentsRoom:
+    """`_is_documents_room(ctx)` is the archivist's bot-specific routing
+    flag — alias on the context matches the configured docs alias.
+    Lives on the subclass because the framework's RoomContext doesn't
+    know about Paperless."""
 
-    def test_documents_room_is_not_capture(self, tmp_path):
+    def test_room_matching_alias_is_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
-        bot._documents_room_id = "!docs:server"
-        assert bot._is_capture_room("!docs:server") is False
+        room = _room(
+            canonical_alias="#documents:server",
+            members=[BOT_ID, "@homer:server"],
+        )
+        ctx = bot._room_context(room)
+        assert bot._is_documents_room(ctx) is True
 
-    def test_other_room_is_capture(self, tmp_path):
+    def test_room_with_other_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
-        bot._documents_room_id = "!docs:server"
-        assert bot._is_capture_room("!arthur-notes:server") is True
-        assert bot._is_capture_room("!dm-with-bot:server") is True
+        room = _room(
+            canonical_alias="#arthur-notes:server",
+            members=[BOT_ID, "@homer:server"],
+        )
+        ctx = bot._room_context(room)
+        assert bot._is_documents_room(ctx) is False
 
-    def test_unresolved_documents_room_defaults_to_capture(self, tmp_path):
-        """If the bot can't find a room matching the documents alias —
-        instance without Paperless, or alias renamed before joining —
-        every room should fall through to capture mode. Failing closed
-        to capture is the safer default: captures don't depend on a
-        running Paperless."""
+    def test_dm_with_no_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
-        bot._documents_room_id = None
-        assert bot._is_capture_room("!whatever:server") is True
+        room = _room(canonical_alias=None, members=[BOT_ID, "@homer:server"])
+        ctx = bot._room_context(room)
+        assert bot._is_documents_room(ctx) is False
+        assert ctx.is_dm is True
+
+    def test_unset_alias_disables_documents_routing(self, tmp_path):
+        """An instance without Paperless can leave `documents_room_alias`
+        empty in bot.toml. Every room should fall through to capture
+        mode — captures don't depend on a running Paperless."""
+        bot = _build_bot(tmp_path, documents_room_alias="")
+        room = _room(
+            canonical_alias="#documents:server",
+            members=[BOT_ID, "@homer:server"],
+        )
+        ctx = bot._room_context(room)
+        assert bot._is_documents_room(ctx) is False
 
 
-class TestResolveDocumentsRoom:
-    """`_resolve_documents_room` walks `self._client.rooms` at first
-    sync and pins the room id matching the configured alias. This test
-    pokes a fake `_client.rooms` dict — no Matrix needed — so we cover
-    the lookup loop's match logic without a live homeserver."""
+class TestRoomContextIntegration:
+    """`_room_context` is now inherited from MicroBot. These tests pin
+    the integration — the bot's user id flows through to DM detection."""
 
-    def test_resolves_matching_room(self, tmp_path):
+    def test_three_member_room_is_not_dm(self, tmp_path):
         bot = _build_bot(tmp_path)
-        bot._client = SimpleNamespace(rooms={
-            "!docs:server": SimpleNamespace(canonical_alias="#documents:server"),
-            "!notes:server": SimpleNamespace(canonical_alias="#arthur-notes:server"),
-        })
-        bot._resolve_documents_room()
-        assert bot._documents_room_id == "!docs:server"
+        room = _room(members=[BOT_ID, "@homer:server", "@marge:server"])
+        ctx = bot._room_context(room)
+        assert ctx.is_dm is False
 
-    def test_no_match_leaves_id_none(self, tmp_path):
+    def test_two_member_room_with_bot_is_dm(self, tmp_path):
         bot = _build_bot(tmp_path)
-        bot._client = SimpleNamespace(rooms={
-            "!notes:server": SimpleNamespace(canonical_alias="#arthur-notes:server"),
-        })
-        bot._resolve_documents_room()
-        assert bot._documents_room_id is None
+        room = _room(members=[BOT_ID, "@homer:server"])
+        ctx = bot._room_context(room)
+        assert ctx.is_dm is True
 
-    def test_handles_room_without_canonical_alias(self, tmp_path):
-        """Some rooms (DMs especially) have no canonical alias. The
-        loop must not crash when `canonical_alias` is None."""
+
+class TestBotMentionDetection:
+    """`_is_bot_mentioned` reads two signals: the MSC3952 mentions list
+    (modern clients) and a plain mxid substring (older clients, hand
+    typed). Either is enough; both absent means no mention."""
+
+    @staticmethod
+    def _event(body="hi", *, mentions_user_ids=None, source_present=True):
+        source = {"content": {}}
+        if mentions_user_ids is not None:
+            source["content"]["m.mentions"] = {"user_ids": mentions_user_ids}
+        return SimpleNamespace(
+            body=body,
+            source=source if source_present else None,
+        )
+
+    def test_mxid_in_mentions_list_detected(self, tmp_path):
         bot = _build_bot(tmp_path)
-        bot._client = SimpleNamespace(rooms={
-            "!dm:server": SimpleNamespace(canonical_alias=None),
-            "!docs:server": SimpleNamespace(canonical_alias="#documents:server"),
-        })
-        bot._resolve_documents_room()
-        assert bot._documents_room_id == "!docs:server"
+        ev = self._event(body="please search Pollos", mentions_user_ids=[BOT_ID])
+        assert bot._is_bot_mentioned(ev) is True
+
+    def test_other_mxid_in_mentions_list_ignored(self, tmp_path):
+        # A mention of someone else in the same message is not a ping
+        # for the bot.
+        bot = _build_bot(tmp_path)
+        ev = self._event(
+            body="hey @homer look at this", mentions_user_ids=["@homer:server"],
+        )
+        assert bot._is_bot_mentioned(ev) is False
+
+    def test_mxid_substring_in_body_detected(self, tmp_path):
+        # Clients that don't populate m.mentions still encode the mxid
+        # in the plain body when the user tab-completes a mention.
+        bot = _build_bot(tmp_path)
+        ev = self._event(body=f"{BOT_ID}: search Pollos")
+        assert bot._is_bot_mentioned(ev) is True
+
+    def test_localpart_mention_does_not_trip(self, tmp_path):
+        # Casual mention of the bot's localpart in chat must not be
+        # treated as an address — only the full mxid counts.
+        bot = _build_bot(tmp_path)
+        ev = self._event(body="the archivist-bot did it again")
+        assert bot._is_bot_mentioned(ev) is False
+
+    def test_plain_message_is_not_mention(self, tmp_path):
+        bot = _build_bot(tmp_path)
+        ev = self._event(body="Pollos")
+        assert bot._is_bot_mentioned(ev) is False
+
+    def test_missing_mentions_field_falls_through(self, tmp_path):
+        # An event with `m.mentions = {}` (no user_ids key) must not crash.
+        bot = _build_bot(tmp_path)
+        ev = SimpleNamespace(
+            body="hi",
+            source={"content": {"m.mentions": {}}},
+        )
+        assert bot._is_bot_mentioned(ev) is False
+
+
+class TestShouldReact:
+    """The single seam for per-room mode gating. Two cases are
+    contractually always-on (mention + DM); the third (group room, no
+    mention) goes through `_room_mode_allows_react` which is the
+    placeholder for future config."""
+
+    def test_mention_in_group_room_always_reacts(self, tmp_path):
+        """An @-tag must never be ignored, regardless of room mode.
+        Even if a future config marks this room as off, the mention
+        bypasses the mode lookup entirely."""
+        bot = _build_bot(tmp_path)
+        room = _room(
+            canonical_alias="#family-chat:server",
+            members=[BOT_ID, "@homer:server", "@marge:server", "@bart:server"],
+        )
+        ctx = bot._room_context(room)
+        # Pin the contract by forcing the mode gate to deny — mention
+        # must still win. The day modes ship, this test catches any
+        # regression that routes mentions through the mode lookup.
+        bot._room_mode_allows_react = lambda _ctx: False
+        assert bot._should_react(ctx, mentioned=True) is True
+
+    def test_dm_always_reacts(self, tmp_path):
+        """A 2-member room with the bot is a private chat. There's
+        nobody else for the message to be aimed at, so the mode gate
+        doesn't apply."""
+        bot = _build_bot(tmp_path)
+        room = _room(members=[BOT_ID, "@homer:server"])
+        ctx = bot._room_context(room)
+        bot._room_mode_allows_react = lambda _ctx: False
+        assert bot._should_react(ctx, mentioned=False) is True
+
+    def test_documents_room_with_mention_reacts(self, tmp_path):
+        # Mention beats every other consideration, including docs-room
+        # routing — the upstream handlers still see ctx.is_documents_room
+        # and dispatch accordingly.
+        bot = _build_bot(tmp_path)
+        room = _room(
+            canonical_alias="#documents:server",
+            members=[BOT_ID, "@homer:server", "@marge:server"],
+        )
+        ctx = bot._room_context(room)
+        assert bot._should_react(ctx, mentioned=True) is True
+
+    def test_group_room_no_mention_consults_mode(self, tmp_path):
+        """The only branch that talks to the future mode lookup. Today
+        the lookup defaults to True; this test pins that wiring so an
+        accidental rewrite that hard-codes True in `_should_react`
+        bypasses the seam."""
+        bot = _build_bot(tmp_path)
+        room = _room(
+            canonical_alias="#family-chat:server",
+            members=[BOT_ID, "@homer:server", "@marge:server", "@bart:server"],
+        )
+        ctx = bot._room_context(room)
+        # Today: gate returns True, so should_react returns True.
+        assert bot._should_react(ctx, mentioned=False) is True
+        # Tomorrow: gate returns False → should_react must respect it.
+        bot._room_mode_allows_react = lambda _ctx: False
+        assert bot._should_react(ctx, mentioned=False) is False
+
+    def test_default_room_mode_is_react(self, tmp_path):
+        """`_room_mode_allows_react` returns True today (no modes
+        configured). This test pins that default so the day a mode
+        config lands, the default-on behavior is explicit not
+        accidental."""
+        bot = _build_bot(tmp_path)
+        room = _room(
+            canonical_alias="#whatever:server",
+            members=[BOT_ID, "@a:server", "@b:server"],
+        )
+        ctx = bot._room_context(room)
+        assert bot._room_mode_allows_react(ctx) is True
 
 
 class TestPastePredicate:
@@ -351,3 +477,135 @@ class TestSearchScopes:
         bot = _build_bot(tmp_path)
         scopes = bot._search_scopes_for_sender("@bart:home.local")
         assert scopes == ["haus/", "bart/"]
+
+
+# ── Mention as routing signal ─────────────────────────────────────────────
+
+class TestMentionRoutesToSearch:
+    """Mention promotes any free-text message to a search query, in any
+    room. The mxid is stripped first so command matching and search see
+    the actual content the user typed.
+
+    These tests poke `_on_text` directly with a fake room/event and
+    intercept handler calls. The dispatcher logic is the bit we're
+    pinning; the handlers themselves are exercised elsewhere.
+    """
+
+    @staticmethod
+    def _text_event(body, sender="@homer:server", *, mentions=None):
+        content = {}
+        if mentions is not None:
+            content["m.mentions"] = {"user_ids": mentions}
+        return SimpleNamespace(
+            body=body,
+            sender=sender,
+            event_id="$evt:server",
+            server_timestamp=1,
+            source={"content": content},
+        )
+
+    @staticmethod
+    def _room_obj(*, alias="#family-chat:server", members=None):
+        return SimpleNamespace(
+            room_id="!room:server",
+            canonical_alias=alias,
+            name=None,
+            users={uid: object() for uid in (members or [BOT_ID, "@homer:server", "@marge:server"])},
+        )
+
+    @pytest.fixture
+    def bot_with_recorder(self, tmp_path):
+        """Build a bot wired with stubs that record handler dispatches.
+
+        Avoids any I/O. The handlers under test (_handle_search,
+        _handle_capture, _handle_text_capture) are replaced with
+        recorders so we can assert which branch fired with which query.
+        """
+        bot = _build_bot(tmp_path)
+        calls: list[tuple[str, str]] = []
+
+        async def _record_search(room_id, query, reply_to=None, *, sender=None):
+            calls.append(("search", query))
+
+        async def _record_capture(room_id, url, sender, reply_to=None):
+            calls.append(("capture_url", url))
+
+        async def _record_text_capture(room_id, text, sender, reply_to=None):
+            calls.append(("capture_text", text))
+
+        async def _record_url(room_id, url, reply_to=None, **kw):
+            calls.append(("paperless_url", url))
+
+        async def _record_send(*a, **kw):
+            calls.append(("send", a[1] if len(a) > 1 else ""))
+
+        bot._handle_search = _record_search
+        bot._handle_capture = _record_capture
+        bot._handle_text_capture = _record_text_capture
+        bot._handle_url = _record_url
+        bot._send = _record_send
+        # Reply-to lookup needs the client; short-circuit it.
+        bot._reply_target_doc_id = lambda *_a, **_kw: _none_coro()
+        return bot, calls
+
+    @pytest.mark.asyncio
+    async def test_mention_in_group_room_routes_to_search(self, bot_with_recorder):
+        """A short free-text query in a group room is normally ignored,
+        but a mention promotes it to search. The mxid is stripped so
+        the search sees just "Pollos"."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj()
+        event = self._text_event(f"{BOT_ID} Pollos", mentions=[BOT_ID])
+        await bot._on_text(room, event)
+        assert calls == [("search", "Pollos")]
+
+    @pytest.mark.asyncio
+    async def test_paste_without_mention_still_captures(self, bot_with_recorder):
+        """The mention is the gate. Without it, a long paste in a
+        non-docs room continues to route to text capture — mention is
+        an additive signal, not a replacement for the capture flow."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj()
+        long_text = "x" * 150
+        event = self._text_event(long_text)
+        await bot._on_text(room, event)
+        assert calls == [("capture_text", long_text)]
+
+    @pytest.mark.asyncio
+    async def test_mention_overrides_capture_for_long_text(self, bot_with_recorder):
+        """A long pasted query *with* a mention is the user explicitly
+        asking — search wins over the capture default."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj()
+        body = f"{BOT_ID} " + ("did marge mention pollos lately " * 8)
+        event = self._text_event(body, mentions=[BOT_ID])
+        await bot._on_text(room, event)
+        assert len(calls) == 1
+        kind, query = calls[0]
+        assert kind == "search"
+        assert BOT_ID not in query  # mxid stripped
+        assert "pollos" in query.lower()
+
+    @pytest.mark.asyncio
+    async def test_bare_mention_routes_to_help(self, bot_with_recorder):
+        """A ping with nothing else falls back to the welcome message
+        so the user gets something useful instead of an empty search."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj()
+        event = self._text_event(f"{BOT_ID}", mentions=[BOT_ID])
+        await bot._on_text(room, event)
+        assert calls and calls[0][0] == "send"  # welcome text via _send
+
+    @pytest.mark.asyncio
+    async def test_mention_with_url_still_routes_url(self, bot_with_recorder):
+        """URL routing isn't changed by mention — `@bot https://x` in
+        a non-docs room still bookmarks the URL."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj()
+        event = self._text_event(f"{BOT_ID} https://example.com/x", mentions=[BOT_ID])
+        await bot._on_text(room, event)
+        assert calls == [("capture_url", "https://example.com/x")]
+
+
+async def _none_coro():
+    return None

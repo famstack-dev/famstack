@@ -48,6 +48,8 @@ from nio import (
     MegolmEvent,
 )
 
+from room_context import RoomContext, context_for
+
 
 class MicroBot:
     """Base class for lightweight Matrix bots.
@@ -235,6 +237,117 @@ class MicroBot:
         """Called once after the very first sync. Override to send welcome
         messages, announce the bot to rooms, etc. Not called on restarts."""
         pass
+
+    # ── Per-event routing primitives ─────────────────────────────────────
+    #
+    # Every bot eventually needs the same three pieces of context per event:
+    # which room is this, was the bot addressed, and should the bot react
+    # at all? Live in the framework so subclasses don't reinvent them.
+    #
+    # The model is intentionally pure / side-effect-free. Each method
+    # consumes the nio room/event and returns a value object or bool —
+    # no Matrix client state read beyond what's already in memory, no
+    # config persistence. Subclasses override the small seam
+    # ``_room_mode_allows_react`` when they want per-room config.
+
+    def _room_context(self, room) -> RoomContext:
+        """Snapshot of the room behind the current event.
+
+        Cheap (a handful of attribute reads). The frozen dataclass keeps
+        handlers honest — once routing has been decided, the same view
+        of the room flows through the rest of the request without any
+        risk of mid-flight mutation.
+        """
+        return context_for(room, bot_user_id=self.user_id)
+
+    def _is_bot_mentioned(self, event) -> bool:
+        """True if the event explicitly addresses this bot.
+
+        Two paths, OR-ed:
+
+          1. ``m.mentions.user_ids`` (MSC3952) — modern Matrix clients
+             (Element X, Element-web) populate this list when the user
+             tab-completes a mention. This is the authoritative signal:
+             the user *meant* to ping the bot.
+          2. Mxid substring in the body — for clients that don't emit
+             ``m.mentions`` and for messages that pasted the full
+             ``@bot:server`` form. The check is on the full mxid, not
+             the localpart, so a casual mention of the bot's name in
+             chat doesn't trip the gate.
+        """
+        content = (
+            event.source.get("content", {}) if hasattr(event, "source") else {}
+        )
+        mentions = content.get("m.mentions") or {}
+        if self.user_id in (mentions.get("user_ids") or []):
+            return True
+        body = getattr(event, "body", "") or ""
+        return self.user_id in body
+
+    def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
+        """Decide whether the bot acts on the current event at all.
+
+        Two cases are never gated — the bot always reacts:
+
+          * ``mentioned`` is True. An explicit @-tag is an unambiguous
+            address; ignoring it would be confusing regardless of any
+            room-mode config.
+          * ``ctx.is_dm`` is True. A private chat with one human is
+            unambiguous by construction — there's nobody else for the
+            message to be aimed at.
+
+        Everything else (group rooms with 3+ members, no mention) is
+        subject to ``_room_mode_allows_react`` — the single seam a
+        subclass overrides when it wants per-room mode config. The
+        framework default lets every event through.
+        """
+        if mentioned:
+            return True
+        if ctx.is_dm:
+            return True
+        return self._room_mode_allows_react(ctx)
+
+    def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
+        """The configurable branch of ``_should_react``.
+
+        Group-room behavior is the only thing rooms might want to gate.
+        Anticipated shape — once a subclass / config lands:
+
+            [room_modes]
+            "#family:home.local"  = "mention"  # only when @-tagged
+            "#friends:home.local" = "off"      # ignore entirely
+            "#open-chat:home"     = "always"   # current default
+
+        With the two always-on cases handled upstream, "mention" mode
+        collapses to "ignore" here (mentions never reach this branch).
+        The framework default — react in every group room — is the
+        least-surprise baseline; bots that want to be quieter override
+        this method.
+        """
+        del ctx
+        return True
+
+    @staticmethod
+    def strip_mention(body: str, bot_user_id: str) -> str:
+        """Remove the bot's mxid (and any clinging punctuation/whitespace)
+        from a message body.
+
+        Used after ``_is_bot_mentioned`` to recover the *actual* query
+        the user typed: ``"@archivist-bot:home.local Pollos?"`` → ``"Pollos?"``.
+        Idempotent: callers can apply it unconditionally; if the mxid
+        isn't present, the body is returned unchanged.
+
+        Conservative on punctuation: trims a single trailing ``:`` or
+        ``,`` after the mxid (common in tab-complete output like
+        ``"@bot: do the thing"``) and collapses the surrounding
+        whitespace, nothing more.
+        """
+        if not body or bot_user_id not in body:
+            return body
+        cleaned = body.replace(bot_user_id, " ", 1)
+        # Common tab-complete suffixes ("@bot: ", "@bot, ").
+        cleaned = cleaned.replace(" : ", " ").replace(" , ", " ")
+        return " ".join(cleaned.split()).strip()
 
     async def emit_event(self, room_id: str, event_type: str, body: dict) -> bool:
         """Emit a structured (non-message) event into a Matrix room.

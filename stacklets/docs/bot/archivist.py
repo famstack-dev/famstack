@@ -84,6 +84,7 @@ from memory.lib import (  # noqa: E402
     search_memory as _search_memory,
 )
 from recall import resolve_search_query as _resolve_search_query  # noqa: E402
+from room_context import normalize_alias  # noqa: E402
 from search_format import (  # noqa: E402
     format_memory_hit as _format_memory_hit,
     format_paperless_hit as _format_paperless_hit,
@@ -411,11 +412,12 @@ class ArchivistBot(MicroBot):
         # Paperless pipeline. Every other room the bot is in — DMs,
         # per-person notes rooms, ad-hoc invites — runs the capture
         # pipeline instead. Alias is read from bot.toml so a deployment
-        # that renames the docs room can update one line.
-        self.documents_room_alias = self._normalize_alias(
+        # that renames the docs room can update one line. Resolution
+        # is per-event in `_room_context()` — see room_context.py for
+        # why we don't pin a room id at startup.
+        self.documents_room_alias = normalize_alias(
             settings.get("documents_room_alias", "documents"),
         )
-        self._documents_room_id: str | None = None
         # Captures are bookmarks (URL pointer + LLM summary) by default —
         # the source URL is the truth, the digest is the marker. Flip
         # `capture_keep_body = true` in bot.toml to also archive the
@@ -482,6 +484,14 @@ class ArchivistBot(MicroBot):
             # leaves `self._mirror = None` and logs the reason; writes
             # become silent skips.
             self._init_mirror()
+            # Warm the vision-capability cache on every boot. Previously
+            # this was kicked from on_first_sync, but MicroBot only runs
+            # that hook once across the lifetime of the welcome marker,
+            # so a restart never re-probed. Probe results are cached to
+            # disk inside Classifier, so this is a no-op if the cache
+            # is already populated.
+            if self.classify_enabled and self.openai_url:
+                asyncio.create_task(self._classifier.has_vision())
             await super().start()
         finally:
             await self._http.close()
@@ -638,19 +648,18 @@ class ArchivistBot(MicroBot):
                       link=link)
 
     async def on_first_sync(self) -> None:
-        """Called after initial sync — send welcome message to rooms.
+        """One-time welcome broadcast to every joined room.
 
-        Also kicks off a background vision-capability probe so the cache
-        is warm before the first user upload. Fire-and-forget: probe
-        failures already log + degrade to text-only inside has_vision().
+        MicroBot's welcome marker gates this hook to a single run across
+        the lifetime of the bot's data directory — exactly what we want
+        for the welcome message and nothing else. Anything that needs to
+        happen on every boot (vision probe, documents-room resolution)
+        belongs in `start()` or per-event `_room_context()`, not here.
         """
-        self._resolve_documents_room()
         url = self.paperless_public_url or self.paperless_url
         welcome = self.t("welcome", url=url, ai_status=self._ai_status())
         for room_id in self._client.rooms:
             await self._send(room_id, welcome)
-        if self.classify_enabled and self.openai_url:
-            asyncio.create_task(self._classifier.has_vision())
 
     # ── Documents-room routing ───────────────────────────────────────────
     #
@@ -665,43 +674,21 @@ class ArchivistBot(MicroBot):
     # bot accepts the invite, that room is in capture mode by default.
     # No allowlist to curate.
     #
-    # If the bot can't find a room matching `documents_room_alias` at
-    # first sync, every room is capture mode. That's a sensible default
-    # for instances that don't run Paperless at all.
+    # Resolution is per-event, not pinned at startup. The framework's
+    # `_room_context` reads `room.canonical_alias` from the current nio
+    # state on every callback; we compare against the configured alias
+    # in the routing dispatcher. This survives restarts, alias renames,
+    # and the documents room being joined late.
 
-    @staticmethod
-    def _normalize_alias(alias: str | None) -> str:
-        """Strip leading `#` and trailing `:server` so we can match the
-        local part regardless of how the user wrote it."""
-        if not alias:
-            return ""
-        a = alias.strip().lstrip("#")
-        return a.split(":", 1)[0]
+    def _is_documents_room(self, ctx) -> bool:
+        """Archivist-specific routing flag: alias matches our docs alias.
 
-    def _resolve_documents_room(self) -> None:
-        """Find the joined room whose canonical alias matches the
-        configured documents alias. Logged once at startup."""
-        target = self.documents_room_alias
-        if not target:
-            return
-        for room_id, room in self._client.rooms.items():
-            canonical = getattr(room, "canonical_alias", None) or ""
-            if self._normalize_alias(canonical) == target:
-                self._documents_room_id = room_id
-                logger.info(
-                    "[archivist] Documents room: {} ({})", canonical, room_id,
-                )
-                return
-        logger.info(
-            "[archivist] No room matches alias '{}' — every room is capture mode",
-            target,
-        )
-
-    def _is_capture_room(self, room_id: str) -> bool:
-        """Capture mode is the default — only the documents room is special."""
-        if self._documents_room_id is None:
-            return True
-        return room_id != self._documents_room_id
+        Sits next to the documents-room routing comment because that's
+        what it's *for*; the framework's RoomContext stays generic and
+        knows nothing about Paperless. An empty alias (deployments
+        without Paperless) collapses every room to capture mode.
+        """
+        return bool(self.documents_room_alias) and ctx.alias == self.documents_room_alias
 
     _PASTE_MIN_CHARS = 100
 
@@ -1292,6 +1279,15 @@ class ArchivistBot(MicroBot):
         if not url or not url.startswith("mxc://"):
             return
 
+        ctx = self._room_context(room)
+        mentioned = self._is_bot_mentioned(event)
+        if not self._should_react(ctx, mentioned=mentioned):
+            logger.debug(
+                "[archivist] skipping file from {} in {} per room mode",
+                event.sender, ctx.room_id,
+            )
+            return
+
         raw_filename = content.get("body", "document")
         display_name = _clean_filename(raw_filename, msgtype)
         sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
@@ -1331,6 +1327,32 @@ class ArchivistBot(MicroBot):
             return
         query_lower = query.lower()
         reply_to = event.event_id
+
+        ctx = self._room_context(room)
+        mentioned = self._is_bot_mentioned(event)
+        is_documents = self._is_documents_room(ctx)
+        logger.info(
+            "[archivist] text from {} in {} (alias={!r}, dm={}, docs={}, "
+            "members={}, mention={})",
+            event.sender, ctx.room_id, ctx.alias, ctx.is_dm,
+            is_documents, len(ctx.members), mentioned,
+        )
+        if not self._should_react(ctx, mentioned=mentioned):
+            logger.debug(
+                "[archivist] skipping {} in {} per room mode",
+                event.sender, ctx.room_id,
+            )
+            return
+
+        # When the bot is mentioned, the mxid is conversational noise —
+        # strip it so the remaining body drives command matching and
+        # the search query. A bare ping with no content becomes "help"
+        # so the user gets a useful response instead of an empty search.
+        if mentioned:
+            query = self.strip_mention(query, self.user_id)
+            if not query:
+                query = "help"
+            query_lower = query.lower()
 
         try:
             # ── Reply-to-classification: user is correcting a prior filing ──
@@ -1372,38 +1394,46 @@ class ArchivistBot(MicroBot):
                 await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
 
             elif URL_PATTERN.match(query):
-                if self._is_capture_room(room.room_id):
-                    await self._handle_capture(
-                        room.room_id, query, event.sender, reply_to,
-                    )
-                else:
+                # URL semantics don't change with mention — a URL in the
+                # docs room means "ingest into Paperless"; anywhere else
+                # it's a bookmark capture for the sender's bucket.
+                if is_documents:
                     await self._handle_url(
                         room.room_id, query, reply_to,
                         date_filed=self._event_date(event),
                         submitter_mxid=event.sender,
                     )
+                else:
+                    await self._handle_capture(
+                        room.room_id, query, event.sender, reply_to,
+                    )
 
-            elif self._is_capture_room(room.room_id) and self._looks_like_paste(query):
-                # Capture room + paste-shaped message → file as text capture.
-                # In the documents room, free text is a Paperless search;
-                # in capture rooms, search isn't useful (the user lives in
-                # Obsidian) and free text is almost always content to file.
+            elif mentioned or is_documents:
+                # Free-text search runs whenever the user explicitly
+                # addressed the bot (any room) or the message landed in
+                # the documents room (where search is the default). A
+                # short chat-shaped query like "ADAC" is fine — that's
+                # exactly the kind of thing recall is for.
+                await self._handle_search(
+                    room.room_id, query, reply_to,
+                    sender=event.sender,
+                )
+
+            elif self._looks_like_paste(query):
+                # Capture room + paste-shaped message, no mention → file
+                # as text capture. The user is dropping content into the
+                # room; without an @-tag we treat it as material to keep,
+                # not a question to answer.
                 await self._handle_text_capture(
                     room.room_id, query, event.sender, reply_to,
                 )
 
-            elif self._is_capture_room(room.room_id):
+            else:
                 # Short message in a capture room — ignored. Pasting more
                 # context will trigger capture; chat-shaped messages don't.
                 logger.debug(
                     "[archivist] capture room {} ignored short text: {!r}",
                     room.room_id, query[:60],
-                )
-
-            else:
-                await self._handle_search(
-                    room.room_id, query, reply_to,
-                    sender=event.sender,
                 )
 
         except Exception as e:
@@ -1859,14 +1889,27 @@ class ArchivistBot(MicroBot):
         rewrite runs, the keywords are surfaced in the reply header
         so the family can tell what was actually searched.
         """
+        logger.info(
+            "[archivist] search: sender={} query={!r}",
+            sender, query[:80],
+        )
+
         search_query, keywords = await _resolve_search_query(
             query,
             classifier=self._classifier,
             ontology_section=self._compute_ontology_section(),
             language=self.language,
         )
+        if keywords:
+            logger.info(
+                "[archivist] search rewritten: {!r} -> {}",
+                query[:60], keywords,
+            )
 
         paperless_results = await self._paperless.search(search_query)
+        logger.info(
+            "[archivist] paperless: {} hit(s)", len(paperless_results),
+        )
 
         memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
         memory_results: list[dict] = []
@@ -1878,6 +1921,12 @@ class ArchivistBot(MicroBot):
                 _search_memory, search_query, memory_path,
                 None, None, scopes, 10,
             )
+            logger.info(
+                "[archivist] memory: {} hit(s) scopes={}",
+                len(memory_results), scopes,
+            )
+        else:
+            logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
 
         if not memory_results and not paperless_results:
             await self._send(room_id, self.t("search_no_results", query=query), reply_to)
