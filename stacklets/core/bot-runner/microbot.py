@@ -61,6 +61,13 @@ class MicroBot:
 
     name: str = "bot"
 
+    # Per-event handler timeout. Long enough for the slowest realistic
+    # operation (LLM classify with vision attachments, Paperless upload,
+    # git mirror push), short enough that a stuck handler doesn't keep
+    # the typing indicator pinned forever or block subsequent events.
+    # Subclasses can raise this by setting a class attribute on themselves.
+    HANDLER_TIMEOUT_SECONDS: int = 180
+
     def __init__(self, homeserver: str, user_id: str, password: str, session_dir: str, **config):
         self.homeserver = homeserver
         self.user_id = user_id
@@ -216,11 +223,27 @@ class MicroBot:
         raise NotImplementedError
 
     def add_event_callback(self, callback, event_type):
-        """Register an event callback with cursor-based dedup.
+        """Register an event callback with the standard framework wrap.
 
-        Wraps the callback so it only fires for messages newer than the
-        last processed timestamp (per room). The cursor is advanced
-        before the callback runs — at-most-once delivery.
+        The wrap does three things every bot wants:
+
+          1. **Dedup** — only fires for messages newer than the per-room
+             cursor; the cursor advances before the callback runs, so a
+             callback that triggers a restart can't replay the message.
+             At-most-once delivery.
+          2. **Typing indicator** — shows that the bot is working from
+             the moment the cursor advances until the handler returns
+             (or fails). This is the family's only signal that the bot
+             saw the message at all.
+          3. **Timeout + error response** — runs the callback under
+             ``HANDLER_TIMEOUT_SECONDS`` and, on timeout *or* any
+             unhandled exception, posts a user-facing notice into the
+             room via ``_send_error``. A silently-failing bot is worse
+             than a bot that says "sorry, try again."
+
+        Handlers don't need their own try/except or typing management;
+        the framework owns both. Subclasses customize the error wording
+        by overriding ``_format_handler_error``.
         """
         async def wrapper(room, event):
             if event.sender == self.user_id:
@@ -229,9 +252,115 @@ class MicroBot:
             if ts <= self._cursors.get(room.room_id, 0):
                 return
             self._advance_cursor(room.room_id, ts)
-            await callback(room, event)
+
+            # From here on, the bot owns this event. The framework
+            # guarantees a typing-off in `finally` (and posts an error
+            # notice if the handler raises or runs over budget), but
+            # it does NOT auto-set typing-on. Handlers control when the
+            # indicator appears, because the right moment depends on
+            # whether they post an intermediate confirmation message
+            # first (which clears the indicator on Element's side).
+            try:
+                await asyncio.wait_for(
+                    callback(room, event),
+                    timeout=self.HANDLER_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError as e:
+                logger.error(
+                    "[{}] handler timed out after {}s in {}",
+                    self.name, self.HANDLER_TIMEOUT_SECONDS, room.room_id,
+                )
+                await self._send_error(room.room_id, event, e)
+            except Exception as e:
+                logger.error(
+                    "[{}] handler error in {}: {}",
+                    self.name, room.room_id, e, exc_info=True,
+                )
+                await self._send_error(room.room_id, event, e)
+            finally:
+                await self._set_typing(room.room_id, on=False)
 
         self._client.add_event_callback(wrapper, event_type)
+
+    # ── Typing + error response ──────────────────────────────────────────
+    #
+    # The framework owns the "bot is working" signal. Handlers that used
+    # to call `_set_typing` themselves can drop those calls — the wrap in
+    # `add_event_callback` handles it.
+
+    async def _set_typing(self, room_id: str, on: bool = True) -> None:
+        """Toggle the bot's typing indicator in a room.
+
+        Best-effort: a typing call that fails (room not joined yet,
+        homeserver hiccup) shouldn't crash the message handler. The
+        300000ms (5 min) timeout matches what the archivist used before
+        this moved into the framework.
+        """
+        logger.info("[{}] typing -> {} in {}", self.name, "on" if on else "off", room_id)
+        try:
+            resp = await self._client.room_typing(
+                room_id, typing_state=on, timeout=300000,
+            )
+            logger.info("[{}] typing response: {}", self.name, type(resp).__name__)
+        except Exception as e:
+            logger.warning("[{}] typing toggle failed: {}", self.name, e)
+
+    async def _room_send(
+        self,
+        room_id: str,
+        content: dict,
+        message_type: str = "m.room.message",
+    ) -> None:
+        """Thin wrapper around ``self._client.room_send``.
+
+        Exists so subclasses can route every send through a single
+        framework-owned method — useful when we want to add cross-
+        cutting behavior (audit logging, retries, etc.) without
+        touching every call site. Today it's a passthrough.
+        """
+        await self._client.room_send(
+            room_id=room_id, message_type=message_type, content=content,
+        )
+
+    def _format_handler_error(self, event, exc: BaseException) -> str:
+        """Render an exception as a user-facing message.
+
+        Default is plain English so every bot has *something* sensible
+        out of the box. Subclasses override to localize or to map
+        specific exception types to kinder messages (e.g. "the model
+        is asleep, try again in a minute").
+        """
+        if isinstance(exc, asyncio.TimeoutError):
+            return "Sorry — that took longer than I'm willing to wait. Try again?"
+        return "Sorry — something went wrong handling that message."
+
+    async def _send_error(self, room_id: str, event, exc: BaseException) -> None:
+        """Post a user-facing error message into the room.
+
+        Replies to the original event so the user can see which message
+        triggered the failure. Best-effort — if the send itself fails
+        we log at warning and stop, no recursion. Uses ``m.notice`` so
+        Element renders it with the bot-message styling rather than as
+        a regular chat line.
+        """
+        try:
+            text = self._format_handler_error(event, exc)
+            content = {"msgtype": "m.notice", "body": text}
+            reply_to = getattr(event, "event_id", None)
+            if reply_to:
+                content["m.relates_to"] = {
+                    "m.in_reply_to": {"event_id": reply_to},
+                }
+            await self._client.room_send(
+                room_id=room_id,
+                message_type="m.room.message",
+                content=content,
+            )
+        except Exception as e:
+            logger.warning(
+                "[{}] error-response send failed in {}: {}",
+                self.name, room_id, e,
+            )
 
     async def on_first_sync(self) -> None:
         """Called once after the very first sync. Override to send welcome

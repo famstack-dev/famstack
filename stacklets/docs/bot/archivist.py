@@ -706,11 +706,16 @@ class ArchivistBot(MicroBot):
 
     # ── Matrix helpers ───────────────────────────────────────────────────
 
-    async def _set_typing(self, room_id: str, typing: bool = True):
-        try:
-            await self._client.room_typing(room_id, typing_state=typing, timeout=300000)
-        except Exception:
-            pass
+    def _format_handler_error(self, event, exc: BaseException) -> str:
+        """Localized override of the framework's error message hook.
+
+        The framework wraps every event handler with a timeout + broad
+        try/except and posts the result of this method into the room
+        when something goes wrong. Both keys live in
+        ``messages/archivist.yml`` so en / de stay in lockstep.
+        """
+        key = "handler_timeout" if isinstance(exc, asyncio.TimeoutError) else "handler_error"
+        return self.t(key)
 
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,
@@ -736,7 +741,11 @@ class ArchivistBot(MicroBot):
             content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
         if metadata:
             content.update(metadata)
-        await self._client.room_send(room_id=room_id, message_type="m.room.message", content=content)
+        # Route through MicroBot._room_send so the typing indicator
+        # refreshes after every send — without it, Element clears the
+        # indicator on the bot's intermediate status messages and the
+        # rest of a long handler runs silently.
+        await self._room_send(room_id, content)
 
     async def _download_matrix_file(self, mxc_url: str) -> bytes | None:
         """Download a file from Matrix using the authenticated media API."""
@@ -829,97 +838,93 @@ class ArchivistBot(MicroBot):
         `is_reprocess=True` preserves the document's filing date in
         Paperless.
         """
-        await self._set_typing(room_id)
-        try:
-            doc = await self._paperless.get_doc(doc_id)
-            if not doc:
-                await self._send(
-                    room_id, self.t("reprocess_doc_missing", doc_id=doc_id),
-                    reply_to,
-                )
-                return
-
-            ontology = self._load_ontology()
-            result = await enrich_document(
-                paperless=self._paperless,
-                classifier=self._classifier,
-                doc=doc,
-                classify_max_chars=self.classify_max_chars,
-                ontology_section=ontology.classifier_prompt_section(self.language),
-                correspondents_section=self._compute_correspondents_section(),
-                ontology=ontology,
-                lang=self.language,
-                is_reprocess=True,
-                date_filed=date_filed,
-                user_hint=user_hint,
-            )
-            if result.llm_error:
-                kind, detail = result.llm_error
-                await self._send(
-                    room_id,
-                    self.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
-                    reply_to,
-                )
-                return
-
-            # Refetch so the mirror sees the post-PATCH title/tags.
-            refreshed = await self._paperless.get_doc(doc_id) or doc
-            paperless_tags = [
-                *result.resolved_topics,
-                *(f"Person: {p}" for p in result.resolved_persons),
-            ]
-            await self._safe_mirror(
-                doc_id=doc_id,
-                classification=dict(result.classification, **{
-                    "topics": result.resolved_topics,
-                    "persons": result.resolved_persons,
-                    "correspondent": result.resolved_correspondent,
-                    "document_type": result.resolved_type,
-                }),
-                body_text=refreshed.get("content", "") or "",
-                processing="ai_formatted" if result.classification else "ocr",
-                model=None,
-                fallback_title=refreshed.get("title") or f"Paperless #{doc_id}",
-                paperless_tags=paperless_tags,
-                summary=result.summary,
-            )
-
-            # Echo back a confirmation carrying a fresh envelope so the
-            # user can chain another correction by replying to THIS
-            # message too. The envelope `type` is `document.reclassified`
-            # so the deriver can distinguish the corrective pass from
-            # the original filing in the ledger.
-            title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
-            meta_parts: list[str] = []
-            meta_parts.extend(result.resolved_topics)
-            meta_parts.extend(result.resolved_persons)
-            if result.resolved_type:
-                meta_parts.append(result.resolved_type)
-            if result.resolved_correspondent:
-                meta_parts.append(result.resolved_correspondent)
-            lines = [self.t("reprocessed", title=title, doc_id=doc_id)]
-            if meta_parts:
-                lines.extend(["", "  " + " | ".join(meta_parts)])
-
-            envelope = build_document_event(
-                doc_id, result.classification,
-                resolved_topics=result.resolved_topics,
-                resolved_persons=result.resolved_persons,
-                resolved_correspondent=result.resolved_correspondent,
-                resolved_type=result.resolved_type,
-                paperless_url=self.paperless_public_url or self.paperless_url,
-                actor=self.user_id,
-                ts=_utc_now_isoformat(),
-            )
-            envelope["type"] = "document.reclassified"
-            envelope["summary"] = f"{title} reclassified (#{doc_id})"
-            envelope["data"]["user_hint"] = user_hint
+        doc = await self._paperless.get_doc(doc_id)
+        if not doc:
             await self._send(
-                room_id, "\n".join(lines), reply_to,
-                metadata={"dev.famstack.event": envelope},
+                room_id, self.t("reprocess_doc_missing", doc_id=doc_id),
+                reply_to,
             )
-        finally:
-            await self._set_typing(room_id, typing=False)
+            return
+
+        ontology = self._load_ontology()
+        result = await enrich_document(
+            paperless=self._paperless,
+            classifier=self._classifier,
+            doc=doc,
+            classify_max_chars=self.classify_max_chars,
+            ontology_section=ontology.classifier_prompt_section(self.language),
+            correspondents_section=self._compute_correspondents_section(),
+            ontology=ontology,
+            lang=self.language,
+            is_reprocess=True,
+            date_filed=date_filed,
+            user_hint=user_hint,
+        )
+        if result.llm_error:
+            kind, detail = result.llm_error
+            await self._send(
+                room_id,
+                self.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
+                reply_to,
+            )
+            return
+
+        # Refetch so the mirror sees the post-PATCH title/tags.
+        refreshed = await self._paperless.get_doc(doc_id) or doc
+        paperless_tags = [
+            *result.resolved_topics,
+            *(f"Person: {p}" for p in result.resolved_persons),
+        ]
+        await self._safe_mirror(
+            doc_id=doc_id,
+            classification=dict(result.classification, **{
+                "topics": result.resolved_topics,
+                "persons": result.resolved_persons,
+                "correspondent": result.resolved_correspondent,
+                "document_type": result.resolved_type,
+            }),
+            body_text=refreshed.get("content", "") or "",
+            processing="ai_formatted" if result.classification else "ocr",
+            model=None,
+            fallback_title=refreshed.get("title") or f"Paperless #{doc_id}",
+            paperless_tags=paperless_tags,
+            summary=result.summary,
+        )
+
+        # Echo back a confirmation carrying a fresh envelope so the
+        # user can chain another correction by replying to THIS
+        # message too. The envelope `type` is `document.reclassified`
+        # so the deriver can distinguish the corrective pass from
+        # the original filing in the ledger.
+        title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
+        meta_parts: list[str] = []
+        meta_parts.extend(result.resolved_topics)
+        meta_parts.extend(result.resolved_persons)
+        if result.resolved_type:
+            meta_parts.append(result.resolved_type)
+        if result.resolved_correspondent:
+            meta_parts.append(result.resolved_correspondent)
+        lines = [self.t("reprocessed", title=title, doc_id=doc_id)]
+        if meta_parts:
+            lines.extend(["", "  " + " | ".join(meta_parts)])
+
+        envelope = build_document_event(
+            doc_id, result.classification,
+            resolved_topics=result.resolved_topics,
+            resolved_persons=result.resolved_persons,
+            resolved_correspondent=result.resolved_correspondent,
+            resolved_type=result.resolved_type,
+            paperless_url=self.paperless_public_url or self.paperless_url,
+            actor=self.user_id,
+            ts=_utc_now_isoformat(),
+        )
+        envelope["type"] = "document.reclassified"
+        envelope["summary"] = f"{title} reclassified (#{doc_id})"
+        envelope["data"]["user_hint"] = user_hint
+        await self._send(
+            room_id, "\n".join(lines), reply_to,
+            metadata={"dev.famstack.event": envelope},
+        )
 
     async def _process_document(
         self, room_id: str, filename: str, display_name: str,
@@ -1083,7 +1088,6 @@ class ArchivistBot(MicroBot):
         #               way: Paperless already extracted clean text from them,
         #               so rerunning the content through the reformat prompt
         #               can only dilute or truncate it).
-        await self._set_typing(room_id)
         reformat_failed = False
         formatted: str | None = None
         if classification and self.reformat_enabled and not is_text and not is_pdf_with_text:
@@ -1298,25 +1302,29 @@ class ArchivistBot(MicroBot):
             await self._handle_scan_page(room.room_id, event, url, raw_filename)
             return
 
-        await self._set_typing(room.room_id)
-        try:
-            file_data = await self._download_matrix_file(url)
-            if not file_data:
-                await self._send(room.room_id, self.t("download_failed_matrix", name=display_name), reply_to)
-                return
+        file_data = await self._download_matrix_file(url)
+        if not file_data:
+            await self._send(room.room_id, self.t("download_failed_matrix", name=display_name), reply_to)
+            return
 
-            if msgtype == "m.image":
-                await self._send(room.room_id, self.t("received_photo", sender=sender_name), reply_to)
-            else:
-                await self._send(room.room_id, self.t("received_document", sender=sender_name), reply_to)
+        if msgtype == "m.image":
+            await self._send(room.room_id, self.t("received_photo", sender=sender_name), reply_to)
+        else:
+            await self._send(room.room_id, self.t("received_document", sender=sender_name), reply_to)
 
-            await self._process_document(
-                room.room_id, raw_filename, display_name, file_data, reply_to,
-                date_filed=self._event_date(event),
-                submitter_mxid=event.sender,
-            )
-        finally:
-            await self._set_typing(room.room_id, typing=False)
+        # Start typing AFTER the confirmation message. Sending a chat
+        # message clears the typing indicator on Element's side, so a
+        # typing notice issued before the confirmation gets immediately
+        # wiped by the message itself. Setting it here keeps the
+        # indicator alive for the rest of the OCR + classify + mirror
+        # work that follows.
+        await self._set_typing(room.room_id, on=True)
+
+        await self._process_document(
+            room.room_id, raw_filename, display_name, file_data, reply_to,
+            date_filed=self._event_date(event),
+            submitter_mxid=event.sender,
+        )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
         if event.sender == self.user_id:
@@ -1354,90 +1362,87 @@ class ArchivistBot(MicroBot):
                 query = "help"
             query_lower = query.lower()
 
-        try:
-            # ── Reply-to-classification: user is correcting a prior filing ──
-            # When the user replies to a bot's doc-filing message we can
-            # trace back the doc_id from the parent event's metadata,
-            # then re-run the classifier with the user's message as an
-            # authoritative hint. Short-circuits before the rest of the
-            # parser so a reply that happens to look like a search
-            # ("ADAC") doesn't get routed to free-text search.
-            doc_id = await self._reply_target_doc_id(room.room_id, event)
-            if doc_id is not None:
-                hint = _strip_reply_fallback(event.body)
-                if hint:
-                    await self._handle_reply_reprocess(
-                        room.room_id, doc_id, hint, reply_to,
-                        date_filed=self._event_date(event),
-                    )
-                    return
-
-            if query_lower in HELP_COMMANDS:
-                url = self.paperless_public_url or self.paperless_url
-                await self._send(room.room_id, self.t("welcome", url=url, ai_status=self._ai_status()), reply_to)
-
-            elif query_lower in SCAN_BEGIN:
-                sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
-                self._scan_sessions[event.sender] = {"files": [], "room_id": room.room_id}
-                await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
-
-            elif query_lower in SCAN_END:
-                if event.sender in self._scan_sessions:
-                    await self._handle_scan_complete(
-                        room.room_id, event.sender, reply_to,
-                        date_filed=self._event_date(event),
-                    )
-                else:
-                    await self._send(room.room_id, self.t("no_active_scan"), reply_to)
-
-            elif query_lower.startswith("show ") and query[5:].strip().isdigit():
-                await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
-
-            elif URL_PATTERN.match(query):
-                # URL semantics don't change with mention — a URL in the
-                # docs room means "ingest into Paperless"; anywhere else
-                # it's a bookmark capture for the sender's bucket.
-                if is_documents:
-                    await self._handle_url(
-                        room.room_id, query, reply_to,
-                        date_filed=self._event_date(event),
-                        submitter_mxid=event.sender,
-                    )
-                else:
-                    await self._handle_capture(
-                        room.room_id, query, event.sender, reply_to,
-                    )
-
-            elif mentioned or is_documents:
-                # Free-text search runs whenever the user explicitly
-                # addressed the bot (any room) or the message landed in
-                # the documents room (where search is the default). A
-                # short chat-shaped query like "ADAC" is fine — that's
-                # exactly the kind of thing recall is for.
-                await self._handle_search(
-                    room.room_id, query, reply_to,
-                    sender=event.sender,
+        # ── Reply-to-classification: user is correcting a prior filing ──
+        # When the user replies to a bot's doc-filing message we can
+        # trace back the doc_id from the parent event's metadata,
+        # then re-run the classifier with the user's message as an
+        # authoritative hint. Short-circuits before the rest of the
+        # parser so a reply that happens to look like a search
+        # ("ADAC") doesn't get routed to free-text search.
+        doc_id = await self._reply_target_doc_id(room.room_id, event)
+        if doc_id is not None:
+            hint = _strip_reply_fallback(event.body)
+            if hint:
+                await self._handle_reply_reprocess(
+                    room.room_id, doc_id, hint, reply_to,
+                    date_filed=self._event_date(event),
                 )
+                return
 
-            elif self._looks_like_paste(query):
-                # Capture room + paste-shaped message, no mention → file
-                # as text capture. The user is dropping content into the
-                # room; without an @-tag we treat it as material to keep,
-                # not a question to answer.
-                await self._handle_text_capture(
+        if query_lower in HELP_COMMANDS:
+            url = self.paperless_public_url or self.paperless_url
+            await self._send(room.room_id, self.t("welcome", url=url, ai_status=self._ai_status()), reply_to)
+
+        elif query_lower in SCAN_BEGIN:
+            sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
+            self._scan_sessions[event.sender] = {"files": [], "room_id": room.room_id}
+            await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
+
+        elif query_lower in SCAN_END:
+            if event.sender in self._scan_sessions:
+                await self._handle_scan_complete(
+                    room.room_id, event.sender, reply_to,
+                    date_filed=self._event_date(event),
+                )
+            else:
+                await self._send(room.room_id, self.t("no_active_scan"), reply_to)
+
+        elif query_lower.startswith("show ") and query[5:].strip().isdigit():
+            await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
+
+        elif URL_PATTERN.match(query):
+            # URL semantics don't change with mention — a URL in the
+            # docs room means "ingest into Paperless"; anywhere else
+            # it's a bookmark capture for the sender's bucket.
+            if is_documents:
+                await self._handle_url(
+                    room.room_id, query, reply_to,
+                    date_filed=self._event_date(event),
+                    submitter_mxid=event.sender,
+                )
+            else:
+                await self._handle_capture(
                     room.room_id, query, event.sender, reply_to,
                 )
 
-            else:
-                # Short message in a capture room — ignored. Pasting more
-                # context will trigger capture; chat-shaped messages don't.
-                logger.debug(
-                    "[archivist] capture room {} ignored short text: {!r}",
-                    room.room_id, query[:60],
-                )
+        elif mentioned or is_documents:
+            # Free-text search runs whenever the user explicitly
+            # addressed the bot (any room) or the message landed in
+            # the documents room (where search is the default). A
+            # short chat-shaped query like "ADAC" is fine — that's
+            # exactly the kind of thing recall is for.
+            await self._handle_search(
+                room.room_id, query, reply_to,
+                sender=event.sender,
+            )
 
-        except Exception as e:
-            logger.error("[archivist] Error handling message: {}", e, exc_info=True)
+        elif self._looks_like_paste(query):
+            # Capture room + paste-shaped message, no mention → file
+            # as text capture. The user is dropping content into the
+            # room; without an @-tag we treat it as material to keep,
+            # not a question to answer.
+            await self._handle_text_capture(
+                room.room_id, query, event.sender, reply_to,
+            )
+
+        else:
+            # Short message in a capture room — ignored. Pasting more
+            # context will trigger capture; chat-shaped messages don't.
+            logger.debug(
+                "[archivist] capture room {} ignored short text: {!r}",
+                room.room_id, query[:60],
+            )
+
 
     # ── Scan mode ────────────────────────────────────────────────────────
 
@@ -1470,37 +1475,33 @@ class ArchivistBot(MicroBot):
             await self._send(room_id, self.t("scan_cancelled"), reply_to)
             return
 
-        await self._set_typing(room_id)
-        try:
-            if len(files) == 1:
-                filename, file_data = files[0]
-                display_name = _clean_filename(filename)
-                await self._send(room_id, self.t("scan_complete_single"), reply_to)
-                await self._process_document(
-                    room_id, filename, display_name, file_data, reply_to,
-                    date_filed=date_filed,
-                    submitter_mxid=sender,
-                )
-                return
-
-            page_count = len(files)
-            await self._send(room_id, self.t("scan_complete_multi", count=page_count), reply_to)
-
-            try:
-                pdf_data = _combine_images_to_pdf(files)
-            except Exception as e:
-                await self._send(room_id, self.t("scan_combine_failed", error=str(e)), reply_to)
-                return
-
-            filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
-            display_name = f"scan ({page_count} pages)"
+        if len(files) == 1:
+            filename, file_data = files[0]
+            display_name = _clean_filename(filename)
+            await self._send(room_id, self.t("scan_complete_single"), reply_to)
             await self._process_document(
-                room_id, filename, display_name, pdf_data, reply_to,
+                room_id, filename, display_name, file_data, reply_to,
                 date_filed=date_filed,
                 submitter_mxid=sender,
             )
-        finally:
-            await self._set_typing(room_id, typing=False)
+            return
+
+        page_count = len(files)
+        await self._send(room_id, self.t("scan_complete_multi", count=page_count), reply_to)
+
+        try:
+            pdf_data = _combine_images_to_pdf(files)
+        except Exception as e:
+            await self._send(room_id, self.t("scan_combine_failed", error=str(e)), reply_to)
+            return
+
+        filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
+        display_name = f"scan ({page_count} pages)"
+        await self._process_document(
+            room_id, filename, display_name, pdf_data, reply_to,
+            date_filed=date_filed,
+            submitter_mxid=sender,
+        )
 
     # ── URL capture (knowledge rooms, DMs, per-person notes rooms) ───────
     #
@@ -1525,22 +1526,18 @@ class ArchivistBot(MicroBot):
         reply_to: str | None = None,
     ) -> None:
         await self._send(room_id, self.t("capture_fetching", url=url), reply_to)
-        await self._set_typing(room_id)
-        try:
-            source = await self._url_extractor.extract(url)
-            if source is None:
-                await self._send(room_id, self.t("capture_failed"), reply_to)
-                return
-            await self._publish_capture_from_source(
-                room_id=room_id,
-                source=source,
-                kind="bookmark",
-                sender_mxid=sender_mxid,
-                display_link=url,
-                reply_to=reply_to,
-            )
-        finally:
-            await self._set_typing(room_id, typing=False)
+        source = await self._url_extractor.extract(url)
+        if source is None:
+            await self._send(room_id, self.t("capture_failed"), reply_to)
+            return
+        await self._publish_capture_from_source(
+            room_id=room_id,
+            source=source,
+            kind="bookmark",
+            sender_mxid=sender_mxid,
+            display_link=url,
+            reply_to=reply_to,
+        )
 
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
@@ -1554,23 +1551,19 @@ class ArchivistBot(MicroBot):
         `source_uri` so the mirror keeps a pointer back to the
         original. The body is always preserved — the user chose to
         type/paste those exact bytes."""
-        await self._set_typing(room_id)
-        try:
-            source = await self._text_extractor.extract(text)
-            if source is None:
-                # The paste predicate gates by length; reaching here with
-                # empty content means whitespace-only — silently drop.
-                return
-            await self._publish_capture_from_source(
-                room_id=room_id,
-                source=source,
-                kind="note",
-                sender_mxid=sender_mxid,
-                display_link=source.source_uri or "(pasted text)",
-                reply_to=reply_to,
-            )
-        finally:
-            await self._set_typing(room_id, typing=False)
+        source = await self._text_extractor.extract(text)
+        if source is None:
+            # The paste predicate gates by length; reaching here with
+            # empty content means whitespace-only — silently drop.
+            return
+        await self._publish_capture_from_source(
+            room_id=room_id,
+            source=source,
+            kind="note",
+            sender_mxid=sender_mxid,
+            display_link=source.source_uri or "(pasted text)",
+            reply_to=reply_to,
+        )
 
     async def _publish_capture_from_source(
         self, *,
@@ -1790,49 +1783,45 @@ class ArchivistBot(MicroBot):
             download_url = url
             await self._send(room_id, self.t("downloading_url"), reply_to)
 
-        await self._set_typing(room_id)
         try:
-            try:
-                async with self._http.get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
-                    if resp.status != 200:
-                        await self._send(room_id, self.t("url_http_error", status=resp.status), reply_to)
-                        return
-                    file_data = await resp.read()
-                    content_type = resp.content_type or ""
-            except asyncio.TimeoutError:
-                await self._send(room_id, self.t("url_timeout"), reply_to)
-                return
-            except aiohttp.ClientError as e:
-                await self._send(room_id, self.t("url_error", error=str(e)), reply_to)
-                return
+            async with self._http.get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
+                if resp.status != 200:
+                    await self._send(room_id, self.t("url_http_error", status=resp.status), reply_to)
+                    return
+                file_data = await resp.read()
+                content_type = resp.content_type or ""
+        except asyncio.TimeoutError:
+            await self._send(room_id, self.t("url_timeout"), reply_to)
+            return
+        except aiohttp.ClientError as e:
+            await self._send(room_id, self.t("url_error", error=str(e)), reply_to)
+            return
 
-            if not file_data:
-                await self._send(room_id, self.t("url_empty"), reply_to)
-                return
+        if not file_data:
+            await self._send(room_id, self.t("url_empty"), reply_to)
+            return
 
-            # Determine filename
-            if google_export:
-                filename = f"google-{doc_type}.pdf"
-                display_name = type_labels.get(doc_type, "Google Doc")
-            elif "pdf" in content_type or url.lower().endswith(".pdf"):
-                url_path = url.split("?")[0].split("#")[0]
-                filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
-                if not filename.lower().endswith(".pdf"):
-                    filename = "document.pdf"
-                display_name = filename
-            elif file_data[:5] == b'%PDF-':
-                filename = display_name = "document.pdf"
-            else:
-                await self._send(room_id, self.t("url_not_pdf", content_type=content_type), reply_to)
-                return
+        # Determine filename
+        if google_export:
+            filename = f"google-{doc_type}.pdf"
+            display_name = type_labels.get(doc_type, "Google Doc")
+        elif "pdf" in content_type or url.lower().endswith(".pdf"):
+            url_path = url.split("?")[0].split("#")[0]
+            filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
+            if not filename.lower().endswith(".pdf"):
+                filename = "document.pdf"
+            display_name = filename
+        elif file_data[:5] == b'%PDF-':
+            filename = display_name = "document.pdf"
+        else:
+            await self._send(room_id, self.t("url_not_pdf", content_type=content_type), reply_to)
+            return
 
-            await self._process_document(
-                room_id, filename, display_name, file_data, reply_to,
-                date_filed=date_filed,
-                submitter_mxid=submitter_mxid,
-            )
-        finally:
-            await self._set_typing(room_id, typing=False)
+        await self._process_document(
+            room_id, filename, display_name, file_data, reply_to,
+            date_filed=date_filed,
+            submitter_mxid=submitter_mxid,
+        )
 
     # ── Search ───────────────────────────────────────────────────────────
 
@@ -1894,79 +1883,75 @@ class ArchivistBot(MicroBot):
             sender, query[:80],
         )
 
-        # Typing indicator wraps the whole search. Question-mode adds an
-        # LLM round-trip (multiple seconds) and the memory walk can fast-
-        # forward a Forgejo checkout before scanning — without a typing
-        # signal the user has no feedback that the bot is working.
-        await self._set_typing(room_id)
-        try:
-            search_query, keywords = await _resolve_search_query(
-                query,
-                classifier=self._classifier,
-                ontology_section=self._compute_ontology_section(),
-                language=self.language,
-            )
-            if keywords:
-                logger.info(
-                    "[archivist] search rewritten: {!r} -> {}",
-                    query[:60], keywords,
-                )
+        # Search posts no confirmation before the work, so typing
+        # starts immediately. The framework's wrap clears it on exit.
+        await self._set_typing(room_id, on=True)
 
-            paperless_results = await self._paperless.search(search_query)
+        search_query, keywords = await _resolve_search_query(
+            query,
+            classifier=self._classifier,
+            ontology_section=self._compute_ontology_section(),
+            language=self.language,
+        )
+        if keywords:
             logger.info(
-                "[archivist] paperless: {} hit(s)", len(paperless_results),
+                "[archivist] search rewritten: {!r} -> {}",
+                query[:60], keywords,
             )
 
-            memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
-            memory_results: list[dict] = []
-            if memory_dir:
-                memory_path = Path(memory_dir)
-                await asyncio.to_thread(_refresh_memory_vault, memory_path)
-                scopes = self._search_scopes_for_sender(sender)
-                memory_results = await asyncio.to_thread(
-                    _search_memory, search_query, memory_path,
-                    None, None, scopes, 10,
-                )
-                logger.info(
-                    "[archivist] memory: {} hit(s) scopes={}",
-                    len(memory_results), scopes,
-                )
-            else:
-                logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
+        paperless_results = await self._paperless.search(search_query)
+        logger.info(
+            "[archivist] paperless: {} hit(s)", len(paperless_results),
+        )
 
-            if not memory_results and not paperless_results:
-                await self._send(room_id, self.t("search_no_results", query=query), reply_to)
-                return
+        memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
+        memory_results: list[dict] = []
+        if memory_dir:
+            memory_path = Path(memory_dir)
+            await asyncio.to_thread(_refresh_memory_vault, memory_path)
+            scopes = self._search_scopes_for_sender(sender)
+            memory_results = await asyncio.to_thread(
+                _search_memory, search_query, memory_path,
+                None, None, scopes, 10,
+            )
+            logger.info(
+                "[archivist] memory: {} hit(s) scopes={}",
+                len(memory_results), scopes,
+            )
+        else:
+            logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
 
-            lines: list[str] = []
-            if keywords:
-                # Question-mode header: surface the rewritten keywords so
-                # the family can spot a bad rewrite that hides results.
-                lines.append(self.t(
-                    "search_rewritten", query=query, keywords=", ".join(keywords),
+        if not memory_results and not paperless_results:
+            await self._send(room_id, self.t("search_no_results", query=query), reply_to)
+            return
+
+        lines: list[str] = []
+        if keywords:
+            # Question-mode header: surface the rewritten keywords so
+            # the family can spot a bad rewrite that hides results.
+            lines.append(self.t(
+                "search_rewritten", query=query, keywords=", ".join(keywords),
+            ))
+        if memory_results:
+            lines.append(self.t("search_memory_results", query=query))
+            for n, r in enumerate(memory_results, start=1):
+                lines.append(_format_memory_hit(
+                    r, n,
+                    code_public_url=self.code_public_url or self.code_url,
+                    mirror_org=self.mirror_org,
                 ))
+
+        if paperless_results:
             if memory_results:
-                lines.append(self.t("search_memory_results", query=query))
-                for n, r in enumerate(memory_results, start=1):
-                    lines.append(_format_memory_hit(
-                        r, n,
-                        code_public_url=self.code_public_url or self.code_url,
-                        mirror_org=self.mirror_org,
-                    ))
+                lines.append("")
+            lines.append(self.t("search_paperless_results", query=query))
+            for n, doc in enumerate(paperless_results, start=1):
+                lines.append(_format_paperless_hit(
+                    doc, n,
+                    public_url=self.paperless_public_url or self.paperless_url,
+                ))
 
-            if paperless_results:
-                if memory_results:
-                    lines.append("")
-                lines.append(self.t("search_paperless_results", query=query))
-                for n, doc in enumerate(paperless_results, start=1):
-                    lines.append(_format_paperless_hit(
-                        doc, n,
-                        public_url=self.paperless_public_url or self.paperless_url,
-                    ))
-
-            await self._send(room_id, "\n".join(lines), reply_to)
-        finally:
-            await self._set_typing(room_id, typing=False)
+        await self._send(room_id, "\n".join(lines), reply_to)
 
     # ── Show document content ─────────────────────────────────────────
 

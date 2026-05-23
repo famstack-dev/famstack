@@ -99,6 +99,8 @@ en:
 
   # Error
   error_processing: "\u274C Error processing file: {error}"
+  handler_error: "\u26A0\uFE0F Sorry \u2014 something went wrong handling that message. Try again?"
+  handler_timeout: "\u23F1\uFE0F Sorry \u2014 that took longer than I'm willing to wait. Try again?"
 
   # Welcome / Help
   welcome: |
@@ -225,6 +227,8 @@ de:
 
   # Error
   error_processing: "\u274C Fehler bei der Verarbeitung: {error}"
+  handler_error: "\u26A0\uFE0F Da ist was schiefgelaufen \u2014 sorry. Versuch es nochmal?"
+  handler_timeout: "\u23F1\uFE0F Das hat zu lange gedauert. Versuch es nochmal?"
 
   # Welcome / Help
   welcome: |
