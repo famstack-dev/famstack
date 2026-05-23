@@ -417,3 +417,26 @@ they send a message and nothing happens. Today the only signal is
 family product. The 2026-05-22 `room_context` import miss (Dockerfile
 COPY missing the new module) only surfaced when a family member
 sent a message and got nothing back.
+
+### Make reformat page threshold configurable
+
+The archivist currently has `_REFORMAT_MAX_PDF_PAGES = 5` hard-coded
+in `stacklets/docs/bot/archivist.py`. Above this, PDFs skip the
+reformat pass and the mirror commits Paperless's raw extraction.
+
+**Scope:**
+
+- Surface a setting under `[docs.bot]` (or wherever bot settings
+  land once they're factored out of stack.toml proper), e.g.
+  `reformat_max_pages = 5`.
+- The vision cap (`_VISION_MAX_PDF_PAGES = 5`) is a separate axis —
+  one limits how many image tokens get spent on classification, the
+  other limits how much text gets folded back through reformat. Both
+  belong in config, neither should re-collapse into one knob.
+- Default stays at 5; the knob is for power users with bigger
+  context budgets or different cost models.
+
+**Why:** the threshold is a trade-off between mirror-readability
+and LLM cost / latency. The right value depends on the host's
+context budget and tolerance for LLM calls per upload, which is
+inherently per-deployment.

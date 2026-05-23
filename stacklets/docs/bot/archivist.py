@@ -297,6 +297,17 @@ _OCR_LAYER_TOOLS = ("ocrmypdf", "tesseract")
 # receipts, single-page letters) stay under this and get vision.
 _VISION_MAX_PDF_PAGES = 5
 
+# Past this length, we skip the reformat pass for PDFs and commit the
+# raw extraction. Reformat's job is recovering layout from
+# column-flattened or OCR-jumbled text — high value on a 1-page
+# invoice (the wall-of-text body becomes a readable markdown block),
+# low value on a 30-page contract where a single LLM call won't fit
+# the content and the body is read in Paperless anyway. The cap will
+# move to stack.toml once reformat gets its own config block; for now
+# it matches the vision cap because the same "short doc, full
+# attention" reasoning applies.
+_REFORMAT_MAX_PDF_PAGES = 5
+
 
 def _has_pdf_ocr_text_layer(file_data: bytes) -> bool:
     """Best-effort: does the text layer look machine-OCR'd, not authored?
@@ -1088,16 +1099,33 @@ class ArchivistBot(MicroBot):
             name=display_name, openai_url=self.openai_url, link=link,
         )
 
-        # ── Reformat (only when we had a classification, and only for
-        #               non-text files — a .md is already clean, reformatting
-        #               would re-LLM content that's already in its final shape.
-        #               PDFs with an embedded text layer are treated the same
-        #               way: Paperless already extracted clean text from them,
-        #               so rerunning the content through the reformat prompt
-        #               can only dilute or truncate it).
+        # ── Reformat (runs on every non-text file the bot can handle in
+        #               one LLM call). A .md / .txt / .json stays as-is —
+        #               the source bytes are already the final shape, and
+        #               re-LLMing them would only dilute. For PDFs we used
+        #               to skip the reformat when an embedded text layer
+        #               was present, on the theory that "Paperless already
+        #               has clean text." In practice a two-column invoice
+        #               has a *clean* text layer that still extracts as a
+        #               wall of run-on lines — reformat is the step that
+        #               recovers the visual structure. So we now reformat
+        #               every PDF up to _REFORMAT_MAX_PDF_PAGES; longer
+        #               docs would blow past one LLM call anyway and the
+        #               body is read in Paperless, not the mirror.
         reformat_failed = False
         formatted: str | None = None
-        if classification and self.reformat_enabled and not is_text and not is_pdf_with_text:
+        should_reformat = (
+            bool(classification) and self.reformat_enabled and not is_text
+        )
+        if should_reformat and ext == "pdf":
+            pages = _pdf_page_count(file_data)
+            if pages > _REFORMAT_MAX_PDF_PAGES:
+                logger.info(
+                    "[archivist] reformat skipped for doc #{}: {} pages > {}",
+                    doc_id, pages, _REFORMAT_MAX_PDF_PAGES,
+                )
+                should_reformat = False
+        if should_reformat:
             formatted = await reformat_document(
                 paperless=self._paperless,
                 classifier=self._classifier,
@@ -1106,11 +1134,6 @@ class ArchivistBot(MicroBot):
             )
             if not formatted:
                 reformat_failed = True
-        elif is_pdf_with_text and classification:
-            logger.info(
-                "[archivist] reformat skipped for doc #{}: PDF with embedded text layer",
-                doc_id,
-            )
 
         # ── Mirror to Forgejo (always, when configured) ─────────────────
         # Runs before the chat reply so failure-path replies are still
