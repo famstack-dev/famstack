@@ -146,9 +146,11 @@ class TestFormatMemoryHit:
 
     def test_numbering_is_one_indexed(self):
         # The synthesis step will eventually cite `[1]`, `[2]`,
-        # matching the numbering the human reads in chat.
+        # matching the numbering the human reads in chat. The dot is
+        # backslash-escaped in the markdown source so the renderer
+        # doesn't treat the line as an ordered-list item.
         out = format_memory_hit(self._hit(), 7)
-        assert out.startswith("7. ")
+        assert out.startswith("7\\. ")
 
 
 # ── Paperless hit formatting ────────────────────────────────────────────
@@ -193,4 +195,4 @@ class TestFormatPaperlessHit:
 
     def test_numbering_is_one_indexed(self):
         out = format_paperless_hit(self._doc(), 5)
-        assert out.startswith("5. ")
+        assert out.startswith("5\\. ")

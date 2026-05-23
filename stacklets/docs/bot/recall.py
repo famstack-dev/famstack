@@ -41,18 +41,30 @@ async def resolve_search_query(
     classifier: Optional[Classifier],
     ontology_section: str,
     language: str,
-) -> Tuple[str, list[str]]:
-    """Resolve a chat message into the regex the search walkers should run.
+) -> Tuple[str, str, list[str]]:
+    """Resolve a chat message into the strings the two search backends need.
 
-    Returns `(search_regex, keywords_used)`:
+    Returns `(memory_regex, paperless_query, keywords_used)`:
 
-      * `search_regex` is the string passed to `search_memory` /
-        `_paperless.search`. Always non-empty; equals the input
-        message in the literal-query path.
+      * `memory_regex` is the Python regex the memory walker feeds
+        to `re.search`. Always non-empty.
+      * `paperless_query` is the Whoosh-compatible string the bot
+        passes to `PaperlessAPI.search`. The API client wildcards
+        bare tokens itself (`_to_whoosh_query`), so we only have to
+        get the *operators* right here — bare tokens joined with ` OR `
+        for question mode, the raw input for literal mode.
       * `keywords_used` is the list the LLM produced (empty when
         rewrite didn't run or failed). The bot uses this to surface a
-        "Searched for: ..." header so the family can tell when a
-        bad rewrite hid results.
+        "Searched for: ..." header so the family can tell when a bad
+        rewrite hid results.
+
+    The two backends need different query languages: the memory walker
+    runs Python regex (so `|` is the alternation operator and
+    `re.escape` is mandatory), while Paperless runs Whoosh (so `|` is
+    a literal character and `OR` is the alternation operator). Before
+    splitting the return shape, a single regex was being shipped to
+    both -- which is why `fish|price|cost` matched nothing in Paperless
+    even when the memory side matched it correctly.
 
     Question mode only runs when *all* of the following hold:
 
@@ -62,12 +74,17 @@ async def resolve_search_query(
          endpoint isn't configured).
 
     Otherwise the function short-circuits to the literal path. This
-    is deliberately strict — surprise LLM calls are exactly the
+    is deliberately strict -- surprise LLM calls are exactly the
     behaviour we want to avoid.
     """
-    if not _looks_like_question(query) or classifier is None:
-        return query, []
+    if not _looks_like_question(query):
+        logger.debug("[recall] literal mode: no trailing '?'")
+        return query, query, []
+    if classifier is None:
+        logger.info("[recall] literal mode: no classifier configured")
+        return query, query, []
 
+    logger.info("[recall] question mode: rewriting {!r}", query[:80])
     try:
         keywords = await classifier.rewrite_query(
             query, ontology_section, language,
@@ -78,15 +95,23 @@ async def resolve_search_query(
         # genuine programming bug in the prompt builders never
         # blocks a search. We log + fall back to literal.
         logger.warning("[recall] rewrite_query raised: {}", e)
-        return query, []
+        return query, query, []
 
     if not keywords:
-        return query, []
+        logger.info("[recall] rewrite returned no keywords; falling back to literal")
+        return query, query, []
+    logger.info("[recall] keywords: {}", keywords)
 
-    # Each keyword goes through re.escape so a chatty LLM that returns
-    # "C++" or "Lisa's" can't blow up the alternation regex.
-    pattern = "|".join(re.escape(k) for k in keywords)
-    return pattern, keywords
+    # Memory side: regex alternation, re.escape each keyword so a
+    # chatty LLM that returns "C++" or "Lisa's" can't blow up the
+    # compile step.
+    memory_regex = "|".join(re.escape(k) for k in keywords)
+    # Paperless side: Whoosh OR alternation, bare tokens. The
+    # PaperlessAPI wraps this in `_to_whoosh_query` which adds the
+    # prefix wildcard on each bare term -- so "fish OR price" becomes
+    # "fish* OR price*" downstream.
+    paperless_query = " OR ".join(keywords)
+    return memory_regex, paperless_query, keywords
 
 
 # ── Triggers ────────────────────────────────────────────────────────────

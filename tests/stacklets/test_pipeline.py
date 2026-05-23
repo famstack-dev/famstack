@@ -23,9 +23,59 @@ from pipeline import (  # noqa: E402
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
+    _to_whoosh_query,
     enrich_document,
     reformat_document,
 )
+
+
+# ── Whoosh query translation ──────────────────────────────────────────────
+
+class TestToWhooshQuery:
+    """Translate chat search input into Whoosh syntax.
+
+    The bug this guards against: a user types `pangasius` expecting the
+    doc titled "Pangasiusfilet" to surface, but Whoosh requires either
+    a full-token match or an explicit prefix wildcard. Bare-term
+    queries miss anything where the token is a compound the analyzer
+    doesn't split.
+    """
+
+    def test_appends_wildcard_to_bare_token(self):
+        # The whole point: "pangasius" alone won't hit the index, but
+        # "pangasius*" will prefix-match "pangasiusfilet".
+        assert _to_whoosh_query("pangasius") == "pangasius*"
+
+    def test_each_token_gets_its_own_wildcard(self):
+        # Two-word queries narrow the set (Whoosh AND under Paperless's
+        # default operator), with both terms allowed to prefix-match.
+        assert _to_whoosh_query("radlager auto") == "radlager* auto*"
+
+    def test_passes_through_existing_wildcard(self):
+        # If the caller already wrote Whoosh syntax we trust them and
+        # don't double-wildcard.
+        assert _to_whoosh_query("pangasius*") == "pangasius*"
+
+    def test_passes_through_operators(self):
+        # AND/OR/NOT are Whoosh operators -- not search terms -- so they
+        # must not get a `*` suffix.
+        assert _to_whoosh_query("fisch OR pangasius") == "fisch* OR pangasius*"
+        assert _to_whoosh_query("fisch AND NOT pangasius") == "fisch* AND NOT pangasius*"
+
+    def test_passes_through_field_query(self):
+        # `field:value` is intentional Whoosh syntax for restricting a
+        # search to one indexed field -- leave it alone.
+        assert _to_whoosh_query("title:rezept") == "title:rezept"
+
+    def test_passes_through_quoted_phrase(self):
+        # Quotes signal an explicit phrase query; wildcarding breaks it.
+        assert _to_whoosh_query('"fisch rezept"') == '"fisch rezept"'
+
+    def test_empty_input_unchanged(self):
+        # Defensive: a stray "" must NOT become "*" -- a wildcard alone
+        # matches every doc, which is the opposite of a no-op.
+        assert _to_whoosh_query("") == ""
+        assert _to_whoosh_query("   ") == "   "
 
 
 # ── Stub collaborators ────────────────────────────────────────────────────

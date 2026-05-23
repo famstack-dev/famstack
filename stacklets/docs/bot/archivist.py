@@ -374,15 +374,19 @@ class ArchivistBot(MicroBot):
     def __init__(self, homeserver, user_id, password, session_dir, **settings):
         super().__init__(homeserver, user_id, password, session_dir, **settings)
         # Shared config from env vars — rendered by the CLI from stack.toml
+        # URL contract: `*_url` is container-internal (compose service
+        # hostname like `stack-paperless:8000` / `stack-code:3000`) and
+        # MUST only feed bot→service API calls (PaperlessAPI, GitMirror,
+        # etc). `*_public_url` is the externally reachable URL and is
+        # the ONLY URL allowed in user-surfacing output (chat messages,
+        # committed memory-vault metadata, event envelopes). There is
+        # no fallback from public to internal -- a docker hostname in a
+        # chat link is worse than no link at all, since the helper
+        # formatters already render a path-only / bold-title view when
+        # the public URL is empty.
         self.paperless_url = os.environ.get("PAPERLESS_URL", "")
         self.paperless_token = os.environ.get("PAPERLESS_TOKEN", "")
         self.paperless_public_url = os.environ.get("PAPERLESS_PUBLIC_URL", "")
-        # Forgejo URLs: the container-network address is used for git
-        # operations (mirror push, ls-remote, clone); the public one,
-        # when set, becomes the basis for clickable source links in
-        # search results. Falls back to the container URL if no public
-        # one is configured -- on a LAN deployment that's still usable
-        # from the same machine, just not from outside the network.
         self.code_url = os.environ.get("CODE_URL", "")
         self.code_public_url = os.environ.get("CODE_PUBLIC_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
@@ -625,7 +629,7 @@ class ArchivistBot(MicroBot):
                 body_text=body_text,
                 processing=processing,
                 model=model,
-                paperless_url=self.paperless_public_url or self.paperless_url,
+                paperless_url=self.paperless_public_url,
                 tags=paperless_tags,
                 fallback_title=fallback_title,
                 summary=summary,
@@ -656,8 +660,11 @@ class ArchivistBot(MicroBot):
         happen on every boot (vision probe, documents-room resolution)
         belongs in `start()` or per-event `_room_context()`, not here.
         """
-        url = self.paperless_public_url or self.paperless_url
-        welcome = self.t("welcome", url=url, ai_status=self._ai_status())
+        welcome = self.t(
+            "welcome",
+            url=self.paperless_public_url,
+            ai_status=self._ai_status(),
+        )
         for room_id in self._client.rooms:
             await self._send(room_id, welcome)
 
@@ -914,7 +921,7 @@ class ArchivistBot(MicroBot):
             resolved_persons=result.resolved_persons,
             resolved_correspondent=result.resolved_correspondent,
             resolved_type=result.resolved_type,
-            paperless_url=self.paperless_public_url or self.paperless_url,
+            paperless_url=self.paperless_public_url,
             actor=self.user_id,
             ts=_utc_now_isoformat(),
         )
@@ -1251,7 +1258,7 @@ class ArchivistBot(MicroBot):
                 resolved_persons=resolved_persons,
                 resolved_correspondent=resolved_correspondent,
                 resolved_type=resolved_type,
-                paperless_url=self.paperless_public_url or self.paperless_url,
+                paperless_url=self.paperless_public_url,
                 actor=self.user_id,
                 ts=_utc_now_isoformat(),
             )
@@ -1380,8 +1387,15 @@ class ArchivistBot(MicroBot):
                 return
 
         if query_lower in HELP_COMMANDS:
-            url = self.paperless_public_url or self.paperless_url
-            await self._send(room.room_id, self.t("welcome", url=url, ai_status=self._ai_status()), reply_to)
+            await self._send(
+                room.room_id,
+                self.t(
+                    "welcome",
+                    url=self.paperless_public_url,
+                    ai_status=self._ai_status(),
+                ),
+                reply_to,
+            )
 
         elif query_lower in SCAN_BEGIN:
             sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
@@ -1887,7 +1901,7 @@ class ArchivistBot(MicroBot):
         # starts immediately. The framework's wrap clears it on exit.
         await self._set_typing(room_id, on=True)
 
-        search_query, keywords = await _resolve_search_query(
+        memory_regex, paperless_query, keywords = await _resolve_search_query(
             query,
             classifier=self._classifier,
             ontology_section=self._compute_ontology_section(),
@@ -1899,7 +1913,7 @@ class ArchivistBot(MicroBot):
                 query[:60], keywords,
             )
 
-        paperless_results = await self._paperless.search(search_query)
+        paperless_results = await self._paperless.search(paperless_query)
         logger.info(
             "[archivist] paperless: {} hit(s)", len(paperless_results),
         )
@@ -1911,7 +1925,7 @@ class ArchivistBot(MicroBot):
             await asyncio.to_thread(_refresh_memory_vault, memory_path)
             scopes = self._search_scopes_for_sender(sender)
             memory_results = await asyncio.to_thread(
-                _search_memory, search_query, memory_path,
+                _search_memory, memory_regex, memory_path,
                 None, None, scopes, 10,
             )
             logger.info(
@@ -1925,33 +1939,39 @@ class ArchivistBot(MicroBot):
             await self._send(room_id, self.t("search_no_results", query=query), reply_to)
             return
 
-        lines: list[str] = []
+        # Each block here is one paragraph in the rendered reply --
+        # the question header, each section header, and each hit. They
+        # join with a blank line so python-markdown treats them as
+        # distinct paragraphs / list items. Joining with a single \n
+        # collapses the whole reply into one paragraph, which is what
+        # produced the run-on "1. ... 2. ... 3. ..." line earlier.
+        # Continuation lines inside a single hit (path, excerpt) stay
+        # joined by a single \n inside the hit string itself.
+        blocks: list[str] = []
         if keywords:
             # Question-mode header: surface the rewritten keywords so
             # the family can spot a bad rewrite that hides results.
-            lines.append(self.t(
+            blocks.append(self.t(
                 "search_rewritten", query=query, keywords=", ".join(keywords),
             ))
         if memory_results:
-            lines.append(self.t("search_memory_results", query=query))
+            blocks.append(self.t("search_memory_results", query=query))
             for n, r in enumerate(memory_results, start=1):
-                lines.append(_format_memory_hit(
+                blocks.append(_format_memory_hit(
                     r, n,
-                    code_public_url=self.code_public_url or self.code_url,
+                    code_public_url=self.code_public_url,
                     mirror_org=self.mirror_org,
                 ))
 
         if paperless_results:
-            if memory_results:
-                lines.append("")
-            lines.append(self.t("search_paperless_results", query=query))
+            blocks.append(self.t("search_paperless_results", query=query))
             for n, doc in enumerate(paperless_results, start=1):
-                lines.append(_format_paperless_hit(
+                blocks.append(_format_paperless_hit(
                     doc, n,
-                    public_url=self.paperless_public_url or self.paperless_url,
+                    public_url=self.paperless_public_url,
                 ))
 
-        await self._send(room_id, "\n".join(lines), reply_to)
+        await self._send(room_id, "\n\n".join(blocks), reply_to)
 
     # ── Show document content ─────────────────────────────────────────
 

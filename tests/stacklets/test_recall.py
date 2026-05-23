@@ -57,24 +57,31 @@ class TestQuestionTrigger:
     @pytest.mark.asyncio
     async def test_no_question_mark_skips_rewrite(self):
         c = _StubClassifier(keywords=["should", "not", "run"])
-        regex, kw = await resolve_search_query(
+        memory, paperless, kw = await resolve_search_query(
             "Allianz", classifier=c, ontology_section="(...)", language="de",
         )
-        # Literal path: regex == input, no keywords, classifier never
-        # called. This is the fast path the family hits 99% of the time.
-        assert regex == "Allianz"
+        # Literal path: both queries equal the input (the Paperless
+        # client wildcards the bare token downstream), no keywords,
+        # classifier never called. This is the fast path the family
+        # hits 99% of the time.
+        assert memory == "Allianz"
+        assert paperless == "Allianz"
         assert kw == []
         assert c.calls == []
 
     @pytest.mark.asyncio
     async def test_question_mark_triggers_rewrite(self):
         c = _StubClassifier(keywords=["Impfung", "MMR", "Auffrischung"])
-        regex, kw = await resolve_search_query(
+        memory, paperless, kw = await resolve_search_query(
             "Wann hatte Bart MMR?",
             classifier=c, ontology_section="(...)", language="de",
         )
         assert kw == ["Impfung", "MMR", "Auffrischung"]
-        assert regex == "Impfung|MMR|Auffrischung"
+        # Memory walker reads Python regex; alternation uses `|`.
+        assert memory == "Impfung|MMR|Auffrischung"
+        # Paperless reads Whoosh; alternation uses ` OR `. The bare
+        # tokens get wildcarded by PaperlessAPI._to_whoosh_query.
+        assert paperless == "Impfung OR MMR OR Auffrischung"
         assert len(c.calls) == 1
 
     @pytest.mark.asyncio
@@ -83,7 +90,7 @@ class TestQuestionTrigger:
         # rstrip before testing the suffix so this case behaves the
         # same as a clean "?".
         c = _StubClassifier(keywords=["k"])
-        _, kw = await resolve_search_query(
+        _, _, kw = await resolve_search_query(
             "What about Lisa?   \n",
             classifier=c, ontology_section="", language="en",
         )
@@ -94,11 +101,12 @@ class TestQuestionTrigger:
         # Archivist boots without a classifier when AI is unconfigured
         # (no openai_url). recall must not crash; it must fall back
         # to literal so a question still surfaces *something*.
-        regex, kw = await resolve_search_query(
+        memory, paperless, kw = await resolve_search_query(
             "Wann hatte Bart MMR?",
             classifier=None, ontology_section="(...)", language="de",
         )
-        assert regex == "Wann hatte Bart MMR?"
+        assert memory == "Wann hatte Bart MMR?"
+        assert paperless == "Wann hatte Bart MMR?"
         assert kw == []
 
 
@@ -113,11 +121,12 @@ class TestFailureFallback:
         # treat it the same as an unreachable LLM: search the literal
         # question text. Bad recall is better than no recall.
         c = _StubClassifier(keywords=[])
-        regex, kw = await resolve_search_query(
+        memory, paperless, kw = await resolve_search_query(
             "Where is the thing?",
             classifier=c, ontology_section="", language="en",
         )
-        assert regex == "Where is the thing?"
+        assert memory == "Where is the thing?"
+        assert paperless == "Where is the thing?"
         assert kw == []
 
     @pytest.mark.asyncio
@@ -127,11 +136,12 @@ class TestFailureFallback:
         # never propagate. Family asks a question, family gets an
         # answer (even if it's "no results"), never a stack trace.
         c = _StubClassifier(raises=RuntimeError("kaboom"))
-        regex, kw = await resolve_search_query(
+        memory, paperless, kw = await resolve_search_query(
             "Anything?",
             classifier=c, ontology_section="", language="en",
         )
-        assert regex == "Anything?"
+        assert memory == "Anything?"
+        assert paperless == "Anything?"
         assert kw == []
 
 
@@ -143,29 +153,32 @@ class TestRegexAssembly:
     @pytest.mark.asyncio
     async def test_alternation_joined_with_pipe(self):
         c = _StubClassifier(keywords=["Auto", "KFZ", "Versicherung"])
-        regex, _ = await resolve_search_query(
+        memory, paperless, _ = await resolve_search_query(
             "Autoversicherung?",
             classifier=c, ontology_section="", language="de",
         )
-        # OR alternation across exactly the returned keywords. Order
-        # preserved -- the LLM's first guess is its best guess, and a
-        # smart walker can later weight by position if we want to.
-        assert regex == "Auto|KFZ|Versicherung"
+        # Memory side: regex `|` alternation. Order preserved -- the
+        # LLM's first guess is its best guess, and a smart walker can
+        # later weight by position if we want to.
+        assert memory == "Auto|KFZ|Versicherung"
+        # Paperless side: Whoosh ` OR ` alternation, same order.
+        assert paperless == "Auto OR KFZ OR Versicherung"
 
     @pytest.mark.asyncio
     async def test_regex_metachars_escaped(self):
         # A chatty LLM might return "C++" or "Lisa's" or even "(foo)".
-        # If we passed those through raw, the alternation regex would
-        # blow up at compile time and the search would silently fail.
-        # re.escape neutralizes them before the join.
+        # If we passed those through raw to the memory side, the
+        # alternation regex would blow up at compile time and the
+        # search would silently fail. re.escape neutralizes them
+        # before the join.
         c = _StubClassifier(keywords=["C++", "Lisa's", "(foo)"])
-        regex, _ = await resolve_search_query(
+        memory, _, _ = await resolve_search_query(
             "Anything?",
             classifier=c, ontology_section="", language="en",
         )
         import re as _re
         # Compile + matches all three escaped tokens in the same text.
-        compiled = _re.compile(regex)
+        compiled = _re.compile(memory)
         assert compiled.search("got C++ done") is not None
         assert compiled.search("Lisa's room") is not None
         assert compiled.search("inside (foo) block") is not None

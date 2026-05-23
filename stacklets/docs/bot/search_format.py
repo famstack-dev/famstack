@@ -74,11 +74,16 @@ def format_memory_hit(
     persons = ", ".join(r.get("persons") or [])
     meta = " · ".join(p for p in [date, persons] if p)
 
+    # Escape the dot after the number so python-markdown doesn't see
+    # this as an ordered-list item. We join hits with blank lines for
+    # paragraph separation, and a loose `<ol>` ends up rendering each
+    # marker on its own line in Element; plain "1. Foo" text avoids
+    # the list machinery entirely.
     url = memory_doc_url(rel, code_public_url=code_public_url, mirror_org=mirror_org)
     if url:
-        head = f"{n}. [{title}]({url})"
+        head = f"{n}\\. [{title}]({url})"
     else:
-        head = f"{n}. **{title}**"
+        head = f"{n}\\. **{title}**"
     if meta:
         head += f" — {meta}"
 
@@ -111,9 +116,9 @@ def format_paperless_hit(
 
     url = paperless_doc_url(doc_id, public_url=public_url)
     if url:
-        head = f"{n}. [{title}]({url})"
+        head = f"{n}\\. [{title}]({url})"
     else:
-        head = f"{n}. **{title}**"
+        head = f"{n}\\. **{title}**"
     if meta:
         head += f" — {meta}"
     return head

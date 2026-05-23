@@ -137,6 +137,52 @@ class EnrichResult:
     llm_error: tuple[str, str] | None = None
 
 
+# ── Whoosh query translation ─────────────────────────────────────────────
+
+# Whoosh special-character set (https://whoosh.readthedocs.io/). When any
+# of these appears in a token we assume the caller is writing Whoosh
+# syntax on purpose (wildcards, fielded search, fuzzy match, grouping,
+# quoted phrases) and leave the token alone.
+_WHOOSH_SPECIAL = set("*?:()\"~")
+
+
+def _to_whoosh_query(q: str) -> str:
+    """Translate a chat search input into a Whoosh query string.
+
+    The visible problem this solves: a user types `pangasius` expecting
+    to find the doc titled "Pangasiusfilet". Whoosh tokenises titles
+    on whitespace and lowercases them, so the index has the token
+    `pangasiusfilet` -- a bare-term query for `pangasius` is not a
+    full token and German compound-splitting only kicks in for words
+    in the analyzer's dictionary (it splits "fisch" out of
+    "fischrezept" but not "pangasius" out of "pangasiusfilet"). The
+    fix is to wildcard each user-supplied token so prefix matching
+    catches "pangasius*" against "pangasiusfilet".
+
+    Each whitespace-separated token gets a `*` appended unless it
+    already contains a Whoosh special character (the caller is using
+    intentional syntax) or is itself a Whoosh operator (AND/OR/NOT).
+    Tokens are joined back with spaces, which Whoosh treats as AND
+    under Paperless's default operator -- so multi-word queries narrow
+    the set rather than blowing it up.
+
+    Empty input passes through unchanged so a defensive caller doesn't
+    accidentally search for `*` (which would match every doc).
+    """
+    if not q.strip():
+        return q
+    tokens: list[str] = []
+    for tok in q.split():
+        if tok.upper() in {"AND", "OR", "NOT"}:
+            tokens.append(tok)
+            continue
+        if any(c in _WHOOSH_SPECIAL for c in tok):
+            tokens.append(tok)
+            continue
+        tokens.append(f"{tok}*")
+    return " ".join(tokens)
+
+
 # ── Paperless HTTP wrapper ───────────────────────────────────────────────
 
 class PaperlessAPI:
@@ -202,7 +248,11 @@ class PaperlessAPI:
     async def search(self, query: str, limit: int = 5) -> list[dict]:
         body, _ = await self._req(
             "GET", "/api/documents/",
-            params={"query": query, "page_size": limit, "ordering": "-created"},
+            params={
+                "query": _to_whoosh_query(query),
+                "page_size": limit,
+                "ordering": "-created",
+            },
         )
         return body.get("results", []) if isinstance(body, dict) else []
 
@@ -722,9 +772,20 @@ class Classifier:
         prompt = _build_rewrite_prompt(question, ontology_section, lang)
         try:
             raw = await self._request("recall", prompt, json_mode=True)
-        except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
+        except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
+            logger.warning("[recall] LLM unavailable for rewrite: {}", e)
             return []
-        return _parse_rewrite_response(raw)
+        keywords = _parse_rewrite_response(raw)
+        if not keywords:
+            # Surface the raw payload so an empty keyword list is
+            # debuggable: an off-shape JSON response is a prompt or
+            # model issue, not a transport one, and we can't fix it
+            # blind.
+            logger.warning(
+                "[recall] rewrite parse produced no keywords; raw={!r}",
+                (raw or "")[:200],
+            )
+        return keywords
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────

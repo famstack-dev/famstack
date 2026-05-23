@@ -49,11 +49,15 @@ PAPERLESS_URL        = "http://stack-docs-paperless:8000"
 PAPERLESS_PUBLIC_URL = "{docs_url}"
 PAPERLESS_TOKEN      = "{docs__API_TOKEN}"
 
-# Forgejo — archivist bot mirrors classified documents here. The
-# container URL is a literal (no template) so this resolves even when
-# the code stacklet hasn't been installed yet — the mirror just fails
-# its reachability probe and soft-skips.
-CODE_URL = "http://stack-code:3000"
+# Forgejo — archivist bot mirrors classified documents here and links
+# memory-vault search results back to the source file. The container
+# URL is a literal (no template) so this resolves even when the code
+# stacklet hasn't been installed yet — the mirror just fails its
+# reachability probe and soft-skips. The public URL is templated and
+# resolves to "" when code isn't installed; the search formatter falls
+# back to a path-only view in that case.
+CODE_URL        = "http://stack-code:3000"
+CODE_PUBLIC_URL = "{code_url}"
 
 # Memory — the archivist reads its classifier vocabulary (ontology
 # topics + doctypes with synonyms) from the local vault working copy
