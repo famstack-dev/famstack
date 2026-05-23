@@ -1,0 +1,225 @@
+# AGENT - Engineer role
+
+Goal: change famstack code safely. Stacklets, framework, CLI, tests, commits.
+
+For full prose: [../stack-reference.md](../stack-reference.md) (framework reference) and [../creating-stacklets.md](../creating-stacklets.md) (stacklet authoring). This file is the compact decision layer.
+
+For ops/lifecycle commands, see [ops.md](ops.md).
+
+## Repo layout
+
+```
+famstack/
+├── stack                  4-line bash wrapper → lib/stack
+├── lib/stack/             CLI core (Python, stdlib only)
+├── stacklets/             one directory per stacklet (id == dirname)
+│   ├── core/              always-on (Caddy, Watchtower, bot-runner)
+│   ├── messages/          Matrix + Element
+│   ├── photos/            Immich
+│   ├── docs/              Paperless-ngx + archivist bot
+│   ├── memory/            git-versioned vault for filed content
+│   ├── ai/                oMLX + Whisper + Piper (host stacklet)
+│   ├── chatai/            Open WebUI
+│   ├── code/              Forgejo
+│   └── infra/             support services
+├── tests/
+│   ├── framework/         fast (~3s), no Docker
+│   ├── stacklets/         per-stacklet unit tests
+│   └── integration/       real stacklets + Docker, opt-in
+├── docs/                  user docs + ADRs + this file
+└── stack.example.toml     template; users copy to stack.toml
+```
+
+`docs/design/` is **gitignored** (work-in-progress design notes). Never commit content there.
+
+## Five framework invariants
+
+1. **`.env` is a derived artifact.** Generated on every `stack up` from `stack.toml` + `[env.defaults]` + secrets. Never edit, never commit, never read as source of truth. (See [adr-006](../adr/adr-006-env-as-derived-artifact.md).)
+2. **The CLI is stdlib-only.** `lib/stack/` imports nothing from pip. Container code carries its own deps; host-side tooling (tests, hooks) gets deps via `pyproject.toml [project.optional-dependencies] test`.
+3. **State is derived.** No "enabled stacklets" registry. `docker ps -a` + `~/famstack-data/<id>/` decide state.
+4. **Convention over configuration.** If a file exists with the documented name (`hooks/on_install.py`, `cli/foo.py`, `caddy.snippet`, `bot/bot.toml`), it is picked up. No registration step.
+5. **The `stack` CLI is the sanctioned agent interface.** Bots, hooks, and external automations call `./stack <id> <cmd>` - they do not import from `lib/`. Commands have stable exit codes, JSON output, and idempotent semantics.
+
+## Stacklet anatomy
+
+Required:
+```
+stacklets/<id>/
+  stacklet.toml         # manifest
+  docker-compose.yml    # services (for docker stacklets)
+```
+
+Optional, all convention-named:
+```
+  hooks/
+    on_configure.py     # once, first up - interactive config prompts (gate)
+    on_install.py       # once, first up - dirs, native deps, builds
+    on_install_success.py # once, after first health pass - tokens, seeds
+    on_start.py         # every up, BEFORE containers - validate config, start native svc
+    on_start_ready.py   # every up, AFTER health - seed data, sync accounts
+    on_stop.py          # every down - stop native services
+    on_destroy.py       # destroy - unload plists, uninstall native
+  cli/<cmd>.py          # `./stack <id> <cmd>` - leading `_` = private helper
+  bot/bot.toml          # bot manifest if shipping a chat bot
+  bot/<name>.py         # MicroBot subclass
+  caddy.snippet         # reverse-proxy route (domain mode only)
+  taxonomy.toml         # stacklet-specific seed data
+```
+
+### Stacklet rules
+
+- **`id` == directory name.** Lowercase, no hyphens, no spaces. Used in container names, env namespacing, secret keys.
+- **Container name:** `stack-<id>` (single-service) or `stack-<id>-<service>` (multi). Set both `services.<key>` and `container_name`.
+- **Network:** every container joins the `stack` network, declared `external: true`. Cross-stacklet refs go by container name (`http://stack-docs-paperless:8000`).
+- **Ports:** declared in `stacklet.toml` (`port = 420xx`), bound in compose as `${PORT_BIND_IP:-0.0.0.0}:<host>:<container>`. Framework sets `PORT_BIND_IP` (0.0.0.0 in port mode, 127.0.0.1 in domain mode).
+- **Volumes:** bind mounts only, paths from env vars rendered by `[env.defaults]`. No named Docker volumes.
+- **Restart:** `unless-stopped` everywhere.
+- **Watchtower label:** every container gets `com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}`.
+- **No `build:` in compose** unless `stacklet.toml` sets `build = true`.
+
+A worked example lives in [../creating-stacklets.md](../creating-stacklets.md).
+
+## Hook contract
+
+Python hooks (preferred) define `def run(ctx):`. `ctx` is the framework hook context:
+
+| Key / method | What it does |
+|---|---|
+| `ctx.env` | rendered env vars (templates resolved) |
+| `ctx.secret(name)` | read a secret; `ctx.secret(name, value)` writes one |
+| `ctx.step(msg)` | progress line to the user |
+| `ctx.shell(cmd)` | streaming shell with error handling |
+| `ctx.http_get(url, headers=...)` | parsed-JSON GET |
+| `ctx.http_post(url, body, content_type=..., headers=...)` | parsed-JSON POST |
+| `ctx.stack` | full Stack instance for `run_cli_command(<id>, <cmd>, ...)` |
+
+Hook rules:
+
+- **All hooks must be idempotent.** They run on retry after partial failure.
+- **`on_install` is gated by `.stack/<id>.setup-done`.** Don't create that marker by hand.
+- **One file per hook - `.py` or `.sh`, never both.** Python wins if both exist.
+- **`on_start` runs BEFORE containers.** Validation and host services only. Raise to abort.
+- **`on_start_ready` runs AFTER health.** Needs a live service. Must be idempotent - runs every up.
+- **`on_destroy` failures must not block destroy.** Log and continue.
+
+Shell hooks (`.sh`) receive env vars: all rendered vars plus `FAMSTACK_DATA_DIR` and `FAMSTACK_DOMAIN`.
+
+## CLI plugin contract
+
+Files under `stacklets/<id>/cli/<cmd>.py` (excluding `_*.py` and `post_setup.py`) become `./stack <id> <cmd>`.
+
+```python
+HELP = "One-line description for --help"
+
+def run(args, stacklet, config):
+    if not config["is_healthy"]():
+        return {"error": "Stacklet not running - start it with 'stack up <id>'"}
+    # ... do work; use sys.argv[3:] for extra args
+    return {"result": "..."}     # dict → JSON when piped, pretty otherwise
+```
+
+Rules:
+- Return a dict. The framework decides JSON vs pretty.
+- On error, return `{"error": "..."}` - framework translates to non-zero exit.
+- **Never bypass the CLI from another stacklet.** Use `ctx.stack.run_cli_command(<id>, <cmd>, ...)`.
+
+## Bot contract
+
+Bots live at `stacklets/<id>/bot/`. `bot.toml` declares; `id` ends with `-bot`. Module convention: strip suffix → `archivist-bot` → `archivist.py` → class `ArchivistBot` (subclass of `MicroBot`).
+
+Bot rules:
+
+- **Matrix is the canonical event ledger.** Replaying the timeline must reconstruct system state. Emit `dev.famstack.event` envelopes for anything cross-bot.
+- Envelope schema: `{source, type, summary, data, actor, ts}`.
+- Visible event: `m.room.message` with `dev.famstack.event` content key (humans see it, bots read structured).
+- Silent event: `dev.famstack.event`-typed message (Element ignores it).
+- **Transport failures are logged, never raised.** A downstream bot offline must not break the emitter.
+- Bot passwords go in `[env].generate` (e.g. `ARCHIVIST_BOT_PASSWORD`). The bot runner reads them from `secrets.toml`.
+
+## Env templates
+
+Use only the documented template variables in `[env.defaults]`. Adding a new one requires a `lib/stack/` change. The canonical list lives in [../stack-reference.md § Environment](../stack-reference.md#environment) - do not duplicate here, it drifts.
+
+Most-used: `{data_dir}`, `{domain}`, `{ip}`, `{language}`, `{timezone}`, `{shared_bucket}`, `{stacklet_id}`, `{admin_username}`, `{admin_email}`, `{admin_password}`, `{ai_openai_url}`, `{ai_openai_url_docker}`, `{ai_default_model}`, `{messages_server_name}`.
+
+## Testing
+
+Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
+
+```bash
+uv run --extra test pytest tests/                # everything fast
+uv run --extra test pytest tests/framework/      # ~3s, no Docker
+uv run --extra test pytest tests/stacklets/      # per-stacklet
+uv run --extra test pytest tests/integration/    # real Docker, opt-in
+```
+
+Or via Makefile: `make test` (fast), `make test-all`, `make test-integration`.
+
+Testing rules:
+
+- **Tests run against real stacklets and real hooks.** No parallel test-only compose files.
+- **Use real Synapse via the `messages` stacklet.** No handwritten Matrix mocks.
+- **Allowed mocks: loggers only.** Real imports catch real errors.
+- **Established deps over handwritten fakes:** `pytest-httpserver` for HTTP, real services for the rest.
+- **Test helpers do one thing.** Add a parameter only when a second test needs it - not preemptively.
+- **`tests/integration/eval/` is opt-in** (slow, real model). Excluded from `pytest tests/` by `norecursedirs`.
+- **Write tests before fixing.** No duct tape.
+- **Before running integration / e2e tests, ASK.** They collide with the user's running instance.
+
+## Code style
+
+- **New code is literate.** Narrative docstrings, section dividers (`# ── Section ──`), prose flow over terse chains.
+- **Comments explain WHY, not WHAT.** If a comment paraphrases the code, delete it. Keep comments that document constraints, invariants, or surprises.
+- **No em dashes in user-facing text** (commit messages, rendered docstrings, blog drafts). Hyphens or sentence breaks instead.
+- **No `--no-verify` or `--no-gpg-sign`** on commits unless the user explicitly asks. If a hook fails, fix the underlying issue.
+- **Unchecked return values are a smell.** On the third site in a session, propose an audit instead of patching a third instance.
+- **Re-read the full error line before calling a failure a duplicate.** Check sender, target, specific IDs. Two errors that look similar at a glance often differ in the load-bearing field.
+- **No backwards-compatibility shims** in pre-1.0 code. Change the code, update callers, ship.
+
+## Commit & branch rules
+
+- **Feature branches only.** Never commit to `main`.
+- **Semantic prefix required:** `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`, `ci:`, `style:`.
+- **Message style:** short, end-user POV, present tense. *What changed and why a user cares* - not the internal refactor narrative.
+- **No `Co-Authored-By:` trailers.** Project rule.
+- **Commit after every non-trivial fix.** Don't batch at session end. Each commit stands alone for review/revert.
+- **Cascade rule:** if fix N triggers fix N+1 triggers N+2, stop. Name the cascade and propose continue / revert / defer.
+- **Scope drift:** declare it out loud. Silent expansion is forbidden.
+
+## Pull requests
+
+- PR title: short, semantic-prefix, under 70 chars.
+- PR body: `## Summary` with 1-3 bullets. **No "Test plan" section** - project preference.
+- **Never `git push` without explicit human approval.** Every push, every branch, every time.
+
+## Pre-1.0 conventions
+
+- Invariant changes (marker semantics, field renames, contract shifts) get coherent commits - each stands alone for revert.
+- Cleanup backlog lives at `docs/cleanup-backlog.md`. Items there have a reason; surface them when adjacent code is touched.
+- Don't add backwards-compatibility shims, feature flags for one-shot migrations, or renamed `_unused` vars.
+
+## What NOT to do
+
+- Don't add fallbacks or validation for scenarios that can't happen.
+- Don't introduce a second pattern for an existing concern. If the framework already has one surface (the CLI for agent interaction, hooks for lifecycle, Matrix for events) and you need to add another, **flag it first**.
+- Don't cache `stack.toml`. Always read fresh from disk.
+- Don't write business strategy, paid-tier details, or personal identifiers into files in this public repo.
+- Don't paraphrase a user's content through cloud LLMs - local only. The product exists to prevent that.
+- Don't mock libraries in tests beyond loggers.
+- Don't read or copy a user's production family vault. Reference paths only; fabricate test data.
+
+## ADR index
+
+Read the relevant ADR before touching the pillar it describes.
+
+| ADR | Topic |
+|---|---|
+| [adr-001](../adr/adr-001-user-seeding.md) | User seeding strategy |
+| [adr-002](../adr/adr-002-port-mode-first.md) | Port mode as the default |
+| [adr-003](../adr/adr-003-managed-dns.md) | Managed DNS approach |
+| [adr-004](../adr/adr-004-messaging-backend-and-abstraction.md) | Matrix as the messaging backend |
+| [adr-005](../adr/adr-005-bonjour-discovery.md) | Bonjour discovery |
+| [adr-006](../adr/adr-006-env-as-derived-artifact.md) | `.env` as a derived artifact |
+| [adr-007](../adr/adr-007-port-convention.md) | 42xxx port convention |
+| [adr-008](../adr/adr-008-convention-based-bot-runner.md) | Convention-based bot runner |
+| [adr-009](../adr/adr-009-managed-ai-provider.md) | Managed AI provider |

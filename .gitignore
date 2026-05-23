@@ -57,3 +57,5 @@ impl/
 
 **CLAUDE.md
 **AGENT.md
+# …except the repo's canonical agent guide at the root.
+!/AGENT.md
