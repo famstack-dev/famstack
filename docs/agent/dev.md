@@ -6,6 +6,23 @@ For full prose: [../stack-reference.md](../stack-reference.md) (framework refere
 
 For ops/lifecycle commands, see [ops.md](ops.md).
 
+## Framing
+
+This repository is **the stack reference implementation**. The stack runtime is a generic "stacklet" runtime; famstack is *one instance* of the stack. Inside the codebase, call things "stack" or "stacklet" - never "famstack". Reserve "famstack" for product-facing surfaces (README, user guide, marketing).
+
+The canonical framework spec is [../stack-reference.md](../stack-reference.md). Keep it up-to-date whenever framework behaviour changes - same commit as the code change, not a follow-up.
+
+Pre-1.0 stance: we keep backwards compatibility only for critical parts. Everywhere else, free to extend or change patterns when it leads to cleaner, more maintainable code. **Conceptual problems get fixed right away** - deferring them only makes them more expensive.
+
+## Before you change code
+
+1. **Find the ROOT cause, not the symptom.** A surface-level fix that papers over a deeper issue is technical debt with a friendly face.
+2. **Reuse framework patterns. Always check first.** Before adding code, look in `lib/stack/` and existing stacklets for a concept or helper that already does the job. Duplicating framework logic in a script is a smell.
+3. **No duct tape.** Think the change through conceptually first; apply it second.
+4. **Discuss the approach with the user before non-trivial changes** - especially when it touches a framework invariant or introduces a new pattern.
+5. **Missing a primitive? Propose adding it.** Don't work around the framework, extend it. Think like a pragmatic veteran: is this extension load-bearing or speculative?
+6. **Keep `stack-reference.md` current.** Any change to framework behaviour (manifest fields, hook contract, lifecycle, env templates) updates the doc in the same commit.
+
 ## Repo layout
 
 ```
@@ -157,6 +174,9 @@ Or via Makefile: `make test` (fast), `make test-all`, `make test-integration`.
 
 Testing rules:
 
+- **Behavioural TDD: RED then GREEN.** Write the failing test that captures the behaviour you want; make it pass with the smallest change; then refactor.
+- **Blackbox at the module boundary.** Test what a module promises through its public surface. Mock only external interfaces (network endpoints, the LLM), and only when truly required.
+- **Docker integration tests when warranted.** If a change crosses a container boundary or depends on a real service's behaviour, add a test under `tests/integration/`.
 - **Tests run against real stacklets and real hooks.** No parallel test-only compose files.
 - **Use real Synapse via the `messages` stacklet.** No handwritten Matrix mocks.
 - **Allowed mocks: loggers only.** Real imports catch real errors.
@@ -168,7 +188,9 @@ Testing rules:
 
 ## Code style
 
-- **New code is literate.** Narrative docstrings, section dividers (`# ── Section ──`), prose flow over terse chains.
+- **Functional decomposition.** Decompose complex methods into pure, testable functions and compose them into higher-level behaviour. The top-level method should read as a sequence of named steps.
+- **Literate code.** Narrative docstrings, section dividers (`# ── Section ──`), prose flow over terse chains. The code IS the specification AND the implementation - keep both legible.
+- **Python 3.11 floor.** `tomllib` is stdlib; no compat shims. Use modern Python (`match`, structural pattern matching, walrus when it earns its keep).
 - **Comments explain WHY, not WHAT.** If a comment paraphrases the code, delete it. Keep comments that document constraints, invariants, or surprises.
 - **No em dashes in user-facing text** (commit messages, rendered docstrings, blog drafts). Hyphens or sentence breaks instead.
 - **No `--no-verify` or `--no-gpg-sign`** on commits unless the user explicitly asks. If a hook fails, fix the underlying issue.
