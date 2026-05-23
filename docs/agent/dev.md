@@ -189,6 +189,7 @@ Testing rules:
 ## Code style
 
 - **Functional decomposition.** Decompose complex methods into pure, testable functions and compose them into higher-level behaviour. The top-level method should read as a sequence of named steps.
+- **Divide and conquer; one core, many surfaces.** Avoid duplicating large fractions of code across modules. Pragmatic duplication (a few similar lines) is fine; large duplication is a smell. Decompose the problem into small pieces, place each piece where it belongs in the core, and let multiple surfaces (CLI, Matrix bot, hooks, tests) call into the same core. Example: `stack docs reprocess` and the archivist bot share the same pipeline - one classifier, two entry points.
 - **Literate code.** Narrative docstrings, section dividers (`# ── Section ──`), prose flow over terse chains. The code IS the specification AND the implementation - keep both legible.
 - **Python 3.11 floor.** `tomllib` is stdlib; no compat shims. Use modern Python (`match`, structural pattern matching, walrus when it earns its keep).
 - **Comments explain WHY, not WHAT.** If a comment paraphrases the code, delete it. Keep comments that document constraints, invariants, or surprises.
