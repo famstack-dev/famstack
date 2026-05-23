@@ -98,7 +98,7 @@ en:
   search_rewritten: "✨ _Searched for: {keywords}_"
   search_answer: "\U0001F4A1 **Answer:** {answer}"
   search_evidence_header: "\U0001F4DA **Evidence**"
-  search_looking_deeper: "\U0001F4D6 Let me read {refs} more closely..."
+  search_looking_deeper: "\U0001F4D6 I found _{titles}_, let me have a closer look..."
 
   # Error
   error_processing: "\u274C Error processing file: {error}"
@@ -229,7 +229,7 @@ de:
   search_rewritten: "✨ _Gesucht nach: {keywords}_"
   search_answer: "\U0001F4A1 **Antwort:** {answer}"
   search_evidence_header: "\U0001F4DA **Belege**"
-  search_looking_deeper: "\U0001F4D6 Ich schau mir {refs} mal genauer an..."
+  search_looking_deeper: "\U0001F4D6 Ich habe _{titles}_ gefunden, schaue mal genauer hin..."
 
   # Error
   error_processing: "\u274C Fehler bei der Verarbeitung: {error}"

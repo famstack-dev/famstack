@@ -2036,10 +2036,18 @@ class ArchivistBot(MicroBot):
             # one extra round-trip: if the second pass also defers,
             # we surface the deferral instead of looping.
             if is_deferral(synthesized) and selected:
-                refs = ", ".join(f"[{n}]" for n, _ in selected)
+                # Use document titles in the status message instead of
+                # bracket refs: the second-turn evidence list is
+                # renumbered to [1], so a "[2]" here would point at
+                # nothing the family can see. Titles map to what's
+                # visible in the evidence below by name.
+                titles = ", ".join(
+                    (ev.get("title") or "the document").strip()
+                    for _, ev in selected
+                )
                 await self._send(
                     room_id,
-                    self.t("search_looking_deeper", refs=refs),
+                    self.t("search_looking_deeper", titles=titles),
                     reply_to,
                 )
                 expanded = expand_to_full_content(
