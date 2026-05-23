@@ -641,6 +641,65 @@ def _norm_tag(value: str) -> str:
     return re.sub(r"\s+", "", value).lower()
 
 
+def body_only(text: str) -> str:
+    """Return the text after the closing `---` of the frontmatter block.
+
+    Public because the natural-language query layer also strips
+    frontmatter when feeding full file contents into the synthesis
+    prompt -- the YAML header is metadata the model already sees as
+    structured `kind`/`date`/`persons` fields, so duplicating it in
+    the body context only crowds the context window.
+
+    Why this exists: the search regex must not match against YAML
+    field names. A query for `date` would otherwise hit every memory
+    file via its `date:` frontmatter line; same for `tags`,
+    `correspondent`, `persons`, etc. Structural-vs-content matters
+    here -- the family asks "when did Bart…", not "tell me every
+    file with a `date` field". Returns the original text unchanged
+    when no frontmatter is present, so files that pre-date the
+    classifier still surface.
+    """
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return text
+    return text[end + len("\n---\n"):]
+
+
+def _extract_summary_callout(text: str) -> str:
+    """Pull the `> [!summary]` callout out of a memory-vault file.
+
+    The archivist writes every classified document with an Obsidian-style
+    callout that contains the LLM's prose summary, the bulleted facts,
+    and any action items. That block is the right size for feeding
+    into a downstream LLM when answering a question -- big enough to
+    carry the actual content, small enough that fitting N hits into
+    one context is cheap.
+
+    Returns the callout body with the leading `> ` blockquote prefix
+    stripped from each line, or "" when no callout is present (files
+    older than the classifier, or non-archivist-written notes).
+    """
+    body = body_only(text)
+    lines = body.splitlines()
+    captured: List[str] = []
+    in_callout = False
+    for line in lines:
+        if not in_callout:
+            if line.strip().startswith("> [!summary]"):
+                in_callout = True
+            continue
+        # Inside the callout: every line starts with `>`. A line that
+        # doesn't ends the block. Blank `>` lines stay as paragraph
+        # breaks inside the summary -- they're meaningful (separate
+        # the prose from the Facts heading from the Action items).
+        if not line.startswith(">"):
+            break
+        captured.append(line[1:].lstrip(" "))
+    return "\n".join(captured).strip()
+
+
 def _excerpt(text: str, query: str, max_len: int = 200) -> str:
     """First non-empty body line that mentions `query` (case-insensitive).
 
@@ -649,11 +708,7 @@ def _excerpt(text: str, query: str, max_len: int = 200) -> str:
     excerpts, which is noisy and misleading.
     """
     needle = query.lower()
-    body = text
-    if text.startswith("---\n"):
-        end = text.find("\n---\n", 4)
-        if end >= 0:
-            body = text[end + len("\n---\n"):]
+    body = body_only(text)
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -676,11 +731,14 @@ def search_memory(
     """Walk the vault, return result dicts sorted newest-first.
 
     `query` is a Python regex matched case-insensitively against the
-    full file content (frontmatter included). `persons` and `tags`
-    narrow the result set: a doc passes when, for every supplied
-    axis, at least one of its frontmatter values matches at least
-    one requested value. Persons compare case-insensitively; tags
-    through `_norm_tag` (whitespace-and-case normalized).
+    *body* of each file -- frontmatter is stripped before matching so
+    generic field names (`date:`, `tags:`, `persons:`, ...) don't
+    pull in every file in the vault. `persons` and `tags` still
+    narrow against the structured frontmatter: a doc passes when,
+    for every supplied axis, at least one of its frontmatter values
+    matches at least one requested value. Persons compare
+    case-insensitively; tags through `_norm_tag` (whitespace-and-case
+    normalized).
 
     `scopes` is a list of allowed path prefixes (entity-rooted, e.g.
     `["family/", "marge/"]`). A doc passes when its vault-relative
@@ -734,7 +792,10 @@ def search_memory(
             text = md_path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if not pattern.search(text):
+        # Match against body only -- frontmatter field names (`date:`,
+        # `tags:`, `persons:`, ...) would otherwise trivially match
+        # generic keywords and drown real hits.
+        if not pattern.search(body_only(text)):
             continue
 
         fm = _parse_frontmatter(text)
@@ -755,6 +816,18 @@ def search_memory(
             "persons": doc_persons,
             "tags": doc_tags,
             "excerpt": _excerpt(text, query),
+            # The `> [!summary]` callout, stripped of blockquote
+            # prefixes. Drives the synthesis step: feeding summaries
+            # to the LLM is cheaper than feeding bodies and usually
+            # enough to answer the question.
+            "summary": _extract_summary_callout(text),
+            # Paperless source id for the document this memory file
+            # mirrors. Lets a downstream deduper recognise that a
+            # `Memory` hit and a `Paperless` hit are the same doc and
+            # collapse them in the synthesis evidence list. Empty
+            # when the file isn't a Paperless mirror (e.g. capture
+            # notes, hand-written wiki entries).
+            "paperless_id": fm.get("paperless_id") or "",
         })
 
     results.sort(

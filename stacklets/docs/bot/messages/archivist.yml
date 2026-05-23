@@ -96,6 +96,9 @@ en:
   search_memory_results: "\U0001F9E0 **Memory** (notes, bookmarks, wiki) for \"{query}\":"
   search_paperless_results: "\U0001F4C1 **Paperless** (source documents) for \"{query}\":"
   search_rewritten: "✨ _Searched for: {keywords}_"
+  search_answer: "\U0001F4A1 **Answer:** {answer}"
+  search_evidence_header: "\U0001F4DA **Evidence**"
+  search_looking_deeper: "\U0001F4D6 Let me read {refs} more closely..."
 
   # Error
   error_processing: "\u274C Error processing file: {error}"
@@ -224,6 +227,9 @@ de:
   search_memory_results: "\U0001F9E0 **Memory** (Notizen, Lesezeichen, Wiki) für \"{query}\":"
   search_paperless_results: "\U0001F4C1 **Paperless** (Quelldokumente) für \"{query}\":"
   search_rewritten: "✨ _Gesucht nach: {keywords}_"
+  search_answer: "\U0001F4A1 **Antwort:** {answer}"
+  search_evidence_header: "\U0001F4DA **Belege**"
+  search_looking_deeper: "\U0001F4D6 Ich schau mir {refs} mal genauer an..."
 
   # Error
   error_processing: "\u274C Fehler bei der Verarbeitung: {error}"

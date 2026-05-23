@@ -23,10 +23,160 @@ from pipeline import (  # noqa: E402
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
+    _build_synthesize_prompt,
+    _format_evidence_block,
     _to_whoosh_query,
     enrich_document,
+    extract_bot_summary,
     reformat_document,
 )
+
+
+# ── Synthesis prompt ──────────────────────────────────────────────────────
+
+class TestFormatEvidenceBlock:
+    """Render the evidence list the synthesis prompt feeds the LLM."""
+
+    def test_includes_number_kind_date_title(self):
+        out = _format_evidence_block([
+            {"kind": "Paperless", "date": "2026-03-22",
+             "title": "Anthropic Max Plan Invoice",
+             "summary": "€90 due 2026-03-22."},
+        ])
+        assert "[1] Paperless · 2026-03-22 · Anthropic Max Plan Invoice" in out
+        assert "€90 due 2026-03-22" in out
+
+    def test_persons_line_when_present(self):
+        out = _format_evidence_block([
+            {"title": "T", "persons": ["Homer", "Marge"], "summary": "s"},
+        ])
+        assert "Persons: Homer, Marge" in out
+
+    def test_persons_line_omitted_when_empty(self):
+        out = _format_evidence_block([
+            {"title": "T", "persons": [], "summary": "s"},
+        ])
+        assert "Persons:" not in out
+
+    def test_missing_summary_renders_placeholder(self):
+        # Without an explicit "(no summary)" marker the model might
+        # quietly skip the hit; the placeholder tells it the hit
+        # exists but has no body to lean on.
+        out = _format_evidence_block([{"title": "T"}])
+        assert "(no summary available)" in out
+
+    def test_multi_hit_separated_by_blank_lines(self):
+        out = _format_evidence_block([
+            {"title": "A", "summary": "alpha"},
+            {"title": "B", "summary": "beta"},
+        ])
+        # Each hit ends with a blank line so the model sees clear
+        # boundaries between numbered stanzas.
+        assert "alpha\n\n[2]" in out
+
+
+class TestBuildSynthesizePrompt:
+    """The synthesis prompt template."""
+
+    def test_question_and_evidence_embedded(self):
+        prompt = _build_synthesize_prompt(
+            "When was the last invoice?",
+            [{"title": "Invoice", "date": "2026-03-22", "summary": "due"}],
+            "en",
+            today="2026-05-23",
+        )
+        assert "When was the last invoice?" in prompt
+        assert "[1]" in prompt
+        assert "2026-03-22" in prompt
+
+    def test_language_hint_passed_through(self):
+        # The household language drives the response language so a
+        # German family doesn't get an English answer from an
+        # English-speaking model.
+        prompt = _build_synthesize_prompt(
+            "x?", [{"title": "y", "summary": "z"}], "de",
+            today="2026-05-23",
+        )
+        assert "language: de" in prompt or "Respond in" in prompt
+
+    def test_deferral_pattern_in_rules(self):
+        # The "need to read [N] in detail" deferral is the contract
+        # the wire-up layer keys off when surfacing follow-up hits.
+        prompt = _build_synthesize_prompt(
+            "x?", [{"title": "y", "summary": "z"}], "en",
+            today="2026-05-23",
+        )
+        assert "read [N] in detail" in prompt
+
+    def test_today_embedded_for_relative_time(self):
+        # The model can't resolve "the last" / "this month" without
+        # knowing today's date -- otherwise it answers from its
+        # training cutoff and confidently picks the wrong record.
+        prompt = _build_synthesize_prompt(
+            "Was the last invoice this month?",
+            [{"title": "x", "summary": "y"}],
+            "en",
+            today="2026-05-23",
+        )
+        assert "2026-05-23" in prompt
+
+
+# ── Bot-summary extraction from Paperless doc dicts ───────────────────────
+
+class TestExtractBotSummary:
+    """Pull the classifier-written note out of a Paperless doc.
+
+    The note shape is set by `_format_classifier_summary`: prose,
+    blank line, bulleted facts, blank line, parties, trailing
+    `<!-- archivist-bot -->` marker. Tests pin that the marker is
+    stripped and non-bot notes are ignored.
+    """
+
+    @staticmethod
+    def _bot_note(body: str) -> dict:
+        return {
+            "id": 1,
+            "note": body + "\n\n<!-- archivist-bot -->",
+        }
+
+    def test_returns_summary_text(self):
+        doc = {"notes": [self._bot_note(
+            "Invoice from Anthropic for €90.00.\n\n- Number: MDIIDNBM-0006",
+        )]}
+        out = extract_bot_summary(doc)
+        # Marker is gone; trailing whitespace trimmed.
+        assert "<!-- archivist-bot -->" not in out
+        assert "Invoice from Anthropic" in out
+        assert "MDIIDNBM-0006" in out
+
+    def test_returns_empty_when_no_notes(self):
+        assert extract_bot_summary({}) == ""
+        assert extract_bot_summary({"notes": []}) == ""
+
+    def test_returns_empty_when_only_user_notes(self):
+        # A free-text user note (no marker) must NOT be returned --
+        # synthesis would otherwise pull arbitrary human prose into
+        # the LLM context.
+        doc = {"notes": [{"id": 99, "note": "remember to call Marge"}]}
+        assert extract_bot_summary(doc) == ""
+
+    def test_skips_user_note_picks_bot_note(self):
+        # Mixed list: the bot note must win regardless of position.
+        doc = {"notes": [
+            {"id": 99, "note": "free text from a user"},
+            self._bot_note("Bot summary body"),
+        ]}
+        assert "Bot summary body" in extract_bot_summary(doc)
+
+    def test_legacy_summary_heading_still_recognised(self):
+        # Pre-marker bot notes used `## Summary` etc; the bot-note
+        # detector recognises both shapes so old vaults keep working.
+        doc = {"notes": [{
+            "id": 1,
+            "note": "## Summary\nLegacy summary text.",
+        }]}
+        out = extract_bot_summary(doc)
+        assert "Legacy summary text" in out
 
 
 # ── Whoosh query translation ──────────────────────────────────────────────

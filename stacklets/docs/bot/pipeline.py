@@ -787,6 +787,57 @@ class Classifier:
             )
         return keywords
 
+    async def synthesize_answer(
+        self,
+        question: str,
+        evidence: list[dict],
+        lang: str = "en",
+        *,
+        today: str | None = None,
+    ) -> str:
+        """Compose a natural-language answer to a question from indexed hits.
+
+        Used by the archivist after question-mode search returns its
+        results. `evidence` is the list of hits the bot wants to feed
+        the LLM as context -- each dict should carry as many of these
+        keys as are available:
+
+          kind       "Memory" or "Paperless"
+          title      doc title
+          date       "YYYY-MM-DD" or ""
+          persons    list of person names
+          summary    the LLM-written summary block (callout or note)
+
+        `today` is the calendar date the prompt embeds so the model
+        can resolve relative-time phrases ("the last invoice", "this
+        month", "in the past two weeks"). Defaults to today's UTC
+        date when not passed; callers running in a different timezone
+        can override with their local "today". The bot already runs
+        with `TZ=Europe/Berlin` in the container, so the default
+        matches the family's wall clock for a German install.
+
+        The model is prompted to answer using *only* the evidence and
+        to cite hits by [N]; when the summaries are not enough it
+        says "I need to read [N], [M] in detail" rather than guessing.
+        That deferral matters: the bot then surfaces those hits so
+        the human can read them directly, instead of fabricating an
+        answer from thin context. Returns "" on any LLM transport
+        failure -- callers fall back to "no synthesis, just the
+        evidence list."
+        """
+        if not evidence:
+            return ""
+        if today is None:
+            from datetime import date
+            today = date.today().isoformat()
+        prompt = _build_synthesize_prompt(question, evidence, lang, today=today)
+        try:
+            raw = await self._request("recall", prompt, json_mode=False)
+        except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
+            logger.warning("[recall] LLM unavailable for synthesis: {}", e)
+            return ""
+        return (raw or "").strip()
+
 
 # ── Prompts ──────────────────────────────────────────────────────────────
 #
@@ -1078,6 +1129,84 @@ def _parse_rewrite_response(raw: str) -> list[str]:
     return cleaned
 
 
+# ── Answer synthesis ─────────────────────────────────────────────────────
+
+def _format_evidence_block(evidence: list[dict]) -> str:
+    """Render the hit list the synthesis prompt feeds the LLM.
+
+    Each hit becomes a numbered stanza with the fields the model is
+    most likely to cite (date for "when", title + persons for "who/
+    what"), followed by the summary. The summary is the high-signal
+    payload -- the rest is metadata the model can quote when citing.
+    A missing field is omitted from its line rather than rendered as
+    `(none)` to keep noise down.
+    """
+    lines: list[str] = []
+    for n, hit in enumerate(evidence, start=1):
+        meta_bits: list[str] = []
+        if hit.get("kind"):
+            meta_bits.append(str(hit["kind"]))
+        if hit.get("date"):
+            meta_bits.append(str(hit["date"]))
+        title = (hit.get("title") or "Untitled").strip()
+        header = f"[{n}] " + " · ".join(meta_bits + [title]) if meta_bits else f"[{n}] {title}"
+        lines.append(header)
+        persons = [p for p in (hit.get("persons") or []) if p]
+        if persons:
+            lines.append(f"    Persons: {', '.join(persons)}")
+        summary = (hit.get("summary") or "").strip()
+        if summary:
+            # Indent the summary so the block is visually one unit
+            # when the model echoes pieces of it back.
+            summary_indented = "\n".join("    " + ln for ln in summary.splitlines())
+            lines.append(summary_indented)
+        else:
+            lines.append("    (no summary available)")
+        lines.append("")  # blank separator between hits
+    return "\n".join(lines).rstrip()
+
+
+def _build_synthesize_prompt(
+    question: str, evidence: list[dict], lang: str,
+    *,
+    today: str,
+) -> str:
+    """Synthesis prompt: question + evidence summaries → answer with citations.
+
+    The contract this prompt sets up:
+
+      - Use only the evidence; don't invent facts.
+      - Cite hits as `[N]` so the reader can verify.
+      - If the summaries aren't enough, defer with a "need to read
+        [N] in detail" line rather than guessing.
+      - Reply in the family's language so a German household gets a
+        German answer even when the question routed through an
+        English-speaking model intermediary.
+      - Today's date is included so relative-time questions ("the
+        last invoice", "this month", "since February") can resolve
+        without the model guessing what "now" means.
+    """
+    evidence_block = _format_evidence_block(evidence)
+    return f"""You are answering a family member's question using a small set of indexed documents. Answer using ONLY the evidence below -- never invent facts.
+
+Today's date is {today}. Use it to resolve relative-time phrases like "the last", "this month", "in the past N days".
+
+Question: {question}
+
+Evidence (each hit is numbered; cite the ones you used as [N]):
+
+{evidence_block}
+
+Rules:
+- Answer concisely. One sentence when the answer is obvious; only longer when the question genuinely needs it.
+- Cite every fact with the source bracket(s): "[1]", "[2, 3]".
+- If the summaries alone are not enough to answer, reply: "I'd need to read [N] in detail to answer that." (List the most relevant hit numbers.)
+- Respond in the family's language: {lang}.
+- Do not include any preamble like "Based on the evidence..." -- answer directly.
+
+Answer:"""
+
+
 # ── Classifier summary ───────────────────────────────────────────────────
 #
 # After a document is classified we write a structured Markdown summary
@@ -1199,6 +1328,32 @@ async def _replace_classifier_summary(
         if _looks_like_bot_note(text) and isinstance(note.get("id"), int):
             await paperless.delete_note(doc_id, note["id"])
     await paperless.add_note(doc_id, summary_text)
+
+
+def extract_bot_summary(doc: dict) -> str:
+    """Pull the archivist-written summary out of a Paperless doc dict.
+
+    `doc` is the JSON object returned by `/api/documents/{id}/` and
+    by `/api/documents/?query=...` -- both include a `notes` list.
+    The archivist's note carries the `_BOT_NOTE_MARKER` HTML comment
+    (or a legacy `## Summary` heading); both are recognised by
+    `_looks_like_bot_note`. The marker line is stripped on the way
+    out so the synthesis prompt sees pure content.
+
+    Returns "" when no bot note is found -- callers can fall back to
+    the OCR `content` field, but the summary is the higher-signal
+    starting point.
+    """
+    for note in doc.get("notes") or []:
+        text = note.get("note") or ""
+        if not _looks_like_bot_note(text):
+            continue
+        # Drop the trailing marker (and any blank lines before it) so
+        # the caller doesn't have to filter HTML comments out of its
+        # prompt context.
+        cleaned = text.replace(_BOT_NOTE_MARKER, "").rstrip()
+        return cleaned
+    return ""
 
 
 # ── Enrichment ───────────────────────────────────────────────────────────

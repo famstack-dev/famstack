@@ -89,6 +89,14 @@ from search_format import (  # noqa: E402
     format_memory_hit as _format_memory_hit,
     format_paperless_hit as _format_paperless_hit,
 )
+from nl_query import (  # noqa: E402
+    build_evidence,
+    expand_to_full_content,
+    extract_citations,
+    format_evidence_item,
+    is_deferral,
+    select_evidence_for_display,
+)
 
 
 @contextmanager
@@ -1977,6 +1985,103 @@ class ArchivistBot(MicroBot):
             blocks.append(self.t(
                 "search_rewritten", query=query, keywords=", ".join(keywords),
             ))
+
+        # ── Synthesis (question mode only) ────────────────────────────
+        # Question-mode queries (`keywords` non-empty, classifier
+        # available) get an extra LLM round-trip that turns the hit
+        # set into a natural-language answer. The synthesized answer
+        # sits above a single unified evidence list whose [N] numbers
+        # match the citations the model emitted. On any LLM failure
+        # we fall through to the literal Memory/Paperless split below
+        # -- the family still sees their results, just without the
+        # synthesized answer on top.
+        synthesized = ""
+        evidence: list[dict] = []
+        if keywords and self._classifier:
+            evidence = build_evidence(
+                memory_results, paperless_results,
+                code_public_url=self.code_public_url,
+                mirror_org=self.mirror_org,
+                paperless_public_url=self.paperless_public_url,
+            )
+            synthesized = await self._classifier.synthesize_answer(
+                query, evidence, lang=self.language,
+            )
+            logger.info(
+                "[archivist] synthesis: {} evidence item(s), answer={} chars",
+                len(evidence), len(synthesized),
+            )
+
+        if synthesized:
+            # Only show the rows the answer actually cited; falls
+            # back to the top few when the model didn't cite at all
+            # (e.g. a deferral message or an "I don't know"). Keeping
+            # the original numbering means the answer's [N] still
+            # points at the right row of the displayed list, even
+            # when intermediate rows are filtered out.
+            citations = extract_citations(synthesized)
+            selected = select_evidence_for_display(evidence, citations)
+            logger.info(
+                "[archivist] synthesis citations={} → showing {} of {} rows",
+                citations, len(selected), len(evidence),
+            )
+
+            # ── Deep dive (single second turn on deferral) ──────────
+            # When the first synthesis punted ("I'd need to read [N]
+            # in detail"), the cited documents are the ones the family
+            # actually wants summarised -- but the model only saw the
+            # `> [!summary]` blurb. Send a short status message so the
+            # family knows we're not stuck, then re-synthesize with
+            # full-text evidence and overwrite the answer. Bounded to
+            # one extra round-trip: if the second pass also defers,
+            # we surface the deferral instead of looping.
+            if is_deferral(synthesized) and selected:
+                refs = ", ".join(f"[{n}]" for n, _ in selected)
+                await self._send(
+                    room_id,
+                    self.t("search_looking_deeper", refs=refs),
+                    reply_to,
+                )
+                expanded = expand_to_full_content(
+                    selected, memory_results, paperless_results,
+                )
+                deeper = await self._classifier.synthesize_answer(
+                    query, expanded, lang=self.language,
+                )
+                logger.info(
+                    "[archivist] deep-dive: {} doc(s), answer={} chars",
+                    len(expanded), len(deeper),
+                )
+                if deeper and not is_deferral(deeper):
+                    # Second-pass numbering starts fresh at [1], since
+                    # we passed `expanded` (a subset) to the LLM. The
+                    # citations now refer to positions in `selected`
+                    # 1-indexed -- re-pick the displayed rows in the
+                    # new order so the brackets in the answer line up.
+                    deeper_cites = extract_citations(deeper)
+                    deeper_selected = select_evidence_for_display(
+                        [ev for _n, ev in selected],
+                        deeper_cites,
+                    )
+                    synthesized = deeper
+                    # Rebuild the displayed evidence with the new
+                    # numbering matching the second-pass citations.
+                    blocks.append(self.t("search_answer", answer=synthesized))
+                    blocks.append(self.t("search_evidence_header"))
+                    for idx, ev in deeper_selected:
+                        blocks.append(format_evidence_item(ev, idx))
+                    await self._send(room_id, "\n\n".join(blocks), reply_to)
+                    return
+
+            blocks.append(self.t("search_answer", answer=synthesized))
+            blocks.append(self.t("search_evidence_header"))
+            for idx, ev in selected:
+                blocks.append(format_evidence_item(ev, idx))
+            await self._send(room_id, "\n\n".join(blocks), reply_to)
+            return
+
+        # Literal mode (or synthesis failed): the historic two-section
+        # layout, one block per source, with bare numbered hits.
         if memory_results:
             blocks.append(self.t("search_memory_results", query=query))
             for n, r in enumerate(memory_results, start=1):

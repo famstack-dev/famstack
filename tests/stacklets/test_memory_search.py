@@ -34,6 +34,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
 from lib import search_memory  # noqa: E402
 
 
+# Probe that matches every fixture doc via body content (one keyword
+# per doc, OR'd together). Body-only search means we can no longer rely
+# on a frontmatter key like "title" as a universal hit, so the limit /
+# ordering tests use this instead.
+_BODY_PROBE_ALL = "Tierarzt|Brummen|Hoover|Backzeit"
+
+
 # ─── Fixture vault ───────────────────────────────────────────────────────
 
 def _write(path: Path, text: str) -> None:
@@ -143,6 +150,48 @@ class TestQuery:
         assert code == 2
 
 
+class TestBodyOnly:
+    """The regex matches only the body of each file, not its YAML
+    frontmatter.
+
+    Why this matters: a question-mode rewrite that extracts the
+    keyword `date` from "when was the last invoice?" would otherwise
+    match every memory file via its `date:` frontmatter line. Same
+    failure mode for `tags`, `persons`, `correspondent`, `title`,
+    etc. Body-only matching means those structural terms only hit
+    files that *also* mention the term in prose.
+    """
+
+    def test_frontmatter_field_name_does_not_match(self, vault):
+        # No fixture body contains the literal word "date". With
+        # frontmatter pollution this query used to return every doc
+        # (each has `date: YYYY-MM-DD`). After the fix: empty.
+        assert search_memory("date", vault) == []
+
+    def test_tags_field_name_does_not_match(self, vault):
+        # Same shape for the `tags:` key + bullet list under it.
+        assert search_memory("tags", vault) == []
+
+    def test_title_field_name_does_not_match(self, vault):
+        # `title:` is in every fixture's frontmatter but in no body.
+        # Old behaviour: 4 hits. New behaviour: 0.
+        assert search_memory("title", vault) == []
+
+    def test_body_word_still_matches(self, vault):
+        # The radlager doc has "Brummen" in the body; the match is
+        # unaffected by the frontmatter strip.
+        results = search_memory("Brummen", vault)
+        assert len(results) == 1
+        assert results[0]["rel"].endswith("radlager.md")
+
+    def test_title_word_in_body_still_matches(self, vault):
+        # "Radlager" appears in the *body* `# Title` line *and* in
+        # the frontmatter `title:`. Even after the strip, the body
+        # heading carries it -- the match still lands.
+        results = search_memory("Radlager", vault)
+        assert len(results) == 1
+
+
 # ─── Filters ─────────────────────────────────────────────────────────────
 
 class TestFilters:
@@ -188,11 +237,10 @@ class TestOutput:
         assert out.strip() == "1"
 
     def test_limit_truncates_results(self, stack_cli, vault):
-        # All three docs contain a "title:" frontmatter key, so a body
-        # query for "title" matches every file. --limit 2 must keep only
-        # two of them.
+        # Probe matches every fixture doc via body keywords. --limit 2
+        # must keep only two of them.
         code, out, _ = stack_cli(
-            "memory", "search", "title", "--limit", "2",
+            "memory", "search", _BODY_PROBE_ALL, "--limit", "2",
             "--paths", "--vault", str(vault),
         )
         assert code == 0
@@ -264,11 +312,11 @@ class TestOrdering:
     """Newest first by frontmatter `date`; files without dates fall to the back."""
 
     def test_results_ordered_by_date_desc(self, stack_cli, vault):
-        # All four fixture docs contain the literal "title:" (frontmatter
-        # key). Newest is the MMR doc (2026-03-08). Listing paths gives
-        # us a clean order to assert on.
+        # The probe matches every doc via body keywords. Newest is the
+        # MMR doc (2026-03-08). Listing paths gives us a clean order
+        # to assert on.
         code, out, _ = stack_cli(
-            "memory", "search", "title",
+            "memory", "search", _BODY_PROBE_ALL,
             "--paths", "--vault", str(vault),
         )
         assert code == 0
@@ -297,14 +345,60 @@ class TestSearchMemoryLib:
         assert len(results) == 1
         r = results[0]
         assert set(r.keys()) == {
-            "path", "rel", "title", "date", "persons", "tags", "excerpt",
+            "path", "rel", "title", "date",
+            "persons", "tags", "excerpt", "summary",
+            "paperless_id",
         }
         assert r["rel"].endswith("radlager.md")
         assert r["persons"] == ["Homer"]
         assert "Brummen" in r["excerpt"]
+        # Fixture docs predate the classifier callout, so no summary
+        # is present. The key exists (downstream code can rely on it)
+        # but it's empty.
+        assert r["summary"] == ""
 
     def test_returns_empty_list_when_no_match(self, vault):
         assert search_memory("spaceship", vault) == []
+
+    def test_summary_extracted_from_callout(self, tmp_path):
+        # A more representative doc that includes the archivist's
+        # `> [!summary]` callout block, matching what classify
+        # actually writes. The synthesis step depends on this
+        # extraction returning the prose + facts, stripped of the
+        # blockquote prefix.
+        v = tmp_path / "vault"
+        _write(v / "family/documents/2026/02/invoice.md", """
+            ---
+            title: Anthropic Invoice
+            date: 2026-02-22
+            persons:
+              - Homer
+            tags:
+              - Topic:Subscription
+            ---
+
+            # Anthropic Invoice
+
+            > [!summary]
+            > Invoice from Anthropic for the Max plan subscription.
+            > Total €90.00 due 2026-02-22.
+            >
+            > **Facts**
+            > - Invoice number: MDIIDNBM-0006
+            > - Total: €90.00
+
+            Body paragraph that must not leak into the summary.
+        """)
+        results = search_memory("Anthropic", v)
+        assert len(results) == 1
+        s = results[0]["summary"]
+        assert "Max plan subscription" in s
+        assert "Total €90.00 due 2026-02-22" in s
+        assert "MDIIDNBM-0006" in s
+        # The blockquote prefix is stripped.
+        assert "> " not in s
+        # Body content outside the callout is not part of the summary.
+        assert "Body paragraph" not in s
 
     def test_returns_empty_list_when_vault_missing(self, tmp_path):
         assert search_memory("anything", tmp_path / "nope") == []
@@ -327,14 +421,15 @@ class TestSearchMemoryLib:
         assert results[0]["rel"].endswith("elternabend.md")
 
     def test_results_sorted_by_date_desc(self, vault):
-        # "title" matches every fixture doc — same trick the CLI
-        # ordering test uses, applied to the in-process surface.
-        results = search_memory("title", vault)
+        # The probe matches every fixture doc via body keywords --
+        # same trick the CLI ordering test uses, applied to the
+        # in-process surface.
+        results = search_memory(_BODY_PROBE_ALL, vault)
         dates = [r["date"] for r in results]
         assert dates == sorted(dates, reverse=True)
 
     def test_limit_truncates(self, vault):
-        results = search_memory("title", vault, limit=2)
+        results = search_memory(_BODY_PROBE_ALL, vault, limit=2)
         assert len(results) == 2
 
 
@@ -351,7 +446,7 @@ class TestSearchMemoryScopes:
     def test_none_scope_keeps_historic_open_behavior(self, vault):
         # No scopes argument == "search every entity tree", matching
         # behaviour before the parameter existed.
-        results = search_memory("title", vault)
+        results = search_memory(_BODY_PROBE_ALL, vault)
         rels = [r["rel"] for r in results]
         assert any(r.startswith("family/") for r in rels)
         assert any(r.startswith("homer/") for r in rels)
@@ -361,12 +456,12 @@ class TestSearchMemoryScopes:
         # Empty list != None: the caller explicitly said "no prefixes
         # allowed". This is the safety-net branch for an unmapped
         # sender on a stack with no shared bucket configured.
-        assert search_memory("title", vault, scopes=[]) == []
+        assert search_memory(_BODY_PROBE_ALL, vault, scopes=[]) == []
 
     def test_family_only_scope(self, vault):
         # The MMR doc (family/...) is the only shared file in the
         # fixture; Homer/Marge notes must drop out.
-        results = search_memory("title", vault, scopes=["family/"])
+        results = search_memory(_BODY_PROBE_ALL, vault, scopes=["family/"])
         rels = [r["rel"] for r in results]
         assert all(r.startswith("family/") for r in rels)
         assert len(rels) == 1
@@ -376,7 +471,7 @@ class TestSearchMemoryScopes:
         # whose Matrix localpart is "marge". Homer's notes must
         # not leak; family/ and marge/ both visible.
         results = search_memory(
-            "title", vault, scopes=["family/", "marge/"],
+            _BODY_PROBE_ALL, vault, scopes=["family/", "marge/"],
         )
         rels = [r["rel"] for r in results]
         assert all(
@@ -389,8 +484,8 @@ class TestSearchMemoryScopes:
         # The contract: callers don't need to remember the trailing
         # slash. Equally important: a prefix without a slash must
         # not match "margery/..." if such a sibling slug existed.
-        with_slash = search_memory("title", vault, scopes=["marge/"])
-        without = search_memory("title", vault, scopes=["marge"])
+        with_slash = search_memory(_BODY_PROBE_ALL, vault, scopes=["marge/"])
+        without = search_memory(_BODY_PROBE_ALL, vault, scopes=["marge"])
         assert [r["rel"] for r in with_slash] == [r["rel"] for r in without]
 
     def test_prefix_does_not_match_longer_sibling(self, tmp_path):
@@ -420,10 +515,10 @@ class TestScopeCli:
     """The `--scope` flag mirrors the lib's `scopes` argument."""
 
     def test_scope_flag_narrows_results(self, stack_cli, vault):
-        # All four fixture docs match "title" in their frontmatter
-        # key. Scoping to `family/` keeps only the MMR doc.
+        # The probe matches every doc via body keywords. Scoping to
+        # `family/` keeps only the MMR doc.
         code, out, _ = stack_cli(
-            "memory", "search", "title",
+            "memory", "search", _BODY_PROBE_ALL,
             "--scope", "family/",
             "--paths", "--vault", str(vault),
         )
@@ -436,7 +531,7 @@ class TestScopeCli:
         # Marge's two docs (notes + bookmarks) + the family MMR doc
         # = three hits; Homer's radlager must not appear.
         code, out, _ = stack_cli(
-            "memory", "search", "title",
+            "memory", "search", _BODY_PROBE_ALL,
             "--scope", "family/", "--scope", "marge/",
             "--paths", "--vault", str(vault),
         )
