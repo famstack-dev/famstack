@@ -60,7 +60,7 @@ import aiohttp
 
 from pipeline import Classifier, PaperlessAPI
 
-from cli import classify, mirror, reformat, reprocess, show, tags
+from cli import classify, mirror, overview, reformat, reprocess, show, tags
 from cli._shared import err
 
 
@@ -71,6 +71,9 @@ _HANDLERS = {
     "reprocess": reprocess.run,
     "mirror": mirror.run,
     "tags": tags.run,
+    # Experimental — undocumented in --help intentionally. See
+    # `cli/overview.py` docstring.
+    "overview": overview.run,
 }
 
 

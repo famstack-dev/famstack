@@ -667,7 +667,7 @@ def body_only(text: str) -> str:
     return text[end + len("\n---\n"):]
 
 
-def _extract_summary_callout(text: str) -> str:
+def extract_summary_callout(text: str) -> str:
     """Pull the `> [!summary]` callout out of a memory-vault file.
 
     The archivist writes every classified document with an Obsidian-style
@@ -820,7 +820,7 @@ def search_memory(
             # prefixes. Drives the synthesis step: feeding summaries
             # to the LLM is cheaper than feeding bodies and usually
             # enough to answer the question.
-            "summary": _extract_summary_callout(text),
+            "summary": extract_summary_callout(text),
             # Paperless source id for the document this memory file
             # mirrors. Lets a downstream deduper recognise that a
             # `Memory` hit and a `Paperless` hit are the same doc and
