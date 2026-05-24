@@ -34,7 +34,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import aiohttp
-import markdown
 import yaml
 from loguru import logger
 from PIL import Image
@@ -564,36 +563,6 @@ class ArchivistBot(MicroBot):
         """
         key = "handler_timeout" if isinstance(exc, asyncio.TimeoutError) else "handler_error"
         return self.t(key)
-
-    async def _send(
-        self, room_id: str, text: str, reply_to: str | None = None,
-        *, metadata: dict | None = None,
-    ):
-        """Send an m.room.message. `metadata` merges into the content dict.
-
-        Matrix content is a JSON object; custom keys (e.g.
-        `dev.famstack.event`) are invisible to clients but readable
-        by the bot when it fetches the event back. The reply-to-reprocess
-        flow rides on this — a filing notification carries a
-        `dev.famstack.event` envelope on the same m.room.message, so a
-        user reply traces straight back to the paperless_id in one fetch.
-        """
-        html = markdown.markdown(text, extensions=["tables", "fenced_code"])
-        content = {
-            "msgtype": "m.text",
-            "body": text,
-            "format": "org.matrix.custom.html",
-            "formatted_body": html,
-        }
-        if reply_to:
-            content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
-        if metadata:
-            content.update(metadata)
-        # Route through MicroBot._room_send so the typing indicator
-        # refreshes after every send — without it, Element clears the
-        # indicator on the bot's intermediate status messages and the
-        # rest of a long handler runs silently.
-        await self._room_send(room_id, content)
 
     async def _download_matrix_file(self, mxc_url: str) -> bytes | None:
         """Download a file from Matrix using the authenticated media API."""

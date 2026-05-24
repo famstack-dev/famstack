@@ -289,3 +289,89 @@ class TestSendErrorRobust:
         await bot._wrapper(_room(), _event())
         # Typing still cleared.
         assert ("!r:server", False) in client.typing_calls
+
+
+# ── Formatted send ────────────────────────────────────────────────────────
+
+
+def _bare_bot(tmp_path) -> tuple[MicroBot, FakeClient]:
+    """A MicroBot with a recording client and no handler wrap.
+
+    Enough surface to exercise the transport helpers (`_send`,
+    `_download_media`) directly.
+    """
+    class _Bot(MicroBot):
+        name = "test-bot"
+
+        def register_callbacks(self, client):
+            return None
+
+    bot = _Bot(
+        homeserver="http://x",
+        user_id="@test-bot:server",
+        password="x",
+        session_dir=str(tmp_path),
+    )
+    bot._client = FakeClient()
+    return bot, bot._client
+
+
+class TestSend:
+    """`_send` is the framework's one formatted-reply path: markdown body
+    rendered to HTML, optional reply relation, optional custom metadata
+    merged onto the same message. Every bot uses this instead of hand-
+    rolling content dicts, and it routes through `_room_send` so the
+    typing-refresh seam stays in one place."""
+
+    @pytest.mark.asyncio
+    async def test_renders_markdown_to_html(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._send("!r:server", "**bold** and `code`")
+
+        assert len(client.sends) == 1
+        room_id, mtype, content = client.sends[0]
+        assert room_id == "!r:server"
+        assert mtype == "m.room.message"
+        assert content["msgtype"] == "m.text"
+        assert content["body"] == "**bold** and `code`"  # raw text preserved
+        assert content["format"] == "org.matrix.custom.html"
+        assert "<strong>bold</strong>" in content["formatted_body"]
+        assert "<code>code</code>" in content["formatted_body"]
+
+    @pytest.mark.asyncio
+    async def test_no_reply_relation_by_default(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._send("!r:server", "hi")
+        assert "m.relates_to" not in client.sends[0][2]
+
+    @pytest.mark.asyncio
+    async def test_reply_to_sets_in_reply_to(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._send("!r:server", "hi", reply_to="$evt:server")
+        content = client.sends[0][2]
+        assert content["m.relates_to"]["m.in_reply_to"]["event_id"] == "$evt:server"
+
+    @pytest.mark.asyncio
+    async def test_metadata_merged_onto_message(self, tmp_path):
+        # The archivist rides a `dev.famstack.event` envelope on the same
+        # visible message so a filing is one replayable timeline event.
+        bot, client = _bare_bot(tmp_path)
+        envelope = {
+            "dev.famstack.event": {
+                "type": "document.filed",
+                "data": {"paperless_id": 42},
+            },
+        }
+        await bot._send("!r:server", "Filed", reply_to="$e", metadata=envelope)
+
+        content = client.sends[0][2]
+        assert content["body"] == "Filed"
+        assert content["dev.famstack.event"]["data"]["paperless_id"] == 42
+
+    @pytest.mark.asyncio
+    async def test_tables_extension_enabled(self, tmp_path):
+        # Search results render as markdown tables — the extension must
+        # survive the move into the framework.
+        bot, client = _bare_bot(tmp_path)
+        await bot._send("!r:server", "| a | b |\n|---|---|\n| 1 | 2 |")
+        assert "<table>" in client.sends[0][2]["formatted_body"]
