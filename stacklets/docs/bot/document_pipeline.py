@@ -102,6 +102,24 @@ class FilingOutcome:
     envelope: dict | None = None
 
 
+@dataclass
+class ReprocessOutcome:
+    """The result of re-enriching a filed doc with a user correction.
+
+    status: doc_missing (target gone) | llm_error | reclassified.
+    """
+
+    status: str
+    doc_id: int
+    llm_error: tuple[str, str] | None = None
+    title: str = ""
+    resolved_topics: list[str] = field(default_factory=list)
+    resolved_persons: list[str] = field(default_factory=list)
+    resolved_type: str | None = None
+    resolved_correspondent: str | None = None
+    envelope: dict | None = None
+
+
 class DocumentPipeline:
     """Files a document into Paperless, enriches it, mirrors it to Forgejo.
 
@@ -345,6 +363,88 @@ class DocumentPipeline:
                 model = None
             return body_text, "ai_formatted", model
         return body_text, "ocr", None
+
+    async def reprocess(
+        self, *, doc_id: int, user_hint: str, date_filed: str | None = None,
+    ) -> ReprocessOutcome:
+        """Re-enrich an already-filed doc with the user's reply as a hint.
+
+        The hint becomes a high-priority correction in the classify prompt;
+        `is_reprocess=True` preserves the document's filing date. The mirror
+        publish is idempotent on the paperless_id, so it overwrites the
+        prior entry. Returns a ReprocessOutcome the orchestrator renders.
+        """
+        doc = await self._paperless.get_doc(doc_id)
+        if not doc:
+            return ReprocessOutcome(status="doc_missing", doc_id=doc_id)
+
+        ontology = self._vault.ontology()
+        result = await enrich_document(
+            paperless=self._paperless,
+            classifier=self._classifier,
+            doc=doc,
+            classify_max_chars=self.classify_max_chars,
+            ontology_section=ontology.classifier_prompt_section(self.language),
+            correspondents_section=self._vault.correspondents_section(),
+            ontology=ontology,
+            lang=self.language,
+            is_reprocess=True,
+            date_filed=date_filed,
+            user_hint=user_hint,
+        )
+        if result.llm_error:
+            return ReprocessOutcome(
+                status="llm_error", doc_id=doc_id, llm_error=result.llm_error,
+            )
+
+        # Refetch so the mirror sees the post-PATCH title/tags.
+        refreshed = await self._paperless.get_doc(doc_id) or doc
+        paperless_tags = [
+            *result.resolved_topics,
+            *(f"Person: {p}" for p in result.resolved_persons),
+        ]
+        await self.safe_mirror(
+            doc_id=doc_id,
+            classification=dict(result.classification, **{
+                "topics": result.resolved_topics,
+                "persons": result.resolved_persons,
+                "correspondent": result.resolved_correspondent,
+                "document_type": result.resolved_type,
+            }),
+            body_text=refreshed.get("content", "") or "",
+            processing="ai_formatted" if result.classification else "ocr",
+            model=None,
+            fallback_title=refreshed.get("title") or f"Paperless #{doc_id}",
+            paperless_tags=paperless_tags,
+            summary=result.summary,
+        )
+
+        title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
+        # A fresh envelope so the user can chain another correction by
+        # replying to THIS message; type `document.reclassified` lets the
+        # deriver tell the corrective pass from the original filing.
+        envelope = build_document_event(
+            doc_id, result.classification,
+            resolved_topics=result.resolved_topics,
+            resolved_persons=result.resolved_persons,
+            resolved_correspondent=result.resolved_correspondent,
+            resolved_type=result.resolved_type,
+            paperless_url=self.paperless_public_url,
+            actor=self.actor,
+            ts=utc_now_isoformat(),
+        )
+        envelope["type"] = "document.reclassified"
+        envelope["summary"] = f"{title} reclassified (#{doc_id})"
+        envelope["data"]["user_hint"] = user_hint
+
+        return ReprocessOutcome(
+            status="reclassified", doc_id=doc_id, title=title,
+            resolved_topics=result.resolved_topics,
+            resolved_persons=result.resolved_persons,
+            resolved_type=result.resolved_type,
+            resolved_correspondent=result.resolved_correspondent,
+            envelope=envelope,
+        )
 
     async def safe_mirror(
         self, *, doc_id, classification, body_text, processing, model,
