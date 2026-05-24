@@ -359,6 +359,47 @@ class MicroBot:
             content.update(metadata)
         await self._room_send(room_id, content)
 
+    # The famstack event envelope rides as a custom key on the visible
+    # m.room.message (see `_send`'s `metadata`), so a filing is a single
+    # replayable timeline event. Distinct from `emit_event`, which posts
+    # a *separate* custom-typed event for bot-to-bot signalling.
+    FAMSTACK_EVENT_KEY = "dev.famstack.event"
+
+    async def _reply_parent_envelope(self, room_id: str, event) -> dict | None:
+        """Return the famstack envelope on the message ``event`` replies to.
+
+        When a user replies to one of the bot's own messages, fetch the
+        parent from the homeserver and hand back its
+        ``dev.famstack.event`` content (Matrix is the ledger — no local
+        cache). The caller decides what the envelope *means*.
+
+        Returns None when the event isn't a reply, the parent fetch
+        fails, the parent isn't ours, or it carries no envelope. The
+        ownership check matters: a reply to another user's message that
+        happens to carry a matching key must not fire.
+        """
+        in_reply_to = (
+            getattr(event, "source", {})
+            .get("content", {})
+            .get("m.relates_to", {})
+            .get("m.in_reply_to", {})
+            .get("event_id")
+        )
+        if not in_reply_to:
+            return None
+        try:
+            resp = await self._client.room_get_event(room_id, in_reply_to)
+        except Exception as e:
+            logger.debug("[{}] reply parent fetch failed: {}", self.name, e)
+            return None
+        parent = getattr(resp, "event", None)
+        if parent is None:
+            return None
+        if getattr(parent, "sender", None) != self.user_id:
+            return None
+        envelope = parent.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
+        return envelope if isinstance(envelope, dict) else None
+
     def _format_handler_error(self, event, exc: BaseException) -> str:
         """Render an exception as a user-facing message.
 

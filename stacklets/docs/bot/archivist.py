@@ -604,40 +604,15 @@ class ArchivistBot(MicroBot):
     async def _reply_target_doc_id(self, room_id: str, event) -> int | None:
         """Return the paperless_id when `event` replies to one of OUR filings.
 
-        Detection: the event carries `m.relates_to.m.in_reply_to.event_id`
-        pointing at a prior bot message that carries a `dev.famstack.event`
-        envelope of `type: document.filed`. We fetch the parent event
-        from the homeserver and read `data.paperless_id` straight off it —
-        Matrix is the ledger, so no local cache is involved.
-
-        Returns None when the message isn't a reply, the parent fetch
-        fails, the parent isn't ours, or the envelope is missing /
-        wrong type. Caller falls back to normal routing.
+        The framework's `_reply_parent_envelope` does the transport work
+        — fetch the replied-to parent, confirm it's ours, read off its
+        `dev.famstack.event` envelope. Here we keep only the archivist's
+        domain reading: a `document.filed` envelope carries the
+        `paperless_id` the reprocess flow needs. Anything else (wrong
+        type, no envelope, not a reply) routes normally.
         """
-        in_reply_to = (
-            event.source.get("content", {})
-            .get("m.relates_to", {})
-            .get("m.in_reply_to", {})
-            .get("event_id")
-        )
-        if not in_reply_to:
-            return None
-        try:
-            resp = await self._client.room_get_event(room_id, in_reply_to)
-        except Exception as e:
-            logger.debug("[archivist] reply parent fetch failed: {}", e)
-            return None
-        parent_event = getattr(resp, "event", None)
-        if parent_event is None:
-            return None
-        # Only act on replies to OUR own messages; a reply to another
-        # user that happens to carry a matching field shouldn't fire.
-        if getattr(parent_event, "sender", None) != self.user_id:
-            return None
-        envelope = parent_event.source.get("content", {}).get("dev.famstack.event")
-        if not isinstance(envelope, dict):
-            return None
-        if envelope.get("type") != "document.filed":
+        envelope = await self._reply_parent_envelope(room_id, event)
+        if not envelope or envelope.get("type") != "document.filed":
             return None
         paperless_id = envelope.get("data", {}).get("paperless_id")
         return paperless_id if isinstance(paperless_id, int) else None
