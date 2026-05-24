@@ -40,6 +40,10 @@ class FakeClient:
         # Allow tests to inject a failure for typing / send.
         self.typing_raises: BaseException | None = None
         self.send_raises: BaseException | None = None
+        # Canned parents for room_get_event, keyed by event_id. A missing
+        # key yields a response whose `.event` is None (parent not found).
+        self.parent_events: dict[str, object] = {}
+        self.get_event_raises: BaseException | None = None
 
     def add_event_callback(self, cb, event_type):
         self.callbacks.append((cb, event_type))
@@ -53,6 +57,11 @@ class FakeClient:
         if self.send_raises is not None:
             raise self.send_raises
         self.sends.append((room_id, message_type, content))
+
+    async def room_get_event(self, room_id, event_id):
+        if self.get_event_raises is not None:
+            raise self.get_event_raises
+        return SimpleNamespace(event=self.parent_events.get(event_id))
 
 
 def _build_bot(tmp_path, *, handler) -> tuple[MicroBot, FakeClient]:
@@ -375,3 +384,74 @@ class TestSend:
         bot, client = _bare_bot(tmp_path)
         await bot._send("!r:server", "| a | b |\n|---|---|\n| 1 | 2 |")
         assert "<table>" in client.sends[0][2]["formatted_body"]
+
+
+# ── Reply-parent envelope ──────────────────────────────────────────────────
+
+
+class TestReplyParentEnvelope:
+    """`_reply_parent_envelope` is the transport half of reply-to-reprocess:
+    given an event that replies to a prior message, fetch that parent,
+    confirm the bot sent it, and hand back the `dev.famstack.event`
+    envelope riding on it. Deciding what the envelope *means* (filing vs
+    reclassify, which id) is the caller's job — this just retrieves it.
+
+    Real-Synapse round-trip is covered by
+    tests/integration/test_microbot_transport_e2e.py; these pin the
+    branch logic offline."""
+
+    @staticmethod
+    def _reply_to(parent_id: str):
+        return SimpleNamespace(source={"content": {
+            "m.relates_to": {"m.in_reply_to": {"event_id": parent_id}},
+        }})
+
+    @pytest.mark.asyncio
+    async def test_returns_envelope_from_our_parent(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        client.parent_events["$p"] = SimpleNamespace(
+            sender="@test-bot:server",
+            source={"content": {"dev.famstack.event": {
+                "type": "document.filed", "data": {"paperless_id": 9},
+            }}},
+        )
+        got = await bot._reply_parent_envelope("!r:server", self._reply_to("$p"))
+        assert got == {"type": "document.filed", "data": {"paperless_id": 9}}
+
+    @pytest.mark.asyncio
+    async def test_none_when_not_a_reply(self, tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        plain = SimpleNamespace(source={"content": {"body": "just chatting"}})
+        assert await bot._reply_parent_envelope("!r:server", plain) is None
+
+    @pytest.mark.asyncio
+    async def test_none_when_parent_not_ours(self, tmp_path):
+        # A reply to ANOTHER user's message that happens to carry an
+        # envelope must not fire — only the bot's own filings reprocess.
+        bot, client = _bare_bot(tmp_path)
+        client.parent_events["$p"] = SimpleNamespace(
+            sender="@homer:server",
+            source={"content": {"dev.famstack.event": {"type": "document.filed"}}},
+        )
+        assert await bot._reply_parent_envelope("!r:server", self._reply_to("$p")) is None
+
+    @pytest.mark.asyncio
+    async def test_none_when_parent_has_no_envelope(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        client.parent_events["$p"] = SimpleNamespace(
+            sender="@test-bot:server",
+            source={"content": {"body": "a plain bot message"}},
+        )
+        assert await bot._reply_parent_envelope("!r:server", self._reply_to("$p")) is None
+
+    @pytest.mark.asyncio
+    async def test_none_when_parent_missing(self, tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        # $p was never registered → response.event is None.
+        assert await bot._reply_parent_envelope("!r:server", self._reply_to("$p")) is None
+
+    @pytest.mark.asyncio
+    async def test_none_when_fetch_raises(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        client.get_event_raises = ConnectionError("synapse down")
+        assert await bot._reply_parent_envelope("!r:server", self._reply_to("$x")) is None
