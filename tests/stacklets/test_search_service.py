@@ -55,8 +55,9 @@ def _service(paperless, *, shared_bucket="family"):
     )
 
 
-async def _noop_announce(_text):
-    pass
+class _FakeNotifier:
+    async def status(self, key, **kwargs):
+        pass
 
 
 class TestScopesForSender:
@@ -80,7 +81,7 @@ class TestRun:
     async def test_no_results(self, tmp_path, monkeypatch):
         monkeypatch.delenv("MEMORY_VAULT_DIR", raising=False)
         svc = _service(FakePaperless(results=[]))
-        reply = await svc.run(query="ADAC", sender="@homer:test", announce=_noop_announce)
+        reply = await svc.run(query="ADAC", sender="@homer:test", notifier=_FakeNotifier())
         assert reply.startswith("search_no_results")
 
     @pytest.mark.asyncio
@@ -91,7 +92,7 @@ class TestRun:
             {"id": 11, "title": "ADAC Renewal", "created": "2025-03-01"},
         ]
         svc = _service(FakePaperless(results=hits))
-        reply = await svc.run(query="ADAC", sender="@homer:test", announce=_noop_announce)
+        reply = await svc.run(query="ADAC", sender="@homer:test", notifier=_FakeNotifier())
         # Literal mode: a Paperless section header + one line per hit.
         assert "search_paperless_results" in reply
         assert "ADAC Invoice" in reply

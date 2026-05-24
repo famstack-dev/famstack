@@ -46,7 +46,7 @@ from nio import (
 )
 
 from capture_tags import CaptureTagCache
-from extractors import SourceContent, TextExtractor, UrlExtractor
+from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
 from matching import build_document_event
 from microbot import MicroBot
@@ -54,9 +54,6 @@ from capabilities import ModelCapabilities
 from pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
-    LLMModelNotFoundError,
-    LLMTimeoutError,
-    LLMUnavailableError,
     PaperlessAPI,
     PaperlessDuplicateError,
     enrich_document,
@@ -89,6 +86,8 @@ from document_pipeline import (  # noqa: E402
     utc_now_isoformat,
 )
 from search_service import SearchService  # noqa: E402
+from capture_pipeline import CapturePipeline, CaptureOutcome  # noqa: E402
+from notifier import MatrixNotifier  # noqa: E402
 
 
 @contextmanager
@@ -259,6 +258,7 @@ class ArchivistBot(MicroBot):
         self._mirror: GitMirror | None = None
         self._pipeline: DocumentPipeline | None = None
         self._search: SearchService | None = None
+        self._capture: CapturePipeline | None = None
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
@@ -331,6 +331,18 @@ class ArchivistBot(MicroBot):
             paperless_public_url=self.paperless_public_url,
             shared_bucket=self.shared_bucket,
             ontology_section=self._compute_ontology_section,
+        )
+        self._capture = CapturePipeline(
+            url_extractor=self._url_extractor,
+            text_extractor=self._text_extractor,
+            classifier=self._classifier,
+            mirror=self._mirror,
+            capture_tags=self._capture_tags,
+            paperless=self._paperless,
+            bot_name=self.name,
+            classify_max_chars=self.classify_max_chars,
+            capture_keep_body=self.capture_keep_body,
+            capture_tag_prompt_size=self.capture_tag_prompt_size,
         )
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
@@ -1022,210 +1034,55 @@ class ArchivistBot(MicroBot):
     # mentions multiple family members, but for v1 the sender is whose
     # capture this is — the rule is "you pasted it, it's yours."
 
+    def _notifier(self, room_id: str, reply_to: str | None) -> MatrixNotifier:
+        """A Notifier bound to this room + reply thread for mid-flow status."""
+        return MatrixNotifier(
+            room_id=room_id, reply_to=reply_to, send=self._send, t=self.t,
+        )
+
     async def _handle_capture(
         self, room_id: str, url: str, sender_mxid: str,
         reply_to: str | None = None,
     ) -> None:
-        await self._send(room_id, self.t("capture_fetching", url=url), reply_to)
-        source = await self._url_extractor.extract(url)
-        if source is None:
-            await self._send(room_id, self.t("capture_failed"), reply_to)
-            return
-        await self._publish_capture_from_source(
-            room_id=room_id,
-            source=source,
-            kind="bookmark",
-            sender_mxid=sender_mxid,
-            display_link=url,
-            reply_to=reply_to,
+        outcome = await self._capture.capture_url(
+            url=url, sender_mxid=sender_mxid,
+            notifier=self._notifier(room_id, reply_to),
         )
+        await self._reply_for_capture(room_id, outcome, reply_to)
 
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None,
     ) -> None:
-        """Capture a pasted body of text. The Reddit-paste case: a wall
-        of content with a source URL somewhere inside it.
-
-        Unlike `_handle_capture` we don't fetch anything — the text is
-        the source. TextExtractor surfaces an embedded URL (if any) as
-        `source_uri` so the mirror keeps a pointer back to the
-        original. The body is always preserved — the user chose to
-        type/paste those exact bytes."""
-        source = await self._text_extractor.extract(text)
-        if source is None:
-            # The paste predicate gates by length; reaching here with
-            # empty content means whitespace-only — silently drop.
-            return
-        await self._publish_capture_from_source(
-            room_id=room_id,
-            source=source,
-            kind="note",
-            sender_mxid=sender_mxid,
-            display_link=source.source_uri or "(pasted text)",
-            reply_to=reply_to,
+        outcome = await self._capture.capture_text(
+            text=text, sender_mxid=sender_mxid,
         )
+        await self._reply_for_capture(room_id, outcome, reply_to)
 
-    async def _publish_capture_from_source(
-        self, *,
-        room_id: str,
-        source: SourceContent,
-        kind: str,
-        sender_mxid: str,
-        display_link: str,
-        reply_to: str | None,
+    async def _reply_for_capture(
+        self, room_id: str, o: CaptureOutcome, reply_to: str | None,
     ) -> None:
-        """Shared tail end of both capture flows: classify, file, reply.
+        """Map a CaptureOutcome to a chat reply.
 
-        `kind` is "bookmark" (URL pointer; body dropped unless
-        `capture_keep_body` is true) or "note" (pasted body always
-        preserved). `display_link` is what we append to the chat
-        reply — the URL for bookmarks, the embedded URL for notes,
-        or a "(pasted text)" placeholder when the note has no source.
+        `empty` (whitespace-only paste) is a silent drop; terminal
+        statuses get a one-line message; a capture renders via the
+        shared presenter.
         """
-        if self._mirror is None:
+        if o.status == "empty":
+            return
+        if o.status == "extract_failed":
+            await self._send(room_id, self.t("capture_failed"), reply_to)
+            return
+        if o.status == "no_mirror":
             await self._send(room_id, self.t("capture_no_mirror"), reply_to)
             return
-
-        # `sender_name` (capitalized) is the human-facing form fed to
-        # the classifier prompt. `entity_slug` (lowercased localpart) is
-        # the filesystem-safe routing key for `<entity>/<kind>s/...`.
-        localpart = sender_mxid.split(":")[0].lstrip("@")
-        sender_name = localpart.capitalize()
-        entity_slug = localpart.lower()
-        classification = await self._classify_capture(source, sender_name)
-
-        try:
-            model = resolve_model(f"{self.name}/classifier")
-        except ValueError:
-            model = None
-
-        tags = self._capture_tag_list(classification)
-
-        import datetime as dt
-        captured_at = dt.date.today().isoformat()
-
-        # Bookmarks default to marker mode: body dropped, summary IS the
-        # content. Flip `capture_keep_body = true` in bot.toml to also
-        # archive the extracted body. Notes always keep the body — it's
-        # what the user pasted.
-        keep_body = kind == "note" or self.capture_keep_body
-        body_for_mirror = source.text if keep_body else ""
-
-        await self._mirror.publish_capture(
-            entity=entity_slug,
-            kind=kind,
-            source_uri=source.source_uri,
-            title_hint=source.title_hint,
-            body_text=body_for_mirror,
-            classification=classification,
-            captured_at=captured_at,
-            model=model,
-            tags=tags,
-        )
-
-        # Record the topic tags (not the Person: X derived tags) into
-        # the vocabulary cache so the next capture's prompt sees them.
-        topic_tags = [
-            t for t in (classification.get("tags") or [])
-            if isinstance(t, str) and t.strip()
-        ]
-        if self._capture_tags and topic_tags:
-            self._capture_tags.record(topic_tags, when=captured_at)
-            self._capture_tags.save()
-
-        await self._send(
-            room_id,
-            self._render_capture_reply(classification, source, display_link),
-            reply_to,
-        )
-
-    async def _classify_capture(
-        self, source, sender_name: str,
-    ) -> dict:
-        """Run the capture-specific classifier.
-
-        Uses `_build_capture_prompt` — smaller payload than the
-        document classify prompt (title, summary, facts, tags,
-        persons, action_items only). No ontology coupling — capture
-        tags grow from the existing cache, which the dream-cycle
-        rebuild can canonicalize later.
-
-        Family-member context still comes from Paperless tags so the
-        classifier matches against the configured family.
-
-        On LLM failure we degrade gracefully: a minimal classification
-        with sender as the only person and the extractor's title hint
-        as the title. The capture is still useful without a digest —
-        the source URL and (for notes) the body are filed regardless.
-        """
-        person_tags = await self._paperless.get_tags()
-        person_names = [
-            t.replace("Person: ", "")
-            for t in person_tags
-            if t.startswith("Person: ")
-        ]
-
-        existing_tags = (
-            self._capture_tags.top(self.capture_tag_prompt_size)
-            if self._capture_tags
-            else []
-        )
-
-        try:
-            classification = await self._classifier.classify_capture(
-                text=source.text[: self.classify_max_chars],
-                person_names=person_names,
-                existing_tags=existing_tags,
-            )
-        except (
-            LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError,
-        ) as e:
-            logger.warning("[archivist] capture classify failed: {}", e)
-            classification = {}
-
-        if not classification:
-            return {
-                "title": source.title_hint or "Capture",
-                "persons": [sender_name],
-                "tags": [],
-            }
-
-        persons = classification.get("persons")
-        if not persons:
-            classification["persons"] = [sender_name]
-        return classification
-
-    @staticmethod
-    def _capture_tag_list(classification: dict) -> list[str]:
-        """Build the mirror's `tags:` list — capture tags + `Person: X` per
-        person. The capture prompt returns `tags` (free-form, vocab-aware);
-        we mix in person tags so Obsidian/Dataview queries on
-        `tags contains "Person: Arthur"` work across documents and captures."""
-        raw_tags = classification.get("tags") or []
-        if isinstance(raw_tags, str):
-            raw_tags = [raw_tags]
-        persons = classification.get("persons") or []
-        if isinstance(persons, str):
-            persons = [persons]
-        out: list[str] = [
-            t.strip() for t in raw_tags
-            if isinstance(t, str) and t.strip()
-        ]
-        out.extend(
-            f"Person: {p}" for p in persons
-            if isinstance(p, str) and p.strip()
-        )
-        return out
-
-    def _render_capture_reply(self, classification: dict, source, url: str) -> str:
-        """Compose the capture reply via the shared presenter (given `t`)."""
-        return render_capture_reply(
+        reply = render_capture_reply(
             self.t,
-            source_title_hint=source.title_hint,
-            classification=classification,
-            link=url,
+            source_title_hint=o.source_title_hint,
+            classification=o.classification,
+            link=o.display_link,
         )
+        await self._send(room_id, reply, reply_to)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
@@ -1299,10 +1156,10 @@ class ArchivistBot(MicroBot):
         """
         await self._set_typing(room_id, on=True)
 
-        async def announce(text: str) -> None:
-            await self._send(room_id, text, reply_to)
-
-        reply = await self._search.run(query=query, sender=sender, announce=announce)
+        reply = await self._search.run(
+            query=query, sender=sender,
+            notifier=self._notifier(room_id, reply_to),
+        )
         await self._send(room_id, reply, reply_to)
 
     # ── Show document content ─────────────────────────────────────────
