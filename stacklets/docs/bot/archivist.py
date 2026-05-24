@@ -109,6 +109,7 @@ from pdf_analysis import (  # noqa: E402
     should_attach_vision as _should_attach_vision,
     should_reformat_pdf as _should_reformat_pdf,
 )
+from reply_presenter import render_capture_reply, render_filing_reply  # noqa: E402
 
 
 @contextmanager
@@ -974,57 +975,20 @@ class ArchivistBot(MicroBot):
             #
             #   http://...
 
-            title = classification.get("title")
-            display_title = title or display_name
-            lines = [self.t("filed", title=display_title, doc_id=doc_id)]
-
-            # Compact metadata line: topic(s) | person(s) | type | from | date.
-            # Built from EnrichResult.resolved_* so the values on screen match
-            # exactly what was written to Paperless — no translation-key
-            # round-trip needed.
-            meta_parts: list[str] = []
-            meta_parts.extend(resolved_topics)
-            meta_parts.extend(resolved_persons)
-            if resolved_type:
-                meta_parts.append(resolved_type)
-            if resolved_correspondent:
-                meta_parts.append(resolved_correspondent)
-            date_applied = result.updates_applied.get("created")
-            if date_applied:
-                meta_parts.append(date_applied)
-            if meta_parts:
-                lines.extend(["", "  " + " | ".join(meta_parts)])
-
-            doc_summary = classification.get("summary", "")
-            if doc_summary and isinstance(doc_summary, str):
-                lines.extend(["", f"  {doc_summary}"])
-
-            facts = classification.get("facts", [])
-            if facts and isinstance(facts, list):
-                fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
-                if fact_lines:
-                    lines.append("")
-                    for f in fact_lines[:5]:
-                        lines.append(f"  - {f}")
-
-            action_items = classification.get("action_items", [])
-            if action_items and isinstance(action_items, list):
-                valid_actions = [a for a in action_items if isinstance(a, dict) and a.get("action")]
-                if valid_actions:
-                    lines.append("")
-                    for a in valid_actions[:3]:
-                        due = a.get("due", "")
-                        due_str = f" (due {due})" if due else ""
-                        lines.append(f"  {a['action']}{due_str}")
-
-            if created_new:
-                lines.extend(["", f"  {self.t('new_in_paperless', items=', '.join(created_new))}"])
-
-            if reformat_failed:
-                lines.extend(["", f"  {self.t('reformat_failed')}"])
-
-            if link:
-                lines.extend(["", f"  {link}"])
+            reply_text = render_filing_reply(
+                self.t,
+                display_title=classification.get("title") or display_name,
+                doc_id=doc_id,
+                resolved_topics=resolved_topics,
+                resolved_persons=resolved_persons,
+                resolved_type=resolved_type,
+                resolved_correspondent=resolved_correspondent,
+                date_applied=result.updates_applied.get("created"),
+                classification=classification,
+                created_new=created_new,
+                reformat_failed=reformat_failed,
+                link=link,
+            )
 
             # The `dev.famstack.event` envelope rides on the visible
             # message content — single event in the timeline, full
@@ -1045,7 +1009,7 @@ class ArchivistBot(MicroBot):
                 ts=_utc_now_isoformat(),
             )
             await self._send(
-                room_id, "\n".join(lines), reply_to,
+                room_id, reply_text, reply_to,
                 metadata={"dev.famstack.event": envelope},
             )
 
@@ -1514,55 +1478,13 @@ class ArchivistBot(MicroBot):
         return out
 
     def _render_capture_reply(self, classification: dict, source, url: str) -> str:
-        """Compose the chat reply summarizing the capture.
-
-        Mirrors the document-filed reply layout: title line, optional
-        meta row (topics | persons), summary paragraph, facts bullets,
-        action items. No Paperless link — captures don't have one.
-        """
-        title = (
-            classification.get("title")
-            or source.title_hint
-            or "Capture"
+        """Compose the capture reply via the shared presenter (given `t`)."""
+        return render_capture_reply(
+            self.t,
+            source_title_hint=source.title_hint,
+            classification=classification,
+            link=url,
         )
-        lines = [self.t("captured", title=title)]
-
-        meta_parts: list[str] = []
-        topics = classification.get("topics") or []
-        if isinstance(topics, str):
-            topics = [topics]
-        meta_parts.extend(t for t in topics if isinstance(t, str))
-        persons = classification.get("persons") or []
-        if isinstance(persons, str):
-            persons = [persons]
-        meta_parts.extend(p for p in persons if isinstance(p, str))
-        if meta_parts:
-            lines.extend(["", "  " + " | ".join(meta_parts)])
-
-        summary = classification.get("summary")
-        if summary and isinstance(summary, str):
-            lines.extend(["", f"  {summary}"])
-
-        facts = classification.get("facts") or []
-        if isinstance(facts, list):
-            fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
-            if fact_lines:
-                lines.append("")
-                for f in fact_lines[:5]:
-                    lines.append(f"  - {f}")
-
-        action_items = classification.get("action_items") or []
-        if isinstance(action_items, list):
-            valid = [a for a in action_items if isinstance(a, dict) and a.get("action")]
-            if valid:
-                lines.append("")
-                for a in valid[:3]:
-                    due = a.get("due", "")
-                    due_str = f" (due {due})" if due else ""
-                    lines.append(f"  {a['action']}{due_str}")
-
-        lines.extend(["", f"  {url}"])
-        return "\n".join(lines)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
