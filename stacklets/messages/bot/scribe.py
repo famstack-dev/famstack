@@ -17,7 +17,6 @@ import aiohttp
 from loguru import logger
 from nio import (
     AsyncClient,
-    DownloadResponse,
     RoomMessageAudio,
 )
 
@@ -73,40 +72,26 @@ class ScribeBot(MicroBot):
             return
 
         logger.info("[scribe] Voice from {} in {}", event.sender, room.room_id)
-        await self._client.room_typing(room.room_id, typing_state=True, timeout=30000)
+        await self._set_typing(room.room_id, on=True)
 
-        resp = await self._client.download(event.url)
-        if not isinstance(resp, DownloadResponse):
-            await self._client.room_typing(room.room_id, typing_state=False)
-            logger.error("[scribe] Download failed: {}", resp)
+        audio = await self._download_media(event.url)
+        if audio is None:
+            await self._set_typing(room.room_id, on=False)
+            logger.error("[scribe] Download failed for {}", event.url)
             return
 
         filename = event.body if event.body else "voice.ogg"
-        text = await _transcribe(self.whisper_url, resp.body, filename)
-        await self._client.room_typing(room.room_id, typing_state=False)
+        text = await _transcribe(self.whisper_url, audio, filename)
+        await self._set_typing(room.room_id, on=False)
 
         if text:
             logger.info("[scribe] Transcribed: {}...", text[:80])
-            await self._client.room_send(
-                room_id=room.room_id,
-                message_type="m.room.message",
-                content={
-                    "msgtype": "m.text",
-                    "body": f"**Transcription:**\n\n{text}",
-                    "format": "org.matrix.custom.html",
-                    "formatted_body": f"<strong>Transcription:</strong><br><br>{text}",
-                    "m.relates_to": {
-                        "m.in_reply_to": {"event_id": event.event_id},
-                    },
-                },
+            await self._send(
+                room.room_id, f"**Transcription:**\n\n{text}",
+                reply_to=event.event_id,
             )
         else:
-            await self._client.room_send(
-                room_id=room.room_id,
-                message_type="m.room.message",
-                content={
-                    "msgtype": "m.text",
-                    "body": "Sorry, I couldn't transcribe that audio.",
-                },
+            await self._send(
+                room.room_id, "Sorry, I couldn't transcribe that audio.",
             )
 
