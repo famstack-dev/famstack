@@ -311,7 +311,10 @@ class ArchivistBot(MicroBot):
         except ValueError as e:
             logger.warning("[archivist] {}", e)
 
-        self._http = aiohttp.ClientSession()
+        # Reuse the framework-owned aiohttp session (created here, before
+        # super().start() blocks in the sync loop) — one pool, closed by
+        # MicroBot on shutdown. Paperless / OpenAI / extractors share it.
+        self._http = self._ensure_http()
         self._paperless = PaperlessAPI(self._http, self.paperless_url, self.paperless_token)
         # Vision-capability cache lives in the bot's data dir so a probe
         # done in one container restart isn't repeated by the next one.
@@ -332,23 +335,22 @@ class ArchivistBot(MicroBot):
             len(self._capture_tags.top(10_000)),
             self.capture_keep_body,
         )
-        try:
-            # Always attempt to wire the memory vault writer. If
-            # CODE_URL / admin creds aren't present, `_init_mirror`
-            # leaves `self._mirror = None` and logs the reason; writes
-            # become silent skips.
-            self._init_mirror()
-            # Warm the vision-capability cache on every boot. Previously
-            # this was kicked from on_first_sync, but MicroBot only runs
-            # that hook once across the lifetime of the welcome marker,
-            # so a restart never re-probed. Probe results are cached to
-            # disk inside Classifier, so this is a no-op if the cache
-            # is already populated.
-            if self.classify_enabled and self.openai_url:
-                asyncio.create_task(self._classifier.has_vision())
-            await super().start()
-        finally:
-            await self._http.close()
+        # Always attempt to wire the memory vault writer. If
+        # CODE_URL / admin creds aren't present, `_init_mirror`
+        # leaves `self._mirror = None` and logs the reason; writes
+        # become silent skips.
+        self._init_mirror()
+        # Warm the vision-capability cache on every boot. Previously
+        # this was kicked from on_first_sync, but MicroBot only runs
+        # that hook once across the lifetime of the welcome marker,
+        # so a restart never re-probed. Probe results are cached to
+        # disk inside Classifier, so this is a no-op if the cache
+        # is already populated.
+        if self.classify_enabled and self.openai_url:
+            asyncio.create_task(self._classifier.has_vision())
+        # The framework's start() owns the session loop and closes the
+        # http session (via _aclose) on shutdown.
+        await super().start()
 
     # ── Classifier prompt inputs (read fresh per call) ───────────────────
     #
@@ -563,23 +565,6 @@ class ArchivistBot(MicroBot):
         """
         key = "handler_timeout" if isinstance(exc, asyncio.TimeoutError) else "handler_error"
         return self.t(key)
-
-    async def _download_matrix_file(self, mxc_url: str) -> bytes | None:
-        """Download a file from Matrix using the authenticated media API."""
-        server_name = mxc_url.replace("mxc://", "").split("/")[0]
-        media_id = mxc_url.replace("mxc://", "").split("/")[1]
-        download_url = f"{self.homeserver}/_matrix/client/v1/media/download/{server_name}/{media_id}"
-
-        async with self._http.get(
-            download_url,
-            headers={"Authorization": f"Bearer {self._client.access_token}"},
-        ) as resp:
-            if resp.status == 200:
-                return await resp.read()
-            else:
-                body = await resp.text()
-                logger.error("[archivist] Download failed (HTTP {}): {}", resp.status, body)
-                return None
 
     # ── Document processing pipeline ─────────────────────────────────────
 
@@ -1106,7 +1091,7 @@ class ArchivistBot(MicroBot):
             await self._handle_scan_page(room.room_id, event, url, raw_filename)
             return
 
-        file_data = await self._download_matrix_file(url)
+        file_data = await self._download_media(url)
         if not file_data:
             await self._send(room.room_id, self.t("download_failed_matrix", name=display_name), reply_to)
             return
@@ -1260,7 +1245,7 @@ class ArchivistBot(MicroBot):
     async def _handle_scan_page(self, room_id: str, event, url: str, raw_filename: str):
         reply_to = event.event_id
         try:
-            file_data = await self._download_matrix_file(url)
+            file_data = await self._download_media(url)
         except Exception as e:
             await self._send(room_id, self.t("scan_page_failed", error=str(e)), reply_to)
             return
