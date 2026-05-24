@@ -56,7 +56,7 @@ class SearchService:
         mirror_org: str,
         paperless_public_url: str,
         shared_bucket: str,
-        ontology_section: Callable[[], str],
+        vault,
     ):
         self._classifier = classifier
         self._paperless = paperless
@@ -66,7 +66,7 @@ class SearchService:
         self.mirror_org = mirror_org
         self.paperless_public_url = paperless_public_url
         self.shared_bucket = shared_bucket
-        self._ontology_section = ontology_section
+        self._vault = vault
 
     def scopes_for_sender(self, sender: str | None) -> list[str]:
         """Vault-path prefixes the asker is allowed to see.
@@ -95,7 +95,7 @@ class SearchService:
         memory_regex, paperless_query, keywords = await _resolve_search_query(
             query,
             classifier=self._classifier,
-            ontology_section=self._ontology_section(),
+            ontology_section=self._vault.ontology_section(),
             language=self.language,
         )
         if keywords:

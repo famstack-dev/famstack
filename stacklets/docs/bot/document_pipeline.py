@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass, field
-from typing import Callable
 
 from loguru import logger
 
@@ -123,8 +122,7 @@ class DocumentPipeline:
         classify_max_chars: int,
         paperless_public_url: str,
         actor: str,
-        load_ontology: Callable,
-        correspondents_section: Callable[[], str],
+        vault,
     ):
         self._paperless = paperless
         self._classifier = classifier
@@ -136,8 +134,7 @@ class DocumentPipeline:
         self.classify_max_chars = classify_max_chars
         self.paperless_public_url = paperless_public_url
         self.actor = actor
-        self._load_ontology = load_ontology
-        self._correspondents_section = correspondents_section
+        self._vault = vault
 
     async def process(
         self, *,
@@ -311,7 +308,7 @@ class DocumentPipeline:
                     images = [
                         ImageAttachment(data=p, mime="image/png") for p in rendered
                     ]
-        ontology = self._load_ontology()
+        ontology = self._vault.ontology()
         return await enrich_document(
             paperless=self._paperless,
             classifier=self._classifier,
@@ -319,7 +316,7 @@ class DocumentPipeline:
             classify_max_chars=self.classify_max_chars,
             images=images,
             ontology_section=ontology.classifier_prompt_section(self.language),
-            correspondents_section=self._correspondents_section(),
+            correspondents_section=self._vault.correspondents_section(),
             ontology=ontology,
             lang=self.language,
             date_filed=date_filed,

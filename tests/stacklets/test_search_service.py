@@ -41,6 +41,15 @@ class FakeClassifier:
     """Literal/no-result paths never call the classifier."""
 
 
+class _FakeVault:
+    def ontology(self):
+        return None
+    def ontology_section(self, language=None):
+        return ""
+    def correspondents_section(self):
+        return ""
+
+
 def _service(paperless, *, shared_bucket="family"):
     return SearchService(
         classifier=FakeClassifier(),
@@ -51,7 +60,7 @@ def _service(paperless, *, shared_bucket="family"):
         mirror_org="family",
         paperless_public_url="http://paperless",
         shared_bucket=shared_bucket,
-        ontology_section=lambda: "",
+        vault=_FakeVault(),
     )
 
 
