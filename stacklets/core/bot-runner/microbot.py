@@ -39,6 +39,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import markdown
 from loguru import logger
 from nio import (
     AsyncClient,
@@ -321,6 +322,42 @@ class MicroBot:
         await self._client.room_send(
             room_id=room_id, message_type=message_type, content=content,
         )
+
+    async def _send(
+        self, room_id: str, text: str, reply_to: str | None = None,
+        *, metadata: dict | None = None,
+    ) -> None:
+        """Send a formatted ``m.room.message``: markdown body + HTML.
+
+        The single formatted-reply path for every bot. ``text`` is sent
+        verbatim as the plaintext ``body`` and rendered to
+        ``formatted_body`` for rich clients (tables + fenced code
+        enabled). ``reply_to`` threads the message under a prior event;
+        ``metadata`` merges extra top-level keys into the content dict.
+
+        Matrix content is a JSON object, so custom keys (e.g.
+        ``dev.famstack.event``) are invisible to clients but readable by
+        the bot when it fetches the event back — that's how a filing
+        notification carries its structured envelope on the same visible
+        message.
+
+        Routes through ``_room_send`` so the typing indicator refreshes
+        after every send: Matrix clients clear the indicator when they
+        see a new bot message, so a long handler that posts an
+        intermediate status would otherwise run silently afterwards.
+        """
+        html = markdown.markdown(text, extensions=["tables", "fenced_code"])
+        content: dict = {
+            "msgtype": "m.text",
+            "body": text,
+            "format": "org.matrix.custom.html",
+            "formatted_body": html,
+        }
+        if reply_to:
+            content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+        if metadata:
+            content.update(metadata)
+        await self._room_send(room_id, content)
 
     def _format_handler_error(self, event, exc: BaseException) -> str:
         """Render an exception as a user-facing message.
