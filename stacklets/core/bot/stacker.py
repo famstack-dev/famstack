@@ -76,7 +76,7 @@ def _parse_command(text):
     # Strip Matrix reply fallback — quoted lines from the original message
     # would otherwise re-trigger commands (e.g. "> stack up docs")
     lines = text.split("\n")
-    text = "\n".join(l for l in lines if not l.startswith("> ")).strip()
+    text = "\n".join(ln for ln in lines if not ln.startswith("> ")).strip()
 
     if not text.lower().startswith("stack "):
         return None
@@ -237,29 +237,11 @@ class StackerBot(MicroBot):
         await self._send_reply(room.room_id, event, response)
 
     async def _send_reply(self, room_id, event, text):
-        """Send a reply to a message."""
-        import re
-        # Simple markdown to HTML
-        html = text
-        # Code blocks first (before line break conversion)
-        html = re.sub(r"```\n?(.*?)\n?```", r"<pre><code>\1</code></pre>", html, flags=re.DOTALL)
-        html = re.sub(r"`(.+?)`", r"<code>\1</code>", html)
-        html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html)
-        # Only convert line breaks outside <pre> blocks
-        parts = re.split(r"(<pre>.*?</pre>)", html, flags=re.DOTALL)
-        html = "".join(p if p.startswith("<pre>") else p.replace("\n", "<br/>") for p in parts)
+        """Reply to `event` with `text` via the framework's formatted send.
 
-        content = {
-            "msgtype": "m.text",
-            "body": text,
-            "format": "org.matrix.custom.html",
-            "formatted_body": html,
-            "m.relates_to": {
-                "m.in_reply_to": {"event_id": event.event_id},
-            },
-        }
-        await self._client.room_send(
-            room_id=room_id,
-            message_type="m.room.message",
-            content=content,
-        )
+        Thin convenience over `MicroBot._send` — derives the reply
+        relation from the triggering event. Markdown→HTML, the reply
+        relation, and the single `_room_send` seam all live in the
+        framework now; this no longer hand-rolls HTML.
+        """
+        await self._send(room_id, text, reply_to=event.event_id)
