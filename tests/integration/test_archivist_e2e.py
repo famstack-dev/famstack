@@ -241,11 +241,12 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
     bdd.scenario("Homer corrects a filing by replying to it")
 
     title = scope.tag("ADAC - Kfz-Versicherung reprocess")
+    expected_correspondent = scope.tag("ADAC")
     bdd.given("the OpenAI mock will classify, reformat, then reclassify")
     # Initial filing pass: classify + reformat.
     stub_classify(openai, {
         "title": title, "topics": [scope.tag("Insurance")], "persons": ["Homer"],
-        "correspondent": scope.tag("ADAC"), "document_type": "Invoice",
+        "correspondent": expected_correspondent, "document_type": "Invoice",
         "date": "2026-03-15", "summary": "Car insurance renewal.",
         "facts": ["EUR 340.00/year"], "action_items": [],
     })
@@ -267,11 +268,18 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
         homer, room_id, sample_invoice_pdf, filename="invoice.pdf",
         mime_type="application/pdf", msgtype="m.file",
     )
+    # Match THIS test's filing by its scope-tagged correspondent. In a
+    # batch run the #documents room still holds prior tests' filings, and
+    # those docs were deleted at their teardown — a bare `document.filed`
+    # match could target a now-missing doc, and the reply would resolve
+    # to a deleted paperless_id (reprocess_doc_missing, no reclassify).
     filing = await _wait_for_reply(
         homer, room_id,
         predicate=lambda e: (
             event_type(e) == "m.room.message"
             and (_envelope(e) or {}).get("type") == "document.filed"
+            and (_envelope(e) or {}).get("data", {}).get("correspondent")
+            == expected_correspondent
         ),
     )
     assert filing, "archivist never posted a document.filed envelope"
