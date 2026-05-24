@@ -423,11 +423,13 @@ class TestShouldAttachVision:
         ) is True
 
     def test_ocr_text_layer_at_cap_still_attaches(self):
-        # The cap is inclusive: exactly 5 pages → still vision.
-        from archivist import _VISION_MAX_PDF_PAGES
+        # The cap is inclusive: exactly 5 pages → still vision. The cap
+        # constant now lives in pdf_analysis (the policy's home); the
+        # archivist imports `_should_attach_vision` from there.
+        from pdf_analysis import VISION_MAX_PDF_PAGES
         assert self._decide(
             has_text_layer=True, has_ocr_text_layer=True,
-            page_count=_VISION_MAX_PDF_PAGES,
+            page_count=VISION_MAX_PDF_PAGES,
         ) is True
 
     def test_ocr_text_layer_long_skips_vision(self):
