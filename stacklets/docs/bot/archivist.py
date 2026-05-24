@@ -51,19 +51,15 @@ from git_mirror import GitMirror
 from matching import build_document_event
 from microbot import MicroBot
 from capabilities import ModelCapabilities
-from pdf_render import render_pages
 from pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
-    EnrichResult,
-    ImageAttachment,
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
     PaperlessAPI,
     PaperlessDuplicateError,
     enrich_document,
-    reformat_document,
 )
 from stack import resolve_model
 
@@ -101,15 +97,12 @@ from text_utils import (  # noqa: E402
     looks_like_paste,
     strip_reply_fallback as _strip_reply_fallback,
 )
-from pdf_analysis import (  # noqa: E402
-    REFORMAT_MAX_PDF_PAGES as _REFORMAT_MAX_PDF_PAGES,
-    has_ocr_text_layer as _has_pdf_ocr_text_layer,
-    has_text_layer as _has_pdf_text_layer,
-    pdf_page_count as _pdf_page_count,
-    should_attach_vision as _should_attach_vision,
-    should_reformat_pdf as _should_reformat_pdf,
-)
 from reply_presenter import render_capture_reply, render_filing_reply  # noqa: E402
+from document_pipeline import (  # noqa: E402
+    DocumentPipeline,
+    FilingOutcome,
+    utc_now_isoformat,
+)
 
 
 @contextmanager
@@ -198,21 +191,6 @@ def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
     return pdf_buffer.getvalue()
 
 
-def _utc_now_isoformat() -> str:
-    """Current UTC time as an ISO-8601 string with second precision.
-
-    Used as the `ts` field on emitted `dev.famstack.event` envelopes —
-    the wall-clock moment the event entered the ledger. Distinct from
-    `date_filed` (the document's own date for date-resolution).
-    """
-    import datetime as _dt
-    return (
-        _dt.datetime.now(_dt.timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
-
 
 # ── ArchivistBot ─────────────────────────────────────────────────────────────
 
@@ -293,6 +271,7 @@ class ArchivistBot(MicroBot):
         self._url_extractor: UrlExtractor | None = None
         self._text_extractor: TextExtractor | None = None
         self._mirror: GitMirror | None = None
+        self._pipeline: DocumentPipeline | None = None
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
@@ -341,6 +320,20 @@ class ArchivistBot(MicroBot):
         # leaves `self._mirror = None` and logs the reason; writes
         # become silent skips.
         self._init_mirror()
+        self._pipeline = DocumentPipeline(
+            paperless=self._paperless,
+            classifier=self._classifier,
+            mirror=self._mirror,
+            bot_name=self.name,
+            language=self.language,
+            classify_enabled=self.classify_enabled,
+            reformat_enabled=self.reformat_enabled,
+            classify_max_chars=self.classify_max_chars,
+            paperless_public_url=self.paperless_public_url,
+            actor=self.user_id,
+            load_ontology=self._load_ontology,
+            correspondents_section=self._compute_correspondents_section,
+        )
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
         # that hook once across the lifetime of the welcome marker,
@@ -455,40 +448,6 @@ class ArchivistBot(MicroBot):
             return "🧠 **AI classification:** enabled — documents are tagged automatically."
         return "💡 **AI classification:** not configured. Run `stack up ai` to enable automatic tagging."
 
-    async def _safe_mirror(
-        self, *,
-        doc_id: int,
-        classification: dict,
-        body_text: str,
-        processing: str,
-        model: str | None,
-        fallback_title: str,
-        paperless_tags: list[str],
-        summary: str | None = None,
-    ) -> None:
-        """Mirror a filed doc to Forgejo — never raises, never blocks the reply.
-
-        Runs for every Paperless-accepted doc, regardless of whether AI
-        classification or reformat succeeded. That way the Forgejo archive
-        stays 1:1 with Paperless: an LLM flake or OCR miss can reduce the
-        richness of a mirror entry but can't make it disappear.
-        """
-        if not self._mirror:
-            return
-        try:
-            await self._mirror.publish(
-                paperless_id=doc_id,
-                classification=classification,
-                body_text=body_text,
-                processing=processing,
-                model=model,
-                paperless_url=self.paperless_public_url,
-                tags=paperless_tags,
-                fallback_title=fallback_title,
-                summary=summary,
-            )
-        except Exception as e:
-            logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)
 
     def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
         """Render the 'already filed' chat reply for a Paperless duplicate.
@@ -653,7 +612,7 @@ class ArchivistBot(MicroBot):
             *result.resolved_topics,
             *(f"Person: {p}" for p in result.resolved_persons),
         ]
-        await self._safe_mirror(
+        await self._pipeline.safe_mirror(
             doc_id=doc_id,
             classification=dict(result.classification, **{
                 "topics": result.resolved_topics,
@@ -694,7 +653,7 @@ class ArchivistBot(MicroBot):
             resolved_type=result.resolved_type,
             paperless_url=self.paperless_public_url,
             actor=self.user_id,
-            ts=_utc_now_isoformat(),
+            ts=utc_now_isoformat(),
         )
         envelope["type"] = "document.reclassified"
         envelope["summary"] = f"{title} reclassified (#{doc_id})"
@@ -710,316 +669,100 @@ class ArchivistBot(MicroBot):
         date_filed: str | None = None,
         submitter_mxid: str | None = None,
     ):
-        """The core pipeline: upload → OCR → classify → tag → report → emit event.
+        """File a document via the pipeline, then render the reply.
 
         Shared by all entry points: single file upload, multi-page scan,
-        and URL archiving. Each step can fail independently — the bot
-        reports partial progress so the user knows what happened.
-
-        After the human-readable summary, emits a dev.famstack.document
-        custom event with full structured metadata for downstream bots.
+        and URL archiving. The DocumentPipeline does the work (upload →
+        OCR → classify → reformat → mirror → emit) and hands back a
+        FilingOutcome; this maps the outcome to a chat reply and logs.
         """
-        logger.info("[archivist] Processing: {} ({} bytes)", display_name, len(file_data))
-
-        # Text-like extensions skip reformat (the content is already clean)
-        # but still run classification + mirror like every other document.
-        # Paperless only has parsers registered for text/plain and text/csv,
-        # so everything else in the text-like set is renamed to .txt at
-        # upload time. The Paperless-side filename loses its source suffix,
-        # but the mirror keeps `display_name` as its fallback title, so the
-        # original `.md` / `.yaml` / ... shows up in the archive.
-        TEXT_LIKE = ("md", "txt", "csv", "json", "yaml", "yml", "toml")
-        # Image extensions get the multimodal classify path when the
-        # model has vision — the binary rides alongside the OCR text as
-        # supplementary context. Scanned PDFs go a separate route (page
-        # render via pypdfium2).
-        IMAGE_MIMES = {
-            "png": "image/png",
-            "jpg": "image/jpeg", "jpeg": "image/jpeg",
-            "webp": "image/webp",
-            "gif": "image/gif",
-        }
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        is_text = ext in TEXT_LIKE
-        is_image = ext in IMAGE_MIMES
-        # A PDF that already carries an embedded text layer is, by
-        # definition, readable without OCR. Reformat's job is cleaning up
-        # OCR artifacts; running it on a native-text PDF risks degrading
-        # already-clean content and costs minutes of generation on long
-        # papers. Scan-mode PDFs (built from photographed pages) have no
-        # text layer and still reformat normally.
-        is_pdf_with_text = ext == "pdf" and _has_pdf_text_layer(file_data)
-        # A text layer that came from a machine-OCR tool (OCRmyPDF /
-        # Tesseract) shouldn't be trusted the way we'd trust a native
-        # authored layer — vision should still attach so the model can
-        # override jumbled / partial text.
-        is_pdf_ocr_layer = is_pdf_with_text and _has_pdf_ocr_text_layer(file_data)
-        if is_text:
-            if ext == "csv":
-                upload_filename, upload_type = filename, "text/csv"
-            elif ext == "txt":
-                upload_filename, upload_type = filename, "text/plain"
-            else:
-                base = filename.rsplit(".", 1)[0] or "document"
-                upload_filename, upload_type = f"{base}.txt", "text/plain"
-        else:
-            upload_filename, upload_type = filename, None
-
-        task_id = await self._paperless.upload(upload_filename, file_data, content_type=upload_type)
-        if not task_id:
-            await self._send(room_id, self.t("upload_failed", name=display_name), reply_to)
-            return
-
-        try:
-            doc_id = await self._paperless.wait_task(task_id)
-        except PaperlessDuplicateError as e:
-            await self._send(room_id, self._duplicate_reply(display_name, e), reply_to)
-            return
-        if not doc_id:
-            await self._send(room_id, self.t("ocr_failed", name=display_name), reply_to)
-            return
-
-        # Everything past this line runs with a Paperless-filed doc. The
-        # mirror is reached unconditionally before we return: classification
-        # and reformat are *enrichment*, not gates, so a flaky LLM reduces
-        # the richness of the mirror entry rather than dropping it entirely.
-
-        link = f"{self.paperless_public_url}/documents/{doc_id}/details" if self.paperless_public_url else ""
-        doc = await self._paperless.get_doc(doc_id)
-
-        if not doc:
-            # Paperless accepted the upload but we can't read the doc back.
-            # Rare — still mirror a minimal entry so Paperless ⇄ mirror stay 1:1.
-            await self._safe_mirror(
-                doc_id=doc_id, classification={}, body_text="",
-                processing="ocr", model=None,
-                fallback_title=display_name, paperless_tags=[],
+        outcome = await self._pipeline.process(
+            filename=filename, display_name=display_name, file_data=file_data,
+            date_filed=date_filed, submitter_mxid=submitter_mxid,
+        )
+        await self._reply_for_outcome(room_id, outcome, reply_to)
+        if outcome.status == "enriched":
+            processed_parts = [*outcome.resolved_topics, *outcome.resolved_persons]
+            if outcome.resolved_type:
+                processed_parts.append(outcome.resolved_type)
+            if outcome.resolved_correspondent:
+                processed_parts.append(outcome.resolved_correspondent)
+            logger.info(
+                "[archivist] Processed: {} → doc {} [{}]",
+                filename, outcome.doc_id,
+                ", ".join(processed_parts) or "no-classification",
             )
-            await self._send(room_id, self.t("filed_no_details", name=display_name, link=link), reply_to)
+
+    async def _reply_for_outcome(
+        self, room_id: str, o: FilingOutcome, reply_to: str | None,
+    ) -> None:
+        """Map a FilingOutcome to a chat reply.
+
+        Terminal statuses get a one-line message. The `enriched` status
+        runs the historic priority chain — llm-error > no-text >
+        classify-disabled > no-classification > the rich filed summary.
+        That chain depends on chat-only inputs (openai_url, the
+        translator) so it lives here, not in the pipeline.
+        """
+        if o.status == "upload_failed":
+            await self._send(room_id, self.t("upload_failed", name=o.display_name), reply_to)
+            return
+        if o.status == "duplicate":
+            await self._send(room_id, self._duplicate_reply(o.display_name, o.duplicate), reply_to)
+            return
+        if o.status == "ocr_failed":
+            await self._send(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
+            return
+        if o.status == "filed_no_details":
+            await self._send(
+                room_id, self.t("filed_no_details", name=o.display_name, link=o.link),
+                reply_to,
+            )
             return
 
-        ocr_text = doc.get("content", "") or ""
-        has_text = len(ocr_text.strip()) >= 10
-
-        # ── Enrich via the shared pipeline ───────────────────────────────
-        # Pipeline hands back structured data; this function renders it for
-        # Matrix. When classification is disabled or the doc has no text,
-        # we skip the LLM call entirely by handing back an empty result.
-        if self.classify_enabled and has_text:
-            # Decide what (if anything) to attach alongside the OCR text.
-            # Three branches:
-            #   image upload (PNG/JPG/...) → one ImageAttachment
-            #   scanned PDF (no text layer) → one per rendered page
-            #   text-layer PDF / md / txt → no images (text-only)
-            # The classifier silently drops images when the model lacks
-            # vision, so attaching is harmless on text-only models — no
-            # per-call gating needed.
-            images: list[ImageAttachment] | None = None
-            if is_image:
-                images = [ImageAttachment(
-                    data=file_data, mime=IMAGE_MIMES[ext],
-                )]
-            elif ext == "pdf" and _should_attach_vision(
-                has_text_layer=is_pdf_with_text,
-                has_ocr_text_layer=is_pdf_ocr_layer,
-                page_count=_pdf_page_count(file_data) if is_pdf_with_text else 0,
-            ):
-                if await self._classifier.has_vision():
-                    rendered = render_pages(file_data)
-                    if rendered:
-                        images = [
-                            ImageAttachment(data=p, mime="image/png")
-                            for p in rendered
-                        ]
-            ontology = self._load_ontology()
-            result = await enrich_document(
-                paperless=self._paperless,
-                classifier=self._classifier,
-                doc=doc,
-                classify_max_chars=self.classify_max_chars,
-                images=images,
-                ontology_section=ontology.classifier_prompt_section(self.language),
-                correspondents_section=self._compute_correspondents_section(),
-                ontology=ontology,
-                lang=self.language,
-                date_filed=date_filed,
-                submitter_mxid=submitter_mxid,
-            )
-        else:
-            result = EnrichResult()
-
-        classification = result.classification
-        resolved_topics = result.resolved_topics
-        resolved_persons = result.resolved_persons
-        resolved_correspondent = result.resolved_correspondent
-        resolved_type = result.resolved_type
-        created_new = result.created_new
+        # status == "enriched": the document is filed; pick the reply.
         llm_error = _llm_error_for_chat(
-            result.llm_error,
-            name=display_name, openai_url=self.openai_url, link=link,
+            o.llm_error, name=o.display_name, openai_url=self.openai_url, link=o.link,
         )
-
-        # ── Reformat (runs on every non-text file the bot can handle in
-        #               one LLM call). A .md / .txt / .json stays as-is —
-        #               the source bytes are already the final shape, and
-        #               re-LLMing them would only dilute. For PDFs we used
-        #               to skip the reformat when an embedded text layer
-        #               was present, on the theory that "Paperless already
-        #               has clean text." In practice a two-column invoice
-        #               has a *clean* text layer that still extracts as a
-        #               wall of run-on lines — reformat is the step that
-        #               recovers the visual structure. So we now reformat
-        #               every PDF up to _REFORMAT_MAX_PDF_PAGES; longer
-        #               docs would blow past one LLM call anyway and the
-        #               body is read in Paperless, not the mirror.
-        reformat_failed = False
-        formatted: str | None = None
-        should_reformat = (
-            bool(classification) and self.reformat_enabled and not is_text
-        )
-        if should_reformat and ext == "pdf":
-            pages = _pdf_page_count(file_data)
-            if not _should_reformat_pdf(pages):
-                logger.info(
-                    "[archivist] reformat skipped for doc #{}: {} pages > {}",
-                    doc_id, pages, _REFORMAT_MAX_PDF_PAGES,
-                )
-                should_reformat = False
-        if should_reformat:
-            formatted = await reformat_document(
-                paperless=self._paperless,
-                classifier=self._classifier,
-                doc_id=doc_id,
-                ocr_text=ocr_text,
-            )
-            if not formatted:
-                reformat_failed = True
-
-        # ── Mirror to Forgejo (always, when configured) ─────────────────
-        # Runs before the chat reply so failure-path replies are still
-        # preceded by a committed mirror entry. Merging resolved_* into
-        # `enriched` keeps the mirror frontmatter in lockstep with the
-        # tag names actually written to Paperless.
-        #
-        # For text files the mirror body is the original bytes decoded —
-        # preserves the source exactly (markdown stays markdown, JSON stays
-        # JSON) instead of whatever Paperless's text parser produced.
-        # `processing` describes the provenance of `body_text`:
-        #   ai_formatted — LLM reformat rewrote the body into clean markdown
-        #   ocr          — Paperless's OCR output, unchanged
-        #   original     — original bytes of a text-like file (markdown,
-        #                  JSON, YAML, ...) — no transformation applied
-        # Classification-ran-or-not is orthogonal: `topics`, `persons`,
-        # `correspondent`, `document_type` reflect what the LLM decided,
-        # independent of whether the body was rewritten.
-        if is_text:
-            try:
-                body_text = file_data.decode("utf-8")
-            except UnicodeDecodeError:
-                body_text = file_data.decode("utf-8", errors="replace")
-            processing = "original"
-            model = None
-        else:
-            body_text = formatted or ocr_text
-            processing = "ai_formatted" if formatted else "ocr"
-            try:
-                model = resolve_model(f"{self.name}/reformat") if formatted else None
-            except ValueError:
-                model = None
-        enriched = dict(classification) if classification else {}
-        enriched["topics"] = resolved_topics
-        enriched["persons"] = resolved_persons
-        enriched["correspondent"] = resolved_correspondent
-        enriched["document_type"] = resolved_type
-        paperless_tags = [
-            *resolved_topics,
-            *(f"Person: {p}" for p in resolved_persons),
-        ]
-        await self._safe_mirror(
-            doc_id=doc_id,
-            classification=enriched,
-            body_text=body_text,
-            processing=processing,
-            model=model,
-            fallback_title=display_name,
-            paperless_tags=paperless_tags,
-            summary=result.summary,
-        )
-
-        # ── Chat reply ───────────────────────────────────────────────────
-        # Priority order:
-        #   LLM error > no-text > classify-disabled > classify-returned-nothing > happy path
         if llm_error:
             key, kwargs = llm_error
             await self._send(room_id, self.t(key, **kwargs), reply_to)
-        elif not has_text:
-            await self._send(room_id, self.t("filed_no_text", name=display_name, link=link), reply_to)
-        elif not self.classify_enabled:
-            await self._send(room_id, f"{self.t('filed', title=display_name)}\n\n  {link}", reply_to)
-        elif not classification:
-            await self._send(room_id, self.t("classify_failed", name=display_name, link=link), reply_to)
+        elif not o.has_text:
+            await self._send(
+                room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
+                reply_to,
+            )
+        elif not o.classify_enabled:
+            await self._send(
+                room_id, f"{self.t('filed', title=o.display_name)}\n\n  {o.link}",
+                reply_to,
+            )
+        elif not o.classification:
+            await self._send(
+                room_id, self.t("classify_failed", name=o.display_name, link=o.link),
+                reply_to,
+            )
         else:
-            # Happy path — rich summary. Layout optimised for scanning in
-            # Element:
-            #
-            #   Filed: Cursor - Pro Subscription USD 192.00 (#10)
-            #
-            #   Subscription | Invoice | Cursor | 2025-03-27
-            #
-            #   Summary text from LLM...
-            #
-            #   - Invoice number: 4182A976 0001
-            #   - Amount due: USD 192.00
-            #
-            #   Payment of USD 192.00 due (due 2025-03-27)
-            #
-            #   http://...
-
             reply_text = render_filing_reply(
                 self.t,
-                display_title=classification.get("title") or display_name,
-                doc_id=doc_id,
-                resolved_topics=resolved_topics,
-                resolved_persons=resolved_persons,
-                resolved_type=resolved_type,
-                resolved_correspondent=resolved_correspondent,
-                date_applied=result.updates_applied.get("created"),
-                classification=classification,
-                created_new=created_new,
-                reformat_failed=reformat_failed,
-                link=link,
+                display_title=o.classification.get("title") or o.display_name,
+                doc_id=o.doc_id,
+                resolved_topics=o.resolved_topics,
+                resolved_persons=o.resolved_persons,
+                resolved_type=o.resolved_type,
+                resolved_correspondent=o.resolved_correspondent,
+                date_applied=o.date_applied,
+                classification=o.classification,
+                created_new=o.created_new,
+                reformat_failed=o.reformat_failed,
+                link=o.link,
             )
-
             # The `dev.famstack.event` envelope rides on the visible
-            # message content — single event in the timeline, full
-            # picture in one fetch. Matrix is famstack's canonical
-            # ledger, so every filing must be replayable from the
-            # m.room.message alone. The reply-to-reprocess handler
-            # reads `data.paperless_id` straight off this field; the
-            # deriver (future) will filter for m.room.message events
-            # carrying this envelope.
-            envelope = build_document_event(
-                doc_id, classification,
-                resolved_topics=resolved_topics,
-                resolved_persons=resolved_persons,
-                resolved_correspondent=resolved_correspondent,
-                resolved_type=resolved_type,
-                paperless_url=self.paperless_public_url,
-                actor=self.user_id,
-                ts=_utc_now_isoformat(),
-            )
+            # message — one replayable timeline event per filing.
             await self._send(
                 room_id, reply_text, reply_to,
-                metadata={"dev.famstack.event": envelope},
+                metadata={"dev.famstack.event": o.envelope},
             )
-
-        processed_parts = [*resolved_topics, *resolved_persons]
-        if resolved_type:
-            processed_parts.append(resolved_type)
-        if resolved_correspondent:
-            processed_parts.append(resolved_correspondent)
-        logger.info("[archivist] Processed: {} → doc {} [{}]",
-                     filename, doc_id, ", ".join(processed_parts) or "no-classification")
 
     # ── Event handlers ───────────────────────────────────────────────────
 

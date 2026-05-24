@@ -383,63 +383,6 @@ class TestStripReplyFallback:
         assert _strip_reply_fallback("> <@bot> Filed (#42)") == ""
 
 
-# ── Vision-attach policy ──────────────────────────────────────────────────
-
-class TestShouldAttachVision:
-    """The single decision point for whether the archivist attaches
-    rendered PDF pages alongside the OCR text. Policy is pure logic
-    over three inputs so it's safe to unit-test without containers."""
-
-    @staticmethod
-    def _decide(**kw):
-        from archivist import _should_attach_vision
-        return _should_attach_vision(**kw)
-
-    def test_scan_without_text_layer_attaches_vision(self):
-        # No text layer → vision is the only signal. Render anything
-        # available, regardless of length.
-        assert self._decide(
-            has_text_layer=False, has_ocr_text_layer=False, page_count=0,
-        ) is True
-
-    def test_native_text_short_skips_vision(self):
-        # A 2-page generated invoice — trustworthy text layer, vision
-        # would waste tokens.
-        assert self._decide(
-            has_text_layer=True, has_ocr_text_layer=False, page_count=2,
-        ) is False
-
-    def test_native_text_long_skips_vision(self):
-        # A 30-page research paper — same reasoning, more emphasis.
-        assert self._decide(
-            has_text_layer=True, has_ocr_text_layer=False, page_count=30,
-        ) is False
-
-    def test_ocr_text_layer_short_attaches_vision(self):
-        # A Booking.com / OCRmyPDF-routed scan — text layer is jumbled,
-        # vision must override.
-        assert self._decide(
-            has_text_layer=True, has_ocr_text_layer=True, page_count=2,
-        ) is True
-
-    def test_ocr_text_layer_at_cap_still_attaches(self):
-        # The cap is inclusive: exactly 5 pages → still vision. The cap
-        # constant now lives in pdf_analysis (the policy's home); the
-        # archivist imports `_should_attach_vision` from there.
-        from pdf_analysis import VISION_MAX_PDF_PAGES
-        assert self._decide(
-            has_text_layer=True, has_ocr_text_layer=True,
-            page_count=VISION_MAX_PDF_PAGES,
-        ) is True
-
-    def test_ocr_text_layer_long_skips_vision(self):
-        # A 30-page contract re-OCR'd by Paperless — trust the (imperfect)
-        # text layer rather than burn one image token per page.
-        assert self._decide(
-            has_text_layer=True, has_ocr_text_layer=True, page_count=30,
-        ) is False
-
-
 # ── Search scoping ────────────────────────────────────────────────────────
 
 class TestSearchScopes:
