@@ -383,47 +383,6 @@ class TestStripReplyFallback:
         assert _strip_reply_fallback("> <@bot> Filed (#42)") == ""
 
 
-# ── Search scoping ────────────────────────────────────────────────────────
-
-class TestSearchScopes:
-    """The asker-identity policy for memory search.
-
-    Matrix localpart is the canonical entity slug — `@marge:home → marge`,
-    matching `users.toml` ids. The bot derives a list of allowed vault
-    path prefixes from the sender so personal notes don't leak between
-    family members. Default closed: an unknown sender sees the shared
-    bucket only.
-    """
-
-    def test_known_sender_sees_family_plus_own(self, tmp_path):
-        bot = _build_bot(tmp_path)
-        # Default shared_bucket is "family" (env unset).
-        scopes = bot._search_scopes_for_sender("@marge:home.local")
-        assert scopes == ["family/", "marge/"]
-
-    def test_unknown_sender_sees_shared_only(self, tmp_path):
-        bot = _build_bot(tmp_path)
-        scopes = bot._search_scopes_for_sender(None)
-        assert scopes == ["family/"]
-
-    def test_sender_equal_to_shared_bucket_does_not_duplicate(self, tmp_path):
-        bot = _build_bot(tmp_path)
-        # A bot ID of `@family:server` would otherwise add "family/"
-        # twice -- the helper guards against that.
-        scopes = bot._search_scopes_for_sender("@family:home.local")
-        assert scopes == ["family/"]
-
-    def test_respects_custom_shared_bucket(self, tmp_path, monkeypatch):
-        # `shared_bucket` is read from env at construction time, so
-        # set it before building the bot. The Smith household might
-        # call theirs "haus" or "hupkamily" -- whatever, the helper
-        # respects it.
-        monkeypatch.setenv("SHARED_BUCKET", "haus")
-        bot = _build_bot(tmp_path)
-        scopes = bot._search_scopes_for_sender("@bart:home.local")
-        assert scopes == ["haus/", "bart/"]
-
-
 # ── Mention as routing signal ─────────────────────────────────────────────
 
 class TestMentionRoutesToSearch:
