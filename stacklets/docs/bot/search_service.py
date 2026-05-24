@@ -6,7 +6,7 @@ searches both backends, optionally synthesises a natural-language answer
 with a bounded deep-dive, and returns the final reply text.
 
 The one piece of mid-flow chatter — the "looking deeper" status before
-a deep-dive — is sent through an injected `announce` callback so the
+a deep-dive — is sent through an injected Notifier so the
 service stays ignorant of Matrix. The bot owns `t` and passes it in,
 so the service renders the household language without holding the
 message catalogue.
@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Callable
 
 from loguru import logger
 
@@ -33,6 +33,7 @@ from nl_query import (
     is_deferral,
     select_evidence_for_display,
 )
+from notifier import Notifier
 from recall import resolve_search_query as _resolve_search_query
 from search_format import (
     format_memory_hit as _format_memory_hit,
@@ -40,7 +41,6 @@ from search_format import (
 )
 
 Translator = Callable[..., str]
-Announce = Callable[[str], Awaitable[None]]
 
 
 class SearchService:
@@ -83,10 +83,10 @@ class SearchService:
                 scopes.append(f"{entity}/")
         return scopes
 
-    async def run(self, *, query: str, sender: str | None, announce: Announce) -> str:
+    async def run(self, *, query: str, sender: str | None, notifier: Notifier) -> str:
         """Resolve, search, optionally synthesise, and return the reply.
 
-        `announce` is awaited only for the mid-flow deep-dive status;
+        `notifier` is used only for the mid-flow deep-dive status;
         everything else is returned as a single block of text for the
         caller to send.
         """
@@ -121,7 +121,7 @@ class SearchService:
         if synthesized:
             return await self._render_synthesis(
                 query, synthesized, evidence, memory_results, paperless_results,
-                blocks, announce,
+                blocks, notifier,
             )
 
         # Literal mode (or synthesis unavailable/failed): the two-section
@@ -181,7 +181,7 @@ class SearchService:
 
     async def _render_synthesis(
         self, query, synthesized, evidence, memory_results, paperless_results,
-        blocks, announce,
+        blocks, notifier,
     ) -> str:
         """Render the synthesised answer + cited evidence, with one bounded
         deep-dive when the first pass deferred ("I'd need to read [N]")."""
@@ -196,7 +196,7 @@ class SearchService:
             titles = ", ".join(
                 (ev.get("title") or "the document").strip() for _, ev in selected
             )
-            await announce(self._t("search_looking_deeper", titles=titles))
+            await notifier.status("search_looking_deeper", titles=titles)
             expanded = expand_to_full_content(selected, memory_results, paperless_results)
             deeper = await self._classifier.synthesize_answer(query, expanded, lang=self.language)
             logger.info("[archivist] deep-dive: {} doc(s), answer={} chars", len(expanded), len(deeper))

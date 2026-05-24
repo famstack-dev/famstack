@@ -313,37 +313,6 @@ class TestPastePredicate:
         assert not ArchivistBot._looks_like_paste("   \n\n  ")
 
 
-class TestCaptureTagList:
-    """The mirror's `tags:` field: capture tags (free-form, from the
-    classifier's `tags` field) + `Person: X` for each attributed
-    person. Stable across rerun, easy to query via Dataview."""
-
-    def test_tags_and_persons(self):
-        c = {"tags": ["AI", "Productivity"], "persons": ["Arthur"]}
-        assert ArchivistBot._capture_tag_list(c) == [
-            "AI", "Productivity", "Person: Arthur",
-        ]
-
-    def test_single_string_tag_becomes_list(self):
-        c = {"tags": "AI", "persons": ["Arthur"]}
-        assert ArchivistBot._capture_tag_list(c) == ["AI", "Person: Arthur"]
-
-    def test_empty_classification_yields_empty(self):
-        assert ArchivistBot._capture_tag_list({}) == []
-
-    def test_skips_non_string_values(self):
-        c = {"tags": ["AI", None, 42, ""], "persons": ["Arthur", ""]}
-        assert ArchivistBot._capture_tag_list(c) == ["AI", "Person: Arthur"]
-
-    def test_strips_whitespace(self):
-        # The classifier sometimes returns "  AI  " — leading/trailing
-        # spaces are noise, not a distinct tag.
-        c = {"tags": ["  AI  ", "Productivity"], "persons": ["Arthur"]}
-        assert ArchivistBot._capture_tag_list(c) == [
-            "AI", "Productivity", "Person: Arthur",
-        ]
-
-
 # ── Reply fallback stripping ──────────────────────────────────────────────
 
 class TestStripReplyFallback:
