@@ -66,11 +66,6 @@ from stack import resolve_model
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.lib import (  # noqa: E402
-    correspondents_prompt_section as _memory_correspondents_section,
-    get_ontology as _get_memory_ontology,
-    load_correspondents_from_vault as _load_memory_correspondents,
-)
 from room_context import normalize_alias  # noqa: E402
 from text_utils import (  # noqa: E402
     clean_filename as _clean_filename,
@@ -88,6 +83,7 @@ from document_pipeline import (  # noqa: E402
 from search_service import SearchService  # noqa: E402
 from capture_pipeline import CapturePipeline, CaptureOutcome  # noqa: E402
 from notifier import MatrixNotifier  # noqa: E402
+from vault_context import VaultContext  # noqa: E402
 
 
 @contextmanager
@@ -259,6 +255,7 @@ class ArchivistBot(MicroBot):
         self._pipeline: DocumentPipeline | None = None
         self._search: SearchService | None = None
         self._capture: CapturePipeline | None = None
+        self._vault: VaultContext | None = None
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
@@ -307,6 +304,7 @@ class ArchivistBot(MicroBot):
         # leaves `self._mirror = None` and logs the reason; writes
         # become silent skips.
         self._init_mirror()
+        self._vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
         self._pipeline = DocumentPipeline(
             paperless=self._paperless,
             classifier=self._classifier,
@@ -318,8 +316,7 @@ class ArchivistBot(MicroBot):
             classify_max_chars=self.classify_max_chars,
             paperless_public_url=self.paperless_public_url,
             actor=self.user_id,
-            load_ontology=self._load_ontology,
-            correspondents_section=self._compute_correspondents_section,
+            vault=self._vault,
         )
         self._search = SearchService(
             classifier=self._classifier,
@@ -330,7 +327,7 @@ class ArchivistBot(MicroBot):
             mirror_org=self.mirror_org,
             paperless_public_url=self.paperless_public_url,
             shared_bucket=self.shared_bucket,
-            ontology_section=self._compute_ontology_section,
+            vault=self._vault,
         )
         self._capture = CapturePipeline(
             url_extractor=self._url_extractor,
@@ -355,58 +352,6 @@ class ArchivistBot(MicroBot):
         # The framework's start() owns the session loop and closes the
         # http session (via _aclose) on shutdown.
         await super().start()
-
-    # ── Classifier prompt inputs (read fresh per call) ───────────────────
-    #
-    # Ontology and correspondents live on disk in the memory vault and are
-    # hand-editable: in Obsidian, in Forgejo's web UI, or via the memory
-    # CLI. We re-read both on every classification so a hand edit takes
-    # effect on the next filed document — no restart, no caching gotcha.
-    # The reads are cheap (small TOML, dozens of tiny markdown files);
-    # the LLM call that follows dwarfs them.
-
-    def _compute_ontology_section(self) -> str:
-        """Render the classifier vocabulary block from the memory ontology.
-
-        Reads `ontology.toml` from the memory stacklet's vault working
-        copy (cloned + pulled by memory's own hooks). The bot-runner
-        mounts the host data dir at `/data`, so the vault lives at
-        `/data/memory/vault/` and `MEMORY_VAULT_DIR` points at it.
-
-        Falls back to the shipped seed when the vault is missing
-        (memory not installed yet, or first run on a host without a
-        working copy).
-        """
-        return self._load_ontology().classifier_prompt_section(self.language)
-
-    def _load_ontology(self):
-        """Load the memory ontology (cached read; cheap TOML).
-
-        Returned alongside the rendered prompt section so the pipeline
-        can use the bilingual canonicals — `match_topics` /
-        `match_doctype` normalize LLM output back to the household
-        language and reject cross-field hallucinations through
-        `Ontology.canonicalize_topic` / `canonicalize_doctype`.
-        """
-        vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
-        vault_path = Path(vault_env) if vault_env else None
-        return _get_memory_ontology(vault_path)
-
-    def _compute_correspondents_section(self) -> str:
-        """Build the correspondents block from the memory vault.
-
-        Each `<shared_bucket>/correspondents/*.md` page contributes a
-        (canonical, aliases) line. Empty when the vault isn't seeded
-        yet — the prompt falls back to the flat Paperless
-        correspondents list, which carries no alias signal.
-        """
-        vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
-        if not vault_env:
-            return ""
-        correspondents = _load_memory_correspondents(
-            Path(vault_env), self.shared_bucket,
-        )
-        return _memory_correspondents_section(correspondents)
 
     def _init_mirror(self) -> None:
         """Build a GitMirror if all required env is present.
@@ -593,14 +538,14 @@ class ArchivistBot(MicroBot):
             )
             return
 
-        ontology = self._load_ontology()
+        ontology = self._vault.ontology()
         result = await enrich_document(
             paperless=self._paperless,
             classifier=self._classifier,
             doc=doc,
             classify_max_chars=self.classify_max_chars,
             ontology_section=ontology.classifier_prompt_section(self.language),
-            correspondents_section=self._compute_correspondents_section(),
+            correspondents_section=self._vault.correspondents_section(),
             ontology=ontology,
             lang=self.language,
             is_reprocess=True,

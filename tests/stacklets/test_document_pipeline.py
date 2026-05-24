@@ -18,7 +18,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from document_pipeline import DocumentPipeline, FilingOutcome  # noqa: E402
+from document_pipeline import DocumentPipeline  # noqa: E402
 from pipeline import PaperlessDuplicateError  # noqa: E402
 
 
@@ -58,6 +58,15 @@ class FakeClassifier:
         return False
 
 
+class _FakeVault:
+    def ontology(self):
+        return None
+    def ontology_section(self, language=None):
+        return ""
+    def correspondents_section(self):
+        return ""
+
+
 def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled=True):
     return DocumentPipeline(
         paperless=paperless,
@@ -70,8 +79,7 @@ def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled
         classify_max_chars=10000,
         paperless_public_url="http://paperless",
         actor="@archivist-bot:test.local",
-        load_ontology=lambda: None,
-        correspondents_section=lambda: "",
+        vault=_FakeVault(),
     )
 
 
