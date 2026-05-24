@@ -39,6 +39,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import aiohttp
 import markdown
 from loguru import logger
 from nio import (
@@ -79,6 +80,10 @@ class MicroBot:
         self._cursor_file = self._session_dir / f"{self.name}-cursor"
         self._cursors = self._load_cursors()
         self._client: AsyncClient | None = None
+        # Lazily-created shared aiohttp session for non-nio HTTP (media
+        # download, and subclasses' own API calls). Owned by the
+        # framework so its lifecycle is tied to start()/teardown.
+        self._http: aiohttp.ClientSession | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -113,7 +118,7 @@ class MicroBot:
 
         if not logged_in:
             logger.error("[{}] Cannot authenticate — giving up", self.name)
-            await self._client.close()
+            await self._aclose()
             return
 
         # ── E2E encryption ───────────────────────────────────────────
@@ -185,8 +190,17 @@ class MicroBot:
                 if self._running:
                     await asyncio.sleep(5)
 
-        await self._client.close()
+        await self._aclose()
         logger.info("[{}] Stopped", self.name)
+
+    async def _aclose(self) -> None:
+        """Close framework-owned network resources. Idempotent — safe on
+        both the login-failure path and normal shutdown, and when a
+        subclass never opened the http session."""
+        if self._client is not None:
+            await self._client.close()
+        if self._http is not None:
+            await self._http.close()
 
     async def _password_login(self, retries=30, interval=10) -> bool:
         """Log in with password, retrying until the account exists.
@@ -399,6 +413,46 @@ class MicroBot:
             return None
         envelope = parent.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
         return envelope if isinstance(envelope, dict) else None
+
+    def _ensure_http(self) -> aiohttp.ClientSession:
+        """The shared aiohttp session, created on first use.
+
+        Subclasses that make their own HTTP calls (Paperless, OpenAI,
+        Forgejo) reuse this one session instead of spinning up their
+        own, so there's a single pool with a single framework-owned
+        lifecycle. Closed in `_aclose` on shutdown.
+        """
+        if self._http is None:
+            self._http = aiohttp.ClientSession()
+        return self._http
+
+    async def _download_media(self, mxc_url: str) -> bytes | None:
+        """Download a file from Matrix via the authenticated media API.
+
+        Uses `/_matrix/client/v1/media/download/...` with the bot's
+        access token — the authenticated endpoint, not nio's default
+        (which targets the now-deprecated unauthenticated media API).
+        Returns the bytes, or None on any non-200 (logged).
+        """
+        rest = mxc_url.replace("mxc://", "")
+        server_name, _, media_id = rest.partition("/")
+        download_url = (
+            f"{self.homeserver}/_matrix/client/v1/media/download/"
+            f"{server_name}/{media_id}"
+        )
+        session = self._ensure_http()
+        async with session.get(
+            download_url,
+            headers={"Authorization": f"Bearer {self._client.access_token}"},
+        ) as resp:
+            if resp.status == 200:
+                return await resp.read()
+            body = await resp.text()
+            logger.error(
+                "[{}] Media download failed (HTTP {}): {}",
+                self.name, resp.status, body,
+            )
+            return None
 
     def _format_handler_error(self, event, exc: BaseException) -> str:
         """Render an exception as a user-facing message.
