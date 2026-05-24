@@ -11,9 +11,11 @@ reads like a protocol. Run with `-s` to stream live:
 
 from __future__ import annotations
 
-import json
+import asyncio
 
-import pytest
+from nio import AsyncClient
+from nio.api import RoomVisibility
+from nio.responses import JoinedMembersResponse, RoomInviteResponse
 
 from tests.integration.matrix import (
     ensure_joined,
@@ -26,6 +28,43 @@ from tests.integration.openai_stub import stub_classify, stub_reformat
 
 
 DOCS_ROOM_ALIAS = "#documents:test.local"
+ARCHIVIST_MXID = "@archivist-bot:test.local"
+
+
+# ── Helpers for reply / DM / mention scenarios ────────────────────────────
+
+
+def _client_from(creds) -> AsyncClient:
+    client = AsyncClient(creds.homeserver, creds.user_id)
+    client.access_token = creds.access_token
+    client.device_id = creds.device_id
+    client.user_id = creds.user_id
+    return client
+
+
+async def _wait_for_bot_membership(client, room_id: str, timeout: int = 30) -> None:
+    """Poll Synapse until the archivist has accepted its invite and joined."""
+    for _ in range(timeout):
+        resp = await client.joined_members(room_id)
+        if isinstance(resp, JoinedMembersResponse):
+            if any(m.user_id == ARCHIVIST_MXID for m in resp.members):
+                return
+        await asyncio.sleep(1)
+    raise AssertionError(f"{ARCHIVIST_MXID} did not join {room_id} within {timeout}s")
+
+
+async def _wait_for_reply(client, room_id: str, *, predicate, timeout: int = 45):
+    """Sync the room until an event satisfies `predicate`, or time out."""
+    for _ in range(timeout // 5 + 1):
+        events = await fetch_room_events(client, room_id, duration=5.0)
+        hit = next((e for e in events if predicate(e)), None)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _envelope(event) -> dict | None:
+    return event.source.get("content", {}).get("dev.famstack.event")
 
 
 async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
@@ -178,3 +217,174 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     assert data.get("correspondent") == expected_correspondent, data
     bdd.ok(f"envelope: type={envelope['type']}, topics={data['topics']}, "
            f"persons={data['persons']}, correspondent={data['correspondent']}")
+
+
+# ── Reply-to-reprocess ────────────────────────────────────────────────────
+
+
+async def test_homer_replies_to_filing_and_archivist_reprocesses(
+    bdd, openai, paperless, paperless_scope, homer, sample_invoice_pdf,
+):
+    """Homer replies to a filing with a correction; the archivist re-runs
+    classification with the reply as a hint and confirms with a
+    `document.reclassified` envelope.
+
+    Scenario
+    --------
+    Given  the archivist filed Homer's invoice (correspondent ADAC)
+    When   Homer replies to the filing message with "this is from Globex"
+    Then   the archivist reprocesses doc and posts a reclassified
+           confirmation carrying the user's hint in its envelope
+    """
+    scope = paperless_scope
+    bdd.scenario("Homer corrects a filing by replying to it")
+
+    title = scope.tag("ADAC - Kfz-Versicherung reprocess")
+    bdd.given("the OpenAI mock will classify, reformat, then reclassify")
+    # Initial filing pass: classify + reformat.
+    stub_classify(openai, {
+        "title": title, "topics": [scope.tag("Insurance")], "persons": ["Homer"],
+        "correspondent": scope.tag("ADAC"), "document_type": "Invoice",
+        "date": "2026-03-15", "summary": "Car insurance renewal.",
+        "facts": ["EUR 340.00/year"], "action_items": [],
+    })
+    stub_reformat(openai, "# Kfz-Versicherung\n\nADAC.")
+    # Reprocess pass (triggered by the reply): classify only.
+    stub_classify(openai, {
+        "title": title, "topics": [scope.tag("Insurance")], "persons": ["Homer"],
+        "correspondent": scope.tag("Globex"), "document_type": "Invoice",
+        "date": "2026-03-15", "summary": "Reclassified: correspondent is Globex.",
+        "facts": ["EUR 340.00/year"], "action_items": [],
+    })
+
+    bdd.given("the #documents room exists and Homer has access")
+    room_id = await resolve_room(homer, DOCS_ROOM_ALIAS)
+    await ensure_joined(homer, room_id)
+
+    bdd.when("Homer uploads the invoice and the archivist files it")
+    await upload_and_send_file(
+        homer, room_id, sample_invoice_pdf, filename="invoice.pdf",
+        mime_type="application/pdf", msgtype="m.file",
+    )
+    filing = await _wait_for_reply(
+        homer, room_id,
+        predicate=lambda e: (
+            event_type(e) == "m.room.message"
+            and (_envelope(e) or {}).get("type") == "document.filed"
+        ),
+    )
+    assert filing, "archivist never posted a document.filed envelope"
+    paperless_id = _envelope(filing)["data"]["paperless_id"]
+    bdd.ok(f"filed doc #{paperless_id}, event {filing.event_id}")
+
+    bdd.when("Homer replies to the filing with a correction")
+    hint = "this is from Globex, not ADAC"
+    await homer.room_send(
+        room_id, "m.room.message",
+        {
+            "msgtype": "m.text", "body": hint,
+            "m.relates_to": {"m.in_reply_to": {"event_id": filing.event_id}},
+        },
+    )
+
+    bdd.then("the archivist posts a document.reclassified confirmation")
+    reclassified = await _wait_for_reply(
+        homer, room_id,
+        predicate=lambda e: (_envelope(e) or {}).get("type") == "document.reclassified",
+    )
+    assert reclassified, "archivist never posted a document.reclassified envelope"
+    env = _envelope(reclassified)
+    assert env["data"]["paperless_id"] == paperless_id, env
+    assert env["data"].get("user_hint") == hint, env
+    bdd.ok(f"reclassified #{paperless_id} with hint {hint!r}")
+
+
+# ── DM: reacts without a mention ──────────────────────────────────────────
+
+
+async def test_dm_help_returns_welcome(bdd, paperless, matrix):
+    """In a 2-member room (a DM), the archivist reacts without an @-mention.
+    Homer DMs `help` and gets the welcome message back."""
+    bdd.scenario("Homer DMs the archivist for help")
+
+    homer = _client_from(matrix["homer"])
+    try:
+        bdd.given("Homer opens a DM and the archivist joins")
+        create = await homer.room_create(
+            name="Homer ⇄ Archivist", visibility=RoomVisibility.private,
+        )
+        room_id = create.room_id
+        invite = await homer.room_invite(room_id, ARCHIVIST_MXID)
+        assert isinstance(invite, RoomInviteResponse), f"invite failed: {invite}"
+        await _wait_for_bot_membership(homer, room_id)
+        bdd.ok(f"DM {room_id} with the archivist")
+
+        bdd.when("Homer sends `help` (no mention)")
+        await homer.room_send(
+            room_id, "m.room.message", {"msgtype": "m.text", "body": "help"},
+        )
+
+        bdd.then("the archivist replies with the welcome text")
+        reply = await _wait_for_reply(
+            homer, room_id,
+            predicate=lambda e: (
+                getattr(e, "sender", None) == ARCHIVIST_MXID
+                and "documents" in getattr(e, "body", "").lower()
+            ),
+        )
+        assert reply, "archivist did not respond to `help` in the DM"
+        bdd.ok("welcome reply received in DM")
+    finally:
+        await homer.close()
+
+
+# ── Group room: @-mention triggers a reaction ─────────────────────────────
+
+
+async def test_group_mention_triggers_search(bdd, paperless, matrix):
+    """In a 3-member room (not a DM), a plain message is ignored but an
+    @-mention makes the archivist react — here, run a (literal) search
+    and reply, even if it finds nothing."""
+    bdd.scenario("Homer @-mentions the archivist in a group room")
+
+    homer = _client_from(matrix["homer"])
+    marge = _client_from(matrix["marge"])
+    try:
+        bdd.given("a 3-member room with Homer, Marge, and the archivist")
+        create = await homer.room_create(
+            name="Family Chat", visibility=RoomVisibility.private,
+        )
+        room_id = create.room_id
+        assert isinstance(
+            await homer.room_invite(room_id, marge.user_id), RoomInviteResponse,
+        )
+        await marge.join(room_id)
+        assert isinstance(
+            await homer.room_invite(room_id, ARCHIVIST_MXID), RoomInviteResponse,
+        )
+        await _wait_for_bot_membership(homer, room_id)
+        bdd.ok(f"group room {room_id}")
+
+        bdd.when("Homer @-mentions the archivist with a search term")
+        await homer.room_send(
+            room_id, "m.room.message",
+            {
+                "msgtype": "m.text",
+                "body": f"{ARCHIVIST_MXID} ADAC",
+                "m.mentions": {"user_ids": [ARCHIVIST_MXID]},
+            },
+        )
+
+        bdd.then("the archivist reacts with a search reply")
+        reply = await _wait_for_reply(
+            homer, room_id,
+            predicate=lambda e: (
+                getattr(e, "sender", None) == ARCHIVIST_MXID
+                and event_type(e) == "m.room.message"
+            ),
+        )
+        assert reply, "archivist did not react to the @-mention"
+        bdd.ok(f"archivist replied: {getattr(reply, 'body', '')[:60]!r}")
+    finally:
+        await homer.close()
+        await marge.close()
