@@ -73,23 +73,8 @@ from memory.lib import (  # noqa: E402
     correspondents_prompt_section as _memory_correspondents_section,
     get_ontology as _get_memory_ontology,
     load_correspondents_from_vault as _load_memory_correspondents,
-    refresh_vault_if_stale as _refresh_memory_vault,
-    search_memory as _search_memory,
 )
-from recall import resolve_search_query as _resolve_search_query  # noqa: E402
 from room_context import normalize_alias  # noqa: E402
-from search_format import (  # noqa: E402
-    format_memory_hit as _format_memory_hit,
-    format_paperless_hit as _format_paperless_hit,
-)
-from nl_query import (  # noqa: E402
-    build_evidence,
-    expand_to_full_content,
-    extract_citations,
-    format_evidence_item,
-    is_deferral,
-    select_evidence_for_display,
-)
 from text_utils import (  # noqa: E402
     clean_filename as _clean_filename,
     google_docs_export_url as _google_docs_export_url,
@@ -103,6 +88,7 @@ from document_pipeline import (  # noqa: E402
     FilingOutcome,
     utc_now_isoformat,
 )
+from search_service import SearchService  # noqa: E402
 
 
 @contextmanager
@@ -272,6 +258,7 @@ class ArchivistBot(MicroBot):
         self._text_extractor: TextExtractor | None = None
         self._mirror: GitMirror | None = None
         self._pipeline: DocumentPipeline | None = None
+        self._search: SearchService | None = None
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
@@ -333,6 +320,17 @@ class ArchivistBot(MicroBot):
             actor=self.user_id,
             load_ontology=self._load_ontology,
             correspondents_section=self._compute_correspondents_section,
+        )
+        self._search = SearchService(
+            classifier=self._classifier,
+            paperless=self._paperless,
+            t=self.t,
+            language=self.language,
+            code_public_url=self.code_public_url,
+            mirror_org=self.mirror_org,
+            paperless_public_url=self.paperless_public_url,
+            shared_bucket=self.shared_bucket,
+            ontology_section=self._compute_ontology_section,
         )
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
@@ -1286,244 +1284,26 @@ class ArchivistBot(MicroBot):
 
     # ── Search ───────────────────────────────────────────────────────────
 
-    def _search_scopes_for_sender(self, sender: str | None) -> list[str]:
-        """Vault-path prefixes the asker is allowed to see.
-
-        The vault is entity-rooted: shared/family docs live under
-        `<shared_bucket>/`, each person's private notes under their
-        own slug. The Matrix localpart is the canonical entity slug
-        across famstack (`@marge:home → marge`), matching `users.toml`
-        ids — so we don't need a separate identity mapping.
-
-        Default closed: an unknown sender gets the shared bucket only.
-        Personal notes never leak to an unmapped Matrix ID.
-        """
-        scopes = [f"{self.shared_bucket}/"]
-        if sender:
-            # @marge:home.local → "marge". The bot uses this same
-            # extraction at line ~553 for admin discovery.
-            entity = sender.lstrip("@").split(":", 1)[0]
-            if entity and entity != self.shared_bucket:
-                scopes.append(f"{entity}/")
-        return scopes
-
     async def _handle_search(
         self, room_id: str, query: str, reply_to: str | None = None,
         *, sender: str | None = None,
     ):
-        """Search both Paperless (source docs) and the memory vault (curated
-        layer: notes, bookmarks, wiki entries).
+        """Search Paperless + the memory vault and reply.
 
-        Memory search runs in a thread to keep the event loop free —
-        it's pure file I/O + regex but the memory tree can grow
-        large. Refresh is best-effort: if Forgejo is reachable and
-        has new commits, the local checkout fast-forwards before
-        the walk; otherwise we search the local copy as-is.
-
-        Memory results are scoped by the asker's identity (the Matrix
-        sender's localpart). Marge sees the shared bucket plus her
-        own entity tree (`family/...` + `marge/...`); she does not
-        see Homer's or Bart's private notes. An unmapped sender (no
-        match in the Matrix ID → entity mapping) gets the shared
-        bucket only — default closed, never leak personal notes.
-
-        Format is deliberately terse — one line per hit — so a reply
-        with many matches stays within Matrix's friendly message
-        size and within the bot's own context budget when fed back
-        to a recall agent.
-
-        Questions (anything ending with `?`) get an LLM keyword
-        extraction step via the recall module before the search. The
-        rewrite is best-effort: any failure falls back to the literal
-        query so a misbehaving model can't block recall. When the
-        rewrite runs, the keywords are surfaced in the reply header
-        so the family can tell what was actually searched.
+        Delegates to SearchService for the work (query resolution, dual
+        search, synthesis + bounded deep-dive); it returns the reply
+        text. Search posts no confirmation before the work, so typing
+        starts immediately and the framework's wrap clears it on exit.
+        The one mid-flow status (the deep-dive "looking deeper" note) is
+        sent through the `announce` callback.
         """
-        logger.info(
-            "[archivist] search: sender={} query={!r}",
-            sender, query[:80],
-        )
-
-        # Search posts no confirmation before the work, so typing
-        # starts immediately. The framework's wrap clears it on exit.
         await self._set_typing(room_id, on=True)
 
-        memory_regex, paperless_query, keywords = await _resolve_search_query(
-            query,
-            classifier=self._classifier,
-            ontology_section=self._compute_ontology_section(),
-            language=self.language,
-        )
-        if keywords:
-            logger.info(
-                "[archivist] search rewritten: {!r} -> {}",
-                query[:60], keywords,
-            )
+        async def announce(text: str) -> None:
+            await self._send(room_id, text, reply_to)
 
-        paperless_results = await self._paperless.search(paperless_query)
-        logger.info(
-            "[archivist] paperless: {} hit(s)", len(paperless_results),
-        )
-
-        memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
-        memory_results: list[dict] = []
-        if memory_dir:
-            memory_path = Path(memory_dir)
-            await asyncio.to_thread(_refresh_memory_vault, memory_path)
-            scopes = self._search_scopes_for_sender(sender)
-            memory_results = await asyncio.to_thread(
-                _search_memory, memory_regex, memory_path,
-                None, None, scopes, 10,
-            )
-            logger.info(
-                "[archivist] memory: {} hit(s) scopes={}",
-                len(memory_results), scopes,
-            )
-        else:
-            logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
-
-        if not memory_results and not paperless_results:
-            await self._send(room_id, self.t("search_no_results", query=query), reply_to)
-            return
-
-        # Each block here is one paragraph in the rendered reply --
-        # the question header, each section header, and each hit. They
-        # join with a blank line so python-markdown treats them as
-        # distinct paragraphs / list items. Joining with a single \n
-        # collapses the whole reply into one paragraph, which is what
-        # produced the run-on "1. ... 2. ... 3. ..." line earlier.
-        # Continuation lines inside a single hit (path, excerpt) stay
-        # joined by a single \n inside the hit string itself.
-        blocks: list[str] = []
-        if keywords:
-            # Question-mode header: surface the rewritten keywords so
-            # the family can spot a bad rewrite that hides results.
-            blocks.append(self.t(
-                "search_rewritten", query=query, keywords=", ".join(keywords),
-            ))
-
-        # ── Synthesis (question mode only) ────────────────────────────
-        # Question-mode queries (`keywords` non-empty, classifier
-        # available) get an extra LLM round-trip that turns the hit
-        # set into a natural-language answer. The synthesized answer
-        # sits above a single unified evidence list whose [N] numbers
-        # match the citations the model emitted. On any LLM failure
-        # we fall through to the literal Memory/Paperless split below
-        # -- the family still sees their results, just without the
-        # synthesized answer on top.
-        synthesized = ""
-        evidence: list[dict] = []
-        if keywords and self._classifier:
-            evidence = build_evidence(
-                memory_results, paperless_results,
-                code_public_url=self.code_public_url,
-                mirror_org=self.mirror_org,
-                paperless_public_url=self.paperless_public_url,
-            )
-            synthesized = await self._classifier.synthesize_answer(
-                query, evidence, lang=self.language,
-            )
-            logger.info(
-                "[archivist] synthesis: {} evidence item(s), answer={} chars",
-                len(evidence), len(synthesized),
-            )
-
-        if synthesized:
-            # Only show the rows the answer actually cited; falls
-            # back to the top few when the model didn't cite at all
-            # (e.g. a deferral message or an "I don't know"). Keeping
-            # the original numbering means the answer's [N] still
-            # points at the right row of the displayed list, even
-            # when intermediate rows are filtered out.
-            citations = extract_citations(synthesized)
-            selected = select_evidence_for_display(evidence, citations)
-            logger.info(
-                "[archivist] synthesis citations={} → showing {} of {} rows",
-                citations, len(selected), len(evidence),
-            )
-
-            # ── Deep dive (single second turn on deferral) ──────────
-            # When the first synthesis punted ("I'd need to read [N]
-            # in detail"), the cited documents are the ones the family
-            # actually wants summarised -- but the model only saw the
-            # `> [!summary]` blurb. Send a short status message so the
-            # family knows we're not stuck, then re-synthesize with
-            # full-text evidence and overwrite the answer. Bounded to
-            # one extra round-trip: if the second pass also defers,
-            # we surface the deferral instead of looping.
-            if is_deferral(synthesized) and selected:
-                # Use document titles in the status message instead of
-                # bracket refs: the second-turn evidence list is
-                # renumbered to [1], so a "[2]" here would point at
-                # nothing the family can see. Titles map to what's
-                # visible in the evidence below by name.
-                titles = ", ".join(
-                    (ev.get("title") or "the document").strip()
-                    for _, ev in selected
-                )
-                await self._send(
-                    room_id,
-                    self.t("search_looking_deeper", titles=titles),
-                    reply_to,
-                )
-                expanded = expand_to_full_content(
-                    selected, memory_results, paperless_results,
-                )
-                deeper = await self._classifier.synthesize_answer(
-                    query, expanded, lang=self.language,
-                )
-                logger.info(
-                    "[archivist] deep-dive: {} doc(s), answer={} chars",
-                    len(expanded), len(deeper),
-                )
-                if deeper and not is_deferral(deeper):
-                    # Second-pass numbering starts fresh at [1], since
-                    # we passed `expanded` (a subset) to the LLM. The
-                    # citations now refer to positions in `selected`
-                    # 1-indexed -- re-pick the displayed rows in the
-                    # new order so the brackets in the answer line up.
-                    deeper_cites = extract_citations(deeper)
-                    deeper_selected = select_evidence_for_display(
-                        [ev for _n, ev in selected],
-                        deeper_cites,
-                    )
-                    synthesized = deeper
-                    # Rebuild the displayed evidence with the new
-                    # numbering matching the second-pass citations.
-                    blocks.append(self.t("search_answer", answer=synthesized))
-                    blocks.append(self.t("search_evidence_header"))
-                    for idx, ev in deeper_selected:
-                        blocks.append(format_evidence_item(ev, idx))
-                    await self._send(room_id, "\n\n".join(blocks), reply_to)
-                    return
-
-            blocks.append(self.t("search_answer", answer=synthesized))
-            blocks.append(self.t("search_evidence_header"))
-            for idx, ev in selected:
-                blocks.append(format_evidence_item(ev, idx))
-            await self._send(room_id, "\n\n".join(blocks), reply_to)
-            return
-
-        # Literal mode (or synthesis failed): the historic two-section
-        # layout, one block per source, with bare numbered hits.
-        if memory_results:
-            blocks.append(self.t("search_memory_results", query=query))
-            for n, r in enumerate(memory_results, start=1):
-                blocks.append(_format_memory_hit(
-                    r, n,
-                    code_public_url=self.code_public_url,
-                    mirror_org=self.mirror_org,
-                ))
-
-        if paperless_results:
-            blocks.append(self.t("search_paperless_results", query=query))
-            for n, doc in enumerate(paperless_results, start=1):
-                blocks.append(_format_paperless_hit(
-                    doc, n,
-                    public_url=self.paperless_public_url,
-                ))
-
-        await self._send(room_id, "\n\n".join(blocks), reply_to)
+        reply = await self._search.run(query=query, sender=sender, announce=announce)
+        await self._send(room_id, reply, reply_to)
 
     # ── Show document content ─────────────────────────────────────────
 
