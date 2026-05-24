@@ -89,6 +89,33 @@ def render_filing_reply(
     return "\n".join(lines)
 
 
+def render_reprocessed_reply(
+    t: Translator,
+    *,
+    title: str,
+    doc_id: int,
+    resolved_topics: list[str],
+    resolved_persons: list[str],
+    resolved_type: str | None,
+    resolved_correspondent: str | None,
+) -> str:
+    """Render the "document reclassified" confirmation after a reply-correction.
+
+    A title line plus the compact metadata row. No summary/facts/links —
+    the reprocess pass corrects classification, and the original filing
+    already carried the rich detail.
+    """
+    lines = [t("reprocessed", title=title, doc_id=doc_id)]
+    meta_parts: list[str] = [*resolved_topics, *resolved_persons]
+    if resolved_type:
+        meta_parts.append(resolved_type)
+    if resolved_correspondent:
+        meta_parts.append(resolved_correspondent)
+    if meta_parts:
+        lines.extend(["", "  " + " | ".join(meta_parts)])
+    return "\n".join(lines)
+
+
 def render_capture_reply(
     t: Translator,
     *,

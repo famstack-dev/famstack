@@ -16,7 +16,11 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from reply_presenter import render_filing_reply, render_capture_reply  # noqa: E402
+from reply_presenter import (  # noqa: E402
+    render_capture_reply,
+    render_filing_reply,
+    render_reprocessed_reply,
+)
 
 
 def _en(key, **kw):
@@ -131,6 +135,26 @@ class TestRenderFilingReply:
             classification={}, created_new=[], reformat_failed=False, link="",
         )
         assert "http" not in out
+
+
+class TestRenderReprocessedReply:
+
+    def test_title_and_meta(self):
+        out = render_reprocessed_reply(
+            _en, title="ADAC Invoice", doc_id=42,
+            resolved_topics=["Insurance"], resolved_persons=["Homer"],
+            resolved_type="Invoice", resolved_correspondent="Globex",
+        )
+        assert "reprocessed" in out  # _en falls back to the bare key
+        assert "Insurance | Homer | Invoice | Globex" in out
+
+    def test_no_meta_line_when_empty(self):
+        out = render_reprocessed_reply(
+            _en, title="x", doc_id=1,
+            resolved_topics=[], resolved_persons=[],
+            resolved_type=None, resolved_correspondent=None,
+        )
+        assert " | " not in out
 
 
 class TestRenderCaptureReply:

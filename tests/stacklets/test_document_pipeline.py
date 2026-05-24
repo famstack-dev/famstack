@@ -122,6 +122,17 @@ class TestEarlyExits:
         assert mirror.published[0]["fallback_title"] == "note.txt"
 
 
+class TestReprocess:
+
+    @pytest.mark.asyncio
+    async def test_doc_missing(self):
+        # The doc the reply targets was deleted — reprocess can't enrich it.
+        pipe = _pipeline(FakePaperless(doc=None))
+        out = await pipe.reprocess(doc_id=99, user_hint="it's from Globex")
+        assert out.status == "doc_missing"
+        assert out.doc_id == 99
+
+
 class TestEnrichedOutcomes:
 
     @pytest.mark.asyncio

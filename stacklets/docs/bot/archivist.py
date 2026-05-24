@@ -48,7 +48,6 @@ from nio import (
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
-from matching import build_document_event
 from microbot import MicroBot
 from capabilities import ModelCapabilities
 from pipeline import (
@@ -56,7 +55,6 @@ from pipeline import (
     DEFAULT_CLASSIFY_MAX_CHARS,
     PaperlessAPI,
     PaperlessDuplicateError,
-    enrich_document,
 )
 from stack import resolve_model
 
@@ -74,11 +72,14 @@ from text_utils import (  # noqa: E402
     looks_like_paste,
     strip_reply_fallback as _strip_reply_fallback,
 )
-from reply_presenter import render_capture_reply, render_filing_reply  # noqa: E402
+from reply_presenter import (  # noqa: E402
+    render_capture_reply,
+    render_filing_reply,
+    render_reprocessed_reply,
+)
 from document_pipeline import (  # noqa: E402
     DocumentPipeline,
     FilingOutcome,
-    utc_now_isoformat,
 )
 from search_service import SearchService  # noqa: E402
 from capture_pipeline import CapturePipeline, CaptureOutcome  # noqa: E402
@@ -521,102 +522,41 @@ class ArchivistBot(MicroBot):
         self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
         *, date_filed: str | None = None,
     ) -> None:
-        """Re-run the pipeline on `doc_id` with the user's reply as a hint.
+        """Re-enrich `doc_id` with the user's reply as a correction hint.
 
-        The hint becomes a high-priority block in the classify prompt —
-        the LLM treats it as a correction that overrides its prior
-        reading. The mirror's existing idempotent publish path
-        overwrites the old markdown entry on the same paperless_id.
-        `is_reprocess=True` preserves the document's filing date in
-        Paperless.
+        The pipeline does the work and returns a ReprocessOutcome; this
+        maps it to a chat reply. The reclassified confirmation carries a
+        fresh `document.reclassified` envelope so the user can chain
+        another correction by replying to it.
         """
-        doc = await self._paperless.get_doc(doc_id)
-        if not doc:
-            await self._send(
-                room_id, self.t("reprocess_doc_missing", doc_id=doc_id),
-                reply_to,
-            )
-            return
-
-        ontology = self._vault.ontology()
-        result = await enrich_document(
-            paperless=self._paperless,
-            classifier=self._classifier,
-            doc=doc,
-            classify_max_chars=self.classify_max_chars,
-            ontology_section=ontology.classifier_prompt_section(self.language),
-            correspondents_section=self._vault.correspondents_section(),
-            ontology=ontology,
-            lang=self.language,
-            is_reprocess=True,
-            date_filed=date_filed,
-            user_hint=user_hint,
+        o = await self._pipeline.reprocess(
+            doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
         )
-        if result.llm_error:
-            kind, detail = result.llm_error
+        if o.status == "doc_missing":
+            await self._send(
+                room_id, self.t("reprocess_doc_missing", doc_id=doc_id), reply_to,
+            )
+        elif o.status == "llm_error":
+            kind, detail = o.llm_error
             await self._send(
                 room_id,
                 self.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
                 reply_to,
             )
-            return
-
-        # Refetch so the mirror sees the post-PATCH title/tags.
-        refreshed = await self._paperless.get_doc(doc_id) or doc
-        paperless_tags = [
-            *result.resolved_topics,
-            *(f"Person: {p}" for p in result.resolved_persons),
-        ]
-        await self._pipeline.safe_mirror(
-            doc_id=doc_id,
-            classification=dict(result.classification, **{
-                "topics": result.resolved_topics,
-                "persons": result.resolved_persons,
-                "correspondent": result.resolved_correspondent,
-                "document_type": result.resolved_type,
-            }),
-            body_text=refreshed.get("content", "") or "",
-            processing="ai_formatted" if result.classification else "ocr",
-            model=None,
-            fallback_title=refreshed.get("title") or f"Paperless #{doc_id}",
-            paperless_tags=paperless_tags,
-            summary=result.summary,
-        )
-
-        # Echo back a confirmation carrying a fresh envelope so the
-        # user can chain another correction by replying to THIS
-        # message too. The envelope `type` is `document.reclassified`
-        # so the deriver can distinguish the corrective pass from
-        # the original filing in the ledger.
-        title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
-        meta_parts: list[str] = []
-        meta_parts.extend(result.resolved_topics)
-        meta_parts.extend(result.resolved_persons)
-        if result.resolved_type:
-            meta_parts.append(result.resolved_type)
-        if result.resolved_correspondent:
-            meta_parts.append(result.resolved_correspondent)
-        lines = [self.t("reprocessed", title=title, doc_id=doc_id)]
-        if meta_parts:
-            lines.extend(["", "  " + " | ".join(meta_parts)])
-
-        envelope = build_document_event(
-            doc_id, result.classification,
-            resolved_topics=result.resolved_topics,
-            resolved_persons=result.resolved_persons,
-            resolved_correspondent=result.resolved_correspondent,
-            resolved_type=result.resolved_type,
-            paperless_url=self.paperless_public_url,
-            actor=self.user_id,
-            ts=utc_now_isoformat(),
-        )
-        envelope["type"] = "document.reclassified"
-        envelope["summary"] = f"{title} reclassified (#{doc_id})"
-        envelope["data"]["user_hint"] = user_hint
-        await self._send(
-            room_id, "\n".join(lines), reply_to,
-            metadata={"dev.famstack.event": envelope},
-        )
+        else:  # reclassified
+            reply = render_reprocessed_reply(
+                self.t,
+                title=o.title,
+                doc_id=doc_id,
+                resolved_topics=o.resolved_topics,
+                resolved_persons=o.resolved_persons,
+                resolved_type=o.resolved_type,
+                resolved_correspondent=o.resolved_correspondent,
+            )
+            await self._send(
+                room_id, reply, reply_to,
+                metadata={"dev.famstack.event": o.envelope},
+            )
 
     async def _process_document(
         self, room_id: str, filename: str, display_name: str,
