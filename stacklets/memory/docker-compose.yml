@@ -6,10 +6,12 @@
 # build --serve`, which watches the bind-mounted vault and rebuilds
 # whenever the hooks pull new commits in from Forgejo.
 #
-# Read path only. The vault is mounted read-only — edits go through
-# Forgejo, which is the canonical source of truth. The image is
-# built locally from the sibling Dockerfile and Watchtower is told
-# to ignore it (there's no upstream image to track).
+# The vault is mounted read-write so the garden can keep its working
+# copy in sync with Forgejo (a background `git pull` loop in the
+# entrypoint). Edits still happen in Forgejo, which stays the canonical
+# source of truth; the garden only ever fast-forwards. The image is
+# built locally from the sibling Dockerfile and Watchtower is told to
+# ignore it (there's no upstream image to track).
 
 name: stack-memory
 
@@ -26,10 +28,11 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
     networks:
       - stack
-    # Vault is mounted read-only: the garden never writes back. Every
-    # change must round-trip through Forgejo so it lands as a commit.
+    # Mounted read-write so the entrypoint can fast-forward the working
+    # copy from Forgejo (git pull). Edits still round-trip through
+    # Forgejo so they land as commits; the garden never writes its own.
     volumes:
-      - ${MEMORY_VAULT_DIR}:/vault:ro
+      - ${MEMORY_VAULT_DIR}:/vault
     environment:
       # Used by quartz.config.ts to build "edit on Forgejo" links and
       # absolute URLs. Resolved by the runtime from stack.toml.
@@ -37,6 +40,8 @@ services:
       GARDEN_HOST: ${GARDEN_HOST}
       GARDEN_IP: ${GARDEN_IP}
       GARDEN_PORT: "42070"
+      # How often the background loop pulls family/memory from Forgejo.
+      VAULT_SYNC_INTERVAL: "20"
     ports:
       # Container's Quartz preview server listens on 8080; we publish
       # on the stacklet's declared port (42070). PORT_BIND_IP is set

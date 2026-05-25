@@ -40,11 +40,18 @@ RUN git clone --depth 1 --branch "${QUARTZ_TAG}" https://github.com/jackyzha0/qu
 COPY quartz/quartz.config.ts ./quartz.config.ts
 COPY quartz/quartz.layout.ts ./quartz.layout.ts
 
+# The entrypoint keeps the vault in sync (background git pull loop) and
+# then serves it with Quartz. See quartz/entrypoint.sh.
+COPY quartz/entrypoint.sh /usr/local/bin/garden-entrypoint.sh
+RUN chmod +x /usr/local/bin/garden-entrypoint.sh
+
 # Quartz's preview server defaults to port 8080. Node's
 # `server.listen(port)` with no host binds 0.0.0.0, so the port
 # publishes cleanly to the Docker network without an explicit
 # `--bind` flag (which Quartz v4 doesn't expose).
 EXPOSE 8080
 
-ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["npx", "quartz", "build", "--serve", "--directory", "/vault", "--port", "8080"]
+# `-g` so a stop signal reaches the whole process group — both Quartz
+# and the background vault-sync loop — not just Quartz.
+ENTRYPOINT ["/sbin/tini", "-g", "--"]
+CMD ["/usr/local/bin/garden-entrypoint.sh"]
