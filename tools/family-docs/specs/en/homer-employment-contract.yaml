@@ -1,0 +1,55 @@
+render: pdf
+filename: homer-employment-contract.pdf
+accent: "#1b5e20"
+
+letterhead:
+  name: Springfield Nuclear Power Plant
+  lines:
+    - Sector 7-G, Reactor Building 2
+    - Springfield, OR 97401
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Contract of Employment
+
+meta:
+  Contract No.: "EMP-1998-0007"
+  Effective: "08 Jun 1998"
+  Position: "Safety Inspector"
+  Department: "Sector 7-G"
+
+blocks:
+  - p: "This Contract of Employment is made between Springfield Nuclear Power Plant (the Employer) and Homer J. Simpson (the Employee), effective from the date shown above."
+  - heading: 1. Position and Duties
+  - p: "The Employee is engaged as Safety Inspector for Sector 7-G and shall perform all duties reasonably associated with that role, including but not limited to monitoring reactor output and not falling asleep at the console."
+  - heading: 2. Compensation
+  - table:
+      columns: [Component, Amount, Frequency]
+      align: [L, R, L]
+      rows:
+        - ["Base salary", "35,400.00", "per year"]
+        - ["Hazard allowance", "5,760.00", "per year"]
+        - ["Annual safety bonus", "1,000.00", "per year"]
+  - heading: 3. Hours and Leave
+  - bullets:
+      - "Standard hours: 40 per week, Monday to Friday."
+      - "Paid leave: 15 working days per year."
+      - "One (1) unpaid donut break per shift."
+  - heading: 4. Termination
+  - p: "Either party may terminate this contract with four (4) weeks written notice. The Employer reserves the right to summary dismissal for gross negligence resulting in a partial meltdown."
+  - signature:
+      name: Montgomery Burns
+      role: Owner, Springfield Nuclear Power Plant
+
+footer: "Springfield Nuclear Power Plant · Contract of Employment · A demo document for famstack."
+
+expected:
+  document_type: Contract
+  topics: [Employment, Legal]
+  persons: [Homer]
+  correspondent: Springfield Nuclear Power Plant
+  date: "1998-06-08"

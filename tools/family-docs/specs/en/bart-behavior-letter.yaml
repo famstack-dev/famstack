@@ -1,0 +1,49 @@
+render: pdf
+filename: bart-behavior-letter.pdf
+accent: "#1565c0"
+
+letterhead:
+  name: Springfield Elementary School
+  lines:
+    - 19 Plympton Street
+    - Springfield, OR 97401
+    - "Principal: W. Seymour Skinner"
+
+recipient:
+  name: Mr. & Mrs. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Notice of Disciplinary Action
+
+meta:
+  Reference: "DISC-2026-0417"
+  Date: "17 Apr 2026"
+  Student: "Bart Simpson, Grade 4"
+
+blocks:
+  - p: "Dear Mr. and Mrs. Simpson,"
+  - p: "I am writing to inform you of a disciplinary matter involving your son, Bart. On the morning of 16 April, Bart was found to have written the same sentence 47 times on the chalkboard without authorisation, and to have released the class hamster during the fire drill."
+  - p: "As a consequence, Bart will serve detention each afternoon this week from 3:00 to 4:00 PM. We ask that you discuss the importance of classroom conduct with him at home."
+  - heading: Summary of Incidents
+  - table:
+      columns: [Date, Incident, Action]
+      align: [L, L, L]
+      rows:
+        - ["16 Apr", "Unauthorised chalkboard use", "Detention (1 day)"]
+        - ["16 Apr", "Release of class hamster", "Detention (4 days)"]
+        - ["12 Apr", "Skateboarding in hallway", "Verbal warning"]
+  - p: "Please sign and return the attached slip by Friday. Thank you for your cooperation."
+  - signature:
+      name: W. Seymour Skinner
+      role: Principal, Springfield Elementary
+
+footer: "Springfield Elementary School · A demo document for famstack."
+
+expected:
+  document_type: Letter
+  topics: [Education, Child]
+  persons: [Bart]
+  correspondent: Springfield Elementary School
+  date: "2026-04-17"

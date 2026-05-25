@@ -1,0 +1,43 @@
+render: pdf
+filename: marge-recipe-card.pdf
+accent: "#ad1457"
+
+letterhead:
+  name: From the Kitchen of Marge Simpson
+  lines:
+    - "742 Evergreen Terrace, Springfield"
+
+title: Marge's Famous Pork Chops
+
+meta:
+  Serves: "5 (plus seconds for Homer)"
+  Prep: "15 min"
+  Cook: "25 min"
+
+blocks:
+  - p: "A Bouvier family recipe, passed down from Grandma Jacqueline. The secret is the apple-onion gravy. Bart will complain; serve anyway."
+  - heading: Ingredients
+  - bullets:
+      - "5 bone-in pork chops"
+      - "2 tbsp flour, salt and pepper"
+      - "2 tbsp butter"
+      - "1 onion, sliced"
+      - "1 apple, sliced"
+      - "1 cup chicken stock"
+      - "1 tsp mustard"
+  - heading: Method
+  - p: "1. Season the chops and dust lightly with flour."
+  - p: "2. Brown the chops in butter over medium-high heat, about 3 minutes a side. Set aside."
+  - p: "3. Soften the onion and apple in the same pan until golden."
+  - p: "4. Add stock and mustard, scrape the pan, and simmer to a gravy."
+  - p: "5. Return the chops, cover, and simmer 15 minutes until tender."
+  - p: "Serve with mashed potatoes. Hide one chop for later or there won't be any."
+
+footer: "A Bouvier family recipe · A demo document for famstack."
+
+expected:
+  document_type: Fact Sheet
+  topics: [Recipe]
+  persons: [Marge]
+  correspondent: null
+  date: null

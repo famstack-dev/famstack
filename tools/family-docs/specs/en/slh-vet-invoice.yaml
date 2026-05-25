@@ -1,0 +1,46 @@
+render: pdf
+filename: slh-vet-invoice.pdf
+accent: "#4e342e"
+
+letterhead:
+  name: Springfield Animal Hospital
+  lines:
+    - 88 Paws Lane
+    - Springfield, OR 97401
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "Owner of: Santa's Little Helper (Greyhound)"
+    - "742 Evergreen Terrace, Springfield, OR 97401"
+
+title: Veterinary Invoice
+
+meta:
+  Invoice No.: "VET-2026-0410"
+  Date: "10 Apr 2026"
+  Patient: "Santa's Little Helper"
+  Species: "Dog, Greyhound"
+
+blocks:
+  - p: "Thank you for bringing Santa's Little Helper in for his annual check-up. He is in good health, though slightly overfed on table scraps."
+  - heading: Services
+  - table:
+      columns: [Description, Amount]
+      align: [L, R]
+      rows:
+        - ["Annual wellness exam", "55.00"]
+        - ["Rabies vaccination", "32.00"]
+        - ["Flea & tick treatment", "28.00"]
+        - ["Nail trim", "15.00"]
+      total: ["Total due", "130.00"]
+  - p: "Recommendation: fewer leftovers, more walks. Next check-up due April 2027."
+
+footer: "Springfield Animal Hospital · Invoice VET-2026-0410 · A demo document for famstack."
+
+expected:
+  document_type: Invoice
+  topics: [Pet]
+  persons: [Homer]
+  correspondent: Springfield Animal Hospital
+  date: "2026-04-10"

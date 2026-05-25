@@ -1,0 +1,48 @@
+render: pdf
+filename: maggie-vaccination-record.pdf
+accent: "#00695c"
+
+letterhead:
+  name: Hibbert Family Practice
+  lines:
+    - Dr. Julius Hibbert, M.D.
+    - 55 Healthway Drive, Springfield, OR 97401
+
+recipient:
+  name: Margaret "Maggie" Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Date of birth: 14 Jan 2025"
+
+title: Immunization Record
+
+meta:
+  Patient: "Maggie Simpson"
+  Record No.: "IMM-2026-0312"
+  Issued: "12 Mar 2026"
+
+blocks:
+  - p: "This is the official immunization record for the patient named above. Please retain it for school enrolment and travel."
+  - heading: Vaccinations Administered
+  - table:
+      columns: [Vaccine, Date, Lot, Provider]
+      align: [L, L, L, L]
+      rows:
+        - ["Hepatitis B", "16 Jan 2025", "HB-4471", "Dr. Hibbert"]
+        - ["DTaP (1st)", "20 Mar 2025", "DT-2210", "Dr. Hibbert"]
+        - ["MMR (1st)", "18 Jan 2026", "MM-8842", "Dr. Hibbert"]
+        - ["Polio (IPV)", "18 Jan 2026", "IPV-115", "Dr. Hibbert"]
+        - ["Varicella", "12 Mar 2026", "VAR-090", "Dr. Hibbert"]
+  - p: "Next due: DTaP booster at 18 months. The patient remains in excellent health and continues to enjoy her pacifier."
+  - signature:
+      name: Dr. Julius Hibbert, M.D.
+      role: Hibbert Family Practice
+
+footer: "Hibbert Family Practice · Immunization Record · A demo document for famstack."
+
+expected:
+  document_type: Certificate
+  topics: [Vaccination, Medical, Child]
+  persons: [Maggie]
+  correspondent: Dr. Julius Hibbert
+  date: "2026-03-12"

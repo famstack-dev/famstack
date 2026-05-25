@@ -1,0 +1,23 @@
+render: receipt
+filename: texxon-gas-receipt.png
+
+store: TEXXON FUEL
+lines:
+  - "Route 401, Springfield"
+  - "Pump 3"
+date: "30 Mar 2026  08:12"
+
+items:
+  - ["Unleaded 12.4 gal", "44.64"]
+  - ["at $3.60 / gal", ""]
+  - ["Car wash", "8.00"]
+total: "52.64"
+paid: "Card ****4471"
+footer: "Thanks for fueling up at Texxon"
+
+expected:
+  document_type: Receipt
+  topics: [Vehicle]
+  persons: [Homer]
+  correspondent: Texxon
+  date: "2026-03-30"

@@ -1,0 +1,25 @@
+render: certificate
+filename: homer-birth-certificate.png
+
+authority: "Springfield County, State of Oregon, Office of Vital Records"
+title: "Certificate of Birth"
+register_no: "1956-00417"
+seal_text: "VITAL RECORDS"
+
+fields:
+  Name of Child: "Homer Jay Simpson"
+  Sex: "Male"
+  Date of Birth: "May 12, 1956"
+  Place of Birth: "Springfield General Hospital"
+  Father: "Abraham J. Simpson"
+  Mother: "Mona J. Simpson"
+  Date Registered: "May 15, 1956"
+
+registrar: "C. Montgomery"
+
+expected:
+  document_type: Certificate
+  topics: [Personal Record]
+  persons: [Homer]
+  correspondent: Springfield County Office of Vital Records
+  date: "1956-05-12"

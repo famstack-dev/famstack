@@ -1,0 +1,41 @@
+render: pdf
+filename: bart-birth-certificate.pdf
+accent: "#455a64"
+
+letterhead:
+  name: "State of Oregon · Springfield County"
+  lines:
+    - Office of Vital Records
+    - 1 Government Plaza, Springfield, OR 97401
+
+title: Certificate of Live Birth
+
+meta:
+  Certificate No.: "BC-2016-10421"
+  Date Issued: "05 Apr 2016"
+
+blocks:
+  - p: "This certifies that the birth described below was registered with the Springfield County Office of Vital Records and is a true record on file."
+  - table:
+      columns: [Field, Detail]
+      align: [L, L]
+      rows:
+        - ["Name of child", "Bartholomew JoJo Simpson"]
+        - ["Sex", "Male"]
+        - ["Date of birth", "01 April 2016"]
+        - ["Time of birth", "06:30"]
+        - ["Place of birth", "Springfield General Hospital"]
+        - ["Father", "Homer J. Simpson"]
+        - ["Mother", "Marjorie Simpson (née Bouvier)"]
+  - signature:
+      name: County Registrar
+      role: Springfield County Office of Vital Records
+
+footer: "State of Oregon · Certificate of Live Birth · A demo document for famstack."
+
+expected:
+  document_type: Certificate
+  topics: [Personal Record, Child]
+  persons: [Bart]
+  correspondent: Springfield County Office of Vital Records
+  date: "2016-04-01"

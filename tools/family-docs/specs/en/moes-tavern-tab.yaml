@@ -1,0 +1,26 @@
+render: receipt
+filename: moes-tavern-tab.png
+
+store: MOE'S TAVERN
+lines:
+  - "57 Walnut Street, Springfield"
+  - "Proprietor: Moe Szyslak"
+date: "05 Mar 2026  23:18"
+
+items:
+  - ["Duff draft x5", "17.50"]
+  - ["Flaming Moe x2", "12.00"]
+  - ["Duff pitcher", "9.00"]
+  - ["Pickled eggs", "2.50"]
+  - ["Beer nuts", "1.50"]
+  - ["Love Tester", "1.00"]
+total: "43.50"
+paid: "Tab (Homer S.)"
+footer: "No tab over $50. Don't tell Marge."
+
+expected:
+  document_type: Receipt
+  topics: [Shopping]
+  persons: [Homer]
+  correspondent: Moe's Tavern
+  date: "2026-03-05"

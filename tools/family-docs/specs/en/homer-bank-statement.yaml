@@ -1,0 +1,48 @@
+render: pdf
+filename: homer-bank-statement.pdf
+accent: "#0d47a1"
+
+letterhead:
+  name: Bank of Springfield
+  lines:
+    - 1 Money Street
+    - Springfield, OR 97401
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Account Statement
+
+meta:
+  Account: "Checking ****4471"
+  Period: "01-31 Mar 2026"
+  Opening Balance: "$612.40"
+  Closing Balance: "$2,900.65"
+
+blocks:
+  - p: "Below is a summary of activity on your checking account for the period shown. Please review your transactions and report any discrepancies within 30 days."
+  - heading: Transactions
+  - table:
+      columns: [Date, Description, Amount]
+      align: [L, L, R]
+      rows:
+        - ["02 Mar", "Kwik-E-Mart", "-21.15"]
+        - ["05 Mar", "Moe's Tavern", "-43.50"]
+        - ["12 Mar", "Springfield Power & Light", "-138.20"]
+        - ["28 Mar", "SNPP Payroll (net pay)", "+2,610.00"]
+        - ["29 Mar", "Krusty Burger", "-18.90"]
+        - ["30 Mar", "ATM withdrawal", "-100.00"]
+      total: ["Closing balance", "", "2,900.65"]
+  - p: "Thank you for banking with the Bank of Springfield. Embiggen your savings with our new Christmas Club account."
+
+footer: "Bank of Springfield · Member SFDIC · A demo document for famstack."
+
+expected:
+  document_type: Statement
+  topics: [Finance]
+  persons: [Homer]
+  correspondent: Bank of Springfield
+  date: "2026-03-31"

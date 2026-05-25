@@ -1,0 +1,47 @@
+render: pdf
+filename: springfield-power-electricity-bill.pdf
+accent: "#e65100"
+
+letterhead:
+  name: Springfield Power & Light
+  lines:
+    - 200 Burns Avenue
+    - Springfield, OR 97401
+    - "Customer service: 1-800-SPRINGFIELD"
+
+recipient:
+  name: Marge Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Electricity Bill
+
+meta:
+  Account No.: "SPL-742-EVG"
+  Billing Period: "01-31 Mar 2026"
+  Meter No.: "M-0099821"
+  Due Date: "20 Apr 2026"
+
+blocks:
+  - p: "Your electricity usage for the billing period is summarised below. Your home used more than usual this month, likely due to extended television operation."
+  - heading: Charges
+  - table:
+      columns: [Description, Usage, Amount]
+      align: [L, R, R]
+      rows:
+        - ["Electricity (peak)", "640 kWh", "89.60"]
+        - ["Electricity (off-peak)", "310 kWh", "27.90"]
+        - ["Grid & meter fee", "", "14.50"]
+        - ["Renewable surcharge", "", "6.20"]
+      total: ["Total due", "", "138.20"]
+  - p: "Please pay by the due date to avoid a late fee. You can pay online or set up direct debit by quoting your account number."
+
+footer: "Springfield Power & Light · Powering Springfield since 1968 · A demo document for famstack."
+
+expected:
+  document_type: Invoice
+  topics: [Utility, Housing]
+  persons: [Marge]
+  correspondent: Springfield Power & Light
+  date: "2026-03-31"

@@ -1,0 +1,49 @@
+render: pdf
+filename: pta-meeting-minutes.pdf
+accent: "#1565c0"
+
+letterhead:
+  name: Springfield Elementary PTA
+  lines:
+    - Parent-Teacher Association
+    - 19 Plympton Street, Springfield, OR 97401
+
+title: Meeting Minutes
+
+meta:
+  Meeting: "Monthly PTA Meeting"
+  Date: "14 Apr 2026"
+  Location: "School Cafeteria"
+  Chair: "Marge Simpson"
+
+blocks:
+  - p: "The monthly meeting of the Springfield Elementary PTA was held on the date above. Present: M. Simpson (chair), Principal Skinner, Ms. Hoover, Ned Flanders, and eleven parents."
+  - heading: Discussion
+  - bullets:
+      - "Spring bake sale confirmed for 09 May to raise funds for new library books."
+      - "Cafeteria menu review: less grey, more vegetables requested."
+      - "Playground fence repair quote received from Springfield Hardware ($420)."
+      - "Proposal to ban skateboards in hallways passed (one objection, from B. Simpson's note)."
+  - heading: Action Items
+  - table:
+      columns: [Action, Owner, Due]
+      align: [L, L, L]
+      rows:
+        - ["Organise bake sale stalls and sign-up sheet", "Marge Simpson", "30 Apr 2026"]
+        - ["Approve fence repair and schedule work", "Principal Skinner", "22 Apr 2026"]
+        - ["Revise cafeteria menu with nutritionist", "Ms. Hoover", "06 May 2026"]
+        - ["Collect bake sale donations from families", "Ned Flanders", "07 May 2026"]
+        - ["Book the school hall for the sale", "Marge Simpson", "25 Apr 2026"]
+  - p: "Next meeting: 12 May 2026, 7:00 PM, in the cafeteria. Meeting adjourned at 8:15 PM."
+  - signature:
+      name: Marge Simpson
+      role: PTA Chair
+
+footer: "Springfield Elementary PTA · Minutes of 14 Apr 2026 · A demo document for famstack."
+
+expected:
+  document_type: Protocol
+  topics: [Education, Membership]
+  persons: [Marge]
+  correspondent: Springfield Elementary School
+  date: "2026-04-14"

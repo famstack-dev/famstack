@@ -1,0 +1,47 @@
+render: pdf
+filename: homer-tax-assessment.pdf
+accent: "#37474f"
+
+letterhead:
+  name: Springfield Department of Revenue
+  lines:
+    - Tax Assessment Division
+    - 1 Government Plaza, Springfield, OR 97401
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Notice of Tax Assessment
+
+meta:
+  Tax Year: "2025"
+  Assessment No.: "TA-2025-008812"
+  Taxpayer ID: "SSN ***-**-7440"
+  Issued: "30 Apr 2026"
+
+blocks:
+  - p: "This notice sets out your assessed income tax for the tax year shown. Please review the figures carefully. If you disagree, you may file an objection within 30 days of the issue date."
+  - heading: Assessment
+  - table:
+      columns: [Item, Amount]
+      align: [L, R]
+      rows:
+        - ["Assessed gross income", "42,160.00"]
+        - ["Allowable deductions", "-6,400.00"]
+        - ["Taxable income", "35,760.00"]
+        - ["Income tax due", "4,891.00"]
+        - ["Tax withheld by employer", "-5,180.00"]
+      total: ["Refund due to taxpayer", "289.00"]
+  - p: "A refund of $289.00 will be paid to your account on file at the Bank of Springfield within 21 days. No further action is required."
+
+footer: "Springfield Department of Revenue · Assessment TA-2025-008812 · A demo document for famstack."
+
+expected:
+  document_type: Tax Assessment
+  topics: [Tax, Tax Office]
+  persons: [Homer]
+  correspondent: Springfield Department of Revenue
+  date: "2026-04-30"
