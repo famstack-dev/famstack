@@ -45,6 +45,43 @@ Dependencies live in the `demo` extra in `pyproject.toml`
 (`reportlab`, `Pillow`, `pyyaml`). They are host-side tooling only and
 are **not** needed to run the stack.
 
+## Filing them into a running stack
+
+`ingest.py` files the rendered documents into a running instance by
+posting each one into the Matrix `documents` room as the family member
+who would plausibly have uploaded it. The archivist watches that room,
+so each document takes the exact path a real family uses: upload to
+Matrix, then OCR, classify, and mirror into the memory wiki. Matrix
+stays the single ledger; nothing here writes to Paperless directly.
+
+```sh
+# bring the stack up first
+stack up messages docs
+
+# preview who posts what (no network)
+python tools/family-docs/ingest.py --dry-run
+
+# file them for real (spaced out so the archivist keeps up)
+python tools/family-docs/ingest.py
+python tools/family-docs/ingest.py --delay 12   # slower, to watch in Element
+```
+
+Only Homer, Marge, Bart and Lisa have Matrix accounts, so documents that
+belong to Maggie or the household are posted by Marge, the same as in
+real life. The sender mapping lives at the top of `ingest.py`; edit it
+to taste.
+
+Under the hood `ingest.py` drives `stack messages upload`, a general
+primitive added alongside `stack messages send`:
+
+```sh
+stack messages upload documents path/to/file.pdf --as homer
+```
+
+It uploads any file to a room (as a family member with `--as`, or as
+stacker-bot by default), reading the user's password from the secrets
+store. Images go as `m.image`; everything else as `m.file`.
+
 ## Adding a document
 
 Drop a new `specs/en/<name>.yaml`. Re-run the generator. That's it.
