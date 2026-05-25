@@ -243,7 +243,7 @@ class Ontology:
         """Shared cross-language canonicalisation walk."""
         if not text or not text.strip():
             return Resolution(canonical=None, cross_field=False)
-        langs = [lang] + [l for l in self.languages if l != lang]
+        langs = [lang] + [other for other in self.languages if other != lang]
         for try_lang in langs:
             hit = primary(text, try_lang)
             if hit:

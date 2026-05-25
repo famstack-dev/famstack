@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-from stack.prompt import section, out, nl, dim, bullet, confirm, ask, done, warn
+from stack.prompt import section, out, nl, dim, confirm, ask, done, warn
 
 
 def _probe_endpoint(url: str, key: str = "") -> bool:

@@ -19,7 +19,6 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from pipeline import (  # noqa: E402
-    EnrichResult,
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
@@ -1285,7 +1284,6 @@ class TestSummaryWrite:
 # patch `_request` to return whatever a fake backend would, and assert
 # on the content shape the Classifier would have sent on the wire.
 
-import json as _json  # noqa: E402
 
 from capabilities import ModelCapabilities  # noqa: E402
 from pipeline import Classifier, ImageAttachment  # noqa: E402

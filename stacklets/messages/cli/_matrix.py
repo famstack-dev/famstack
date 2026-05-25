@@ -13,10 +13,8 @@ same session. This keeps the device list clean.
 """
 
 import json
-import os
 import random
 import ssl
-import sys
 import time
 import tomllib
 import urllib.error

@@ -64,6 +64,35 @@ class IsolatedStack:
                                 timeout=timeout, cwd=str(self.root), env=self._env())
         return result.returncode, result.stdout, result.stderr
 
+    def run_ok(self, *args, timeout=60) -> dict:
+        """Run a lifecycle command that must succeed.
+
+        On failure, surface the command's full stdout/stderr in the
+        assertion message — otherwise a broken `up`/`down`/`destroy`
+        either reads as a bare `assert ok` or gets swallowed entirely and
+        only shows up later as an unrelated failure.
+        """
+        result = self.run(*args, timeout=timeout)
+        assert result.get("ok"), (
+            f"`stack {' '.join(args)}` failed (exit {result.get('_code')})\n"
+            f"--- stdout ---\n{result.get('_raw', '')}\n"
+            f"--- stderr ---\n{result.get('_stderr', '')}"
+        )
+        return result
+
+    def run_pretty_ok(self, *args, timeout=60) -> tuple[str, str]:
+        """Run a command that must succeed; return (stdout, stderr).
+
+        Surfaces both streams on failure instead of a bare `assert 1 == 0`,
+        so the real traceback or error message is visible in the report.
+        """
+        code, stdout, stderr = self.run_pretty(*args, timeout=timeout)
+        assert code == 0, (
+            f"`stack {' '.join(args)}` exited {code}\n"
+            f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+        )
+        return stdout, stderr
+
     def update_config(self, old_value: str, new_value: str):
         """Update a value in stack.toml."""
         config_path = self.root / "stack.toml"
@@ -203,8 +232,7 @@ class TestConfigToContainer:
 
     def test_timezone_reaches_container(self, isolated_stack):
         """TZ from stack.toml appears in the container's environment."""
-        result = isolated_stack.run("up", "test")
-        assert result.get("ok"), f"stack up test failed: {result}"
+        isolated_stack.run_ok("up", "test")
 
         env = docker_env("stack-test")
         assert env.get("TZ") == "Europe/Berlin", \
@@ -212,12 +240,12 @@ class TestConfigToContainer:
 
     def test_config_change_propagates_on_restart(self, isolated_stack):
         """Changing stack.toml and re-running stack up updates the container."""
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         env_before = docker_env("stack-test")
         assert env_before.get("TZ") == "Europe/Berlin"
 
         isolated_stack.update_config("Europe/Berlin", "America/New_York")
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
 
         env_after = docker_env("stack-test")
         assert env_after.get("TZ") == "America/New_York", \
@@ -229,17 +257,16 @@ class TestConfigToContainer:
 class TestStopAndRestart:
 
     def test_down_stops_container(self, isolated_stack):
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         assert container_running("stack-test")
 
-        isolated_stack.run("down", "test")
+        isolated_stack.run_ok("down", "test")
         assert wait_for_stop("stack-test"), "Container did not stop in time"
 
     def test_up_after_down_brings_it_back(self, isolated_stack):
-        isolated_stack.run("up", "test")
-        isolated_stack.run("down", "test")
-        result = isolated_stack.run("up", "test")
-        assert result.get("ok"), f"up after down failed: {result}"
+        isolated_stack.run_ok("up", "test")
+        isolated_stack.run_ok("down", "test")
+        isolated_stack.run_ok("up", "test")
         assert container_running("stack-test")
 
 
@@ -248,19 +275,18 @@ class TestStopAndRestart:
 class TestDestroyAndRecreate:
 
     def test_destroy_removes_container_and_data(self, isolated_stack):
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         assert container_running("stack-test")
 
-        isolated_stack.run("destroy", "test", "--yes")
+        isolated_stack.run_ok("destroy", "test", "--yes")
         assert wait_for_stop("stack-test"), "Container did not stop in time"
         assert not (isolated_stack.data / "test").exists()
 
     def test_up_after_destroy_is_first_run(self, isolated_stack):
-        isolated_stack.run("up", "test")
-        isolated_stack.run("destroy", "test", "--yes")
+        isolated_stack.run_ok("up", "test")
+        isolated_stack.run_ok("destroy", "test", "--yes")
 
-        result = isolated_stack.run("up", "test")
-        assert result.get("ok"), f"up after destroy failed: {result}"
+        isolated_stack.run_ok("up", "test")
         assert container_running("stack-test")
 
 
@@ -271,50 +297,45 @@ class TestOutputBehavior:
 
     def test_up_shows_stacklet_name(self, isolated_stack):
         """'stack up test' output includes the stacklet name."""
-        code, stdout, stderr = isolated_stack.run_pretty("up", "test")
-        assert code == 0
+        stdout, stderr = isolated_stack.run_pretty_ok("up", "test")
         combined = stdout + stderr
         assert "Test" in combined
 
     def test_up_shows_lifecycle_steps(self, isolated_stack):
         """Framework reports progress steps during up."""
-        code, stdout, stderr = isolated_stack.run_pretty("up", "test")
-        assert code == 0
+        stdout, stderr = isolated_stack.run_pretty_ok("up", "test")
         combined = stdout + stderr
         assert "Rendering environment" in combined
         assert "Writing .env" in combined
 
     def test_up_shows_success_banner(self, isolated_stack):
         """Successful up shows the result banner with URL and hints."""
-        code, stdout, stderr = isolated_stack.run_pretty("up", "test")
-        assert code == 0
+        stdout, stderr = isolated_stack.run_pretty_ok("up", "test")
         combined = stdout + stderr
         assert "is running" in combined
         assert "42099" in combined
 
     def test_up_shows_hints(self, isolated_stack):
         """Hints from stacklet.toml are rendered in the success banner."""
-        code, stdout, stderr = isolated_stack.run_pretty("up", "test")
-        assert code == 0
+        stdout, stderr = isolated_stack.run_pretty_ok("up", "test")
         combined = stdout + stderr
         assert "Test service running" in combined
 
     def test_no_garbled_output(self, isolated_stack):
         """Output should not have overlapping/garbled lines from spinners."""
-        code, stdout, stderr = isolated_stack.run_pretty("up", "test")
+        stdout, stderr = isolated_stack.run_pretty_ok("up", "test")
         combined = stdout + stderr
-        cr_lines = [l for l in combined.split("\n") if "\r" in l and l.strip()]
+        cr_lines = [line for line in combined.split("\n") if "\r" in line and line.strip()]
         assert not cr_lines, \
             f"Carriage returns in output (spinner leaked): {cr_lines[:3]}"
 
     def test_destroy_output_is_clean(self, isolated_stack):
         """Destroy output doesn't have garbled lines."""
-        isolated_stack.run_pretty("up", "test")
-        code, stdout, stderr = isolated_stack.run_pretty("destroy", "test", "--yes")
-        assert code == 0
+        isolated_stack.run_pretty_ok("up", "test")
+        stdout, stderr = isolated_stack.run_pretty_ok("destroy", "test", "--yes")
         combined = stdout + stderr
         assert "destroyed" in combined
-        cr_lines = [l for l in combined.split("\n") if "\r" in l and l.strip()]
+        cr_lines = [line for line in combined.split("\n") if "\r" in line and line.strip()]
         assert not cr_lines, \
             f"Carriage returns in output (spinner leaked): {cr_lines[:3]}"
 
@@ -326,36 +347,35 @@ class TestConfigPropagation:
 
     def test_secret_in_env_reaches_container(self, isolated_stack):
         """A generated secret appears in the container's environment."""
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         env = docker_env("stack-test")
         assert env.get("TEST_SECRET"), \
             f"TEST_SECRET not in container env. Got: {sorted(env.keys())}"
 
     def test_admin_username_reaches_container(self, isolated_stack):
         """Tech admin username reaches the container via template vars."""
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         env = docker_env("stack-test")
         assert env.get("TEST_ADMIN") == "stackadmin", \
             f"Expected TEST_ADMIN='stackadmin', got: {env.get('TEST_ADMIN')}"
 
     def test_config_change_visible_on_next_env(self, isolated_stack):
         """Writing to stack.toml is picked up by the next 'stack env' command."""
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         isolated_stack.update_config("Europe/Berlin", "Asia/Tokyo")
 
-        code, stdout, stderr = isolated_stack.run_pretty("env", "test")
-        assert code == 0
+        stdout, stderr = isolated_stack.run_pretty_ok("env", "test")
         assert "Asia/Tokyo" in stdout, \
             f"Expected Asia/Tokyo in env output, got: {stdout[:300]}"
 
     def test_config_change_reaches_container_on_restart(self, isolated_stack):
         """Changing stack.toml and re-running stack up updates the container."""
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         env_before = docker_env("stack-test")
         assert env_before.get("TZ") == "Europe/Berlin"
 
         isolated_stack.update_config("Europe/Berlin", "America/New_York")
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
 
         env_after = docker_env("stack-test")
         assert env_after.get("TZ") == "America/New_York", \
@@ -367,7 +387,7 @@ class TestConfigPropagation:
         sys.path.insert(0, str(isolated_stack.root / "lib"))
         from stack.secrets import TomlSecretStore
 
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
         env_before = docker_env("stack-test")
         old_secret = env_before.get("TEST_SECRET")
         assert old_secret, "TEST_SECRET should exist after first up"
@@ -376,7 +396,7 @@ class TestConfigPropagation:
         secrets = TomlSecretStore(isolated_stack.root / ".stack" / "secrets.toml")
         secrets.set("test", "TEST_SECRET", "changed-value-123")
 
-        isolated_stack.run("up", "test")
+        isolated_stack.run_ok("up", "test")
 
         env_after = docker_env("stack-test")
         assert env_after.get("TEST_SECRET") == "changed-value-123", \

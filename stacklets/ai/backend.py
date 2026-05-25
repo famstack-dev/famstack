@@ -11,7 +11,6 @@ no scanning, no interactive prompts for URLs.
 import dataclasses
 import json
 import ssl
-import sys
 import tomllib
 import urllib.error
 import urllib.request
@@ -66,7 +65,7 @@ def ensure_backend(repo_root: Path, interactive=True) -> dict:
 
     Returns {"url": str, "key": str} or {"error": str}.
     """
-    from stack.prompt import done, warn, dim
+    from stack.prompt import done, dim
 
     ai_cfg = _load_ai_config(repo_root)
     url = ai_cfg.get("openai_url", "")
@@ -155,11 +154,11 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
         available = ", ".join(probe.models[:5]) if probe.models else "none"
         warn(f"Default model '{model_name}' not found on endpoint.")
         dim(f"  Available: {available}")
-        dim(f"  Load it on your server, or change [ai] default in stack.toml.")
+        dim("  Load it on your server, or change [ai] default in stack.toml.")
         return {"warning": f"Model '{model_name}' not found. Available: {available}"}
 
     # ── Managed oMLX: offer to download ─────────────────────────────
-    from omlx import OMLXClient, is_omlx, repo_id_to_model_id
+    from omlx import OMLXClient, is_omlx
 
     admin_url = base_url.rstrip("/").replace("/v1", "")
     if not is_omlx(admin_url):
@@ -213,11 +212,11 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
     warn("Download can take a while depending on your connection.")
     nl()
 
-    if not confirm(f"Download from HuggingFace?"):
+    if not confirm("Download from HuggingFace?"):
         nl()
         dim("Download skipped. You can change the model or download later:")
-        dim(f"  • stack.toml [ai] has commented alternatives — uncomment to switch")
-        dim(f"  • Run './stack setup ai' to re-run this check")
+        dim("  • stack.toml [ai] has commented alternatives — uncomment to switch")
+        dim("  • Run './stack setup ai' to re-run this check")
         return {"skipped": True, "model": model_id}
 
     return _download_and_load(client, model_id, info)
@@ -237,7 +236,7 @@ def _load_model(client, model_id: str) -> dict:
 def _download_and_load(client, repo_id: str, info) -> dict:
     """Download a model from HuggingFace with progress display, then load it."""
     import time
-    from stack.prompt import nl, out, dim, done, warn, ORANGE, TEAL, RESET
+    from stack.prompt import nl, out, dim, done, ORANGE, RESET
     from omlx import repo_id_to_model_id
 
     task = client.start_download(repo_id)

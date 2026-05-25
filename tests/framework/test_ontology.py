@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from stack.ontology import Ontology, Topic, DocType
+from stack.ontology import Ontology
 
 
 # ─── Fixture ─────────────────────────────────────────────────────────────

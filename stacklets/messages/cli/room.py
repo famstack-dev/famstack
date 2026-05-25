@@ -149,7 +149,7 @@ def _cmd_create(client, base_url, server_name, argv):
     space_id = _find_family_space(client, base_url)
     if space_id:
         client.add_space_child(space_id, room_id)
-        print(f"  Added to family Space")
+        print("  Added to family Space")
 
     print()
 
@@ -173,14 +173,14 @@ def _cmd_delete(client, base_url, server_name, argv):
     # Gate: require explicit confirmation unless --yes is passed
     if not force:
         print(f"\n  This will permanently delete #{alias}:{server_name}")
-        print(f"  All messages and media will be purged. There is no undo.\n")
+        print("  All messages and media will be purged. There is no undo.\n")
         try:
             confirm = input(f"  Type '{alias}' to confirm: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n\n  Aborted.\n")
             return
         if confirm != alias:
-            print(f"\n  Aborted.\n")
+            print("\n  Aborted.\n")
             return
 
     status, resp = _api(

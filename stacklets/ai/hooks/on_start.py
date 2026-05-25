@@ -36,7 +36,7 @@ def run(ctx):
         if not url:
             nl()
             warn("External provider selected but no endpoint URL set.")
-            out(f"Set [ai].openai_url in stack.toml, or reconfigure:")
+            out("Set [ai].openai_url in stack.toml, or reconfigure:")
             nl()
             out(f"  {TEAL}stack destroy ai && stack up ai{RESET}")
             nl()

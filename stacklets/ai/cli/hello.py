@@ -4,7 +4,11 @@ HELP = "Play the welcome voice message"
 
 
 def run(args, stacklet, config):
-    import json, subprocess, sys, tempfile, urllib.request
+    import json
+    import subprocess
+    import sys
+    import tempfile
+    import urllib.request
     from pathlib import Path
 
     # Read language from stack.toml [ai] section, derive voice
@@ -41,7 +45,7 @@ def run(args, stacklet, config):
             "Enjoy the rest of your famstack journey."
         )
 
-    print(f"\n  Speaking...\n", file=sys.stderr)
+    print("\n  Speaking...\n", file=sys.stderr)
 
     try:
         req = urllib.request.Request(

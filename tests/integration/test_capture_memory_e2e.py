@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from tests.integration.forgejo import ForgejoError
 from tests.integration.openai_stub import stub_classify

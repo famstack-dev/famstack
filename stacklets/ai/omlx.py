@@ -11,7 +11,6 @@ is in backend.py which calls this for oMLX backends.
 
 import http.cookiejar
 import json
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass

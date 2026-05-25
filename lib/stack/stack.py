@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """The Stack class — core framework orchestrator.
 
 Stack coordinates config, discovery, secrets, hooks, and lifecycle.
@@ -11,13 +9,12 @@ Usage:
     s.down("photos")   # run on_stop hook
     s.destroy("photos") # full teardown: hooks, secrets, data, markers
 """
+from __future__ import annotations
 
 import collections
-import json
 import platform
 import shutil
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -390,7 +387,6 @@ class Stack:
 
     def status(self) -> dict:
         """Full system status: version, runtime, host, stacklets."""
-        from . import docker
         from .cli import VERSION
 
         info = {

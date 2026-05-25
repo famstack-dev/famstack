@@ -11,7 +11,6 @@ The CLI dispatch becomes:
 """
 
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest

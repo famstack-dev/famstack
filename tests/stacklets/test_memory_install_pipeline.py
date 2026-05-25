@@ -17,7 +17,6 @@ Three branches covered:
 
 from __future__ import annotations
 
-import base64
 import sys
 from pathlib import Path
 
@@ -32,7 +31,6 @@ from lib import (  # noqa: E402
     REPO_OWNER,
     install_memory_to_forgejo,
 )
-from stack.forgejo import ForgejoClient  # noqa: E402
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────

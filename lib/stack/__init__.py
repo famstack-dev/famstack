@@ -16,3 +16,26 @@ from .models import resolve_model
 from . import docker
 from .cli import CLI
 from .commands import COMMANDS, EnvCommand, ListCommand, UpCommand, DownCommand, DestroyCommand
+
+# Re-exported names form the framework's public API (see module docstring).
+# Listing them in __all__ makes the intent explicit and keeps linters from
+# flagging the imports above as unused.
+__all__ = [
+    "Stack",
+    "TomlSecretStore",
+    "HookResolver",
+    "StackContext",
+    "build_hook_ctx",
+    "SilentOutput",
+    "CollectorOutput",
+    "user_id",
+    "resolve_model",
+    "docker",
+    "CLI",
+    "COMMANDS",
+    "EnvCommand",
+    "ListCommand",
+    "UpCommand",
+    "DownCommand",
+    "DestroyCommand",
+]

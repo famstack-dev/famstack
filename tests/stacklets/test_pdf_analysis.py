@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
@@ -36,8 +35,8 @@ def _make_pdf(pages: int = 1, *, text: str = "page", producer: str = "") -> byte
     from pypdf import PdfWriter
 
     writer = PdfWriter()
-    for i in range(pages):
-        page = writer.add_blank_page(width=300, height=400)
+    for _ in range(pages):
+        writer.add_blank_page(width=300, height=400)
         # Add text so the page has a text layer
         # (Pillow's PDF writer doesn't add text; pypdf's blank page
         # also has no text, so we need a different approach for
@@ -54,10 +53,10 @@ def _make_pdf_with_text(text: str = "hello world") -> bytes:
 
     This produces a PDF where ``page.extract_text()`` returns the
     supplied text, so ``has_text_layer`` returns True."""
-    from pypdf import PdfWriter, PageObject
+    from pypdf import PdfWriter
 
     writer = PdfWriter()
-    page = writer.add_blank_page(width=300, height=400)
+    writer.add_blank_page(width=300, height=400)
     # pypdf doesn't easily let us inject text content, so we'll use
     # a different approach: create a minimal PDF with a text object.
     # For testing purposes, we'll just use a real PDF file.

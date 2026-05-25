@@ -22,7 +22,6 @@ stack.toml.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import urllib.error

@@ -18,7 +18,7 @@ def run(ctx):
 
     # Verify http_get works against our own health endpoint
     try:
-        data = ctx.http_get("http://localhost:42099/")
+        ctx.http_get("http://localhost:42099/")
     except Exception:
         step("Health endpoint not returning JSON (expected for plain text)")
 

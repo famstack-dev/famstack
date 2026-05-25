@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 """User identity and credentials.
 
 Canonical way to resolve usernames and passwords from users.toml
 and secrets.toml. All code that needs user info goes through here.
 """
+from __future__ import annotations
 
 import tomllib
 from pathlib import Path

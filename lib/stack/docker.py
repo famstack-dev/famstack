@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Docker operations for the stacklet framework.
 
 Encapsulates all Docker Compose interactions: starting, stopping,
@@ -16,6 +14,7 @@ Keeping Docker operations in one place means:
   - A future podman backend swaps this file, nothing else changes
   - Error handling for Docker issues is consistent
 """
+from __future__ import annotations
 
 import json
 import platform
@@ -177,9 +176,9 @@ def init_runtime(preferred: str = "orbstack") -> tuple[str | None, str | None]:
     if fallback:
         _context = fallback
     warning = (
-        f"famstack is tested with OrbStack only.\n"
-        f"      Docker Desktop is not recommended and can cause high CPU usage.\n"
-        f"      Install OrbStack: https://orbstack.dev"
+        "famstack is tested with OrbStack only.\n"
+        "      Docker Desktop is not recommended and can cause high CPU usage.\n"
+        "      Install OrbStack: https://orbstack.dev"
     )
     return f"Using {_context or 'default'} runtime", warning
 

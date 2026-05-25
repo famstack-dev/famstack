@@ -5,9 +5,14 @@ hooks fire, secrets generate, env renders, and markers get written.
 No Docker — we test the framework logic, not container management.
 
 The Stack class coordinates:
-  up:      check deps → render env → on_install (first) → write .env → mark done
+  up:      check deps → render env → on_install (first) → write .env → on_start
   down:    on_stop
   destroy: on_stop → on_destroy → clear secrets → delete marker → delete data
+
+First-run setup is two-phase: up() runs on_install but does NOT promote the
+setup-done marker. The CLI calls run_on_install_success() after the health
+check passes, and that promotes the marker so later ups skip the first-run
+chain. Tests that need a "fully installed" stacklet must do the same.
 """
 
 import sys
@@ -134,19 +139,22 @@ class TestStackUp:
             },
         }})
         s.up("myapp")
+        s.run_on_install_success("myapp")  # promotes the marker, as the CLI does
         s.up("myapp")
         assert counter.read_text() == "1"
 
     def test_creates_setup_done_marker(self, tmp_path):
-        """After first up, the setup-done marker exists."""
+        """After first up + on_install_success, the setup-done marker exists."""
         s = _make_stack(tmp_path, {"myapp": {}})
         s.up("myapp")
+        s.run_on_install_success("myapp")
         assert (tmp_path / ".stack" / "myapp.setup-done").exists()
 
     def test_first_run_flag(self, tmp_path):
-        """First up returns first_run=True, second returns False."""
+        """First up returns first_run=True; once setup completes, the next is False."""
         s = _make_stack(tmp_path, {"myapp": {}})
         r1 = s.up("myapp")
+        s.run_on_install_success("myapp")  # promotes the marker, as the CLI does
         r2 = s.up("myapp")
         assert r1["first_run"] is True
         assert r2["first_run"] is False
@@ -188,6 +196,7 @@ class TestStackUpDependencies:
             "app": {"requires": ["base"]},
         })
         s.up("base")
+        s.run_on_install_success("base")  # base must be fully set up to satisfy requires
         result = s.up("app")
         assert result.get("ok"), f"Should pass: {result}"
 
@@ -212,6 +221,7 @@ class TestStackDown:
         """down doesn't remove the setup-done marker — up won't re-install."""
         s = _make_stack(tmp_path, {"myapp": {}})
         s.up("myapp")
+        s.run_on_install_success("myapp")
         s.down("myapp")
         assert (tmp_path / ".stack" / "myapp.setup-done").exists()
 
@@ -254,6 +264,7 @@ class TestStackDestroy:
     def test_removes_setup_done_marker(self, tmp_path):
         s = _make_stack(tmp_path, {"myapp": {}})
         s.up("myapp")
+        s.run_on_install_success("myapp")
         assert (tmp_path / ".stack" / "myapp.setup-done").exists()
 
         s.destroy("myapp")

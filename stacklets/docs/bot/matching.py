@@ -19,7 +19,10 @@ Two matching strategies:
 from __future__ import annotations
 
 import re
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from stack.ontology import Ontology
 
 
 class TopicResult(NamedTuple):
