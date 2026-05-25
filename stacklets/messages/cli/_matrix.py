@@ -295,3 +295,60 @@ class MatrixClient:
         if status == 200:
             return True, resp.get("event_id", "sent")
         return False, resp.get("error", "unknown error")
+
+    def join(self, room):
+        """Join a room by alias or ID as the logged-in user. Idempotent —
+        Synapse returns 200 if you are already a member."""
+        target = room if room.startswith("!") else self._full_room(room)
+        encoded = urllib.request.quote(target)
+        status, _ = _post(
+            self._url(f"/_matrix/client/v3/join/{encoded}"), {}, token=self.token,
+        )
+        return status == 200
+
+    def upload_media(self, data, content_type, filename):
+        """Upload raw bytes to the Matrix media repo; return the mxc:// URI.
+
+        Not routed through `_api` because that JSON-encodes the body — a
+        media upload POSTs the file bytes verbatim with the file's own
+        content type. Returns None on failure.
+        """
+        url = self._url(
+            f"/_matrix/media/v3/upload?filename={urllib.request.quote(filename)}"
+        )
+        req = urllib.request.Request(
+            url, data=data, method="POST",
+            headers={"Content-Type": content_type,
+                     "Authorization": f"Bearer {self.token}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60, context=_SSL) as resp:
+                return json.loads(resp.read().decode()).get("content_uri")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+            return None
+
+    def send_file(self, room, mxc_uri, filename, mime, *, msgtype="m.file", size=0):
+        """Post a file/image message referencing an already-uploaded mxc URI.
+
+        `msgtype` is "m.file" for documents or "m.image" for pictures —
+        the archivist keys its handling on this. Returns (ok, detail).
+        """
+        room_id = room if room.startswith("!") else self.resolve_room(room)
+        if not room_id:
+            return False, f"Room '{room}' not found"
+
+        txn = f"{int(time.time() * 1000)}_{random.randint(0, 0xFFFFFFFF):08x}"
+        body = {
+            "msgtype": msgtype,
+            "body": filename,
+            "url": mxc_uri,
+            "info": {"mimetype": mime, "size": size},
+        }
+        status, resp = _put(
+            self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn}"),
+            body,
+            token=self.token,
+        )
+        if status == 200:
+            return True, resp.get("event_id", "sent")
+        return False, resp.get("error", "unknown error")
