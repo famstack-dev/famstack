@@ -5,30 +5,44 @@
 # the commit log doubles as the learning history: every fact added,
 # every wiki edit, every reclassification is a diff you can revert.
 #
-# Today memory is a host stacklet with no container. It ships seeds and
-# a few hooks. Bots and CLIs talk to its lib in-process; reads and writes
-# round-trip through Forgejo so there is one source of truth.
+# Memory is a host stacklet that *also* runs one container: the garden,
+# a Quartz site that renders the vault as a browsable, mobile-friendly
+# wiki. The hooks still own the data plane (clone, pull, push); the
+# container is a derived, read-only view that watches the bind-mounted
+# working copy and rebuilds on change. There is one source of truth
+# (Forgejo) — the garden is just a nicer pair of eyes on it.
 #
-# A service (e.g. a deriver bot that consumes structured Matrix events
-# and synthesises wiki pages) may join later. The stacklet shape is
-# ready for that — just add hooks/on_start_ready.py and a service
-# definition when needed.
+# Edits still happen in Forgejo: the garden renders pages with an
+# "edit on Forgejo" link, so every change lands as a real commit.
 
 id          = "memory"
 name        = "Memory"
 description = "Persistent knowledge — ontology, facts, and wiki — backed by Forgejo"
-version     = "0.3.0"
+version     = "0.4.0"
 category    = "infrastructure"
 type        = "host"
 requires    = ["code"]
 
+# The garden container is built locally from the Dockerfile in this
+# directory — there is no upstream image to pull. `build = true` tells
+# the runtime to `docker compose build` on every `stack up`, so config
+# tweaks (`quartz/*.ts`) land without manual image management.
+build = true
+
+# LAN port for the garden's Quartz preview server. Sits at the end of
+# the 42xxx range used by other stacklets so future infra ports stay
+# easy to scan.
+port = 42070
+
 hints = [
-    "Memory lives in the Forgejo `memory` repo — edit ontology.toml or wiki/*.md in the web UI to grow it",
+    "Read the family memory at {url}",
+    "Edit pages in Forgejo (`family/memory` repo) — every save is a commit",
 ]
 
-# Memory has no container of its own — hooks run on the host and talk
-# to Forgejo over HTTP. These env vars are what `on_install_success.py`
-# reads to find the code stacklet and authenticate as the tech admin.
+# Host-side env vars are read by the install / start hooks (they run on
+# the host and talk to Forgejo over HTTP). Container-side env vars are
+# read by the garden through `env_file: .env`. Both surfaces share this
+# table — names that don't apply to a given surface are simply ignored.
 [env.defaults]
 CODE_URL       = "{code_url}"
 ADMIN_USER     = "{admin_username}"
@@ -38,3 +52,14 @@ ADMIN_PASSWORD = "{admin_password}"
 # marge, ...) live at <vault>/<localpart>/. Sourced from stack.toml
 # [core] shared_bucket, defaults to "family".
 SHARED_BUCKET  = "{shared_bucket}"
+
+# Bind-mount source for the garden container. Resolves to the same
+# working copy that the hooks clone into — `memory.lib.vault_path_for`
+# also returns this path, so there is exactly one vault on disk.
+MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
+
+# Public hostname the garden renders into absolute URLs (sitemap,
+# social cards, etc). Empty domain (port mode) falls back to the
+# auto-detected LAN IP via `{ip}` so the site stays reachable.
+GARDEN_HOST = "memory.{domain}"
+GARDEN_IP   = "{ip}"

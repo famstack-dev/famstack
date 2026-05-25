@@ -1,0 +1,14 @@
+# stacklets/memory/caddy.snippet
+#
+# One route. The memory garden — Quartz rendering the family vault —
+# lives at memory.{$FAMSTACK_DOMAIN}. Caddy runs on the stack network
+# so the backend is the container name; the in-container port is
+# Quartz's preview server default (8080), not the published host port.
+#
+# No auth here, matching the rest of the family-facing stacklets
+# (photos, docs, messages). The LAN is the perimeter. Add `basicauth`
+# inside this block if you ever want to gate the vault separately.
+
+memory.{$FAMSTACK_DOMAIN} {
+    reverse_proxy stack-memory-garden:8080
+}
