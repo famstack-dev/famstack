@@ -1,0 +1,41 @@
+render: pdf
+filename: lisa-birth-certificate.pdf
+accent: "#455a64"
+
+letterhead:
+  name: "State of Oregon · Springfield County"
+  lines:
+    - Office of Vital Records
+    - 1 Government Plaza, Springfield, OR 97401
+
+title: Certificate of Live Birth
+
+meta:
+  Certificate No.: "BC-2018-11883"
+  Date Issued: "12 May 2018"
+
+blocks:
+  - p: "This certifies that the birth described below was registered with the Springfield County Office of Vital Records and is a true record on file."
+  - table:
+      columns: [Field, Detail]
+      align: [L, L]
+      rows:
+        - ["Name of child", "Lisa Marie Simpson"]
+        - ["Sex", "Female"]
+        - ["Date of birth", "09 May 2018"]
+        - ["Time of birth", "04:47"]
+        - ["Place of birth", "Springfield General Hospital"]
+        - ["Father", "Homer J. Simpson"]
+        - ["Mother", "Marjorie Simpson (née Bouvier)"]
+  - signature:
+      name: County Registrar
+      role: Springfield County Office of Vital Records
+
+footer: "State of Oregon · Certificate of Live Birth · A demo document for famstack."
+
+expected:
+  document_type: Certificate
+  topics: [Personal Record, Child]
+  persons: [Lisa]
+  correspondent: Springfield County Office of Vital Records
+  date: "2018-05-09"

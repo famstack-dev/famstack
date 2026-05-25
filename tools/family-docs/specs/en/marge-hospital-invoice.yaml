@@ -1,0 +1,47 @@
+render: pdf
+filename: marge-hospital-invoice.pdf
+accent: "#7b1fa2"
+
+letterhead:
+  name: Springfield General Hospital
+  lines:
+    - 300 Mercy Boulevard
+    - Springfield, OR 97401
+    - billing@springfieldgeneral.example
+
+recipient:
+  name: Marge Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Invoice
+
+meta:
+  Invoice No.: "SGH-2026-5520"
+  Date: "22 Mar 2026"
+  Patient: "Marge Simpson"
+  Service Date: "18 Mar 2026"
+
+blocks:
+  - p: "Thank you for choosing Springfield General Hospital. The following charges relate to your recent outpatient visit."
+  - heading: Services
+  - table:
+      columns: [Description, Code, Amount]
+      align: [L, L, R]
+      rows:
+        - ["Outpatient consultation", "OPC-01", "180.00"]
+        - ["X-ray, left wrist", "RAD-22", "240.00"]
+        - ["Wrist splint", "SUP-09", "65.00"]
+        - ["Dispensary (pain relief)", "PHM-04", "22.00"]
+      total: ["Total", "", "507.00"]
+  - p: "Your insurer (Springfield Mutual) has been billed directly. Your estimated out-of-pocket portion after coverage is $76.05. Please do not pay until you receive your explanation of benefits."
+
+footer: "Springfield General Hospital · Invoice SGH-2026-5520 · A demo document for famstack."
+
+expected:
+  document_type: Invoice
+  topics: [Medical, Insurance]
+  persons: [Marge]
+  correspondent: Springfield General Hospital
+  date: "2026-03-22"

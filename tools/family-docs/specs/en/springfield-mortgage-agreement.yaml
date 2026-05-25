@@ -1,0 +1,75 @@
+render: pdf
+filename: springfield-mortgage-agreement.pdf
+accent: "#0d47a1"
+
+letterhead:
+  name: Bank of Springfield
+  lines:
+    - Mortgage & Lending Division
+    - 1 Money Street, Springfield, OR 97401
+
+recipient:
+  name: Homer J. Simpson & Marjorie Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Residential Mortgage Agreement
+
+meta:
+  Loan No.: "MTG-2009-00742"
+  Date: "15 Jun 2009"
+  Property: "742 Evergreen Terrace"
+  Principal: "$182,000.00"
+
+blocks:
+  - p: "This Residential Mortgage Agreement (the Agreement) is made between the Bank of Springfield (the Lender) and Homer J. Simpson and Marjorie Simpson, jointly and severally (the Borrower), in respect of the property at 742 Evergreen Terrace, Springfield, Oregon (the Property)."
+  - heading: 1. The Loan
+  - p: "The Lender agrees to advance to the Borrower the principal sum of one hundred eighty-two thousand dollars ($182,000.00) for the purpose of purchasing the Property. The Borrower acknowledges receipt of this sum and agrees to repay it together with interest in accordance with this Agreement."
+  - heading: 2. Interest
+  - p: "Interest shall accrue on the outstanding principal at a fixed annual rate of five and one quarter percent (5.25%), calculated monthly. The rate is fixed for the full term and is not subject to revision except as expressly provided in Clause 9."
+  - heading: 3. Repayment
+  - p: "The Borrower shall repay the loan by 360 equal monthly instalments of one thousand and five dollars and twelve cents ($1,005.12), payable on the first day of each month, commencing 01 July 2009 and ending 01 June 2039. Payments shall be made by direct debit from the Borrower's checking account ending 4471."
+  - table:
+      columns: [Term, Detail]
+      align: [L, L]
+      rows:
+        - ["Principal", "$182,000.00"]
+        - ["Annual interest rate", "5.25% fixed"]
+        - ["Term", "360 months (30 years)"]
+        - ["Monthly instalment", "$1,005.12"]
+        - ["First payment", "01 July 2009"]
+        - ["Final payment", "01 June 2039"]
+  - heading: 4. Security
+  - p: "As security for the loan, the Borrower grants the Lender a first charge over the Property. The Borrower shall not sell, transfer, or further encumber the Property without the Lender's prior written consent. The charge shall be discharged upon repayment in full of all sums owing under this Agreement."
+  - heading: 5. Borrower's Covenants
+  - bullets:
+      - "To keep the Property insured for its full reinstatement value at all times."
+      - "To maintain the Property in good repair and not to permit nuclear materials to be stored on the premises."
+      - "To pay all property taxes, utility charges, and assessments when due."
+      - "To occupy the Property as the Borrower's principal residence."
+      - "To notify the Lender promptly of any event materially affecting the value of the Property."
+  - heading: 6. Insurance
+  - p: "The Borrower shall maintain buildings insurance with a reputable insurer and shall name the Lender as an interested party. Evidence of cover shall be provided on request. If the Borrower fails to insure, the Lender may do so and add the cost to the loan balance."
+  - heading: 7. Default
+  - p: "The following constitute events of default: (a) failure to pay any instalment within fifteen (15) days of its due date; (b) breach of any covenant in Clause 5; (c) the Borrower becoming insolvent. On default, the Lender may, after giving notice, require immediate repayment of all sums owing and may exercise its power of sale over the Property."
+  - heading: 8. Early Repayment
+  - p: "The Borrower may repay all or part of the loan early. A partial prepayment shall be applied to the principal and shall not alter the due date of subsequent instalments. No early-repayment penalty applies to this fixed-rate loan."
+  - heading: 9. Variation
+  - p: "No variation of this Agreement is effective unless made in writing and signed by both parties. The interest rate may be varied only by written agreement or as required by law."
+  - heading: 10. Governing Law
+  - p: "This Agreement is governed by the laws of the State of Oregon. The parties submit to the exclusive jurisdiction of the courts of Springfield County."
+  - heading: 11. Acknowledgement
+  - p: "The Borrower confirms having read and understood this Agreement, having had the opportunity to take independent legal advice, and having freely entered into it. The Borrower further confirms that the figures above are correct and that the donut budget has been considered separately."
+  - signature:
+      name: C. Montgomery Burns (for the Lender)
+      role: Bank of Springfield, Mortgage & Lending Division
+
+footer: "Bank of Springfield · Residential Mortgage Agreement MTG-2009-00742 · A demo document for famstack."
+
+expected:
+  document_type: Contract
+  topics: [Housing, Finance, Legal]
+  persons: [Homer, Marge]
+  correspondent: Bank of Springfield
+  date: "2009-06-15"

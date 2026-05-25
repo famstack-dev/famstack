@@ -1,0 +1,26 @@
+render: receipt
+filename: kwik-e-mart-receipt.png
+
+store: KWIK-E-MART
+lines:
+  - "57 Mystery Lane, Springfield"
+  - "Mgr: Apu Nahasapeemapetilon"
+date: "02 Apr 2026  18:42"
+
+items:
+  - ["Squishee XL Blue", "1.49"]
+  - ["Duff Beer 6-pack", "7.99"]
+  - ["Pork rinds (jumbo)", "2.29"]
+  - ["Buzz Cola 2L", "1.89"]
+  - ["Frosted Krusty O's", "3.49"]
+  - ["Lottery scratcher x2", "4.00"]
+total: "21.15"
+paid: "Cash"
+footer: "Thank you, come again!"
+
+expected:
+  document_type: Receipt
+  topics: [Groceries, Shopping]
+  persons: [Homer]
+  correspondent: Kwik-E-Mart
+  date: "2026-04-02"

@@ -1,0 +1,53 @@
+render: pdf
+filename: homer-payslip.pdf
+accent: "#1b5e20"
+
+letterhead:
+  name: Springfield Nuclear Power Plant
+  lines:
+    - Sector 7-G, Reactor Building 2
+    - Springfield, OR 97401
+    - payroll@snpp.example
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: "Pay Statement: March 2026"
+
+meta:
+  Statement No.: "PAY-2026-03-0042"
+  Pay Period: "01-31 Mar 2026"
+  Employee ID: "SNPP-007"
+  Position: "Safety Inspector, Sector 7-G"
+
+blocks:
+  - p: "This statement summarises your gross pay, deductions and net pay for the period shown. Please retain it for your records and for your annual tax return."
+  - heading: Earnings & Deductions
+  - table:
+      columns: [Description, Hours, Amount]
+      align: [L, R, R]
+      rows:
+        - ["Base salary", "160.0", "2,950.00"]
+        - ["Hazard pay (radiation)", "160.0", "480.00"]
+        - ["Overtime", "6.0", "165.00"]
+        - ["Federal income tax", "", "-612.00"]
+        - ["Social security", "", "-220.00"]
+        - ["Health plan (Burns Mutual)", "", "-118.00"]
+        - ["Donut fund (voluntary)", "", "-35.00"]
+      total: ["Net pay", "", "2,610.00"]
+  - p: "Net pay has been transferred to your account at the Bank of Springfield ending 4471."
+  - signature:
+      name: Montgomery Burns
+      role: Owner, Springfield Nuclear Power Plant
+
+footer: "Springfield Nuclear Power Plant · Questions about your pay? Contact payroll@snpp.example · This is a demo document."
+
+expected:
+  document_type: Pay Slip
+  topics: [Income, Employment]
+  persons: [Homer]
+  correspondent: Springfield Nuclear Power Plant
+  date: "2026-03-31"

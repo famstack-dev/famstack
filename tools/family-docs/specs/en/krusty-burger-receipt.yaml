@@ -1,0 +1,24 @@
+render: receipt
+filename: krusty-burger-receipt.png
+
+store: KRUSTY BURGER
+lines:
+  - "Springfield Mall, Food Court"
+  - "Order #0815"
+date: "29 Mar 2026  13:05"
+
+items:
+  - ["Krusty Meal (large)", "8.49"]
+  - ["Krusty Burger x2", "7.00"]
+  - ["Krusty Partial Fries", "2.49"]
+  - ["Buzz Cola refill", "0.92"]
+total: "18.90"
+paid: "Card ****4471"
+footer: "Hey hey! Collect all 12 Krusty cups!"
+
+expected:
+  document_type: Receipt
+  topics: [Shopping]
+  persons: [Homer]
+  correspondent: Krusty Burger
+  date: "2026-03-29"

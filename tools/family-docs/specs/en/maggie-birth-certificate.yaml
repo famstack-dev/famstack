@@ -1,0 +1,41 @@
+render: pdf
+filename: maggie-birth-certificate.pdf
+accent: "#455a64"
+
+letterhead:
+  name: "State of Oregon · Springfield County"
+  lines:
+    - Office of Vital Records
+    - 1 Government Plaza, Springfield, OR 97401
+
+title: Certificate of Live Birth
+
+meta:
+  Certificate No.: "BC-2025-13207"
+  Date Issued: "18 Jan 2025"
+
+blocks:
+  - p: "This certifies that the birth described below was registered with the Springfield County Office of Vital Records and is a true record on file."
+  - table:
+      columns: [Field, Detail]
+      align: [L, L]
+      rows:
+        - ["Name of child", "Margaret Simpson"]
+        - ["Sex", "Female"]
+        - ["Date of birth", "14 January 2025"]
+        - ["Time of birth", "23:58"]
+        - ["Place of birth", "Springfield General Hospital"]
+        - ["Father", "Homer J. Simpson"]
+        - ["Mother", "Marjorie Simpson (née Bouvier)"]
+  - signature:
+      name: County Registrar
+      role: Springfield County Office of Vital Records
+
+footer: "State of Oregon · Certificate of Live Birth · A demo document for famstack."
+
+expected:
+  document_type: Certificate
+  topics: [Personal Record, Child]
+  persons: [Maggie]
+  correspondent: Springfield County Office of Vital Records
+  date: "2025-01-14"

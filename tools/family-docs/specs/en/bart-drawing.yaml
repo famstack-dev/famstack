@@ -1,0 +1,12 @@
+render: drawing
+filename: bart-drawing.png
+
+title: MY FAMLY
+caption: "by Bart Simpson, age 10, Springfield Elementary Grade 4"
+
+expected:
+  document_type: Letter
+  topics: [Memory, Child]
+  persons: [Bart]
+  correspondent: null
+  date: "2026-04-20"

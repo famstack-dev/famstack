@@ -30,6 +30,16 @@ test = [
     "trafilatura>=1.12,<3.0",
 ]
 
+# Host-side tooling for generating the demo family-document set
+# (tools/family-docs). Not needed to run the stack — only to render the
+# example PDFs/images. reportlab lays out the native-text PDFs (clean
+# text layer for the classifier); Pillow draws the scanned-look images.
+demo = [
+    "reportlab>=4",
+    "Pillow>=10",
+    "pyyaml",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Pipeline-quality evals (real model, real Paperless, slow) are opt-in via

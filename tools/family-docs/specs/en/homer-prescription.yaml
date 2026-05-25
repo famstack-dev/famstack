@@ -1,0 +1,49 @@
+render: pdf
+filename: homer-prescription.pdf
+accent: "#00695c"
+
+letterhead:
+  name: Hibbert Family Practice
+  lines:
+    - Dr. Julius Hibbert, M.D.
+    - 55 Healthway Drive, Springfield, OR 97401
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Prescription
+
+meta:
+  Patient: "Homer J. Simpson"
+  Rx No.: "RX-2026-7781"
+  Date: "09 Apr 2026"
+
+blocks:
+  - p: "Following today's consultation regarding elevated cholesterol and recurring back strain, please take the following as directed."
+  - heading: Medication
+  - table:
+      columns: [Medication, Dosage, Qty, Directions]
+      align: [L, L, C, L]
+      rows:
+        - ["Lipitor", "20 mg", "30", "One tablet daily with food"]
+        - ["Ibuprofen", "400 mg", "20", "As needed for back pain"]
+  - heading: Advice
+  - bullets:
+      - "Reduce intake of donuts and Duff beer."
+      - "Walk to work at least twice a week."
+      - "Return in 6 weeks for a cholesterol re-check."
+  - signature:
+      name: Dr. Julius Hibbert, M.D.
+      role: Hibbert Family Practice
+
+footer: "Hibbert Family Practice · This prescription is a demo document for famstack."
+
+expected:
+  document_type: Prescription
+  topics: [Medical]
+  persons: [Homer]
+  correspondent: Dr. Julius Hibbert
+  date: "2026-04-09"

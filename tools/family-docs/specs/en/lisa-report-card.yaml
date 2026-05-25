@@ -1,0 +1,51 @@
+render: pdf
+filename: lisa-report-card.pdf
+accent: "#1565c0"
+
+letterhead:
+  name: Springfield Elementary School
+  lines:
+    - 19 Plympton Street
+    - Springfield, OR 97401
+
+recipient:
+  name: Mr. & Mrs. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Student Report Card
+
+meta:
+  Student: "Lisa Simpson"
+  Grade: "2"
+  Term: "Spring 2026"
+  Teacher: "Ms. Elizabeth Hoover"
+
+blocks:
+  - p: "This report summarises Lisa's academic progress and conduct for the Spring 2026 term. Grades are on an A to F scale."
+  - heading: Grades
+  - table:
+      columns: [Subject, Grade, Comment]
+      align: [L, C, L]
+      rows:
+        - ["Reading", "A+", "Reads far above grade level"]
+        - ["Mathematics", "A", "Excellent problem solving"]
+        - ["Science", "A+", "Built a working perpetual motion model"]
+        - ["Music", "A+", "Outstanding saxophone"]
+        - ["Physical Education", "B", "Participates, dislikes dodgeball"]
+        - ["Conduct", "A", "A model student"]
+  - heading: Teacher's Comment
+  - p: "Lisa continues to be the brightest student in her class and a joy to teach. She would benefit from being challenged further. Please encourage her to keep up the saxophone."
+  - signature:
+      name: Ms. Elizabeth Hoover
+      role: Grade 2 Teacher
+
+footer: "Springfield Elementary School · Spring 2026 Report Card · A demo document for famstack."
+
+expected:
+  document_type: Certificate
+  topics: [Education, Child]
+  persons: [Lisa]
+  correspondent: Springfield Elementary School
+  date: "2026-04-03"

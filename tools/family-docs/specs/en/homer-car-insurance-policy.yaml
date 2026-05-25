@@ -1,0 +1,96 @@
+render: pdf
+filename: homer-car-insurance-policy.pdf
+accent: "#b71c1c"
+
+letterhead:
+  name: Springfield Mutual Insurance Co.
+  lines:
+    - 100 Industry Way
+    - Springfield, OR 97401
+    - claims@springfieldmutual.example
+
+recipient:
+  name: Homer J. Simpson
+  lines:
+    - "742 Evergreen Terrace"
+    - "Springfield, OR 97401"
+
+title: Auto Insurance Policy
+
+meta:
+  Policy No.: "AUTO-2026-44871"
+  Period: "01 Jan 2026 to 31 Dec 2026"
+  Vehicle: "Plymouth Junkerolla (pink)"
+  Plate: "OR-SIMPSN"
+
+blocks:
+  - p: "Thank you for insuring your vehicle with Springfield Mutual. This document sets out your coverage, limits and annual premium for the period shown above, followed by the full terms and conditions. Please keep it with your vehicle documents."
+  - heading: Coverage Summary
+  - table:
+      columns: [Coverage, Limit, Premium]
+      align: [L, R, R]
+      rows:
+        - ["Liability (bodily injury)", "100,000.00", "210.00"]
+        - ["Liability (property)", "50,000.00", "95.00"]
+        - ["Collision", "actual cash value", "180.00"]
+        - ["Comprehensive", "actual cash value", "120.00"]
+        - ["Roadside assistance", "included", "35.00"]
+      total: ["Total annual premium", "", "640.00"]
+
+  - heading: What Your Policy Covers
+  - p: "Subject to the limits above and the conditions below, this policy covers the following."
+  - heading: 1. Liability
+  - p: "If you cause an accident, we pay for other people's injuries up to $100,000 and damage to their property up to $50,000. This includes legal defence costs if you are sued as a result of a covered accident. Liability cover is required by Oregon law."
+  - heading: 2. Collision
+  - p: "We pay to repair or replace your vehicle if it is damaged in a collision with another vehicle or object, regardless of who is at fault, up to the actual cash value of the vehicle less your excess. This includes single-vehicle accidents such as hitting a tree, a fire hydrant, or the garage."
+  - heading: 3. Comprehensive
+  - p: "Comprehensive covers loss or damage to your vehicle that is not the result of a collision. Covered causes include:"
+  - bullets:
+      - "Theft of the vehicle or its parts, and attempted theft"
+      - "Fire, explosion, and lightning"
+      - "Vandalism and malicious damage"
+      - "Storm, hail, flood, and falling objects"
+      - "Broken glass and windscreen damage"
+      - "Collision with an animal (including deer and the occasional escaped zoo animal)"
+  - heading: 4. Roadside Assistance
+  - p: "Around-the-clock roadside help, included at no extra excess: towing to the nearest approved garage, jump-starts, lockout service, flat-tyre changes, and emergency fuel delivery (fuel charged separately)."
+
+  - heading: What Is Not Covered
+  - p: "This policy does not cover loss or damage arising from:"
+  - bullets:
+      - "Racing, speed trials, or any contest of speed"
+      - "Driving under the influence of alcohol or drugs, including after visiting Moe's Tavern"
+      - "Any driver not named on this policy, or driving without a valid licence"
+      - "Deliberate or intentional damage caused by you"
+      - "Ordinary wear and tear, rust, or mechanical or electrical breakdown"
+      - "Use of the vehicle for hire, delivery, or commercial purposes"
+      - "Carriage of hazardous or radioactive materials in the vehicle"
+
+  - heading: Your Excess
+  - p: "An excess of $500 applies to each collision or comprehensive claim and is deducted from any settlement. The excess is waived for glass-only repairs. No excess applies to roadside assistance."
+
+  - heading: Making a Claim
+  - bullets:
+      - "Report the incident to us within 30 days at claims@springfieldmutual.example, quoting your policy number."
+      - "Do not admit fault or agree to pay anything at the scene."
+      - "Obtain the other party's name, plate, and insurer where possible."
+      - "We will appoint an approved garage and pay the repairer directly, less your excess."
+
+  - heading: General Conditions
+  - bullets:
+      - "Named driver: Homer J. Simpson only. No other drivers are permitted."
+      - "You must tell us of any change to the vehicle, its use, or your address."
+      - "The vehicle must be roadworthy and hold a current registration."
+      - "Cover may be voided if information you gave us is found to be untrue."
+  - p: "This is a summary of cover. The full policy wording governs in the event of any dispute. To renew, cancel, or change your policy, contact Springfield Mutual at the address above."
+
+footer: "Springfield Mutual Insurance Co. · Auto Policy AUTO-2026-44871 · A demo document for famstack."
+
+expected:
+  document_type: Policy
+  topics: [Insurance, Vehicle]
+  persons: [Homer]
+  correspondent: Springfield Mutual Insurance Co.
+  date: "2026-01-01"
+  # Recall demo: "What does the car insurance cover?" should answer from
+  # the "What Your Policy Covers" and "What Is Not Covered" sections.
