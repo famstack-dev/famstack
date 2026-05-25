@@ -14,8 +14,7 @@ from pathlib import Path
 from .prompt import (
     ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET,
     clear, nl, out, dim, bold, done, warn,
-    heading, section, banner, rule, kv,
-    Spinner, ask, confirm,
+    heading, section, banner, rule, Spinner, ask, confirm,
 )
 
 
@@ -36,8 +35,8 @@ def get_help_text(detail=""):
         for line in detail.split("\n"):
             lines.append(f"  {DIM}{line}{RESET}")
     lines.append("")
-    lines.append(f"  Sorry for that. If it keeps happening, we'd love to help.")
-    lines.append(f"  Please reach out so we can fix it faster:")
+    lines.append("  Sorry for that. If it keeps happening, we'd love to help.")
+    lines.append("  Please reach out so we can fix it faster:")
     lines.append("")
     lines.extend(HELP_LINKS)
     lines.append("")
@@ -306,7 +305,7 @@ def write_users_toml(users):
         lines.append(f'name     = "{u["name"]}"')
         lines.append(f'email    = "{u["email"]}"')
         lines.append(f'role     = "{u["role"]}"')
-        lines.append(f'stacklets = ["photos", "docs", "messages"]')
+        lines.append('stacklets = ["photos", "docs", "messages"]')
         lines.append("")
 
     path = REPO_ROOT / "users.toml"
@@ -407,21 +406,21 @@ def wizard():
 
     out(f"{ORANGE}{BOLD}How it works{RESET}")
     nl()
-    out(f"  Every family member gets an account on each service you enable.")
+    out("  Every family member gets an account on each service you enable.")
     out(f"  Log in with your {TEAL}first name{RESET} or {TEAL}email{RESET}, depending on the service.")
     out(f"  Default password is your {TEAL}first name{RESET}. Change it after first login.")
     nl()
     dim(f"  famstack also creates a {TEAL}stackadmin{RESET}{DIM} service account to manage")
-    dim(f"  things behind the scenes. You'll find its password in")
+    dim("  things behind the scenes. You'll find its password in")
     dim(f"  {TEAL}.stack/secrets.toml{RESET}{DIM} if you ever need it.")
     nl()
 
     out(f"{ORANGE}{BOLD}First step{RESET}")
     nl()
     out(f"  We'll start with {TEAL}Messages{RESET}, your family's private chat.")
-    out(f"  It doubles as the operation center: manage your server")
-    out(f"  from any device, get notifications, and add more services.")
-    out(f"  Once it's running, you can continue the setup from there.")
+    out("  It doubles as the operation center: manage your server")
+    out("  from any device, get notifications, and add more services.")
+    out("  Once it's running, you can continue the setup from there.")
     nl()
 
     if not confirm("Ready?"):
@@ -513,7 +512,6 @@ def wizard():
 
     # Resolve URLs from the Stack instance
     messages_url = stck._public_url("messages", 42030)
-    synapse_url = stck._public_url("messages", 42031)
 
     # ── Step-by-step guide ────────────────────────────────────────────
 
@@ -552,7 +550,7 @@ def wizard():
     out(f"  {TEAL}stack status{RESET}        See what's running")
     nl()
 
-    dim(f"  Service admin password is in .stack/secrets.toml")
+    dim("  Service admin password is in .stack/secrets.toml")
     nl()
 
     return {"stacklets": ["messages"], "users": users}

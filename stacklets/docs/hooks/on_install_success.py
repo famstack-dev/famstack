@@ -9,7 +9,6 @@ Also seeded on every `stack up docs` via on_start_ready.py
 so they stay in sync with users.toml and taxonomy.yaml changes.
 """
 
-import json
 import sys
 from pathlib import Path
 

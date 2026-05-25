@@ -6,7 +6,6 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 # backend.py lives in stacklets/ai/, not in a package
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "stacklets" / "ai"))

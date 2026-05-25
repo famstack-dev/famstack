@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Lifecycle hook resolution and execution.
 
 Hooks are the extension points of the stacklet lifecycle. Each transition
@@ -19,6 +17,7 @@ The ctx object provides:
   ctx.step()  — report progress
   ctx.shell() — run a system command
 """
+from __future__ import annotations
 
 import importlib.util
 import os

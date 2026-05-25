@@ -1,16 +1,14 @@
 """Tests for the oMLX admin API client."""
 
-import json
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 # Add stacklets/ai to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "stacklets" / "ai"))
 
-from omlx import OMLXClient, ModelInfo, DownloadTask, is_omlx, repo_id_to_model_id
+from omlx import OMLXClient, DownloadTask, repo_id_to_model_id
 
 
 class TestRepoIdToModelId:

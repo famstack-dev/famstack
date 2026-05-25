@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from .prompt import (
-    ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET,
+    ORANGE, TEAL, DIM, BOLD, RESET,
     clear, nl, out, dim, bold, done, warn,
     heading, section, banner, rule, kv,
     Spinner, ask, confirm, choose, choose_many,
@@ -331,7 +331,7 @@ def write_users_toml(users):
         lines.append(f'name     = "{u["name"]}"')
         lines.append(f'email    = "{u["email"]}"')
         lines.append(f'role     = "{u["role"]}"')
-        lines.append(f'stacklets = ["photos", "docs", "messages"]')
+        lines.append('stacklets = ["photos", "docs", "messages"]')
         lines.append("")
 
     path = REPO_ROOT / "users.toml"
@@ -402,10 +402,10 @@ def show_existing_config():
     # How to change things
     heading("To make changes")
     out(f"Edit {TEAL}stack.toml{RESET} to change settings like timezone, LLM endpoint,")
-    out(f"or AI language. Changes take effect on the next 'stack up'.")
+    out("or AI language. Changes take effect on the next 'stack up'.")
     nl()
     out(f"Edit {TEAL}users.toml{RESET} to add or remove family members.")
-    out(f"New accounts are created on the next 'stack up' for each service.")
+    out("New accounts are created on the next 'stack up' for each service.")
     nl()
     out(f"To start fresh, run {TEAL}stack uninstall{RESET} and then {TEAL}stack install{RESET}.")
     nl()

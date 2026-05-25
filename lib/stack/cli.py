@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Stack CLI — manage your stacklets.
 
 Entry point: main(). Invoked by the ./stack shell wrapper.
@@ -14,9 +12,9 @@ This module handles everything user-facing:
 All framework logic lives in the Stack class. Docker operations use
 the docker module. This file is the glue.
 """
+from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -45,6 +43,13 @@ def _refresh_core(stck, stacklet_id):
     we don't pretend nothing went wrong either.
     """
     if stacklet_id == "core":
+        return
+    # A "core" compose project may be running on the same Docker daemon yet
+    # belong to a different stack — tests run against the host daemon, and a
+    # host can carry a second install. Only refresh when THIS stack actually
+    # ships a core stacklet; otherwise refresh_env("core") raises on a stack
+    # that has none.
+    if not (stck.root / "stacklets" / "core").is_dir():
         return
     from .docker import running_project_ids
     if "core" not in running_project_ids():
@@ -627,7 +632,7 @@ def print_list(result: dict, stck=None) -> None:
 
 def print_status(result: dict) -> None:
     """Rich status overview: system info + stacklet list."""
-    from .prompt import TEAL, status_list
+    from .prompt import status_list
 
     name = result.get("name", "stack")
     version = result.get("version", "?")
@@ -781,12 +786,12 @@ def handle_destroy(stck, args):
             print_error({"error": "Pass --yes to confirm (non-interactive)"})
             sys.exit(1)
         print(f"\n  {ORANGE}⚠  Destroy {name}?{RESET}\n")
-        print(f"  This will permanently remove:")
-        print(f"    · Containers and volumes")
+        print("  This will permanently remove:")
+        print("    · Containers and volumes")
         if data_path.exists():
-            print(f"    · All stored data")
-        print(f"    · Secrets and config\n")
-        print(f"  You may want to back up your data first.\n")
+            print("    · All stored data")
+        print("    · Secrets and config\n")
+        print("  You may want to back up your data first.\n")
         try:
             answer = input("  Type 'destroy' to confirm: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -872,8 +877,8 @@ def handle_init(stck, args):
     if err:
         # No Docker at all — guide to OrbStack
         print(f"\n  {ORANGE}Docker is not running.{RESET}\n")
-        print(f"  famstack uses OrbStack as its container runtime.")
-        print(f"  It's fast, lightweight, and built for macOS.\n")
+        print("  famstack uses OrbStack as its container runtime.")
+        print("  It's fast, lightweight, and built for macOS.\n")
         print(f"  Install it from {TEAL}https://orbstack.dev{RESET}")
         print(f"  or run: {TEAL}brew install orbstack{RESET}\n")
         print(f"  Then run {TEAL}./stack init{RESET} again.\n")
@@ -889,11 +894,11 @@ def handle_init(stck, args):
         # Docker works but OrbStack not available
         print(f"  {ORANGE}⚠{RESET}  {status}")
         print()
-        print(f"  famstack is tested with OrbStack only.")
-        print(f"  Docker Desktop can cause high CPU usage and a sluggish system.\n")
+        print("  famstack is tested with OrbStack only.")
+        print("  Docker Desktop can cause high CPU usage and a sluggish system.\n")
         print(f"  Install OrbStack from {TEAL}https://orbstack.dev{RESET}")
         print(f"  or run: {TEAL}brew install orbstack{RESET}\n")
-        print(f"  famstack will use it automatically once installed.\n")
+        print("  famstack will use it automatically once installed.\n")
     else:
         print(f"  {GREEN}✓{RESET} {status}")
 
@@ -1063,11 +1068,11 @@ def handle_uninstall(stck, args):
 
     if not getattr(args, "yes", False):
         print(f"\n  {ORANGE}\u26a0  Uninstall {name}?{RESET}\n")
-        print(f"  This will:")
-        print(f"    \u2022 Destroy all running services and their containers")
-        print(f"    \u2022 Remove stack.toml and users.toml")
-        print(f"    \u2022 Remove all runtime state (.stack/)")
-        print(f"    \u2022 Optionally remove all service data\n")
+        print("  This will:")
+        print("    \u2022 Destroy all running services and their containers")
+        print("    \u2022 Remove stack.toml and users.toml")
+        print("    \u2022 Remove all runtime state (.stack/)")
+        print("    \u2022 Optionally remove all service data\n")
         try:
             answer = input("  Type 'uninstall' to confirm: ").strip()
         except (EOFError, KeyboardInterrupt):

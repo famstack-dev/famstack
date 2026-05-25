@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Output adapters for the Stack lifecycle.
 
 The Stack class reports progress through an output object instead of
@@ -10,6 +8,7 @@ Implementations:
   CollectorOutput  — captures messages in lists (for tests and JSON)
   TerminalOutput   — prints to stderr with formatting (for the CLI)
 """
+from __future__ import annotations
 
 import itertools
 import sys

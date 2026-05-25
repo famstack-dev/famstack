@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from tests.integration.forgejo import ForgejoError
 from tests.integration.matrix import (
@@ -95,7 +94,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
 
     bdd.given("the code (Forgejo) stacklet is reachable")
     assert code.ping(), "Forgejo API unreachable at http://localhost:42040"
-    bdd.ok(f"Forgejo /api/v1/version returned OK")
+    bdd.ok("Forgejo /api/v1/version returned OK")
 
     bdd.given("the #documents room exists and Homer has access")
     room_id = await wait_for_room(homer, DOCS_ROOM_ALIAS, timeout=90)

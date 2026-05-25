@@ -1,6 +1,7 @@
 """Prompt utilities: shared TUI primitives for hooks and installer."""
 
-from unittest.mock import patch, call
+import pytest
+from unittest.mock import patch
 
 
 class TestAsk:
@@ -37,11 +38,17 @@ class TestAsk:
         with patch("builtins.input", side_effect=EOFError):
             assert ask("Name") is None
 
-    def test_returns_none_on_interrupt(self):
+    def test_propagates_interrupt(self):
+        """Ctrl+C is not swallowed into None — it propagates so the
+        top-level handlers (__main__/cli/installer) can exit cleanly.
+        EOF is a closed stdin and returns None; an interrupt is the user
+        actively aborting and must reach those handlers.
+        """
         from stack.prompt import ask
 
         with patch("builtins.input", side_effect=KeyboardInterrupt):
-            assert ask("Name") is None
+            with pytest.raises(KeyboardInterrupt):
+                ask("Name")
 
     def test_prompt_has_chevron(self):
         from stack.prompt import ask

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Secret storage with stacklet-scoped namespacing.
 
 v1 implementation: TOML file at .stack/secrets.toml.
@@ -11,6 +9,7 @@ Namespacing: secrets are prefixed with {stacklet_id}__ (e.g. photos__DB_PASSWORD
 Reading falls back from stacklet-specific to global (global__ADMIN_PASSWORD).
 Writing always targets the stacklet namespace.
 """
+from __future__ import annotations
 
 import tomllib
 from pathlib import Path

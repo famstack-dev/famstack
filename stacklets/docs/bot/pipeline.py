@@ -30,7 +30,7 @@ import base64
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from loguru import logger
@@ -45,6 +45,9 @@ from matching import (
     submitter_person_tag,
 )
 from stack import resolve_model
+
+if TYPE_CHECKING:
+    from stack.ontology import Ontology
 
 
 # A 32×32 white PNG — small enough to be cheap on the wire, large enough

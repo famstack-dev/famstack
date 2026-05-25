@@ -4,8 +4,6 @@ No mocking. Creates a real Stack with real files, writes real secrets,
 and verifies the hook context can find them through the actual lookup path.
 """
 
-import tomllib
-from pathlib import Path
 
 
 def _make_stack(tmp_path):

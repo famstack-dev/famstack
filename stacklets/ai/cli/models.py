@@ -32,7 +32,7 @@ def run(args, stacklet, config):
     default_name = default_model.split("/")[-1] if "/" in default_model else default_model
 
     if sys.stderr.isatty():
-        from stack.prompt import nl, out, dim, done, warn, GREEN, ORANGE, RESET
+        from stack.prompt import nl, out, dim, warn, GREEN, ORANGE, RESET
 
         nl()
         # Check if default is loaded

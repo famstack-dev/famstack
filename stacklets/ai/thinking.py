@@ -27,7 +27,8 @@ def disable_thinking(client, model_id: str, log=None) -> bool:
     Returns True if thinking is now disabled, False on failure.
     """
     if log is None:
-        log = lambda msg: None
+        def log(msg):
+            return None
 
     if not is_qwen35(model_id):
         log(f"Not a Qwen3.5 model ({model_id}), skipping")

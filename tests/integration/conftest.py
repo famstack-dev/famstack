@@ -41,7 +41,7 @@ INSTANCE_DIR = REPO_ROOT
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 from tests.integration.paperless import PaperlessAPI, cleanup_prefix
-from tests.integration.matrix import MatrixCreds, login
+from tests.integration.matrix import login
 from tests.integration.forgejo import ForgejoAPI, cleanup_mirror_files
 from tests.integration.bdd import BDDLog
 from tests.integration._seed_secrets import (

@@ -5,7 +5,6 @@ The framework resolves hooks by name, builds a ctx for Python hooks,
 and passes env vars to shell hooks.
 """
 
-from pathlib import Path
 
 
 class TestHookResolution:

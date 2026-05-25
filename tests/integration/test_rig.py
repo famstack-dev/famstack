@@ -9,7 +9,6 @@ If these fail, nothing else in this directory will work.
 
 from __future__ import annotations
 
-import pytest
 
 
 def test_paperless_responds(paperless):
