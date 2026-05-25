@@ -117,8 +117,14 @@ config = {
     "url_preview_enabled": True,
     "url_preview_ip_range_blacklist": [],
 
-    # Keep everything forever — it's your own server
+    # Messages and media are kept forever — it's your own server.
+    # (retention disabled; media_retention left unset = Synapse never purges media)
     "retention": {"enabled": False},
+
+    # Redactions ARE honored: deleting a message eventually purges the
+    # original content from the DB. We widen Synapse's 7d default to 30d so
+    # an accidental delete has a month to be noticed before it's gone for good.
+    "redaction_retention_period": "30d",
 
     # Voice/video calls — STUN helps devices find each other.
     # Works for LAN calls out of the box. For calls across networks,
