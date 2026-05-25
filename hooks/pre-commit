@@ -1,0 +1,20 @@
+#!/bin/sh
+# Block commits that introduce ruff findings.
+#
+# Enable once per clone:
+#     git config core.hooksPath hooks
+#
+# Checks only the staged Python files, so unrelated unstaged lint never
+# blocks a commit. Runs through uvx, so no local ruff install is needed —
+# the config in pyproject.toml (ruleset + per-file ignores) is picked up
+# automatically because ruff runs from the repo root.
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+[ -z "$files" ] && exit 0
+
+if ! uvx ruff check $files; then
+    echo "" >&2
+    echo "ruff found issues in staged files. Fix them (try 'uvx ruff check --fix')" >&2
+    echo "or commit with --no-verify to bypass." >&2
+    exit 1
+fi
