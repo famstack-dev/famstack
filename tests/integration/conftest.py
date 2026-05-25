@@ -333,8 +333,30 @@ def code(test_stack) -> ForgejoAPI:
     )
 
 
+@pytest.fixture(scope="session")
+def memory_repo(code) -> None:
+    """Provision the family/memory repo the way the memory stacklet does.
+
+    The archivist mirror writes into this repo but no longer creates it —
+    the memory stacklet owns org, repo, and seed creation. This invokes
+    memory's own provisioning lib (no Quartz container needed) so the e2e
+    exercises the real ownership split: memory creates, archivist consumes.
+    """
+    mem_dir = REPO_ROOT / "stacklets" / "memory"
+    if str(mem_dir) not in sys.path:
+        sys.path.insert(0, str(mem_dir))
+    from stack.forgejo import ForgejoClient
+    import lib as memory_lib
+
+    client = ForgejoClient(
+        url=code.url, admin_user=code.admin_user, admin_password=code.admin_password,
+    )
+    memory_lib.ensure_memory_repo(client)
+    memory_lib.install_seeds(client)
+
+
 @pytest.fixture
-def mirror_scope(code, scope) -> Scope:
+def mirror_scope(code, memory_repo, scope) -> Scope:
     """Scope bound to mirror cleanup — on teardown, every file in the
     `memory` repo whose frontmatter title starts with scope.uid is
     deleted. The repo + bot user + seeds survive between tests."""

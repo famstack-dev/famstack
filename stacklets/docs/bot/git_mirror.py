@@ -58,23 +58,17 @@ from loguru import logger
 from stack.forgejo import ForgejoClient, ForgejoError
 
 
-# The shared family knowledge vault. The memory stacklet creates,
-# seeds, and READMEs the repo; the archivist writes Markdown under
-# entity-rooted paths (see module docstring). If the archivist boots
-# before memory is installed, the description here is used as the
-# create-time fallback — memory's install pipeline overwrites it
-# later (and they say the same thing).
+# The shared family knowledge vault. The memory stacklet creates and
+# seeds the org + repo (description, README, ontology, facts); the
+# archivist only writes Markdown under entity-rooted paths (see module
+# docstring), and skips mirroring entirely if memory hasn't provisioned
+# the repo yet.
 REPO_NAME = "memory"
-REPO_DESCRIPTION = (
-    "The family's curated knowledge — ontology, facts, and wiki. "
-    "Hand-edit any file here; the commit log is the learning history."
-)
 
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
 TOKEN_NAME = "archivist-git-mirror"
-TOKEN_SCOPES = ["write:repository", "read:repository", "read:user", "write:organization"]
-ORG_DESCRIPTION = "Your family's Forgejo — documents, knowledge, and shared repos."
+TOKEN_SCOPES = ["write:repository", "read:repository", "read:user"]
 
 
 @dataclass
@@ -132,11 +126,16 @@ class GitMirror:
     # ── Setup (idempotent, lazy) ─────────────────────────────────────────
 
     async def ensure_setup(self) -> bool:
-        """Ensure archivist-bot user, token, repo, and collaborators exist.
+        """Ensure the archivist-bot can push to the memory-provisioned repo.
+
+        Sets up docs' own resources — the archivist-bot user, its push
+        token, and the bot's membership in the family org Owners team.
+        Creation of the org, repo, and seeds belongs to the memory
+        stacklet; if memory hasn't provisioned the repo yet, this skips.
 
         Returns True if setup succeeded (or was already done), False if
-        Forgejo is unreachable. Subsequent calls short-circuit once
-        `_setup_done` is set.
+        Forgejo is unreachable or the repo isn't provisioned yet.
+        Subsequent calls short-circuit once `_setup_done` is set.
         """
         if self._setup_done:
             return True
@@ -172,20 +171,25 @@ class GitMirror:
                 logger.warning("[git-mirror] Could not issue token: {}", e)
                 return False
 
-        client.token = self._creds.token
-
-        # ── Org + team membership ────────────────────────────────────
-        # Orgs are the right home for family-wide repos (documents now,
-        # brain/calendar later). Admins see every org repo on their
-        # dashboard without per-repo watches.
-        try:
-            await asyncio.to_thread(
-                client.create_org, self.org_name, ORG_DESCRIPTION,
+        # The memory stacklet owns creation of the family org, the
+        # family/memory repo, and its seeds. If memory hasn't provisioned
+        # the repo yet there is nowhere to mirror — skip best-effort and
+        # let the next document retry once memory is up. The document
+        # still files into Paperless either way.
+        repo = await asyncio.to_thread(client.get_repo, self.org_name, REPO_NAME)
+        if repo is None:
+            logger.info(
+                "[git-mirror] {}/{} not provisioned by the memory stacklet yet; "
+                "skipping mirror",
+                self.org_name, REPO_NAME,
             )
-        except ForgejoError as e:
-            logger.warning("[git-mirror] Could not ensure org {}: {}", self.org_name, e)
             return False
 
+        # ── Team membership ──────────────────────────────────────────
+        # Grant the bot push access via the org Owners team. Org/team ops
+        # run as the admin (which owns the org through memory's creation),
+        # not the bot token. Admins are re-added so the repo shows on
+        # their dashboard.
         try:
             owners_team_id = await asyncio.to_thread(
                 client.get_owners_team_id, self.org_name,
@@ -201,33 +205,10 @@ class GitMirror:
             except ForgejoError as e:
                 logger.warning("[git-mirror] Could not add {} to Owners: {}", member, e)
 
-        try:
-            await asyncio.to_thread(
-                client.create_repo, self.org_name, REPO_NAME,
-                description=REPO_DESCRIPTION, private=True, owner_is_org=True,
-            )
-        except ForgejoError as e:
-            logger.warning("[git-mirror] Could not ensure repo: {}", e)
-            return False
-
-        # `create_repo` is idempotent on existing repos, so the description
-        # sync is a separate step for deployments that already have the
-        # repo with an older description. Admin-basic auth because the
-        # bot's token isn't scoped to repo settings.
-        admin_client = ForgejoClient(
-            url=self.code_url,
-            admin_user=self.admin_user, admin_password=self.admin_password,
-        )
-        try:
-            await asyncio.to_thread(
-                admin_client.update_repo, self.org_name, REPO_NAME,
-                description=REPO_DESCRIPTION,
-            )
-        except ForgejoError as e:
-            logger.warning("[git-mirror] Could not sync repo description: {}", e)
-
-        # README and vault top-level files (documents/, ontology.toml,
-        # facts.toml) are seeded by the memory stacklet, not here.
+        # The repo itself, its description, README, and the seed files
+        # (documents/, ontology.toml, facts.toml) are all created and
+        # owned by the memory stacklet. The archivist only writes Markdown
+        # under the shared bucket into the already-provisioned repo.
 
         self._setup_done = True
         logger.info("[git-mirror] Setup complete: {}/{}", self.org_name, REPO_NAME)
