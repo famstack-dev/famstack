@@ -89,8 +89,20 @@ def main(argv: list[str]) -> int:
     if not files:
         sys.exit("no documents to ingest")
 
+    senders = sorted({SENDERS.get(p.stem, DEFAULT_SENDER) for p in files})
+
     print(f"{'(dry run) ' if args.dry_run else ''}filing {len(files)} documents "
-          f"into '{args.room}':\n")
+          f"into '{args.room}' as {', '.join(senders)}:\n")
+
+    if not args.dry_run:
+        # Family members must be a member of the room to post into it.
+        # Force-join the senders once up front (idempotent) via the
+        # sanctioned admin command, so an upload never fails with
+        # "user not in room".
+        subprocess.run(
+            [str(STACK), "messages", "join", args.room, *senders],
+            cwd=REPO_ROOT,
+        )
 
     failures = 0
     for i, path in enumerate(files):
