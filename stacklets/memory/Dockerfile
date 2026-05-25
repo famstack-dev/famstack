@@ -21,7 +21,10 @@ ARG QUARTZ_TAG=v4.5.2
 # `git` clones Quartz at build time. `tini` reaps zombies left by
 # Quartz's child build process under `--serve`, which forks a
 # bundler on every rebuild. Without it, defunct processes pile up.
-RUN apk add --no-cache git tini
+# `coreutils` gives us GNU `env`: Quartz's CLI shebang uses
+# `#!/usr/bin/env -S node ...`, and BusyBox's `env` (Alpine's default)
+# doesn't understand `-S`, so the container crash-loops without it.
+RUN apk add --no-cache git tini coreutils
 
 WORKDIR /app
 
