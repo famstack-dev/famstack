@@ -1,5 +1,5 @@
 /**
- * quartz.layout.ts — memory garden
+ * quartz.layout.ts — family wiki
  *
  * Tracks the upstream v4 layout (graph + backlinks + search) with
  * one change: the footer's links table points at the Forgejo

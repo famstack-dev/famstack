@@ -1,5 +1,5 @@
 /**
- * quartz.config.ts — memory garden
+ * quartz.config.ts — family wiki
  *
  * Overlays the upstream Quartz v4 config with the bits that matter
  * for famstack: site title, edit-on-Forgejo origin, no analytics,
@@ -14,15 +14,15 @@
 import { QuartzConfig } from "./quartz/cfg"
 import * as Plugin from "./quartz/plugins"
 
-// Runtime env. `GARDEN_HOST` is "memory.<domain>" in domain mode and
-// the empty-domain rendering "memory." in port mode — we treat the
+// Runtime env. `WIKI_HOST` is "wiki.<domain>" in domain mode and
+// the empty-domain rendering "wiki." in port mode — we treat the
 // trailing-dot form as missing and fall back to the LAN IP so
 // absolute URLs in the sitemap stay reachable in either mode.
-const gardenHost = process.env.GARDEN_HOST?.replace(/^https?:\/\//, "") || ""
-const gardenIp = process.env.GARDEN_IP || ""
-const gardenPort = process.env.GARDEN_PORT || "42070"
-const haveRealHost = gardenHost && !gardenHost.endsWith(".")
-const baseUrl = haveRealHost ? gardenHost : `${gardenIp || "localhost"}:${gardenPort}`
+const wikiHost = process.env.WIKI_HOST?.replace(/^https?:\/\//, "") || ""
+const wikiIp = process.env.WIKI_IP || ""
+const wikiPort = process.env.WIKI_PORT || "42070"
+const haveRealHost = wikiHost && !wikiHost.endsWith(".")
+const baseUrl = haveRealHost ? wikiHost : `${wikiIp || "localhost"}:${wikiPort}`
 
 const config: QuartzConfig = {
   configuration: {
@@ -105,7 +105,7 @@ const config: QuartzConfig = {
       Plugin.Favicon(),
       Plugin.NotFoundPage(),
       // CustomOgImages does a heavy per-page render. Skipped for the
-      // garden — every container start rebuilds the whole site and
+      // wiki — every container start rebuilds the whole site and
       // OG cards aren't useful for a LAN-only wiki.
     ],
   },

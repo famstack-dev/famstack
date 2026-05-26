@@ -5,14 +5,14 @@
 # the commit log doubles as the learning history: every fact added,
 # every wiki edit, every reclassification is a diff you can revert.
 #
-# Memory is a host stacklet that *also* runs one container: the garden,
+# Memory is a host stacklet that *also* runs one container: the wiki,
 # a Quartz site that renders the vault as a browsable, mobile-friendly
 # wiki. The hooks still own the data plane (clone, pull, push); the
 # container is a derived, read-only view that watches the bind-mounted
 # working copy and rebuilds on change. There is one source of truth
-# (Forgejo) — the garden is just a nicer pair of eyes on it.
+# (Forgejo) — the wiki is just a nicer pair of eyes on it.
 #
-# Edits still happen in Forgejo: the garden renders pages with an
+# Edits still happen in Forgejo: the wiki renders pages with an
 # "edit on Forgejo" link, so every change lands as a real commit.
 
 id          = "memory"
@@ -23,25 +23,25 @@ category    = "infrastructure"
 type        = "host"
 requires    = ["code"]
 
-# The garden container is built locally from the Dockerfile in this
+# The wiki container is built locally from the Dockerfile in this
 # directory — there is no upstream image to pull. `build = true` tells
 # the runtime to `docker compose build` on every `stack up`, so config
 # tweaks (`quartz/*.ts`) land without manual image management.
 build = true
 
-# LAN port for the garden's Quartz preview server. Sits at the end of
+# LAN port for the wiki's Quartz preview server. Sits at the end of
 # the 42xxx range used by other stacklets so future infra ports stay
 # easy to scan.
 port = 42070
 
 hints = [
-    "Read the family memory at {url}",
+    "Read the family wiki at {url}",
     "Edit pages in Forgejo (`family/memory` repo) — every save is a commit",
 ]
 
 # Host-side env vars are read by the install / start hooks (they run on
 # the host and talk to Forgejo over HTTP). Container-side env vars are
-# read by the garden through `env_file: .env`. Both surfaces share this
+# read by the wiki through `env_file: .env`. Both surfaces share this
 # table — names that don't apply to a given surface are simply ignored.
 [env.defaults]
 CODE_URL       = "{code_url}"
@@ -53,13 +53,13 @@ ADMIN_PASSWORD = "{admin_password}"
 # [core] shared_bucket, defaults to "family".
 SHARED_BUCKET  = "{shared_bucket}"
 
-# Bind-mount source for the garden container. Resolves to the same
+# Bind-mount source for the wiki container. Resolves to the same
 # working copy that the hooks clone into — `memory.lib.vault_path_for`
 # also returns this path, so there is exactly one vault on disk.
 MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
 
-# Public hostname the garden renders into absolute URLs (sitemap,
+# Public hostname the wiki renders into absolute URLs (sitemap,
 # social cards, etc). Empty domain (port mode) falls back to the
 # auto-detected LAN IP via `{ip}` so the site stays reachable.
-GARDEN_HOST = "memory.{domain}"
-GARDEN_IP   = "{ip}"
+WIKI_HOST = "wiki.{domain}"
+WIKI_IP   = "{ip}"

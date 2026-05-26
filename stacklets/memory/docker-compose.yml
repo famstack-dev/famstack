@@ -1,27 +1,27 @@
-# stacklets/memory/docker-compose.yml — the memory garden
+# stacklets/memory/docker-compose.yml — the family wiki
 #
-# One service. The "garden" is a Quartz v4 site that renders the
+# One service. The "wiki" is a Quartz v4 site that renders the
 # family memory vault as a browsable wiki: graph view, backlinks,
 # full-text search, mobile-friendly. The container runs `quartz
 # build --serve`, which watches the bind-mounted vault and rebuilds
 # whenever the hooks pull new commits in from Forgejo.
 #
-# The vault is mounted read-write so the garden can keep its working
+# The vault is mounted read-write so the wiki can keep its working
 # copy in sync with Forgejo (a background `git pull` loop in the
 # entrypoint). Edits still happen in Forgejo, which stays the canonical
-# source of truth; the garden only ever fast-forwards. The image is
+# source of truth; the wiki only ever fast-forwards. The image is
 # built locally from the sibling Dockerfile and Watchtower is told to
 # ignore it (there's no upstream image to track).
 
 name: stack-memory
 
 services:
-  stack-memory-garden:
-    container_name: stack-memory-garden
+  stack-memory-wiki:
+    container_name: stack-memory-wiki
     build:
       context: .
       dockerfile: Dockerfile
-    image: stack-memory-garden:local
+    image: stack-memory-wiki:local
     # Locally-built image — nothing for Watchtower to pull. The Quartz
     # version is pinned in the Dockerfile and bumped by hand.
     labels:
@@ -30,16 +30,16 @@ services:
       - stack
     # Mounted read-write so the entrypoint can fast-forward the working
     # copy from Forgejo (git pull). Edits still round-trip through
-    # Forgejo so they land as commits; the garden never writes its own.
+    # Forgejo so they land as commits; the wiki never writes its own.
     volumes:
       - ${MEMORY_VAULT_DIR}:/vault
     environment:
       # Used by quartz.config.ts to build "edit on Forgejo" links and
       # absolute URLs. Resolved by the runtime from stack.toml.
       CODE_URL: ${CODE_URL}
-      GARDEN_HOST: ${GARDEN_HOST}
-      GARDEN_IP: ${GARDEN_IP}
-      GARDEN_PORT: "42070"
+      WIKI_HOST: ${WIKI_HOST}
+      WIKI_IP: ${WIKI_IP}
+      WIKI_PORT: "42070"
       # How often the background loop pulls family/memory from Forgejo.
       VAULT_SYNC_INTERVAL: "20"
     ports:

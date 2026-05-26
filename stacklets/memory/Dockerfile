@@ -1,6 +1,6 @@
-# Dockerfile — memory garden (Quartz v4)
+# Dockerfile — family wiki (Quartz v4)
 #
-# The garden is a thin shell around an upstream Quartz checkout. We
+# The wiki is a thin shell around an upstream Quartz checkout. We
 # clone the Quartz repo at a pinned tag, install its node_modules,
 # and overlay our config files. The container's job at runtime is
 # `npx quartz build --serve`, which builds the site once and then
@@ -42,8 +42,8 @@ COPY quartz/quartz.layout.ts ./quartz.layout.ts
 
 # The entrypoint keeps the vault in sync (background git pull loop) and
 # then serves it with Quartz. See quartz/entrypoint.sh.
-COPY quartz/entrypoint.sh /usr/local/bin/garden-entrypoint.sh
-RUN chmod +x /usr/local/bin/garden-entrypoint.sh
+COPY quartz/entrypoint.sh /usr/local/bin/wiki-entrypoint.sh
+RUN chmod +x /usr/local/bin/wiki-entrypoint.sh
 
 # Quartz's preview server defaults to port 8080. Node's
 # `server.listen(port)` with no host binds 0.0.0.0, so the port
@@ -54,4 +54,4 @@ EXPOSE 8080
 # `-g` so a stop signal reaches the whole process group — both Quartz
 # and the background vault-sync loop — not just Quartz.
 ENTRYPOINT ["/sbin/tini", "-g", "--"]
-CMD ["/usr/local/bin/garden-entrypoint.sh"]
+CMD ["/usr/local/bin/wiki-entrypoint.sh"]
