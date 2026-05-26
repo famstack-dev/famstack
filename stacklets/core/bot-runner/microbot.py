@@ -17,7 +17,7 @@ The base class then handles:
   - Initial sync that skips old messages (bots don't replay history)
   - Auto-accept room invitations
   - The sync loop with error recovery
-  - Message dedup via per-room cursor (at-most-once delivery)
+  - Reliable, burst-safe delivery by draining the room timeline
 
 Session persistence: each bot stores its access token and device ID in
 a JSON file at {session_dir}/{name}.session.json. On restart, the bot
@@ -25,18 +25,27 @@ restores the session instead of creating a new login — this prevents
 the "unknown device" problem where other clients can't encrypt for a
 bot that logs in with a new device every time.
 
-Message cursor: Matrix is used as a message bus — bots may be restarted
-at any time (e.g. when a new stacklet is installed and core is refreshed).
-Each bot keeps a per-room timestamp cursor on disk. Callbacks registered
-via add_event_callback() only fire for messages newer than the cursor.
-The cursor is advanced before the callback runs, so if the callback
-triggers a container restart (stacker running "stack up"), the message
-won't be replayed. This gives at-most-once delivery — safe for commands
-and document processing where replay would cause duplicates.
+Delivery model — Synapse is the queue: the room timeline is a durable,
+ordered log; we treat it as the work queue rather than maintaining a
+separate one. The live `sync()` is only a doorbell — it keeps the bot
+present and tells us the room advanced. The actual work is read by
+`_drain()`, which pages the timeline forward from a durable per-room
+cursor via `room_messages` and dispatches each event to its handler in
+order. Reading the timeline directly (instead of relying on the live
+sync payload) means a burst can never be lost to a "limited" (gappy)
+sync — every event since the cursor is still on the timeline.
+
+The cursor (a per-room server_timestamp on disk) advances only *after*
+a handler returns, so a crash mid-processing replays the event rather
+than skipping it: at-least-once delivery. Handlers must therefore be
+idempotent — keyed on a stable id, every write an upsert — so a replay
+is a no-op. (The timestamp cursor has a same-millisecond edge; a later
+revision moves the cursor to the Matrix read marker / event id.)
 """
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import aiohttp
@@ -48,6 +57,8 @@ from nio import (
     InviteMemberEvent,
     LoginResponse,
     MegolmEvent,
+    MessageDirection,
+    RoomMessagesResponse,
 )
 
 from room_context import RoomContext, context_for
@@ -79,6 +90,10 @@ class MicroBot:
         self.session_file = self._session_dir / f"{self.name}.session.json"
         self._cursor_file = self._session_dir / f"{self.name}-cursor"
         self._cursors = self._load_cursors()
+        # (event_type_or_tuple, wrapped_handler) pairs. The drain dispatches
+        # to these; we do not register them with nio, because the live sync
+        # is only a doorbell — delivery happens in `_drain`.
+        self._handlers: list[tuple] = []
         self._client: AsyncClient | None = None
         # Lazily-created shared aiohttp session for non-nio HTTP (media
         # download, and subclasses' own API calls). Owned by the
@@ -177,12 +192,16 @@ class MicroBot:
         # ── Subclass callbacks ───────────────────────────────────────
         self.register_callbacks(self._client)
 
-        # ── Sync loop ────────────────────────────────────────────────
+        # ── Sync + drain loop ─────────────────────────────────────────
+        # `sync()` is the doorbell (long-poll: returns on activity or after
+        # the timeout); `_drain()` does the work, reading the timeline from
+        # the durable cursor so nothing is lost to a limited sync.
         logger.info("[{}] Running", self.name)
         while self._running:
             try:
                 await self._client.sync(timeout=30000)
                 self._trust_all_devices()
+                await self._drain()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -240,41 +259,29 @@ class MicroBot:
     def add_event_callback(self, callback, event_type):
         """Register an event callback with the standard framework wrap.
 
-        The wrap does three things every bot wants:
+        The wrap does two things every bot wants:
 
-          1. **Dedup** — only fires for messages newer than the per-room
-             cursor; the cursor advances before the callback runs, so a
-             callback that triggers a restart can't replay the message.
-             At-most-once delivery.
-          2. **Typing indicator** — shows that the bot is working from
-             the moment the cursor advances until the handler returns
-             (or fails). This is the family's only signal that the bot
-             saw the message at all.
-          3. **Timeout + error response** — runs the callback under
+          1. **Typing indicator** — a typing-off is guaranteed in
+             `finally`. It does NOT auto-set typing-on; handlers control
+             when the indicator appears, because the right moment depends
+             on whether they post an intermediate confirmation first
+             (which clears the indicator on Element's side).
+          2. **Timeout + error response** — runs the callback under
              ``HANDLER_TIMEOUT_SECONDS`` and, on timeout *or* any
              unhandled exception, posts a user-facing notice into the
              room via ``_send_error``. A silently-failing bot is worse
              than a bot that says "sorry, try again."
 
-        Handlers don't need their own try/except or typing management;
-        the framework owns both. Subclasses customize the error wording
-        by overriding ``_format_handler_error``.
+        The handler is not registered with nio; it is stored and invoked
+        by `_drain` in timeline order. Dedup and cursor advancement live
+        there — the drain only dispatches events past the cursor and
+        advances it *after* the handler returns (at-least-once), so
+        handlers must be idempotent. Subclasses customize the error
+        wording by overriding ``_format_handler_error``.
         """
         async def wrapper(room, event):
             if event.sender == self.user_id:
                 return
-            ts = getattr(event, "server_timestamp", 0)
-            if ts <= self._cursors.get(room.room_id, 0):
-                return
-            self._advance_cursor(room.room_id, ts)
-
-            # From here on, the bot owns this event. The framework
-            # guarantees a typing-off in `finally` (and posts an error
-            # notice if the handler raises or runs over budget), but
-            # it does NOT auto-set typing-on. Handlers control when the
-            # indicator appears, because the right moment depends on
-            # whether they post an intermediate confirmation message
-            # first (which clears the indicator on Element's side).
             try:
                 await asyncio.wait_for(
                     callback(room, event),
@@ -295,7 +302,75 @@ class MicroBot:
             finally:
                 await self._set_typing(room.room_id, on=False)
 
-        self._client.add_event_callback(wrapper, event_type)
+        # Stored for the drain, not registered with nio: the live sync is
+        # only a doorbell, delivery happens in `_drain`.
+        self._handlers.append((event_type, wrapper))
+
+    # ── Drain: the timeline is the queue ──────────────────────────────────
+    #
+    # Each cycle we read everything past the per-room cursor straight off
+    # the timeline via `room_messages` and dispatch it in order. Reading the
+    # timeline (rather than trusting the live sync payload) is gap-free: a
+    # burst that outran a "limited" sync is still fully on the timeline, so
+    # nothing is dropped under load.
+
+    DRAIN_PAGE_SIZE = 50
+    MAX_DRAIN_PAGES = 40  # safety cap: up to ~2000 backlogged events per room
+
+    async def _drain(self) -> None:
+        """Process new events in every joined room, in timeline order."""
+        if not self._handlers or self._client is None:
+            return
+        for room_id in list(self._client.rooms.keys()):
+            try:
+                await self._drain_room(room_id)
+            except Exception as e:
+                logger.warning("[{}] drain error in {}: {}", self.name, room_id, e)
+
+    async def _drain_room(self, room_id: str) -> None:
+        # First sight of a room: anchor the cursor at "now" so we don't
+        # replay its whole history (the old "skip old messages" behavior).
+        if room_id not in self._cursors:
+            self._advance_cursor(room_id, int(time.time() * 1000))
+            return
+
+        cursor = self._cursors[room_id]
+
+        # Page backward from the live sync position, collecting events newer
+        # than the cursor, until we cross it. Then process oldest-first.
+        pending: list = []
+        start = self._client.next_batch
+        for _ in range(self.MAX_DRAIN_PAGES):
+            resp = await self._client.room_messages(
+                room_id, start=start, direction=MessageDirection.back,
+                limit=self.DRAIN_PAGE_SIZE,
+            )
+            if not isinstance(resp, RoomMessagesResponse) or not resp.chunk:
+                break
+            crossed = False
+            for event in resp.chunk:  # newest -> oldest
+                if getattr(event, "server_timestamp", 0) <= cursor:
+                    crossed = True
+                    break
+                pending.append(event)
+            if crossed or not resp.end or resp.end == start:
+                break
+            start = resp.end
+
+        for event in sorted(pending, key=lambda e: getattr(e, "server_timestamp", 0)):
+            await self._dispatch(room_id, event)
+            # Advance only after the handler returns: a crash mid-handler
+            # replays the event (at-least-once), it is never skipped.
+            self._advance_cursor(room_id, getattr(event, "server_timestamp", cursor))
+
+    async def _dispatch(self, room_id: str, event) -> None:
+        """Invoke every handler whose registered type matches the event."""
+        room = self._client.rooms.get(room_id)
+        if room is None:
+            return
+        for event_type, handler in self._handlers:
+            if isinstance(event, event_type):
+                await handler(room, event)
 
     # ── Typing + error response ──────────────────────────────────────────
     #
