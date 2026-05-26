@@ -39,8 +39,15 @@ The cursor (a per-room server_timestamp on disk) advances only *after*
 a handler returns, so a crash mid-processing replays the event rather
 than skipping it: at-least-once delivery. Handlers must therefore be
 idempotent — keyed on a stable id, every write an upsert — so a replay
-is a no-op. (The timestamp cursor has a same-millisecond edge; a later
-revision moves the cursor to the Matrix read marker / event id.)
+is a no-op. The timestamp cursor has a rare same-millisecond edge,
+accepted for now.
+
+The bot also sets the public `m.read` receipt to each processed event,
+so the room shows its "Seen by" progress in Element. That is purely
+cosmetic — the local cursor is the source of truth, so a failed receipt
+never affects what gets processed. (Using the Matrix `m.fully_read`
+marker *as* the cursor was tried and dropped: the account-data callback
+that reads it back didn't fire reliably, so the local cursor stays.)
 """
 
 import asyncio
@@ -362,6 +369,20 @@ class MicroBot:
             # Advance only after the handler returns: a crash mid-handler
             # replays the event (at-least-once), it is never skipped.
             self._advance_cursor(room_id, getattr(event, "server_timestamp", cursor))
+            # Move the public read receipt too, so the room shows the bot's
+            # "Seen by" progress. Purely cosmetic — the cursor above is the
+            # source of truth, so a failed receipt never affects delivery.
+            await self._set_read_receipt(room_id, getattr(event, "event_id", None))
+
+    async def _set_read_receipt(self, room_id: str, event_id: str | None) -> None:
+        """Best-effort public m.read receipt for the "Seen by" indicator."""
+        if not event_id:
+            return
+        try:
+            await self._client.update_receipt_marker(room_id, event_id)
+        except Exception as e:
+            logger.debug("[{}] read receipt update failed in {}: {}",
+                         self.name, room_id, e)
 
     async def _dispatch(self, room_id: str, event) -> None:
         """Invoke every handler whose registered type matches the event."""
