@@ -44,9 +44,20 @@ class FakeClient:
         # key yields a response whose `.event` is None (parent not found).
         self.parent_events: dict[str, object] = {}
         self.get_event_raises: BaseException | None = None
+        # Drain surface: the timeline (newest-first), the rooms map, and a
+        # sync token. room_messages returns the whole timeline in one page.
+        self.next_batch = "END"
+        self.rooms: dict = {}
+        self.timeline: list = []
 
     def add_event_callback(self, cb, event_type):
         self.callbacks.append((cb, event_type))
+
+    async def room_messages(self, room_id, start, direction, limit):
+        from nio import RoomMessagesResponse
+        return RoomMessagesResponse(
+            room_id=room_id, chunk=list(self.timeline), start=start, end=None,
+        )
 
     async def room_typing(self, room_id, typing_state, timeout):
         if self.typing_raises is not None:
@@ -87,8 +98,10 @@ def _build_bot(tmp_path, *, handler) -> tuple[MicroBot, FakeClient]:
         session_dir=str(tmp_path),
     )
     bot._client = FakeClient()
-    bot.add_event_callback(handler, "RoomMessageText")
-    bot._wrapper = bot._client.callbacks[0][0]
+    # `object` matches any synthetic event in the drain's isinstance check;
+    # the wrapper-contract tests invoke bot._wrapper directly and ignore it.
+    bot.add_event_callback(handler, object)
+    bot._wrapper = bot._handlers[0][1]
     return bot, bot._client
 
 
@@ -172,24 +185,70 @@ class TestSkipCases:
         assert ran == []
         assert client.typing_calls == []
 
+
+# ── Drain: the timeline is the queue ────────────────────────────────────────
+
+
+class TestDrain:
+    """The drain is the delivery path: it reads the timeline past the
+    per-room cursor and dispatches oldest-first, advancing the cursor
+    after each handler returns (at-least-once). Dedup and ordering live
+    here now, not in the wrapper."""
+
     @pytest.mark.asyncio
-    async def test_replay_event_skipped(self, tmp_path):
-        ran = []
+    async def test_dispatches_past_cursor_oldest_first_and_advances(self, tmp_path):
+        seen = []
 
         async def handler(room, event):
-            ran.append(True)
+            seen.append(event.server_timestamp)
 
         bot, client = _build_bot(tmp_path, handler=handler)
-        # First event advances the cursor.
-        await bot._wrapper(_room(), _event(ts=5))
-        # Older / equal timestamp must be dropped.
-        await bot._wrapper(_room(), _event(ts=5))
-        await bot._wrapper(_room(), _event(ts=4))
+        room = _room()
+        client.rooms = {room.room_id: room}
+        bot._cursors[room.room_id] = 5
+        # Timeline newest-first; only ts > 5 runs, and oldest-first.
+        client.timeline = [_event(ts=7), _event(ts=6), _event(ts=5), _event(ts=4)]
 
-        assert ran == [True]  # only the first ran
-        # Framework only clears typing on the one event that actually
-        # ran — replay-skipped events return before reaching the wrap.
-        assert client.typing_calls == [("!r:server", False)]
+        await bot._drain()
+
+        assert seen == [6, 7]
+        assert bot._cursors[room.room_id] == 7
+
+    @pytest.mark.asyncio
+    async def test_own_messages_skipped_but_cursor_advances(self, tmp_path):
+        seen = []
+
+        async def handler(room, event):
+            seen.append(event.server_timestamp)
+
+        bot, client = _build_bot(tmp_path, handler=handler)
+        room = _room()
+        client.rooms = {room.room_id: room}
+        bot._cursors[room.room_id] = 0
+        client.timeline = [_event(ts=10, sender="@test-bot:server")]
+
+        await bot._drain()
+
+        assert seen == []                        # the bot's own message does nothing
+        assert bot._cursors[room.room_id] == 10  # but the cursor moves past it
+
+    @pytest.mark.asyncio
+    async def test_first_sight_room_anchors_without_replaying_history(self, tmp_path):
+        seen = []
+
+        async def handler(room, event):
+            seen.append(event.server_timestamp)
+
+        bot, client = _build_bot(tmp_path, handler=handler)
+        room = _room()
+        client.rooms = {room.room_id: room}
+        client.timeline = [_event(ts=100), _event(ts=99)]
+        assert room.room_id not in bot._cursors
+
+        await bot._drain()
+
+        assert seen == []                       # history is not replayed
+        assert bot._cursors[room.room_id] > 0   # cursor anchored at ~now
 
 
 # ── Timeout ──────────────────────────────────────────────────────────────
