@@ -49,6 +49,8 @@ class FakeClient:
         self.next_batch = "END"
         self.rooms: dict = {}
         self.timeline: list = []
+        # (room_id, event_id) read receipts the drain set for the "Seen by".
+        self.receipts: list = []
 
     def add_event_callback(self, cb, event_type):
         self.callbacks.append((cb, event_type))
@@ -58,6 +60,10 @@ class FakeClient:
         return RoomMessagesResponse(
             room_id=room_id, chunk=list(self.timeline), start=start, end=None,
         )
+
+    async def update_receipt_marker(self, room_id, event_id, receipt_type=None, thread_id="main"):
+        self.receipts.append((room_id, event_id))
+        return SimpleNamespace()
 
     async def room_typing(self, room_id, typing_state, timeout):
         if self.typing_raises is not None:
@@ -105,11 +111,11 @@ def _build_bot(tmp_path, *, handler) -> tuple[MicroBot, FakeClient]:
     return bot, bot._client
 
 
-def _event(sender="@homer:server", ts=1_000_000):
+def _event(sender="@homer:server", ts=1_000_000, eid="$evt:server"):
     return SimpleNamespace(
         sender=sender,
         server_timestamp=ts,
-        event_id="$evt:server",
+        event_id=eid,
         source={"content": {}},
         body="hi",
     )
@@ -207,12 +213,17 @@ class TestDrain:
         client.rooms = {room.room_id: room}
         bot._cursors[room.room_id] = 5
         # Timeline newest-first; only ts > 5 runs, and oldest-first.
-        client.timeline = [_event(ts=7), _event(ts=6), _event(ts=5), _event(ts=4)]
+        client.timeline = [
+            _event(ts=7, eid="$e7"), _event(ts=6, eid="$e6"),
+            _event(ts=5, eid="$e5"), _event(ts=4, eid="$e4"),
+        ]
 
         await bot._drain()
 
         assert seen == [6, 7]
         assert bot._cursors[room.room_id] == 7
+        # The public read receipt followed to the last processed event.
+        assert client.receipts[-1] == (room.room_id, "$e7")
 
     @pytest.mark.asyncio
     async def test_own_messages_skipped_but_cursor_advances(self, tmp_path):
