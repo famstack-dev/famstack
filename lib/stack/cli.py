@@ -700,6 +700,13 @@ def handle_up(stck, args):
     from .prompt import TEAL
     cli = CLI(stck)
 
+    # --no-voice is the flag form of STACK_AI_NO_VOICE=1. The ai stacklet's
+    # on_start reads this env var to drop the Piper TTS container (and
+    # on_install skips the Whisper build). Other stacklets don't read it, so
+    # setting it here for `up all` is harmless.
+    if getattr(args, "no_voice", False):
+        os.environ["STACK_AI_NO_VOICE"] = "1"
+
     if args.stacklet == "all":
         print(f"\n  Bringing up {TEAL}all installed stacklets{RESET}...\n",
               file=sys.stderr)
@@ -1303,6 +1310,8 @@ def main():
     sub.add_parser("version")
 
     p = sub.add_parser("up"); p.add_argument("stacklet")
+    p.add_argument("--no-voice", action="store_true",
+                   help="(ai) start without the voice container (TTS + Whisper); sets STACK_AI_NO_VOICE=1")
     p = sub.add_parser("down"); p.add_argument("stacklet")
     p = sub.add_parser("destroy"); p.add_argument("stacklet"); p.add_argument("--yes", action="store_true")
     p = sub.add_parser("restart"); p.add_argument("stacklet")
