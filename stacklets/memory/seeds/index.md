@@ -13,3 +13,8 @@ folders in the sidebar. Each page links back to where it came from.
 
 To add or edit a page, open the **family/memory** repository in Forgejo.
 Every change is saved as a version you can always look back on.
+
+<!-- begin: generated -->
+<!-- Your family overview appears here once you run `stack docs overview --write`. -->
+<!-- end: generated -->
+
