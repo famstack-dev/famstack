@@ -184,7 +184,7 @@ async def _generate_member(
     prompt = _build_member_prompt(display, slug, entries, facts, lang=lang)
     page = (await classifier._request("overview", prompt, json_mode=False)).strip()
 
-    # Member page lives at `<slug>/index.md`; links climb one level to
+    # Member page lives at `<slug>/about.md`; links climb one level to
     # reach the shared bucket and stay relative within the member's own.
     page = _with_references(page, entries, page_dir=slug)
 
@@ -194,14 +194,38 @@ async def _generate_member(
     return await _publish(
         page, target_path=f"{slug}/about.md", shared_bucket=shared_bucket,
         commit_msg=f"docs(memory): refresh {slug}'s wiki page",
-        # Quartz's FolderPage emitter wins for any `<folder>/index.md`
-        # and the markdown body never reaches the rendered page (it only
-        # surfaces as the description meta tag). Naming the file
-        # `about.md` keeps it inside the member's bucket while letting
-        # the standard ContentPage emitter render the body. The title
-        # frontmatter still drives the page's display title.
-        default_preamble=f"---\ntitle: {display}\n---",
+        # First-creation frontmatter seeds the person entity registry on
+        # the page itself: `canonical` is the longest synonym (usually
+        # the formal first name when the family also uses a nickname),
+        # `synonyms` are the other variants seen in document
+        # frontmatter. The splice keeps everything outside the markers
+        # on re-runs, so a hand edit or a future deriver pass takes
+        # ownership of the registry from here.
+        default_preamble=_member_preamble(slug, display, _member_synonyms(index, slug)),
     )
+
+
+def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
+    """Frontmatter for a freshly-created member page.
+
+    Picks the longest synonym as the canonical name -- in a household
+    that uses both "Margaret" and "Maggie", the longer one is reliably
+    the formal first name. Empty synonyms (a member named consistently
+    in every document) collapses to a single-field registry entry.
+    """
+    canonical = max(synonyms, key=len) if synonyms else display
+    others = [s for s in synonyms if s != canonical]
+    lines = [
+        "---",
+        f"title: {canonical}",
+        f"slug: {slug}",
+        f"canonical: {canonical}",
+    ]
+    if others:
+        lines.append("synonyms:")
+        lines.extend(f"  - {s}" for s in others)
+    lines.append("---")
+    return "\n".join(lines)
 
 
 # ── Vault index (single walk) ──────────────────────────────────────────────
@@ -211,10 +235,11 @@ def _index_vault(vault: Path) -> list[dict]:
 
     Files without a `> [!summary]` block are skipped -- they don't carry
     the structured signal the LLM needs and would only add noise. Each
-    entry holds `title`, `date`, `summary`, `rel`, and `persons` (the
-    frontmatter person list, slugified to match member buckets). The one
-    list the home page and every member page draw from: one walk, many
-    surfaces.
+    entry holds `title`, `date`, `summary`, `rel`, `persons` (frontmatter
+    person list, slugified to match member buckets), and `person_names`
+    (the original casing, kept aligned with `persons` so callers can
+    recover synonym variants for the entity registry). The one list the
+    home page and every member page draw from: one walk, many surfaces.
     """
     out: list[dict] = []
     for md in sorted(vault.rglob("*.md")):
@@ -230,17 +255,19 @@ def _index_vault(vault: Path) -> list[dict]:
             rel = str(md.relative_to(vault))
         except ValueError:
             rel = str(md)
-        persons = [
-            _slugify_person(p)
+        raw_persons = [
+            p.strip()
             for p in (fm.get("persons") or [])
             if isinstance(p, str) and p.strip()
         ]
+        slugged = [(_slugify_person(p), p) for p in raw_persons]
         out.append({
             "title": fm.get("title") or md.stem,
             "date": fm.get("date") or "",
             "summary": summary,
             "rel": rel,
-            "persons": [p for p in persons if p],
+            "persons": [s for s, _ in slugged if s],
+            "person_names": [n for s, n in slugged if s],
         })
     return out
 
@@ -262,6 +289,25 @@ def _member_slugs(vault: Path, index: list[dict], shared_bucket: str) -> list[st
     for entry in index:
         slugs.update(entry["persons"])
     return sorted(slugs)
+
+
+def _member_synonyms(index: list[dict], slug: str) -> list[str]:
+    """Distinct person-name variants that resolve to this member's bucket.
+
+    The classifier writes whatever first name appears in each document
+    into `persons:` -- "Maggie" on one bill, "Margaret" on the birth
+    certificate. Collected and deduped across the vault, those are the
+    member's known synonyms: the raw material for the entity registry
+    seeded into each `about.md` page and, eventually, what the deriver
+    grows over time.
+    """
+    seen: set[str] = set()
+    for entry in index:
+        for sl, raw in zip(entry.get("persons", []),
+                           entry.get("person_names", [])):
+            if sl == slug:
+                seen.add(raw)
+    return sorted(seen)
 
 
 def _member_entries(index: list[dict], slug: str) -> list[dict]:
