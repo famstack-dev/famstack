@@ -280,14 +280,25 @@ class ForgejoClient:
 
     def get_file(self, owner: str, repo: str, path: str,
                  ref: str = "main") -> dict | None:
-        """Return {'content': <base64>, 'sha': ..., ...} or None if missing."""
-        return self._req(
+        """Return {'content': str, 'sha': ..., ...} or None if missing.
+
+        Forgejo's contents API returns the file body base64-encoded; we
+        decode it here so callers get the actual file text and don't
+        each have to remember the wire encoding.
+        """
+        data = self._req(
             "GET",
             f"/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
             headers=self._token_header(),
             params={"ref": ref},
             allow_404=True,
         )
+        if not data:
+            return None
+        raw = data.get("content")
+        if raw:
+            data["content"] = base64.b64decode(raw).decode("utf-8", errors="replace")
+        return data
 
     def put_file(self, owner: str, repo: str, path: str, *,
                  content: str, message: str,
