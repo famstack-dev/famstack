@@ -511,12 +511,16 @@ class ArchivistBot(MicroBot):
         The framework's `_reply_parent_envelope` does the transport work
         — fetch the replied-to parent, confirm it's ours, read off its
         `dev.famstack.event` envelope. Here we keep only the archivist's
-        domain reading: a `document.filed` envelope carries the
-        `paperless_id` the reprocess flow needs. Anything else (wrong
-        type, no envelope, not a reply) routes normally.
+        domain reading: any envelope that carries a `paperless_id` is a
+        valid correction target. That covers the initial `document.filed`
+        message AND a later `document.reclassified` -- the user can chain
+        corrections by replying to the most recent classification reply,
+        not just to the original filing.
         """
         envelope = await self._reply_parent_envelope(room_id, event)
-        if not envelope or envelope.get("type") != "document.filed":
+        if not envelope or envelope.get("type") not in (
+            "document.filed", "document.reclassified",
+        ):
             return None
         paperless_id = envelope.get("data", {}).get("paperless_id")
         return paperless_id if isinstance(paperless_id, int) else None

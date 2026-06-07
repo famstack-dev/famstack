@@ -952,7 +952,7 @@ class TestClassifyPromptUserHint:
         )
         # Default classification path produces the same prompt as before;
         # the user-context section only appears when the human spoke.
-        assert "User context" not in prompt
+        assert "User context — what the human" not in prompt
 
     def test_blank_hint_is_treated_as_missing(self):
         from pipeline import _build_classify_prompt
@@ -961,7 +961,7 @@ class TestClassifyPromptUserHint:
             doc_types=[], correspondents=[],
             user_hint="   \n  ",
         )
-        assert "User context" not in prompt
+        assert "User context — what the human" not in prompt
 
 
 class TestClassifyPromptVisionRule:
