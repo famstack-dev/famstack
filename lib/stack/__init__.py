@@ -12,7 +12,7 @@ from .secrets import TomlSecretStore
 from .hooks import HookResolver, StackContext, build_hook_ctx
 from .output import SilentOutput, CollectorOutput
 from .users import user_id
-from .models import resolve_model
+from .ai import resolve_model
 from . import docker
 from .cli import CLI
 from .commands import COMMANDS, EnvCommand, ListCommand, UpCommand, DownCommand, DestroyCommand

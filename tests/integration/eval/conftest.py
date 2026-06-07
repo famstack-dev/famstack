@@ -9,7 +9,7 @@ bdd) and only adds what the eval needs:
   - `bot_paperless`  — the bot's async PaperlessAPI client (upload +
     OCR-task polling lives there, not on the test client).
   - `ai_classifier`  — a real `Classifier` aimed at the AI stacklet,
-    with `stack.models._DEFAULT_MODEL` patched to the chosen model so
+    with `stack.ai.models._DEFAULT_MODEL` patched to the chosen model so
     `resolve_model("archivist-bot/classifier")` returns it.
   - `eval_upload`    — uploads a file, waits for OCR, returns the doc.
 
@@ -79,12 +79,12 @@ def eval_ai_config() -> dict[str, str]:
 def _patch_model_resolver(eval_ai_config) -> None:
     """Make `resolve_model("archivist-bot/...")` return the eval's model.
 
-    `stack.models` reads env at import time; the bot module has already
+    `stack.ai.models` reads env at import time; the bot module has already
     imported `resolve_model` by the time our fixtures run. Setting the
     module globals directly works because `resolve_model` reads them at
     call time, not at import time.
     """
-    import stack.models as _models
+    import stack.ai.models as _models
     _models._DEFAULT_MODEL = eval_ai_config["model"]
     _models._MODELS = {}
 

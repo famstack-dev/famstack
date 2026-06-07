@@ -1326,13 +1326,13 @@ def _make_classifier(*, request_results: list, capabilities=None) -> Classifier:
     return c
 
 
-# `resolve_model("archivist-bot/classifier")` reads stack.models at call
+# `resolve_model("archivist-bot/classifier")` reads stack.ai.models at call
 # time — patch it module-side so tests don't need AI_DEFAULT_MODEL set.
 @pytest.fixture
 def patched_resolve_model(monkeypatch):
-    import stack.models
-    monkeypatch.setattr(stack.models, "_DEFAULT_MODEL", "stub-model")
-    monkeypatch.setattr(stack.models, "_MODELS", {})
+    import stack.ai.models
+    monkeypatch.setattr(stack.ai.models, "_DEFAULT_MODEL", "stub-model")
+    monkeypatch.setattr(stack.ai.models, "_MODELS", {})
     return "stub-model"
 
 

@@ -28,6 +28,9 @@ test = [
     # URL → Markdown for the archivist's capture pipeline. Tests run
     # trafilatura against fixture HTML in-process — no network calls.
     "trafilatura>=1.12,<3.0",
+    # The framework LLM client (stack.ai.client) wraps the OpenAI SDK.
+    # Tests point it at a pytest-httpserver mock /v1 endpoint.
+    "openai>=1.50,<3.0",
 ]
 
 # Host-side tooling for generating the demo family-document set
