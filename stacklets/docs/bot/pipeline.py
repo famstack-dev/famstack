@@ -632,6 +632,7 @@ class Classifier:
         images: list[ImageAttachment] | None = None,
         ontology_section: str = "",
         correspondents_section: str = "",
+        persons_section: str = "",
         date_filed: str | None = None,
         user_hint: str | None = None,
     ) -> dict:
@@ -671,6 +672,7 @@ class Classifier:
             correspondents=list(correspondents.keys()),
             ontology_section=ontology_section,
             correspondents_section=correspondents_section,
+            persons_section=persons_section,
             date_filed=date_filed,
             user_hint=user_hint,
         )
@@ -874,6 +876,7 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
                            correspondents: list[str],
                            ontology_section: str = "",
                            correspondents_section: str = "",
+                           persons_section: str = "",
                            date_filed: str | None = None,
                            user_hint: str | None = None) -> str:
     """The classification prompt.
@@ -907,6 +910,13 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
     teaches the LLM what to canonicalize before Paperless ever sees a
     duplicate. Without it, we fall back to the flat Paperless list,
     which has no alias signal.
+
+    Person context follows the same pattern: when `persons_section` is
+    supplied, canonical first names ride alongside their curated
+    synonyms ("Marge (Marjorie, Margaret Bouvier)") so a document that
+    refers to a member by their formal name or maiden name still
+    resolves to the canonical roster entry. Without it, the prompt
+    falls back to the bare list of Paperless Person tags.
     """
     if ontology_section:
         vocabulary_block = ontology_section
@@ -921,6 +931,13 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
     else:
         correspondents_block = (
             f"Existing correspondents: {json.dumps(correspondents, ensure_ascii=False)}"
+        )
+
+    if persons_section:
+        persons_block = persons_section
+    else:
+        persons_block = (
+            f"Family members: {json.dumps(person_names, ensure_ascii=False)}"
         )
 
     # `date_filed` is the document's filing date — for initial Matrix
@@ -940,7 +957,7 @@ Date filed: {date_filed}{_user_hint_block(user_hint)}
 IMPORTANT: Always prefer existing values from the lists below. Only suggest
 a new value when NOTHING in the list is a reasonable match.
 
-Family members: {json.dumps(person_names, ensure_ascii=False)}
+{persons_block}
 {vocabulary_block}
 {correspondents_block}
 
@@ -1377,6 +1394,7 @@ async def enrich_document(
     images: list[ImageAttachment] | None = None,
     ontology_section: str = "",
     correspondents_section: str = "",
+    persons_section: str = "",
     ontology: "Ontology | None" = None,
     lang: str = "en",
     is_reprocess: bool = False,
@@ -1427,6 +1445,7 @@ async def enrich_document(
             images=images,
             ontology_section=ontology_section,
             correspondents_section=correspondents_section,
+            persons_section=persons_section,
             date_filed=date_filed,
             user_hint=user_hint,
         )

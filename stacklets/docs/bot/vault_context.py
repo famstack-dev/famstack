@@ -19,6 +19,8 @@ from memory.lib import (
     correspondents_prompt_section,
     get_ontology,
     load_correspondents_from_vault,
+    load_persons_from_vault,
+    persons_prompt_section,
 )
 
 
@@ -62,3 +64,16 @@ class VaultContext:
             return ""
         correspondents = load_correspondents_from_vault(path, self.shared_bucket)
         return correspondents_prompt_section(correspondents)
+
+    def persons_section(self) -> str:
+        """Build the persons block from `<slug>/about.md` across the vault.
+
+        Empty when the vault isn't seeded yet — the prompt then falls back
+        to the flat Paperless Person roster (canonical first names only,
+        no synonym signal).
+        """
+        path = self._vault_path()
+        if path is None:
+            return ""
+        persons = load_persons_from_vault(path, self.shared_bucket)
+        return persons_prompt_section(persons)

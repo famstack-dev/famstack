@@ -400,6 +400,142 @@ def correspondents_prompt_section(correspondents: List[Correspondent]) -> str:
     return "\n".join(lines)
 
 
+# ─── Persons (entity-bucket entity layer) ────────────────────────────────
+#
+# Persons are the household members the wiki carries a page for. They
+# parallel correspondents in shape: a canonical name plus the synonyms
+# the family uses in real documents (formal, nicknames, maiden names).
+# Unlike correspondents they live one-per-entity under each member's
+# bucket -- the same about.md the home page links to -- so the wiki is
+# the single curation surface and there is no parallel registry file
+# to keep in sync.
+#
+# Layout: `<vault>/<slug>/about.md`. The page body is free-form prose
+# the family edits; the frontmatter is the structured signal the
+# classifier reads.
+#
+# Example shape (vault/maggie/about.md):
+#
+#     ---
+#     title: Margaret
+#     slug: maggie
+#     canonical: Margaret
+#     synonyms:
+#       - Maggie
+#       - Margaret Bouvier
+#     ---
+#
+#     # Margaret
+#     [free-form notes, links to documents]
+#
+# `synonyms` is the curated set the classifier needs to recognise so
+# "Marge Bouvier" on a marriage certificate resolves to the same
+# person as "Marge" on a utility bill.
+
+# Skip set for `load_persons_from_vault`: top-level directories that
+# carry an `about.md` but are not a household member. Kept in sync
+# with the docs/bot overview command's own skip set; both walk the
+# same vault structure.
+_NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
+
+
+@dataclass
+class Person:
+    """A single household-member wiki entry."""
+
+    canonical: str
+    slug: str
+    synonyms: List[str] = field(default_factory=list)
+    # Path on disk, useful for `stack memory persons show` and tests.
+    source_path: Optional[Path] = None
+
+    def all_known_names(self) -> List[str]:
+        """Canonical + every synonym, no duplicates, canonical first."""
+        seen = {self.canonical}
+        out = [self.canonical]
+        for s in self.synonyms:
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+
+
+def load_persons_from_vault(
+    vault_path: Path,
+    shared_bucket: str = DEFAULT_SHARED_BUCKET,
+) -> List[Person]:
+    """Walk `<vault>/<slug>/about.md` and return the parsed entries.
+
+    Each entity bucket directly under the vault root is treated as a
+    potential household member. Buckets that are reserved for shared
+    content (the `shared_bucket`, `wiki/`, `.git/`, ...) are skipped
+    by name. A bucket without an `about.md` is also skipped -- a
+    member can exist on the file system (with captured notes) before
+    the wiki overview pass has generated their page.
+
+    Pages tagged with a `kind:` other than `person` are skipped --
+    leaves room for non-member entries to coexist under the same
+    directory shape without leaking into the classifier prompt.
+    """
+    vault_path = Path(vault_path)
+    if not vault_path.exists():
+        return []
+
+    # Lazy import: keeps the CLI install path stdlib-only (see the
+    # module-level note above `load_correspondents_from_vault`).
+    import frontmatter
+
+    skip = _NON_MEMBER_DIRS | {shared_bucket}
+    result: List[Person] = []
+    for about in sorted(vault_path.glob("*/about.md")):
+        slug = about.parent.name
+        if slug in skip or slug.startswith("."):
+            continue
+        try:
+            with open(about, "r", encoding="utf-8") as f:
+                post = frontmatter.load(f)
+        except (OSError, ValueError):
+            continue
+        meta = post.metadata or {}
+        if meta.get("kind") and meta.get("kind") != "person":
+            continue
+        canonical = meta.get("canonical") or meta.get("title") or slug
+        if not canonical:
+            continue
+        result.append(Person(
+            canonical=str(canonical),
+            slug=str(meta.get("slug") or slug),
+            synonyms=[str(s) for s in (meta.get("synonyms") or [])],
+            source_path=about,
+        ))
+    return result
+
+
+def persons_prompt_section(persons: List[Person]) -> str:
+    """Render the persons block embedded in the classifier prompt.
+
+    Output shape, mirroring `correspondents_prompt_section`:
+
+        Family members (canonical first name; synonyms in parens):
+          - Marge (Marjorie, Margaret, Marge Bouvier, Marge Simpson)
+          - Homer
+          - Bart (Bartholomew, Bart Simpson)
+
+    Returns an empty string when no curated person pages exist yet --
+    the prompt builder falls back to the flat list of first names
+    pulled from Paperless Person tags in that case.
+    """
+    if not persons:
+        return ""
+    lines = ["Family members (canonical first name; synonyms in parens):"]
+    for p in persons:
+        if p.synonyms:
+            lines.append(f"  - {p.canonical} ({', '.join(p.synonyms)})")
+        else:
+            lines.append(f"  - {p.canonical}")
+    return "\n".join(lines)
+
+
 def get_ontology(vault_path: Optional[Path] = None) -> Ontology:
     """Return the live ontology from the vault, else the shipped seed.
 
