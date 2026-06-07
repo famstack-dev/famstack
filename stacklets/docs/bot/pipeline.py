@@ -866,10 +866,25 @@ def _user_hint_block(user_hint: str | None) -> str:
         return ""
     hint = user_hint.strip()
     return (
-        "\n\nUser context — what the human said about this document. "
-        "Treat as a high-signal hint for title, person attribution, "
-        "correspondent, and intent; override your own reading when it "
-        "conflicts:\n"
+        "\n\nUser context — what the human said when filing this document. "
+        "Treat as supplementary evidence about the document's purpose, "
+        "audience, and how it should be tagged, NOT as a substitute for "
+        "what the document itself shows. Specifically:\n"
+        "  - Weave the human's framing into the SUMMARY so the document's "
+        "content and their note fit together naturally (paraphrase in the "
+        "document's language; never quote the note verbatim).\n"
+        "  - Use it to disambiguate `persons`, `correspondent`, or the "
+        "title's wording when the document text alone is ambiguous (an "
+        "un-named receipt becomes attributable when the note says who it's "
+        "for; a generic invoice gets a more specific title).\n"
+        "  - When the note names a subject area or category "
+        "('Krankenversicherung', 'Auto', 'Schule', 'Steuer', ...) treat it "
+        "as a topic hint -- prefer existing canonicals from the topic list "
+        "when there's a fit, and let it tip the choice when the document "
+        "could plausibly belong to more than one topic.\n"
+        "  - Do NOT invent facts the document contradicts. If the document "
+        "plainly shows one sender, don't flip to a different sender just "
+        "because the note mentions another.\n"
         f"---\n{hint}\n---"
     )
 
@@ -975,8 +990,8 @@ Return this exact JSON structure:
   "correspondent": "the SENDER's CANONICAL short name. If the printed sender matches one of the Existing correspondents (or one of its aliases in parens), return the canonical exactly. Otherwise return the cleanest short form — strip regional, branch, and legal-form suffixes. 'ADAC Ortsverband Manzell' → 'ADAC'. 'Burns Industries LLC' → 'Burns Industries'. 'Springfield Nuclear Power Plant Division 7' → 'Springfield Nuclear'. null is better than guessing from fragments.",
   "correspondent_aliases": ["full names as printed on THIS document, useful for growing the wiki. Include only when the printed name differs from the canonical you returned above. Empty list when the printed name matches the canonical exactly."],
   "correspondent_facts": ["STABLE facts about the SENDER organization that are useful on every future document from them: address, phone, email, website, IBAN, your customer/membership/policy number with them. NOT facts about THIS document (totals, invoice numbers, dates — those go in facts). Empty list if none visible."],
-  "summary": "2-3 sentence summary with key facts: amounts, dates, names, deadlines",
-  "facts": ["key structured facts about THIS document, e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'"],
+  "summary": "2-3 sentence summary in the document's language. Lead with the document type (Invoice/Receipt/Letter/Certificate or Rechnung/Quittung/Brief/Bescheinigung — whichever matches) and the correspondent; include the document's date and any total amount; name the person(s) involved (use the human note when the document doesn't name them). Examples — match the document's language, not these literal strings: EN 'Invoice from ADAC for EUR 340/year covering Homer Simpson's car insurance, effective 2026-04-01.' / EN 'Receipt from Kwik-E-Mart dated 2026-05-12 for EUR 7.42 (cash purchase).' / DE 'Rechnung der ADAC über EUR 340/Jahr für die Kfz-Versicherung von Homer Simpson, gültig ab 01.04.2026.' / DE 'Quittung von Kwik-E-Mart vom 12.05.2026 über EUR 7,42 (Einkauf, bar bezahlt).' Omit a field only when the document genuinely lacks it; never invent.",
+  "facts": ["key structured facts about THIS document, one bullet per fact. Top-level facts: totals, account/invoice/policy numbers, dates, plan/tariff names, deadlines — e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'. Line items: when the document lists individual purchases or services, include each one as its own bullet with quantity/unit-price/total — e.g. 'Donuts 5x EUR 5.00', 'Cola 1x EUR 2.42', 'Reparatur Bremsbeläge EUR 240.00'. Don't fabricate line items the document doesn't print; a one-line receipt has no line items, only a total."],
   "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
 }}
 
@@ -993,7 +1008,7 @@ Rules:
 - correspondent: always the SENDER, never the addressee/customer/recipient. When the existing list shows aliases in parentheses, those are previous spellings of the same correspondent — use the canonical (the name OUTSIDE the parentheses). Strip regional/branch/legal-form suffixes for new correspondents. Use null if the sender is not clearly identifiable. Do not guess from fragments.
 - correspondent_aliases: only when the printed sender name on THIS document differs from your canonical answer. Single-element list is fine.
 - correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
-- facts: concrete numbers, dates, account numbers, amounts that describe THIS document. Empty list if none.
+- facts: concrete numbers, dates, account numbers, amounts that describe THIS document. When the document itemises purchases or services, each line item is its own fact bullet alongside the top-level totals. Empty list if none.
 - action_items: deadlines, payments due, forms to return. Empty list if none.
 
 Document text:

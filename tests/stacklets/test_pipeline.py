@@ -925,8 +925,10 @@ class TestClassifyPromptDateAnchor:
 class TestClassifyPromptUserHint:
     """The user's accompanying note -- a fresh upload caption, a scan
     session opener, or a reply-to-correct on a prior filing -- rides
-    on the prompt as a `User context` block and is marked as
-    overriding the LLM's own reading where they conflict."""
+    on the prompt as a `User context` block. It is treated as
+    supplementary evidence that shapes the summary, disambiguates
+    persons/correspondent, and steers the title -- without
+    overriding direct document evidence."""
 
     def test_hint_appears_when_supplied(self):
         from pipeline import _build_classify_prompt
@@ -937,7 +939,10 @@ class TestClassifyPromptUserHint:
         )
         assert "User context" in prompt
         assert "actually this is for Marge, not Homer" in prompt
-        assert "override" in prompt
+        # The framing must steer the LLM toward weaving the note into
+        # the summary rather than treating it as a verbatim quote.
+        assert "SUMMARY" in prompt
+        assert "supplementary evidence" in prompt
 
     def test_no_block_when_hint_is_missing(self):
         from pipeline import _build_classify_prompt
