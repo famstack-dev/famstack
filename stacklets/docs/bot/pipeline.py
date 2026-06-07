@@ -851,21 +851,25 @@ class Classifier:
 # depending on classifier internals.
 
 def _user_hint_block(user_hint: str | None) -> str:
-    """Render the user's clarification as a high-priority prompt block.
+    """Render the user's note as a high-signal prompt block.
 
     Returned empty when the hint is missing or blank so well-formed
-    initial classifications produce the same prompt as before — the
-    extra section only appears when a human is actively correcting
-    the bot. The hint is wrapped in unambiguous fences so a chatty
-    user message can't be mistaken for the document text below.
+    initial classifications without a caption produce the same prompt
+    as before. One source for every channel: Element X attachment
+    captions, scan-session opener/closer text, reply-to-correct on a
+    prior filing. The classifier treats them all the same -- they are
+    what the human said about the document. The hint is wrapped in
+    unambiguous fences so a chatty user message can't be mistaken
+    for the document text below.
     """
     if not user_hint or not user_hint.strip():
         return ""
     hint = user_hint.strip()
     return (
-        "\n\nUser clarification — this human note OVERRIDES your own "
-        "reading of the document when they conflict (the user has seen "
-        "the previous classification and is correcting it):\n"
+        "\n\nUser context — what the human said about this document. "
+        "Treat as a high-signal hint for title, person attribution, "
+        "correspondent, and intent; override your own reading when it "
+        "conflicts:\n"
         f"---\n{hint}\n---"
     )
 

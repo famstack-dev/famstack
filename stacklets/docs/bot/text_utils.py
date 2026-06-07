@@ -63,6 +63,87 @@ def clean_filename(raw_filename: str, msgtype: str = "") -> str:
     return clean
 
 
+def attachment_caption(content: dict) -> str:
+    """Return the human caption attached to an m.image/m.file event.
+
+    Modern Matrix clients (Element X, FluffyChat) split the file's
+    name from the user's accompanying note: ``filename`` carries the
+    actual filename, ``body`` carries the caption. A client with no
+    caption (and every legacy client) sets ``body`` to the filename
+    and omits ``filename`` -- ``body == filename`` is the signal that
+    nothing was typed.
+
+    >>> attachment_caption({"body": "IMG_1234.jpg"})
+    ''
+    >>> attachment_caption({"body": "IMG_1234.jpg", "filename": "IMG_1234.jpg"})
+    ''
+    >>> attachment_caption({"body": "neue Personalausweise", "filename": "IMG_1234.jpg"})
+    'neue Personalausweise'
+    >>> attachment_caption({})
+    ''
+    """
+    filename = content.get("filename")
+    body = content.get("body", "")
+    if filename and body and body != filename:
+        return body.strip()
+    return ""
+
+
+def split_scan_command(query: str, commands: set[str]) -> tuple[bool, str]:
+    """Match a scan command at the start of ``query``; return (matched, trailing).
+
+    Single-character commands like ``(`` and ``)`` match the first
+    character; everything after is the caption. Multi-character word
+    commands like ``scan``, ``done``, ``fertig`` match as the first
+    whitespace-separated token; anything after the first space is
+    the caption. Comparison is case-insensitive.
+
+    >>> split_scan_command("(", {"(", "scan"})
+    (True, '')
+    >>> split_scan_command("( neue Personalausweise", {"(", "scan"})
+    (True, 'neue Personalausweise')
+    >>> split_scan_command("scan vaccine cards", {"(", "scan"})
+    (True, 'vaccine cards')
+    >>> split_scan_command("Scan", {"(", "scan"})
+    (True, '')
+    >>> split_scan_command("scanner setup", {"(", "scan"})
+    (False, '')
+    >>> split_scan_command("help", {"(", "scan"})
+    (False, '')
+    >>> split_scan_command("", {"(", "scan"})
+    (False, '')
+    """
+    q = query.strip()
+    if not q:
+        return (False, "")
+    for cmd in commands:
+        if len(cmd) == 1:
+            if q[0] == cmd:
+                return (True, q[1:].strip())
+        else:
+            head, _, rest = q.partition(" ")
+            if head.lower() == cmd:
+                return (True, rest.strip())
+    return (False, "")
+
+
+def join_captions(*parts: str) -> str:
+    """Concatenate non-empty caption strings with a single newline between.
+
+    Lets the scan opener, per-page captions, and the closer all
+    contribute to the session's combined ``user_hint`` without the
+    caller having to track which slots are filled.
+
+    >>> join_captions("opener", "", "closer")
+    'opener\\ncloser'
+    >>> join_captions("", "")
+    ''
+    >>> join_captions("only one")
+    'only one'
+    """
+    return "\n".join(p.strip() for p in parts if p and p.strip())
+
+
 def strip_reply_fallback(body: str) -> str:
     """Drop Matrix's reply-quote fallback from a message body.
 

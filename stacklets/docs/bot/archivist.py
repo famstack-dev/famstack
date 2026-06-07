@@ -66,10 +66,13 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 from room_context import normalize_alias  # noqa: E402
 from text_utils import (  # noqa: E402
+    attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
     google_docs_export_url as _google_docs_export_url,
     is_just_url as _is_just_url,
+    join_captions as _join_captions,
     looks_like_paste,
+    split_scan_command as _split_scan_command,
     strip_reply_fallback as _strip_reply_fallback,
 )
 from reply_presenter import (  # noqa: E402
@@ -563,6 +566,7 @@ class ArchivistBot(MicroBot):
         file_data: bytes, reply_to: str | None = None,
         date_filed: str | None = None,
         submitter_mxid: str | None = None,
+        user_hint: str | None = None,
     ):
         """File a document via the pipeline, then render the reply.
 
@@ -574,6 +578,7 @@ class ArchivistBot(MicroBot):
         outcome = await self._pipeline.process(
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
+            user_hint=user_hint,
         )
         await self._reply_for_outcome(room_id, outcome, reply_to)
         if outcome.status == "enriched":
@@ -683,14 +688,23 @@ class ArchivistBot(MicroBot):
             )
             return
 
-        raw_filename = content.get("body", "document")
+        # On modern Matrix clients an upload can carry a human caption
+        # alongside the file (Element X, FluffyChat, anything honoring
+        # MSC4274). When present, the caption rides into the classify
+        # prompt as user_hint -- "neue Personalausweise für Marge und
+        # Bart" steers the LLM the same way a reply-to-correct does,
+        # without the user having to wait for a bad classification first.
+        raw_filename = content.get("filename") or content.get("body") or "document"
+        caption = _attachment_caption(content)
         display_name = _clean_filename(raw_filename, msgtype)
         sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
         reply_to = event.event_id
 
         # Multi-page scan mode
         if event.sender in self._scan_sessions:
-            await self._handle_scan_page(room.room_id, event, url, raw_filename)
+            await self._handle_scan_page(
+                room.room_id, event, url, raw_filename, caption,
+            )
             return
 
         file_data = await self._download_media(url)
@@ -715,6 +729,7 @@ class ArchivistBot(MicroBot):
             room.room_id, raw_filename, display_name, file_data, reply_to,
             date_filed=self._event_date(event),
             submitter_mxid=event.sender,
+            user_hint=caption or None,
         )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
@@ -781,13 +796,24 @@ class ArchivistBot(MicroBot):
                 reply_to,
             )
 
-        elif query_lower in SCAN_BEGIN:
+        # `(` and `scan` open a multi-page session and accept an
+        # optional caption inline: `( neue Personalausweise`. The
+        # caption rides through to classify alongside any per-page
+        # captions and the closer's trailing text.
+        elif (begin := _split_scan_command(query, SCAN_BEGIN))[0]:
             sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
-            self._scan_sessions[event.sender] = {"files": [], "room_id": room.room_id}
+            self._scan_sessions[event.sender] = {
+                "files": [], "room_id": room.room_id, "caption": begin[1],
+            }
             await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
 
-        elif query_lower in SCAN_END:
+        elif (end := _split_scan_command(query, SCAN_END))[0]:
             if event.sender in self._scan_sessions:
+                if end[1]:
+                    session = self._scan_sessions[event.sender]
+                    session["caption"] = _join_captions(
+                        session.get("caption", ""), end[1],
+                    )
                 await self._handle_scan_complete(
                     room.room_id, event.sender, reply_to,
                     date_filed=self._event_date(event),
@@ -844,7 +870,10 @@ class ArchivistBot(MicroBot):
 
     # ── Scan mode ────────────────────────────────────────────────────────
 
-    async def _handle_scan_page(self, room_id: str, event, url: str, raw_filename: str):
+    async def _handle_scan_page(
+        self, room_id: str, event, url: str, raw_filename: str,
+        caption: str = "",
+    ):
         reply_to = event.event_id
         try:
             file_data = await self._download_media(url)
@@ -858,6 +887,8 @@ class ArchivistBot(MicroBot):
 
         session = self._scan_sessions[event.sender]
         session["files"].append((raw_filename, file_data))
+        if caption:
+            session["caption"] = _join_captions(session.get("caption", ""), caption)
         page_num = len(session["files"])
         await self._send(room_id, self.t("page_received", num=page_num), reply_to)
 
@@ -867,6 +898,7 @@ class ArchivistBot(MicroBot):
     ):
         session = self._scan_sessions.pop(sender)
         files = session["files"]
+        caption = session.get("caption", "").strip()
         sender_name = sender.split(":")[0].replace("@", "").capitalize()
 
         if not files:
@@ -881,6 +913,7 @@ class ArchivistBot(MicroBot):
                 room_id, filename, display_name, file_data, reply_to,
                 date_filed=date_filed,
                 submitter_mxid=sender,
+                user_hint=caption or None,
             )
             return
 
@@ -898,6 +931,7 @@ class ArchivistBot(MicroBot):
         await self._process_document(
             room_id, filename, display_name, pdf_data, reply_to,
             date_filed=date_filed,
+            user_hint=caption or None,
             submitter_mxid=sender,
         )
 

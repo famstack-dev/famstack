@@ -923,9 +923,10 @@ class TestClassifyPromptDateAnchor:
 
 
 class TestClassifyPromptUserHint:
-    """A user's reply-correction rides on the prompt as a `User
-    clarification` block, marked as overriding the LLM's own reading
-    so the second-pass classification respects the human input."""
+    """The user's accompanying note -- a fresh upload caption, a scan
+    session opener, or a reply-to-correct on a prior filing -- rides
+    on the prompt as a `User context` block and is marked as
+    overriding the LLM's own reading where they conflict."""
 
     def test_hint_appears_when_supplied(self):
         from pipeline import _build_classify_prompt
@@ -934,9 +935,9 @@ class TestClassifyPromptUserHint:
             doc_types=[], correspondents=[],
             user_hint="actually this is for Marge, not Homer",
         )
-        assert "User clarification" in prompt
+        assert "User context" in prompt
         assert "actually this is for Marge, not Homer" in prompt
-        assert "OVERRIDES" in prompt
+        assert "override" in prompt
 
     def test_no_block_when_hint_is_missing(self):
         from pipeline import _build_classify_prompt
@@ -945,8 +946,8 @@ class TestClassifyPromptUserHint:
             doc_types=[], correspondents=[],
         )
         # Default classification path produces the same prompt as before;
-        # the clarification section only appears on a correction.
-        assert "User clarification" not in prompt
+        # the user-context section only appears when the human spoke.
+        assert "User context" not in prompt
 
     def test_blank_hint_is_treated_as_missing(self):
         from pipeline import _build_classify_prompt
@@ -955,7 +956,7 @@ class TestClassifyPromptUserHint:
             doc_types=[], correspondents=[],
             user_hint="   \n  ",
         )
-        assert "User clarification" not in prompt
+        assert "User context" not in prompt
 
 
 class TestClassifyPromptVisionRule:

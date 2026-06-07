@@ -161,6 +161,7 @@ class DocumentPipeline:
         file_data: bytes,
         date_filed: str | None = None,
         submitter_mxid: str | None = None,
+        user_hint: str | None = None,
     ) -> FilingOutcome:
         """Run the full pipeline and return a FilingOutcome.
 
@@ -231,7 +232,7 @@ class DocumentPipeline:
         if self.classify_enabled and has_text:
             result = await self._enrich(
                 doc, ext, is_image, is_pdf_with_text, is_pdf_ocr_layer,
-                file_data, date_filed, submitter_mxid,
+                file_data, date_filed, submitter_mxid, user_hint,
             )
         else:
             result = EnrichResult()
@@ -304,13 +305,18 @@ class DocumentPipeline:
 
     async def _enrich(
         self, doc, ext, is_image, is_pdf_with_text, is_pdf_ocr_layer,
-        file_data, date_filed, submitter_mxid,
+        file_data, date_filed, submitter_mxid, user_hint=None,
     ) -> EnrichResult:
         """Classify the doc, attaching images when vision helps.
 
         Image upload → one attachment; scanned/short OCR'd PDF → one per
         rendered page; native-text PDF or text → text-only. The classifier
         silently drops images on text-only models, so attaching is safe.
+
+        `user_hint` is the human caption that accompanied the upload --
+        Element X attachment text, scan-session opener/closer text, or
+        per-page captions concatenated. The classifier reads it as
+        high-signal context next to the OCR.
         """
         images: list[ImageAttachment] | None = None
         if is_image:
@@ -340,6 +346,7 @@ class DocumentPipeline:
             lang=self.language,
             date_filed=date_filed,
             submitter_mxid=submitter_mxid,
+            user_hint=user_hint,
         )
 
     def _mirror_body(self, is_text, file_data, formatted, ocr_text, *, reformatted):

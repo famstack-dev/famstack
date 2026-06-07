@@ -13,11 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from text_utils import (
+    attachment_caption,
     clean_filename,
-    strip_reply_fallback,
-    looks_like_paste,
     google_docs_export_url,
     is_just_url,
+    join_captions,
+    looks_like_paste,
+    split_scan_command,
+    strip_reply_fallback,
 )
 
 
@@ -227,3 +230,108 @@ class TestIsJustUrl:
 
     def test_url_with_port(self):
         assert is_just_url("https://example.com:8080/path") is True
+
+
+# ── Attachment caption (MSC4274) ───────────────────────────────────────
+
+class TestAttachmentCaption:
+
+    def test_no_caption_legacy_client(self):
+        # Old Element clients: body carries the filename, no `filename`
+        # field. Treated as "no caption".
+        assert attachment_caption({"body": "IMG_1234.jpg"}) == ""
+
+    def test_no_caption_modern_client_redundant_body(self):
+        # Modern client emits both fields with the same value when the
+        # user did not type a caption -- still "no caption".
+        assert attachment_caption(
+            {"body": "IMG_1234.jpg", "filename": "IMG_1234.jpg"},
+        ) == ""
+
+    def test_caption_present(self):
+        # The MSC4274 contract: body and filename differ -> body is
+        # the user's note.
+        assert attachment_caption(
+            {"body": "neue Personalausweise", "filename": "IMG_1234.jpg"},
+        ) == "neue Personalausweise"
+
+    def test_caption_is_stripped(self):
+        assert attachment_caption(
+            {"body": "  vaccine cards  ", "filename": "scan.pdf"},
+        ) == "vaccine cards"
+
+    def test_empty_content(self):
+        assert attachment_caption({}) == ""
+
+
+# ── Scan command parser ────────────────────────────────────────────────
+
+class TestSplitScanCommand:
+
+    BEGIN = {"(", "scan"}
+    END = {")", "done", "fertig"}
+
+    def test_bare_paren_opens_session_with_no_caption(self):
+        assert split_scan_command("(", self.BEGIN) == (True, "")
+
+    def test_paren_with_trailing_caption(self):
+        assert split_scan_command("( neue Personalausweise", self.BEGIN) == (
+            True, "neue Personalausweise",
+        )
+
+    def test_paren_without_space(self):
+        # `(caption` — no space after the literal. Still legal: the
+        # `(` is a single-char command and everything after is caption.
+        assert split_scan_command("(caption", self.BEGIN) == (True, "caption")
+
+    def test_word_command_bare(self):
+        assert split_scan_command("scan", self.BEGIN) == (True, "")
+
+    def test_word_command_with_caption(self):
+        assert split_scan_command("scan vaccine cards", self.BEGIN) == (
+            True, "vaccine cards",
+        )
+
+    def test_word_command_case_insensitive(self):
+        assert split_scan_command("Scan some context", self.BEGIN) == (
+            True, "some context",
+        )
+
+    def test_word_command_no_partial_match(self):
+        # `scanner setup` must not match `scan` -- it's a different
+        # word entirely, not the scan command with trailing text.
+        assert split_scan_command("scanner setup", self.BEGIN) == (False, "")
+
+    def test_unrelated_input_no_match(self):
+        assert split_scan_command("help", self.BEGIN) == (False, "")
+
+    def test_empty_string(self):
+        assert split_scan_command("", self.BEGIN) == (False, "")
+
+    def test_closer_with_trailing_text(self):
+        assert split_scan_command(") chalet bookings", self.END) == (
+            True, "chalet bookings",
+        )
+
+    def test_german_closer(self):
+        assert split_scan_command("fertig", self.END) == (True, "")
+
+
+# ── Caption joiner ─────────────────────────────────────────────────────
+
+class TestJoinCaptions:
+
+    def test_all_filled(self):
+        assert join_captions("opener", "page2", "closer") == "opener\npage2\ncloser"
+
+    def test_skips_empty_strings(self):
+        assert join_captions("opener", "", "closer") == "opener\ncloser"
+
+    def test_all_empty_returns_empty(self):
+        assert join_captions("", "", "") == ""
+
+    def test_strips_whitespace_around_parts(self):
+        assert join_captions("  opener  ", "  closer  ") == "opener\ncloser"
+
+    def test_single_part(self):
+        assert join_captions("just one") == "just one"
