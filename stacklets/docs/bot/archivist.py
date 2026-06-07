@@ -525,6 +525,88 @@ class ArchivistBot(MicroBot):
         paperless_id = envelope.get("data", {}).get("paperless_id")
         return paperless_id if isinstance(paperless_id, int) else None
 
+    async def _collect_correction_hint(self, room_id: str, event) -> str:
+        """Walk the reply chain back to the original filing; return the
+        joined human-correction hint, most-recent first.
+
+        Each round of correction → reclassification adds two layers to
+        the thread (user reply, bot's reclassified confirmation). We
+        walk those layers in pairs, collecting every user turn between
+        the current event and the bot's `document.filed` boundary --
+        beyond that boundary the human's words belong to the upload's
+        caption, not to a correction.
+
+        The returned string carries the chain as a numbered list when
+        more than one correction is present, with a short header that
+        tells the LLM the ordering rule (later supersedes earlier for
+        the same field). A single-correction chain stays plain so the
+        prompt isn't padded for the common case.
+        """
+        bodies: list[str] = []
+        current_body = _strip_reply_fallback(event.body)
+        if current_body:
+            bodies.append(current_body)
+
+        # Each loop iteration consumes one (bot, prior-user) pair from
+        # the chain. Bounded by the framework's in_reply_to depth and a
+        # hard cap so a thread that somehow loops doesn't burn API
+        # calls forever.
+        parent_id = self._in_reply_to_id(event)
+        for _ in range(10):
+            if not parent_id:
+                break
+            parent = await self._fetch_event(room_id, parent_id)
+            if parent is None or getattr(parent, "sender", None) != self.user_id:
+                break
+            envelope = parent.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
+            if not isinstance(envelope, dict):
+                break
+            if envelope.get("type") == "document.filed":
+                break
+            if envelope.get("type") != "document.reclassified":
+                break
+            grandparent_id = self._in_reply_to_id(parent)
+            grandparent = await self._fetch_event(room_id, grandparent_id) if grandparent_id else None
+            if grandparent is None:
+                break
+            prior = _strip_reply_fallback(getattr(grandparent, "body", "") or "")
+            if prior:
+                bodies.append(prior)
+            parent_id = self._in_reply_to_id(grandparent)
+
+        if not bodies:
+            return ""
+        if len(bodies) == 1:
+            return bodies[0]
+        numbered = "\n".join(f"  {i+1}. {b}" for i, b in enumerate(bodies))
+        return (
+            "Conversation of corrections, most recent first. The most "
+            "recent line supersedes earlier ones when they conflict for "
+            "the same field; merge non-conflicting fields:\n" + numbered
+        )
+
+    @staticmethod
+    def _in_reply_to_id(event) -> str | None:
+        """The event_id this event replies to, or None if it isn't a reply."""
+        return (
+            getattr(event, "source", {})
+            .get("content", {})
+            .get("m.relates_to", {})
+            .get("m.in_reply_to", {})
+            .get("event_id")
+        )
+
+    async def _fetch_event(self, room_id: str, event_id: str | None):
+        """Best-effort `room_get_event`; returns the event or None on any failure."""
+        if not event_id:
+            return None
+        try:
+            resp = await self._client.room_get_event(room_id, event_id)
+        except Exception as e:
+            logger.debug("[archivist] event fetch failed for {}: {}", event_id, e)
+            return None
+        return getattr(resp, "event", None)
+
     async def _handle_reply_reprocess(
         self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
         *, date_filed: str | None = None,
@@ -781,7 +863,7 @@ class ArchivistBot(MicroBot):
         # ("ADAC") doesn't get routed to free-text search.
         doc_id = await self._reply_target_doc_id(room.room_id, event)
         if doc_id is not None:
-            hint = _strip_reply_fallback(event.body)
+            hint = await self._collect_correction_hint(room.room_id, event)
             if hint:
                 await self._handle_reply_reprocess(
                     room.room_id, doc_id, hint, reply_to,
