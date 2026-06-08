@@ -989,7 +989,10 @@ class ArchivistBot(MicroBot):
         # the search query. A bare ping with no content becomes "help"
         # so the user gets a useful response instead of an empty search.
         if mentioned:
-            query = self.strip_mention(query, self.user_id)
+            formatted_body = event.source.get("content", {}).get("formatted_body")
+            query = self.strip_mention(
+                query, self.user_id, formatted_body=formatted_body,
+            )
             if not query:
                 query = "help"
             query_lower = query.lower()

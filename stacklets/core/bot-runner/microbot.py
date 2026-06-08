@@ -685,26 +685,65 @@ class MicroBot:
         return True
 
     @staticmethod
-    def strip_mention(body: str, bot_user_id: str) -> str:
-        """Remove the bot's mxid (and any clinging punctuation/whitespace)
+    def strip_mention(
+        body: str, bot_user_id: str, *, formatted_body: str | None = None,
+    ) -> str:
+        """Remove the bot mention (and any clinging punctuation/whitespace)
         from a message body.
 
         Used after ``_is_bot_mentioned`` to recover the *actual* query
         the user typed: ``"@archivist-bot:home.local Pollos?"`` → ``"Pollos?"``.
-        Idempotent: callers can apply it unconditionally; if the mxid
-        isn't present, the body is returned unchanged.
+        Idempotent: callers can apply it unconditionally; if neither
+        mxid nor display-name mention is present, the body is returned
+        unchanged.
+
+        Three rendering paths to handle:
+          1. Legacy: the raw mxid appears in ``body``. Strip it.
+          2. Modern: clients with ``m.mentions`` support (Element X,
+             Element-web) render the mention as the bot's DISPLAY NAME
+             in ``body`` (``"Archivist: find MLX"``) and put the mxid
+             only inside the HTML ``formatted_body``. We pull the
+             display name from the formatted_body's anchor element and
+             strip it from the start of ``body``.
+          3. Neither: nothing to strip.
 
         Conservative on punctuation: trims a single trailing ``:`` or
-        ``,`` after the mxid (common in tab-complete output like
-        ``"@bot: do the thing"``) and collapses the surrounding
-        whitespace, nothing more.
+        ``,`` after the mention (common in tab-complete output) and
+        collapses the surrounding whitespace, nothing more.
         """
-        if not body or bot_user_id not in body:
+        if not body:
             return body
-        cleaned = body.replace(bot_user_id, " ", 1)
-        # Common tab-complete suffixes ("@bot: ", "@bot, ").
-        cleaned = cleaned.replace(" : ", " ").replace(" , ", " ")
-        return " ".join(cleaned.split()).strip()
+
+        # Path 1: raw mxid in body.
+        if bot_user_id in body:
+            cleaned = body.replace(bot_user_id, " ", 1)
+            cleaned = cleaned.replace(" : ", " ").replace(" , ", " ")
+            return " ".join(cleaned.split()).strip()
+
+        # Path 2: anchored mention in formatted_body. Find the anchor
+        # whose href points at the bot's mxid, take its text content,
+        # and strip that prefix from `body`. Display names are
+        # user-controlled; this also tolerates Element's
+        # ``"DisplayName: "`` colon suffix and the bare-token form.
+        if formatted_body:
+            import re
+            pattern = re.compile(
+                r'<a[^>]+href="(?:https?://)?matrix\.to/#/'
+                + re.escape(bot_user_id)
+                + r'"[^>]*>([^<]+)</a>',
+                re.IGNORECASE,
+            )
+            match = pattern.search(formatted_body)
+            if match:
+                display = match.group(1).strip()
+                if display and body.startswith(display):
+                    rest = body[len(display):]
+                    rest = rest.lstrip()
+                    if rest[:1] in {":", ","}:
+                        rest = rest[1:].lstrip()
+                    return rest.strip()
+
+        return body
 
     async def emit_event(self, room_id: str, event_type: str, body: dict) -> bool:
         """Emit a structured (non-message) event into a Matrix room.
