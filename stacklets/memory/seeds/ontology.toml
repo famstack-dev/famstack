@@ -80,9 +80,12 @@ keywords = { de = ["TÜV", "KFZ"], en = ["registration", "inspection"] }
 types    = ["contract", "invoice", "certificate"]
 
 [topic.housing]
+# Long-term residence -- the primary home -- not short-term stays.
+# Holiday rentals (chalet, Ferienwohnung, hotel bookings) belong to
+# `topic.travel`, not here.
 names    = { de = "Wohnen", en = "Housing" }
 synonyms = { de = ["Miete"], en = ["rent", "mortgage"] }
-keywords = { de = ["Vermieter", "Hausverwaltung"], en = ["landlord", "lease"] }
+keywords = { de = ["Vermieter", "Hausverwaltung", "Mietvertrag", "Hauptwohnsitz", "Betriebskostenabrechnung", "Wohnungsübergabe", "Hausordnung", "Nebenkosten"], en = ["landlord", "lease", "rental agreement", "primary residence", "utility bill", "tenancy"] }
 types    = ["contract", "invoice", "statement", "letter"]
 
 [topic.property]
@@ -136,8 +139,12 @@ synonyms = { de = ["Supermarkt"], en = ["supermarket"] }
 types = ["receipt"]
 
 [topic.travel]
+# Anything short-stay: vacation, business trip, weekend getaway.
+# Holiday rentals (chalet, Ferienwohnung, hotel) belong here, NOT
+# under `topic.housing` -- that one is for long-term residence.
 names = { de = "Reise", en = "Travel" }
-synonyms = { de = ["Urlaub"], en = ["holiday", "trip", "vacation"] }
+synonyms = { de = ["Urlaub", "Ferien"], en = ["holiday", "trip", "vacation"] }
+keywords = { de = ["Anreise", "Abreise", "Aufenthalt", "Übernachtung", "Hotel", "Pension", "Chalet", "Ferienwohnung", "Ferienhaus", "Unterkunft", "Reservierung", "Buchungsbestätigung", "Check-in", "Check-out"], en = ["hotel", "chalet", "vacation rental", "holiday home", "lodging", "accommodation", "check-in", "check-out", "booking confirmation", "stay"] }
 types = ["booking", "invoice"]
 
 [topic.pet]
