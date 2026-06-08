@@ -140,13 +140,16 @@ def render_capture_reply(
     title = classification.get("title") or source_title_hint or "Capture"
     lines = [t("captured", title=title)]
 
-    topics = classification.get("topics") or []
+    # Captures classify under `tags`; the documents pipeline uses
+    # `topics`. Accept either so the same presenter works for both
+    # and we don't end up with a silent empty meta row on captures.
+    topics = classification.get("topics") or classification.get("tags") or []
     if isinstance(topics, str):
         topics = [topics]
     persons = classification.get("persons") or []
     if isinstance(persons, str):
         persons = [persons]
-    meta_parts = [x for x in (*topics, *persons) if isinstance(x, str)]
+    meta_parts = [x for x in (*topics, *persons) if isinstance(x, str) and x.strip()]
     if meta_parts:
         lines.extend(["", "  " + " | ".join(meta_parts)])
 

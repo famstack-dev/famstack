@@ -232,9 +232,9 @@ class TestSourceFromBinary:
         return p
 
     def test_image_returns_single_image_no_text(self):
-        # Plain image -> one ImageAttachment, no extracted text.
+        # Plain image -> one ImageAttachment, no extracted text, bookmark kind.
         pipe = self._pipe()
-        source, images = pipe._source_from_binary(
+        source, images, kind = pipe._source_from_binary(
             file_data=b"\xff\xd8fake-jpeg-bytes",
             mime="image/jpeg",
             filename="recipe.jpg",
@@ -246,17 +246,51 @@ class TestSourceFromBinary:
         assert source.text == ""
         assert len(images) == 1
         assert images[0].mime == "image/jpeg"
+        assert kind == "bookmark"
 
     def test_unsupported_mime_returns_none(self):
         # Audio, video, archives: out of scope for v1 captures.
         pipe = self._pipe()
-        source, images = pipe._source_from_binary(
+        source, images, _kind = pipe._source_from_binary(
             file_data=b"riff-wave",
             mime="audio/wav",
             filename="voice.wav",
             source_uri="mxc://server/xyz",
         )
         assert source is None
+        assert images == []
+
+    def test_markdown_file_decodes_as_note(self):
+        # An .md file: bytes are the artifact, kept as a note (no
+        # vision call, body preserved). The text comes out decoded.
+        pipe = self._pipe()
+        body = "# Title\n\nSome notes about MLX.\n"
+        source, images, kind = pipe._source_from_binary(
+            file_data=body.encode("utf-8"),
+            mime="text/markdown",
+            filename="notes.md",
+            source_uri="mxc://server/md1",
+        )
+        assert source is not None
+        assert source.text == body
+        assert source.mime == "text/markdown"
+        assert images == []
+        assert kind == "note"
+
+    def test_txt_file_by_extension_when_mime_unknown(self):
+        # Some clients send application/octet-stream for plain .txt
+        # files; the extension still routes them to the note path.
+        pipe = self._pipe()
+        body = "Just a plain text note.\n"
+        source, images, kind = pipe._source_from_binary(
+            file_data=body.encode("utf-8"),
+            mime="application/octet-stream",
+            filename="thought.txt",
+            source_uri="mxc://server/t1",
+        )
+        assert source is not None
+        assert source.text == body
+        assert kind == "note"
         assert images == []
 
 

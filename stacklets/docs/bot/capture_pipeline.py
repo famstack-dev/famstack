@@ -53,6 +53,17 @@ IMAGE_MIMES = {
     "image/webp", "image/tiff",
 }
 
+# Files we treat as note-shaped content: the bytes themselves are the
+# artifact worth keeping (a Markdown export, a hand-written text file),
+# not a pointer or a scan. The body lands in the mirror verbatim so a
+# later edit or search hits the actual words. PDFs and images, by
+# contrast, stay as bookmarks: the binary lives in Matrix, the wiki
+# entry just summarises and links.
+TEXT_MIMES = {
+    "text/plain", "text/markdown", "text/x-markdown",
+}
+TEXT_EXTS = {"md", "markdown", "txt"}
+
 
 @dataclass
 class CaptureOutcome:
@@ -155,14 +166,14 @@ class CapturePipeline:
         wiki entry links back to the original binary -- we don't
         re-store the bytes; Matrix already has them.
         """
-        source, images = self._source_from_binary(
+        source, images, kind = self._source_from_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri,
         )
         if source is None:
             return CaptureOutcome(status="extract_failed")
         return await self._publish(
-            source=source, kind="bookmark", sender_mxid=sender_mxid,
+            source=source, kind=kind, sender_mxid=sender_mxid,
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
             capture_id=capture_id,
@@ -171,15 +182,17 @@ class CapturePipeline:
     def _source_from_binary(
         self, *, file_data: bytes, mime: str, filename: str,
         source_uri: str | None,
-    ) -> tuple[SourceContent | None, list[ImageAttachment]]:
-        """Pick the extraction strategy for a PDF or image.
+    ) -> tuple[SourceContent | None, list[ImageAttachment], str]:
+        """Pick the extraction strategy for a PDF, image, or text file.
 
-        Returns ``(source, images)`` where ``source.text`` is whatever
-        text we already have (pypdf for native-text PDFs, empty for
-        scans and photos) and ``images`` is the page renders the
-        classifier should see. The classifier's vision pass produces
-        the summary; pypdf text rides alongside as supplementary
-        context when both are available.
+        Returns ``(source, images, kind)`` where ``source.text`` is
+        whatever text we already have (decoded bytes for md/txt, pypdf
+        for native-text PDFs, empty for scans and photos) and
+        ``images`` is the page renders the classifier should see. The
+        ``kind`` ("bookmark" or "note") drives whether the body is
+        kept in the mirror: notes preserve the bytes verbatim, since
+        a Markdown export or text file IS the artifact; bookmarks
+        keep only the summary, since the binary stays in Matrix.
         """
         title_hint = filename or None
         is_image = mime in IMAGE_MIMES
@@ -190,13 +203,37 @@ class CapturePipeline:
                     title_hint=title_hint, source_uri=source_uri,
                 ),
                 [ImageAttachment(data=file_data, mime=mime)],
+                "bookmark",
+            )
+
+        # md / txt uploads land as notes: the bytes themselves are the
+        # content the user wants to keep, so we decode and pass them
+        # straight to the text-only classify path. No vision call, no
+        # PDF machinery -- just a SourceContent with the body.
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        is_text_file = mime in TEXT_MIMES or ext in TEXT_EXTS
+        if is_text_file:
+            try:
+                text = file_data.decode("utf-8")
+            except UnicodeDecodeError:
+                text = file_data.decode("utf-8", errors="replace")
+            if not text.strip():
+                return (None, [], "note")
+            return (
+                SourceContent(
+                    text=text,
+                    mime=mime or ("text/markdown" if ext in {"md", "markdown"} else "text/plain"),
+                    title_hint=title_hint, source_uri=source_uri,
+                ),
+                [],
+                "note",
             )
 
         if mime != "application/pdf":
             # Anything else (audio, video, archives, ...) is out of
             # scope for v1; the capture path stays a text + image
             # surface.
-            return (None, [])
+            return (None, [], "bookmark")
 
         pages = pdf_page_count(file_data) if PdfReader is not None else 0
         text_layer = (
@@ -234,7 +271,7 @@ class CapturePipeline:
                 images.append(ImageAttachment(data=png, mime="image/png"))
 
         if not images and not text_body:
-            return (None, [])
+            return (None, [], "bookmark")
 
         return (
             SourceContent(
@@ -242,6 +279,7 @@ class CapturePipeline:
                 title_hint=title_hint, source_uri=source_uri,
             ),
             images,
+            "bookmark",
         )
 
     async def reprocess(

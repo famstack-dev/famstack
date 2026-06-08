@@ -173,6 +173,8 @@ _MIME_BY_EXT = {
     "heic": "image/heic", "heif": "image/heif",
     "webp": "image/webp",
     "tiff": "image/tiff", "tif": "image/tiff",
+    "md": "text/markdown", "markdown": "text/markdown",
+    "txt": "text/plain",
 }
 
 
