@@ -39,7 +39,8 @@ class FakeClassifier:
         }
         self._raises = raises
 
-    async def classify_capture(self, *, text, person_names, existing_tags):
+    async def classify_capture(self, *, text, person_names, existing_tags,
+                               images=None):
         if self._raises:
             raise self._raises
         return self._payload
@@ -201,3 +202,49 @@ class TestClassifyDegradation:
         # Degraded classification: sender as the only person, hint title.
         assert out.classification["persons"] == ["Bart"]
         assert out.classification["title"] == "A Title"  # source title_hint
+
+
+# ── Binary capture (PDFs and images) ───────────────────────────────────
+
+
+class TestSourceFromBinary:
+    """Internal: how _source_from_binary picks text vs vision for each
+    incoming binary shape. The router is small but load-bearing for the
+    PDF-in-notes-room story, so each branch gets its own assertion."""
+
+    def _pipe(self, *, vision_max_pdf_pages=5):
+        # Pipe with a vision cap we can override per test; the
+        # classifier is irrelevant for this layer.
+        p = _pipeline(mirror=FakeMirror())
+        p.vision_max_pdf_pages = vision_max_pdf_pages
+        return p
+
+    def test_image_returns_single_image_no_text(self):
+        # Plain image -> one ImageAttachment, no extracted text.
+        pipe = self._pipe()
+        source, images = pipe._source_from_binary(
+            file_data=b"\xff\xd8fake-jpeg-bytes",
+            mime="image/jpeg",
+            filename="recipe.jpg",
+            source_uri="mxc://server/abc",
+        )
+        assert source is not None
+        assert source.source_uri == "mxc://server/abc"
+        assert source.title_hint == "recipe.jpg"
+        assert source.text == ""
+        assert len(images) == 1
+        assert images[0].mime == "image/jpeg"
+
+    def test_unsupported_mime_returns_none(self):
+        # Audio, video, archives: out of scope for v1 captures.
+        pipe = self._pipe()
+        source, images = pipe._source_from_binary(
+            file_data=b"riff-wave",
+            mime="audio/wav",
+            filename="voice.wav",
+            source_uri="mxc://server/xyz",
+        )
+        assert source is None
+        assert images == []
+
+

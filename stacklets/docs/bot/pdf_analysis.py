@@ -22,21 +22,23 @@ from pypdf import PdfReader
 # Word, LaTeX, or a CMS-generated invoice.
 _OCR_LAYER_TOOLS = ("ocrmypdf", "tesseract")
 
-# Past this length, we skip vision even on OCR'd text-layer PDFs and
-# trust the (possibly imperfect) text layer. A 30-page contract scanned
-# and re-OCR'd would otherwise cost 30 image tokens — disproportionate
-# to the classification value. Short docs (booking confirmations,
-# receipts, single-page letters) stay under this and get vision.
-VISION_MAX_PDF_PAGES = 5
+# Default cap on how many PDF pages we'll attach to a vision call.
+# A typical render at low res costs 1-3K tokens per page, so 5 pages
+# is comfortable on a 32K-context model; households running a larger
+# context can raise this via the archivist bot's `vision_max_pdf_pages`
+# setting. Past the cap we skip vision and trust the (possibly
+# imperfect) text layer. Short docs (booking confirmations, receipts,
+# single-page letters) stay under this and get vision.
+DEFAULT_VISION_MAX_PDF_PAGES = 5
 
-# Past this length, we skip the reformat pass for PDFs and commit the
-# raw extraction. Reformat's job is recovering layout from
-# column-flattened or OCR-jumbled text — high value on a 1-page
-# invoice (the wall-of-text body becomes a readable markdown block),
-# low value on a 30-page contract where a single LLM call won't fit
-# the content. The reformat cap matches the vision cap because the
-# same "short doc, full attention" reasoning applies.
-REFORMAT_MAX_PDF_PAGES = 5
+# Default cap on the LLM reformat pass for PDFs. Reformat recovers
+# layout from column-flattened or OCR-jumbled text -- high value on a
+# 1-page invoice (a wall of text becomes a readable markdown block),
+# low value on a 30-page contract where one LLM call can't fit the
+# content. The reformat cap shares the same "short doc, full
+# attention" reasoning as the vision cap; both come from bot config so
+# households tune them together for their model's context.
+DEFAULT_REFORMAT_MAX_PDF_PAGES = 5
 
 
 def has_text_layer(pdf_bytes: bytes) -> bool:
@@ -104,7 +106,7 @@ def pdf_page_count(pdf_bytes: bytes) -> int:
 
     Used to gate the vision-attach decision: a long OCR'd PDF would
     otherwise burn one image token per page. Returns 0 for unreadable
-    files so the caller's ``<= VISION_MAX_PDF_PAGES`` comparison treats
+    files so the caller's ``<= vision_max_pages`` comparison treats
     them as "short enough" — vision still attaches and the renderer
     handles its own failures gracefully.
 
@@ -124,6 +126,7 @@ def should_attach_vision(
     has_text_layer: bool,
     has_ocr_text_layer: bool,
     page_count: int,
+    vision_max_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
 ) -> bool:
     """Single decision point for PDF vision-attach policy.
 
@@ -138,12 +141,15 @@ def should_attach_vision(
 
     ``page_count`` is only consulted when there IS a text layer — for
     scans we render whatever's there (partial classification on a long
-    scan beats none).
+    scan beats none). ``vision_max_pages`` is the per-household cap
+    from `archivist-bot.toml`; the default is a safe lower bound for
+    small-context models.
 
     Args:
         has_text_layer: Whether the PDF has an embedded text layer.
         has_ocr_text_layer: Whether the text layer looks machine-OCR'd.
         page_count: Number of pages in the PDF.
+        vision_max_pages: Per-household cap on attached pages.
 
     Returns:
         True when the classifier should receive image attachments.
@@ -159,15 +165,20 @@ def should_attach_vision(
         False
         >>> should_attach_vision(True, False, 30)   # long native-text
         False
+        >>> should_attach_vision(True, True, 15, vision_max_pages=20)
+        True
     """
     if not has_text_layer:
         return True
-    if has_ocr_text_layer and page_count <= VISION_MAX_PDF_PAGES:
+    if has_ocr_text_layer and page_count <= vision_max_pages:
         return True
     return False
 
 
-def should_reformat_pdf(page_count: int) -> bool:
+def should_reformat_pdf(
+    page_count: int,
+    reformat_max_pages: int = DEFAULT_REFORMAT_MAX_PDF_PAGES,
+) -> bool:
     """Should we run the LLM reformat pass on this PDF?
 
     Short PDFs (≤5 pages) benefit from layout recovery — a two-column
@@ -177,6 +188,8 @@ def should_reformat_pdf(page_count: int) -> bool:
 
     Args:
         page_count: Number of pages in the PDF.
+        reformat_max_pages: Per-household cap from the archivist's bot
+            settings.
 
     Returns:
         True when reformat is worth running.
@@ -190,5 +203,7 @@ def should_reformat_pdf(page_count: int) -> bool:
         False
         >>> should_reformat_pdf(30)
         False
+        >>> should_reformat_pdf(15, reformat_max_pages=20)
+        True
     """
-    return page_count <= REFORMAT_MAX_PDF_PAGES
+    return page_count <= reformat_max_pages

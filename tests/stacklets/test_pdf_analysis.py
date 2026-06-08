@@ -20,8 +20,8 @@ from pdf_analysis import (
     pdf_page_count,
     should_attach_vision,
     should_reformat_pdf,
-    VISION_MAX_PDF_PAGES,
-    REFORMAT_MAX_PDF_PAGES,
+    DEFAULT_VISION_MAX_PDF_PAGES,
+    DEFAULT_REFORMAT_MAX_PDF_PAGES,
 )
 
 
@@ -210,11 +210,23 @@ class TestShouldAttachVision:
     def test_all_combinations(self, has_text, has_ocr, pages, expected):
         assert should_attach_vision(has_text, has_ocr, pages) is expected
 
-    def test_constant_vision_max_pages(self):
-        assert VISION_MAX_PDF_PAGES == 5
+    def test_default_vision_max_pages(self):
+        assert DEFAULT_VISION_MAX_PDF_PAGES == 5
 
-    def test_constant_reformat_max_pages(self):
-        assert REFORMAT_MAX_PDF_PAGES == 5
+    def test_default_reformat_max_pages(self):
+        assert DEFAULT_REFORMAT_MAX_PDF_PAGES == 5
+
+    def test_vision_cap_overridable_per_call(self):
+        # Households on larger-context models raise the cap via
+        # archivist-bot settings; the helper takes that override.
+        assert should_attach_vision(
+            has_text_layer=True, has_ocr_text_layer=True,
+            page_count=15, vision_max_pages=20,
+        ) is True
+        assert should_attach_vision(
+            has_text_layer=True, has_ocr_text_layer=True,
+            page_count=21, vision_max_pages=20,
+        ) is False
 
 
 # ── Reformat decision ──────────────────────────────────────────────────
@@ -235,3 +247,8 @@ class TestShouldReformatPdf:
 
     def test_zero_pages(self):
         assert should_reformat_pdf(0) is True
+
+    def test_cap_overridable_per_call(self):
+        # archivist-bot tunable carries through.
+        assert should_reformat_pdf(15, reformat_max_pages=20) is True
+        assert should_reformat_pdf(21, reformat_max_pages=20) is False

@@ -50,6 +50,10 @@ from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
 from microbot import MicroBot
 from capabilities import ModelCapabilities
+from pdf_analysis import (
+    DEFAULT_REFORMAT_MAX_PDF_PAGES,
+    DEFAULT_VISION_MAX_PDF_PAGES,
+)
 from pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
@@ -162,6 +166,28 @@ def _t(lang: str, key: str, **kwargs) -> str:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+_MIME_BY_EXT = {
+    "pdf": "application/pdf",
+    "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "png": "image/png",
+    "heic": "image/heic", "heif": "image/heif",
+    "webp": "image/webp",
+    "tiff": "image/tiff", "tif": "image/tiff",
+}
+
+
+def _guess_mime(filename: str, msgtype: str) -> str:
+    """Best-effort MIME from filename extension, with msgtype as a
+    fallback ("m.image" → image/jpeg). Used when the upload event
+    omits `content.info.mimetype`, which happens on some clients."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext in _MIME_BY_EXT:
+        return _MIME_BY_EXT[ext]
+    if msgtype == "m.image":
+        return "image/jpeg"
+    return "application/octet-stream"
+
+
 def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
     """Combine multiple image files into a single multi-page PDF."""
     images = []
@@ -214,6 +240,18 @@ class ArchivistBot(MicroBot):
         # when running a larger-context model.
         self.classify_max_chars = int(settings.get(
             "classify_max_chars", DEFAULT_CLASSIFY_MAX_CHARS,
+        ))
+        # Page caps on PDF vision/reformat. Defaults are safe for small
+        # context models (32K-ish); raise both together when running a
+        # larger-context LLM so longer docs still get the full vision
+        # pass and layout-recovery reformat. A 1-3K-token-per-page
+        # render means 5 pages already eats ~15K input tokens, so tune
+        # to your model's headroom.
+        self.vision_max_pdf_pages = int(settings.get(
+            "vision_max_pdf_pages", DEFAULT_VISION_MAX_PDF_PAGES,
+        ))
+        self.reformat_max_pdf_pages = int(settings.get(
+            "reformat_max_pdf_pages", DEFAULT_REFORMAT_MAX_PDF_PAGES,
         ))
         # Org under which the shared knowledge vault (`<org>/memory`)
         # lives in Forgejo. The bot joins the org's Owners team so
@@ -318,6 +356,8 @@ class ArchivistBot(MicroBot):
             classify_enabled=self.classify_enabled,
             reformat_enabled=self.reformat_enabled,
             classify_max_chars=self.classify_max_chars,
+            vision_max_pdf_pages=self.vision_max_pdf_pages,
+            reformat_max_pdf_pages=self.reformat_max_pdf_pages,
             paperless_public_url=self.paperless_public_url,
             actor=self.user_id,
             vault=self._vault,
@@ -344,6 +384,7 @@ class ArchivistBot(MicroBot):
             classify_max_chars=self.classify_max_chars,
             capture_keep_body=self.capture_keep_body,
             capture_tag_prompt_size=self.capture_tag_prompt_size,
+            vision_max_pdf_pages=self.vision_max_pdf_pages,
         )
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
@@ -811,12 +852,29 @@ class ArchivistBot(MicroBot):
         # work that follows.
         await self._set_typing(room.room_id, on=True)
 
-        await self._process_document(
-            room.room_id, raw_filename, display_name, file_data, reply_to,
-            date_filed=self._event_date(event),
-            submitter_mxid=event.sender,
-            user_hint=caption or None,
-        )
+        # Documents room → full archivist pipeline (Paperless + classify
+        # + entity reconciliation). Every other reacting room is a
+        # capture room: PDFs and images become visual bookmarks in the
+        # sender's bucket; Matrix already stores the binary, so we link
+        # to the mxc URL and don't re-archive the bytes.
+        if self._is_documents_room(ctx):
+            await self._process_document(
+                room.room_id, raw_filename, display_name, file_data, reply_to,
+                date_filed=self._event_date(event),
+                submitter_mxid=event.sender,
+                user_hint=caption or None,
+            )
+        else:
+            await self._handle_binary_capture(
+                room_id=room.room_id,
+                file_data=file_data,
+                mime=content.get("info", {}).get("mimetype")
+                     or _guess_mime(raw_filename, msgtype),
+                filename=raw_filename,
+                source_uri=url,
+                sender_mxid=event.sender,
+                reply_to=reply_to,
+            )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
         if event.sender == self.user_id:
@@ -1061,6 +1119,24 @@ class ArchivistBot(MicroBot):
     ) -> None:
         outcome = await self._capture.capture_text(
             text=text, sender_mxid=sender_mxid,
+        )
+        await self._reply_for_capture(room_id, outcome, reply_to)
+
+    async def _handle_binary_capture(
+        self, *, room_id: str, file_data: bytes, mime: str,
+        filename: str, source_uri: str, sender_mxid: str,
+        reply_to: str | None = None,
+    ) -> None:
+        """Capture a PDF or image as a visual bookmark.
+
+        Vision-driven by default (the classifier sees the rendered
+        page(s) + any extractable text layer). The mirror entry
+        points back at the Matrix mxc URL -- the binary stays where
+        the homeserver put it, the wiki just summarises and links.
+        """
+        outcome = await self._capture.capture_binary(
+            file_data=file_data, mime=mime, filename=filename,
+            source_uri=source_uri, sender_mxid=sender_mxid,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

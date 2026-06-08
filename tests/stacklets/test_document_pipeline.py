@@ -77,6 +77,8 @@ def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled
         classify_enabled=classify_enabled,
         reformat_enabled=reformat_enabled,
         classify_max_chars=10000,
+        vision_max_pdf_pages=5,
+        reformat_max_pdf_pages=5,
         paperless_public_url="http://paperless",
         actor="@archivist-bot:test.local",
         vault=_FakeVault(),

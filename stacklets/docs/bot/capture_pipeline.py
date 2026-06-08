@@ -17,17 +17,39 @@ fold into the ontology.
 from __future__ import annotations
 
 import datetime as _dt
+import io
 from dataclasses import dataclass, field
 
 from loguru import logger
 
+from extractors import SourceContent
 from notifier import Notifier
+from pdf_analysis import (
+    DEFAULT_VISION_MAX_PDF_PAGES,
+    has_ocr_text_layer,
+    has_text_layer,
+    pdf_page_count,
+    should_attach_vision,
+)
+from pdf_render import render_pages
 from pipeline import (
+    ImageAttachment,
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
 )
 from stack import resolve_model
+
+try:
+    from pypdf import PdfReader  # type: ignore
+except Exception:  # pragma: no cover - runtime dep at bot install time
+    PdfReader = None  # type: ignore
+
+
+IMAGE_MIMES = {
+    "image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif",
+    "image/webp", "image/tiff",
+}
 
 
 @dataclass
@@ -58,6 +80,7 @@ class CapturePipeline:
         classify_max_chars: int,
         capture_keep_body: bool,
         capture_tag_prompt_size: int,
+        vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
     ):
         self._url_extractor = url_extractor
         self._text_extractor = text_extractor
@@ -69,6 +92,7 @@ class CapturePipeline:
         self.classify_max_chars = classify_max_chars
         self.capture_keep_body = capture_keep_body
         self.capture_tag_prompt_size = capture_tag_prompt_size
+        self.vision_max_pdf_pages = vision_max_pdf_pages
 
     async def capture_url(
         self, *, url: str, sender_mxid: str, notifier: Notifier,
@@ -101,8 +125,117 @@ class CapturePipeline:
             display_link=source.source_uri or "(pasted text)",
         )
 
+    async def capture_binary(
+        self, *,
+        file_data: bytes,
+        mime: str,
+        filename: str,
+        source_uri: str | None,
+        sender_mxid: str,
+        display_link: str | None = None,
+    ) -> CaptureOutcome:
+        """File a PDF or image as a bookmark.
+
+        Vision-driven by default: render the page(s) and let the LLM
+        do extraction + summary + tags in one prompt. Long text-layer
+        PDFs (past the per-instance vision cap) bypass vision and
+        ride the text layer through the existing text-capture path,
+        so the household doesn't pay vision tokens for a 60-page
+        research paper. ``source_uri`` is the Matrix mxc URL so the
+        wiki entry links back to the original binary -- we don't
+        re-store the bytes; Matrix already has them.
+        """
+        source, images = self._source_from_binary(
+            file_data=file_data, mime=mime, filename=filename,
+            source_uri=source_uri,
+        )
+        if source is None:
+            return CaptureOutcome(status="extract_failed")
+        return await self._publish(
+            source=source, kind="bookmark", sender_mxid=sender_mxid,
+            display_link=display_link or source_uri or filename,
+            images=images,
+        )
+
+    def _source_from_binary(
+        self, *, file_data: bytes, mime: str, filename: str,
+        source_uri: str | None,
+    ) -> tuple[SourceContent | None, list[ImageAttachment]]:
+        """Pick the extraction strategy for a PDF or image.
+
+        Returns ``(source, images)`` where ``source.text`` is whatever
+        text we already have (pypdf for native-text PDFs, empty for
+        scans and photos) and ``images`` is the page renders the
+        classifier should see. The classifier's vision pass produces
+        the summary; pypdf text rides alongside as supplementary
+        context when both are available.
+        """
+        title_hint = filename or None
+        is_image = mime in IMAGE_MIMES
+        if is_image:
+            return (
+                SourceContent(
+                    text="", mime=mime,
+                    title_hint=title_hint, source_uri=source_uri,
+                ),
+                [ImageAttachment(data=file_data, mime=mime)],
+            )
+
+        if mime != "application/pdf":
+            # Anything else (audio, video, archives, ...) is out of
+            # scope for v1; the capture path stays a text + image
+            # surface.
+            return (None, [])
+
+        pages = pdf_page_count(file_data) if PdfReader is not None else 0
+        text_layer = (
+            has_text_layer(file_data) if PdfReader is not None else False
+        )
+        ocr_layer = (
+            has_ocr_text_layer(file_data)
+            if PdfReader is not None and text_layer else False
+        )
+
+        attach = should_attach_vision(
+            has_text_layer=text_layer,
+            has_ocr_text_layer=ocr_layer,
+            page_count=pages if text_layer else 0,
+            vision_max_pages=self.vision_max_pdf_pages,
+        )
+
+        text_body = ""
+        if text_layer and PdfReader is not None:
+            try:
+                reader = PdfReader(io.BytesIO(file_data))
+                text_body = "\n".join(
+                    (p.extract_text() or "") for p in reader.pages
+                ).strip()
+            except Exception as e:
+                logger.debug("[capture] pypdf extract failed: {}", e)
+
+        images: list[ImageAttachment] = []
+        if attach:
+            # For scans (no text layer) we cap page renders to the
+            # vision budget; partial coverage beats nothing.
+            cap = self.vision_max_pdf_pages
+            rendered = render_pages(file_data)
+            for png in rendered[:cap]:
+                images.append(ImageAttachment(data=png, mime="image/png"))
+
+        if not images and not text_body:
+            return (None, [])
+
+        return (
+            SourceContent(
+                text=text_body, mime="application/pdf",
+                title_hint=title_hint, source_uri=source_uri,
+            ),
+            images,
+        )
+
     async def _publish(
         self, *, source, kind: str, sender_mxid: str, display_link: str,
+        images: list[ImageAttachment] | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome."""
         if self._mirror is None:
@@ -113,7 +246,7 @@ class CapturePipeline:
         localpart = sender_mxid.split(":")[0].lstrip("@")
         sender_name = localpart.capitalize()
         entity_slug = localpart.lower()
-        classification = await self._classify(source, sender_name)
+        classification = await self._classify(source, sender_name, images=images)
 
         try:
             model = resolve_model(f"{self._name}/classifier")
@@ -157,7 +290,10 @@ class CapturePipeline:
             display_link=display_link,
         )
 
-    async def _classify(self, source, sender_name: str) -> dict:
+    async def _classify(
+        self, source, sender_name: str,
+        *, images: list[ImageAttachment] | None = None,
+    ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
         failure — the capture is still useful without a digest."""
@@ -175,6 +311,7 @@ class CapturePipeline:
                 text=source.text[: self.classify_max_chars],
                 person_names=person_names,
                 existing_tags=existing_tags,
+                images=images,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

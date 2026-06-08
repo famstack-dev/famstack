@@ -23,7 +23,6 @@ from loguru import logger
 
 from matching import build_document_event
 from pdf_analysis import (
-    REFORMAT_MAX_PDF_PAGES,
     has_ocr_text_layer,
     has_text_layer,
     pdf_page_count,
@@ -138,6 +137,8 @@ class DocumentPipeline:
         classify_enabled: bool,
         reformat_enabled: bool,
         classify_max_chars: int,
+        vision_max_pdf_pages: int,
+        reformat_max_pdf_pages: int,
         paperless_public_url: str,
         actor: str,
         vault,
@@ -150,6 +151,8 @@ class DocumentPipeline:
         self.classify_enabled = classify_enabled
         self.reformat_enabled = reformat_enabled
         self.classify_max_chars = classify_max_chars
+        self.vision_max_pdf_pages = vision_max_pdf_pages
+        self.reformat_max_pdf_pages = reformat_max_pdf_pages
         self.paperless_public_url = paperless_public_url
         self.actor = actor
         self._vault = vault
@@ -243,10 +246,10 @@ class DocumentPipeline:
         should_reformat = bool(classification) and self.reformat_enabled and not is_text
         if should_reformat and ext == "pdf":
             pages = pdf_page_count(file_data)
-            if not should_reformat_pdf(pages):
+            if not should_reformat_pdf(pages, self.reformat_max_pdf_pages):
                 logger.info(
                     "[archivist] reformat skipped for doc #{}: {} pages > {}",
-                    doc_id, pages, REFORMAT_MAX_PDF_PAGES,
+                    doc_id, pages, self.reformat_max_pdf_pages,
                 )
                 should_reformat = False
         if should_reformat:
@@ -325,6 +328,7 @@ class DocumentPipeline:
             has_text_layer=is_pdf_with_text,
             has_ocr_text_layer=is_pdf_ocr_layer,
             page_count=pdf_page_count(file_data) if is_pdf_with_text else 0,
+            vision_max_pages=self.vision_max_pdf_pages,
         ):
             if await self._classifier.has_vision():
                 rendered = render_pages(file_data)

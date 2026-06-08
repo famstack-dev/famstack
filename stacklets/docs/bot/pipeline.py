@@ -704,6 +704,7 @@ class Classifier:
         text: str,
         person_names: list[str],
         existing_tags: list[str] | None = None,
+        images: list[ImageAttachment] | None = None,
     ) -> dict:
         """Capture-specific classification.
 
@@ -719,13 +720,31 @@ class Classifier:
         what's already in the system ("LLMs" not "llm", "Apple
         Silicon" not "M-series chips"). New tags are still allowed
         when nothing existing fits.
+
+        ``images`` lets binary captures (PDFs, photos) ride the same
+        prompt path as text captures -- the prompt asks the LLM to
+        summarize what the page(s) show. When images are present but
+        the model lacks vision, they are silently dropped and the
+        caller's ``text`` becomes the sole signal.
         """
         prompt = _build_capture_prompt(
             text=text,
             person_names=person_names,
             existing_tags=existing_tags or [],
         )
-        response = await self._request("classifier", prompt, json_mode=True)
+        content: Any = prompt
+        valid_images = [
+            img for img in (images or [])
+            if img.data and img.mime and img.mime.startswith("image/")
+        ]
+        if valid_images and await self.has_vision():
+            content = self._multimodal_content(prompt, valid_images)
+            total = sum(len(img.data) for img in valid_images)
+            logger.info(
+                "[pipeline] capture: attaching {} image(s), {} bytes total",
+                len(valid_images), total,
+            )
+        response = await self._request("classifier", content, json_mode=True)
         if not response:
             return {}
         try:

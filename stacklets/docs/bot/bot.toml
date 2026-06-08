@@ -15,6 +15,17 @@ reformat = true
 # (contracts, research papers) matters more than the extra latency.
 classify_max_chars = 20000
 
+# How many PDF pages get attached to a single vision call. Each page
+# costs ~1-3K input tokens at low render resolution, so the default
+# of 5 leaves headroom on a 32K-context model. Raise to ~15-20 on an
+# 80K-context model so longer scanned docs still get a full vision
+# pass; lower if you see context-overflow errors.
+vision_max_pdf_pages = 5
+
+# Page cap for the LLM reformat (layout-recovery) pass on PDFs. Same
+# token-budget reasoning as the vision cap; usually moves in lockstep.
+reformat_max_pdf_pages = 5
+
 # Forgejo organisation the archivist writes the shared knowledge vault
 # (`<org>/memory`) under. The bot joins the org's Owners team so admins
 # see the repo on their dashboard. The archivist always writes to this
