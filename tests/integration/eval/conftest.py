@@ -136,13 +136,15 @@ async def ai_classifier(eval_ai_config):
     """Real `Classifier` aimed at the live AI stacklet."""
     from pipeline import Classifier
 
-    async with aiohttp.ClientSession() as session:
-        yield Classifier(
-            http=session,
-            url=eval_ai_config["url"],
-            key=eval_ai_config["key"],
-            bot_name="archivist-bot",
-        )
+    classifier = Classifier.from_endpoint(
+        eval_ai_config["url"],
+        eval_ai_config["key"],
+        bot_name="archivist-bot",
+    )
+    try:
+        yield classifier
+    finally:
+        await classifier.aclose()
 
 
 # ── Upload + OCR helper ──────────────────────────────────────────────────

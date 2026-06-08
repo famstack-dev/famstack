@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
+sys.path.insert(0, str(REPO_ROOT / "lib"))
 
-from capabilities import ModelCapabilities
+from stack.ai.client import ModelCapabilities
 
 
 # ── Tri-state semantics ─────────────────────────────────────────────────
