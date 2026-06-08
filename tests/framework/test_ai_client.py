@@ -292,6 +292,24 @@ class TestFromEnv:
         llm = LLM.from_env()
         assert llm._client.api_key == "not-needed"
 
+    def test_empty_url_raises_unavailable(self, monkeypatch):
+        """Privacy guard: an unset OPENAI_URL must NOT silently fall through
+        to api.openai.com (the SDK's default base_url). A family server
+        with AI not configured should fail loudly with a setup hint, not
+        ship OCR text to a hosted provider."""
+        monkeypatch.delenv("OPENAI_URL", raising=False)
+        monkeypatch.delenv("OPENAI_KEY", raising=False)
+        with pytest.raises(LLMUnavailableError):
+            LLM.from_env()
+
+    def test_url_that_is_only_chat_completions_suffix_raises(self, monkeypatch):
+        """Pathological config: the user pasted just '/chat/completions' as
+        OPENAI_URL. After stripping the suffix nothing is left — treat it
+        as unconfigured rather than firing off requests to a relative URL."""
+        monkeypatch.setenv("OPENAI_URL", "/chat/completions")
+        with pytest.raises(LLMUnavailableError):
+            LLM.from_env()
+
 
 # ── has_vision: caching ──────────────────────────────────────────────────
 

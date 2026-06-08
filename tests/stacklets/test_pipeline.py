@@ -1342,6 +1342,24 @@ def _make_classifier(*, response: str = '{"title": "t"}',
     return c
 
 
+class TestClassifierFromEndpoint:
+    """Constructor guards — must not silently fall through to api.openai.com."""
+
+    def test_empty_url_raises_unavailable(self):
+        # If the bot env didn't render an [ai] endpoint, the SDK would
+        # default base_url to api.openai.com. The family server's whole
+        # premise is "stays on the LAN unless I told it not to" — bail
+        # loudly with a setup hint instead of silently routing OCR off-host.
+        with pytest.raises(LLMUnavailableError):
+            Classifier.from_endpoint("")
+
+    def test_whitespace_only_url_raises_unavailable(self):
+        # Same guard, defending against a trailing-slash-only config value
+        # that strips down to empty.
+        with pytest.raises(LLMUnavailableError):
+            Classifier.from_endpoint("/")
+
+
 class TestClassifyWithImage:
     """`classify` attaches images only when the cached vision answer is True."""
 

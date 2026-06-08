@@ -130,7 +130,10 @@ class LLMImage:
     mime: str
 
 
-# A 1x1 PNG-ish probe image used to ask a model whether it accepts images.
+# A 32×32 white PNG — small enough to be cheap on the wire, large enough
+# to satisfy vision-tower patch-size requirements (14×14 / 16×16 ViTs).
+# A 1×1 PNG triggers HTTP 500 in mlx_vlm because the image is smaller
+# than one patch — that surfaced as "vision unsupported" in early probes.
 _PROBE_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lE"
     "QVR4nO3RwQ0AMAjDwJT9d05HMB9+vgGCZF7bXJrT9XhgwR8gEyET"
@@ -171,14 +174,23 @@ class LLM:
         ``max_retries=1`` is deliberate: the SDK retries connection/timeout
         errors, but a model that's still loading should surface as a
         timeout quickly rather than be masked by many retries.
+
+        Refuses to build a client when ``OPENAI_URL`` is empty: the SDK
+        would silently fall back to ``api.openai.com``, which for a
+        privacy-first family server is the wrong default to ever reach
+        by accident. Callers must point at a configured endpoint.
         """
         url = os.environ.get("OPENAI_URL", "").rstrip("/")
         # The SDK appends /chat/completions to base_url; tolerate callers
         # who set the full endpoint instead of the /v1 root.
         if url.endswith("/chat/completions"):
             url = url[: -len("/chat/completions")]
+        if not url:
+            raise LLMUnavailableError(
+                "No AI endpoint configured — set up AI with 'stack up ai'"
+            )
         key = os.environ.get("OPENAI_KEY", "") or "not-needed"
-        client = AsyncOpenAI(base_url=url or None, api_key=key, max_retries=max_retries)
+        client = AsyncOpenAI(base_url=url, api_key=key, max_retries=max_retries)
         return cls(client, namespace=namespace, capabilities=capabilities)
 
     def _full_role(self, role: str) -> str:

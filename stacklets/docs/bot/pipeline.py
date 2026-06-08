@@ -454,12 +454,20 @@ class Classifier:
         The OpenAI SDK appends `/chat/completions` itself, so the caller
         may pass either the `/v1` root (what `stack.toml` stores) or the
         full endpoint — both shapes are tolerated.
+
+        Refuses an empty URL: the SDK would otherwise default to
+        api.openai.com, which on a privacy-first family server is the
+        wrong destination to ever reach by accident.
         """
         clean = url.rstrip("/")
         if clean.endswith("/chat/completions"):
             clean = clean[: -len("/chat/completions")]
+        if not clean:
+            raise LLMUnavailableError(
+                "No AI endpoint configured — set up AI with 'stack up ai'"
+            )
         client = AsyncOpenAI(
-            base_url=clean or None,
+            base_url=clean,
             api_key=key or "not-needed",
             max_retries=1,
         )
