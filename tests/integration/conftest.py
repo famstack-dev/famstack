@@ -348,11 +348,20 @@ def memory_repo(code) -> None:
     from stack.forgejo import ForgejoClient
     import lib as memory_lib
 
-    client = ForgejoClient(
+    admin_client = ForgejoClient(
         url=code.url, admin_user=code.admin_user, admin_password=code.admin_password,
     )
-    memory_lib.ensure_memory_repo(client)
-    memory_lib.install_seeds(client)
+    memory_lib.ensure_memory_repo(admin_client)
+    # install_seeds writes through the contents API which requires a
+    # token-authed client (basic admin auth isn't enough). Mirror
+    # `install_memory_to_forgejo_admin`'s production shape: issue an
+    # admin token, then use it for the seed push.
+    admin_token = admin_client.issue_token(
+        code.admin_user, code.admin_password,
+        "memory-install-tests", memory_lib.TOKEN_SCOPES,
+    )
+    token_client = ForgejoClient(url=code.url, token=admin_token)
+    memory_lib.install_seeds(token_client)
 
 
 @pytest.fixture

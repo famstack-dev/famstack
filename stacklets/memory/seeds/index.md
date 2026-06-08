@@ -15,6 +15,6 @@ To add or edit a page, open the **family/memory** repository in Forgejo.
 Every change is saved as a version you can always look back on.
 
 <!-- begin: generated -->
-<!-- Your family overview appears here once you run `stack docs overview --write`. -->
+<!-- Your family overview appears here once you run `stack memory wiki`. -->
 <!-- end: generated -->
 
