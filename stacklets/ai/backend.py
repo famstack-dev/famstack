@@ -8,44 +8,12 @@ This module just probes the configured endpoint. No detection waterfall,
 no scanning, no interactive prompts for URLs.
 """
 
-import dataclasses
-import json
-import ssl
 import tomllib
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-_SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode = ssl.CERT_NONE
-
-
-@dataclasses.dataclass
-class ProbeResult:
-    reachable: bool
-    needs_auth: bool = False
-    models: list = dataclasses.field(default_factory=list)
-
-
-def _probe(url: str, key: str = "") -> ProbeResult:
-    """Hit {url}/models and return what we find."""
-    models_url = f"{url.rstrip('/')}/models"
-    headers = {}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    req = urllib.request.Request(models_url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=3, context=_SSL) as resp:
-            data = json.loads(resp.read().decode())
-            model_ids = [m.get("id", "") for m in data.get("data", [])]
-            return ProbeResult(reachable=True, models=model_ids)
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            return ProbeResult(reachable=False, needs_auth=True)
-        return ProbeResult(reachable=False)
-    except Exception:
-        return ProbeResult(reachable=False)
+# Reachability probe lives in the framework so other stacklets (and the host
+# CLI's setup flow) can reuse it without rewriting the urllib dance.
+from stack.ai.probe import probe as _probe
 
 
 def _load_ai_config(repo_root: Path) -> dict:

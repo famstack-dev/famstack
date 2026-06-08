@@ -97,8 +97,7 @@ async def main(argv: list[str]) -> int:
 
     async with aiohttp.ClientSession() as http:
         paperless = PaperlessAPI(http, paperless_url, paperless_token)
-        classifier = Classifier(
-            http,
+        classifier = Classifier.from_endpoint(
             os.environ.get("OPENAI_URL", ""),
             os.environ.get("OPENAI_KEY", ""),
         )

@@ -1286,236 +1286,146 @@ class TestSummaryWrite:
         assert note["note"].endswith("<!-- archivist-bot -->")
 
 
-# ── Vision multimodal ─────────────────────────────────────────────────────
+# ── Classify-with-images decision logic ───────────────────────────────────
 #
-# These tests exercise the multimodal call construction and the lazy
-# vision-capability probe in isolation — no live LLM, no aiohttp. We
-# patch `_request` to return whatever a fake backend would, and assert
-# on the content shape the Classifier would have sent on the wire.
+# Whether `classify()` passes its images through to the LLM depends on the
+# cached vision-capability answer for the resolved model. The wire-format
+# specifics (data: URL encoding, multipart content shape) and the probe
+# itself live in `stack.ai.client` and are covered by `test_ai_client.py`
+# — we test only the Classifier-side decision here.
 
 
-from capabilities import ModelCapabilities  # noqa: E402
 from pipeline import Classifier, ImageAttachment  # noqa: E402
+from stack.ai.client import ModelCapabilities  # noqa: E402
 
 
-def _make_classifier(*, request_results: list, capabilities=None) -> Classifier:
-    """Build a Classifier whose `_request` returns canned values in order.
+class _StubLLM:
+    """Records each `complete()` call and returns a canned response.
 
-    Each entry is either a string (returned as-is) or an Exception
-    instance (raised). Records every (task, content, model_override)
-    triple in `c.calls` for assertions.
+    Stands in for `stack.ai.client.LLM` so the Classifier tests can
+    assert what was passed without spinning up an httpserver. Vision
+    answers come from the injected `capabilities` cache so tests can
+    pre-seed True/False to skip the probe entirely.
     """
-    c = Classifier(http=None, url="http://stub", key="",
-                   bot_name="archivist-bot",
-                   capabilities=capabilities or ModelCapabilities())
-    c.calls = []  # type: ignore[attr-defined]
 
-    queue = list(request_results)
+    def __init__(self, *, response: str = '{"title": "t"}',
+                 capabilities: ModelCapabilities | None = None,
+                 model: str = "stub-model"):
+        self.capabilities = capabilities or ModelCapabilities()
+        self._response = response
+        self._model = model
+        self.calls: list[dict] = []
 
-    async def _stub_request(task, content, *, json_mode=False, model_override=None):
-        c.calls.append({"task": task, "content": content,
-                        "model_override": model_override})
-        if not queue:
-            raise AssertionError("Stub _request called more times than seeded")
-        nxt = queue.pop(0)
-        if isinstance(nxt, Exception):
-            raise nxt
-        return nxt
+    async def complete(self, role, prompt, *, images=None,
+                       json_mode=False, model_override=None):
+        self.calls.append({
+            "role": role, "prompt": prompt, "images": images,
+            "json_mode": json_mode, "model_override": model_override,
+        })
+        return self._response
 
-    c._request = _stub_request  # type: ignore[assignment]
+    async def has_vision(self, *, role="classifier", model_override=None):
+        # Mirror the real LLM: cache-only here, never probe — tests that
+        # need a probe outcome should pre-record on `capabilities`.
+        cached = self.capabilities.supports_vision(self._model)
+        return bool(cached) if cached is not None else False
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _make_classifier(*, response: str = '{"title": "t"}',
+                     capabilities: ModelCapabilities | None = None) -> Classifier:
+    stub = _StubLLM(response=response, capabilities=capabilities)
+    c = Classifier(stub)  # type: ignore[arg-type]
+    c._stub = stub  # type: ignore[attr-defined]  exposed for assertions
     return c
 
 
-# `resolve_model("archivist-bot/classifier")` reads stack.models at call
-# time — patch it module-side so tests don't need AI_DEFAULT_MODEL set.
-@pytest.fixture
-def patched_resolve_model(monkeypatch):
-    import stack.models
-    monkeypatch.setattr(stack.models, "_DEFAULT_MODEL", "stub-model")
-    monkeypatch.setattr(stack.models, "_MODELS", {})
-    return "stub-model"
+class TestClassifierFromEndpoint:
+    """Constructor guards — must not silently fall through to api.openai.com."""
 
+    def test_empty_url_raises_unavailable(self):
+        # If the bot env didn't render an [ai] endpoint, the SDK would
+        # default base_url to api.openai.com. The family server's whole
+        # premise is "stays on the LAN unless I told it not to" — bail
+        # loudly with a setup hint instead of silently routing OCR off-host.
+        with pytest.raises(LLMUnavailableError):
+            Classifier.from_endpoint("")
 
-class TestMultimodalContentBuilder:
-    """`_multimodal_content` is pure — exercise it directly."""
-
-    def test_text_part_first_image_second(self):
-        out = Classifier._multimodal_content(
-            "describe",
-            [ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")],
-        )
-        assert out[0] == {"type": "text", "text": "describe"}
-        assert out[1]["type"] == "image_url"
-
-    def test_image_url_is_data_url_with_correct_mime(self):
-        out = Classifier._multimodal_content(
-            "x",
-            [ImageAttachment(data=b"hello", mime="image/jpeg")],
-        )
-        url = out[1]["image_url"]["url"]
-        assert url.startswith("data:image/jpeg;base64,")
-        # Base64 decodes back to the original bytes.
-        import base64
-        b64 = url.split(",", 1)[1]
-        assert base64.b64decode(b64) == b"hello"
-
-    def test_multiple_images_become_separate_parts(self):
-        # Each ImageAttachment gets its own image_url part — the model
-        # processes pages independently rather than stacking on our side.
-        out = Classifier._multimodal_content(
-            "describe",
-            [
-                ImageAttachment(data=b"page1", mime="image/png"),
-                ImageAttachment(data=b"page2", mime="image/png"),
-                ImageAttachment(data=b"page3", mime="image/png"),
-            ],
-        )
-        # 1 text + 3 images = 4 parts.
-        assert len(out) == 4
-        assert out[0]["type"] == "text"
-        assert all(p["type"] == "image_url" for p in out[1:])
-
-
-class TestHasVision:
-    """`has_vision` cache + probe behaviour."""
-
-    @pytest.mark.asyncio
-    async def test_returns_cached_true_without_probing(self, patched_resolve_model):
-        caps = ModelCapabilities()
-        caps.record_vision("stub-model", True)
-        c = _make_classifier(request_results=[], capabilities=caps)
-        assert await c.has_vision() is True
-        assert c.calls == []  # no probe — cache hit
-
-    @pytest.mark.asyncio
-    async def test_returns_cached_false_without_probing(self, patched_resolve_model):
-        caps = ModelCapabilities()
-        caps.record_vision("stub-model", False)
-        c = _make_classifier(request_results=[], capabilities=caps)
-        assert await c.has_vision() is False
-        assert c.calls == []
-
-    @pytest.mark.asyncio
-    async def test_probe_success_caches_true(self, patched_resolve_model):
-        caps = ModelCapabilities()
-        c = _make_classifier(request_results=["ok"], capabilities=caps)
-        assert await c.has_vision() is True
-        assert caps.supports_vision("stub-model") is True
-        # Probe sent multimodal content with one text + one image part.
-        assert isinstance(c.calls[0]["content"], list)
-        assert len(c.calls[0]["content"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_probe_rejection_caches_false(self, patched_resolve_model):
-        # Backend complains about images → that's a definitive "no vision".
-        caps = ModelCapabilities()
-        err = LLMUnavailableError("HTTP 400: model does not support image input")
-        c = _make_classifier(request_results=[err], capabilities=caps)
-        assert await c.has_vision() is False
-        assert caps.supports_vision("stub-model") is False
-
-    @pytest.mark.asyncio
-    async def test_inconclusive_failure_does_not_cache(self, patched_resolve_model):
-        # A generic HTTP 500 doesn't tell us anything about capability —
-        # don't poison the cache, just say no for this run.
-        caps = ModelCapabilities()
-        err = LLMUnavailableError("HTTP 500: internal error")
-        c = _make_classifier(request_results=[err], capabilities=caps)
-        assert await c.has_vision() is False
-        assert caps.supports_vision("stub-model") is None  # not cached
-
-    @pytest.mark.asyncio
-    async def test_timeout_does_not_cache(self, patched_resolve_model):
-        caps = ModelCapabilities()
-        err = LLMTimeoutError("model loading")
-        c = _make_classifier(request_results=[err], capabilities=caps)
-        assert await c.has_vision() is False
-        assert caps.supports_vision("stub-model") is None
+    def test_whitespace_only_url_raises_unavailable(self):
+        # Same guard, defending against a trailing-slash-only config value
+        # that strips down to empty.
+        with pytest.raises(LLMUnavailableError):
+            Classifier.from_endpoint("/")
 
 
 class TestClassifyWithImage:
-    """`classify` attaches images only when vision is available."""
+    """`classify` attaches images only when the cached vision answer is True."""
 
     @pytest.mark.asyncio
-    async def test_text_only_when_no_images(self, patched_resolve_model):
-        # Baseline — no images → string content as before.
-        c = _make_classifier(request_results=['{"title": "t"}'])
+    async def test_text_only_when_no_images(self):
+        c = _make_classifier()
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
         )
-        assert isinstance(c.calls[0]["content"], str)
-        assert "some text" in c.calls[0]["content"]
+        call = c._stub.calls[0]
+        assert call["images"] is None
+        assert "some text" in call["prompt"]
 
     @pytest.mark.asyncio
-    async def test_images_attached_when_vision_supported(self, patched_resolve_model):
-        # Pre-cache vision=True so classify takes the multimodal path
-        # without having to probe in this test.
+    async def test_images_attached_when_vision_supported(self):
         caps = ModelCapabilities()
         caps.record_vision("stub-model", True)
-        c = _make_classifier(
-            request_results=['{"title": "t"}'],
-            capabilities=caps,
-        )
+        c = _make_classifier(capabilities=caps)
+        img = ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
-            images=[ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")],
+            images=[img],
         )
-        assert isinstance(c.calls[0]["content"], list)
-        assert c.calls[0]["content"][0]["type"] == "text"
-        assert c.calls[0]["content"][1]["type"] == "image_url"
+        assert c._stub.calls[0]["images"] == [img]
 
     @pytest.mark.asyncio
-    async def test_multiple_images_all_attached(self, patched_resolve_model):
-        # N pages → N image_url parts in the request, alongside the prompt.
+    async def test_multiple_images_all_attached(self):
         caps = ModelCapabilities()
         caps.record_vision("stub-model", True)
-        c = _make_classifier(
-            request_results=['{"title": "t"}'],
-            capabilities=caps,
-        )
+        c = _make_classifier(capabilities=caps)
+        imgs = [
+            ImageAttachment(data=b"p1", mime="image/png"),
+            ImageAttachment(data=b"p2", mime="image/png"),
+        ]
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
-            images=[
-                ImageAttachment(data=b"p1", mime="image/png"),
-                ImageAttachment(data=b"p2", mime="image/png"),
-            ],
+            images=imgs,
         )
-        parts = c.calls[0]["content"]
-        assert len(parts) == 3  # text + 2 images
-        assert sum(1 for p in parts if p["type"] == "image_url") == 2
+        assert c._stub.calls[0]["images"] == imgs
 
     @pytest.mark.asyncio
-    async def test_images_dropped_when_vision_unsupported(self, patched_resolve_model):
+    async def test_images_dropped_when_vision_unsupported(self):
         # Cached vision=False → images are silently dropped, request is
         # text-only. The intent is degradation, not error.
         caps = ModelCapabilities()
         caps.record_vision("stub-model", False)
-        c = _make_classifier(
-            request_results=['{"title": "t"}'],
-            capabilities=caps,
-        )
+        c = _make_classifier(capabilities=caps)
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
             images=[ImageAttachment(data=b"\x89PNG\r\n", mime="image/png")],
         )
-        assert isinstance(c.calls[0]["content"], str)
+        assert c._stub.calls[0]["images"] is None
 
     @pytest.mark.asyncio
-    async def test_non_image_mime_filtered(self, patched_resolve_model):
+    async def test_non_image_mime_filtered(self):
         # Defensive: caller passes an attachment but mime says it isn't
         # an image — that single attachment is filtered out, falling back
         # to text-only rather than risk a malformed multimodal payload.
         caps = ModelCapabilities()
         caps.record_vision("stub-model", True)
-        c = _make_classifier(
-            request_results=['{"title": "t"}'],
-            capabilities=caps,
-        )
+        c = _make_classifier(capabilities=caps)
         await c.classify(
             ocr_text="some text", tags={}, doc_types={}, correspondents={},
             images=[ImageAttachment(data=b"binary", mime="application/pdf")],
         )
-        assert isinstance(c.calls[0]["content"], str)
+        assert c._stub.calls[0]["images"] is None
 
 
 # ── Query rewrite (recall mode) ────────────────────────────────────────

@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 
 import stack
+import stack.ai.models  # noqa: F401  (test patches `_DEFAULT_MODEL`/`_MODELS` on this module)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -32,8 +33,8 @@ def configure(default="", model_overrides=None):
     Patches the module globals directly — this is how the resolver
     receives config at runtime (from env vars set by the CLI).
     """
-    stack.models._DEFAULT_MODEL = default
-    stack.models._MODELS = model_overrides or {}
+    stack.ai.models._DEFAULT_MODEL = default
+    stack.ai.models._MODELS = model_overrides or {}
 
 
 # ── Simple setup: one model for everything ───────────────────────────────

@@ -1,0 +1,290 @@
+"""OpenAI-compatible LLM client for famstack stacklets.
+
+Container-only: this module imports the `openai` SDK, so it is **not**
+imported from `stack/__init__` or `stack.ai.__init__` — the host `./stack`
+CLI stays stdlib. Any stacklet's container code uses it directly:
+
+    from stack.ai.client import LLM
+    llm = LLM.from_env(namespace="archivist-bot")
+    text = await llm.complete("classifier", prompt, json_mode=True)
+
+It wraps `AsyncOpenAI`, which speaks to any provider serving
+``/v1/chat/completions`` via `base_url` (oMLX, Ollama, vLLM, or a hosted
+OpenAI-compatible endpoint). We let the SDK own transport, retries,
+streaming, and tool-calling, and add only the three things it can't know:
+
+  1. famstack's role -> model router (`resolve_model`),
+  2. friendly, typed errors so the family sees "set up AI" not a stack
+     trace, and
+  3. a vision-capability probe + on-disk cache.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+from dataclasses import dataclass
+
+import openai
+from loguru import logger
+from openai import AsyncOpenAI
+
+from stack.ai.models import resolve_model
+
+
+# ── Errors ───────────────────────────────────────────────────────────────
+#
+# A small typed hierarchy so callers can distinguish "the LLM is down" from
+# "the model isn't loaded" from "it timed out" — each maps to a different
+# user-facing message and a different retry decision.
+
+class LLMError(Exception):
+    """Base for all LLM client errors."""
+
+
+class LLMUnavailableError(LLMError):
+    """Endpoint unreachable or misconfigured (down, wrong URL, bad key)."""
+
+
+class LLMModelNotFoundError(LLMError):
+    """The configured model isn't loaded on the server."""
+
+
+class LLMTimeoutError(LLMError):
+    """Request timed out — a cold model start or a large input can cause it."""
+
+
+# ── Vision-capability cache ────────────────────────────────────────────────
+#
+# Probing a new model for image support costs one round-trip; caching the
+# answer to disk means we don't re-probe on every restart or pay it on every
+# call. Keyed by model name, so swapping models is a clean slate.
+
+@dataclass
+class ModelCapabilities:
+    """JSON-backed capability cache.
+
+    ``path=None`` makes the cache in-memory only — useful for tests and
+    one-shot CLI invocations that shouldn't leak state to disk.
+    """
+    path: "os.PathLike | None" = None
+
+    def __post_init__(self) -> None:
+        self._cache: dict[str, dict] = {}
+        self._loaded = False
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        import json
+        from pathlib import Path
+        p = Path(self.path) if self.path else None
+        if p and p.exists():
+            try:
+                data = json.loads(p.read_text())
+                if isinstance(data, dict):
+                    self._cache = data
+            except (json.JSONDecodeError, OSError):
+                self._cache = {}
+        self._loaded = True
+
+    def _save(self) -> None:
+        if not self.path:
+            return
+        import json
+        from pathlib import Path
+        p = Path(self.path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(self._cache, indent=2, sort_keys=True))
+        tmp.replace(p)
+
+    def supports_vision(self, model: str) -> "bool | None":
+        """Tri-state: ``None`` not yet probed, else the cached answer."""
+        self._load()
+        entry = self._cache.get(model)
+        if not entry or "vision" not in entry:
+            return None
+        return bool(entry["vision"])
+
+    def record_vision(self, model: str, supported: bool) -> None:
+        import datetime as dt
+        self._load()
+        entry = self._cache.setdefault(model, {})
+        entry["vision"] = bool(supported)
+        entry["probed_at"] = (
+            dt.datetime.now(dt.timezone.utc)
+            .replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        self._save()
+
+
+@dataclass(frozen=True)
+class LLMImage:
+    """One image to attach to a multimodal request: raw bytes + MIME type.
+
+    Any object exposing ``.data`` and ``.mime`` works with `complete()` —
+    this is just the convenient default.
+    """
+    data: bytes
+    mime: str
+
+
+# A 32×32 white PNG — small enough to be cheap on the wire, large enough
+# to satisfy vision-tower patch-size requirements (14×14 / 16×16 ViTs).
+# A 1×1 PNG triggers HTTP 500 in mlx_vlm because the image is smaller
+# than one patch — that surfaced as "vision unsupported" in early probes.
+_PROBE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lE"
+    "QVR4nO3RwQ0AMAjDwJT9d05HMB9+vgGCZF7bXJrT9XhgwR8gEyET"
+    "IRMhEyETIRMhEyEThXzH8QM9OMM6fAAAAABJRU5ErkJggg=="
+)
+
+# Substrings text-only models emit when rejecting a multimodal request —
+# used to tell "no vision" (cache it) from "transport flaked" (don't).
+_NO_VISION_HINTS = (
+    "image", "vision", "multimodal", "modality",
+    "image_url", "unsupported content",
+)
+
+
+class LLM:
+    """An OpenAI-compatible chat client scoped to one stacklet/bot.
+
+    ``namespace`` is the role prefix: with ``namespace="archivist-bot"``,
+    ``complete("classifier", ...)`` resolves the model for the role
+    ``"archivist-bot/classifier"``. A role already containing "/" is used
+    verbatim, so callers can reach across namespaces when needed.
+    """
+
+    def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None,
+                 capabilities: ModelCapabilities | None = None):
+        self._client = client
+        self.namespace = namespace
+        # Default to in-memory; bots inject a disk-backed cache so the
+        # vision probe survives container restarts.
+        self.capabilities = capabilities or ModelCapabilities()
+
+    @classmethod
+    def from_env(cls, *, namespace: str | None = None,
+                 capabilities: ModelCapabilities | None = None,
+                 max_retries: int = 1) -> "LLM":
+        """Build from OPENAI_URL / OPENAI_KEY in the environment.
+
+        ``max_retries=1`` is deliberate: the SDK retries connection/timeout
+        errors, but a model that's still loading should surface as a
+        timeout quickly rather than be masked by many retries.
+
+        Refuses to build a client when ``OPENAI_URL`` is empty: the SDK
+        would silently fall back to ``api.openai.com``, which for a
+        privacy-first family server is the wrong default to ever reach
+        by accident. Callers must point at a configured endpoint.
+        """
+        url = os.environ.get("OPENAI_URL", "").rstrip("/")
+        # The SDK appends /chat/completions to base_url; tolerate callers
+        # who set the full endpoint instead of the /v1 root.
+        if url.endswith("/chat/completions"):
+            url = url[: -len("/chat/completions")]
+        if not url:
+            raise LLMUnavailableError(
+                "No AI endpoint configured — set up AI with 'stack up ai'"
+            )
+        key = os.environ.get("OPENAI_KEY", "") or "not-needed"
+        client = AsyncOpenAI(base_url=url, api_key=key, max_retries=max_retries)
+        return cls(client, namespace=namespace, capabilities=capabilities)
+
+    def _full_role(self, role: str) -> str:
+        if "/" in role or not self.namespace:
+            return role
+        return f"{self.namespace}/{role}"
+
+    async def complete(self, role: str, prompt: str, *,
+                       images: "list | None" = None,
+                       json_mode: bool = False,
+                       model_override: str | None = None) -> str:
+        """Run a single chat completion and return the response text.
+
+        ``role`` resolves to a concrete model via `resolve_model`. Pass
+        ``images`` (objects with ``.data``/``.mime``) for a multimodal
+        call, and ``json_mode=True`` to ask for a JSON object back. SDK
+        errors are translated to the typed LLM errors above.
+        """
+        model = model_override or resolve_model(self._full_role(role))
+        content = prompt if not images else _content_parts(prompt, images)
+
+        kwargs: dict = {}
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        try:
+            resp = await self._client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": content}],
+                **kwargs,
+            )
+        # Order matters: APITimeoutError < APIConnectionError, and
+        # Authentication/NotFound < APIStatusError — catch specific first.
+        except openai.APITimeoutError as e:
+            raise LLMTimeoutError(f"{model} — model may still be loading, try again") from e
+        except openai.AuthenticationError as e:
+            raise LLMUnavailableError("Authentication failed — check [ai].openai_key in stack.toml") from e
+        except openai.NotFoundError as e:
+            raise LLMModelNotFoundError(f"{model} — is it loaded on the AI server?") from e
+        except openai.APIConnectionError as e:
+            raise LLMUnavailableError("No AI endpoint reachable — set up AI with 'stack up ai'") from e
+        except openai.APIStatusError as e:
+            raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
+
+        return resp.choices[0].message.content or ""
+
+    async def has_vision(self, *, role: str = "classifier",
+                         model_override: str | None = None) -> bool:
+        """Does the model for ``role`` accept image inputs? Cached per model.
+
+        First call per model sends a tiny image with a trivial prompt. A
+        success means vision works; an error whose body mentions the
+        multimodal vocabulary means text-only (cache it). Anything else is
+        inconclusive — return False without caching, so we retry next run.
+        """
+        model = model_override or resolve_model(self._full_role(role))
+        cached = self.capabilities.supports_vision(model)
+        if cached is not None:
+            return cached
+
+        probe_img = LLMImage(data=base64.b64decode(_PROBE_PNG_B64), mime="image/png")
+        try:
+            await self.complete(role, "Reply with the single word 'ok'.",
+                                images=[probe_img], model_override=model)
+            self.capabilities.record_vision(model, True)
+            logger.info("[llm] vision probe: {} -> supported", model)
+            return True
+        except (LLMUnavailableError, LLMModelNotFoundError) as e:
+            if any(hint in str(e).lower() for hint in _NO_VISION_HINTS):
+                self.capabilities.record_vision(model, False)
+                logger.info("[llm] vision probe: {} -> text-only", model)
+                return False
+            logger.warning("[llm] vision probe inconclusive for {}: {}", model, e)
+            return False
+        except LLMTimeoutError:
+            logger.warning("[llm] vision probe timed out for {}", model)
+            return False
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client. Owned by us via from_env()."""
+        await self._client.close()
+
+
+def _content_parts(prompt: str, images: list) -> list[dict]:
+    """OpenAI-style multimodal content: one text part + N image_url parts.
+
+    Images are inlined as ``data:`` URLs so we never expose a public image
+    URL — every vision backend (oMLX, Ollama, OpenAI-compat) accepts this.
+    """
+    parts: list[dict] = [{"type": "text", "text": prompt}]
+    for img in images:
+        b64 = base64.b64encode(img.data).decode("ascii")
+        parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{img.mime};base64,{b64}"},
+        })
+    return parts

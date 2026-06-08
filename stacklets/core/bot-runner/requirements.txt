@@ -14,3 +14,7 @@ pypdfium2>=4.0,<6.0
 # Used by the archivist's URL-capture pipeline — pasted links to
 # articles get summarized + filed without going through Paperless.
 trafilatura>=1.12,<3.0
+# OpenAI SDK backs the framework LLM client (stack.ai.client). Works
+# against any /v1/chat/completions provider (oMLX, Ollama, BYO) via
+# base_url. Pulls httpx + pydantic.
+openai>=1.50,<3.0

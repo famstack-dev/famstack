@@ -454,6 +454,10 @@ class CapturePipeline:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
         failure — the capture is still useful without a digest."""
+        if self._classifier is None:
+            # Bot was brought up without AI configured; fall through to the
+            # minimal classification below so the capture still files.
+            return {}
         person_tags = await self._paperless.get_tags()
         person_names = [
             t.replace("Person: ", "") for t in person_tags

@@ -49,7 +49,6 @@ from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
 from microbot import MicroBot
-from capabilities import ModelCapabilities
 from pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -61,6 +60,7 @@ from pipeline import (
     PaperlessDuplicateError,
 )
 from stack import resolve_model
+from stack.ai.client import ModelCapabilities
 
 # Make sibling stacklets importable. In the bot-runner container,
 # `/stacklets/` is mounted read-only and holds all stacklets; locally
@@ -326,12 +326,24 @@ class ArchivistBot(MicroBot):
         self._paperless = PaperlessAPI(self._http, self.paperless_url, self.paperless_token)
         # Vision-capability cache lives in the bot's data dir so a probe
         # done in one container restart isn't repeated by the next one.
-        self._classifier = Classifier(
-            self._http, self.openai_url, self.openai_key, bot_name=self.name,
-            capabilities=ModelCapabilities(
-                path=self._session_dir / "model-capabilities.json",
-            ),
-        )
+        # When OPENAI_URL is empty, leave the classifier unconfigured —
+        # the bot still does filing / search / URL archiving, and the
+        # framework refuses to construct against a missing endpoint so
+        # we don't silently leak documents to api.openai.com.
+        if self.openai_url:
+            self._classifier = Classifier.from_endpoint(
+                self.openai_url, self.openai_key, bot_name=self.name,
+                capabilities=ModelCapabilities(
+                    path=self._session_dir / "model-capabilities.json",
+                ),
+            )
+        elif self.classify_enabled:
+            logger.warning(
+                "[archivist] classify=true but OPENAI_URL is empty — "
+                "disabling classification; set up AI with 'stack up ai'"
+            )
+            self.classify_enabled = False
+            self.reformat_enabled = False
         self._url_extractor = UrlExtractor(self._http)
         self._text_extractor = TextExtractor()
         self._capture_tags = CaptureTagCache(

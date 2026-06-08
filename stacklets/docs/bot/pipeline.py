@@ -26,7 +26,6 @@ which makes the contract visible in every call site.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -34,8 +33,8 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from loguru import logger
+from openai import AsyncOpenAI
 
-from capabilities import ModelCapabilities
 from matching import (
     MAX_TITLE_LENGTH,
     _is_empty,
@@ -44,43 +43,26 @@ from matching import (
     match_topics,
     submitter_person_tag,
 )
-from stack import resolve_model
+# Re-export the framework's LLM surface so existing
+# `from pipeline import LLMUnavailableError, ImageAttachment, ...` callers
+# (capture_pipeline, document_pipeline, tests) keep working unchanged.
+from stack.ai.client import (
+    LLM,
+    LLMError,  # noqa: F401  (re-exported)
+    LLMImage,
+    LLMModelNotFoundError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+    ModelCapabilities,
+)
+
+# Back-compat alias — the docs pipeline shipped with `ImageAttachment`
+# before the framework introduced `LLMImage`. The fields are identical
+# so callers stay duck-typed.
+ImageAttachment = LLMImage
 
 if TYPE_CHECKING:
     from stack.ontology import Ontology
-
-
-# A 32×32 white PNG — small enough to be cheap on the wire, large enough
-# to satisfy vision-tower patch-size requirements (14×14 / 16×16 ViTs).
-# A 1×1 PNG triggers HTTP 500 in mlx_vlm because the image is smaller
-# than one patch — that surfaced as "vision unsupported" in early probes.
-_PROBE_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lE"
-    "QVR4nO3RwQ0AMAjDwJT9d05HMB9+vgGCZF7bXJrT9XhgwR8gEyET"
-    "IRMhEyETIRMhEyEThXzH8QM9OMM6fAAAAABJRU5ErkJggg=="
-)
-
-# Substrings that show up in error responses from text-only models when
-# they reject a multimodal request — used to distinguish "no vision" (a
-# definitive answer worth caching) from "transport flaked" (don't cache).
-_NO_VISION_HINTS = (
-    "image", "vision", "multimodal", "modality",
-    "image_url", "unsupported content",
-)
-
-
-# ── Errors ───────────────────────────────────────────────────────────────
-
-class LLMUnavailableError(Exception):
-    """LLM service is not reachable — oMLX/Ollama might not be running."""
-
-
-class LLMModelNotFoundError(Exception):
-    """The configured model is not loaded on the LLM server."""
-
-
-class LLMTimeoutError(Exception):
-    """LLM took too long — large documents or cold model start can cause this."""
 
 
 class PaperlessDuplicateError(Exception):
@@ -99,19 +81,6 @@ _DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
 
 
 # ── Enrichment result ────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class ImageAttachment:
-    """A single image to attach to a multimodal classify call.
-
-    Carries the raw bytes plus the MIME type — both are required to
-    construct the OpenAI-style `image_url` data URL the wire format
-    expects. Frozen because the bytes shouldn't be mutated after the
-    caller hands them off to the pipeline.
-    """
-    data: bytes
-    mime: str
-
 
 @dataclass
 class EnrichResult:
@@ -458,170 +427,65 @@ class PaperlessAPI:
 # ── LLM client ───────────────────────────────────────────────────────────
 
 class Classifier:
-    """OpenAI-compatible classifier + reformatter.
+    """Domain wrapper over `stack.ai.client.LLM` for the docs pipeline.
 
-    Resolves the concrete model via the framework's `resolve_model(path)`
-    chain — "archivist-bot/classifier" falls back through bot-level and
-    global defaults. Callers set AI_DEFAULT_MODEL / AI_MODELS_JSON in the
-    environment before building a Classifier so resolve_model sees the
-    same config the bot runtime does.
+    Holds the bot-specific prompts (classify, capture, reformat, rewrite,
+    synthesize) and delegates all HTTP, error translation, and vision
+    probing to the framework LLM. Construct via :py:meth:`from_endpoint`
+    in production; pass any LLM-shaped object directly when stubbing in
+    tests.
 
-    classify() raises on transport / model errors so the caller can
-    distinguish 'the LLM is down' from 'the LLM returned nothing'.
-    reformat() is best-effort and swallows the same errors, returning
-    None — rewriting OCR is enrichment, never a gate.
+    classify() and classify_capture() raise the framework LLM*Errors so
+    the caller can distinguish 'the LLM is down' from 'the LLM returned
+    nothing'. reformat(), rewrite_query() and synthesize_answer() are
+    best-effort: they swallow the same errors and degrade to a safe empty
+    fallback so document enrichment never blocks on AI hiccups.
     """
 
-    def __init__(self, http: aiohttp.ClientSession, url: str,
-                 key: str = "", bot_name: str = "archivist-bot",
-                 capabilities: ModelCapabilities | None = None):
-        self.http = http
-        self.url = url.rstrip("/")
-        self.key = key
-        self.bot_name = bot_name
-        # Capabilities default to in-memory only — bots inject a
-        # disk-backed instance so the probe survives container restarts.
-        self.capabilities = capabilities or ModelCapabilities()
+    def __init__(self, llm: LLM):
+        self._llm = llm
 
-    def _endpoint(self) -> str:
-        if not self.url:
-            raise LLMUnavailableError("No AI endpoint configured — set up AI with 'stack up ai'")
-        return self.url if self.url.endswith("/chat/completions") else f"{self.url}/chat/completions"
+    @classmethod
+    def from_endpoint(cls, url: str, key: str = "", *,
+                      bot_name: str = "archivist-bot",
+                      capabilities: ModelCapabilities | None = None) -> "Classifier":
+        """Build a Classifier from a base URL + key, like the bot runtime sees.
 
-    async def _request(self, task: str, content: Any, *,
-                       json_mode: bool = False,
-                       model_override: str | None = None) -> str:
-        """Send content to the LLM and return the response text.
+        The OpenAI SDK appends `/chat/completions` itself, so the caller
+        may pass either the `/v1` root (what `stack.toml` stores) or the
+        full endpoint — both shapes are tolerated.
 
-        `content` is either a plain string (text-only call, the historic
-        path) or a list of OpenAI-style content parts (multimodal — see
-        `_multimodal_content`). Both shapes go through the same wire
-        format; the chat completions API accepts either as `content`.
-
-        `model_override` skips `resolve_model` — used by the vision
-        probe so we test the *actual* model the classifier would use,
-        not a different model the resolver might return.
-
-        The task name (e.g. "classifier", "reformat") is resolved to a
-        concrete model via resolve_model("<bot>/<task>"). The fallback chain:
-
-          1. [ai.models] <bot>.<task> — task-specific override
-          2. [ai.models] <bot>        — bot-level default
-          3. [ai] default             — global fallback
-
-        Uses the OpenAI-compatible chat completions API — works with oMLX,
-        Ollama, LM Studio, or any provider that serves /v1/chat/completions.
+        Refuses an empty URL: the SDK would otherwise default to
+        api.openai.com, which on a privacy-first family server is the
+        wrong destination to ever reach by accident.
         """
-        model = model_override or resolve_model(f"{self.bot_name}/{task}")
-
-        headers = {"Content-Type": "application/json"}
-        if self.key:
-            headers["Authorization"] = f"Bearer {self.key}"
-
-        body: dict = {
-            "model": model,
-            "messages": [{"role": "user", "content": content}],
-        }
-        if json_mode:
-            body["response_format"] = {"type": "json_object"}
-
-        try:
-            async with self.http.post(
-                self._endpoint(), headers=headers, json=body,
-                timeout=aiohttp.ClientTimeout(total=300),
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    return result["choices"][0]["message"]["content"]
-                if resp.status == 401:
-                    raise LLMUnavailableError("Authentication failed — check [ai].openai_key in stack.toml")
-                if resp.status == 404:
-                    body_text = await resp.text()
-                    if "not found" in body_text.lower():
-                        raise LLMModelNotFoundError(f"{model} — is it loaded in oMLX?")
-                    raise LLMUnavailableError(f"HTTP 404: {body_text[:200]}")
-                # Other 4xx/5xx — let the caller see the body so probes
-                # can tell "model rejected the image" from "transport flake".
-                body_text = await resp.text()
-                raise LLMUnavailableError(f"HTTP {resp.status}: {body_text[:300]}")
-        except asyncio.TimeoutError:
-            raise LLMTimeoutError(f"{model} — model may still be loading, try again")
-        except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
-            raise
-        except Exception as e:
-            raise LLMUnavailableError(f"{e}")
-
-    # ── Multimodal helpers ───────────────────────────────────────────
-
-    @staticmethod
-    def _multimodal_content(prompt: str,
-                            images: list[ImageAttachment]) -> list[dict]:
-        """Build OpenAI-style multimodal content: text + N images.
-
-        Each ImageAttachment becomes one `image_url` part — the model
-        processes each at native resolution rather than us pre-stacking
-        into one tall image. Verified end-to-end against oMLX + Qwen3.5
-        VL with a 2-image probe.
-
-        Encoded as `data:` URLs so we don't have to expose a public
-        image URL — every backend that supports vision (oMLX, Ollama,
-        OpenAI, Anthropic via OpenAI-compat) accepts this form.
-        """
-        parts: list[dict] = [{"type": "text", "text": prompt}]
-        for img in images:
-            b64 = base64.b64encode(img.data).decode("ascii")
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{img.mime};base64,{b64}"},
-            })
-        return parts
-
-    async def has_vision(self, model: str | None = None) -> bool:
-        """Does this model accept image inputs? Cached after first probe.
-
-        On the first call for a given model: send a 1×1 PNG with a
-        trivial text prompt. A 200 response → vision works. An error
-        whose body mentions the multimodal vocabulary ("image",
-        "vision", "multimodal", "modality") → text-only, cache as such.
-        Anything else (timeout, network flake) → return False without
-        caching, so we'll retry next session.
-        """
-        model = model or resolve_model(f"{self.bot_name}/classifier")
-
-        cached = self.capabilities.supports_vision(model)
-        if cached is not None:
-            return cached
-
-        try:
-            await self._request(
-                "classifier",
-                self._multimodal_content(
-                    "Reply with the single word 'ok'.",
-                    [ImageAttachment(
-                        data=base64.b64decode(_PROBE_PNG_B64),
-                        mime="image/png",
-                    )],
-                ),
-                model_override=model,
+        clean = url.rstrip("/")
+        if clean.endswith("/chat/completions"):
+            clean = clean[: -len("/chat/completions")]
+        if not clean:
+            raise LLMUnavailableError(
+                "No AI endpoint configured — set up AI with 'stack up ai'"
             )
-            self.capabilities.record_vision(model, True)
-            logger.info("[pipeline] vision probe: {} → supported", model)
-            return True
-        except (LLMUnavailableError, LLMModelNotFoundError) as e:
-            msg = str(e).lower()
-            if any(hint in msg for hint in _NO_VISION_HINTS):
-                self.capabilities.record_vision(model, False)
-                logger.info("[pipeline] vision probe: {} → text-only", model)
-                return False
-            # Inconclusive — don't poison the cache, just say no for now.
-            logger.warning(
-                "[pipeline] vision probe inconclusive for {}: {} — "
-                "treating as text-only this run", model, e,
-            )
-            return False
-        except LLMTimeoutError:
-            logger.warning("[pipeline] vision probe timed out for {}", model)
-            return False
+        client = AsyncOpenAI(
+            base_url=clean,
+            api_key=key or "not-needed",
+            max_retries=1,
+        )
+        llm = LLM(client, namespace=bot_name, capabilities=capabilities)
+        return cls(llm)
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        """Expose the vision-capability cache for tests + diagnostics."""
+        return self._llm.capabilities
+
+    async def has_vision(self) -> bool:
+        """Does the classifier's model accept image inputs? See :py:meth:`LLM.has_vision`."""
+        return await self._llm.has_vision(role="classifier")
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client — paired with :py:meth:`from_endpoint`."""
+        await self._llm.aclose()
 
     async def classify(
         self, *,
@@ -679,20 +543,22 @@ class Classifier:
             initial_classification=initial_classification,
         )
 
-        content: Any = prompt
         valid_images = [
             img for img in (images or [])
             if img.data and img.mime and img.mime.startswith("image/")
         ]
+        attach: list | None = None
         if valid_images and await self.has_vision():
-            content = self._multimodal_content(prompt, valid_images)
+            attach = valid_images
             total = sum(len(img.data) for img in valid_images)
             logger.info(
                 "[pipeline] classify: attaching {} image(s), {} bytes total",
                 len(valid_images), total,
             )
 
-        response = await self._request("classifier", content, json_mode=True)
+        response = await self._llm.complete(
+            "classifier", prompt, images=attach, json_mode=True,
+        )
         if not response:
             return {}
         try:
@@ -738,19 +604,21 @@ class Classifier:
             user_hint=user_hint,
             initial_classification=initial_classification,
         )
-        content: Any = prompt
         valid_images = [
             img for img in (images or [])
             if img.data and img.mime and img.mime.startswith("image/")
         ]
+        attach: list | None = None
         if valid_images and await self.has_vision():
-            content = self._multimodal_content(prompt, valid_images)
+            attach = valid_images
             total = sum(len(img.data) for img in valid_images)
             logger.info(
                 "[pipeline] capture: attaching {} image(s), {} bytes total",
                 len(valid_images), total,
             )
-        response = await self._request("classifier", content, json_mode=True)
+        response = await self._llm.complete(
+            "classifier", prompt, images=attach, json_mode=True,
+        )
         if not response:
             return {}
         try:
@@ -777,7 +645,7 @@ class Classifier:
         """
         prompt = _build_reformat_prompt(ocr_text[:6000])
         try:
-            result = await self._request("reformat", prompt)
+            result = await self._llm.complete("reformat", prompt)
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
             return None
         return result.strip() if result else None
@@ -801,7 +669,7 @@ class Classifier:
         """
         prompt = _build_rewrite_prompt(question, ontology_section, lang)
         try:
-            raw = await self._request("recall", prompt, json_mode=True)
+            raw = await self._llm.complete("recall", prompt, json_mode=True)
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[recall] LLM unavailable for rewrite: {}", e)
             return []
@@ -862,7 +730,7 @@ class Classifier:
             today = date.today().isoformat()
         prompt = _build_synthesize_prompt(question, evidence, lang, today=today)
         try:
-            raw = await self._request("recall", prompt, json_mode=False)
+            raw = await self._llm.complete("recall", prompt, json_mode=False)
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[recall] LLM unavailable for synthesis: {}", e)
             return ""
