@@ -434,7 +434,7 @@ def correspondents_prompt_section(correspondents: List[Correspondent]) -> str:
 
 # Skip set for `load_persons_from_vault`: top-level directories that
 # carry an `about.md` but are not a household member. Kept in sync
-# with the docs/bot overview command's own skip set; both walk the
+# with the `stack memory wiki` command's own skip set; both walk the
 # same vault structure.
 _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
 

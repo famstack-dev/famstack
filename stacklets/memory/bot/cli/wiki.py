@@ -1,11 +1,12 @@
-"""`stack docs overview` — generate the family wiki's entry pages.
+"""`stack memory wiki` — regenerate the family wiki's entry pages.
 
 Walks the memory vault, pulls every document's `> [!summary]` callout,
 and asks the LLM to compose the browsable pages a family lands on:
 
-    stack docs overview              the household home page (index.md)
-    stack docs overview --members    the home page + one page per member
-    stack docs overview --member X   just member X's page
+    stack memory wiki                 home + every member page (apply)
+    stack memory wiki --home          just the household home page
+    stack memory wiki --member homer  just Homer's page
+    stack memory wiki --dry-run       preview to stdout, no writes
 
 Pages are published to the memory repo on Forgejo, where the wiki
 container picks them up within seconds. The wiki is Quartz, which
@@ -14,25 +15,22 @@ renders `index.md` as the landing page for the site (vault-root
 household overview becomes the wiki home and each member's overview
 becomes the landing page for their folder.
 
-The generated body lives inside a bracketed regenerate region
-(`<!-- begin: generated --> ... <!-- end: generated -->`); anything a
-human writes outside the brackets -- a welcome line, frontmatter, a
-hand-edited note -- survives the next regen. Same contract as the
-correspondent pages.
+Updates are splice-based: the generated body lives inside a bracketed
+regenerate region (`<!-- begin: generated --> ... <!-- end: generated -->`);
+anything a human writes outside the brackets -- a welcome line,
+frontmatter, a hand-edited note -- survives the next regen. Same
+contract as the correspondent pages.
 
-Output goes to stdout by default so we can eyeball before committing.
-`--write` splices the generated region into the page on Forgejo.
-
-Lives in `docs/bot/cli/` because the LLM (and the bot-runner's
-aiohttp / env wiring) is here, even though the artifact it writes
-belongs to the memory stacklet. The natural home will move when the
-memory stacklet grows its own LLM access.
+Apply by default; `--dry-run` is the opt-in preview. Mirrors
+`stack memory ontology`. Lives in `memory/bot/cli/` because the LLM
+client needs the bot-runner's Python environment.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -45,14 +43,11 @@ from memory.lib import (  # noqa: E402
     extract_summary_callout,
 )
 
+from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 
-from pipeline import Classifier, PaperlessAPI  # noqa: E402
-from nl_query import extract_citations  # noqa: E402
-from cli._shared import err  # noqa: E402
 
-
-HELP = "Generate the family wiki entry pages (experimental)"
+HELP = "Regenerate the family wiki's home and member pages"
 
 # Repo + branch defaults match the memory stacklet's layout. Hard-coded
 # rather than env-driven because the layout is stable across deploys
@@ -60,7 +55,7 @@ HELP = "Generate the family wiki entry pages (experimental)"
 # bot config to silently retarget the write.
 _REPO_NAME = "memory"
 _BRANCH = "main"
-_TOKEN_NAME = "stack-docs-overview-cli"
+_TOKEN_NAME = "stack-memory-wiki-cli"
 _TOKEN_SCOPES = ["write:repository", "read:repository"]
 
 # Bracketed regenerate markers. Match the correspondent-page convention
@@ -76,19 +71,43 @@ _END = "<!-- end: generated -->"
 _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
 
 
-async def run(paperless: PaperlessAPI, classifier: Classifier,
-              argv: list[str]) -> int:
-    write = "--write" in argv
+def _err(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+# Citation extractor — single use here, inlined to keep the command
+# stacklet-local. Matches `[N]`, `[N, M]`, and back-to-back `[N][M]`
+# patterns. Returns unique numbers in first-seen order so the caller
+# can both filter the evidence and keep the bracket numbering aligned
+# with the answer's `[N]`.
+_CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+
+def _extract_citations(text: str) -> list[int]:
+    seen: list[int] = []
+    for match in _CITATION_RE.finditer(text or ""):
+        for part in match.group(1).split(","):
+            stripped = part.strip()
+            if not stripped.isdigit():
+                continue
+            n = int(stripped)
+            if n not in seen:
+                seen.append(n)
+    return seen
+
+
+async def run(llm: LLM, argv: list[str]) -> int:
+    dry_run = "--dry-run" in argv
+    home_only = "--home" in argv
     single = _arg_value(argv, "--member")
-    members_flag = "--members" in argv
 
     vault_dir = os.environ.get("MEMORY_VAULT_DIR", "")
     if not vault_dir:
-        err("MEMORY_VAULT_DIR not set — is the memory stacklet installed?")
+        _err("MEMORY_VAULT_DIR not set — is the memory stacklet installed?")
         return 1
     vault = Path(vault_dir)
     if not vault.exists():
-        err(f"vault path does not exist: {vault}")
+        _err(f"vault path does not exist: {vault}")
         return 1
 
     # In the default install the org name and the in-repo bucket
@@ -102,34 +121,35 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
     # each member page reads its slice. No re-walking per member.
     index = _index_vault(vault)
     if not index:
-        err("no documents with summary callouts found in vault")
+        _err("no documents with summary callouts found in vault")
         return 1
 
-    # The roster the home page links into and the --members loop walks.
-    # Computed once: bucket dirs on disk plus everyone named in document
-    # frontmatter.
+    # The roster the home page links into and the default --members loop
+    # walks. Computed once: bucket dirs on disk plus everyone named in
+    # document frontmatter.
     roster = _member_slugs(vault, index, shared_bucket)
 
     if single:
         return await _generate_member(
-            classifier, single, index, vault,
-            shared_bucket=shared_bucket, lang=lang, write=write,
+            llm, single, index, vault,
+            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
 
     rc = await _generate_home(
-        classifier, index, roster=roster,
-        shared_bucket=shared_bucket, lang=lang, write=write,
+        llm, index, roster=roster,
+        shared_bucket=shared_bucket, lang=lang, write=not dry_run,
     )
-    if rc != 0 or not members_flag:
+    if rc != 0 or home_only:
         return rc
 
-    # `--members`: regenerate every member page after the home page. A
-    # member with no content is skipped (not an error) so one empty
-    # bucket doesn't sink the whole run.
+    # Default scope: home + every member page. A member with no content
+    # is skipped (not an error) so one empty bucket doesn't sink the
+    # whole run. `_generate_member` returns 1 for skipped-empty, which
+    # we deliberately swallow here -- the overall run still succeeds.
     for slug in roster:
         await _generate_member(
-            classifier, slug, index, vault,
-            shared_bucket=shared_bucket, lang=lang, write=write,
+            llm, slug, index, vault,
+            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
     return 0
 
@@ -137,7 +157,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
 # ── Generation ───────────────────────────────────────────────────────────
 
 async def _generate_home(
-    classifier: Classifier, index: list[dict], *,
+    llm: LLM, index: list[dict], *,
     roster: list[str], shared_bucket: str, lang: str, write: bool,
 ) -> int:
     """Compose the household home page from every filed summary.
@@ -148,7 +168,11 @@ async def _generate_home(
     the member pages become navigable in both directions.
     """
     prompt = _build_home_prompt(index, roster=roster, lang=lang)
-    page = (await classifier._request("overview", prompt, json_mode=False)).strip()
+    try:
+        page = (await llm.complete("overview", prompt)).strip()
+    except LLMUnavailableError as e:
+        _err(f"LLM unavailable: {e}")
+        return 1
 
     # Append References using the citations the LLM actually used. Built
     # deterministically from the index rather than asked of the model --
@@ -170,19 +194,23 @@ async def _generate_home(
 
 
 async def _generate_member(
-    classifier: Classifier, slug: str, index: list[dict], vault: Path, *,
+    llm: LLM, slug: str, index: list[dict], vault: Path, *,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
     """Compose one member's page from their slice of the vault."""
     entries = _member_entries(index, slug)
     if not entries:
-        err(f"no content involving '{slug}' — skipping")
+        _err(f"no content involving '{slug}' — skipping")
         return 1
 
     display = slug.capitalize()
     facts = _load_facts(vault, slug)
     prompt = _build_member_prompt(display, slug, entries, facts, lang=lang)
-    page = (await classifier._request("overview", prompt, json_mode=False)).strip()
+    try:
+        page = (await llm.complete("overview", prompt)).strip()
+    except LLMUnavailableError as e:
+        _err(f"LLM unavailable: {e}")
+        return 1
 
     # Member page lives at `<slug>/about.md`; links climb one level to
     # reach the shared bucket and stay relative within the member's own.
@@ -386,7 +414,7 @@ def _build_references_section(
     Returns "" when the LLM cited nothing -- an empty heading helps no
     one.
     """
-    citations = extract_citations(page)
+    citations = _extract_citations(page)
     if not citations:
         return ""
     rows: list[str] = ["## References", ""]
@@ -480,7 +508,7 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
     admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
     admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (code_url and admin_user and admin_password):
-        err("CODE_URL / MATRIX_ADMIN_USER / MATRIX_ADMIN_PASSWORD not set")
+        _err("CODE_URL / MATRIX_ADMIN_USER / MATRIX_ADMIN_PASSWORD not set")
         return 1
 
     repo_owner = shared_bucket  # default-install convention; see run()
@@ -511,10 +539,10 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
             content=merged, message=commit_msg, branch=_BRANCH, sha=sha,
         )
     except ForgejoError as e:
-        err(f"forgejo publish failed: {e}")
+        _err(f"forgejo publish failed: {e}")
         return 1
 
-    err(f"published {repo_owner}/{_REPO_NAME}:{target_path}")
+    _err(f"published {repo_owner}/{_REPO_NAME}:{target_path}")
     return 0
 
 
