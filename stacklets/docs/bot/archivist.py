@@ -995,43 +995,47 @@ class ArchivistBot(MicroBot):
             query_lower = query.lower()
 
         # ── Reply-to-classification: user is correcting a prior filing ──
-        # When the user replies to a bot's doc-filing message we can
-        # trace back the doc_id from the parent event's metadata,
-        # then re-run the classifier with the user's message as an
-        # authoritative hint. Short-circuits before the rest of the
-        # parser so a reply that happens to look like a search
-        # ("ADAC") doesn't get routed to free-text search.
-        doc_id = await self._reply_target_doc_id(room.room_id, event)
-        if doc_id is not None:
-            hint, initial = await self._collect_correction_chain(
-                room.room_id, event,
-            )
-            if hint:
-                await self._handle_reply_reprocess(
-                    room.room_id, doc_id, hint, reply_to,
-                    date_filed=self._event_date(event),
-                    initial_classification=initial,
+        # When the user replies to a bot's filing message WITHOUT
+        # @-mentioning the bot, that's a correction: trace back the
+        # target from the parent event's envelope, re-run the
+        # classifier with the user's message as an authoritative
+        # hint. An @-mention is a different intent -- the user is
+        # addressing the bot conversationally (search, help), so we
+        # skip the reprocess path and let the dispatcher route on
+        # query content instead. Some clients (Element X) attach
+        # `m.in_reply_to` to mentioned messages; without this guard
+        # those searches would be eaten by the reprocess path.
+        if not mentioned:
+            doc_id = await self._reply_target_doc_id(room.room_id, event)
+            if doc_id is not None:
+                hint, initial = await self._collect_correction_chain(
+                    room.room_id, event,
                 )
-                return
+                if hint:
+                    await self._handle_reply_reprocess(
+                        room.room_id, doc_id, hint, reply_to,
+                        date_filed=self._event_date(event),
+                        initial_classification=initial,
+                    )
+                    return
 
-        # Same shape for captures: a reply to a `capture.filed` or
-        # `capture.reclassified` confirmation reaches the capture
-        # pipeline's reprocess instead of the search path. The chain
-        # walker is generic over filing kind, so it Just Works for
-        # either side.
-        capture_path = await self._reply_target_capture_path(
-            room.room_id, event,
-        )
-        if capture_path is not None:
-            hint, initial = await self._collect_correction_chain(
+            # Same shape for captures: a reply to a `capture.filed` or
+            # `capture.reclassified` confirmation reaches the capture
+            # pipeline's reprocess. The chain walker is generic over
+            # filing kind, so it Just Works for either side.
+            capture_path = await self._reply_target_capture_path(
                 room.room_id, event,
             )
-            if hint:
-                await self._handle_reply_capture_reprocess(
-                    room.room_id, capture_path, hint, event.sender, reply_to,
-                    initial_classification=initial,
+            if capture_path is not None:
+                hint, initial = await self._collect_correction_chain(
+                    room.room_id, event,
                 )
-                return
+                if hint:
+                    await self._handle_reply_capture_reprocess(
+                        room.room_id, capture_path, hint, event.sender, reply_to,
+                        initial_classification=initial,
+                    )
+                    return
 
         if query_lower in HELP_COMMANDS:
             await self._send(
