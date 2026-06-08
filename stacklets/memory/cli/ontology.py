@@ -5,14 +5,14 @@ The classifier reads `ontology.toml` from each instance's memory vault
 seed gains new topics, keywords, or synonyms, this command pushes
 those changes to the live vault without manual web-UI edits.
 
-    stack memory ontology              Preview: diff seed vs. live vault.
-    stack memory ontology --apply      Push the seed to Forgejo, pull locally.
+    stack memory ontology              Push the seed to Forgejo, pull locally.
+    stack memory ontology --dry-run    Show the diff and exit without writing.
 
 The push REPLACES the vault's `ontology.toml` wholesale — if the
 household has hand-curated topics in Forgejo, those changes are
-clobbered. The diff preview is the safeguard: read it before running
-`--apply`. The non-destructive way to add a single topic to a
-curated vault is still a Forgejo web-UI edit.
+clobbered. Run `--dry-run` first when you suspect drift. The
+non-destructive way to add a single topic to a curated vault is
+still a Forgejo web-UI edit.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ HELP = "Sync the live vault ontology with the shipped seed"
 
 
 def run(args, stacklet, config):
-    apply = "--apply" in (args or [])
+    dry_run = "--dry-run" in (args or [])
 
     data_dir = config.get("data_dir") if config else None
     if not data_dir:
@@ -82,9 +82,9 @@ def run(args, stacklet, config):
         print("Ontology is already in sync with the shipped seed.")
         return {"ok": True, "applied": False, "in_sync": True}
 
-    # Always show the diff -- it's the user's only safeguard against
-    # losing hand edits. Keep it terse so the apply prompt at the
-    # bottom stays visible without scrolling on a typical terminal.
+    # Always show the diff -- the user's eyes on what's about to land
+    # (or what would land in a dry run). Keep it terse so the apply
+    # status at the bottom stays on the same screen.
     diff = difflib.unified_diff(
         live_text.splitlines(),
         seed_text.splitlines(),
@@ -95,9 +95,9 @@ def run(args, stacklet, config):
     for line in diff:
         print(line)
 
-    if not apply:
+    if dry_run:
         print()
-        print("Re-run with `--apply` to push the seed to Forgejo.")
+        print("Dry run — nothing pushed. Drop `--dry-run` to apply.")
         return {"ok": True, "applied": False, "in_sync": False}
 
     client.put_file(
