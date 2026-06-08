@@ -635,6 +635,7 @@ class Classifier:
         persons_section: str = "",
         date_filed: str | None = None,
         user_hint: str | None = None,
+        initial_classification: dict | None = None,
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
@@ -675,6 +676,7 @@ class Classifier:
             persons_section=persons_section,
             date_filed=date_filed,
             user_hint=user_hint,
+            initial_classification=initial_classification,
         )
 
         content: Any = prompt
@@ -706,6 +708,7 @@ class Classifier:
         existing_tags: list[str] | None = None,
         images: list[ImageAttachment] | None = None,
         user_hint: str | None = None,
+        initial_classification: dict | None = None,
     ) -> dict:
         """Capture-specific classification.
 
@@ -733,6 +736,7 @@ class Classifier:
             person_names=person_names,
             existing_tags=existing_tags or [],
             user_hint=user_hint,
+            initial_classification=initial_classification,
         )
         content: Any = prompt
         valid_images = [
@@ -871,6 +875,41 @@ class Classifier:
 # for debugging (`--dry-run --show-prompt` may land in v1.1) without
 # depending on classifier internals.
 
+def _initial_classification_block(initial: dict | None) -> str:
+    """Render the latest classification as a delta-anchor.
+
+    Reprocess uses this so each correction pass starts from the same
+    picture the user SAW when they typed their correction (the
+    immediate parent envelope's payload) instead of re-deriving
+    everything from the OCR. The human's note is a delta against
+    THIS state -- preserve fields the note doesn't address, change
+    the ones it does. Empty when no prior state is known
+    (a fresh classification with no chain).
+    """
+    if not isinstance(initial, dict) or not initial:
+        return ""
+    parts: list[str] = []
+    for key in ("title", "topics", "persons", "correspondent",
+                "document_type", "tags"):
+        if key not in initial:
+            continue
+        value = initial.get(key)
+        if value in (None, "", [], {}):
+            continue
+        parts.append(f"  {key}: {value!r}")
+    if not parts:
+        return ""
+    return (
+        "\n\nCurrent classification — what the human saw on screen "
+        "when they wrote the correction below. Treat the human note "
+        "as a DELTA on this state: preserve every field the note "
+        "does NOT explicitly address, change only the fields a "
+        "correction touches. If the note says 'Arbeit war richtig', "
+        "the topic stays Arbeit even if the OCR could plausibly "
+        "suggest something else:\n" + "\n".join(parts)
+    )
+
+
 def _user_hint_block(user_hint: str | None) -> str:
     """Render the user's note as a high-signal prompt block.
 
@@ -918,7 +957,8 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
                            correspondents_section: str = "",
                            persons_section: str = "",
                            date_filed: str | None = None,
-                           user_hint: str | None = None) -> str:
+                           user_hint: str | None = None,
+                           initial_classification: dict | None = None) -> str:
     """The classification prompt.
 
     Simplified to three clear axes:
@@ -992,7 +1032,7 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
 
     return f"""Classify this document. Return ONLY a JSON object.
 
-Date filed: {date_filed}{_user_hint_block(user_hint)}
+Date filed: {date_filed}{_initial_classification_block(initial_classification)}{_user_hint_block(user_hint)}
 
 IMPORTANT: Always prefer existing values from the lists below. Only suggest
 a new value when NOTHING in the list is a reasonable match.
@@ -1024,9 +1064,9 @@ Rules:
   - Never invent a year that isn't visible and isn't derivable from `Date filed`. When even the month is unclear, return null (or omit the date from a fact).
   - Do NOT pull dates from sample texts, legal disclaimers, copyright footers, or unrelated logos.
 - LANGUAGE: use the document's original language for title, summary, facts, and action_items. A German document gets a German title and German facts. Never translate.
-- topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. When the document uses a synonym of a listed topic (the list shows synonyms in parentheses), return the canonical name. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas.
+- topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. When the document uses a synonym of a listed topic (the list shows synonyms in parentheses), return the canonical name. Use the document's language for new topic tags too. Most documents have one topic; use two only when clearly spanning two areas. EXCEPTION: when the human note block above explicitly assigns a topic ("Arbeit war richtig", "this is health insurance", "tag as Steuer"), that topic IS the right answer for this document regardless of what the OCR text would suggest. The human's intent overrides OCR-derived defaults for this field; pick the canonical that matches their term.
 - persons: return names that EXPLICITLY appear in the document text OR are explicitly attributed by the human note block above. Match by first name against the family members list. A marriage certificate naming "Homer Simpson" and "Marge Simpson": ["Homer", "Marge"]. A booking confirmation that says "2 Erwachsene, 2 Kinder (0 und 6 Jahre alt)" with no actual names AND no human note: []. A health insurance bill in Marge's name only: ["Marge"]. A receipt with no printed customer name AND a human note "Marges Tankquittung" or "its marges invoice": ["Marge"] — the human attribution stands in for a missing customer field. NEVER guess based on group counts ("2 Personen" is not "Homer + Marge"), document type ("Kinderarztrechnung" doesn't mean "Bart" or "Lisa" unless the human note says so), or who you think the doc is "probably for". When neither the document nor the human note names anyone, return [] — the system attributes the doc to the uploader as a fallback.
-- correspondent: always the SENDER, never the addressee/customer/recipient. When the existing list shows aliases in parentheses, those are previous spellings of the same correspondent — use the canonical (the name OUTSIDE the parentheses). Strip regional/branch/legal-form suffixes for new correspondents. Use null if the sender is not clearly identifiable. Do not guess from fragments.
+- correspondent: always the SENDER, never the addressee/customer/recipient. When the existing list shows aliases in parentheses, those are previous spellings of the same correspondent — use the canonical (the name OUTSIDE the parentheses). Strip regional/branch/legal-form suffixes for new correspondents. Use null if the sender is not clearly identifiable. Do not guess from fragments. EXCEPTION: when the human note block above explicitly names the correspondent ("File it under Leapter GmbH", "this is from ADAC"), use that name as the canonical -- the human knows the institution better than the printed letterhead. Add any additional sender forms the human mentions ("Leapter GmbH" alongside "Leapter") to `correspondent_aliases` so the wiki grows the alias set.
 - correspondent_aliases: only when the printed sender name on THIS document differs from your canonical answer. Single-element list is fine.
 - correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
 - facts: concrete numbers, dates, account numbers, amounts that describe THIS document. When the document itemises purchases or services, each line item is its own fact bullet alongside the top-level totals. Empty list if none.
@@ -1044,6 +1084,7 @@ def _build_capture_prompt(
     person_names: list[str],
     existing_tags: list[str] | None = None,
     user_hint: str | None = None,
+    initial_classification: dict | None = None,
 ) -> str:
     """The capture prompt — smaller and focused on summary + tags.
 
@@ -1074,7 +1115,7 @@ Return ONLY a JSON object.
 
 The user is bookmarking or noting this content to find it later. Your
 job: produce a digest they can scan in 10 seconds and tags that
-position this content among their interests.{_user_hint_block(user_hint)}
+position this content among their interests.{_initial_classification_block(initial_classification)}{_user_hint_block(user_hint)}
 
 Family members: {json.dumps(person_names, ensure_ascii=False)}
 {tags_hint}
@@ -1441,6 +1482,7 @@ async def enrich_document(
     is_reprocess: bool = False,
     date_filed: str | None = None,
     user_hint: str | None = None,
+    initial_classification: dict | None = None,
     submitter_mxid: str | None = None,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
@@ -1489,6 +1531,7 @@ async def enrich_document(
             persons_section=persons_section,
             date_filed=date_filed,
             user_hint=user_hint,
+            initial_classification=initial_classification,
         )
     except LLMUnavailableError as e:
         return EnrichResult(llm_error=("unavailable", str(e)))

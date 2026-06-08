@@ -378,6 +378,7 @@ class DocumentPipeline:
 
     async def reprocess(
         self, *, doc_id: int, user_hint: str, date_filed: str | None = None,
+        initial_classification: dict | None = None,
     ) -> ReprocessOutcome:
         """Re-enrich an already-filed doc with the user's reply as a hint.
 
@@ -385,6 +386,13 @@ class DocumentPipeline:
         `is_reprocess=True` preserves the document's filing date. The mirror
         publish is idempotent on the paperless_id, so it overwrites the
         prior entry. Returns a ReprocessOutcome the orchestrator renders.
+
+        ``initial_classification`` is the LLM's original output for this
+        document (from the chain walker's `*.filed` boundary). Threading
+        it into the prompt anchors each reprocess pass on the same
+        starting state -- corrections behave like deltas, and the same
+        chain of hints produces the same output regardless of how many
+        intermediate reclassifications have already happened.
         """
         doc = await self._paperless.get_doc(doc_id)
         if not doc:
@@ -404,6 +412,7 @@ class DocumentPipeline:
             is_reprocess=True,
             date_filed=date_filed,
             user_hint=user_hint,
+            initial_classification=initial_classification,
         )
         if result.llm_error:
             return ReprocessOutcome(

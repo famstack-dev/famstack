@@ -327,7 +327,8 @@ class StubClassifier:
     async def classify(self, *, ocr_text, tags, doc_types, correspondents,
                        images=None, ontology_section="",
                        correspondents_section="", persons_section="",
-                       date_filed=None, user_hint=None):
+                       date_filed=None, user_hint=None,
+                       initial_classification=None):
         self.classify_calls.append({
             "ocr_text": ocr_text, "tags": tags,
             "doc_types": doc_types, "correspondents": correspondents,
@@ -336,6 +337,7 @@ class StubClassifier:
             "persons_section": persons_section,
             "date_filed": date_filed,
             "user_hint": user_hint,
+            "initial_classification": initial_classification,
         })
         if self.classify_raises:
             raise self.classify_raises

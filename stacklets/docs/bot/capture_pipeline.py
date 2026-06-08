@@ -284,6 +284,7 @@ class CapturePipeline:
 
     async def reprocess(
         self, *, vault_path: str, user_hint: str, sender_mxid: str,
+        initial_classification: dict | None = None,
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -341,6 +342,7 @@ class CapturePipeline:
             reclassified=True,
             actor=sender_mxid,
             capture_id=str(capture_id) if capture_id else None,
+            initial_classification=initial_classification,
         )
 
     async def _publish(
@@ -352,6 +354,7 @@ class CapturePipeline:
         reclassified: bool = False,
         actor: str | None = None,
         capture_id: str | None = None,
+        initial_classification: dict | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -373,6 +376,7 @@ class CapturePipeline:
         entity_slug = localpart.lower()
         classification = await self._classify(
             source, sender_name, images=images, user_hint=user_hint,
+            initial_classification=initial_classification,
         )
 
         try:
@@ -445,6 +449,7 @@ class CapturePipeline:
         self, source, sender_name: str,
         *, images: list[ImageAttachment] | None = None,
         user_hint: str | None = None,
+        initial_classification: dict | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -465,6 +470,7 @@ class CapturePipeline:
                 existing_tags=existing_tags,
                 images=images,
                 user_hint=user_hint,
+                initial_classification=initial_classification,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

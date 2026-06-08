@@ -587,33 +587,58 @@ class ArchivistBot(MicroBot):
         vault_path = envelope.get("data", {}).get("vault_path")
         return vault_path if isinstance(vault_path, str) and vault_path else None
 
-    async def _collect_correction_hint(self, room_id: str, event) -> str:
-        """Walk the reply chain back to the original filing; return the
-        joined human-correction hint, most-recent first.
+    async def _collect_correction_chain(
+        self, room_id: str, event,
+    ) -> tuple[str, dict | None]:
+        """Walk the reply chain back to the original filing; return both
+        the joined human-correction hint AND the latest classification
+        state the user was looking at when they wrote this correction.
 
         Each round of correction → reclassification adds two layers to
         the thread (user reply, bot's reclassified confirmation). We
         walk those layers in pairs, collecting every user turn between
-        the current event and the bot's `document.filed` boundary --
-        beyond that boundary the human's words belong to the upload's
+        the current event and the bot's `*.filed` boundary -- beyond
+        that boundary the human's words belong to the upload's
         caption, not to a correction.
 
-        The returned string carries the chain as a numbered list when
-        more than one correction is present, with a short header that
-        tells the LLM the ordering rule (later supersedes earlier for
-        the same field). A single-correction chain stays plain so the
-        prompt isn't padded for the common case.
+        The latest envelope (the IMMEDIATE parent the user just
+        replied to) carries the post-correction-N classification under
+        ``data``. That's the state the human saw on screen when they
+        typed their note, so it's the right anchor for "apply this
+        correction as a delta": the LLM works against the same picture
+        the user saw, not against the LLM's untouched first pass.
+        Each step (state_N + correction_(N+1) → state_(N+1)) is
+        deterministic; chaining them gives a deterministic transform
+        from the initial filing to the current correction.
+
+        Returned hint: numbered list when more than one correction is
+        present, plain string for a single correction.
         """
         bodies: list[str] = []
         current_body = _strip_reply_fallback(event.body)
         if current_body:
             bodies.append(current_body)
 
+        # The IMMEDIATE parent is the latest classification the user
+        # replied to. Grab its envelope BEFORE walking back so we can
+        # hand it to the prompt as the delta-anchor; the walker itself
+        # only needs the chain of human turns.
+        latest_state: dict | None = None
+        parent_id = self._in_reply_to_id(event)
+        immediate = (
+            await self._fetch_event(room_id, parent_id) if parent_id else None
+        )
+        if immediate is not None and getattr(immediate, "sender", None) == self.user_id:
+            envelope = immediate.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
+            if isinstance(envelope, dict):
+                data = envelope.get("data")
+                if isinstance(data, dict):
+                    latest_state = data
+
         # Each loop iteration consumes one (bot, prior-user) pair from
         # the chain. Bounded by the framework's in_reply_to depth and a
         # hard cap so a thread that somehow loops doesn't burn API
         # calls forever.
-        parent_id = self._in_reply_to_id(event)
         for _ in range(10):
             if not parent_id:
                 break
@@ -642,15 +667,22 @@ class ArchivistBot(MicroBot):
             parent_id = self._in_reply_to_id(grandparent)
 
         if not bodies:
-            return ""
+            return ("", latest_state)
         if len(bodies) == 1:
-            return bodies[0]
+            return (bodies[0], latest_state)
         numbered = "\n".join(f"  {i+1}. {b}" for i, b in enumerate(bodies))
-        return (
+        hint = (
             "Conversation of corrections, most recent first. The most "
             "recent line supersedes earlier ones when they conflict for "
             "the same field; merge non-conflicting fields:\n" + numbered
         )
+        return (hint, latest_state)
+
+    async def _collect_correction_hint(self, room_id: str, event) -> str:
+        """Back-compat wrapper -- some callers (and older tests) just
+        want the hint string. Internally delegates to the chain walker."""
+        hint, _initial = await self._collect_correction_chain(room_id, event)
+        return hint
 
     @staticmethod
     def _in_reply_to_id(event) -> str | None:
@@ -677,6 +709,7 @@ class ArchivistBot(MicroBot):
     async def _handle_reply_reprocess(
         self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
         *, date_filed: str | None = None,
+        initial_classification: dict | None = None,
     ) -> None:
         """Re-enrich `doc_id` with the user's reply as a correction hint.
 
@@ -687,6 +720,7 @@ class ArchivistBot(MicroBot):
         """
         o = await self._pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
+            initial_classification=initial_classification,
         )
         if o.status == "doc_missing":
             await self._send(
@@ -717,6 +751,7 @@ class ArchivistBot(MicroBot):
     async def _handle_reply_capture_reprocess(
         self, room_id: str, vault_path: str, user_hint: str,
         sender_mxid: str, reply_to: str,
+        *, initial_classification: dict | None = None,
     ) -> None:
         """Re-classify a capture with the user's reply as a hint.
 
@@ -728,6 +763,7 @@ class ArchivistBot(MicroBot):
         outcome = await self._capture.reprocess(
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
+            initial_classification=initial_classification,
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
@@ -967,27 +1003,33 @@ class ArchivistBot(MicroBot):
         # ("ADAC") doesn't get routed to free-text search.
         doc_id = await self._reply_target_doc_id(room.room_id, event)
         if doc_id is not None:
-            hint = await self._collect_correction_hint(room.room_id, event)
+            hint, initial = await self._collect_correction_chain(
+                room.room_id, event,
+            )
             if hint:
                 await self._handle_reply_reprocess(
                     room.room_id, doc_id, hint, reply_to,
                     date_filed=self._event_date(event),
+                    initial_classification=initial,
                 )
                 return
 
         # Same shape for captures: a reply to a `capture.filed` or
         # `capture.reclassified` confirmation reaches the capture
         # pipeline's reprocess instead of the search path. The chain
-        # walker (`_collect_correction_hint`) is generic over filing
-        # kind, so it Just Works for either side.
+        # walker is generic over filing kind, so it Just Works for
+        # either side.
         capture_path = await self._reply_target_capture_path(
             room.room_id, event,
         )
         if capture_path is not None:
-            hint = await self._collect_correction_hint(room.room_id, event)
+            hint, initial = await self._collect_correction_chain(
+                room.room_id, event,
+            )
             if hint:
                 await self._handle_reply_capture_reprocess(
                     room.room_id, capture_path, hint, event.sender, reply_to,
+                    initial_classification=initial,
                 )
                 return
 
