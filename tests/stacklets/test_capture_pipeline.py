@@ -40,7 +40,7 @@ class FakeClassifier:
         self._raises = raises
 
     async def classify_capture(self, *, text, person_names, existing_tags,
-                               images=None):
+                               images=None, user_hint=None):
         if self._raises:
             raise self._raises
         return self._payload
@@ -52,6 +52,18 @@ class FakeMirror:
 
     async def publish_capture(self, **kwargs):
         self.captures.append(kwargs)
+        # Mirrors the new publish_capture contract: return the vault
+        # path (or None on failure). Stubs out a deterministic path
+        # so the envelope-emission branch in _publish executes.
+        kind = kwargs.get("kind") or "bookmark"
+        entity = "homer"
+        return f"{entity}/{kind}s/test-capture.md"
+
+    async def read_capture(self, path):
+        # The simplest re-readable shape for reprocess tests.
+        return self._stored.get(path)
+
+    _stored: dict = {}
 
 
 class FakeTags:

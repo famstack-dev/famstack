@@ -93,19 +93,25 @@ def render_reprocessed_reply(
     t: Translator,
     *,
     title: str,
-    doc_id: int,
+    doc_id: int | None,
     resolved_topics: list[str],
     resolved_persons: list[str],
     resolved_type: str | None,
     resolved_correspondent: str | None,
 ) -> str:
-    """Render the "document reclassified" confirmation after a reply-correction.
+    """Render the "reclassified" confirmation after a reply-correction.
 
-    A title line plus the compact metadata row. No summary/facts/links —
-    the reprocess pass corrects classification, and the original filing
-    already carried the rich detail.
+    Shared between document reprocess (where ``doc_id`` is the
+    Paperless id) and capture reprocess (where ``doc_id`` is None
+    -- the capture's identity lives in the envelope's ``capture_id``
+    and isn't shown to the human). A title line plus the compact
+    metadata row -- the reprocess pass corrects classification, the
+    original filing already carried the rich detail.
     """
-    lines = [t("reprocessed", title=title, doc_id=doc_id)]
+    if doc_id is None:
+        lines = [t("reprocessed_capture", title=title)]
+    else:
+        lines = [t("reprocessed", title=title, doc_id=doc_id)]
     meta_parts: list[str] = [*resolved_topics, *resolved_persons]
     if resolved_type:
         meta_parts.append(resolved_type)

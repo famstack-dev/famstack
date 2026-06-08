@@ -380,6 +380,70 @@ def build_document_event(
     return envelope
 
 
+def build_capture_event(
+    vault_path: str,
+    classification: dict,
+    *,
+    kind: str,
+    source_uri: str | None,
+    # `capture_id` is the stable correlation key for a capture. When
+    # the capture was filed via Matrix (the common path) the Matrix
+    # `event_id` of the triggering message IS the capture_id -- one
+    # ledger, one identifier. CLI-triggered captures (memory CLI or
+    # future programmatic surfaces) can supply their own opaque key
+    # under the same name.
+    capture_id: str | None = None,
+    resolved_tags: list[str] | None = None,
+    resolved_persons: list[str] | None = None,
+    actor: str | None = None,
+    ts: str | None = None,
+) -> dict:
+    """`dev.famstack.event` envelope for a capture filing.
+
+    Mirrors `build_document_event` -- same {source, type, summary,
+    data, actor, ts} shape -- so the bot's reply-to-correct walker
+    treats captures and documents uniformly. The data payload swaps
+    `paperless_id` for `vault_path` (the mirror entry's repo-relative
+    path) since captures have no Paperless backing; everything else
+    that's classify-derived rides verbatim.
+    """
+    title = classification.get("title", "")
+    data: dict = {
+        "vault_path": vault_path,
+        "kind": kind,
+        "title": title,
+        "tags": resolved_tags or [],
+        "persons": resolved_persons or [],
+        "summary": classification.get("summary", ""),
+        "facts": classification.get("facts", []),
+    }
+    if source_uri:
+        data["source_uri"] = source_uri
+    if capture_id:
+        # Stable correlation key. `vault_path` may rename on a future
+        # reclassification (title slug shift); `capture_id` remains
+        # the original ledger anchor (Matrix `event_id` when filed
+        # via chat) and lets the deriver tie the capture back to its
+        # triggering event without walking the mirror.
+        data["capture_id"] = capture_id
+
+    summary = (
+        f"{title} captured" if title else f"Capture ({kind})"
+    )
+
+    envelope: dict = {
+        "source": "docs",
+        "type": "capture.filed",
+        "summary": summary,
+        "data": data,
+    }
+    if actor:
+        envelope["actor"] = actor
+    if ts:
+        envelope["ts"] = ts
+    return envelope
+
+
 def deduplicate_hashtags(*labels: str | None) -> list[str]:
     """Build a deduplicated list of #hashtags for the chat summary.
 

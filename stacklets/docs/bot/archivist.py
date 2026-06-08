@@ -566,6 +566,25 @@ class ArchivistBot(MicroBot):
         paperless_id = envelope.get("data", {}).get("paperless_id")
         return paperless_id if isinstance(paperless_id, int) else None
 
+    async def _reply_target_capture_path(
+        self, room_id: str, event,
+    ) -> str | None:
+        """Return the capture's vault path when `event` replies to one
+        of OUR captures.
+
+        Mirrors `_reply_target_doc_id` exactly -- accepts both the
+        initial `capture.filed` envelope and any later
+        `capture.reclassified` so chained corrections work the same
+        way they do for documents.
+        """
+        envelope = await self._reply_parent_envelope(room_id, event)
+        if not envelope or envelope.get("type") not in (
+            "capture.filed", "capture.reclassified",
+        ):
+            return None
+        vault_path = envelope.get("data", {}).get("vault_path")
+        return vault_path if isinstance(vault_path, str) and vault_path else None
+
     async def _collect_correction_hint(self, room_id: str, event) -> str:
         """Walk the reply chain back to the original filing; return the
         joined human-correction hint, most-recent first.
@@ -602,9 +621,14 @@ class ArchivistBot(MicroBot):
             envelope = parent.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
             if not isinstance(envelope, dict):
                 break
-            if envelope.get("type") == "document.filed":
+            # Generic over filing kind: any `*.filed` is the boundary,
+            # any `*.reclassified` is an intermediate hop. So the same
+            # walker handles `document.{filed,reclassified}` AND
+            # `capture.{filed,reclassified}` without per-kind branches.
+            env_type = envelope.get("type", "")
+            if env_type.endswith(".filed"):
                 break
-            if envelope.get("type") != "document.reclassified":
+            if not env_type.endswith(".reclassified"):
                 break
             grandparent_id = self._in_reply_to_id(parent)
             grandparent = await self._fetch_event(room_id, grandparent_id) if grandparent_id else None
@@ -687,6 +711,25 @@ class ArchivistBot(MicroBot):
                 room_id, reply, reply_to,
                 metadata={"dev.famstack.event": o.envelope},
             )
+
+    async def _handle_reply_capture_reprocess(
+        self, room_id: str, vault_path: str, user_hint: str,
+        sender_mxid: str, reply_to: str,
+    ) -> None:
+        """Re-classify a capture with the user's reply as a hint.
+
+        Parallels `_handle_reply_reprocess` for documents: dispatch to
+        the pipeline, render via the shared reprocessed presenter,
+        attach the fresh `capture.reclassified` envelope so the user
+        can chain another correction by replying to THIS message.
+        """
+        outcome = await self._capture.reprocess(
+            vault_path=vault_path, user_hint=user_hint,
+            sender_mxid=sender_mxid,
+        )
+        # `_reply_for_capture` already knows how to render the
+        # reclassified branch + attach the envelope, so we just defer.
+        await self._reply_for_capture(room_id, outcome, reply_to)
 
     async def _process_document(
         self, room_id: str, filename: str, display_name: str,
@@ -873,6 +916,7 @@ class ArchivistBot(MicroBot):
                 filename=raw_filename,
                 source_uri=url,
                 sender_mxid=event.sender,
+                capture_id=event.event_id,
                 reply_to=reply_to,
             )
 
@@ -929,6 +973,22 @@ class ArchivistBot(MicroBot):
                 )
                 return
 
+        # Same shape for captures: a reply to a `capture.filed` or
+        # `capture.reclassified` confirmation reaches the capture
+        # pipeline's reprocess instead of the search path. The chain
+        # walker (`_collect_correction_hint`) is generic over filing
+        # kind, so it Just Works for either side.
+        capture_path = await self._reply_target_capture_path(
+            room.room_id, event,
+        )
+        if capture_path is not None:
+            hint = await self._collect_correction_hint(room.room_id, event)
+            if hint:
+                await self._handle_reply_capture_reprocess(
+                    room.room_id, capture_path, hint, event.sender, reply_to,
+                )
+                return
+
         if query_lower in HELP_COMMANDS:
             await self._send(
                 room.room_id,
@@ -981,6 +1041,7 @@ class ArchivistBot(MicroBot):
             else:
                 await self._handle_capture(
                     room.room_id, query, event.sender, reply_to,
+                    capture_id=event.event_id,
                 )
 
         elif mentioned or is_documents:
@@ -1001,6 +1062,7 @@ class ArchivistBot(MicroBot):
             # not a question to answer.
             await self._handle_text_capture(
                 room.room_id, query, event.sender, reply_to,
+                capture_id=event.event_id,
             )
 
         else:
@@ -1105,26 +1167,29 @@ class ArchivistBot(MicroBot):
 
     async def _handle_capture(
         self, room_id: str, url: str, sender_mxid: str,
-        reply_to: str | None = None,
+        reply_to: str | None = None, *, capture_id: str | None = None,
     ) -> None:
         outcome = await self._capture.capture_url(
             url=url, sender_mxid=sender_mxid,
             notifier=self._notifier(room_id, reply_to),
+            capture_id=capture_id,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
-        reply_to: str | None = None,
+        reply_to: str | None = None, *, capture_id: str | None = None,
     ) -> None:
         outcome = await self._capture.capture_text(
             text=text, sender_mxid=sender_mxid,
+            capture_id=capture_id,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
     async def _handle_binary_capture(
         self, *, room_id: str, file_data: bytes, mime: str,
         filename: str, source_uri: str, sender_mxid: str,
+        capture_id: str | None = None,
         reply_to: str | None = None,
     ) -> None:
         """Capture a PDF or image as a visual bookmark.
@@ -1133,10 +1198,15 @@ class ArchivistBot(MicroBot):
         page(s) + any extractable text layer). The mirror entry
         points back at the Matrix mxc URL -- the binary stays where
         the homeserver put it, the wiki just summarises and links.
+        ``capture_id`` is the Matrix event_id of the upload, stored
+        on the entry as a stable correlation key so a deriver (or
+        the reply-to-correct path) can find this capture later
+        without depending on the title-derived path.
         """
         outcome = await self._capture.capture_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri, sender_mxid=sender_mxid,
+            capture_id=capture_id,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -1146,8 +1216,10 @@ class ArchivistBot(MicroBot):
         """Map a CaptureOutcome to a chat reply.
 
         `empty` (whitespace-only paste) is a silent drop; terminal
-        statuses get a one-line message; a capture renders via the
-        shared presenter.
+        statuses get a one-line message; a capture or a reclassified
+        capture renders via the shared presenter and carries the
+        `capture.*` envelope as metadata so the user can reply-to-
+        correct the same way they do with document filings.
         """
         if o.status == "empty":
             return
@@ -1157,13 +1229,29 @@ class ArchivistBot(MicroBot):
         if o.status == "no_mirror":
             await self._send(room_id, self.t("capture_no_mirror"), reply_to)
             return
-        reply = render_capture_reply(
-            self.t,
-            source_title_hint=o.source_title_hint,
-            classification=o.classification,
-            link=o.display_link,
+        if o.status == "reclassified":
+            reply = render_reprocessed_reply(
+                self.t,
+                title=o.classification.get("title") or o.source_title_hint or "",
+                doc_id=None,
+                resolved_topics=[t for t in (o.classification.get("tags") or [])
+                                 if isinstance(t, str)],
+                resolved_persons=[p for p in (o.classification.get("persons") or [])
+                                  if isinstance(p, str)],
+                resolved_type=None,
+                resolved_correspondent=None,
+            )
+        else:
+            reply = render_capture_reply(
+                self.t,
+                source_title_hint=o.source_title_hint,
+                classification=o.classification,
+                link=o.display_link,
+            )
+        metadata = (
+            {"dev.famstack.event": o.envelope} if o.envelope else None
         )
-        await self._send(room_id, reply, reply_to)
+        await self._send(room_id, reply, reply_to, metadata=metadata)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 

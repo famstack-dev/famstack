@@ -400,10 +400,12 @@ class TestMentionRoutesToSearch:
         async def _record_search(room_id, query, reply_to=None, *, sender=None):
             calls.append(("search", query))
 
-        async def _record_capture(room_id, url, sender, reply_to=None):
+        async def _record_capture(room_id, url, sender, reply_to=None,
+                                  *, capture_id=None):
             calls.append(("capture_url", url))
 
-        async def _record_text_capture(room_id, text, sender, reply_to=None):
+        async def _record_text_capture(room_id, text, sender, reply_to=None,
+                                       *, capture_id=None):
             calls.append(("capture_text", text))
 
         async def _record_url(room_id, url, reply_to=None, **kw):
@@ -419,6 +421,7 @@ class TestMentionRoutesToSearch:
         bot._send = _record_send
         # Reply-to lookup needs the client; short-circuit it.
         bot._reply_target_doc_id = lambda *_a, **_kw: _none_coro()
+        bot._reply_target_capture_path = lambda *_a, **_kw: _none_coro()
         return bot, calls
 
     @pytest.mark.asyncio

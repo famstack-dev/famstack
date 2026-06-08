@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
+from document_pipeline import utc_now_isoformat
 from extractors import SourceContent
+from matching import build_capture_event
 from notifier import Notifier
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -56,13 +58,15 @@ IMAGE_MIMES = {
 class CaptureOutcome:
     """What the pipeline produces; the orchestrator renders the reply.
 
-    status: captured | extract_failed | no_mirror | empty
+    status: captured | reclassified | extract_failed | no_mirror | empty
     """
 
     status: str
     classification: dict = field(default_factory=dict)
     source_title_hint: str | None = None
     display_link: str = ""
+    vault_path: str | None = None
+    envelope: dict | None = None
 
 
 class CapturePipeline:
@@ -96,6 +100,7 @@ class CapturePipeline:
 
     async def capture_url(
         self, *, url: str, sender_mxid: str, notifier: Notifier,
+        capture_id: str | None = None,
     ) -> CaptureOutcome:
         """Fetch a URL and file it as a bookmark.
 
@@ -108,11 +113,13 @@ class CapturePipeline:
             return CaptureOutcome(status="extract_failed")
         return await self._publish(
             source=source, kind="bookmark", sender_mxid=sender_mxid,
-            display_link=url,
+            display_link=url, actor=sender_mxid,
+            capture_id=capture_id,
         )
 
     async def capture_text(
         self, *, text: str, sender_mxid: str,
+        capture_id: str | None = None,
     ) -> CaptureOutcome:
         """File a pasted body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
@@ -123,6 +130,8 @@ class CapturePipeline:
         return await self._publish(
             source=source, kind="note", sender_mxid=sender_mxid,
             display_link=source.source_uri or "(pasted text)",
+            actor=sender_mxid,
+            capture_id=capture_id,
         )
 
     async def capture_binary(
@@ -133,6 +142,7 @@ class CapturePipeline:
         source_uri: str | None,
         sender_mxid: str,
         display_link: str | None = None,
+        capture_id: str | None = None,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -154,7 +164,8 @@ class CapturePipeline:
         return await self._publish(
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=display_link or source_uri or filename,
-            images=images,
+            images=images, actor=sender_mxid,
+            capture_id=capture_id,
         )
 
     def _source_from_binary(
@@ -233,11 +244,87 @@ class CapturePipeline:
             images,
         )
 
+    async def reprocess(
+        self, *, vault_path: str, user_hint: str, sender_mxid: str,
+    ) -> CaptureOutcome:
+        """Re-classify an already-filed capture using a human note.
+
+        Mirrors ``DocumentPipeline.reprocess`` -- read the prior entry,
+        rebuild a SourceContent from its persisted summary, run the
+        classifier again with the reply chain as ``user_hint``, and
+        rewrite the mirror in place (renaming the slug when the new
+        title shifts). Captures don't have a separate Paperless
+        backing store, so the prior summary IS the source the LLM
+        re-reads; this stays cheap (no vision round-trip, no re-fetch
+        of the original binary) at the cost of corrections having to
+        work against the model's own paraphrase rather than the raw
+        page. Pure text corrections (Arthur's "It is a Mac Studio")
+        compose cleanly under that constraint.
+        """
+        if self._mirror is None:
+            return CaptureOutcome(status="no_mirror")
+        raw = await self._mirror.read_capture(vault_path)
+        if raw is None:
+            return CaptureOutcome(status="capture_missing")
+        meta, summary_text = _parse_capture_markdown(raw)
+        # The summary callout doesn't carry the frontmatter tag list,
+        # so the classifier would otherwise have to re-derive tags
+        # from prose alone -- they drift on each pass. Append them as
+        # a short context line that the prompt naturally treats as
+        # part of the entry's content, anchoring stable tags while
+        # leaving the LLM free to add/remove via the hint.
+        raw_tags = meta.get("tags") or []
+        existing_tags = [
+            t for t in raw_tags
+            if isinstance(t, str) and t.strip() and not t.startswith("Person: ")
+        ]
+        body_parts: list[str] = []
+        if summary_text:
+            body_parts.append(summary_text)
+        if existing_tags:
+            body_parts.append(
+                "Existing tags on this entry: " + ", ".join(existing_tags)
+            )
+        source_text = "\n\n".join(body_parts) or meta.get("title", "") or ""
+        source = SourceContent(
+            text=source_text,
+            title_hint=meta.get("title") or None,
+            source_uri=meta.get("source_uri") or None,
+        )
+        kind = meta.get("kind") or "bookmark"
+        captured_at = meta.get("date") or _dt.date.today().isoformat()
+        capture_id = meta.get("capture_id")
+        return await self._publish(
+            source=source, kind=str(kind), sender_mxid=sender_mxid,
+            display_link=meta.get("source_uri") or "(capture)",
+            user_hint=user_hint,
+            existing_path=vault_path,
+            captured_at=str(captured_at),
+            reclassified=True,
+            actor=sender_mxid,
+            capture_id=str(capture_id) if capture_id else None,
+        )
+
     async def _publish(
         self, *, source, kind: str, sender_mxid: str, display_link: str,
         images: list[ImageAttachment] | None = None,
+        user_hint: str | None = None,
+        existing_path: str | None = None,
+        captured_at: str | None = None,
+        reclassified: bool = False,
+        actor: str | None = None,
+        capture_id: str | None = None,
     ) -> CaptureOutcome:
-        """Shared tail: classify, mirror, record tags, return the outcome."""
+        """Shared tail: classify, mirror, record tags, return the outcome.
+
+        ``existing_path`` + ``captured_at`` are the reprocess inputs --
+        when re-classifying an already-filed capture we keep its
+        original capture date and hand the prior path to publish_capture
+        so the rewrite either updates in place or renames the slug.
+        ``reclassified`` flips the envelope type to ``capture.reclassified``
+        so the reply-chain walker treats it as a chain-link, not a
+        boundary.
+        """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
 
@@ -246,7 +333,9 @@ class CapturePipeline:
         localpart = sender_mxid.split(":")[0].lstrip("@")
         sender_name = localpart.capitalize()
         entity_slug = localpart.lower()
-        classification = await self._classify(source, sender_name, images=images)
+        classification = await self._classify(
+            source, sender_name, images=images, user_hint=user_hint,
+        )
 
         try:
             model = resolve_model(f"{self._name}/classifier")
@@ -254,14 +343,14 @@ class CapturePipeline:
             model = None
 
         tags = self._tag_list(classification)
-        captured_at = _dt.date.today().isoformat()
+        captured_at = captured_at or _dt.date.today().isoformat()
 
         # Bookmarks default to marker mode (body dropped, summary IS the
         # content); notes always keep the body.
         keep_body = kind == "note" or self.capture_keep_body
         body_for_mirror = source.text if keep_body else ""
 
-        await self._mirror.publish_capture(
+        vault_path = await self._mirror.publish_capture(
             entity=entity_slug,
             kind=kind,
             source_uri=source.source_uri,
@@ -271,6 +360,8 @@ class CapturePipeline:
             captured_at=captured_at,
             model=model,
             tags=tags,
+            existing_path=existing_path,
+            capture_id=capture_id,
         )
 
         # Feed topic tags (not the derived Person: X) back into the
@@ -283,16 +374,39 @@ class CapturePipeline:
             self._capture_tags.record(topic_tags, when=captured_at)
             self._capture_tags.save()
 
+        envelope = None
+        if vault_path:
+            persons = classification.get("persons") or []
+            if isinstance(persons, str):
+                persons = [persons]
+            envelope = build_capture_event(
+                vault_path, classification,
+                kind=kind,
+                source_uri=source.source_uri,
+                capture_id=capture_id,
+                resolved_tags=topic_tags,
+                resolved_persons=[p for p in persons if isinstance(p, str)],
+                actor=actor,
+                ts=utc_now_isoformat(),
+            )
+            if reclassified:
+                envelope["type"] = "capture.reclassified"
+                if user_hint:
+                    envelope["data"]["user_hint"] = user_hint
+
         return CaptureOutcome(
-            status="captured",
+            status="reclassified" if reclassified else "captured",
             classification=classification,
             source_title_hint=source.title_hint,
             display_link=display_link,
+            vault_path=vault_path,
+            envelope=envelope,
         )
 
     async def _classify(
         self, source, sender_name: str,
         *, images: list[ImageAttachment] | None = None,
+        user_hint: str | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -312,6 +426,7 @@ class CapturePipeline:
                 person_names=person_names,
                 existing_tags=existing_tags,
                 images=images,
+                user_hint=user_hint,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)
@@ -344,3 +459,79 @@ class CapturePipeline:
             f"Person: {p}" for p in persons if isinstance(p, str) and p.strip()
         )
         return out
+
+
+# ── Parsing for reprocess ──────────────────────────────────────────────
+
+
+def _parse_capture_markdown(raw: str) -> tuple[dict, str]:
+    """Extract frontmatter dict and the `> [!summary]` callout body
+    from a capture mirror entry.
+
+    Reprocess needs both: the frontmatter to recover `capture_id`,
+    `kind`, `captured_at`, and `source_uri`; the callout body to
+    re-feed the classifier as the text source. The body returned is
+    the prose + facts text (with the `> ` blockquote prefix stripped
+    per line), suitable for use as a SourceContent.text.
+
+    Tolerant of partial or missing structure -- returns `({}, "")`
+    rather than raising so a malformed mirror entry surfaces as
+    "couldn't reprocess" instead of crashing the bot.
+    """
+    if not raw or not raw.startswith("---\n"):
+        return ({}, "")
+    fm_end = raw.find("\n---\n", 4)
+    if fm_end < 0:
+        return ({}, raw)
+
+    meta = _parse_yaml_frontmatter(raw[4:fm_end])
+    body = raw[fm_end + len("\n---\n"):]
+    summary = _extract_summary_callout(body)
+    return (meta, summary)
+
+
+def _parse_yaml_frontmatter(text: str) -> dict:
+    """Same stdlib subset memory/lib's `_parse_frontmatter` uses --
+    keeps the bot stdlib-only for this path so we don't pull
+    python-frontmatter into the reprocess hot loop."""
+    data: dict = {}
+    current_list: list[str] | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if line.startswith("  - ") or line.startswith("- "):
+            if current_list is not None:
+                token = line.split("- ", 1)[1].strip().strip("'\"")
+                current_list.append(token)
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip(), value.strip()
+        if value == "":
+            current_list = []
+            data[key] = current_list
+        else:
+            data[key] = value.strip("'\"")
+            current_list = None
+    return data
+
+
+def _extract_summary_callout(body: str) -> str:
+    """Pull the `> [!summary]` callout text (prose + facts) out of a
+    capture mirror's body. Returns "" when no callout is present --
+    older entries or a hand-edited file land in that branch."""
+    captured: list[str] = []
+    in_callout = False
+    for line in body.splitlines():
+        if not in_callout:
+            if line.strip().startswith("> [!summary]"):
+                in_callout = True
+            continue
+        if not line.startswith(">"):
+            break
+        captured.append(line[1:].lstrip(" "))
+    return "\n".join(captured).strip()

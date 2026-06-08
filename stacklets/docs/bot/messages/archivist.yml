@@ -23,6 +23,7 @@ en:
   filed_no_text: "\U0001F4C1 Filed: {name}\n\n  No text detected — manual tagging needed.\n\n  {link}"
   filed: "\u2705 Filed: {title} (#{doc_id})"
   reprocessed: "\U0001F501 Reclassified with your note: {title} (#{doc_id})"
+  reprocessed_capture: "\U0001F501 Reclassified with your note: {title}"
   reprocess_doc_missing: "\u274c Cannot reprocess #{doc_id} \u2014 not found in Paperless."
   reprocess_llm_error: "\u274c Reclassify #{doc_id} failed ({kind}): {detail}"
 
@@ -154,6 +155,7 @@ de:
   filed_no_text: "\U0001F4C1 Abgelegt: {name}\n\n  Kein Text erkannt — bitte manuell in Paperless taggen.\n\n  {link}"
   filed: "\u2705 Abgelegt: {title} (#{doc_id})"
   reprocessed: "\U0001F501 Mit deinem Hinweis neu klassifiziert: {title} (#{doc_id})"
+  reprocessed_capture: "\U0001F501 Mit deinem Hinweis neu klassifiziert: {title}"
   reprocess_doc_missing: "\u274c Kann #{doc_id} nicht erneut verarbeiten \u2014 nicht in Paperless gefunden."
   reprocess_llm_error: "\u274c Neuklassifizierung von #{doc_id} fehlgeschlagen ({kind}): {detail}"
 

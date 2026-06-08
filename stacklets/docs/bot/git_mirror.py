@@ -849,6 +849,7 @@ class GitMirror:
         persons: list[str],
         tags: list[str],
         model: str | None,
+        capture_id: str | None = None,
     ) -> dict:
         """Frontmatter for a capture entry.
 
@@ -882,10 +883,38 @@ class GitMirror:
             fm["tags"] = tags
         if source_uri:
             fm["source_uri"] = source_uri
+        if capture_id:
+            # Same identifier the `dev.famstack.event` envelope carries
+            # under `data.capture_id`. Stored on the file too so a
+            # later grep (or the future deriver) can find this entry
+            # without depending on the mutable `vault_path`.
+            fm["capture_id"] = capture_id
         if model:
             fm["model"] = model
         fm["added"] = now
         return fm
+
+    async def read_capture(self, path: str) -> str | None:
+        """Return the raw markdown of a capture entry, or None if missing.
+
+        Used by ``CapturePipeline.reprocess`` to re-classify an
+        already-filed capture without re-fetching the original binary.
+        Best-effort: Forgejo errors are logged and surfaced as None
+        so the caller can render a friendly "couldn't find it" reply.
+        """
+        if not await self.ensure_setup():
+            return None
+        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+        try:
+            data = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, path,
+            )
+        except ForgejoError as e:
+            logger.warning("[git-mirror] read_capture {} failed: {}", path, e)
+            return None
+        if data is None:
+            return None
+        return data.get("content") or ""
 
     async def publish_capture(
         self, *,
@@ -898,7 +927,9 @@ class GitMirror:
         captured_at: str,
         model: str | None,
         tags: list[str] | None = None,
-    ) -> bool:
+        existing_path: str | None = None,
+        capture_id: str | None = None,
+    ) -> str | None:
         """Create or update a capture entry in the mirror.
 
         `entity` is the sender's slug — the Matrix localpart, lowercased.
@@ -915,12 +946,19 @@ class GitMirror:
         the body text (re-pastes of the same text update; edits create
         a new file).
 
-        Returns True on success, False if Forgejo is unreachable or the
-        write failed. Failures are logged but never raised — captures
-        are best-effort.
+        ``existing_path`` is the reprocess hook: when supplied, the
+        write deletes the old file if the new title-derived path
+        differs (a rename) and re-uses the same identity otherwise.
+        The doc-mirror's `publish` already does this for renamed
+        Paperless docs; captures pick up the same shape.
+
+        Returns the path where the capture landed (relative to the
+        repo root) on success, None when Forgejo is unreachable or
+        the write failed. Failures are logged but never raised —
+        captures are best-effort.
         """
         if not await self.ensure_setup():
-            return False
+            return None
 
         client = ForgejoClient(url=self.code_url, token=self._creds.token)
 
@@ -941,9 +979,24 @@ class GitMirror:
             hash_key=hash_key,
         )
 
-        existing = await asyncio.to_thread(
-            client.get_file, self.repo_owner, REPO_NAME, target_path,
-        )
+        # Reprocess path: read the previous file at its old path. When
+        # the title changes the slug changes too, so we'll delete the
+        # old entry after writing the new one (same as the doc
+        # mirror's rename handling).
+        existing = None
+        if existing_path and existing_path != target_path:
+            existing = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, existing_path,
+            )
+            existing_at_new = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, target_path,
+            )
+        else:
+            lookup_path = existing_path or target_path
+            existing = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, lookup_path,
+            )
+            existing_at_new = existing if lookup_path == target_path else None
 
         fm = self._capture_frontmatter(
             title=title,
@@ -953,6 +1006,7 @@ class GitMirror:
             persons=persons,
             tags=tags or [],
             model=model,
+            capture_id=capture_id,
         )
 
         briefing_summary = classification.get("summary")
@@ -987,15 +1041,24 @@ class GitMirror:
                 client.put_file,
                 self.repo_owner, REPO_NAME, target_path,
                 content=content, message=message,
-                sha=existing["sha"] if existing else None,
+                sha=existing_at_new["sha"] if existing_at_new else None,
                 author_name=BOT_USERNAME, author_email=BOT_EMAIL,
             )
+            # Title rename on reprocess: remove the prior file after
+            # the new one is in place so the vault never has both.
+            if existing_path and existing_path != target_path and existing:
+                await asyncio.to_thread(
+                    client.delete_file,
+                    self.repo_owner, REPO_NAME, existing_path,
+                    sha=existing["sha"],
+                    message=f"rename: {existing_path} → {target_path}",
+                )
         except ForgejoError as e:
             logger.warning(
                 "[git-mirror] Capture publish failed for {}: {}",
                 source_uri or "(paste)", e,
             )
-            return False
+            return None
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
-        return True
+        return target_path

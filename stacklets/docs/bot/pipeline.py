@@ -705,6 +705,7 @@ class Classifier:
         person_names: list[str],
         existing_tags: list[str] | None = None,
         images: list[ImageAttachment] | None = None,
+        user_hint: str | None = None,
     ) -> dict:
         """Capture-specific classification.
 
@@ -731,6 +732,7 @@ class Classifier:
             text=text,
             person_names=person_names,
             existing_tags=existing_tags or [],
+            user_hint=user_hint,
         )
         content: Any = prompt
         valid_images = [
@@ -1041,6 +1043,7 @@ def _build_capture_prompt(
     text: str,
     person_names: list[str],
     existing_tags: list[str] | None = None,
+    user_hint: str | None = None,
 ) -> str:
     """The capture prompt — smaller and focused on summary + tags.
 
@@ -1071,7 +1074,7 @@ Return ONLY a JSON object.
 
 The user is bookmarking or noting this content to find it later. Your
 job: produce a digest they can scan in 10 seconds and tags that
-position this content among their interests.
+position this content among their interests.{_user_hint_block(user_hint)}
 
 Family members: {json.dumps(person_names, ensure_ascii=False)}
 {tags_hint}
