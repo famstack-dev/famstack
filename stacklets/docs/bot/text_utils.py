@@ -253,3 +253,40 @@ def is_just_url(text: str) -> bool:
     False
     """
     return bool(URL_PATTERN.match(text))
+
+
+# Permissive URL pattern for finding a link embedded in chat-shaped
+# prose. Excludes trailing sentence punctuation (`.` `,` `;` `:` `!`
+# `?` `)` `>`) so `https://example.com/x.` stops before the period;
+# permissive enough to keep query strings and fragments. Mirror of
+# the pattern `extractors._URL_IN_TEXT_RE` uses for pasted bodies --
+# the two stay in lockstep so capture and routing agree on what
+# counts as a URL.
+_URL_IN_TEXT_RE = re.compile(
+    r"https?://[^\s<>\"'\]]+[^\s<>\"'\]\.,;:!?\)]+", re.IGNORECASE,
+)
+
+
+def first_url(text: str) -> str | None:
+    """First URL found in the text, or None.
+
+    Used by the archivist's capture-room routing: a chat message like
+    "Interesting facts: <url>" should still file the URL as a bookmark
+    even though `is_just_url` rejects it. The surrounding text is
+    framing the user wrote for themselves; the URL is the payload.
+
+    >>> first_url("Interesting facts: https://example.com")
+    'https://example.com'
+    >>> first_url("https://example.com is cool")
+    'https://example.com'
+    >>> first_url("see https://example.com/path?q=1 for details")
+    'https://example.com/path?q=1'
+    >>> first_url("https://example.com.") == 'https://example.com'
+    True
+    >>> first_url("no link here") is None
+    True
+    >>> first_url("") is None
+    True
+    """
+    match = _URL_IN_TEXT_RE.search(text)
+    return match.group(0) if match else None

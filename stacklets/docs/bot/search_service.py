@@ -68,14 +68,25 @@ class SearchService:
         self.shared_bucket = shared_bucket
         self._vault = vault
 
-    def scopes_for_sender(self, sender: str | None) -> list[str]:
+    def scopes_for_sender(
+        self, sender: str | None, *, topic_bucket: str | None = None,
+    ) -> list[str]:
         """Vault-path prefixes the asker is allowed to see.
 
         Shared/family docs live under `<shared_bucket>/`; each person's
         private notes under their own slug (the Matrix localpart, which
         is the canonical entity slug). Default closed: an unknown sender
         gets the shared bucket only — personal notes never leak.
+
+        ``topic_bucket`` overrides the sender-derived defaults: a `?`
+        query asked in a topic room scopes to that topic's bucket only.
+        The asker is who they always were (frontmatter and bot replies
+        still respect identity), but the room context narrows the
+        haystack. Wider search is reached by asking outside the topic
+        room or via the CLI's `--global` flag.
         """
+        if topic_bucket:
+            return [f"{topic_bucket}/"]
         scopes = [f"{self.shared_bucket}/"]
         if sender:
             entity = sender.lstrip("@").split(":", 1)[0]
@@ -83,7 +94,10 @@ class SearchService:
                 scopes.append(f"{entity}/")
         return scopes
 
-    async def run(self, *, query: str, sender: str | None, notifier: Notifier) -> str:
+    async def run(
+        self, *, query: str, sender: str | None, notifier: Notifier,
+        topic_bucket: str | None = None,
+    ) -> str:
         """Resolve, search, optionally synthesise, and return the reply.
 
         `notifier` is used only for the mid-flow deep-dive status;
@@ -104,7 +118,9 @@ class SearchService:
         paperless_results = await self._paperless.search(paperless_query)
         logger.info("[archivist] paperless: {} hit(s)", len(paperless_results))
 
-        memory_results = await self._search_memory_scoped(memory_regex, sender)
+        memory_results = await self._search_memory_scoped(
+            memory_regex, sender, topic_bucket=topic_bucket,
+        )
 
         if not memory_results and not paperless_results:
             return self._t("search_no_results", query=query)
@@ -140,11 +156,15 @@ class SearchService:
                 ))
         return "\n\n".join(blocks)
 
-    async def _search_memory_scoped(self, memory_regex, sender) -> list[dict]:
+    async def _search_memory_scoped(
+        self, memory_regex, sender, *, topic_bucket: str | None = None,
+    ) -> list[dict]:
         """Search the memory vault, scoped to what `sender` may see.
 
         Runs in a thread (file I/O + regex) and best-effort refreshes the
         local checkout first. Empty when MEMORY_VAULT_DIR is unset.
+        ``topic_bucket`` narrows scope to a single topic folder when
+        the query came from a topic room.
         """
         memory_dir = os.environ.get("MEMORY_VAULT_DIR", "")
         if not memory_dir:
@@ -152,7 +172,7 @@ class SearchService:
             return []
         memory_path = Path(memory_dir)
         await asyncio.to_thread(_refresh_memory_vault, memory_path)
-        scopes = self.scopes_for_sender(sender)
+        scopes = self.scopes_for_sender(sender, topic_bucket=topic_bucket)
         results = await asyncio.to_thread(
             _search_memory, memory_regex, memory_path, None, None, scopes, 10,
         )

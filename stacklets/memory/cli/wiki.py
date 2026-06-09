@@ -1,17 +1,20 @@
 """stack memory wiki — regenerate the family wiki's entry pages.
 
 Walks the memory vault, asks the LLM to compose the household home
-page and a personal page for every household member, and publishes
-the result to the memory repo on Forgejo. The wiki container picks
-the change up within seconds.
+page, a personal page for every household member, and a topic page
+for every topic folder (bootstrapped from `Thema:` / `Topic:` Matrix
+rooms); publishes the result to the memory repo on Forgejo. The
+wiki container picks the change up within seconds.
 
 Apply by default; `--dry-run` is the opt-in preview that streams the
 generated pages to stdout without writing anywhere.
 
-    stack memory wiki                 # home + every member page (apply)
-    stack memory wiki --home          # just the household home page
-    stack memory wiki --member homer  # just one member's page
-    stack memory wiki --dry-run       # preview, no writes
+    stack memory wiki                   # home + members + topics (apply)
+    stack memory wiki --home            # just the household home page
+    stack memory wiki --member homer    # just one member's page
+    stack memory wiki --topic camping   # just one topic's page
+    stack memory wiki --topics          # every topic page, no home/members
+    stack memory wiki --dry-run         # preview, no writes
 
 Updates use a splice contract: the LLM-generated body lives inside
 `<!-- begin: generated --> ... <!-- end: generated -->` markers in
@@ -23,7 +26,7 @@ the LLM client and the rendered env); the host wrapper is a thin
 docker-exec.
 """
 
-HELP = "Regenerate the family wiki's home and member pages"
+HELP = "Regenerate the family wiki's home, member, and topic pages"
 
 import sys
 from pathlib import Path

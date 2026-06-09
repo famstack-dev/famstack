@@ -604,3 +604,318 @@ class TestCaptureBinaryAudioRouting:
         assert tr.calls[0]["cleanup_with"] is None
 
 
+# ── Topic-room tag-seed invariant ────────────────────────────────────────
+
+
+class TestTopicSeedMerge:
+    """The static merge helper pins the tag-seed semantics: seed first,
+    classifier additions second, duplicates collapsed. The room-based
+    routing in the archivist (Step 3) leans on this contract; the
+    merge function is exposed as static so the archivist can verify
+    its own seed handling without instantiating a pipeline."""
+
+    def test_seed_survives_empty_classifier_tags(self):
+        """The strongest property: a capture filed in a topic room
+        retains the seed even when the classifier returns no tags
+        at all. Room beats classifier in the empty case."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": []}, seed_topics=["camping"],
+        )
+        assert merged["tags"] == ["camping"]
+
+    def test_seed_first_then_classifier_additions(self):
+        """Seed precedes classifier tags in the merged list. This
+        is load-bearing for downstream consumers that read the first
+        tag as the canonical topic (e.g. the dream cycle's pattern
+        detection)."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": ["gear", "italy-2026"]},
+            seed_topics=["camping"],
+        )
+        assert merged["tags"] == ["camping", "gear", "italy-2026"]
+
+    def test_seed_deduplicates_when_classifier_repeats_it(self):
+        """The classifier may include the seed tag in its output
+        despite the prompt's guidance. The merge collapses the
+        duplicate; the seed's position wins."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": ["camping", "gear"]},
+            seed_topics=["camping"],
+        )
+        assert merged["tags"] == ["camping", "gear"]
+
+    def test_no_seed_is_noop(self):
+        """Non-topic-room captures pass `seed_topics=None` (or omit
+        the kwarg). The classifier's tags are returned unchanged."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": ["gear"]}, seed_topics=None,
+        )
+        assert merged["tags"] == ["gear"]
+        merged_empty = CapturePipeline._merge_seed_topics(
+            {"tags": ["gear"]}, seed_topics=[],
+        )
+        assert merged_empty["tags"] == ["gear"]
+
+    def test_classifier_missing_tags_key(self):
+        """When the classifier degraded (no tags key in the payload),
+        the seed still applies. The result has a fresh `tags` list."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"persons": ["Arthur"]}, seed_topics=["camping"],
+        )
+        assert merged["tags"] == ["camping"]
+
+    def test_classifier_returns_string_for_tags(self):
+        """`_tag_list` already tolerates the classifier returning a
+        bare string for `tags:` (some prompts produce that). The
+        merge does the same coercion so the seed prepends cleanly."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": "gear"}, seed_topics=["camping"],
+        )
+        assert merged["tags"] == ["camping", "gear"]
+
+    def test_seed_with_multiple_entries(self):
+        """A topic room with multiple guaranteed tags (forward
+        compatibility for `default_topics: [camping, outdoor]`)
+        keeps all of them in order."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": ["italy-2026"]},
+            seed_topics=["camping", "outdoor"],
+        )
+        assert merged["tags"] == ["camping", "outdoor", "italy-2026"]
+
+    def test_seed_skips_whitespace_and_non_string(self):
+        """Defensive: malformed seed entries don't pollute the
+        merged list. Empty strings and non-strings drop silently."""
+        merged = CapturePipeline._merge_seed_topics(
+            {"tags": ["gear"]},
+            seed_topics=["camping", "", None, "  ", 42],  # type: ignore[list-item]
+        )
+        assert merged["tags"] == ["camping", "gear"]
+
+
+class TestCaptureUrlUserHint:
+    """A chat-shaped URL message ("Interesting facts: <url>") is captured
+    with the surrounding text passed to the classifier as a user_hint.
+    The hint surfaces in the prompt's user-clarification block so the
+    generated title and summary reflect the framing the user wrote."""
+
+    @pytest.mark.asyncio
+    async def test_user_hint_flows_to_classifier(self):
+        """The hint reaches the classifier call. Pins the wiring all
+        the way through capture_url -> _publish -> _classify."""
+        captured: dict = {}
+
+        class HintCapturingClassifier(FakeClassifier):
+            async def classify_capture(self, **kwargs):
+                captured.update(kwargs)
+                return await super().classify_capture(**kwargs)
+
+        pipe = _pipeline(
+            mirror=FakeMirror(),
+            classifier=HintCapturingClassifier(),
+        )
+        await pipe.capture_url(
+            url="http://example.com/article",
+            sender_mxid="@homer:s",
+            notifier=FakeNotifier(),
+            user_hint="Interesting facts",
+        )
+        assert captured["user_hint"] == "Interesting facts"
+
+    @pytest.mark.asyncio
+    async def test_no_user_hint_passes_none(self):
+        """The kwarg is optional. Existing bare-URL captures pass
+        nothing and the classifier sees user_hint=None."""
+        captured: dict = {}
+
+        class HintCapturingClassifier(FakeClassifier):
+            async def classify_capture(self, **kwargs):
+                captured.update(kwargs)
+                return await super().classify_capture(**kwargs)
+
+        pipe = _pipeline(
+            mirror=FakeMirror(),
+            classifier=HintCapturingClassifier(),
+        )
+        await pipe.capture_url(
+            url="http://example.com/article",
+            sender_mxid="@homer:s",
+            notifier=FakeNotifier(),
+        )
+        assert captured["user_hint"] is None
+
+
+class TestTopicSeedEndToEnd:
+    """The seed propagates through `_publish`: the mirror call receives
+    the merged tag list, the envelope carries it, the capture-tag
+    cache records it. Three entry points are pinned; the fourth
+    (capture_binary) is exercised through the markdown file path."""
+
+    @pytest.mark.asyncio
+    async def test_capture_text_with_seed_files_seed_tag(self):
+        """End-to-end: a topic-routed text capture lands in the mirror
+        with the seed even when the classifier returns no tags."""
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Note",
+                "tags": [],
+                "persons": ["Arthur"],
+                "summary": "s",
+            }),
+        )
+        out = await pipe.capture_text(
+            text="we packed everything in the roof box",
+            sender_mxid="@arthur:s",
+            seed_topics=["camping"],
+        )
+        assert out.status == "captured"
+        # Mirror gets the merged list (seed + Person: Arthur).
+        assert "camping" in mirror.captures[0]["tags"]
+        # Classification dict also carries the merge.
+        assert "camping" in out.classification["tags"]
+
+    @pytest.mark.asyncio
+    async def test_capture_url_with_seed_keeps_classifier_additions(self):
+        """A URL captured in a topic room: seed first, classifier
+        additions kept. Both end up in the mirror's tag list."""
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Article",
+                "tags": ["gear", "vans"],
+                "persons": ["Arthur"],
+                "summary": "s",
+            }),
+        )
+        out = await pipe.capture_url(
+            url="http://example.com/best-vanlife-gear",
+            sender_mxid="@arthur:s",
+            notifier=FakeNotifier(),
+            seed_topics=["van-life"],
+        )
+        assert out.status == "captured"
+        tags = mirror.captures[0]["tags"]
+        assert "van-life" in tags
+        assert "gear" in tags
+        assert "vans" in tags
+        # Seed first, then classifier additions in order.
+        non_person = [t for t in tags if not t.startswith("Person: ")]
+        assert non_person == ["van-life", "gear", "vans"]
+
+    @pytest.mark.asyncio
+    async def test_capture_voice_batch_with_seed_files_seed_tag(self):
+        """Voice batches go through `_publish` like every other
+        capture; the seed applies the same way."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_voice_batch(
+            transcripts=["first memo", "second memo"],
+            primary_mxc="mxc://server/abc",
+            sender_mxid="@arthur:s",
+            seed_topics=["camping"],
+        )
+        assert out.status == "captured"
+        assert "camping" in mirror.captures[0]["tags"]
+
+    @pytest.mark.asyncio
+    async def test_seed_recorded_in_capture_tag_cache(self):
+        """The capture-tag cache feeds the next capture's prompt as
+        existing-tags context. A seeded topic-room capture should
+        push the seed into that cache so the camping tag stays warm
+        even when the classifier never invented it on its own."""
+        mirror = FakeMirror()
+        tags = FakeTags()
+        pipe = CapturePipeline(
+            url_extractor=FakeExtractor(_source(source_uri="http://src")),
+            text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
+            classifier=FakeClassifier(payload={
+                "title": "Note", "tags": [], "persons": ["Arthur"],
+            }),
+            mirror=mirror,
+            capture_tags=tags,
+            paperless=FakePaperless(),
+            bot_name="archivist-bot",
+            classify_max_chars=10000,
+            capture_keep_body=False,
+            capture_tag_prompt_size=50,
+        )
+        await pipe.capture_text(
+            text="some pasted thought",
+            sender_mxid="@arthur:s",
+            seed_topics=["camping"],
+        )
+        # The seed survives into the topic-tag list the cache records.
+        all_recorded = [t for entry in tags.recorded for t in entry[0]]
+        assert "camping" in all_recorded
+
+    @pytest.mark.asyncio
+    async def test_bucket_override_routes_to_topic_folder(self):
+        """A topic-room capture files under the topic bucket regardless
+        of who sent it. Sender stays attributed via `persons:` (the
+        classifier returns it); only the on-disk path changes."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_text(
+            text="we packed everything in the roof box",
+            sender_mxid="@arthur:s",
+            seed_topics=["camping"],
+            bucket="camping",
+        )
+        assert out.status == "captured"
+        # Mirror sees the topic bucket as entity, not arthur.
+        assert mirror.captures[0]["entity"] == "camping"
+
+    @pytest.mark.asyncio
+    async def test_bucket_override_handles_nested_personal_bucket(self):
+        """Personal topic rooms nest under the sender bucket
+        (`arthur/camping/`). The mirror writer treats the entity
+        string as a path prefix, so this just works."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_text(
+            text="solo trip planning",
+            sender_mxid="@arthur:s",
+            seed_topics=["gravel"],
+            bucket="arthur/gravel",
+        )
+        assert out.status == "captured"
+        assert mirror.captures[0]["entity"] == "arthur/gravel"
+
+    @pytest.mark.asyncio
+    async def test_no_bucket_override_falls_back_to_sender(self):
+        """Without a bucket override the capture routes to the sender's
+        own personal bucket (today's default for non-topic rooms)."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_text(
+            text="a personal note",
+            sender_mxid="@homer:s",
+        )
+        assert out.status == "captured"
+        assert mirror.captures[0]["entity"] == "homer"
+
+    @pytest.mark.asyncio
+    async def test_seed_propagates_to_envelope(self):
+        """The Matrix envelope carries `resolved_tags` so downstream
+        consumers (the deriver, future cross-reference passes) see
+        the merged tag list, not just whatever the classifier guessed."""
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Note", "tags": [], "persons": ["Arthur"],
+            }),
+        )
+        out = await pipe.capture_text(
+            text="a note",
+            sender_mxid="@arthur:s",
+            seed_topics=["camping"],
+        )
+        assert out.envelope is not None
+        envelope_tags = out.envelope.get("data", {}).get("tags", [])
+        assert "camping" in envelope_tags
+
+
