@@ -1002,7 +1002,7 @@ Return this exact JSON structure:
   "title": "scannable title under 80 chars. Use the content's language. Capture what this is *about*, not just the source name.",
   "summary": "Markdown summary. Length scales with input — short paste (under ~300 chars): 1-2 sentences. Long content (articles, threads, posts): 200-400 words covering key points, claims, named entities, and conclusions. The user reads this instead of reopening the source.",
   "facts": ["Concrete facts extracted from the content. Each fact MUST anchor on a number, date, named entity, or proper noun — a sentence without one of those is filler and belongs in the summary instead. Count scales with content: 0 for a short note with nothing to extract, 1-3 for a homepage bookmark, 4-8 for a typical article, more for data-heavy content. Don't pad, don't cap."],
-  "tags": ["3-5 topic tags. Format: lowercase, hyphen-separated (kebab-case), e.g. 'open-source', 'digital-sovereignty', 'local-llms'. Tag the stable interest area, not every concept mentioned. One tag per domain — pick 'gov-tech' OR 'government-tools' OR 'ai-in-government', not all three. Reuse existing tags from the list above when a near-fit exists; a new tag is justified only when no existing tag is within two synonyms."],
+  "tags": ["3-5 content-specific tags. Format: lowercase, hyphen-separated (kebab-case). DERIVE tags from concrete nouns, named activities, named items, places, and seasons that appear in the content. PREFER SPECIFIC over generic: 'camping' beats 'travel', 'wäschesack' beats 'haushalt', 'lasagna-recipe' beats 'food', 'local-llms' beats 'ai'. German content → German tags ('campingurlaub', 'bremsen', 'kindergarten'). MINIMUM 3 entries — if a short note has only one obvious specific (e.g. 'camping'), add adjacent ones (the activity, the gear named, the season, the place). Existing-tag reuse: only when an existing tag is content-specific itself; ignore generic categories from the list."],
   "persons": ["which family members this is for or about. Pick from the family members list. Empty list if unclear — the caller will default to the sender."]
 }}
 
@@ -1010,7 +1010,7 @@ Rules:
 - LANGUAGE: use the content's original language for title, summary, facts. German content → German output.
 - summary: write a real digest, not a teaser. Match length to input — terse for short pastes, fuller for long-form. Do NOT include the source URL; it's surfaced separately in the vault entry.
 - facts: each fact carries an anchor (number, date, named entity, proper noun). "X is widely used" is not a fact; "X is used by 600K+ agents" is. Don't pad to hit a count; an empty list beats invented facts.
-- tags: lowercase, hyphen-separated, 1-3 words each. Drop redundancy — never emit two tags about the same domain. Prefer existing tags from the list whenever a near-fit exists.
+- tags: 3-5 entries, no exceptions. Each tag must be content-specific: 'camping' not 'travel', 'wäschesack' not 'haushalt', 'bremsen' not 'auto'. The retrieval test for a good tag: would the user, six months from now, type this word to search for this specific content? If no, replace it with a more specific one. Lowercase, hyphen-separated, 1-3 words. Match the content's language.
 - persons: only if the content explicitly names a family member. Don't guess from sender.
 
 Content:
