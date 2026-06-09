@@ -3,10 +3,12 @@
 Walks the memory vault, pulls every document's `> [!summary]` callout,
 and asks the LLM to compose the browsable pages a family lands on:
 
-    stack memory wiki                 home + every member page (apply)
-    stack memory wiki --home          just the household home page
-    stack memory wiki --member homer  just Homer's page
-    stack memory wiki --dry-run       preview to stdout, no writes
+    stack memory wiki                   home + members + topics (apply)
+    stack memory wiki --home            just the household home page
+    stack memory wiki --member homer    just Homer's page
+    stack memory wiki --topic camping   just one topic's page
+    stack memory wiki --topics          every topic page, no home/members
+    stack memory wiki --dry-run         preview to stdout, no writes
 
 Pages are published to the memory repo on Forgejo, where the wiki
 container picks them up within seconds. The wiki is Quartz, which
@@ -14,6 +16,14 @@ renders `index.md` as the landing page for the site (vault-root
 `index.md`) and for each folder (`<member>/index.md`) -- so the
 household overview becomes the wiki home and each member's overview
 becomes the landing page for their folder.
+
+Topic folders (`<bucket>/<slug>/`, bootstrapped from `Thema:` /
+`Topic:` Matrix rooms by the archivist) get the same treatment:
+`<bucket>/<slug>/about.md` is composed from the topic's own captures
+plus cross-references that grep the rest of the vault for files whose
+frontmatter `topics:` or `tags:` mention the slug. The deriver later
+inherits the same cross-reference structure and refreshes it on
+every capture instead of every wiki rebuild.
 
 Updates are splice-based: the generated body lives inside a bracketed
 regenerate region (`<!-- begin: generated --> ... <!-- end: generated -->`);
@@ -70,6 +80,20 @@ _END = "<!-- end: generated -->"
 # the vault root is an entity (member) bucket.
 _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
 
+# Within-bucket reserved subdirectories. A child folder of a known
+# bucket with one of these names is part of the bucket's own shape
+# (capture-type folder, correspondent index, rescue folder), not a
+# topic. The topic-discovery walker skips these names.
+_RESERVED_BUCKET_SUBDIRS = {
+    "notes", "bookmarks", "documents",
+    "correspondents", "_unfiled",
+}
+
+# Subdir names a topic folder must contain at least one of to be
+# discovered. The bucket-shape signal: a topic carries captures of
+# at least one shape.
+_CAPTURE_SUBDIRS = {"notes", "bookmarks", "documents"}
+
 
 def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -99,7 +123,9 @@ def _extract_citations(text: str) -> list[int]:
 async def run(llm: LLM, argv: list[str]) -> int:
     dry_run = "--dry-run" in argv
     home_only = "--home" in argv
-    single = _arg_value(argv, "--member")
+    topics_only = "--topics" in argv
+    single_member = _arg_value(argv, "--member")
+    single_topic = _arg_value(argv, "--topic")
 
     vault_dir = os.environ.get("MEMORY_VAULT_DIR", "")
     if not vault_dir:
@@ -129,26 +155,62 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # document frontmatter.
     roster = _member_slugs(vault, index, shared_bucket)
 
-    if single:
+    # Topic locations are discovered against the roster: a topic under
+    # a bucket whose owner the wiki doesn't generate a page for would
+    # be a dangling page, so we skip it here too. Reads from disk
+    # because topic membership isn't surfaced in the index.
+    topics = _topic_locations(
+        vault, shared_bucket=shared_bucket, member_slugs=roster,
+    )
+
+    # ── Single-surface flags ──────────────────────────────────────────
+    # `--topic camping` finds the (bucket, slug) match anywhere in the
+    # vault; ambiguity (both `family/camping/` and `arthur/camping/`)
+    # generates both pages -- they're genuinely separate topics.
+    if single_topic:
+        matched = [t for t in topics if t[1] == single_topic]
+        if not matched:
+            _err(f"no topic folder found with slug '{single_topic}'")
+            return 1
+        rc = 0
+        for bucket_prefix, topic_slug in matched:
+            sub_rc = await _generate_topic(
+                llm, bucket_prefix, topic_slug, index,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            )
+            rc = sub_rc if sub_rc else rc
+        return rc
+
+    if single_member:
         return await _generate_member(
-            llm, single, index, vault,
+            llm, single_member, index, vault,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
 
-    rc = await _generate_home(
-        llm, index, roster=roster,
-        shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-    )
-    if rc != 0 or home_only:
-        return rc
+    # ── Default loop ──────────────────────────────────────────────────
+    # `--topics` skips home + members; otherwise we cover home, every
+    # member, and every topic in turn.
+    if not topics_only:
+        rc = await _generate_home(
+            llm, index, roster=roster,
+            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+        )
+        if rc != 0 or home_only:
+            return rc
 
-    # Default scope: home + every member page. A member with no content
-    # is skipped (not an error) so one empty bucket doesn't sink the
-    # whole run. `_generate_member` returns 1 for skipped-empty, which
-    # we deliberately swallow here -- the overall run still succeeds.
-    for slug in roster:
-        await _generate_member(
-            llm, slug, index, vault,
+        # A member with no content is skipped (not an error) so one
+        # empty bucket doesn't sink the whole run. `_generate_member`
+        # returns 1 for skipped-empty, which we deliberately swallow
+        # here -- the overall run still succeeds.
+        for slug in roster:
+            await _generate_member(
+                llm, slug, index, vault,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            )
+
+    for bucket_prefix, topic_slug in topics:
+        await _generate_topic(
+            llm, bucket_prefix, topic_slug, index,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
     return 0
@@ -233,6 +295,63 @@ async def _generate_member(
     )
 
 
+async def _generate_topic(
+    llm: LLM, bucket_prefix: str, topic_slug: str, index: list[dict], *,
+    shared_bucket: str, lang: str, write: bool,
+) -> int:
+    """Compose one topic's `about.md` from its slice plus cross-refs.
+
+    Mirror of `_generate_member`. The topic's own captures drive the
+    `Recent Activity` section; cross-references (captures elsewhere
+    whose `topics:` or `tags:` mention the slug) drive a dedicated
+    section so the topic page collects the household's relevant
+    material even when it lives in another bucket.
+
+    `bucket_prefix` is the topic's owning bucket: `<shared_bucket>`
+    for a shared topic, `<localpart>` for a personal one. The scope
+    is derived from this (matches `<shared_bucket>` → shared; else
+    personal) — the prompt branches on scope so the page reads as
+    one person's interest or the household's, depending.
+    """
+
+    entries = _topic_entries(index, bucket_prefix, topic_slug)
+    if not entries:
+        _err(f"no content under {bucket_prefix}/{topic_slug}/ — skipping")
+        return 1
+
+    cross_refs = _topic_cross_refs(index, bucket_prefix, topic_slug)
+    scope = "shared" if bucket_prefix == shared_bucket else "personal"
+    display = topic_slug.replace("-", " ").title()
+
+    prompt = _build_topic_prompt(
+        display, topic_slug, scope, entries, cross_refs, lang=lang,
+    )
+    try:
+        page = (await llm.complete("overview", prompt)).strip()
+    except LLMUnavailableError as e:
+        _err(f"LLM unavailable: {e}")
+        return 1
+
+    # Topic about.md lives at `<bucket>/<slug>/about.md`; citations climb
+    # two levels (out of <slug>/, out of <bucket>/) to reach files in
+    # other buckets.
+    page_dir = f"{bucket_prefix}/{topic_slug}"
+    page = _with_references(page, entries + cross_refs, page_dir=page_dir)
+
+    if not write:
+        print(f"\n<!-- {page_dir}/about.md -->\n{page}")
+        return 0
+    return await _publish(
+        page,
+        target_path=f"{page_dir}/about.md",
+        shared_bucket=shared_bucket,
+        commit_msg=(
+            f"docs(memory): refresh {bucket_prefix}/{topic_slug} topic page"
+        ),
+        default_preamble=_topic_preamble(topic_slug, display, scope),
+    )
+
+
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
     """Frontmatter for a freshly-created member page.
 
@@ -296,8 +415,30 @@ def _index_vault(vault: Path) -> list[dict]:
             "rel": rel,
             "persons": [s for s, _ in slugged if s],
             "person_names": [n for s, n in slugged if s],
+            # Both taxonomy surfaces a capture can carry. Documents
+            # use `topics:` for the ontology classification; captures
+            # use `tags:` (the topic-room seed merges into the
+            # classifier's tag list). Cross-reference grep checks the
+            # union so a single slug finds material in either shape.
+            "topics": _norm_str_list(fm.get("topics")),
+            "tags": _norm_str_list(fm.get("tags")),
         })
     return out
+
+
+def _norm_str_list(value) -> list[str]:
+    """Coerce a frontmatter list-of-strings, filtering out non-strings.
+
+    `_parse_frontmatter` returns lists for `- foo` shaped blocks and
+    strings (or absent) for scalar values. Both shapes feed the
+    cross-reference grep; this normalises to a clean list[str].
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if not isinstance(value, list):
+        return []
+    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
 
 
 def _member_slugs(vault: Path, index: list[dict], shared_bucket: str) -> list[str]:
@@ -352,6 +493,112 @@ def _member_entries(index: list[dict], slug: str) -> list[dict]:
         e for e in index
         if e["rel"].startswith(prefix) or slug in e["persons"]
     ]
+
+
+# ── Topic folders ──────────────────────────────────────────────────────
+#
+# Topics nest inside the bucket that owns them: shared topics under
+# `<shared_bucket>/`, personal topics under `<member>/`. The wiki
+# command discovers them by walking each bucket and matching the
+# bucket-shape signal — a child folder that itself contains at least
+# one of `notes/`, `bookmarks/`, or `documents/` is a topic. Reserved
+# subdirectory names (the capture-type folders themselves, plus
+# `correspondents/` and `_unfiled/`) are skipped.
+
+def _topic_locations(
+    vault: Path, *, shared_bucket: str, member_slugs: list[str],
+) -> list[tuple[str, str]]:
+    """Every topic folder in the vault, as `(bucket_prefix, topic_slug)`.
+
+    Sorted output keeps render order stable across runs and makes
+    test assertions and human review easier.
+    """
+
+    out: list[tuple[str, str]] = []
+    candidate_buckets = [shared_bucket, *member_slugs]
+    for bucket in candidate_buckets:
+        bucket_path = vault / bucket
+        if not bucket_path.is_dir():
+            continue
+        for child in bucket_path.iterdir():
+            if not child.is_dir():
+                continue
+            if child.name in _RESERVED_BUCKET_SUBDIRS:
+                continue
+            if child.name.startswith("."):
+                continue
+            if not any((child / sub).is_dir() for sub in _CAPTURE_SUBDIRS):
+                # The folder lives inside a bucket but doesn't carry
+                # the capture-type shape -- treat it as user-shaped
+                # content, not a topic. Avoids false positives like
+                # `family/2023/` or hand-made staging folders.
+                continue
+            out.append((bucket, child.name))
+    return sorted(out)
+
+
+def _topic_entries(
+    index: list[dict], bucket_prefix: str, topic_slug: str,
+) -> list[dict]:
+    """The index slice that lives under this topic's folder.
+
+    The slash on the prefix (`<bucket>/<slug>/`) prevents an
+    accidental match between a short topic (`camp`) and a longer
+    sibling (`camping`)."""
+
+    prefix = f"{bucket_prefix}/{topic_slug}/"
+    return [e for e in index if e["rel"].startswith(prefix)]
+
+
+def _topic_cross_refs(
+    index: list[dict], bucket_prefix: str, topic_slug: str,
+) -> list[dict]:
+    """Captures elsewhere in the vault whose frontmatter mentions this
+    topic's slug.
+
+    The deriver-style grep, run cheaply over the in-memory index:
+    files OUTSIDE the topic's own folder whose `topics:` (the document
+    ontology) or `tags:` (the capture tag list, which carries the
+    topic-room seed) includes the slug. The union catches both shapes
+    so the same call finds material on either surface.
+
+    Skipping the topic's own folder avoids `about.md` citing every
+    file in the folder it already represents; the page's `Recent
+    Activity` section is the right place for that, not
+    `Cross-references`.
+    """
+
+    own_prefix = f"{bucket_prefix}/{topic_slug}/"
+    out: list[dict] = []
+    for entry in index:
+        rel = entry.get("rel") or ""
+        if rel.startswith(own_prefix):
+            continue
+        topics = entry.get("topics") or []
+        tags = entry.get("tags") or []
+        if topic_slug in topics or topic_slug in tags:
+            out.append(entry)
+    return out
+
+
+def _topic_preamble(slug: str, display: str, scope: str) -> str:
+    """First-creation frontmatter for a topic `about.md`.
+
+    Mirrors `_member_preamble`'s contract: laid down above the
+    bracketed regenerate region the first time the page is written.
+    Carries the topic's identity (type, slug, display name, scope)
+    so future deriver passes and hand-inspection know what they are
+    looking at without re-parsing the bucket path.
+    """
+
+    return "\n".join([
+        "---",
+        f"title: {display}",
+        f"slug: {slug}",
+        "type: topic",
+        f"scope: {scope}",
+        "---",
+    ])
 
 
 def _slugify_person(name: str) -> str:
@@ -693,6 +940,103 @@ Rules:
 - Respond in: {lang}.
 - Use ONLY what the sources and facts above support. Empty section → "(none on file)". Never invent.
 - Cite the source document as [N] inline. Multiple sources: [1, 3].
+- Keep entries dense and skimmable.
+- Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
+"""
+
+
+def _build_topic_prompt(
+    display: str, slug: str, scope: str,
+    entries: list[dict], cross_refs: list[dict], *, lang: str,
+) -> str:
+    """Prompt for one topic's `about.md` page.
+
+    Two surfaces feed the LLM: `entries` are captures filed under
+    the topic's own folder (the household's direct material on this
+    subject); `cross_refs` are captures elsewhere whose taxonomy
+    fields cited the slug (insurance docs that mention camping,
+    Marge's gear list that tagged camping, etc.). Both are numbered
+    `[N]` evidence; the LLM cites by number.
+
+    Scope branches the tone: a shared topic reads as the family's
+    common interest; a personal topic frames it as one person's. The
+    section layout is fixed so re-runs produce comparable output and
+    a future deriver can read the page back into structured form.
+    """
+
+    main_evidence = _format_evidence(entries)
+    if cross_refs:
+        # Numbering continues from main_evidence so a single citation
+        # space spans the whole prompt -- the LLM and the rendered
+        # references section stay aligned.
+        offset = len(entries)
+        cross_block_lines: list[str] = []
+        for n, s in enumerate(cross_refs, start=offset + 1):
+            meta_bits = [s["date"]] if s.get("date") else []
+            meta = " · ".join(meta_bits + [s.get("title") or "(untitled)"])
+            cross_block_lines.append(f"[{n}] {meta}")
+            cross_block_lines.append(
+                "    " + (s.get("summary") or "").replace("\n", "\n    "),
+            )
+            cross_block_lines.append("")
+        cross_block = "\n".join(cross_block_lines).rstrip()
+        cross_section = (
+            "\nThe household also has material on this topic filed elsewhere "
+            "(insurance docs, personal notes, other members' captures). "
+            "Treat these as cross-references — surface them in a "
+            "`## Cross-references` section, one bullet each, citing as "
+            f"`[N]`:\n\n{cross_block}\n"
+        )
+    else:
+        cross_section = (
+            "\n(No cross-references on file yet — when other captures "
+            "tag this topic, they will appear in a `## Cross-references` "
+            "section. Omit the section entirely for now.)\n"
+        )
+
+    if scope == "shared":
+        framing = (
+            f"This topic is a shared household interest. Frame the "
+            f"`## About` section as the family's collective material on "
+            f"{display.lower()} — what the household uses this topic for, "
+            f"what shows up in the captures."
+        )
+    else:
+        framing = (
+            f"This topic is a personal interest. Frame the `## About` "
+            f"section from the perspective of the one household member who "
+            f"keeps these notes — what they care about, what they're "
+            f"tracking on {display.lower()}."
+        )
+
+    return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. The page is the first thing someone sees when they open the topic's folder. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
+
+This page is about the topic: {display} (vault slug: {slug}, scope: {scope}).
+
+{framing}
+
+Captures filed directly under this topic (cite as [N] inline where a fact came from a specific capture):
+
+{main_evidence}
+{cross_section}
+Produce a markdown page with this EXACT structure and section order:
+
+# {display}
+> <one short line: what this topic is, in the household's voice — omit the blockquote if not derivable>
+
+## About
+One short paragraph: what this topic covers in the family's memory, what kinds of captures land here, what makes it worth revisiting. [N]
+
+## Recent Activity
+The most recent captures filed under this topic, newest first. One bullet each: `<date> — <what it was>`. [N]
+
+## Cross-references
+{"Captures filed in other buckets that mention this topic. One bullet each: `<date> — <what it was> [from <bucket>]`. [N]" if cross_refs else "(omit this section)"}
+
+Rules:
+- Respond in: {lang}.
+- Use ONLY what the sources above support. Empty section → "(none on file)". Never invent.
+- Cite the source capture as [N] inline. Multiple sources: [1, 3].
 - Keep entries dense and skimmable.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
 """
