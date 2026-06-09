@@ -565,36 +565,24 @@ class ArchivistBot(MicroBot):
                 )
 
     async def on_room_joined(self, room_id: str) -> None:
-        """Eager welcome on join. Falls through to the per-event path
-        when the room isn't fully synced yet.
+        """Post the per-room welcome.
 
-        At invite-accept time, `client.rooms[room_id]` is often empty
-        until nio's next sync picks up the room state. When that's the
-        case we skip here without recording state, so the per-event
-        handler can post the welcome with full context on the user's
-        first message. When the room IS already in `client.rooms`
-        (uncommon during invite, but routine on a restart sweep that
-        finds new rooms), we welcome eagerly so the user sees the
-        introduction the moment they open the room.
-
-        Either way the introduction lands before the user's first real
-        interaction with the bot -- the project rule's hard floor.
+        The framework's deferred-notification path guarantees room
+        state is populated when this fires; we don't need to poll
+        ourselves. The per-event path in `_on_text` / `_on_file`
+        remains the safety net for any edge case the deferred path
+        doesn't reach.
         """
 
         room = self._room_by_id(room_id)
-        if room is None or not getattr(room, "users", None):
-            logger.debug(
-                "[archivist] join welcome deferred for {}: room state "
-                "not yet synced; per-event path will handle it",
-                room_id,
-            )
+        if room is None:
             return
         ctx = self._room_context(room)
         try:
             await self._send_room_welcome_if_needed(room, ctx)
         except Exception as e:
             logger.warning(
-                "[archivist] eager welcome failed for {}: {}", room_id, e,
+                "[archivist] welcome on join failed for {}: {}", room_id, e,
             )
 
     # ── Documents-room routing ───────────────────────────────────────────

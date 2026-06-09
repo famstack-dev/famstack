@@ -62,10 +62,12 @@ from nio import (
     AsyncClient,
     AsyncClientConfig,
     InviteMemberEvent,
+    JoinResponse,
     LoginResponse,
     MegolmEvent,
     MessageDirection,
     RoomMessagesResponse,
+    SyncResponse,
 )
 
 from room_context import RoomContext, context_for
@@ -149,28 +151,41 @@ class MicroBot:
             logger.info("[{}] Keys uploaded: {}", self.name, type(resp).__name__)
 
         # ── Auto-accept invitations ──────────────────────────────────
+        # Two-stage hand-off so subclass `on_room_joined` sees a fully
+        # populated room: invite-accept queues the room id, and the
+        # sync-response callback below fires `on_room_joined` on the
+        # first sync that contains that room's state.
+        self._pending_room_joins: set[str] = set()
+
         async def on_invite(room, event):
             if isinstance(event, InviteMemberEvent) and event.state_key == self.user_id:
                 logger.info("[{}] Invited to {} by {}", self.name, room.room_id, event.sender)
                 resp = await self._client.join(room.room_id)
                 logger.info("[{}] Join result: {}", self.name, resp)
-                # Hand control to the subclass hook for room-join
-                # post-processing (typically a welcome message). At
-                # this moment `client.rooms[room.room_id]` may still
-                # be empty -- nio populates it on the next sync. The
-                # default hook is a no-op; subclasses are responsible
-                # for whatever degraded behaviour fits their UX (try
-                # the work now with partial state, defer to first
-                # event, or query Synapse directly).
+                if isinstance(resp, JoinResponse):
+                    self._pending_room_joins.add(room.room_id)
+
+        self._client.add_event_callback(on_invite, InviteMemberEvent)
+
+        async def on_sync_for_pending_joins(resp):
+            if not isinstance(resp, SyncResponse) or not self._pending_room_joins:
+                return
+            for room_id in list(self._pending_room_joins):
+                room = self._client.rooms.get(room_id)
+                if room is None or not getattr(room, "users", None):
+                    continue
+                self._pending_room_joins.discard(room_id)
                 try:
-                    await self.on_room_joined(room.room_id)
+                    await self.on_room_joined(room_id)
                 except Exception as e:
                     logger.warning(
                         "[{}] on_room_joined({}) failed: {}",
-                        self.name, room.room_id, e,
+                        self.name, room_id, e,
                     )
 
-        self._client.add_event_callback(on_invite, InviteMemberEvent)
+        self._client.add_response_callback(
+            on_sync_for_pending_joins, SyncResponse,
+        )
 
         # ── Initial sync ─────────────────────────────────────────────
         logger.info("[{}] Initial sync...", self.name)
@@ -611,25 +626,15 @@ class MicroBot:
         pass
 
     async def on_room_joined(self, room_id: str) -> None:
-        """Called after the bot auto-accepts an invite and ``join``
-        succeeds.
+        """Called once after the bot has joined a room AND its state
+        is populated by the first sync that includes it.
 
-        Hook for join-time behaviour like a per-room welcome message.
-        Default is a no-op so subclasses opt in explicitly.
-
-        Limitations the override must handle:
-
-          - At this moment ``self._client.rooms`` may not yet contain
-            ``room_id`` -- nio adds the room on the next sync, not
-            during the invite callback. Subclasses that need full
-            membership / canonical-alias state should either query
-            Synapse directly via ``client.room_get_state_event`` or
-            defer the work to a per-event path that runs once the
-            room is fully synced.
-          - The framework calls this from inside the sync loop. Heavy
-            work or recursive sync calls block delivery of other
-            events; keep the hook fast or schedule async follow-ups
-            from the body.
+        Hook for join-time behaviour like posting a welcome message.
+        Default is a no-op so subclasses opt in explicitly. Contract:
+        ``self._client.rooms[room_id]`` is guaranteed to exist and to
+        carry members + name when this fires. The framework wires
+        invite-accept to a sync-response callback to enforce that
+        contract so subclasses do not need to poll or defer.
         """
 
         pass
