@@ -206,6 +206,88 @@ class TestCaptureText:
         assert out.status == "empty"
 
 
+class TestCaptureVoiceBatch:
+    """The ( ... ) batch flow: N voice memos arrive, each gets transcribed
+    on its way in (with LLM cleanup if available), then `)` combines them
+    into one note via capture_voice_batch."""
+
+    @pytest.mark.asyncio
+    async def test_concatenates_transcripts_with_paragraph_breaks(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_voice_batch(
+            transcripts=[
+                "First memo about the boiler.",
+                "Second memo about Bart's prescription.",
+                "Third memo with shopping list.",
+            ],
+            primary_mxc="mxc://server/first",
+            sender_mxid="@homer:s",
+        )
+        assert out.status == "captured"
+        body = mirror.captures[0]["body_text"]
+        assert "First memo about the boiler." in body
+        assert "Second memo about Bart's prescription." in body
+        assert "Third memo with shopping list." in body
+        # Paragraph breaks between memos so the LLM and the human reader
+        # both see them as distinct thoughts.
+        assert "boiler.\n\nSecond" in body
+
+    @pytest.mark.asyncio
+    async def test_empty_transcripts_returns_empty_status(self):
+        """A `(` ... `)` with no voice memos (or all silent ones) drops
+        out as empty -- the orchestrator silently no-ops, matching the
+        existing scan_cancelled semantics for empty PDF batches."""
+        pipe = _pipeline(mirror=FakeMirror())
+        out = await pipe.capture_voice_batch(
+            transcripts=[], primary_mxc=None, sender_mxid="@homer:s",
+        )
+        assert out.status == "empty"
+
+    @pytest.mark.asyncio
+    async def test_blank_transcripts_filtered(self):
+        """Empty / whitespace-only transcripts are dropped silently so
+        one silent memo in the middle of a batch doesn't add a hole
+        of blank lines to the combined body."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_voice_batch(
+            transcripts=["real one", "   ", "", "another real one"],
+            primary_mxc="mxc://server/first",
+            sender_mxid="@homer:s",
+        )
+        assert out.status == "captured"
+        body = mirror.captures[0]["body_text"]
+        assert body == "real one\n\nanother real one"
+
+    @pytest.mark.asyncio
+    async def test_primary_mxc_threads_through_as_source_uri(self):
+        """The first memo's mxc becomes the vault note's link -- the
+        wiki entry points back to the start of the conversation."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_voice_batch(
+            transcripts=["just one"],
+            primary_mxc="mxc://server/start-of-batch",
+            sender_mxid="@homer:s",
+        )
+        assert mirror.captures[0]["source_uri"] == "mxc://server/start-of-batch"
+        assert out.display_link == "mxc://server/start-of-batch"
+
+    @pytest.mark.asyncio
+    async def test_outcome_carries_transcript_for_reply_echo(self):
+        """The mime=audio/ogg on the synthetic SourceContent triggers
+        the same transcript-in-reply behaviour single-memo captures
+        get -- so the sender sees the combined text quoted back."""
+        pipe = _pipeline(mirror=FakeMirror())
+        out = await pipe.capture_voice_batch(
+            transcripts=["one", "two"],
+            primary_mxc="mxc://server/x",
+            sender_mxid="@homer:s",
+        )
+        assert out.transcript == "one\n\ntwo"
+
+
 class TestTagList:
     """`_tag_list` mixes the classifier's free-form tags with a `Person: X`
     tag per attributed person, normalising types and whitespace."""

@@ -61,7 +61,12 @@ from pipeline import (
     PaperlessDuplicateError,
 )
 from stack import resolve_model
-from stack.ai.client import LLMUnavailableError, ModelCapabilities, Transcriber
+from stack.ai.client import (
+    LLMError,
+    LLMUnavailableError,
+    ModelCapabilities,
+    Transcriber,
+)
 
 # Make sibling stacklets importable. In the bot-runner container,
 # `/stacklets/` is mounted read-only and holds all stacklets; locally
@@ -974,11 +979,20 @@ class ArchivistBot(MicroBot):
         sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
         reply_to = event.event_id
 
-        # Multi-page scan mode
+        # Multi-page scan / multi-message batch mode. PDFs and images
+        # take the existing page-accumulator path; voice memos take the
+        # transcription-and-accumulate path so a single `(` ... `)`
+        # session can collect either kind (or both, filed as separate
+        # captures on close).
         if event.sender in self._scan_sessions:
-            await self._handle_scan_page(
-                room.room_id, event, url, raw_filename, caption,
-            )
+            if msgtype == "m.audio":
+                await self._handle_voice_batch_message(
+                    room.room_id, event, url, raw_filename,
+                )
+            else:
+                await self._handle_scan_page(
+                    room.room_id, event, url, raw_filename, caption,
+                )
             return
 
         file_data = await self._download_media(url)
@@ -1130,7 +1144,8 @@ class ArchivistBot(MicroBot):
         elif (begin := _split_scan_command(query, SCAN_BEGIN))[0]:
             sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
             self._scan_sessions[event.sender] = {
-                "files": [], "room_id": room.room_id, "caption": begin[1],
+                "files": [], "voice_inputs": [],
+                "room_id": room.room_id, "caption": begin[1],
             }
             await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
 
@@ -1221,48 +1236,147 @@ class ArchivistBot(MicroBot):
         page_num = len(session["files"])
         await self._send(room_id, self.t("page_received", num=page_num), reply_to)
 
+    async def _handle_voice_batch_message(
+        self, room_id: str, event, url: str, raw_filename: str,
+    ):
+        """Transcribe a voice memo and stash it on the open batch session.
+
+        Mirrors _handle_scan_page: download, normalise input, append to
+        the session, ack the count. The transcript is computed eagerly
+        (with the LLM cleanup pass) so by the time `)` arrives we just
+        concatenate ready text -- no extra round-trip on close.
+        """
+        reply_to = event.event_id
+        if self._transcriber is None:
+            await self._send(
+                room_id, self.t("scan_voice_no_transcriber"), reply_to,
+            )
+            return
+        try:
+            audio = await self._download_media(url)
+        except Exception as e:
+            await self._send(
+                room_id, self.t("scan_voice_failed", error=str(e)), reply_to,
+            )
+            return
+        if not audio:
+            await self._send(
+                room_id, self.t("scan_voice_failed_matrix"), reply_to,
+            )
+            return
+
+        cleanup_llm = self._classifier.llm if self._classifier is not None else None
+        try:
+            transcript = await self._transcriber.transcribe(
+                audio, filename=raw_filename or "voice.ogg",
+                cleanup_with=cleanup_llm,
+            )
+        except LLMError as e:
+            logger.warning("[archivist] batch voice transcribe failed: {}", e)
+            await self._send(
+                room_id, self.t("scan_voice_failed", error=str(e)), reply_to,
+            )
+            return
+
+        if not transcript.strip():
+            await self._send(room_id, self.t("scan_voice_empty"), reply_to)
+            return
+
+        session = self._scan_sessions[event.sender]
+        session["voice_inputs"].append({
+            "transcript": transcript,
+            "mxc": url,
+            "event_id": event.event_id,
+        })
+        n = len(session["voice_inputs"])
+        await self._send(room_id, self.t("scan_voice_received", num=n), reply_to)
+
     async def _handle_scan_complete(
         self, room_id: str, sender: str, reply_to: str | None = None,
         *, date_filed: str | None = None,
     ):
         session = self._scan_sessions.pop(sender)
         files = session["files"]
+        voice_inputs = session.get("voice_inputs") or []
         caption = session.get("caption", "").strip()
         sender_name = sender.split(":")[0].replace("@", "").capitalize()
 
-        if not files:
+        # Nothing accumulated -- the user opened a session and closed it
+        # without sending anything. Treat as cancelled, same as today.
+        if not files and not voice_inputs:
             await self._send(room_id, self.t("scan_cancelled"), reply_to)
             return
 
-        if len(files) == 1:
-            filename, file_data = files[0]
-            display_name = _clean_filename(filename)
-            await self._send(room_id, self.t("scan_complete_single"), reply_to)
-            await self._process_document(
-                room_id, filename, display_name, file_data, reply_to,
-                date_filed=date_filed,
-                submitter_mxid=sender,
-                user_hint=caption or None,
+        # Files (PDFs / images) take the existing PDF combine path. A
+        # mixed batch files both: the PDF as a document and the voice
+        # memos as a separate note below, since the vault data model
+        # has one body per capture.
+        if files:
+            if len(files) == 1:
+                filename, file_data = files[0]
+                display_name = _clean_filename(filename)
+                await self._send(
+                    room_id, self.t("scan_complete_single"), reply_to,
+                )
+                await self._process_document(
+                    room_id, filename, display_name, file_data, reply_to,
+                    date_filed=date_filed,
+                    submitter_mxid=sender,
+                    user_hint=caption or None,
+                )
+            else:
+                page_count = len(files)
+                await self._send(
+                    room_id,
+                    self.t("scan_complete_multi", count=page_count),
+                    reply_to,
+                )
+                try:
+                    pdf_data = _combine_images_to_pdf(files)
+                except Exception as e:
+                    await self._send(
+                        room_id,
+                        self.t("scan_combine_failed", error=str(e)),
+                        reply_to,
+                    )
+                    return
+                filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
+                display_name = f"scan ({page_count} pages)"
+                await self._process_document(
+                    room_id, filename, display_name, pdf_data, reply_to,
+                    date_filed=date_filed,
+                    user_hint=caption or None,
+                    submitter_mxid=sender,
+                )
+
+        if voice_inputs:
+            await self._handle_voice_batch_complete(
+                room_id, sender, voice_inputs, reply_to,
             )
-            return
 
-        page_count = len(files)
-        await self._send(room_id, self.t("scan_complete_multi", count=page_count), reply_to)
+    async def _handle_voice_batch_complete(
+        self, room_id: str, sender: str, voice_inputs: list[dict],
+        reply_to: str | None,
+    ):
+        """File the accumulated voice memos as one combined note.
 
-        try:
-            pdf_data = _combine_images_to_pdf(files)
-        except Exception as e:
-            await self._send(room_id, self.t("scan_combine_failed", error=str(e)), reply_to)
-            return
-
-        filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
-        display_name = f"scan ({page_count} pages)"
-        await self._process_document(
-            room_id, filename, display_name, pdf_data, reply_to,
-            date_filed=date_filed,
-            user_hint=caption or None,
-            submitter_mxid=sender,
+        Each input already carries a cleaned transcript (the LLM pass
+        ran at message time), so this just hands the list to the
+        capture pipeline and renders the resulting reply. We post a
+        progress line first because the classify call is the slowest
+        step and the sender deserves to know we're working.
+        """
+        n = len(voice_inputs)
+        await self._send(
+            room_id, self.t("scan_voice_complete", count=n), reply_to,
         )
+        outcome = await self._capture.capture_voice_batch(
+            transcripts=[v["transcript"] for v in voice_inputs],
+            primary_mxc=voice_inputs[0].get("mxc"),
+            sender_mxid=sender,
+            capture_id=voice_inputs[0].get("event_id"),
+        )
+        await self._reply_for_capture(room_id, outcome, reply_to)
 
     # ── URL capture (knowledge rooms, DMs, per-person notes rooms) ───────
     #
