@@ -1461,7 +1461,16 @@ class ArchivistBot(MicroBot):
         if o.status == "empty":
             return
         if o.status == "extract_failed":
-            await self._send(room_id, self.t("capture_failed"), reply_to)
+            # The reason qualifies what failed so the family doesn't hear
+            # "couldn't read that link" after sending a voice memo. Falls
+            # back to the original URL-shaped message for legacy callers.
+            failure_keys = {
+                "url": "capture_failed",
+                "transcription": "capture_failed_transcription",
+                "binary": "capture_failed_binary",
+            }
+            key = failure_keys.get(o.failure_reason or "", "capture_failed")
+            await self._send(room_id, self.t(key), reply_to)
             return
         if o.status == "no_mirror":
             await self._send(room_id, self.t("capture_no_mirror"), reply_to)

@@ -169,6 +169,9 @@ class TestCaptureUrl:
         notifier = FakeNotifier()
         out = await pipe.capture_url(url="http://x", sender_mxid="@homer:s", notifier=notifier)
         assert out.status == "extract_failed"
+        # URL-shaped failure -> the reply layer renders the link error
+        # message (`Couldn't read that link...`).
+        assert out.failure_reason == "url"
         # Fetching was still announced before the failed extract.
         assert notifier.statuses[0][0] == "capture_fetching"
 
@@ -534,6 +537,24 @@ class TestCaptureBinaryAudioRouting:
             sender_mxid="@homer:s",
         )
         assert out.status == "extract_failed"
+        # The reason qualifies the failure so the reply layer can render
+        # a voice-shaped message ('Couldn't transcribe...') rather than
+        # the URL-shaped message ('Couldn't read that link...').
+        assert out.failure_reason == "transcription"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_binary_returns_binary_failure_reason(self):
+        """A non-audio mime that the binary path can't extract (e.g.
+        an unsupported video format) returns failure_reason='binary' so
+        the user gets the file-shaped error message, not the link one."""
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=FakeTranscriber())
+        out = await pipe.capture_binary(
+            file_data=b"random-bytes", mime="video/mp4",
+            filename="clip.mp4", source_uri="mxc://server/v",
+            sender_mxid="@homer:s",
+        )
+        assert out.status == "extract_failed"
+        assert out.failure_reason == "binary"
 
     @pytest.mark.asyncio
     async def test_non_audio_mime_bypasses_transcriber(self):

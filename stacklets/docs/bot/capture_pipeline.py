@@ -81,6 +81,13 @@ class CaptureOutcome:
     renderer can quote what was heard back to the sender -- the only
     way a user can catch a bad transcription without opening the vault.
     Empty for every other capture shape (PDFs, images, URLs, notes).
+
+    ``failure_reason`` qualifies an ``extract_failed`` status with
+    where the failure originated: ``url`` (article body didn't extract),
+    ``transcription`` (whisper or the cleanup LLM gave up on a voice
+    memo), or ``binary`` (PDF/image couldn't be read). The reply layer
+    renders a different message per reason so the user isn't told
+    "couldn't read that link" when they sent a voice memo.
     """
 
     status: str
@@ -90,6 +97,7 @@ class CaptureOutcome:
     vault_path: str | None = None
     envelope: dict | None = None
     transcript: str | None = None
+    failure_reason: str | None = None
 
 
 class CapturePipeline:
@@ -143,7 +151,9 @@ class CapturePipeline:
         await notifier.status("capture_fetching", url=url)
         source = await self._url_extractor.extract(url)
         if source is None:
-            return CaptureOutcome(status="extract_failed")
+            return CaptureOutcome(
+                status="extract_failed", failure_reason="url",
+            )
         return await self._publish(
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
@@ -227,7 +237,8 @@ class CapturePipeline:
         wiki entry links back to the original binary -- we don't
         re-store the bytes; Matrix already has them.
         """
-        if mime and mime.startswith(AUDIO_MIME_PREFIX):
+        is_audio = bool(mime and mime.startswith(AUDIO_MIME_PREFIX))
+        if is_audio:
             source, images, kind = await self._source_from_audio(
                 file_data=file_data, mime=mime, filename=filename,
                 source_uri=source_uri,
@@ -238,7 +249,10 @@ class CapturePipeline:
                 source_uri=source_uri,
             )
         if source is None:
-            return CaptureOutcome(status="extract_failed")
+            return CaptureOutcome(
+                status="extract_failed",
+                failure_reason="transcription" if is_audio else "binary",
+            )
         return await self._publish(
             source=source, kind=kind, sender_mxid=sender_mxid,
             display_link=display_link or source_uri or filename,
