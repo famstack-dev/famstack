@@ -167,6 +167,45 @@ class CapturePipeline:
             capture_id=capture_id,
         )
 
+    async def capture_voice_batch(
+        self, *,
+        transcripts: list[str],
+        primary_mxc: str | None,
+        sender_mxid: str,
+        capture_id: str | None = None,
+    ) -> CaptureOutcome:
+        """File N voice memos as a single combined note.
+
+        Used by the `( ... )` batch flow: each voice memo has already
+        been transcribed (and LLM-cleaned) on arrival, so this just
+        concatenates them with paragraph breaks and ships the result
+        through the standard publish path. ``primary_mxc`` is the
+        first memo's media URL -- the vault note links back to the
+        start of the conversation; other memos stay discoverable via
+        chat scrollback.
+
+        Marking the SourceContent as ``audio/ogg`` makes ``_publish``
+        echo the combined transcript in the capture reply, same as
+        single-memo captures, so the sender sees the whole batch's
+        text quoted back to them.
+        """
+        bodies = [t.strip() for t in transcripts if t and t.strip()]
+        if not bodies:
+            return CaptureOutcome(status="empty")
+        combined = "\n\n".join(bodies)
+        source = SourceContent(
+            text=combined,
+            mime="audio/ogg",
+            title_hint=None,
+            source_uri=primary_mxc,
+        )
+        return await self._publish(
+            source=source, kind="note", sender_mxid=sender_mxid,
+            display_link=primary_mxc or "(voice batch)",
+            actor=sender_mxid,
+            capture_id=capture_id,
+        )
+
     async def capture_binary(
         self, *,
         file_data: bytes,
