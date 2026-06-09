@@ -19,28 +19,32 @@ A Matrix room whose name starts with `Thema:` or `Topic:` is a topic room. The a
 
 | Property | Guarantee |
 |---|---|
-| **Routing** | Captures in `#Thema: Camping` always file under `camping/`, regardless of the classifier's opinion. |
-| **Tag invariant** | Every file in `camping/` has `camping` in its frontmatter `topics:`. The classifier may add tags; it can never remove this one. |
+| **Routing** | Captures in `#Thema: Camping` always file under `family/camping/` (shared) or `arthur/camping/` (personal), regardless of the classifier's opinion. |
+| **Tag invariant** | Every file in the topic folder has `camping` in its frontmatter `topics:`. The classifier may add tags; it can never remove this one. |
 | **Discoverability** | The room list is the topic list. Family members find topics by browsing joined rooms — no separate index UI. |
 
 Topic rooms compose with the existing capture pipeline. The classifier, mirror, search, deriver, ontology-canonicalizer — none of them special-case topic folders. They see a bucket like any other.
+
+**Topics always nest inside the bucket that owns them.** Shared topics live under the household's configured shared bucket (`family/<slug>/`, or `office/<slug>/` for deskstack); personal topics live under the originating person's bucket (`arthur/<slug>/`). The top level of the vault stays pure access-scope: one folder per privacy boundary, never a topic folder. This makes a default sender-scoped search (`["family/", "<localpart>/"]`) automatically include shared-topic content — a family member asking "what did we note about camping?" in #documents finds it without knowing the topic room exists.
 
 ## Naming convention
 
 | Room name | Slug | Bucket path (shared) | Bucket path (personal) | Guaranteed tag |
 |---|---|---|---|---|
-| `Thema: Camping` | `camping` | `camping/` | `arthur/camping/` | `camping` |
-| `Topic: Photography` | `photography` | `photography/` | `arthur/photography/` | `photography` |
-| `Thema: Van Life` | `van-life` | `van-life/` | `arthur/van-life/` | `van-life` |
-| `Topic: 3D printing` | `3d-printing` | `3d-printing/` | `arthur/3d-printing/` | `3d-printing` |
-| `Thema: Café Hopping` | `cafe-hopping` | `cafe-hopping/` | `arthur/cafe-hopping/` | `cafe-hopping` |
+| `Thema: Camping` | `camping` | `family/camping/` | `arthur/camping/` | `camping` |
+| `Topic: Photography` | `photography` | `family/photography/` | `arthur/photography/` | `photography` |
+| `Thema: Van Life` | `van-life` | `family/van-life/` | `arthur/van-life/` | `van-life` |
+| `Topic: 3D printing` | `3d-printing` | `family/3d-printing/` | `arthur/3d-printing/` | `3d-printing` |
+| `Thema: Café Hopping` | `cafe-hopping` | `family/cafe-hopping/` | `arthur/cafe-hopping/` | `cafe-hopping` |
+
+(Shared-bucket paths show `family/` because that is the default `[core] shared_bucket`. A deskstack household with `shared_bucket = "office"` gets `office/<slug>/`.)
 
 ### Parser rules
 
 - **Prefix recognition.** Match `^\s*(thema|topic)\s*:\s*` case-insensitively. Both languages always accepted, regardless of `[core] language`.
 - **Slug derivation.** NFD-normalize, strip combining marks (`Vélo` → `velo`, `Café` → `cafe`), lowercase, replace runs of non-alphanumeric with `-`, strip leading and trailing `-`. Maximum 40 characters; collisions at the tail receive a numeric suffix during bootstrap.
 - **Empty after prefix.** `Thema:` with no body fails the parser — not a topic room. The archivist treats it as a regular room.
-- **Reserved slugs.** Refused at bootstrap: any existing top-level bucket name, the configured `[core] shared_bucket`, any Matrix-localpart that resolves to a known family member, plus the literal strings `meta`, `wiki`, `archive`, `_unfiled`.
+- **Reserved slugs.** Refused at bootstrap: within-bucket reserved directory names. The mirror writes `notes/`, `bookmarks/`, `documents/` per bucket and the shared bucket also carries `correspondents/` and `_unfiled/`; the derived per-bucket landing page is `about.md`. The reserved set is therefore `{notes, bookmarks, documents, correspondents, _unfiled, about}`. Top-level vault names (`family`, `arthur`, `marge`, `meta`, `wiki`, `archive`) no longer need to be reserved because topics never live at the top level.
 
 ### Slug stability
 
@@ -55,7 +59,7 @@ The archivist writes `dev.famstack.capture` room state on first detection and re
   "type": "dev.famstack.capture",
   "content": {
     "kind": "topic",
-    "bucket": "camping",
+    "bucket": "family/camping",
     "slug": "camping",
     "display_name": "Camping",
     "default_topics": ["camping"],
@@ -70,7 +74,7 @@ The archivist writes `dev.famstack.capture` room state on first detection and re
 | Field | Purpose |
 |---|---|
 | `kind` | `"topic"` distinguishes from existing room kinds (`"capture"`, `"document_drop"`). Future kinds may follow. |
-| `bucket` | Top-level path in the vault. Shared topic: the slug. Personal topic: `<sender_localpart>/<slug>`. |
+| `bucket` | Vault path. Shared topic: `<shared_bucket>/<slug>`. Personal topic: `<sender_localpart>/<slug>`. Topics never live at the vault root. |
 | `slug` | The tag value applied to every capture from this room. |
 | `display_name` | Room name with prefix stripped. Used in `about.md` and CLI listings. |
 | `default_topics` | List with one element (the slug). Future-proofed for topics that might seed multiple tags. |
@@ -88,7 +92,7 @@ When the archivist joins (or finds itself already in) a room whose name matches 
 1. Parse the name. Derive the candidate slug.
 2. Look up existing `dev.famstack.capture` room state. If present and `kind == "topic"`, the room is already bootstrapped; skip to step 7.
 3. Check the candidate slug against reserved names and existing top-level vault folders. On collision: post a one-line correction prompt asking for rename. Do not bootstrap.
-4. Detect scope by member count at the moment of bootstrap. One human (the sender, plus the archivist) → `personal`, bucket = `<sender_localpart>/<slug>/`. Two or more humans → `shared`, bucket = `<slug>/`.
+4. Detect scope by member count at the moment of bootstrap. One human (the sender, plus the archivist) → `personal`, bucket = `<sender_localpart>/<slug>/`. Two or more humans → `shared`, bucket = `<shared_bucket>/<slug>/`.
 5. Write the room state per the schema above.
 6. Create the topic folder in the memory repo with the scaffold (see §about.md scaffold).
 7. Post a one-line confirmation: `📁 Topic '<display>' is set up. Send notes, voice memos, links, or scans; everything files under <bucket>/.`
@@ -124,17 +128,17 @@ A personal topic (`arthur/camping/`) receives a second human member. The archivi
 1. Debounces ~10 seconds, in case the invite comes in a batch.
 2. Verifies the new joiner is a human (a known Matrix user, not another bot).
 3. Re-detects scope: `personal` → `shared`.
-4. `git mv arthur/camping/ camping/` (full history preserved through the rename).
-5. Rewrites `bucket: camping` and `scope: shared` in the room state.
-6. Appends to the auto-region of `about.md`: `promoted from arthur/camping/ on 2026-06-09 (sabrina:home joined)`.
-7. Posts: `📁 Topic promoted to shared. Files now live under camping/.`
+4. `git mv arthur/camping/ family/camping/` (full history preserved through the rename — bucket-to-bucket move within the vault).
+5. Rewrites `bucket: family/camping` and `scope: shared` in the room state.
+6. The wiki command regenerates `family/camping/about.md` on its next run with the new scope and participant list.
+7. Posts: `📁 Topic promoted to shared. Files now live under family/camping/.`
 8. On the next deriver pass, cross-references in other buckets' indexes are rewritten to point at the new path.
 
 ### Personal → shared promotion: edge cases
 
 | Case | Behavior |
 |---|---|
-| Promotion would collide with existing shared topic (`camping/` already exists) | Refuse promotion. Post a correction prompt. Leave the personal folder where it is. The room remains personal-scoped even though it has multiple humans (a known degraded state, visible in `stack memory topic list`). |
+| Promotion would collide with existing shared topic (`family/camping/` already exists) | Refuse promotion. Post a correction prompt. Leave the personal folder where it is. The room remains personal-scoped even though it has multiple humans (a known degraded state, visible in `stack memory topic list`). |
 | Second human leaves during the debounce window | Cancel promotion. Topic stays personal. |
 | Multiple new humans join in one batch | One promotion, not many. The debounce coalesces. |
 
@@ -155,31 +159,44 @@ Reverse (shared → personal) is **not automatic**. Once shared, the topic stays
 
 ## File layout
 
-A topic folder follows the same convention as personal buckets, with `about.md` added at the root:
+Topic folders nest inside the bucket that owns them — shared under `<shared_bucket>/`, personal under `<localpart>/`. The top level of the vault stays purely access-scope (one folder per privacy boundary), with no thematic folders at all.
 
 ```
 memory.git
-├── family/                   (existing shared bucket)
-├── arthur/, marge/           (existing personal buckets)
-├── camping/                  (shared topic, bootstrapped from #Thema: Camping)
-│   ├── about.md              (hand-edited + bracketed auto-region)
-│   ├── notes/
-│   │   ├── YYYY/MM/<slug>-<hash>.md
-│   │   └── _unfiled/...
-│   ├── bookmarks/
-│   │   ├── YYYY/MM/<slug>-<hash>.md
-│   │   └── _unfiled/...
-│   └── documents/            (when documents are captured in the topic room)
-│       └── YYYY/MM/...
-└── arthur/
-    └── camping/              (personal topic variant, nested under personal bucket)
-        ├── about.md
-        ├── notes/, bookmarks/, documents/
+├── family/                       (shared bucket — institutional + thematic)
+│   ├── documents/                (existing institutional artifacts)
+│   ├── correspondents/
+│   ├── _unfiled/
+│   ├── camping/                  (shared topic, bootstrapped from #Thema: Camping)
+│   │   ├── about.md              (derived by the wiki command)
+│   │   ├── notes/
+│   │   │   ├── YYYY/MM/<slug>-<hash>.md
+│   │   │   └── _unfiled/...
+│   │   ├── bookmarks/
+│   │   │   ├── YYYY/MM/<slug>-<hash>.md
+│   │   │   └── _unfiled/...
+│   │   └── documents/            (when documents are captured in the topic room)
+│   │       └── YYYY/MM/...
+│   └── photography/              (another shared topic)
+│       └── ...
+├── arthur/                       (personal bucket)
+│   ├── notes/, bookmarks/, documents/, _unfiled/
+│   └── gravel/                   (personal topic, nested under personal bucket)
+│       ├── about.md
+│       ├── notes/, bookmarks/, documents/
+└── marge/
+    └── ...
 ```
 
-Personal topics nest *under* the existing personal bucket, not at the top level. This keeps the top level a clean privacy gate: top-level reads = explicit access scope. The promotion handler is the only path that creates a top-level topic folder.
+Why this shape:
 
-### about.md scaffold
+- **One rule for topic placement:** topics live inside the bucket whose access scope they share. Personal topics under `<localpart>/`; shared topics under `<shared_bucket>/`. No special case for the top level.
+- **Default searches naturally include shared topics.** A sender-scoped search returns `["family/", "<localpart>/"]`. Files under `family/camping/...` are picked up automatically — a family member asking about camping in #documents finds the topic content without knowing the room exists.
+- **Promotion (Step 5) is a bucket-to-bucket move.** `git mv arthur/camping/ family/camping/` — both sides of the move are inside an owning bucket. The top level never changes.
+
+### about.md is a derived view
+
+Each topic folder has an `about.md` at its root, generated by the existing `stack memory wiki` command — the same rebuild path that already produces `family/about.md` and the per-member about pages. The bootstrap writes zero files; the folder appears the first time a capture lands; the about page is filled in on the next wiki rebuild.
 
 ```markdown
 ---
@@ -187,44 +204,27 @@ type: topic
 slug: camping
 display_name: Camping
 scope: shared
-status: active
 participants: [arthur, sabrina]
-created: 2026-06-09
-created_by: arthur:home
-language: de
+captures: 47
+last_capture: 2026-06-08
 ---
 
 # Camping
 
-<!-- begin: user-edited -->
+A shared topic in the family bucket. 47 captures across notes, bookmarks, and documents.
 
-(Write what this topic is about, the packing list, lessons learned, links
-to gear reviews, anything you want to find again. This region survives
-every regeneration.)
+## Recent activity
 
-<!-- end: user-edited -->
-
-## Activity
-
-<!-- begin: generated -->
-
-(Timeline of captures filed under this topic, regenerated by the wiki
-engine on each deriver pass. Most recent first.)
-
-<!-- end: generated -->
+- 2026-06-08 — Voice memo: roof box arrangement [[family/camping/notes/2026/06/roof-box-arrangement-a3f1.md]]
+- 2026-06-02 — Bookmark: best gravel routes in Tuscany [[family/camping/bookmarks/2026/06/gravel-tuscany-d7b2.md]]
+- ...
 
 ## Cross-references
 
-<!-- begin: generated -->
-
-(Pointers to captures in other buckets that the deriver identified as
-relevant to this topic. Source files stay in their original buckets;
-this section curates them.)
-
-<!-- end: generated -->
+(Pointers to captures in other buckets the deriver identified as relevant. Filled in once the deriver lands.)
 ```
 
-The bracketed-region pattern is the one already proven in correspondent pages (see [family-memory.md](family-memory.md) §Mirror). User edits inside `<!-- begin: user-edited -->` survive every deriver pass. Auto-regions get fully rewritten on each pass.
+Why fully derived: the household does not edit the wiki by hand today — there is no proper editor, and pretending the system supports hand-edits adds complexity for no user value. When an editor surface lands later, hand-editable regions can be reintroduced. For now, every page in the vault that is not a capture is a derived view over the captures plus the room state.
 
 ## The tag invariant
 
@@ -278,7 +278,7 @@ async def test_seed_deduplicates_when_classifier_repeats_it():
 The retrieval test ("find anything we noted about camping") becomes a deterministic grep:
 
 ```
-grep -l 'topics:.*camping' camping/**/*.md
+grep -lr 'topics:.*camping' family/camping/ arthur/camping/ marge/camping/
 ```
 
 Plus the deriver's cross-reference index. Guaranteed coverage.
@@ -287,12 +287,12 @@ Plus the deriver's cross-reference index. Guaranteed coverage.
 
 | Surface | Scope behavior |
 |---|---|
-| `?` in `#Thema: Camping` | Search auto-scopes to `camping/` plus the topic's cross-references in `about.md`. |
-| `?` in `#documents` or `#assistant` | Global search, same as today. |
+| `?` in `#Thema: Camping` | Search auto-scopes to `family/camping/` (or `arthur/camping/`) plus the topic's cross-references in `about.md`. |
+| `?` in `#documents` or `#assistant` | Default sender-scoped search (`family/`, `<localpart>/`) — naturally includes shared topic content. |
 | `stack memory ask "..." --topic camping` | Explicit topic-scoped CLI search. |
 | `stack memory search "..." --topic camping` | Topic-scoped grep. |
 | `stack memory ask "..." --global` (from a topic room) | Override the auto-scope; search the whole vault. |
-| Forgejo / Obsidian | Open `camping/about.md` directly to browse. |
+| Forgejo / Obsidian | Open `family/camping/about.md` directly to browse. |
 
 In-room scoping is the lightest UX: family members do not learn any flags. They ask in the room they are already in; the room is the implicit `--topic`.
 
@@ -313,7 +313,7 @@ The deriver (forward reference: [knowledge-architecture.md](knowledge-architectu
 
 The source file never moves. The ADAC camping-trailer policy belongs in `family/` (it is a household insurance document); camping just receives the citation. Captures live in the bucket they were posted to; topics are views over the vault, not containers that own data.
 
-The cross-reference pass is deterministic — a grep for `topics:.*<slug>` across non-topic buckets. No LLM call required for the citation pass. (An LLM pass may augment the cross-reference entry with a one-line summary of *why* the source is relevant; deferred to the deriver work.)
+The cross-reference pass is deterministic — a grep for `topics:.*<slug>` across the vault, excluding the topic's own bucket (no point citing yourself). For shared topic `family/camping/`, that means scanning `family/documents/`, `family/correspondents/`, every personal bucket, and every *other* shared topic under `family/`. The intra-`family/` scan is what surfaces an ADAC camping-trailer addendum filed in #documents. No LLM call required. (An LLM pass may augment the cross-reference entry with a one-line summary of *why* the source is relevant; deferred to the deriver work.)
 
 ## CLI surface
 
@@ -331,30 +331,29 @@ stack memory topic archive <slug>              Manual archive (sets status, no M
 
 | Module | Status | Purpose |
 |---|---|---|
-| `stacklets/docs/bot/topic_rooms.py` | new | Pure parser: `parse_topic_name()`, `derive_slug()`, `is_reserved()`, `room_state_from_name()`. All unit-testable; no I/O. |
-| `stacklets/docs/bot/archivist.py` | changed | On-join handler: detect topic room, bootstrap if needed, write room state. Read room state on every capture and pass routing + seed into the pipeline. |
-| `stacklets/docs/bot/capture_pipeline.py` | changed | Add `seed_topics` parameter to `capture_text`, `capture_url`, `capture_voice`, `capture_voice_batch`, `capture_binary`. Implement `_merge_classifier_topics`. |
-| `stacklets/docs/bot/pipeline.py` | changed | Extend `_build_capture_prompt` to accept `seeded_topic`; emit the guidance line. Adjust the minimum-3 rule to count the seed. |
-| `stacklets/memory/lib.py` | changed | Extend `resolve_search_query` to accept `scope_bucket`; topic rooms pass theirs. |
-| `stacklets/memory/cli/topic.py` | new | `stack memory topic` subcommands. |
-| `stacklets/memory/seeds/_topic_scaffold/about.md` | new | Scaffold template, copied into new topic folders by the archivist. |
-| `tests/stacklets/test_topic_rooms.py` | new | Parser, slug derivation, reserved-name check, scope detection from member count. Pure unit tests. |
-| `tests/stacklets/test_capture_pipeline.py` | changed | Add `TestTopicSeedInvariant` class with the three pins above. |
-| `tests/stacklets/test_archivist_bootstrap.py` | new | Bootstrap flow, idempotency, collision handling. Uses the existing fake-Matrix rig. |
-| `tests/stacklets/test_topic_promotion.py` | new | Personal → shared promotion, debounce, collision, cancellation. Filesystem + state machine. |
+| `stacklets/docs/bot/topic_rooms.py` | new | Pure parser: `parse_topic_name`, `derive_slug`, `is_reserved`, `scope_from_members`, `bucket_for_scope`, `make_room_state`, `binding_from_state`. All unit-testable; no I/O. |
+| `stacklets/docs/bot/archivist.py` | changed | Lazy bootstrap (`_topic_binding`): read room state on every capture; parse the room name and write state on first encounter. Threads `bucket` + `seed_topics` into the four capture entry points and `topic_bucket` into search. |
+| `stacklets/docs/bot/capture_pipeline.py` | changed | `seed_topics` and `bucket` kwargs on `capture_url`, `capture_text`, `capture_voice_batch`, `capture_binary`. `_merge_seed_topics` does the additive dedupe; `_publish` uses `bucket` to override the sender-derived entity. |
+| `stacklets/docs/bot/search_service.py` | changed | `scopes_for_sender` and `run` accept `topic_bucket`. When set, scopes become `[<topic_bucket>/]` only; otherwise the existing shared + sender defaults. |
+| `stacklets/memory/cli/topic.py` | future | `stack memory topic list / show / rename / demote / archive`. Not in v1. |
+| `stacklets/memory/cli/wiki.py` | future change | Extend to discover topic folders under each bucket and generate `about.md` from captures + room state. Replaces the per-bootstrap scaffold idea. |
+| `tests/stacklets/test_topic_rooms.py` | new | Parser, slug derivation, reserved-name check, scope detection, bucket composition, room-state shape, binding extraction. Pure unit tests. |
+| `tests/stacklets/test_capture_pipeline.py` | changed | `TestTopicSeedMerge`, `TestTopicSeedEndToEnd` — the three-piece invariant plus the bucket-override pins. |
+| `tests/stacklets/test_search_service.py` | changed | `TestScopesWithTopicBucket` — topic-bucket override semantics. |
+| `tests/stacklets/test_archivist_topic_bootstrap.py` | new | Bootstrap flow, idempotency, reserved-slug refusal, resilience, human counting. Light fakes for the nio state I/O. |
+| `tests/stacklets/test_topic_promotion.py` | future | Personal → shared promotion, debounce, collision, cancellation. Lands with Step 5. |
 
 ### Sequencing
 
-Six implementation steps, each independently shippable:
+Six implementation steps, each independently shippable. Steps 1-4 are shipped on this branch; the wiki extension lands next; Step 5 follows.
 
-1. **Parser + slug derivation.** Pure function module plus unit tests. No Matrix, no I/O. Lands as its own commit.
-2. **Tag invariant in capture pipeline.** Add `seed_topics` parameter, additive merge, pin with the three invariant tests. No archivist change yet; the parameter is unused in production at this point.
-3. **Archivist bootstrap.** On-join detection, room state writing, scaffold creation. Tag seed wires up to the parameter from step 2. First end-to-end working topic room.
-4. **In-room query scoping.** `resolve_search_query` reads room state; `?` in a topic room becomes topic-scoped automatically. Adds `--topic` and `--global` flags to the search and ask CLIs.
-5. **Promotion handler.** Member-count watcher, debounce, `git mv`, room-state rewrite, message. Most complex piece; lands on top of a working baseline.
-6. **Deriver cross-reference pass.** Grep-based scan, write to `about.md` auto-region. Deferred until the deriver bot exists (post-v0.3).
-
-Steps 1 through 5 are in scope for the initial branch. Step 6 lands with the deriver work.
+1. ✅ **Parser + slug derivation.** Pure function module plus unit tests. No Matrix, no I/O.
+2. ✅ **Tag invariant + bucket override in capture pipeline.** `seed_topics` and `bucket` kwargs plumbed through the four entry points; additive merge pinned with tests.
+3. ✅ **Archivist lazy bootstrap.** `_topic_binding` reads existing room state or parses the room name and writes state inline. Bootstrap is idempotent and best-effort. Wired into all four capture entry points.
+4. ✅ **In-room query scoping.** `SearchService` accepts `topic_bucket`; the archivist passes the binding's bucket on `?` queries. Default sender-scoped search still picks up shared topic content naturally because shared topics nest under `<shared_bucket>/`.
+5. ⏳ **Wiki-command extension** (replaces the pre-bootstrap scaffold idea). Generate `<bucket>/<topic>/about.md` from captures + room state, the same rebuild path that already builds `family/about.md`.
+6. ⏳ **Promotion handler.** Member-count watcher, debounce, `git mv arthur/<slug>/ family/<slug>/`, room-state rewrite, message.
+7. ⏳ **Deriver cross-reference pass.** Grep-based scan, append to `about.md`. Deferred until the deriver bot exists (post-v0.3).
 
 ## Open questions
 

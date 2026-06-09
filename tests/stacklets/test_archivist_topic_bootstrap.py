@@ -122,7 +122,7 @@ class TestExistingTopicState:
 
     SHARED_STATE = {
         "kind": "topic",
-        "bucket": "camping",
+        "bucket": "family/camping",
         "slug": "camping",
         "display_name": "Camping",
         "default_topics": ["camping"],
@@ -138,7 +138,7 @@ class TestExistingTopicState:
                      members=[BOT_ID, "@arthur:server", "@marge:server"])
         binding = await bot._topic_binding(room, "@arthur:server")
         assert binding is not None
-        assert binding.bucket == "camping"
+        assert binding.bucket == "family/camping"
         assert binding.seed_topics == ["camping"]
         assert binding.scope == "shared"
         # Read once (to find existing state); no write.
@@ -170,7 +170,8 @@ class TestBootstrap:
 
     @pytest.mark.asyncio
     async def test_shared_topic_bootstrap(self, tmp_path):
-        """Two humans in the room → shared topic, bucket at root."""
+        """Two humans in the room → shared topic, bucket nested under
+        the household's shared bucket."""
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(
@@ -179,7 +180,7 @@ class TestBootstrap:
         )
         binding = await bot._topic_binding(room, "@arthur:server")
         assert binding is not None
-        assert binding.bucket == "camping"
+        assert binding.bucket == "family/camping"
         assert binding.scope == "shared"
         assert binding.seed_topics == ["camping"]
         # State was written with the schema fields.
@@ -187,7 +188,7 @@ class TestBootstrap:
         room_id, event_type, content, _ = client.writes[0]
         assert event_type == "dev.famstack.capture"
         assert content["kind"] == "topic"
-        assert content["bucket"] == "camping"
+        assert content["bucket"] == "family/camping"
         assert content["scope"] == "shared"
         assert content["bootstrapped_by"] == "@arthur:server"
 
@@ -237,30 +238,60 @@ class TestBootstrap:
 
 
 class TestReservedSlugRefusal:
-    """A topic name whose slug collides with a vault built-in or the
-    configured shared bucket is refused at bootstrap. The archivist
-    logs and returns None; routing falls back to sender-based."""
+    """A topic name whose slug collides with a within-bucket reserved
+    directory (notes, bookmarks, documents, correspondents, _unfiled,
+    about) is refused at bootstrap. The archivist logs and returns
+    None; routing falls back to sender-based. Top-level vault names
+    (`family`, `arthur`, ...) no longer need to be reserved because
+    topics never live at the top level."""
 
     @pytest.mark.asyncio
-    async def test_meta_slug_refused(self, tmp_path):
+    async def test_notes_slug_refused(self, tmp_path):
+        """`Thema: Notes` would collide with `family/notes/` inside
+        the shared bucket. Refuse."""
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
-        room = _room(name="Thema: Meta",
+        room = _room(name="Thema: Notes",
                      members=[BOT_ID, "@arthur:server", "@marge:server"])
         binding = await bot._topic_binding(room, "@arthur:server")
         assert binding is None
         assert client.writes == []
 
     @pytest.mark.asyncio
-    async def test_shared_bucket_name_refused(self, tmp_path):
+    async def test_correspondents_slug_refused(self, tmp_path):
         client = FakeStateClient(initial_state=None)
-        bot = _bot(tmp_path, client=client, )
-        # Default shared_bucket is "family".
+        bot = _bot(tmp_path, client=client)
+        room = _room(name="Thema: Correspondents",
+                     members=[BOT_ID, "@arthur:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@arthur:server")
+        assert binding is None
+        assert client.writes == []
+
+    @pytest.mark.asyncio
+    async def test_about_slug_refused(self, tmp_path):
+        """`about` is the derived per-bucket landing page (the wiki
+        command's job). A topic can't shadow it."""
+        client = FakeStateClient(initial_state=None)
+        bot = _bot(tmp_path, client=client)
+        room = _room(name="Thema: About",
+                     members=[BOT_ID, "@arthur:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@arthur:server")
+        assert binding is None
+
+    @pytest.mark.asyncio
+    async def test_shared_bucket_name_now_allowed_as_topic(self, tmp_path):
+        """The new nested layout means `Thema: Family` would create
+        `family/family/` -- ugly, but not a collision. We accept it
+        rather than refuse; the user can rename if they regret it.
+        This is the inverse of the old top-level shape, where it WAS
+        a refusal."""
+        client = FakeStateClient(initial_state=None)
+        bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Family",
                      members=[BOT_ID, "@arthur:server", "@marge:server"])
         binding = await bot._topic_binding(room, "@arthur:server")
-        assert binding is None
-        assert client.writes == []
+        assert binding is not None
+        assert binding.bucket == "family/family"
 
 
 # ── Resilience ─────────────────────────────────────────────────────────
@@ -284,7 +315,7 @@ class TestResilience:
         binding = await bot._topic_binding(room, "@arthur:server")
         # Read failed, so we treated it as no-state and bootstrapped.
         assert binding is not None
-        assert binding.bucket == "camping"
+        assert binding.bucket == "family/camping"
 
     @pytest.mark.asyncio
     async def test_state_write_failure_still_returns_binding(self, tmp_path):
@@ -297,7 +328,7 @@ class TestResilience:
                      members=[BOT_ID, "@arthur:server", "@marge:server"])
         binding = await bot._topic_binding(room, "@arthur:server")
         assert binding is not None
-        assert binding.bucket == "camping"
+        assert binding.bucket == "family/camping"
 
 
 # ── Human counting ─────────────────────────────────────────────────────

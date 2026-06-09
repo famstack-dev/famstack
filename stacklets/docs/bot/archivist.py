@@ -593,17 +593,23 @@ class ArchivistBot(MicroBot):
     def _reserved_topic_slugs(self) -> set[str]:
         """Slugs the archivist refuses to bootstrap as topics.
 
-        v1 covers the vault built-ins and the configured `shared_bucket`.
-        Personal-bucket localpart collisions (someone names a room
-        `Thema: Arthur` when `arthur/` already exists) belong on the
-        list too, but that requires the household-member registry which
-        ships with the deriver work. Until then a personal-localpart
-        collision overwrites the bucket; v2 turns it into a refusal.
+        Topics nest inside their owning bucket (shared under
+        `<shared_bucket>/`, personal under `<localpart>/`), so the
+        slug only has to avoid collisions with within-bucket reserved
+        directories: the capture-type folders the mirror writes
+        (`notes`, `bookmarks`, `documents`), the correspondent index
+        used in the shared bucket, the `_unfiled` rescue folder, and
+        the derived `about` page.
+
+        Top-level vault names (`family`, `arthur`, `marge`, `meta`,
+        `wiki`, `archive`) no longer need to appear here -- the new
+        layout makes top-level collisions impossible because topic
+        folders never live at the top level.
         """
 
         return {
-            "meta", "wiki", "archive", "_unfiled", "documents",
-            self.shared_bucket,
+            "notes", "bookmarks", "documents",
+            "correspondents", "_unfiled", "about",
         }
 
     async def _read_topic_state(self, room_id: str) -> dict | None:
@@ -702,6 +708,7 @@ class ArchivistBot(MicroBot):
             parsed=parsed, scope=scope,
             bootstrapped_by=sender_mxid,
             sender_localpart=sender_localpart,
+            shared_bucket=self.shared_bucket,
             bootstrapped_at=utc_now_isoformat(),
         )
         await self._write_topic_state(room.room_id, content)

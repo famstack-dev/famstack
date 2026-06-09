@@ -216,17 +216,28 @@ class TopicBinding:
     slug: str
 
 
-def bucket_for_scope(slug: str, scope: Scope, sender_localpart: str) -> str:
-    """Compose a bucket path for a topic + scope + sender.
+def bucket_for_scope(
+    slug: str, scope: Scope, *,
+    sender_localpart: str, shared_bucket: str,
+) -> str:
+    """Compose a bucket path for a topic + scope + sender + shared bucket.
 
-    Shared topics live at the vault root (`<slug>/`). Personal topics
-    nest under the sender's personal bucket (`<localpart>/<slug>/`)
-    to preserve the existing privacy boundary: top-level reads imply
-    explicit access scope, so personal topics never appear there.
+    Topics always nest inside the bucket that owns them: personal
+    topics under `<localpart>/`, shared topics under the configured
+    `<shared_bucket>/`. The top level of the vault stays purely
+    access-scope (one folder per privacy boundary); topics never
+    appear there. Promotion (Step 5) is therefore a clean
+    bucket-to-bucket `git mv <localpart>/<slug>/ <shared_bucket>/<slug>/`.
+
+    The shared-bucket nesting has a second property: a default
+    sender-scoped search (`["<shared_bucket>/", "<localpart>/"]`)
+    naturally finds shared-topic content -- the family member asking
+    a question in #documents discovers their camping notes without
+    knowing the topic exists.
     """
 
     if scope == "shared":
-        return slug
+        return f"{shared_bucket}/{slug}"
     return f"{sender_localpart}/{slug}"
 
 
@@ -236,6 +247,7 @@ def make_room_state(
     scope: Scope,
     bootstrapped_by: str,
     sender_localpart: str,
+    shared_bucket: str,
     bootstrapped_at: str,
 ) -> dict:
     """Build the `dev.famstack.capture` state content for a new topic.
@@ -249,9 +261,17 @@ def make_room_state(
     is recording as the originator — the capture sender for lazy
     bootstrap, the inviter for the future eager (on_invite) path.
     Same answer regardless of trigger: who put this topic on the map.
+
+    ``shared_bucket`` is the household's configured shared-bucket slug
+    (`family` by default; deskstack uses `office`). The bucket field
+    becomes ``<shared_bucket>/<slug>`` for shared topics and
+    ``<localpart>/<slug>`` for personal ones.
     """
 
-    bucket = bucket_for_scope(parsed.slug, scope, sender_localpart)
+    bucket = bucket_for_scope(
+        parsed.slug, scope,
+        sender_localpart=sender_localpart, shared_bucket=shared_bucket,
+    )
     return {
         "kind": "topic",
         "bucket": bucket,

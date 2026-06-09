@@ -264,23 +264,61 @@ class TestParsedTopicNameShape:
 # ── Bucket composition ──────────────────────────────────────────────────
 
 class TestBucketForScope:
-    """Shared topics live at the vault root; personal topics nest
-    under the sender's personal bucket. The composition is one place
-    so the routing rule stays single-sourced."""
+    """Topics nest inside the bucket that owns them. Shared topics
+    under `<shared_bucket>/`, personal topics under `<localpart>/`.
+    The top level of the vault stays purely access-scope; topics
+    never appear there."""
 
-    def test_shared_topic_at_vault_root(self):
-        assert bucket_for_scope("camping", "shared", "arthur") == "camping"
+    def test_shared_topic_nested_under_shared_bucket(self):
+        assert bucket_for_scope(
+            "camping", "shared",
+            sender_localpart="arthur", shared_bucket="family",
+        ) == "family/camping"
 
-    def test_personal_topic_nested(self):
-        """`<localpart>/<slug>` keeps personal topics off the top
-        level — the existing privacy boundary stays clean."""
-        assert bucket_for_scope("gravel", "personal", "arthur") == "arthur/gravel"
+    def test_shared_bucket_slug_is_configurable(self):
+        """Deskstack uses `office`; a surname household might use
+        `simpson`. The composition reads the configured slug, not
+        a hard-coded `family`."""
+        assert bucket_for_scope(
+            "camping", "shared",
+            sender_localpart="arthur", shared_bucket="office",
+        ) == "office/camping"
+
+    def test_personal_topic_nested_under_localpart(self):
+        """Personal topics keep the same shape they always had:
+        `<localpart>/<slug>`. The privacy boundary is unchanged."""
+        assert bucket_for_scope(
+            "gravel", "personal",
+            sender_localpart="arthur", shared_bucket="family",
+        ) == "arthur/gravel"
 
     def test_different_localparts_get_different_personal_paths(self):
         """A personal `camping` topic by Arthur is a different bucket
         from a personal `camping` topic by Marge. They never collide."""
-        assert bucket_for_scope("camping", "personal", "arthur") == "arthur/camping"
-        assert bucket_for_scope("camping", "personal", "marge") == "marge/camping"
+        assert bucket_for_scope(
+            "camping", "personal",
+            sender_localpart="arthur", shared_bucket="family",
+        ) == "arthur/camping"
+        assert bucket_for_scope(
+            "camping", "personal",
+            sender_localpart="marge", shared_bucket="family",
+        ) == "marge/camping"
+
+    def test_shared_and_personal_can_coexist_with_same_slug(self):
+        """`family/camping/` (shared) and `arthur/camping/` (personal)
+        live in different bucket trees. Step 5 promotion is the
+        bucket-to-bucket move between them."""
+        shared = bucket_for_scope(
+            "camping", "shared",
+            sender_localpart="arthur", shared_bucket="family",
+        )
+        personal = bucket_for_scope(
+            "camping", "personal",
+            sender_localpart="arthur", shared_bucket="family",
+        )
+        assert shared == "family/camping"
+        assert personal == "arthur/camping"
+        assert shared != personal
 
 
 # ── Room state shape ────────────────────────────────────────────────────
@@ -293,73 +331,55 @@ class TestMakeRoomState:
     PARSED = parse_topic_name("Thema: Camping")
     BOOTSTRAPPED_AT = "2026-06-09T12:00:00Z"
 
+    def _state(self, scope="shared", shared_bucket="family"):
+        return make_room_state(
+            parsed=self.PARSED, scope=scope,
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            shared_bucket=shared_bucket,
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+
     def test_kind_is_topic(self):
         """`kind=topic` is the discriminator downstream consumers
         match on (vs. the existing `kind=capture` / `kind=document_drop`
         room types)."""
-        state = make_room_state(
-            parsed=self.PARSED, scope="shared",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
-        assert state["kind"] == "topic"
+        assert self._state()["kind"] == "topic"
 
-    def test_shared_topic_bucket_is_slug(self):
-        state = make_room_state(
-            parsed=self.PARSED, scope="shared",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
-        assert state["bucket"] == "camping"
+    def test_shared_topic_bucket_nested_under_shared_bucket(self):
+        state = self._state(scope="shared")
+        assert state["bucket"] == "family/camping"
         assert state["scope"] == "shared"
 
+    def test_shared_topic_respects_configured_shared_bucket(self):
+        """Deskstack households use `office` as their shared bucket
+        slug; the topic state must follow."""
+        state = self._state(scope="shared", shared_bucket="office")
+        assert state["bucket"] == "office/camping"
+
     def test_personal_topic_bucket_nests_under_sender(self):
-        state = make_room_state(
-            parsed=self.PARSED, scope="personal",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
+        state = self._state(scope="personal")
         assert state["bucket"] == "arthur/camping"
         assert state["scope"] == "personal"
 
     def test_default_topics_is_single_slug(self):
         """Forward-compatible as a list, but v1 always has exactly
         the topic's own slug — the tag-seed invariant."""
-        state = make_room_state(
-            parsed=self.PARSED, scope="shared",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
-        assert state["default_topics"] == ["camping"]
+        assert self._state()["default_topics"] == ["camping"]
 
     def test_display_name_preserved(self):
-        state = make_room_state(
-            parsed=self.PARSED, scope="shared",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
-        assert state["display_name"] == "Camping"
+        assert self._state()["display_name"] == "Camping"
 
     def test_extract_knowledge_defaults_true(self):
         """Topic rooms inherit the existing `extract_knowledge: true`
         default from the capture room contract — the deriver should
         process their captures."""
-        state = make_room_state(
-            parsed=self.PARSED, scope="shared",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
-        assert state["extract_knowledge"] is True
+        assert self._state()["extract_knowledge"] is True
 
     def test_bootstrap_provenance_recorded(self):
         """`bootstrapped_at` and `bootstrapped_by` make the bootstrap
         audit-able from room history. Useful for the future eager
         on-invite handler and for `stack memory topic list`."""
-        state = make_room_state(
-            parsed=self.PARSED, scope="shared",
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
-            bootstrapped_at=self.BOOTSTRAPPED_AT,
-        )
+        state = self._state()
         assert state["bootstrapped_at"] == self.BOOTSTRAPPED_AT
         assert state["bootstrapped_by"] == "@arthur:home"
 
@@ -373,7 +393,7 @@ class TestBindingFromState:
 
     SHARED_STATE = {
         "kind": "topic",
-        "bucket": "camping",
+        "bucket": "family/camping",
         "slug": "camping",
         "display_name": "Camping",
         "default_topics": ["camping"],
@@ -384,7 +404,7 @@ class TestBindingFromState:
     def test_extracts_binding_from_valid_state(self):
         binding = binding_from_state(self.SHARED_STATE)
         assert binding is not None
-        assert binding.bucket == "camping"
+        assert binding.bucket == "family/camping"
         assert binding.seed_topics == ["camping"]
         assert binding.display_name == "Camping"
         assert binding.scope == "shared"
