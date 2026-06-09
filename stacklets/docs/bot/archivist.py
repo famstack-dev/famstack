@@ -78,6 +78,7 @@ from room_context import normalize_alias  # noqa: E402
 from text_utils import (  # noqa: E402
     attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
+    first_url as _first_url,
     google_docs_export_url as _google_docs_export_url,
     is_just_url as _is_just_url,
     join_captions as _join_captions,
@@ -1344,6 +1345,30 @@ class ArchivistBot(MicroBot):
                     capture_id=event.event_id,
                 )
 
+        elif not mentioned and (embedded_url := _first_url(query)) is not None:
+            # Chat-shaped message with a URL embedded ("Interesting
+            # facts: <url>", "look at this gear list <url>"). The URL
+            # is the payload; the surrounding text is framing the user
+            # wrote. Capture the URL, pass the framing as user_hint so
+            # the classifier's title and summary reflect what the user
+            # actually said about it. @-mentioned messages still flow
+            # to search -- there a URL is conversational, not a drop.
+            hint = query.replace(embedded_url, "", 1).strip(
+                " \t\n\r:.,;!?—-",
+            )
+            if is_documents:
+                await self._handle_url(
+                    room.room_id, embedded_url, reply_to,
+                    date_filed=self._event_date(event),
+                    submitter_mxid=event.sender,
+                )
+            else:
+                await self._handle_capture(
+                    room.room_id, embedded_url, event.sender, reply_to,
+                    capture_id=event.event_id,
+                    user_hint=hint or None,
+                )
+
         elif mentioned or is_documents:
             # Free-text search runs whenever the user explicitly
             # addressed the bot (any room) or the message landed in
@@ -1572,6 +1597,7 @@ class ArchivistBot(MicroBot):
     async def _handle_capture(
         self, room_id: str, url: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
+        user_hint: str | None = None,
     ) -> None:
         binding = await self._topic_binding(
             self._room_by_id(room_id), sender_mxid,
@@ -1582,6 +1608,7 @@ class ArchivistBot(MicroBot):
             capture_id=capture_id,
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
+            user_hint=user_hint,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

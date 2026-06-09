@@ -144,6 +144,7 @@ class CapturePipeline:
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
+        user_hint: str | None = None,
     ) -> CaptureOutcome:
         """Fetch a URL and file it as a bookmark.
 
@@ -163,6 +164,13 @@ class CapturePipeline:
         instead of the sender's default personal bucket. The classifier
         still sees the sender's name in ``persons``; only the path
         changes.
+
+        ``user_hint`` is the surrounding chat text that came with the
+        URL ("Interesting facts:", "look at this gear list"). The
+        classifier prompt's user-clarification block surfaces it so
+        the generated title and summary reflect the framing the user
+        actually wrote, not just whatever the article extractor pulled
+        out. Empty/None leaves the prompt unchanged.
         """
         await notifier.status("capture_fetching", url=url)
         source = await self._url_extractor.extract(url)
@@ -174,7 +182,7 @@ class CapturePipeline:
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket,
+            bucket=bucket, user_hint=user_hint,
         )
 
     async def capture_text(

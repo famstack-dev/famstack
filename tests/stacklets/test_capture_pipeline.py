@@ -693,6 +693,58 @@ class TestTopicSeedMerge:
         assert merged["tags"] == ["camping", "gear"]
 
 
+class TestCaptureUrlUserHint:
+    """A chat-shaped URL message ("Interesting facts: <url>") is captured
+    with the surrounding text passed to the classifier as a user_hint.
+    The hint surfaces in the prompt's user-clarification block so the
+    generated title and summary reflect the framing the user wrote."""
+
+    @pytest.mark.asyncio
+    async def test_user_hint_flows_to_classifier(self):
+        """The hint reaches the classifier call. Pins the wiring all
+        the way through capture_url -> _publish -> _classify."""
+        captured: dict = {}
+
+        class HintCapturingClassifier(FakeClassifier):
+            async def classify_capture(self, **kwargs):
+                captured.update(kwargs)
+                return await super().classify_capture(**kwargs)
+
+        pipe = _pipeline(
+            mirror=FakeMirror(),
+            classifier=HintCapturingClassifier(),
+        )
+        await pipe.capture_url(
+            url="http://example.com/article",
+            sender_mxid="@homer:s",
+            notifier=FakeNotifier(),
+            user_hint="Interesting facts",
+        )
+        assert captured["user_hint"] == "Interesting facts"
+
+    @pytest.mark.asyncio
+    async def test_no_user_hint_passes_none(self):
+        """The kwarg is optional. Existing bare-URL captures pass
+        nothing and the classifier sees user_hint=None."""
+        captured: dict = {}
+
+        class HintCapturingClassifier(FakeClassifier):
+            async def classify_capture(self, **kwargs):
+                captured.update(kwargs)
+                return await super().classify_capture(**kwargs)
+
+        pipe = _pipeline(
+            mirror=FakeMirror(),
+            classifier=HintCapturingClassifier(),
+        )
+        await pipe.capture_url(
+            url="http://example.com/article",
+            sender_mxid="@homer:s",
+            notifier=FakeNotifier(),
+        )
+        assert captured["user_hint"] is None
+
+
 class TestTopicSeedEndToEnd:
     """The seed propagates through `_publish`: the mirror call receives
     the merged tag list, the envelope carries it, the capture-tag
