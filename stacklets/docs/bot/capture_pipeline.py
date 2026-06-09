@@ -142,11 +142,19 @@ class CapturePipeline:
     async def capture_url(
         self, *, url: str, sender_mxid: str, notifier: Notifier,
         capture_id: str | None = None,
+        seed_topics: list[str] | None = None,
     ) -> CaptureOutcome:
         """Fetch a URL and file it as a bookmark.
 
         The body is dropped by default (the URL + summary IS the entry)
         unless `capture_keep_body` is set.
+
+        ``seed_topics`` are tags the caller guarantees on this capture
+        regardless of what the classifier returns -- the topic-rooms
+        contract (see docs/design/brain/topic-rooms.md). The pipeline
+        prepends them to the classifier's tag list and dedupes; the
+        mirror, the capture-tag cache, and the envelope all see the
+        merged list.
         """
         await notifier.status("capture_fetching", url=url)
         source = await self._url_extractor.extract(url)
@@ -157,16 +165,21 @@ class CapturePipeline:
         return await self._publish(
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
-            capture_id=capture_id,
+            capture_id=capture_id, seed_topics=seed_topics,
         )
 
     async def capture_text(
         self, *, text: str, sender_mxid: str,
         capture_id: str | None = None,
+        seed_topics: list[str] | None = None,
     ) -> CaptureOutcome:
         """File a pasted body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
-        The body is always kept (the user typed those exact bytes)."""
+        The body is always kept (the user typed those exact bytes).
+
+        ``seed_topics`` carries the topic-room guarantee through; see
+        ``capture_url``.
+        """
         source = await self._text_extractor.extract(text)
         if source is None:
             return CaptureOutcome(status="empty")
@@ -174,7 +187,7 @@ class CapturePipeline:
             source=source, kind="note", sender_mxid=sender_mxid,
             display_link=source.source_uri or "(pasted text)",
             actor=sender_mxid,
-            capture_id=capture_id,
+            capture_id=capture_id, seed_topics=seed_topics,
         )
 
     async def capture_voice_batch(
@@ -183,6 +196,7 @@ class CapturePipeline:
         primary_mxc: str | None,
         sender_mxid: str,
         capture_id: str | None = None,
+        seed_topics: list[str] | None = None,
     ) -> CaptureOutcome:
         """File N voice memos as a single combined note.
 
@@ -213,7 +227,7 @@ class CapturePipeline:
             source=source, kind="note", sender_mxid=sender_mxid,
             display_link=primary_mxc or "(voice batch)",
             actor=sender_mxid,
-            capture_id=capture_id,
+            capture_id=capture_id, seed_topics=seed_topics,
         )
 
     async def capture_binary(
@@ -225,6 +239,7 @@ class CapturePipeline:
         sender_mxid: str,
         display_link: str | None = None,
         capture_id: str | None = None,
+        seed_topics: list[str] | None = None,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -257,7 +272,7 @@ class CapturePipeline:
             source=source, kind=kind, sender_mxid=sender_mxid,
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
-            capture_id=capture_id,
+            capture_id=capture_id, seed_topics=seed_topics,
         )
 
     async def _source_from_audio(
@@ -479,6 +494,7 @@ class CapturePipeline:
         actor: str | None = None,
         capture_id: str | None = None,
         initial_classification: dict | None = None,
+        seed_topics: list[str] | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -502,6 +518,12 @@ class CapturePipeline:
             source, sender_name, images=images, user_hint=user_hint,
             initial_classification=initial_classification,
         )
+
+        # Topic-room seed: prepend caller-guaranteed tags to whatever
+        # the classifier returned. Mutates the classification dict so
+        # everything downstream (mirror tags, capture-tag cache,
+        # envelope's resolved_tags) sees the merged list.
+        classification = self._merge_seed_topics(classification, seed_topics)
 
         try:
             model = resolve_model(f"{self._name}/classifier")
@@ -620,6 +642,55 @@ class CapturePipeline:
             }
         if not classification.get("persons"):
             classification["persons"] = [sender_name]
+        return classification
+
+    @staticmethod
+    def _merge_seed_topics(
+        classification: dict, seed_topics: list[str] | None,
+    ) -> dict:
+        """Prepend topic-room seed tags to the classifier's tag list.
+
+        The tag invariant from docs/design/brain/topic-rooms.md: a
+        capture filed in a topic room always carries the topic's slug
+        in its `topics:` frontmatter, regardless of the classifier's
+        opinion. The room is the source of truth; the classifier is
+        advisory.
+
+        Seed tags appear first in the merged list (preserving the
+        topic-as-primary-tag semantic), followed by classifier
+        additions in their original order. Exact-string duplicates
+        between seed and classifier collapse to a single entry; the
+        seed's position wins. Empty / None seeds are a no-op.
+
+        Returns the (mutated) classification dict for caller
+        convenience -- the same object the classifier already shaped.
+        """
+        if not seed_topics:
+            return classification
+        existing = classification.get("tags")
+        if isinstance(existing, str):
+            existing = [existing]
+        elif not isinstance(existing, list):
+            existing = []
+        merged: list[str] = []
+        seen: set[str] = set()
+        for tag in seed_topics:
+            if not isinstance(tag, str):
+                continue
+            tag = tag.strip()
+            if not tag or tag in seen:
+                continue
+            merged.append(tag)
+            seen.add(tag)
+        for tag in existing:
+            if not isinstance(tag, str):
+                continue
+            tag = tag.strip()
+            if not tag or tag in seen:
+                continue
+            merged.append(tag)
+            seen.add(tag)
+        classification["tags"] = merged
         return classification
 
     @staticmethod
