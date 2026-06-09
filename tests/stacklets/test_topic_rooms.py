@@ -29,8 +29,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                        / "stacklets" / "docs" / "bot"))
 
 from topic_rooms import (  # noqa: E402
+    binding_from_state,
+    bucket_for_scope,
     derive_slug,
     is_reserved,
+    make_room_state,
     parse_topic_name,
     scope_from_members,
 )
@@ -256,3 +259,173 @@ class TestParsedTopicNameShape:
         parsed = parse_topic_name("Thema: Café Hopping")
         assert parsed.display_name == "Café Hopping"
         assert parsed.slug == "cafe-hopping"
+
+
+# ── Bucket composition ──────────────────────────────────────────────────
+
+class TestBucketForScope:
+    """Shared topics live at the vault root; personal topics nest
+    under the sender's personal bucket. The composition is one place
+    so the routing rule stays single-sourced."""
+
+    def test_shared_topic_at_vault_root(self):
+        assert bucket_for_scope("camping", "shared", "arthur") == "camping"
+
+    def test_personal_topic_nested(self):
+        """`<localpart>/<slug>` keeps personal topics off the top
+        level — the existing privacy boundary stays clean."""
+        assert bucket_for_scope("gravel", "personal", "arthur") == "arthur/gravel"
+
+    def test_different_localparts_get_different_personal_paths(self):
+        """A personal `camping` topic by Arthur is a different bucket
+        from a personal `camping` topic by Marge. They never collide."""
+        assert bucket_for_scope("camping", "personal", "arthur") == "arthur/camping"
+        assert bucket_for_scope("camping", "personal", "marge") == "marge/camping"
+
+
+# ── Room state shape ────────────────────────────────────────────────────
+
+class TestMakeRoomState:
+    """The `dev.famstack.capture` event the archivist writes on bootstrap.
+    Schema is pinned in docs/design/brain/topic-rooms.md §Room state
+    schema; these tests pin the implementation matches."""
+
+    PARSED = parse_topic_name("Thema: Camping")
+    BOOTSTRAPPED_AT = "2026-06-09T12:00:00Z"
+
+    def test_kind_is_topic(self):
+        """`kind=topic` is the discriminator downstream consumers
+        match on (vs. the existing `kind=capture` / `kind=document_drop`
+        room types)."""
+        state = make_room_state(
+            parsed=self.PARSED, scope="shared",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["kind"] == "topic"
+
+    def test_shared_topic_bucket_is_slug(self):
+        state = make_room_state(
+            parsed=self.PARSED, scope="shared",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["bucket"] == "camping"
+        assert state["scope"] == "shared"
+
+    def test_personal_topic_bucket_nests_under_sender(self):
+        state = make_room_state(
+            parsed=self.PARSED, scope="personal",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["bucket"] == "arthur/camping"
+        assert state["scope"] == "personal"
+
+    def test_default_topics_is_single_slug(self):
+        """Forward-compatible as a list, but v1 always has exactly
+        the topic's own slug — the tag-seed invariant."""
+        state = make_room_state(
+            parsed=self.PARSED, scope="shared",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["default_topics"] == ["camping"]
+
+    def test_display_name_preserved(self):
+        state = make_room_state(
+            parsed=self.PARSED, scope="shared",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["display_name"] == "Camping"
+
+    def test_extract_knowledge_defaults_true(self):
+        """Topic rooms inherit the existing `extract_knowledge: true`
+        default from the capture room contract — the deriver should
+        process their captures."""
+        state = make_room_state(
+            parsed=self.PARSED, scope="shared",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["extract_knowledge"] is True
+
+    def test_bootstrap_provenance_recorded(self):
+        """`bootstrapped_at` and `bootstrapped_by` make the bootstrap
+        audit-able from room history. Useful for the future eager
+        on-invite handler and for `stack memory topic list`."""
+        state = make_room_state(
+            parsed=self.PARSED, scope="shared",
+            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_at=self.BOOTSTRAPPED_AT,
+        )
+        assert state["bootstrapped_at"] == self.BOOTSTRAPPED_AT
+        assert state["bootstrapped_by"] == "@arthur:home"
+
+
+# ── Routing binding ─────────────────────────────────────────────────────
+
+class TestBindingFromState:
+    """The archivist reads existing room state on every capture and
+    extracts a routing binding. Malformed or non-topic state returns
+    None — the archivist falls back to sender-based routing."""
+
+    SHARED_STATE = {
+        "kind": "topic",
+        "bucket": "camping",
+        "slug": "camping",
+        "display_name": "Camping",
+        "default_topics": ["camping"],
+        "scope": "shared",
+        "extract_knowledge": True,
+    }
+
+    def test_extracts_binding_from_valid_state(self):
+        binding = binding_from_state(self.SHARED_STATE)
+        assert binding is not None
+        assert binding.bucket == "camping"
+        assert binding.seed_topics == ["camping"]
+        assert binding.display_name == "Camping"
+        assert binding.scope == "shared"
+        assert binding.slug == "camping"
+
+    def test_personal_topic_carries_nested_bucket(self):
+        state = {**self.SHARED_STATE,
+                 "bucket": "arthur/camping", "scope": "personal"}
+        binding = binding_from_state(state)
+        assert binding is not None
+        assert binding.bucket == "arthur/camping"
+        assert binding.scope == "personal"
+
+    def test_none_state_returns_none(self):
+        assert binding_from_state(None) is None
+        assert binding_from_state({}) is None
+
+    def test_non_topic_kind_returns_none(self):
+        """The existing capture-room and document-drop states ride
+        the same event type. Routing must ignore them."""
+        state = {**self.SHARED_STATE, "kind": "capture"}
+        assert binding_from_state(state) is None
+
+    def test_malformed_state_returns_none(self):
+        """Missing bucket, slug, display_name, or invalid scope all
+        return None. Safer to fall back than to route to a junk path."""
+        for missing in ("bucket", "slug", "display_name"):
+            state = {**self.SHARED_STATE}
+            state[missing] = ""
+            assert binding_from_state(state) is None
+        assert binding_from_state(
+            {**self.SHARED_STATE, "scope": "weird"},
+        ) is None
+
+    def test_filters_non_string_default_topics(self):
+        """Defensive: a malformed default_topics list (mixed types)
+        is filtered to clean strings rather than rejected outright.
+        Bootstrap's intent (the seed tag) usually survives even when
+        the state has been hand-edited."""
+        state = {**self.SHARED_STATE,
+                 "default_topics": ["camping", None, 42, "", "outdoor"]}
+        binding = binding_from_state(state)
+        assert binding is not None
+        assert binding.seed_topics == ["camping", "outdoor"]

@@ -1,16 +1,16 @@
-"""Topic-room name parsing and slug derivation.
+"""Topic-room name parsing, slug derivation, and state helpers.
 
 A Matrix room whose name begins with `Thema:` (German) or `Topic:`
 (English) is a topic room. The full design lives at
 `docs/design/brain/topic-rooms.md`.
 
-This module is the parser layer: pure functions, no Matrix, no
-filesystem. Everything I/O-shaped — bootstrapping the room state,
-writing the `about.md` scaffold, watching for joins — lives in the
-archivist. The split keeps the rules testable without standing up
-a fake Matrix client.
+This module is the parser + state-shape layer: pure functions, no
+Matrix, no filesystem. Everything I/O-shaped — reading and writing
+`dev.famstack.capture` room state, creating the `about.md` scaffold,
+watching for joins — lives in the archivist. The split keeps the
+rules testable without standing up a fake Matrix client.
 
-The four entry points cover the four parser concerns:
+Public surface:
 
   - `parse_topic_name(room_name)`     recognize the prefix, build a
                                       `ParsedTopicName` carrying
@@ -24,10 +24,15 @@ The four entry points cover the four parser concerns:
                                       personal-bucket localparts
   - `scope_from_members(human_count)` "personal" if one human in the
                                       room, "shared" otherwise
+  - `make_room_state(...)`            build the `dev.famstack.capture`
+                                      state content for a new topic
+  - `binding_from_state(state)`       extract a `TopicBinding` (the
+                                      routing input for the capture
+                                      pipeline) from existing state
 
 The parser does not know about Matrix users, the vault directory, or
-the room state event. It returns dataclasses; the archivist composes
-them with its own world model.
+the room state event transport. It returns dataclasses; the archivist
+composes them with its own world model.
 """
 
 from __future__ import annotations
@@ -183,3 +188,113 @@ def scope_from_members(human_count: int) -> Scope:
     if human_count <= 1:
         return "personal"
     return "shared"
+
+
+# ── State shape and routing binding ──────────────────────────────────────
+#
+# Everything below is shape-only. The archivist owns the I/O: reading
+# room state through nio, writing it back on bootstrap, passing the
+# binding into the capture pipeline. These helpers exist so the rules
+# stay unit-testable.
+
+@dataclass(frozen=True)
+class TopicBinding:
+    """Routing input the archivist passes into the capture pipeline.
+
+    Carries everything a single capture in a topic room needs: the
+    bucket it files under (shared topic = the slug; personal topic =
+    `<localpart>/<slug>`), the seed tags applied before classification,
+    and the display name for any operator-facing surfaces. Scope is
+    informational (drives the promotion handler in Step 5; the routing
+    itself doesn't branch on it).
+    """
+
+    bucket: str
+    seed_topics: list[str]
+    display_name: str
+    scope: Scope
+    slug: str
+
+
+def bucket_for_scope(slug: str, scope: Scope, sender_localpart: str) -> str:
+    """Compose a bucket path for a topic + scope + sender.
+
+    Shared topics live at the vault root (`<slug>/`). Personal topics
+    nest under the sender's personal bucket (`<localpart>/<slug>/`)
+    to preserve the existing privacy boundary: top-level reads imply
+    explicit access scope, so personal topics never appear there.
+    """
+
+    if scope == "shared":
+        return slug
+    return f"{sender_localpart}/{slug}"
+
+
+def make_room_state(
+    *,
+    parsed: ParsedTopicName,
+    scope: Scope,
+    bootstrapped_by: str,
+    sender_localpart: str,
+    bootstrapped_at: str,
+) -> dict:
+    """Build the `dev.famstack.capture` state content for a new topic.
+
+    The shape mirrors the schema pinned in
+    docs/design/brain/topic-rooms.md §Room state schema. ``kind=topic``
+    is the discriminator that downstream consumers (capture routing,
+    query scoping, promotion handler) match on.
+
+    ``bootstrapped_by`` is the Matrix user id of whoever the archivist
+    is recording as the originator — the capture sender for lazy
+    bootstrap, the inviter for the future eager (on_invite) path.
+    Same answer regardless of trigger: who put this topic on the map.
+    """
+
+    bucket = bucket_for_scope(parsed.slug, scope, sender_localpart)
+    return {
+        "kind": "topic",
+        "bucket": bucket,
+        "slug": parsed.slug,
+        "display_name": parsed.display_name,
+        "default_topics": [parsed.slug],
+        "scope": scope,
+        "extract_knowledge": True,
+        "bootstrapped_at": bootstrapped_at,
+        "bootstrapped_by": bootstrapped_by,
+    }
+
+
+def binding_from_state(state: dict | None) -> TopicBinding | None:
+    """Extract a routing binding from `dev.famstack.capture` state.
+
+    Returns None when the state is absent or carries a different
+    ``kind`` than ``"topic"`` (the documents-room state and future
+    capture-room kinds ride the same event type). Malformed state
+    (missing required fields) also returns None — the archivist
+    falls back to sender-based routing and the next capture will
+    re-bootstrap if needed.
+    """
+
+    if not state or state.get("kind") != "topic":
+        return None
+    bucket = state.get("bucket")
+    slug = state.get("slug")
+    display = state.get("display_name")
+    scope = state.get("scope")
+    if not (
+        isinstance(bucket, str) and bucket
+        and isinstance(slug, str) and slug
+        and isinstance(display, str) and display
+        and scope in ("personal", "shared")
+    ):
+        return None
+    seeds_raw = state.get("default_topics") or []
+    seeds = [s for s in seeds_raw if isinstance(s, str) and s]
+    return TopicBinding(
+        bucket=bucket,
+        seed_topics=seeds,
+        display_name=display,
+        scope=scope,
+        slug=slug,
+    )
