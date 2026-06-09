@@ -69,6 +69,26 @@ types = ["certificate", "letter", "invoice"]
 names = { de = "Kind", en = "Child" }
 synonyms = { de = ["Kinder"], en = ["children", "kids"] }
 
+[topic.toys]
+# Subject side -- what the document is about. The shape (assembly
+# instructions, warranty card, receipt) lives in `types`; keywords
+# stay off this entry because terms like "Bauanleitung" or
+# "Modellnummer" appear on furniture manuals and e-commerce
+# invoices too. Names + synonyms + a Lego brand mention in the
+# body give the classifier enough to land on Toys.
+names    = { de = "Spielzeug", en = "Toys" }
+synonyms = { de = ["Spielware"], en = ["toy"] }
+types    = ["manual", "warranty", "receipt", "invoice"]
+
+[topic.games]
+# Board games, card games, rule sheets. `doctype.manual` covers the
+# shape (the UNO rules sheet is a Manual / Spielanleitung); this
+# topic carries the subject so retrieval like "where is the UNO
+# rule for the wild draw four" finds the right mirror.
+names    = { de = "Spiele", en = "Games" }
+synonyms = { de = ["Brettspiel", "Kartenspiel"], en = ["board game", "card game"] }
+types    = ["manual"]
+
 [topic.marriage]
 names = { de = "Ehe", en = "Marriage" }
 types = ["certificate", "personal_record"]
@@ -231,8 +251,13 @@ names = { de = "Police", en = "Policy" }
 synonyms = { de = ["Versicherungsschein"] }
 
 [doctype.manual]
+# Any instructions-shaped document: device manuals, furniture
+# assembly guides (Bauanleitung), game rule sheets (Spielregeln,
+# Spielanleitung), build-it-yourself instructions. Topic dictates
+# the subject (electronics, housing, toys, games); doctype.manual
+# is purely the shape.
 names = { de = "Bedienungsanleitung", en = "Manual" }
-synonyms = { en = ["instructions"] }
+synonyms = { de = ["Anleitung", "Bauanleitung", "Spielregeln", "Spielanleitung"], en = ["instructions", "rules", "rulebook", "assembly instructions"] }
 
 [doctype.protocol]
 names = { de = "Protokoll", en = "Protocol" }

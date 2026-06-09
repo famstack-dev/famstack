@@ -19,6 +19,8 @@ tags = [
     "Gesundheit",          # doctors, prescriptions, lab results
     "Bildung",             # school, university, courses, further education
     "Kind",                # daycare, activities, allowances, Kindergeld
+    "Spielzeug",           # plush toys, Lego sets, kids' figures, model kits
+    "Spiele",              # board games, card games, rule sheets (UNO, Settlers)
     "Ehe",                 # marriage certificate, divorce, joint documents
     "Fahrzeug",            # registration, inspections, repairs, fuel
     "Wohnen",              # rent, mortgage, renovations, maintenance
@@ -78,6 +80,8 @@ tags = [
     "Medical",             # doctors, prescriptions, lab results
     "Education",           # school, university, courses, further education
     "Child",               # daycare, activities, allowances, child benefit
+    "Toys",                # plush toys, Lego sets, kids' figures, model kits
+    "Games",               # board games, card games, rule sheets (UNO, Settlers)
     "Marriage",            # marriage certificate, divorce, joint documents
     "Vehicle",             # registration, inspections, repairs, fuel
     "Housing",             # rent, mortgage, renovations, maintenance
