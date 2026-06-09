@@ -154,6 +154,21 @@ class MicroBot:
                 logger.info("[{}] Invited to {} by {}", self.name, room.room_id, event.sender)
                 resp = await self._client.join(room.room_id)
                 logger.info("[{}] Join result: {}", self.name, resp)
+                # Hand control to the subclass hook for room-join
+                # post-processing (typically a welcome message). At
+                # this moment `client.rooms[room.room_id]` may still
+                # be empty -- nio populates it on the next sync. The
+                # default hook is a no-op; subclasses are responsible
+                # for whatever degraded behaviour fits their UX (try
+                # the work now with partial state, defer to first
+                # event, or query Synapse directly).
+                try:
+                    await self.on_room_joined(room.room_id)
+                except Exception as e:
+                    logger.warning(
+                        "[{}] on_room_joined({}) failed: {}",
+                        self.name, room.room_id, e,
+                    )
 
         self._client.add_event_callback(on_invite, InviteMemberEvent)
 
@@ -593,6 +608,30 @@ class MicroBot:
     async def on_first_sync(self) -> None:
         """Called once after the very first sync. Override to send welcome
         messages, announce the bot to rooms, etc. Not called on restarts."""
+        pass
+
+    async def on_room_joined(self, room_id: str) -> None:
+        """Called after the bot auto-accepts an invite and ``join``
+        succeeds.
+
+        Hook for join-time behaviour like a per-room welcome message.
+        Default is a no-op so subclasses opt in explicitly.
+
+        Limitations the override must handle:
+
+          - At this moment ``self._client.rooms`` may not yet contain
+            ``room_id`` -- nio adds the room on the next sync, not
+            during the invite callback. Subclasses that need full
+            membership / canonical-alias state should either query
+            Synapse directly via ``client.room_get_state_event`` or
+            defer the work to a per-event path that runs once the
+            room is fully synced.
+          - The framework calls this from inside the sync loop. Heavy
+            work or recursive sync calls block delivery of other
+            events; keep the hook fast or schedule async follow-ups
+            from the body.
+        """
+
         pass
 
     # ── Per-event routing primitives ─────────────────────────────────────

@@ -422,6 +422,12 @@ class TestMentionRoutesToSearch:
         # Reply-to lookup needs the client; short-circuit it.
         bot._reply_target_doc_id = lambda *_a, **_kw: _none_coro()
         bot._reply_target_capture_path = lambda *_a, **_kw: _none_coro()
+        # The per-room welcome path runs ahead of routing decisions in
+        # `_on_text` / `_on_file`. These tests focus on the routing
+        # dispatch, not the welcome -- stub it out so the recorded
+        # calls list stays clean. The welcome itself has its own test
+        # file: tests/stacklets/test_archivist_welcome.py.
+        bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none_coro()
         return bot, calls
 
     @pytest.mark.asyncio

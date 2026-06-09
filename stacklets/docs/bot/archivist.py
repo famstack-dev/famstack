@@ -536,21 +536,66 @@ class ArchivistBot(MicroBot):
                       link=link)
 
     async def on_first_sync(self) -> None:
-        """One-time welcome broadcast to every joined room.
+        """Walk every joined room and welcome the ones the bot has not
+        greeted yet, picking the variant that fits each room's kind.
 
-        MicroBot's welcome marker gates this hook to a single run across
-        the lifetime of the bot's data directory — exactly what we want
-        for the welcome message and nothing else. Anything that needs to
-        happen on every boot (vision probe, documents-room resolution)
-        belongs in `start()` or per-event `_room_context()`, not here.
+        On a fresh install this delivers the introduction to every
+        room the bot was invited to before its first sync completed
+        (typically the documents room from the seed install). On bot
+        restart the per-room `dev.famstack.welcome` state event short-
+        circuits this loop -- rooms that were already welcomed in a
+        prior run stay silent.
+
+        For rooms invited after first install, the eager path is
+        ``on_room_joined`` (fires from MicroBot's auto-accept of an
+        invite) plus the per-event fallback in `_on_text` / `_on_file`.
+        Both routes converge on the same idempotent
+        ``_send_room_welcome_if_needed`` orchestrator.
         """
-        welcome = self.t(
-            "welcome",
-            url=self.paperless_public_url,
-            ai_status=self._ai_status(),
-        )
-        for room_id in self._client.rooms:
-            await self._send(room_id, welcome)
+
+        for room_id in list(self._client.rooms):
+            room = self._client.rooms[room_id]
+            ctx = self._room_context(room)
+            try:
+                await self._send_room_welcome_if_needed(room, ctx)
+            except Exception as e:
+                logger.warning(
+                    "[archivist] welcome on first sync failed for {}: {}",
+                    room_id, e,
+                )
+
+    async def on_room_joined(self, room_id: str) -> None:
+        """Eager welcome on join. Falls through to the per-event path
+        when the room isn't fully synced yet.
+
+        At invite-accept time, `client.rooms[room_id]` is often empty
+        until nio's next sync picks up the room state. When that's the
+        case we skip here without recording state, so the per-event
+        handler can post the welcome with full context on the user's
+        first message. When the room IS already in `client.rooms`
+        (uncommon during invite, but routine on a restart sweep that
+        finds new rooms), we welcome eagerly so the user sees the
+        introduction the moment they open the room.
+
+        Either way the introduction lands before the user's first real
+        interaction with the bot -- the project rule's hard floor.
+        """
+
+        room = self._room_by_id(room_id)
+        if room is None or not getattr(room, "users", None):
+            logger.debug(
+                "[archivist] join welcome deferred for {}: room state "
+                "not yet synced; per-event path will handle it",
+                room_id,
+            )
+            return
+        ctx = self._room_context(room)
+        try:
+            await self._send_room_welcome_if_needed(room, ctx)
+        except Exception as e:
+            logger.warning(
+                "[archivist] eager welcome failed for {}: {}", room_id, e,
+            )
 
     # ── Documents-room routing ───────────────────────────────────────────
     #
@@ -733,6 +778,153 @@ class ArchivistBot(MicroBot):
             return None
         rooms = getattr(self._client, "rooms", None) or {}
         return rooms.get(room_id)
+
+    # ── Per-room welcome ─────────────────────────────────────────────
+    #
+    # The archivist greets every room it enters with a context-aware
+    # welcome (documents / topic / DM / generic capture) the first time
+    # it sees an event there. The gate is a `dev.famstack.welcome`
+    # state event written immediately after the welcome message lands,
+    # so a re-encounter -- whether on bot restart, on reinvite to a
+    # room the bot was previously kicked from, or on the next event in
+    # the same session -- skips the post. The same path serves the
+    # `help` / `hilfe` command so the user re-reads exactly what fits
+    # where they are asking. Project rule: self-explaining UX, see
+    # memory `project_self_explaining_ux.md`.
+
+    @staticmethod
+    def _room_display_name(room) -> str:
+        return (
+            getattr(room, "name", None)
+            or getattr(room, "display_name", None)
+            or ""
+        )
+
+    def _welcome_kind_for(self, room, ctx) -> str:
+        """Decide which welcome variant fits this room.
+
+        Topic rooms win over every other classification: a `Thema:` /
+        `Topic:` prefix is the strongest signal of user intent and
+        overrides documents-room aliases or DM shape. The remaining
+        order is documents > personal (DM) > capture (fallback).
+        """
+
+        name = self._room_display_name(room)
+        if parse_topic_name(name) is not None:
+            return "topic"
+        if self._is_documents_room(ctx):
+            return "documents"
+        if getattr(ctx, "is_dm", False):
+            return "personal"
+        return "capture"
+
+    def _welcome_text_for(self, room, ctx) -> str:
+        """Render the welcome text for this room's kind, filling vars.
+
+        The documents and personal variants reuse the existing welcome
+        plumbing (ai_status, paperless URL); the topic variant computes
+        the bucket path the family will see for captures here so the
+        welcome doubles as a navigation hint to Forgejo.
+        """
+
+        kind = self._welcome_kind_for(room, ctx)
+        if kind == "topic":
+            parsed = parse_topic_name(self._room_display_name(room))
+            scope = scope_from_members(self._count_humans_in_room(room))
+            if scope == "shared":
+                bucket = f"{self.shared_bucket}/{parsed.slug}"
+            else:
+                users = getattr(room, "users", None) or {}
+                humans = [u for u in users if u != self.user_id]
+                if humans:
+                    localpart = humans[0].split(":")[0].lstrip("@").lower()
+                    bucket = f"{localpart}/{parsed.slug}"
+                else:
+                    bucket = parsed.slug
+            return self.t(
+                "welcome_topic",
+                display=parsed.display_name,
+                slug=parsed.slug,
+                bucket=bucket,
+            )
+        if kind == "documents":
+            return self.t(
+                "welcome_documents",
+                url=self.paperless_public_url,
+                ai_status=self._ai_status(),
+            )
+        if kind == "personal":
+            return self.t("welcome_personal")
+        return self.t("welcome_capture")
+
+    async def _read_welcome_state(self, room_id: str) -> dict | None:
+        """Fetch `dev.famstack.welcome` state for the room, or None.
+
+        Returns the parsed state content on success, None on miss or
+        any nio error. The "miss" branch is what triggers the welcome
+        post; transient nio errors during a re-encounter would resend
+        the welcome, which is acceptable for a polish surface.
+        """
+
+        if self._client is None:
+            return None
+        try:
+            resp = await self._client.room_get_state_event(
+                room_id, "dev.famstack.welcome",
+            )
+        except Exception as e:
+            logger.debug(
+                "[archivist] welcome state read failed for {}: {}",
+                room_id, e,
+            )
+            return None
+        content = getattr(resp, "content", None)
+        return content if isinstance(content, dict) else None
+
+    async def _write_welcome_state(self, room_id: str, content: dict) -> bool:
+        """Write `dev.famstack.welcome` state to mark the room as
+        already-welcomed. True on success, False on any nio error
+        (best-effort: a failed write reposts the welcome on the next
+        encounter, which the user notices but does not break)."""
+
+        if self._client is None:
+            return False
+        try:
+            await self._client.room_put_state(
+                room_id, "dev.famstack.welcome", content,
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "[archivist] welcome state write failed for {}: {}",
+                room_id, e,
+            )
+            return False
+
+    async def _send_room_welcome_if_needed(self, room, ctx) -> None:
+        """Post the room-appropriate welcome on first encounter.
+
+        Idempotent: the welcome state event gates against duplicates.
+        Read-failures are treated as "no state yet" so a transient nio
+        hiccup does not silently hide the welcome from a brand-new
+        room.
+        """
+
+        if room is None:
+            return
+        state = await self._read_welcome_state(room.room_id)
+        if state is not None:
+            return
+        text = self._welcome_text_for(room, ctx)
+        await self._send(room.room_id, text)
+        await self._write_welcome_state(
+            room.room_id,
+            {
+                "bot": self.name,
+                "kind": self._welcome_kind_for(room, ctx),
+                "welcomed_at": utc_now_isoformat(),
+            },
+        )
 
     # Paste detection lives in text_utils; exposed as a static method so
     # capture-room routing reads `self._looks_like_paste(...)`.
@@ -1122,6 +1314,10 @@ class ArchivistBot(MicroBot):
             return
 
         ctx = self._room_context(room)
+        # First-encounter welcome -- idempotent, gated by a per-room
+        # state event. Runs ahead of the routing decision so the user
+        # always sees the intro before any other reply from the bot.
+        await self._send_room_welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
         if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
@@ -1218,6 +1414,10 @@ class ArchivistBot(MicroBot):
         reply_to = event.event_id
 
         ctx = self._room_context(room)
+        # First-encounter welcome -- idempotent, gated by a per-room
+        # state event. Runs ahead of the routing decision so the user
+        # always sees the intro before any other reply from the bot.
+        await self._send_room_welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
         is_documents = self._is_documents_room(ctx)
         logger.info(
@@ -1290,13 +1490,11 @@ class ArchivistBot(MicroBot):
                     return
 
         if query_lower in HELP_COMMANDS:
+            # Same per-room welcome the bot posted on first encounter
+            # -- the user re-reads exactly what fits where they asked.
             await self._send(
                 room.room_id,
-                self.t(
-                    "welcome",
-                    url=self.paperless_public_url,
-                    ai_status=self._ai_status(),
-                ),
+                self._welcome_text_for(room, ctx),
                 reply_to,
             )
 

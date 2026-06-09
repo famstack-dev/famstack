@@ -116,7 +116,18 @@ en:
   handler_timeout: "\u23F1\uFE0F Sorry \u2014 that took longer than I'm willing to wait. Try again?"
 
   # Welcome / Help
-  welcome: |
+  #
+  # The archivist greets every room it joins with a context-aware welcome.
+  # `welcome_documents` rides into the configured #documents room (Paperless
+  # filing); `welcome_topic` rides into `Thema:`/`Topic:`-prefixed rooms
+  # (topic-folder routing); `welcome_personal` rides into DM-shaped rooms;
+  # `welcome_capture` is the fallback for any other room the bot is invited
+  # to. The `help`/`hilfe` command resolves to the same per-room welcome so
+  # the user re-reads exactly what fits where they are asking. `welcome`
+  # remains as an alias for `welcome_documents` so legacy callers (and any
+  # operator who set `documents_room_alias` to "" to disable Paperless
+  # routing) still get a sensible default.
+  welcome_documents: |
     📋 **Hi! I'm Archivist!** Your famstack document keeper.
 
     From now on, I'll take care of your documents. No more digging through drawers or scrolling through photos to find that one receipt from last year.
@@ -144,6 +155,66 @@ en:
     ❓ Type **help** or **hilfe** to see this message again.
 
     **Ready to try? Drop a document here and let's see it in action!**
+  welcome: |
+    📋 **Hi! I'm Archivist!** Your famstack document keeper.
+
+    From now on, I'll take care of your documents. No more digging through drawers or scrolling through photos to find that one receipt from last year.
+
+    **What I can do:**
+
+    - 📷 **Upload a document:** post a photo, PDF, or file here → automatically archived, OCR'd, and tagged
+    - 📸 **Multi-page scan:** type `(` then upload pages, then type `)` → combined into one PDF
+    - 🌐 **Archive a link:** paste a PDF or Google Docs link → downloaded and archived
+    - 🔍 **Search:** type any search term, e.g. "insurance 2024" → full-text search across all documents
+    - 📄 **Show document:** `show 42` → fetches the content of document #42
+
+    {ai_status}
+
+    📂 **All documents:** {url}
+
+    ❓ Type **help** or **hilfe** to see this message again.
+
+    **Ready to try? Drop a document here and let's see it in action!**
+  welcome_topic: |
+    📁 **Hi! I'm Archivist.** I file everything you drop in this room under the **{display}** topic.
+
+    **What I'll do here:**
+
+    - 📝 **Notes & links:** paste text or paste a URL → filed under `{bucket}/` with the `{slug}` tag
+    - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
+    - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
+    - 🎤 **Multi-memo notes:** type `(` then send multiple voice memos, then `)` → combined into one note
+    - 🔍 **Search this topic:** start a message with `?` (e.g. `?how did we pack the trunk last trip`) → I search only this topic's folder
+
+    Every capture in this room is tagged `{slug}` automatically, so the wiki's **{display}** page accumulates everything in one place.
+
+    Drop something to try it out!
+  welcome_personal: |
+    📝 **Hi! I'm Archivist.** This is your personal capture surface.
+
+    **What I'll do here:**
+
+    - 📝 **Notes & links:** paste text or paste a URL → filed under your personal bucket
+    - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
+    - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
+    - 🔍 **Ask me anything:** start a message with `?` (e.g. `?when does our car insurance expire`) → I search your captures and our household documents
+
+    Type **help** to see this message again.
+
+    Drop something to try it out!
+  welcome_capture: |
+    📝 **Hi! I'm Archivist.** I capture what your family drops here.
+
+    **What I'll do here:**
+
+    - 📝 **Notes & links:** paste text or paste a URL → summarised and filed under the sender's bucket
+    - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
+    - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
+    - 🔍 **Ask me anything:** start a message with `?` (e.g. `?did we get the dentist confirmation`) → I search captures and documents
+
+    Type **help** to see this message again.
+
+    **Pro tip:** create a `Thema: <name>` room (e.g. `Thema: Camping`) and invite me — everything you drop there will be organised under that topic automatically.
 
 de:
   # Startup
@@ -256,8 +327,8 @@ de:
   handler_error: "\u26A0\uFE0F Da ist was schiefgelaufen \u2014 sorry. Versuch es nochmal?"
   handler_timeout: "\u23F1\uFE0F Das hat zu lange gedauert. Versuch es nochmal?"
 
-  # Welcome / Help
-  welcome: |
+  # Welcome / Help -- siehe englischen Block für die Vier-Varianten-Logik.
+  welcome_documents: |
     📋 **Hallo! Ich bin Archivist!** Euer famstack Dokumenten-Verwalter.
 
     Ab jetzt kümmere ich mich um eure Dokumente. Schluss mit dem Wühlen in Schubladen oder dem Durchscrollen von Fotos, um die eine Rechnung vom letzten Jahr zu finden.
@@ -285,3 +356,63 @@ de:
     ❓ **help** oder **hilfe** tippen für diese Nachricht.
 
     **Bereit zum Testen? Wirf einfach ein Dokument hier rein!**
+  welcome: |
+    📋 **Hallo! Ich bin Archivist!** Euer famstack Dokumenten-Verwalter.
+
+    Ab jetzt kümmere ich mich um eure Dokumente. Schluss mit dem Wühlen in Schubladen oder dem Durchscrollen von Fotos, um die eine Rechnung vom letzten Jahr zu finden.
+
+    **Was ich kann:**
+
+    - 📷 **Dokument hochladen:** Foto, PDF oder Datei hier posten → wird automatisch archiviert, per OCR gelesen und verschlagwortet
+    - 📸 **Mehrseitige Dokumente:** `(` tippen, Seiten hochladen, dann `)` tippen → zu einem PDF zusammengefasst
+    - 🌐 **Link archivieren:** PDF-Link oder Google Docs-Link einfügen → wird heruntergeladen und archiviert
+    - 🔍 **Suchen:** einfach Suchbegriff tippen, z.B. "Steuerbescheid 2024" → Volltextsuche über alle Dokumente
+    - 📄 **Dokument anzeigen:** `show 42` → zeigt den Inhalt von Dokument #42
+
+    {ai_status}
+
+    📂 **Alle Dokumente:** {url}
+
+    ❓ **help** oder **hilfe** tippen für diese Nachricht.
+
+    **Bereit zum Testen? Wirf einfach ein Dokument hier rein!**
+  welcome_topic: |
+    📁 **Hallo! Ich bin Archivist.** Hier sammle ich alles unter dem Thema **{display}**.
+
+    **Was ich hier mache:**
+
+    - 📝 **Notizen & Links:** Text einfügen oder URL pasten → wird unter `{bucket}/` mit dem Tag `{slug}` abgelegt
+    - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
+    - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
+    - 🎤 **Mehrere Sprachnachrichten:** `(` tippen, mehrere Memos senden, dann `)` → werden zu einer Notiz kombiniert
+    - 🔍 **In diesem Thema suchen:** Nachricht mit `?` beginnen (z.B. `?wie haben wir letztes Mal die Kisten gepackt`) → ich suche nur in diesem Topic-Ordner
+
+    Jeder Eintrag in diesem Raum wird automatisch mit `{slug}` getaggt, damit die **{display}**-Wiki-Seite alles an einem Ort sammelt.
+
+    Wirf was rein zum Ausprobieren!
+  welcome_personal: |
+    📝 **Hallo! Ich bin Archivist.** Das ist deine persönliche Capture-Fläche.
+
+    **Was ich hier mache:**
+
+    - 📝 **Notizen & Links:** Text einfügen oder URL pasten → wird in deinem persönlichen Bucket abgelegt
+    - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
+    - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
+    - 🔍 **Frag mich was:** Nachricht mit `?` beginnen (z.B. `?wann läuft die KFZ-Versicherung ab`) → ich durchsuche deine Captures und unsere Dokumente
+
+    **help** tippen für diese Nachricht.
+
+    Wirf was rein zum Ausprobieren!
+  welcome_capture: |
+    📝 **Hallo! Ich bin Archivist.** Ich sammle alles, was eure Familie hier droppt.
+
+    **Was ich hier mache:**
+
+    - 📝 **Notizen & Links:** Text einfügen oder URL pasten → wird zusammengefasst und im Bucket des Absenders abgelegt
+    - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
+    - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
+    - 🔍 **Frag mich was:** Nachricht mit `?` beginnen (z.B. `?haben wir die Zahnarzt-Bestätigung bekommen`) → ich durchsuche Captures und Dokumente
+
+    **help** tippen für diese Nachricht.
+
+    **Profi-Tipp:** Erstellt einen Raum mit dem Präfix `Thema:` (z.B. `Thema: Camping`) und ladet mich ein — alles dort wird automatisch unter diesem Thema organisiert.
