@@ -161,6 +161,42 @@ def _setup(client, users, config, secrets=None):
             join_rooms = all_rooms if is_admin_role else everyone_rooms
             for rid in join_rooms:
                 client.join_user(rid, uid)
+
+            # ── Per-room power level ─────────────────────────────────
+            # The Synapse "admin" flag passed to createUser is
+            # server-side only -- it does NOT grant in-room PL.
+            # Family admins from users.toml need an explicit PL bump
+            # in the space and every seeded room so they can manage
+            # settings, ban/kick, and write state events without
+            # someone having to elevate them manually in Element.
+            # Idempotent: ensure_user_power_level reads first, only
+            # writes when the target differs. Non-admin members keep
+            # the default PL 0 (the private_chat preset). A future
+            # `role = "moderator"` tier would land as another branch
+            # here -- not introduced now because the household-policy
+            # decision about kid PL hasn't been made.
+            if is_admin_role:
+                full_uid = client._full_user(uid)
+                pl_targets = []
+                if space_id:
+                    pl_targets.append((space_id, space_name))
+                for alias, rid in room_ids.items():
+                    pl_targets.append((rid, f"#{alias}"))
+                for room_id_target, label_target in pl_targets:
+                    outcome = client.ensure_user_power_level(
+                        room_id_target, full_uid, 100,
+                    )
+                    if outcome == "set":
+                        results.append({
+                            "item": f"{full_uid} in {label_target}",
+                            "action": "promoted to PL 100",
+                        })
+                    elif outcome == "failed":
+                        results.append({
+                            "item": f"{full_uid} in {label_target}",
+                            "action": "could not promote (Synapse refused)",
+                        })
+                    # "ok" stays silent -- already at PL 100, no news.
         else:
             results.append({"item": uid, "action": "failed to create"})
 

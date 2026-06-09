@@ -310,6 +310,35 @@ class MatrixClient:
         ok = self.set_power_levels(room_id, merged)
         return "set" if ok else "failed"
 
+    def ensure_user_power_level(self, room_id, user_id, level):
+        """Make sure ``user_id`` is at exactly PL ``level`` in the room.
+        Returns one of:
+
+          "set"      – the value changed, write succeeded
+          "ok"       – the value already matched, no write
+          "failed"   – we could not read or write the state event
+
+        Idempotent and safe across re-runs. Existing ``users`` entries
+        for other accounts are preserved; only the requested user's PL
+        is touched.
+
+        Synapse's "admin" flag on createUser is server-side: it lets
+        the user use ``/_synapse/admin/`` endpoints but does NOT grant
+        any in-room power. Family admins still need an explicit PL bump
+        in each room they should administer; this is the seam setup.py
+        uses to do it.
+        """
+        current = self.get_power_levels(room_id)
+        if current is None:
+            return "failed"
+        users = dict(current.get("users") or {})
+        if users.get(user_id) == level:
+            return "ok"
+        users[user_id] = level
+        merged = {**current, "users": users}
+        ok = self.set_power_levels(room_id, merged)
+        return "set" if ok else "failed"
+
     def open_space_to_members(self, space_id):
         """Lower the space's `m.space.child` PL threshold to 0 so any
         joined member can add rooms to the space. Idempotent: returns

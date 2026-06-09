@@ -258,6 +258,101 @@ class TestOpenSpaceToMembers:
             assert level <= 100  # tautological but documents the intent
 
 
+# ── User power-level promotion ───────────────────────────────────────────
+
+
+class TestEnsureUserPowerLevel:
+    """`ensure_user_power_level` is the seam ``stack messages setup``
+    uses to give every ``role = admin`` family member PL 100 in the
+    Family space and the seeded rooms. The Synapse "admin" flag on
+    createUser is server-side only -- it does NOT grant in-room power,
+    so without this seam every family admin would still need someone
+    to elevate them manually in Element."""
+
+    ROOM_ID = "!room:home"
+    PL_URL = f"/_matrix/client/v3/rooms/{ROOM_ID}/state/m.room.power_levels"
+    EXISTING = {
+        "users": {"@stackadmin:home": 100},
+        "users_default": 0,
+        "events": {},
+        "events_default": 0,
+        "state_default": 50,
+    }
+
+    def test_promotes_member_to_admin(self, tmp_path, monkeypatch):
+        client, http = _client_with_http(tmp_path, monkeypatch)
+        http.respond("GET", self.PL_URL, body=self.EXISTING)
+        http.respond("PUT", self.PL_URL, body={})
+
+        outcome = client.ensure_user_power_level(
+            self.ROOM_ID, "@homer:home", 100,
+        )
+
+        assert outcome == "set"
+        body = _puts(http)[0][2]
+        assert body["users"]["@homer:home"] == 100
+        # Existing admin is preserved verbatim.
+        assert body["users"]["@stackadmin:home"] == 100
+
+    def test_already_at_level_is_silent_noop(self, tmp_path, monkeypatch):
+        """Re-run safety: the second pass over an already-promoted
+        admin makes no PL write. setup.py also surfaces this as 'ok',
+        which means the output line does not appear -- the operator
+        only sees the changes."""
+        existing = {
+            **self.EXISTING,
+            "users": {"@stackadmin:home": 100, "@homer:home": 100},
+        }
+        client, http = _client_with_http(tmp_path, monkeypatch)
+        http.respond("GET", self.PL_URL, body=existing)
+
+        outcome = client.ensure_user_power_level(
+            self.ROOM_ID, "@homer:home", 100,
+        )
+
+        assert outcome == "ok"
+        assert _puts(http) == []
+
+    def test_does_not_clobber_other_users(self, tmp_path, monkeypatch):
+        """Bumping one admin must preserve every other entry in the
+        ``users`` dict, including any manually-set PL the operator
+        granted via Element."""
+        existing = {
+            **self.EXISTING,
+            "users": {
+                "@stackadmin:home": 100,
+                "@marge:home": 100,         # another admin already bumped
+                "@bart:home": 25,           # operator-granted intermediate PL
+            },
+        }
+        client, http = _client_with_http(tmp_path, monkeypatch)
+        http.respond("GET", self.PL_URL, body=existing)
+        http.respond("PUT", self.PL_URL, body={})
+
+        client.ensure_user_power_level(self.ROOM_ID, "@homer:home", 100)
+
+        body = _puts(http)[0][2]
+        assert body["users"] == {
+            "@stackadmin:home": 100,
+            "@marge:home": 100,
+            "@bart:home": 25,
+            "@homer:home": 100,
+        }
+
+    def test_failure_paths_return_failed(self, tmp_path, monkeypatch):
+        """GET or PUT refusal surfaces as 'failed' so the setup output
+        prints a 'could not promote' line and the operator knows the
+        re-run did not heal the instance."""
+        client, http = _client_with_http(tmp_path, monkeypatch)
+        http.respond("GET", self.PL_URL, status=500, body={})
+
+        outcome = client.ensure_user_power_level(
+            self.ROOM_ID, "@homer:home", 100,
+        )
+
+        assert outcome == "failed"
+
+
 # ── Atomic creation-time override ────────────────────────────────────────
 
 
