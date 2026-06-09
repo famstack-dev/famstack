@@ -1744,12 +1744,25 @@ class ArchivistBot(MicroBot):
         starts immediately and the framework's wrap clears it on exit.
         The one mid-flow status (the deep-dive "looking deeper" note) is
         sent through the `announce` callback.
+
+        A search asked in a topic room auto-scopes to that topic's
+        bucket -- the room context narrows the haystack. The user can
+        still reach a wider search by asking outside the topic room.
         """
         await self._set_typing(room_id, on=True)
+
+        topic_bucket: str | None = None
+        if sender:
+            binding = await self._topic_binding(
+                self._room_by_id(room_id), sender,
+            )
+            if binding is not None:
+                topic_bucket = binding.bucket
 
         reply = await self._search.run(
             query=query, sender=sender,
             notifier=self._notifier(room_id, reply_to),
+            topic_bucket=topic_bucket,
         )
         await self._send(room_id, reply, reply_to)
 

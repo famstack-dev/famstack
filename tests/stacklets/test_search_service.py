@@ -84,6 +84,46 @@ class TestScopesForSender:
         assert svc.scopes_for_sender("@family:home") == ["family/"]
 
 
+class TestScopesWithTopicBucket:
+    """A `?` query asked in a topic room scopes the memory search to
+    that topic's bucket only. The room is the implicit `--topic` flag;
+    no shared bucket, no personal bucket. The user can still reach
+    wider search by asking outside the topic room (or by passing
+    `--global` to the CLI)."""
+
+    def test_topic_bucket_overrides_sender_defaults(self):
+        svc = _service(FakePaperless())
+        scopes = svc.scopes_for_sender(
+            "@arthur:home", topic_bucket="camping",
+        )
+        assert scopes == ["camping/"]
+
+    def test_topic_bucket_overrides_for_unknown_sender(self):
+        """An unknown sender in a topic room still gets the topic's
+        scope. The room's room state already vouches for who belongs
+        here; there's no leakage."""
+        svc = _service(FakePaperless())
+        scopes = svc.scopes_for_sender(None, topic_bucket="camping")
+        assert scopes == ["camping/"]
+
+    def test_no_topic_bucket_falls_back_to_default(self):
+        """The default scoping rules apply when no topic_bucket is
+        passed -- normal rooms behave exactly as before."""
+        svc = _service(FakePaperless())
+        assert svc.scopes_for_sender(
+            "@marge:home", topic_bucket=None,
+        ) == ["family/", "marge/"]
+
+    def test_personal_topic_bucket_passes_through_intact(self):
+        """A personal topic (`arthur/camping`) is a nested bucket;
+        the scope writer must not strip the slash inside."""
+        svc = _service(FakePaperless())
+        scopes = svc.scopes_for_sender(
+            "@arthur:home", topic_bucket="arthur/camping",
+        )
+        assert scopes == ["arthur/camping/"]
+
+
 class TestRun:
 
     @pytest.mark.asyncio
