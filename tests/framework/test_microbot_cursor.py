@@ -44,7 +44,7 @@ if "loguru" not in sys.modules:
 try:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent / "stacklets" / "core" / "bot-runner"))
     from microbot import MicroBot
-    from nio import RoomMessagesResponse
+    from nio import RoomMessagesResponse, SyncResponse
 except ImportError:
     pytest.skip("matrix-nio not installed", allow_module_level=True)
 
@@ -353,3 +353,107 @@ class TestDrainRoomCursorFiltering:
         asyncio.run(bot._drain_room("!a:test"))
         assert delivered == [("!a:test", 1000)]
         assert bot._cursors == {"!a:test": 1000, "!b:test": 500}
+
+
+# ── on_room_joined deferral via SyncResponse ──────────────────────────────
+
+
+class TestOnRoomJoinedDeferral:
+    """`on_room_joined` is the framework's contract that subclasses see a
+    room with populated state. Invite-accept queues the room id; the
+    sync-response callback `_on_sync_for_pending_joins` fires the hook
+    exactly once when the next sync has populated the room.
+
+    These tests exercise that callback directly without standing up a
+    real sync loop, so the framework contract is pinned independently
+    of nio's internals."""
+
+    def _bot_with_hook(self, tmp_path):
+        bot = StubBot(tmp_path)
+        bot._client = MagicMock()
+        bot._client.rooms = {}
+        calls: list[str] = []
+
+        async def on_joined(room_id):
+            calls.append(room_id)
+
+        bot.on_room_joined = on_joined
+        return bot, calls
+
+    def test_fires_once_state_arrives(self, tmp_path):
+        bot, calls = self._bot_with_hook(tmp_path)
+        bot._pending_room_joins.add("!room:test")
+        # Sync arrives but room state not yet populated; hook stays
+        # queued, no call.
+        asyncio.run(bot._on_sync_for_pending_joins(
+            MagicMock(spec=SyncResponse),
+        ))
+        assert calls == []
+        assert bot._pending_room_joins == {"!room:test"}
+
+        # Next sync: room appears with members. Hook fires; queue drains.
+        bot._client.rooms["!room:test"] = MagicMock(users={"@a:test": object()})
+        asyncio.run(bot._on_sync_for_pending_joins(
+            MagicMock(spec=SyncResponse),
+        ))
+        assert calls == ["!room:test"]
+        assert bot._pending_room_joins == set()
+
+    def test_room_present_but_no_members_still_waits(self, tmp_path):
+        """A room that appears with an empty users dict is not yet
+        usable -- the hook must wait for membership to populate too."""
+        bot, calls = self._bot_with_hook(tmp_path)
+        bot._pending_room_joins.add("!room:test")
+        bot._client.rooms["!room:test"] = MagicMock(users={})
+        asyncio.run(bot._on_sync_for_pending_joins(
+            MagicMock(spec=SyncResponse),
+        ))
+        assert calls == []
+        assert bot._pending_room_joins == {"!room:test"}
+
+    def test_does_not_fire_twice_for_same_room(self, tmp_path):
+        """Once the hook fires, the room id leaves the queue. A
+        subsequent sync (covering unrelated activity) doesn't trigger
+        a second hook call."""
+        bot, calls = self._bot_with_hook(tmp_path)
+        bot._pending_room_joins.add("!room:test")
+        bot._client.rooms["!room:test"] = MagicMock(users={"@a:test": object()})
+        asyncio.run(bot._on_sync_for_pending_joins(
+            MagicMock(spec=SyncResponse),
+        ))
+        assert calls == ["!room:test"]
+        # Second sync, room still present, queue empty -- no hook call.
+        asyncio.run(bot._on_sync_for_pending_joins(
+            MagicMock(spec=SyncResponse),
+        ))
+        assert calls == ["!room:test"]
+
+    def test_ignores_non_sync_responses(self, tmp_path):
+        """nio's response callbacks receive every response; the room-
+        join handler must only act on SyncResponse."""
+        bot, calls = self._bot_with_hook(tmp_path)
+        bot._pending_room_joins.add("!room:test")
+        bot._client.rooms["!room:test"] = MagicMock(users={"@a:test": object()})
+        # Pass something that isn't a SyncResponse -- should be ignored.
+        asyncio.run(bot._on_sync_for_pending_joins(MagicMock()))
+        assert calls == []
+        assert bot._pending_room_joins == {"!room:test"}
+
+    def test_hook_exception_does_not_crash_or_requeue(self, tmp_path):
+        """A subclass `on_room_joined` that raises must not break the
+        callback or leave the room queued. Errors are logged and the
+        room is treated as handled."""
+        bot = StubBot(tmp_path)
+        bot._client = MagicMock()
+        bot._client.rooms = {"!room:test": MagicMock(users={"@a:test": object()})}
+        bot._pending_room_joins.add("!room:test")
+
+        async def boom(_rid):
+            raise RuntimeError("hook bug")
+
+        bot.on_room_joined = boom
+        # Should not raise.
+        asyncio.run(bot._on_sync_for_pending_joins(
+            MagicMock(spec=SyncResponse),
+        ))
+        assert bot._pending_room_joins == set()

@@ -103,6 +103,10 @@ class MicroBot:
         # to these; we do not register them with nio, because the live sync
         # is only a doorbell — delivery happens in `_drain`.
         self._handlers: list[tuple] = []
+        # Rooms we have auto-accepted but whose state hasn't yet arrived
+        # via sync. The SyncResponse callback drains this set and fires
+        # `on_room_joined` once nio has populated the room.
+        self._pending_room_joins: set[str] = set()
         self._client: AsyncClient | None = None
         # Lazily-created shared aiohttp session for non-nio HTTP (media
         # download, and subclasses' own API calls). Owned by the
@@ -153,9 +157,8 @@ class MicroBot:
         # ── Auto-accept invitations ──────────────────────────────────
         # Two-stage hand-off so subclass `on_room_joined` sees a fully
         # populated room: invite-accept queues the room id, and the
-        # sync-response callback below fires `on_room_joined` on the
-        # first sync that contains that room's state.
-        self._pending_room_joins: set[str] = set()
+        # sync-response callback fires `on_room_joined` on the first
+        # sync that contains that room's state.
 
         async def on_invite(room, event):
             if isinstance(event, InviteMemberEvent) and event.state_key == self.user_id:
@@ -166,25 +169,8 @@ class MicroBot:
                     self._pending_room_joins.add(room.room_id)
 
         self._client.add_event_callback(on_invite, InviteMemberEvent)
-
-        async def on_sync_for_pending_joins(resp):
-            if not isinstance(resp, SyncResponse) or not self._pending_room_joins:
-                return
-            for room_id in list(self._pending_room_joins):
-                room = self._client.rooms.get(room_id)
-                if room is None or not getattr(room, "users", None):
-                    continue
-                self._pending_room_joins.discard(room_id)
-                try:
-                    await self.on_room_joined(room_id)
-                except Exception as e:
-                    logger.warning(
-                        "[{}] on_room_joined({}) failed: {}",
-                        self.name, room_id, e,
-                    )
-
         self._client.add_response_callback(
-            on_sync_for_pending_joins, SyncResponse,
+            self._on_sync_for_pending_joins, SyncResponse,
         )
 
         # ── Initial sync ─────────────────────────────────────────────
@@ -638,6 +624,31 @@ class MicroBot:
         """
 
         pass
+
+    async def _on_sync_for_pending_joins(self, resp) -> None:
+        """SyncResponse callback that drains ``_pending_room_joins``.
+
+        For every room id queued by the invite-accept handler, check
+        whether nio has populated its state in this sync. If so, fire
+        ``on_room_joined`` exactly once and discard the entry.
+        Rooms whose state hasn't arrived yet stay queued for the next
+        sync.
+        """
+
+        if not isinstance(resp, SyncResponse) or not self._pending_room_joins:
+            return
+        for room_id in list(self._pending_room_joins):
+            room = self._client.rooms.get(room_id) if self._client else None
+            if room is None or not getattr(room, "users", None):
+                continue
+            self._pending_room_joins.discard(room_id)
+            try:
+                await self.on_room_joined(room_id)
+            except Exception as e:
+                logger.warning(
+                    "[{}] on_room_joined({}) failed: {}",
+                    self.name, room_id, e,
+                )
 
     # ── Per-event routing primitives ─────────────────────────────────────
     #
