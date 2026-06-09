@@ -409,6 +409,24 @@ class TestCaptureBinaryAudioRouting:
         # searchable note in the sender's bucket.
         assert "Pick up Bart's prescription Friday" in published["body_text"]
         assert published["kind"] == "note"
+        # The outcome carries the transcript so the reply renderer can
+        # echo it back to the sender; PDF/URL/note captures get None.
+        assert out.transcript == "Pick up Bart's prescription Friday"
+
+    @pytest.mark.asyncio
+    async def test_non_audio_capture_outcome_has_no_transcript(self):
+        """A markdown note capture must not surface a transcript field --
+        only audio captures get one, so the reply layer can branch on
+        presence rather than mime-sniffing again."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror, transcriber=FakeTranscriber())
+        out = await pipe.capture_binary(
+            file_data=b"# Hello\n\nbody",
+            mime="text/markdown", filename="note.md",
+            source_uri="mxc://server/md1", sender_mxid="@homer:s",
+        )
+        assert out.status == "captured"
+        assert out.transcript is None
 
     @pytest.mark.asyncio
     async def test_audio_without_transcriber_returns_extract_failed(self):

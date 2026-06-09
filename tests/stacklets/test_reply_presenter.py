@@ -194,3 +194,48 @@ class TestRenderCaptureReply:
             _en, source_title_hint="x", classification={}, link="(pasted text)",
         )
         assert out.rstrip().endswith("(pasted text)")
+
+    def test_transcript_renders_block_quoted_above_title(self):
+        """Voice captures echo the transcript so the sender can spot a
+        mistranscription without opening the vault. It goes above the
+        title so it's the first thing they read."""
+        transcript = "Reminder: book Bart's prescription before Friday"
+        out = render_capture_reply(
+            _en, source_title_hint=None,
+            classification={"title": "Bart prescription pickup"},
+            link="mxc://server/abc",
+            transcript=transcript,
+        )
+        # The "What I heard" header signals these are the spoken words.
+        assert "What I heard" in out
+        # Block-quoted (single line memo -> one '> ' line).
+        assert f"> {transcript}" in out
+        # Transcript appears BEFORE the title line.
+        assert out.index(transcript) < out.index("Captured")
+
+    def test_transcript_multiline_keeps_each_line_quoted(self):
+        """Element renders consecutive '> ' lines as one quote block;
+        each transcript line gets its own '> ' prefix so a 3-sentence
+        memo stays visually a single quote."""
+        transcript = "First sentence.\nSecond sentence.\nThird sentence."
+        out = render_capture_reply(
+            _en, source_title_hint=None,
+            classification={"title": "Multi-sentence memo"},
+            link="mxc://server/abc",
+            transcript=transcript,
+        )
+        assert "> First sentence." in out
+        assert "> Second sentence." in out
+        assert "> Third sentence." in out
+
+    def test_no_transcript_omits_header(self):
+        """The transcript block is gated on the kwarg -- a URL/PDF capture
+        doesn't get a spurious 'What I heard' header."""
+        out = render_capture_reply(
+            _en, source_title_hint="Reddit thread",
+            classification={"title": "x"},
+            link="https://reddit.com/x",
+            transcript=None,
+        )
+        assert "What I heard" not in out
+        assert "> " not in out
