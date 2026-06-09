@@ -5,6 +5,10 @@ built `room_send` directly. After the transport consolidation it goes
 through the framework: `_download_media` (authenticated endpoint),
 `_set_typing`, and `_send` (formatted, threaded). These pin that the
 handler drives the framework methods rather than the raw client.
+
+The transcription HTTP call is delegated to the shared `Transcriber`
+capability on the AI client; these tests inject a stub Transcriber so
+the bot's wiring is exercised without a whisper server.
 """
 
 from __future__ import annotations
@@ -18,8 +22,11 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "bot"))
+# `lib/` hosts `stack.ai.client`, which the bot now imports at module load.
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from scribe import ScribeBot  # noqa: E402
+from stack.ai.client import LLMUnavailableError  # noqa: E402
 
 
 class _FakeClient:
@@ -44,12 +51,34 @@ class _FakeClient:
         return SimpleNamespace(body=b"")
 
 
-def _build(tmp_path):
+class _StubTranscriber:
+    """Stand-in for `stack.ai.client.Transcriber` — records calls and
+    returns a configured transcript (or raises a configured error)."""
+
+    def __init__(self, result: str = "hello world", error: Exception | None = None):
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[bytes, str]] = []
+
+    async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
+                         model: str | None = None) -> str:
+        self.calls.append((audio, filename))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _build(tmp_path, monkeypatch, *, transcriber: _StubTranscriber | None = None):
+    # Transcriber.from_env reads WHISPER_URL at construction; we don't
+    # care what URL the stub is "pointed at", but the constructor refuses
+    # an empty value, so pin a benign placeholder.
+    monkeypatch.setenv("WHISPER_URL", "http://test.local/v1")
     bot = ScribeBot(
         homeserver="http://x", user_id="@scribe-bot:server",
         password="x", session_dir=str(tmp_path),
     )
     bot._client = _FakeClient()
+    bot._transcriber = transcriber or _StubTranscriber()
     return bot
 
 
@@ -58,7 +87,7 @@ async def test_voice_routes_through_framework(tmp_path, monkeypatch):
     """A voice message is downloaded via `_download_media`, transcribed,
     and posted via `_send` threaded to the voice event; typing toggles
     via `_set_typing`."""
-    bot = _build(tmp_path)
+    bot = _build(tmp_path, monkeypatch)
 
     calls = {"download": [], "send": [], "typing": []}
 
@@ -76,11 +105,6 @@ async def test_voice_routes_through_framework(tmp_path, monkeypatch):
     bot._send = fake_send
     bot._set_typing = fake_typing
 
-    import scribe
-    async def fake_transcribe(url, audio, filename):
-        return "hello world"
-    monkeypatch.setattr(scribe, "_transcribe", fake_transcribe)
-
     event = SimpleNamespace(
         sender="@homer:server", url="mxc://server/abc123",
         event_id="$v:server", body="voice.ogg",
@@ -88,6 +112,8 @@ async def test_voice_routes_through_framework(tmp_path, monkeypatch):
     await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
 
     assert calls["download"] == ["mxc://server/abc123"]
+    # The Transcriber got the downloaded bytes and the caption filename.
+    assert bot._transcriber.calls == [(b"audio-bytes", "voice.ogg")]
     assert len(calls["send"]) == 1
     room_id, text, reply_to = calls["send"][0]
     assert room_id == "!r:server"
@@ -98,9 +124,9 @@ async def test_voice_routes_through_framework(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failed_download_sends_nothing(tmp_path):
+async def test_failed_download_sends_nothing(tmp_path, monkeypatch):
     """When media can't be downloaded, scribe bails without posting."""
-    bot = _build(tmp_path)
+    bot = _build(tmp_path, monkeypatch)
     sent = []
 
     async def fake_download(mxc):
@@ -122,3 +148,36 @@ async def test_failed_download_sends_nothing(tmp_path):
     )
     await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
     assert sent == []
+    # The Transcriber must not be called when there's nothing to transcribe.
+    assert bot._transcriber.calls == []
+
+
+@pytest.mark.asyncio
+async def test_transcriber_error_falls_back_to_apology(tmp_path, monkeypatch):
+    """If whisper is down (Transcriber raises LLMError) the bot tells the
+    sender it couldn't do it — silent failure leaves people wondering."""
+    failing = _StubTranscriber(error=LLMUnavailableError("whisper offline"))
+    bot = _build(tmp_path, monkeypatch, transcriber=failing)
+    sent: list[str] = []
+
+    async def fake_download(mxc):
+        return b"audio-bytes"
+
+    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
+        sent.append(text)
+
+    async def fake_typing(room_id, on=True):
+        pass
+
+    bot._download_media = fake_download
+    bot._send = fake_send
+    bot._set_typing = fake_typing
+
+    event = SimpleNamespace(
+        sender="@homer:server", url="mxc://server/abc",
+        event_id="$v:server", body="voice.ogg",
+    )
+    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
+
+    assert len(sent) == 1
+    assert "couldn't transcribe" in sent[0].lower()
