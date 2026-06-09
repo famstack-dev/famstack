@@ -5,8 +5,26 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
+
+
+@pytest.fixture(autouse=True)
+def _clean_sys_argv(monkeypatch):
+    """Make ``handle_uninstall`` see a bare `['stack', 'uninstall']` argv.
+
+    The production code reads ``sys.argv[2:]`` to catch the common
+    mistake of typing ``stack uninstall <stacklet>`` (which should be
+    ``stack destroy <stacklet>``). Under pytest, ``sys.argv`` carries
+    pytest's own positional arguments — test paths, node ids — which
+    look like stacklet names to that parser and trigger the safety
+    bail before the test's mocked args take effect. The fix is to
+    isolate ``sys.argv`` per test rather than rely on whatever pytest
+    happened to be invoked with.
+    """
+    monkeypatch.setattr(sys, "argv", ["stack", "uninstall"])
 
 
 def _make_env(tmp_path, stacklet_ids):
