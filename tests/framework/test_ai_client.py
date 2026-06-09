@@ -32,6 +32,7 @@ from stack.ai.client import (  # noqa: E402
     LLMTimeoutError,
     LLMUnavailableError,
     ModelCapabilities,
+    Transcriber,
 )
 
 
@@ -365,3 +366,168 @@ class TestHasVision:
         llm = _make_llm(httpserver, capabilities=cap)
         assert await llm.has_vision() is True
         await llm.aclose()
+
+
+# ── Transcriber ──────────────────────────────────────────────────────────
+#
+# The Transcriber wraps the same SDK but points at whisper-server, which
+# speaks /v1/audio/transcriptions. We pin transport-level behaviour the
+# same way the LLM tests do: a pytest-httpserver mock for the endpoint,
+# and assert that bytes go in as multipart and text comes back out.
+
+def _make_transcriber(httpserver: HTTPServer, *, timeout: float = 5.0) -> Transcriber:
+    """Build a Transcriber pointed at the local httpserver mock."""
+    client = AsyncOpenAI(
+        base_url=httpserver.url_for("/v1"),
+        api_key="not-needed",
+        max_retries=0,
+        timeout=timeout,
+    )
+    return Transcriber(client, namespace="test-bot")
+
+
+class TestTranscribe:
+    """Happy path + error translation for the Transcriber."""
+
+    async def test_returns_text_from_server(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "hello from whisper"})
+
+        tr = _make_transcriber(httpserver)
+        result = await tr.transcribe(b"fake-audio-bytes", filename="voice.ogg")
+        assert result == "hello from whisper"
+        await tr.aclose()
+
+    async def test_strips_surrounding_whitespace(self, httpserver: HTTPServer):
+        """whisper-server often returns text with a leading space; callers
+        shouldn't have to remember to strip."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "  hello  \n"})
+
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"fake-audio") == "hello"
+        await tr.aclose()
+
+    async def test_sends_multipart_with_filename(self, httpserver: HTTPServer):
+        """The filename matters — whisper.cpp sniffs the container by
+        extension, so 'voice.ogg' vs 'voice.wav' picks a different decoder.
+        Pin that the SDK actually puts our filename on the wire."""
+        captured: dict = {}
+
+        def handler(request):
+            captured["content_type"] = request.headers.get("Content-Type", "")
+            captured["body"] = request.get_data()
+            from werkzeug.wrappers import Response
+            return Response(
+                json.dumps({"text": "ok"}),
+                content_type="application/json",
+            )
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_handler(handler)
+
+        tr = _make_transcriber(httpserver)
+        await tr.transcribe(b"PAYLOAD-BYTES", filename="memo.wav")
+
+        assert captured["content_type"].startswith("multipart/form-data")
+        assert b"memo.wav" in captured["body"]
+        assert b"PAYLOAD-BYTES" in captured["body"]
+        await tr.aclose()
+
+    async def test_404_raises_unavailable(self, httpserver: HTTPServer):
+        """Whisper has one model, so a 404 isn't 'model not found' — it's
+        the endpoint being misconfigured. Surface as Unavailable, not the
+        ModelNotFound the LLM uses."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_data("not found", status=404)
+
+        tr = _make_transcriber(httpserver)
+        with pytest.raises(LLMUnavailableError):
+            await tr.transcribe(b"audio")
+        await tr.aclose()
+
+    async def test_500_raises_unavailable(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_data("boom", status=500)
+
+        tr = _make_transcriber(httpserver)
+        with pytest.raises(LLMUnavailableError):
+            await tr.transcribe(b"audio")
+        await tr.aclose()
+
+    async def test_connection_refused_raises_unavailable(self):
+        """Whisper-server isn't running — APIConnectionError -> Unavailable."""
+        client = AsyncOpenAI(
+            base_url="http://127.0.0.1:1/v1",
+            api_key="not-needed",
+            max_retries=0,
+            timeout=2.0,
+        )
+        tr = Transcriber(client, namespace="test-bot")
+        with pytest.raises(LLMUnavailableError):
+            await tr.transcribe(b"audio")
+        await tr.aclose()
+
+    async def test_timeout_raises_timeout(self, httpserver: HTTPServer):
+        """A long voice memo can stall past the SDK's timeout; map to the
+        same LLMTimeoutError so callers handle it uniformly with the LLM."""
+        import time
+
+        def slow_handler(request):
+            time.sleep(0.5)
+            from werkzeug.wrappers import Response
+            return Response("{}", content_type="application/json")
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_handler(slow_handler)
+
+        client = AsyncOpenAI(
+            base_url=httpserver.url_for("/v1"),
+            api_key="not-needed",
+            max_retries=0,
+            timeout=httpx.Timeout(0.1),
+        )
+        tr = Transcriber(client, namespace="test-bot")
+        with pytest.raises(LLMTimeoutError):
+            await tr.transcribe(b"audio")
+        await tr.aclose()
+
+
+class TestTranscriberFromEnv:
+    def test_strips_trailing_endpoint(self, monkeypatch):
+        """The bot-runner env renders WHISPER_URL with the full endpoint;
+        the SDK appends /audio/transcriptions itself, so we strip it."""
+        monkeypatch.setenv(
+            "WHISPER_URL", "http://host.docker.internal:42062/v1/audio/transcriptions"
+        )
+        tr = Transcriber.from_env(namespace="x")
+        assert str(tr._client.base_url).rstrip("/") == "http://host.docker.internal:42062/v1"
+
+    def test_accepts_v1_base(self, monkeypatch):
+        """Setting just the /v1 root must also work — the SDK appends the
+        endpoint either way."""
+        monkeypatch.setenv("WHISPER_URL", "http://whisper.local/v1")
+        tr = Transcriber.from_env()
+        assert str(tr._client.base_url).rstrip("/") == "http://whisper.local/v1"
+
+    def test_empty_url_raises_unavailable(self, monkeypatch):
+        """Privacy guard mirrors LLM.from_env: an unset WHISPER_URL must
+        not silently fall through to api.openai.com (the SDK's default)."""
+        monkeypatch.delenv("WHISPER_URL", raising=False)
+        monkeypatch.delenv("WHISPER_KEY", raising=False)
+        with pytest.raises(LLMUnavailableError):
+            Transcriber.from_env()
+
+    def test_empty_key_falls_back(self, monkeypatch):
+        """Native whisper-server is unauthenticated; the SDK insists on
+        *some* key so the constructor substitutes a placeholder."""
+        monkeypatch.setenv("WHISPER_URL", "http://whisper.local/v1")
+        monkeypatch.delenv("WHISPER_KEY", raising=False)
+        tr = Transcriber.from_env()
+        assert tr._client.api_key == "not-needed"

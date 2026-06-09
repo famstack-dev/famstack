@@ -5,15 +5,11 @@ with the transcribed text. Uses whisper.cpp running natively on the host
 for Metal GPU acceleration — a 5-minute voice memo transcribes in ~20
 seconds, vs 10+ minutes CPU-only inside Docker.
 
-The transcription API is OpenAI-compatible (/v1/audio/transcriptions),
-so this bot works with any backend that serves that endpoint.
+The transcription API call is delegated to the shared `Transcriber`
+capability on the AI client; the bot is just the Matrix-side wiring —
+download audio, hand bytes to the Transcriber, post the result.
 """
 
-import os
-import tempfile
-from pathlib import Path
-
-import aiohttp
 from loguru import logger
 from nio import (
     AsyncClient,
@@ -21,40 +17,7 @@ from nio import (
 )
 
 from microbot import MicroBot
-
-# Default — overridden by bots.json config
-DEFAULT_WHISPER_URL = "http://host.docker.internal:42062/v1/audio/transcriptions"
-
-
-async def _transcribe(whisper_url: str, audio_bytes: bytes, filename: str) -> str:
-    """POST audio to whisper-server, return transcribed text."""
-    suffix = Path(filename).suffix or ".ogg"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-        f.write(audio_bytes)
-        tmp_path = f.name
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            data = aiohttp.FormData()
-            data.add_field(
-                "file",
-                open(tmp_path, "rb"),
-                filename=filename,
-                content_type="application/octet-stream",
-            )
-            data.add_field("response_format", "json")
-
-            async with session.post(
-                whisper_url, data=data, timeout=aiohttp.ClientTimeout(total=120)
-            ) as resp:
-                resp.raise_for_status()
-                result = await resp.json()
-                return result.get("text", "").strip()
-    except Exception as e:
-        logger.error("[scribe] Transcription failed: {}", e)
-        return ""
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+from stack.ai.client import LLMError, Transcriber
 
 
 class ScribeBot(MicroBot):
@@ -62,7 +25,10 @@ class ScribeBot(MicroBot):
 
     def __init__(self, homeserver, user_id, password, session_dir, **config):
         super().__init__(homeserver, user_id, password, session_dir, **config)
-        self.whisper_url = os.environ.get("WHISPER_URL", config.get("whisper_url", DEFAULT_WHISPER_URL))
+        # The Transcriber owns the HTTP client; we don't have a clean
+        # shutdown hook in the MicroBot base, so we accept that the
+        # underlying client lives for the lifetime of the bot process.
+        self._transcriber = Transcriber.from_env(namespace=self.name)
 
     def register_callbacks(self, client: AsyncClient) -> None:
         self.add_event_callback(self._on_voice, RoomMessageAudio)
@@ -81,7 +47,14 @@ class ScribeBot(MicroBot):
             return
 
         filename = event.body if event.body else "voice.ogg"
-        text = await _transcribe(self.whisper_url, audio, filename)
+        text = ""
+        try:
+            text = await self._transcriber.transcribe(audio, filename=filename)
+        except LLMError as e:
+            # The Transcriber maps every transport / API failure to an
+            # LLMError; we log and fall through to the empty-text branch
+            # so the family sees a friendly reply instead of silence.
+            logger.error("[scribe] Transcription failed: {}", e)
         await self._set_typing(room.room_id, on=False)
 
         if text:
@@ -94,4 +67,3 @@ class ScribeBot(MicroBot):
             await self._send(
                 room.room_id, "Sorry, I couldn't transcribe that audio.",
             )
-

@@ -1,22 +1,22 @@
-"""OpenAI-compatible LLM client for famstack stacklets.
+"""OpenAI-compatible AI capabilities for famstack stacklets.
 
 Container-only: this module imports the `openai` SDK, so it is **not**
 imported from `stack/__init__` or `stack.ai.__init__` — the host `./stack`
 CLI stays stdlib. Any stacklet's container code uses it directly:
 
-    from stack.ai.client import LLM
+    from stack.ai.client import LLM, Transcriber
     llm = LLM.from_env(namespace="archivist-bot")
     text = await llm.complete("classifier", prompt, json_mode=True)
 
-It wraps `AsyncOpenAI`, which speaks to any provider serving
-``/v1/chat/completions`` via `base_url` (oMLX, Ollama, vLLM, or a hosted
-OpenAI-compatible endpoint). We let the SDK own transport, retries,
-streaming, and tool-calling, and add only the three things it can't know:
+    transcriber = Transcriber.from_env(namespace="scribe-bot")
+    transcript = await transcriber.transcribe(audio_bytes, filename="voice.ogg")
 
-  1. famstack's role -> model router (`resolve_model`),
-  2. friendly, typed errors so the family sees "set up AI" not a stack
-     trace, and
-  3. a vision-capability probe + on-disk cache.
+Both classes wrap `AsyncOpenAI`, which speaks to any provider serving the
+OpenAI Audio + Chat APIs via `base_url`. They are deliberately separate
+classes because chat and speech-to-text live behind different services
+(``OPENAI_URL`` vs ``WHISPER_URL``) — folding them into one client would
+force a single base URL onto two unrelated endpoints. They do share the
+typed error hierarchy so callers can handle "AI is down" uniformly.
 """
 
 from __future__ import annotations
@@ -288,3 +288,105 @@ def _content_parts(prompt: str, images: list) -> list[dict]:
             "image_url": {"url": f"data:{img.mime};base64,{b64}"},
         })
     return parts
+
+
+# ── Transcription ────────────────────────────────────────────────────────
+#
+# Whisper-server (whisper.cpp) speaks the OpenAI ``/v1/audio/transcriptions``
+# shape, so the same SDK we use for chat handles speech-to-text. It lives
+# on a different base URL than the LLM, though — the AI stacklet runs the
+# LLM (oMLX) and whisper as two native services on different ports — so
+# this class owns its own AsyncOpenAI instance pointed at ``WHISPER_URL``.
+# Folding it into ``LLM`` would conflate two unrelated endpoints under one
+# client.
+
+# Whisper-server has exactly one model loaded; the SDK still requires a
+# ``model`` argument, so we send the canonical OpenAI name. The local
+# server ignores it and dispatches to whatever it loaded at startup.
+_DEFAULT_WHISPER_MODEL = "whisper-1"
+
+
+class Transcriber:
+    """OpenAI-compatible speech-to-text scoped to one stacklet.
+
+    ``namespace`` mirrors the role-prefix idea from ``LLM`` even though
+    whisper-server doesn't route by role today — recording it keeps the
+    door open for per-bot model routing (different whisper variants for
+    archivist vs scribe) without touching call sites later.
+    """
+
+    def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None):
+        self._client = client
+        self.namespace = namespace
+
+    @classmethod
+    def from_env(cls, *, namespace: str | None = None,
+                 max_retries: int = 1) -> "Transcriber":
+        """Build from ``WHISPER_URL`` in the environment.
+
+        The bot-runner env renders ``WHISPER_URL`` as the full endpoint
+        (``…/v1/audio/transcriptions``) for the legacy raw-HTTP path; the
+        SDK appends ``/audio/transcriptions`` itself, so we strip a
+        trailing endpoint suffix the same way ``LLM.from_env`` strips
+        ``/chat/completions``. Either form just works.
+
+        Refuses to build a client when ``WHISPER_URL`` is empty: the SDK
+        would silently fall back to ``api.openai.com``, which for a
+        privacy-first family server is the wrong default to ever reach
+        by accident.
+        """
+        url = os.environ.get("WHISPER_URL", "").rstrip("/")
+        if url.endswith("/audio/transcriptions"):
+            url = url[: -len("/audio/transcriptions")]
+        if not url:
+            raise LLMUnavailableError(
+                "No whisper endpoint configured — set up AI with 'stack up ai'"
+            )
+        # Native whisper-server doesn't authenticate, but the SDK insists
+        # on *some* key — same trick as LLM.from_env.
+        key = os.environ.get("WHISPER_KEY", "") or "not-needed"
+        client = AsyncOpenAI(base_url=url, api_key=key, max_retries=max_retries)
+        return cls(client, namespace=namespace)
+
+    async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
+                         model: str | None = None) -> str:
+        """Transcribe audio bytes to text, stripped of leading/trailing space.
+
+        ``filename`` lets the server pick a decoder by extension (whisper.cpp
+        sniffs the container from the filename). ``model`` is forwarded to
+        the SDK for OpenAI-compat servers that route by model name; the
+        native whisper-server ignores it.
+
+        SDK errors are translated to the same typed LLM errors ``LLM`` uses
+        so callers can ``except LLMError`` once for both surfaces.
+        """
+        try:
+            resp = await self._client.audio.transcriptions.create(
+                model=model or _DEFAULT_WHISPER_MODEL,
+                file=(filename, audio),
+                response_format="json",
+            )
+        except openai.APITimeoutError as e:
+            raise LLMTimeoutError(
+                "whisper — transcription timed out, try a shorter clip"
+            ) from e
+        except openai.AuthenticationError as e:
+            raise LLMUnavailableError(
+                "Whisper authentication failed — check [ai].whisper_key in stack.toml"
+            ) from e
+        except openai.APIConnectionError as e:
+            raise LLMUnavailableError(
+                "Whisper server unreachable — check 'stack status ai'"
+            ) from e
+        except openai.APIStatusError as e:
+            raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
+
+        # The SDK returns a Transcription object whose `.text` mirrors
+        # whisper-server's `{"text": ...}` response. Strip incidental
+        # whitespace so callers don't have to.
+        text = getattr(resp, "text", "") or ""
+        return text.strip()
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client. Owned by us via from_env()."""
+        await self._client.close()
