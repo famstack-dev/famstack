@@ -11,7 +11,7 @@ en:
   # File upload
   received_photo: "\U0001F4F7 Received photo from {sender} — analyzing..."
   received_document: "\U0001F4C4 Received document from {sender} — analyzing..."
-  received_voice: "\U0001F3A4 Received voice memo from {sender} — transcribing..."
+  received_voice: "\U0001F3A4 Received voice memo from {sender}. Transcribing..."
   download_failed: "\u274C Failed to download {name}: {error}"
   download_failed_matrix: "\u274C Failed to download {name} from Matrix."
 
@@ -66,7 +66,7 @@ en:
   new_in_paperless: "\U0001F195 New in Paperless: {items}"
 
   # Scan
-  scan_started: "\U0001F4F8 Batch started for {sender} — send pages, photos, or voice memos, then ) or 'fertig' to combine."
+  scan_started: "\U0001F4F8 Batch started for {sender}. Send pages, photos, or voice memos, then ) or 'fertig' to combine."
   page_received: "\U0001F4C4 Page {num} received."
   scan_page_failed: "\u274C Failed to download page: {error}"
   scan_page_failed_matrix: "\u274C Failed to download page from Matrix."
@@ -77,9 +77,9 @@ en:
   scan_voice_received: "\U0001F3A4 Voice memo {num} received."
   scan_voice_failed: "\u274C Failed to download voice memo: {error}"
   scan_voice_failed_matrix: "\u274C Failed to download voice memo from Matrix."
-  scan_voice_no_transcriber: "\U0001F3A4 Voice transcription is not configured — set up AI with 'stack up ai'."
+  scan_voice_no_transcriber: "\U0001F3A4 Voice transcription is not configured. Set up AI with 'stack up ai'."
   scan_voice_empty: "\U0001F3A4 Couldn't hear anything in that voice memo."
-  scan_voice_complete: "\U0001F3A4 Combining {count} voice memos into one note — analyzing..."
+  scan_voice_complete: "\U0001F3A4 Combining {count} voice memos into one note. Analyzing..."
   no_active_scan: "No active scan. Send ( or 'scan' to start one."
 
   # URL archiving
@@ -152,7 +152,7 @@ de:
   # File upload
   received_photo: "\U0001F4F7 Foto von {sender} empfangen — wird analysiert..."
   received_document: "\U0001F4C4 Dokument von {sender} empfangen — wird analysiert..."
-  received_voice: "\U0001F3A4 Sprachnachricht von {sender} empfangen — wird transkribiert..."
+  received_voice: "\U0001F3A4 Sprachnachricht von {sender} empfangen. Wird transkribiert..."
   download_failed: "\u274C Download von {name} fehlgeschlagen: {error}"
   download_failed_matrix: "\u274C Download von {name} aus Matrix fehlgeschlagen."
 
@@ -207,7 +207,7 @@ de:
   new_in_paperless: "\U0001F195 Neu in Paperless: {items}"
 
   # Scan
-  scan_started: "\U0001F4F8 Batch gestartet für {sender} — sende Seiten, Fotos oder Sprachnachrichten, dann ) oder 'fertig' zum Zusammenfassen."
+  scan_started: "\U0001F4F8 Batch gestartet für {sender}. Sende Seiten, Fotos oder Sprachnachrichten, dann ) oder 'fertig' zum Zusammenfassen."
   page_received: "\U0001F4C4 Seite {num} empfangen."
   scan_page_failed: "\u274C Seite konnte nicht heruntergeladen werden: {error}"
   scan_page_failed_matrix: "\u274C Seite konnte nicht aus Matrix heruntergeladen werden."
@@ -218,9 +218,9 @@ de:
   scan_voice_received: "\U0001F3A4 Sprachnachricht {num} empfangen."
   scan_voice_failed: "\u274C Sprachnachricht konnte nicht heruntergeladen werden: {error}"
   scan_voice_failed_matrix: "\u274C Sprachnachricht konnte nicht aus Matrix heruntergeladen werden."
-  scan_voice_no_transcriber: "\U0001F3A4 Sprach-Transkription ist nicht eingerichtet — 'stack up ai' ausführen."
+  scan_voice_no_transcriber: "\U0001F3A4 Sprach-Transkription ist nicht eingerichtet. 'stack up ai' ausführen."
   scan_voice_empty: "\U0001F3A4 Konnte nichts in der Sprachnachricht hören."
-  scan_voice_complete: "\U0001F3A4 Kombiniere {count} Sprachnachrichten zu einer Notiz — wird analysiert..."
+  scan_voice_complete: "\U0001F3A4 Kombiniere {count} Sprachnachrichten zu einer Notiz. Wird analysiert..."
   no_active_scan: "Kein aktiver Scan. Sende ( oder 'scan' um einen zu starten."
 
   # URL archiving
