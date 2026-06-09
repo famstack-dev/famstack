@@ -800,6 +800,52 @@ class TestTopicSeedEndToEnd:
         assert "camping" in all_recorded
 
     @pytest.mark.asyncio
+    async def test_bucket_override_routes_to_topic_folder(self):
+        """A topic-room capture files under the topic bucket regardless
+        of who sent it. Sender stays attributed via `persons:` (the
+        classifier returns it); only the on-disk path changes."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_text(
+            text="we packed everything in the roof box",
+            sender_mxid="@arthur:s",
+            seed_topics=["camping"],
+            bucket="camping",
+        )
+        assert out.status == "captured"
+        # Mirror sees the topic bucket as entity, not arthur.
+        assert mirror.captures[0]["entity"] == "camping"
+
+    @pytest.mark.asyncio
+    async def test_bucket_override_handles_nested_personal_bucket(self):
+        """Personal topic rooms nest under the sender bucket
+        (`arthur/camping/`). The mirror writer treats the entity
+        string as a path prefix, so this just works."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_text(
+            text="solo trip planning",
+            sender_mxid="@arthur:s",
+            seed_topics=["gravel"],
+            bucket="arthur/gravel",
+        )
+        assert out.status == "captured"
+        assert mirror.captures[0]["entity"] == "arthur/gravel"
+
+    @pytest.mark.asyncio
+    async def test_no_bucket_override_falls_back_to_sender(self):
+        """Without a bucket override the capture routes to the sender's
+        own personal bucket (today's default for non-topic rooms)."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_text(
+            text="a personal note",
+            sender_mxid="@homer:s",
+        )
+        assert out.status == "captured"
+        assert mirror.captures[0]["entity"] == "homer"
+
+    @pytest.mark.asyncio
     async def test_seed_propagates_to_envelope(self):
         """The Matrix envelope carries `resolved_tags` so downstream
         consumers (the deriver, future cross-reference passes) see

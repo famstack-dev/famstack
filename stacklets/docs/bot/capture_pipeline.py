@@ -143,6 +143,7 @@ class CapturePipeline:
         self, *, url: str, sender_mxid: str, notifier: Notifier,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
+        bucket: str | None = None,
     ) -> CaptureOutcome:
         """Fetch a URL and file it as a bookmark.
 
@@ -155,6 +156,13 @@ class CapturePipeline:
         prepends them to the classifier's tag list and dedupes; the
         mirror, the capture-tag cache, and the envelope all see the
         merged list.
+
+        ``bucket`` overrides the sender-derived entity routing. Used
+        by topic-room captures so a memo in #Thema:Camping files
+        under ``camping/`` (shared) or ``arthur/camping/`` (personal)
+        instead of the sender's default personal bucket. The classifier
+        still sees the sender's name in ``persons``; only the path
+        changes.
         """
         await notifier.status("capture_fetching", url=url)
         source = await self._url_extractor.extract(url)
@@ -166,19 +174,21 @@ class CapturePipeline:
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
+            bucket=bucket,
         )
 
     async def capture_text(
         self, *, text: str, sender_mxid: str,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
+        bucket: str | None = None,
     ) -> CaptureOutcome:
         """File a pasted body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
         The body is always kept (the user typed those exact bytes).
 
-        ``seed_topics`` carries the topic-room guarantee through; see
-        ``capture_url``.
+        ``seed_topics`` and ``bucket`` carry the topic-room guarantees
+        through; see ``capture_url``.
         """
         source = await self._text_extractor.extract(text)
         if source is None:
@@ -188,6 +198,7 @@ class CapturePipeline:
             display_link=source.source_uri or "(pasted text)",
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
+            bucket=bucket,
         )
 
     async def capture_voice_batch(
@@ -197,6 +208,7 @@ class CapturePipeline:
         sender_mxid: str,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
+        bucket: str | None = None,
     ) -> CaptureOutcome:
         """File N voice memos as a single combined note.
 
@@ -228,6 +240,7 @@ class CapturePipeline:
             display_link=primary_mxc or "(voice batch)",
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
+            bucket=bucket,
         )
 
     async def capture_binary(
@@ -240,6 +253,7 @@ class CapturePipeline:
         display_link: str | None = None,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
+        bucket: str | None = None,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -273,6 +287,7 @@ class CapturePipeline:
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
+            bucket=bucket,
         )
 
     async def _source_from_audio(
@@ -495,6 +510,7 @@ class CapturePipeline:
         capture_id: str | None = None,
         initial_classification: dict | None = None,
         seed_topics: list[str] | None = None,
+        bucket: str | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -511,9 +527,12 @@ class CapturePipeline:
 
         # `sender_name` (capitalized) feeds the classifier prompt;
         # `entity_slug` (lowercased localpart) routes <entity>/<kind>s/...
+        # ``bucket`` overrides entity routing for topic-room captures:
+        # a memo in #Thema:Camping files under camping/ regardless of
+        # who sent it. Sender still flows through as `persons:`.
         localpart = sender_mxid.split(":")[0].lstrip("@")
         sender_name = localpart.capitalize()
-        entity_slug = localpart.lower()
+        entity_slug = bucket or localpart.lower()
         classification = await self._classify(
             source, sender_name, images=images, user_hint=user_hint,
             initial_classification=initial_classification,
