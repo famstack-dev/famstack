@@ -42,6 +42,7 @@ from nio import (
     RoomMessageMedia,
     RoomMessageImage,
     RoomMessageFile,
+    RoomMessageAudio,
     RoomMessageText,
 )
 
@@ -60,7 +61,7 @@ from pipeline import (
     PaperlessDuplicateError,
 )
 from stack import resolve_model
-from stack.ai.client import ModelCapabilities
+from stack.ai.client import LLMUnavailableError, ModelCapabilities, Transcriber
 
 # Make sibling stacklets importable. In the bot-runner container,
 # `/stacklets/` is mounted read-only and holds all stacklets; locally
@@ -141,7 +142,7 @@ def _llm_error_for_chat(
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SUPPORTED_MSGTYPES = {"m.file", "m.image"}
+SUPPORTED_MSGTYPES = {"m.file", "m.image", "m.audio"}
 
 SCAN_BEGIN = {"scan", "("}
 SCAN_END = {"done", "fertig", ")"}
@@ -175,6 +176,14 @@ _MIME_BY_EXT = {
     "tiff": "image/tiff", "tif": "image/tiff",
     "md": "text/markdown", "markdown": "text/markdown",
     "txt": "text/plain",
+    # Voice messages: Element and most Matrix clients upload Opus-in-OGG
+    # for the in-app voice recorder; mp3 / m4a / wav cover files attached
+    # from elsewhere. Element X uses .ogg specifically.
+    "ogg": "audio/ogg", "oga": "audio/ogg", "opus": "audio/ogg",
+    "mp3": "audio/mpeg",
+    "m4a": "audio/mp4", "mp4a": "audio/mp4",
+    "wav": "audio/wav",
+    "webm": "audio/webm",
 }
 
 
@@ -187,6 +196,8 @@ def _guess_mime(filename: str, msgtype: str) -> str:
         return _MIME_BY_EXT[ext]
     if msgtype == "m.image":
         return "image/jpeg"
+    if msgtype == "m.audio":
+        return "audio/ogg"
     return "application/octet-stream"
 
 
@@ -233,6 +244,10 @@ class ArchivistBot(MicroBot):
         self.code_public_url = os.environ.get("CODE_PUBLIC_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
         self.openai_key = os.environ.get("OPENAI_KEY", "")
+        # Voice transcription endpoint. When unset (e.g. the AI stacklet
+        # isn't installed yet), the archivist still files PDFs/images; only
+        # the audio-capture path becomes a soft-skip with a friendly reply.
+        self.whisper_url = os.environ.get("WHISPER_URL", "")
         self.language = os.environ.get("LANGUAGE", "en")
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
@@ -299,6 +314,7 @@ class ArchivistBot(MicroBot):
         self._pipeline: DocumentPipeline | None = None
         self._search: SearchService | None = None
         self._capture: CapturePipeline | None = None
+        self._transcriber: Transcriber | None = None
         self._vault: VaultContext | None = None
         self._paperless_version: str = ""
 
@@ -306,7 +322,10 @@ class ArchivistBot(MicroBot):
         return _t(self.language, key, **kwargs)
 
     def register_callbacks(self, client: AsyncClient) -> None:
-        self.add_event_callback(self._on_file, (RoomMessageMedia, RoomMessageImage, RoomMessageFile))
+        self.add_event_callback(
+            self._on_file,
+            (RoomMessageMedia, RoomMessageImage, RoomMessageFile, RoomMessageAudio),
+        )
         self.add_event_callback(self._on_text, RoomMessageText)
 
     async def start(self) -> None:
@@ -387,6 +406,21 @@ class ArchivistBot(MicroBot):
             shared_bucket=self.shared_bucket,
             vault=self._vault,
         )
+        # Whisper speaks /v1/audio/transcriptions on its own port, so the
+        # Transcriber gets its own client. When WHISPER_URL is unset the
+        # archivist still works for PDFs/images; only the voice-capture
+        # branch in the pipeline soft-skips.
+        if self.whisper_url:
+            try:
+                self._transcriber = Transcriber.from_env(namespace=self.name)
+            except LLMUnavailableError as e:
+                logger.warning("[archivist] no transcription: {}", e)
+                self._transcriber = None
+        else:
+            logger.info(
+                "[archivist] WHISPER_URL unset — voice messages will soft-skip"
+            )
+
         self._capture = CapturePipeline(
             url_extractor=self._url_extractor,
             text_extractor=self._text_extractor,
@@ -399,6 +433,7 @@ class ArchivistBot(MicroBot):
             capture_keep_body=self.capture_keep_body,
             capture_tag_prompt_size=self.capture_tag_prompt_size,
             vision_max_pdf_pages=self.vision_max_pdf_pages,
+            transcriber=self._transcriber,
         )
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
@@ -934,6 +969,8 @@ class ArchivistBot(MicroBot):
 
         if msgtype == "m.image":
             await self._send(room.room_id, self.t("received_photo", sender=sender_name), reply_to)
+        elif msgtype == "m.audio":
+            await self._send(room.room_id, self.t("received_voice", sender=sender_name), reply_to)
         else:
             await self._send(room.room_id, self.t("received_document", sender=sender_name), reply_to)
 
@@ -950,7 +987,11 @@ class ArchivistBot(MicroBot):
         # capture room: PDFs and images become visual bookmarks in the
         # sender's bucket; Matrix already stores the binary, so we link
         # to the mxc URL and don't re-archive the bytes.
-        if self._is_documents_room(ctx):
+        #
+        # Voice memos always take the capture path, even in #documents:
+        # a transcript belongs in the sender's own notes, not in Paperless
+        # alongside scanned invoices and IDs.
+        if self._is_documents_room(ctx) and msgtype != "m.audio":
             await self._process_document(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
                 date_filed=self._event_date(event),

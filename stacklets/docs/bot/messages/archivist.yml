@@ -11,6 +11,7 @@ en:
   # File upload
   received_photo: "\U0001F4F7 Received photo from {sender} — analyzing..."
   received_document: "\U0001F4C4 Received document from {sender} — analyzing..."
+  received_voice: "\U0001F3A4 Received voice memo from {sender} — transcribing..."
   download_failed: "\u274C Failed to download {name}: {error}"
   download_failed_matrix: "\u274C Failed to download {name} from Matrix."
 
@@ -143,6 +144,7 @@ de:
   # File upload
   received_photo: "\U0001F4F7 Foto von {sender} empfangen — wird analysiert..."
   received_document: "\U0001F4C4 Dokument von {sender} empfangen — wird analysiert..."
+  received_voice: "\U0001F3A4 Sprachnachricht von {sender} empfangen — wird transkribiert..."
   download_failed: "\u274C Download von {name} fehlgeschlagen: {error}"
   download_failed_matrix: "\u274C Download von {name} aus Matrix fehlgeschlagen."
 

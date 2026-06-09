@@ -94,7 +94,8 @@ class FakeNotifier:
         self.statuses.append((key, kwargs))
 
 
-def _pipeline(*, mirror, classifier=None, capture_keep_body=False):
+def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
+              transcriber=None):
     return CapturePipeline(
         url_extractor=FakeExtractor(_source(source_uri="http://src")),
         text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
@@ -106,7 +107,26 @@ def _pipeline(*, mirror, classifier=None, capture_keep_body=False):
         classify_max_chars=10000,
         capture_keep_body=capture_keep_body,
         capture_tag_prompt_size=50,
+        transcriber=transcriber,
     )
+
+
+class FakeTranscriber:
+    """Stand-in for stack.ai.client.Transcriber — records calls and
+    returns a configured transcript or raises a configured error."""
+
+    def __init__(self, transcript: str = "I forgot to renew the boiler service",
+                 error: Exception | None = None):
+        self.transcript = transcript
+        self.error = error
+        self.calls: list[tuple[bytes, str]] = []
+
+    async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
+                         model: str | None = None) -> str:
+        self.calls.append((audio, filename))
+        if self.error is not None:
+            raise self.error
+        return self.transcript
 
 
 class TestCaptureUrl:
@@ -250,12 +270,14 @@ class TestSourceFromBinary:
         assert kind == "bookmark"
 
     def test_unsupported_mime_returns_none(self):
-        # Audio, video, archives: out of scope for v1 captures.
+        # _source_from_binary itself doesn't handle audio; capture_binary
+        # routes audio through _source_from_audio upstream. Video and
+        # archives still land here and fall through to None.
         pipe = self._pipe()
         source, images, _kind = pipe._source_from_binary(
             file_data=b"riff-wave",
-            mime="audio/wav",
-            filename="voice.wav",
+            mime="video/mp4",
+            filename="clip.mp4",
             source_uri="mxc://server/xyz",
         )
         assert source is None
@@ -293,5 +315,124 @@ class TestSourceFromBinary:
         assert source.text == body
         assert kind == "note"
         assert images == []
+
+
+# ── Audio capture (voice memos) ────────────────────────────────────────
+
+
+class TestSourceFromAudio:
+    """The audio branch: transcribe via the injected Transcriber, return
+    a note-shaped SourceContent. When no transcriber is wired, soft-skip
+    with None so the orchestrator surfaces a friendly extract_failed."""
+
+    @pytest.mark.asyncio
+    async def test_transcribes_audio_into_note(self):
+        tr = FakeTranscriber(transcript="Reminder: book the boiler service")
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
+        source, images, kind = await pipe._source_from_audio(
+            file_data=b"opus-bytes", mime="audio/ogg",
+            filename="voice-2026-06-09.ogg",
+            source_uri="mxc://server/abc",
+        )
+        assert tr.calls == [(b"opus-bytes", "voice-2026-06-09.ogg")]
+        assert source is not None
+        assert source.text == "Reminder: book the boiler service"
+        assert source.mime == "audio/ogg"
+        assert source.title_hint == "voice-2026-06-09.ogg"
+        assert source.source_uri == "mxc://server/abc"
+        assert images == []
+        assert kind == "note"
+
+    @pytest.mark.asyncio
+    async def test_no_transcriber_soft_skips(self):
+        # WHISPER_URL unset at bootstrap -> the pipeline drops audio
+        # rather than raising. Bot replies with extract_failed.
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=None)
+        source, images, _kind = await pipe._source_from_audio(
+            file_data=b"opus-bytes", mime="audio/ogg",
+            filename="voice.ogg", source_uri="mxc://server/abc",
+        )
+        assert source is None
+        assert images == []
+
+    @pytest.mark.asyncio
+    async def test_transcriber_error_soft_skips(self):
+        # Whisper is misconfigured or down -> log + drop, same shape as
+        # the no-transcriber case so the user-facing reply is uniform.
+        from stack.ai.client import LLMUnavailableError
+        tr = FakeTranscriber(error=LLMUnavailableError("whisper down"))
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
+        source, images, _kind = await pipe._source_from_audio(
+            file_data=b"opus-bytes", mime="audio/ogg",
+            filename="voice.ogg", source_uri="mxc://server/abc",
+        )
+        assert source is None
+        assert images == []
+
+    @pytest.mark.asyncio
+    async def test_empty_transcript_soft_skips(self):
+        # whisper.cpp sometimes returns "" for a silent clip; treat it
+        # like an unreadable scan -- no point classifying empty bytes.
+        tr = FakeTranscriber(transcript="   \n  ")
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
+        source, images, _kind = await pipe._source_from_audio(
+            file_data=b"silence", mime="audio/ogg",
+            filename="voice.ogg", source_uri="mxc://server/abc",
+        )
+        assert source is None
+        assert images == []
+
+
+class TestCaptureBinaryAudioRouting:
+    """capture_binary peeks at the mime: audio/* -> _source_from_audio,
+    everything else -> _source_from_binary. The classify + mirror tail
+    runs identically afterwards, so a transcribed voice memo lands in
+    the mirror as a fully classified note."""
+
+    @pytest.mark.asyncio
+    async def test_audio_mime_routes_through_transcriber(self):
+        mirror = FakeMirror()
+        tr = FakeTranscriber(transcript="Pick up Bart's prescription Friday")
+        pipe = _pipeline(mirror=mirror, transcriber=tr)
+        out = await pipe.capture_binary(
+            file_data=b"opus-data", mime="audio/ogg",
+            filename="voice-2026-06-09.ogg",
+            source_uri="mxc://server/abc",
+            sender_mxid="@homer:s",
+        )
+        # The transcript reached the mirror via the classify tail.
+        assert tr.calls == [(b"opus-data", "voice-2026-06-09.ogg")]
+        assert out.status == "captured"
+        assert mirror.captures, "expected the transcript to be mirrored as a note"
+        published = mirror.captures[0]
+        # The body the mirror writes IS the transcript -- voice memo as a
+        # searchable note in the sender's bucket.
+        assert "Pick up Bart's prescription Friday" in published["body_text"]
+        assert published["kind"] == "note"
+
+    @pytest.mark.asyncio
+    async def test_audio_without_transcriber_returns_extract_failed(self):
+        # Mirrors a bot booted before `stack up ai` -- the rest of the
+        # bot is alive, but voice messages can't be processed yet.
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=None)
+        out = await pipe.capture_binary(
+            file_data=b"opus-data", mime="audio/ogg",
+            filename="voice.ogg", source_uri="mxc://server/abc",
+            sender_mxid="@homer:s",
+        )
+        assert out.status == "extract_failed"
+
+    @pytest.mark.asyncio
+    async def test_non_audio_mime_bypasses_transcriber(self):
+        # An image upload must not get sent to whisper -- the transcriber
+        # is for audio only, so non-audio mimes never touch it.
+        tr = FakeTranscriber()
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
+        await pipe.capture_binary(
+            file_data=b"\xff\xd8jpg", mime="image/jpeg",
+            filename="recipe.jpg", source_uri="mxc://server/abc",
+            sender_mxid="@homer:s",
+        )
+        assert tr.calls == []
 
 
