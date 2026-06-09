@@ -128,6 +128,7 @@ def render_capture_reply(
     source_title_hint: str | None,
     classification: dict,
     link: str,
+    transcript: str | None = None,
 ) -> str:
     """Render the "capture saved" reply.
 
@@ -136,9 +137,25 @@ def render_capture_reply(
     source link / "(pasted text)" placeholder rather than a Paperless
     URL. Title falls back through the classifier title, the extractor's
     hint, then a generic "Capture".
+
+    ``transcript`` is the verbatim text for voice captures; when set it
+    renders as a block-quoted preamble above the title so the sender
+    can verify whisper heard them correctly. None for every other
+    capture shape.
     """
+    lines: list[str] = []
+    if transcript:
+        # Block-quote each line so multi-sentence memos still render as
+        # one quote block in Element / SchildiChat / FluffyChat. The
+        # mic emoji signals "this is the spoken content."
+        lines.append("\U0001F3A4 What I heard:")
+        lines.append("")
+        for line in transcript.splitlines() or [transcript]:
+            lines.append(f"> {line}" if line else ">")
+        lines.append("")
+
     title = classification.get("title") or source_title_hint or "Capture"
-    lines = [t("captured", title=title)]
+    lines.append(t("captured", title=title))
 
     # Captures classify under `tags`; the documents pipeline uses
     # `topics`. Accept either so the same presenter works for both

@@ -153,6 +153,57 @@ async def test_failed_download_sends_nothing(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_no_whisper_url_does_not_crash_construction(tmp_path, monkeypatch):
+    """WHISPER_URL missing -> the bot still constructs, sets transcriber=None,
+    and logs a warning. The family server should boot scribe even when AI
+    hasn't been installed yet."""
+    monkeypatch.delenv("WHISPER_URL", raising=False)
+    bot = ScribeBot(
+        homeserver="http://x", user_id="@scribe-bot:server",
+        password="x", session_dir=str(tmp_path),
+    )
+    assert bot._transcriber is None
+
+
+@pytest.mark.asyncio
+async def test_voice_no_op_when_transcriber_disabled(tmp_path, monkeypatch):
+    """Without a transcriber the bot silently ignores audio: no typing
+    indicator, no apology reply, no download. The warning at startup is
+    the one and only signal."""
+    monkeypatch.delenv("WHISPER_URL", raising=False)
+    bot = ScribeBot(
+        homeserver="http://x", user_id="@scribe-bot:server",
+        password="x", session_dir=str(tmp_path),
+    )
+    bot._client = _FakeClient()
+    assert bot._transcriber is None
+
+    calls = {"download": [], "send": [], "typing": []}
+
+    async def fake_download(mxc):
+        calls["download"].append(mxc)
+        return b"audio-bytes"
+
+    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
+        calls["send"].append(text)
+
+    async def fake_typing(room_id, on=True):
+        calls["typing"].append((room_id, on))
+
+    bot._download_media = fake_download
+    bot._send = fake_send
+    bot._set_typing = fake_typing
+
+    event = SimpleNamespace(
+        sender="@homer:server", url="mxc://server/abc",
+        event_id="$v:server", body="voice.ogg",
+    )
+    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
+
+    assert calls == {"download": [], "send": [], "typing": []}
+
+
+@pytest.mark.asyncio
 async def test_transcriber_error_falls_back_to_apology(tmp_path, monkeypatch):
     """If whisper is down (Transcriber raises LLMError) the bot tells the
     sender it couldn't do it — silent failure leaves people wondering."""

@@ -418,7 +418,8 @@ class ArchivistBot(MicroBot):
                 self._transcriber = None
         else:
             logger.info(
-                "[archivist] WHISPER_URL unset — voice messages will soft-skip"
+                "[archivist] WHISPER_URL unset — voice messages will be ignored "
+                "(set up AI with 'stack up ai' to enable transcription)"
             )
 
         self._capture = CapturePipeline(
@@ -930,6 +931,17 @@ class ArchivistBot(MicroBot):
         if msgtype not in SUPPORTED_MSGTYPES:
             return
 
+        # Voice messages depend on the optional whisper service. When the
+        # transcriber wasn't wired (WHISPER_URL unset or whisper missing
+        # at boot), silently ignore audio so the bot still files PDFs and
+        # images normally; the startup log already warned the admin.
+        if msgtype == "m.audio" and self._transcriber is None:
+            logger.debug(
+                "[archivist] ignoring voice from {} (transcription disabled)",
+                event.sender,
+            )
+            return
+
         url = content.get("url", "")
         if not url or not url.startswith("mxc://"):
             return
@@ -1351,6 +1363,7 @@ class ArchivistBot(MicroBot):
                 source_title_hint=o.source_title_hint,
                 classification=o.classification,
                 link=o.display_link,
+                transcript=o.transcript,
             )
         metadata = (
             {"dev.famstack.event": o.envelope} if o.envelope else None

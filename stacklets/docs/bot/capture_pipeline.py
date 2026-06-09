@@ -76,6 +76,11 @@ class CaptureOutcome:
     """What the pipeline produces; the orchestrator renders the reply.
 
     status: captured | reclassified | extract_failed | no_mirror | empty
+
+    ``transcript`` is populated for voice-memo captures so the reply
+    renderer can quote what was heard back to the sender -- the only
+    way a user can catch a bad transcription without opening the vault.
+    Empty for every other capture shape (PDFs, images, URLs, notes).
     """
 
     status: str
@@ -84,6 +89,7 @@ class CaptureOutcome:
     display_link: str = ""
     vault_path: str | None = None
     envelope: dict | None = None
+    transcript: str | None = None
 
 
 class CapturePipeline:
@@ -494,6 +500,13 @@ class CapturePipeline:
                 if user_hint:
                     envelope["data"]["user_hint"] = user_hint
 
+        # Voice captures echo the transcript back to the sender so they
+        # can spot a mistranscription without opening the vault. Other
+        # capture shapes (PDFs, images, URLs, notes) leave it None.
+        source_mime = getattr(source, "mime", None) or ""
+        is_audio_source = source_mime.startswith(AUDIO_MIME_PREFIX)
+        transcript = source.text if is_audio_source else None
+
         return CaptureOutcome(
             status="reclassified" if reclassified else "captured",
             classification=classification,
@@ -501,6 +514,7 @@ class CapturePipeline:
             display_link=display_link,
             vault_path=vault_path,
             envelope=envelope,
+            transcript=transcript,
         )
 
     async def _classify(

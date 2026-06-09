@@ -17,7 +17,7 @@ from nio import (
 )
 
 from microbot import MicroBot
-from stack.ai.client import LLMError, Transcriber
+from stack.ai.client import LLMError, LLMUnavailableError, Transcriber
 
 
 class ScribeBot(MicroBot):
@@ -28,13 +28,31 @@ class ScribeBot(MicroBot):
         # The Transcriber owns the HTTP client; we don't have a clean
         # shutdown hook in the MicroBot base, so we accept that the
         # underlying client lives for the lifetime of the bot process.
-        self._transcriber = Transcriber.from_env(namespace=self.name)
+        #
+        # When WHISPER_URL isn't set (e.g. the AI stacklet hasn't been
+        # installed yet) the constructor would otherwise crash here. We
+        # degrade to a no-op bot instead: still in the room, still
+        # joinable, but silent on voice messages until whisper is wired.
+        try:
+            self._transcriber = Transcriber.from_env(namespace=self.name)
+        except LLMUnavailableError as e:
+            logger.warning(
+                "[scribe] transcription disabled: {} — "
+                "voice messages will be ignored until WHISPER_URL is set",
+                e,
+            )
+            self._transcriber = None
 
     def register_callbacks(self, client: AsyncClient) -> None:
         self.add_event_callback(self._on_voice, RoomMessageAudio)
 
     async def _on_voice(self, room, event: RoomMessageAudio) -> None:
         if event.sender == self.user_id:
+            return
+        if self._transcriber is None:
+            # The startup warning already told the admin why; don't
+            # spam a per-message error reply or a typing indicator that
+            # leads nowhere.
             return
 
         logger.info("[scribe] Voice from {} in {}", event.sender, room.room_id)
