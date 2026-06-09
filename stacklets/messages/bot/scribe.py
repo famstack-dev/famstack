@@ -17,7 +17,7 @@ from nio import (
 )
 
 from microbot import MicroBot
-from stack.ai.client import LLMError, LLMUnavailableError, Transcriber
+from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 
 
 class ScribeBot(MicroBot):
@@ -43,6 +43,20 @@ class ScribeBot(MicroBot):
             )
             self._transcriber = None
 
+        # The LLM is optional: when present, it polishes raw whisper
+        # output into a punctuated paragraph (the Transcriber owns the
+        # prompt). When absent, scribe still posts the raw transcript --
+        # less readable but never a blocker.
+        try:
+            self._llm = LLM.from_env(namespace=self.name)
+        except LLMUnavailableError as e:
+            logger.warning(
+                "[scribe] transcript cleanup disabled: {} — "
+                "voice messages will post the raw whisper output",
+                e,
+            )
+            self._llm = None
+
     def register_callbacks(self, client: AsyncClient) -> None:
         self.add_event_callback(self._on_voice, RoomMessageAudio)
 
@@ -67,7 +81,9 @@ class ScribeBot(MicroBot):
         filename = event.body if event.body else "voice.ogg"
         text = ""
         try:
-            text = await self._transcriber.transcribe(audio, filename=filename)
+            text = await self._transcriber.transcribe(
+                audio, filename=filename, cleanup_with=self._llm,
+            )
         except LLMError as e:
             # The Transcriber maps every transport / API failure to an
             # LLMError; we log and fall through to the empty-text branch

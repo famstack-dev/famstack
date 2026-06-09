@@ -109,6 +109,7 @@ class CapturePipeline:
         capture_tag_prompt_size: int,
         vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
         transcriber=None,
+        llm=None,
     ):
         self._url_extractor = url_extractor
         self._text_extractor = text_extractor
@@ -124,6 +125,11 @@ class CapturePipeline:
         # Optional: when None, audio uploads soft-skip with extract_failed
         # so the bot tells the sender it can't transcribe right now.
         self._transcriber = transcriber
+        # Optional: when present, the transcriber uses it to polish raw
+        # whisper output (add punctuation + sentence breaks). The same
+        # LLM the classifier already runs on -- no extra HTTP client.
+        # Missing -> raw transcript falls through, never a hard failure.
+        self._llm = llm
 
     async def capture_url(
         self, *, url: str, sender_mxid: str, notifier: Notifier,
@@ -223,6 +229,7 @@ class CapturePipeline:
         try:
             transcript = await self._transcriber.transcribe(
                 file_data, filename=filename or "voice.ogg",
+                cleanup_with=self._llm,
             )
         except LLMError as e:
             # Same failure shape the LLM client uses for chat outages;

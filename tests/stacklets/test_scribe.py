@@ -61,8 +61,12 @@ class _StubTranscriber:
         self.calls: list[tuple[bytes, str]] = []
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
-                         model: str | None = None) -> str:
-        self.calls.append((audio, filename))
+                         model: str | None = None,
+                         cleanup_with=None) -> str:
+        self.calls.append({
+            "audio": audio, "filename": filename,
+            "cleanup_with": cleanup_with,
+        })
         if self.error is not None:
             raise self.error
         return self.result
@@ -113,7 +117,12 @@ async def test_voice_routes_through_framework(tmp_path, monkeypatch):
 
     assert calls["download"] == ["mxc://server/abc123"]
     # The Transcriber got the downloaded bytes and the caption filename.
-    assert bot._transcriber.calls == [(b"audio-bytes", "voice.ogg")]
+    assert len(bot._transcriber.calls) == 1
+    assert bot._transcriber.calls[0]["audio"] == b"audio-bytes"
+    assert bot._transcriber.calls[0]["filename"] == "voice.ogg"
+    # The bot built no LLM (no OPENAI_URL in the test env), so cleanup
+    # is skipped: cleanup_with comes through as None.
+    assert bot._transcriber.calls[0]["cleanup_with"] is None
     assert len(calls["send"]) == 1
     room_id, text, reply_to = calls["send"][0]
     assert room_id == "!r:server"
@@ -150,6 +159,48 @@ async def test_failed_download_sends_nothing(tmp_path, monkeypatch):
     assert sent == []
     # The Transcriber must not be called when there's nothing to transcribe.
     assert bot._transcriber.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_threaded_into_transcribe_when_configured(tmp_path, monkeypatch):
+    """When OPENAI_URL is set, scribe builds an LLM and passes it as
+    cleanup_with so whisper's raw output gets polished. The LLM itself
+    isn't called in this test -- we use a stub transcriber that just
+    records what kwarg it received."""
+    monkeypatch.setenv("WHISPER_URL", "http://test.local/v1")
+    monkeypatch.setenv("OPENAI_URL", "http://test.local/v1")
+    bot = ScribeBot(
+        homeserver="http://x", user_id="@scribe-bot:server",
+        password="x", session_dir=str(tmp_path),
+    )
+    bot._client = _FakeClient()
+    assert bot._llm is not None, "scribe should construct an LLM when OPENAI_URL is set"
+
+    stub = _StubTranscriber(result="Cleaned text.")
+    bot._transcriber = stub
+
+    async def fake_download(mxc):
+        return b"audio-bytes"
+
+    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
+        pass
+
+    async def fake_typing(room_id, on=True):
+        pass
+
+    bot._download_media = fake_download
+    bot._send = fake_send
+    bot._set_typing = fake_typing
+
+    event = SimpleNamespace(
+        sender="@homer:server", url="mxc://server/abc",
+        event_id="$v:server", body="voice.ogg",
+    )
+    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
+
+    # The bot's own LLM instance came through as cleanup_with -- not a
+    # different one, not None.
+    assert stub.calls[0]["cleanup_with"] is bot._llm
 
 
 @pytest.mark.asyncio

@@ -531,3 +531,106 @@ class TestTranscriberFromEnv:
         monkeypatch.delenv("WHISPER_KEY", raising=False)
         tr = Transcriber.from_env()
         assert tr._client.api_key == "not-needed"
+
+
+# ── Transcript cleanup ──────────────────────────────────────────────────
+#
+# The cleanup pass turns whisper's raw output into a punctuated paragraph.
+# We test against a stub LLM rather than the framework LLM + httpserver:
+# the contract we care about is "raw whisper text -> LLM.complete -> result",
+# not the inner HTTP shape (already covered by TestComplete above).
+
+
+class _StubLLM:
+    """Minimal LLM-shaped object for Transcriber cleanup tests.
+
+    Records the role and prompt it was called with, returns a configured
+    string or raises a configured error. Matches the signature
+    ``Transcriber._cleanup`` calls: ``complete(role, prompt)``.
+    """
+
+    def __init__(self, result: str = "Cleaned text.",
+                 error: Exception | None = None):
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, str]] = []
+
+    async def complete(self, role: str, prompt: str) -> str:
+        self.calls.append((role, prompt))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class TestTranscriberCleanup:
+    """The cleanup_with kwarg is a best-effort polish: the caller always
+    gets a usable transcript, never a hard failure when the LLM hiccups."""
+
+    async def test_cleanup_applied_when_llm_provided(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "hey i forgot to renew the boiler"})
+
+        llm = _StubLLM(result="Hey, I forgot to renew the boiler.")
+        tr = _make_transcriber(httpserver)
+        result = await tr.transcribe(b"audio", cleanup_with=llm)
+        assert result == "Hey, I forgot to renew the boiler."
+        # The cleanup hit the LLM exactly once, with the raw transcript
+        # interpolated into the strict-rules prompt.
+        assert len(llm.calls) == 1
+        role, prompt = llm.calls[0]
+        assert role == "transcript_cleanup"
+        assert "hey i forgot to renew the boiler" in prompt
+        assert "Do not change, add, remove, or reorder any words." in prompt
+        await tr.aclose()
+
+    async def test_no_cleanup_when_kwarg_omitted(self, httpserver: HTTPServer):
+        """Default path: no LLM passed -> raw STT result returned unchanged.
+        Verifies the kwarg defaults to None and skips cleanup entirely."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "raw words"})
+
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"audio") == "raw words"
+        await tr.aclose()
+
+    async def test_empty_raw_skips_cleanup_call(self, httpserver: HTTPServer):
+        """A silent voice memo returns empty -> no point asking the LLM
+        to clean nothing. Verifies we don't waste a call on empties."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "   "})
+
+        llm = _StubLLM(result="should not be reached")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"silence", cleanup_with=llm) == ""
+        assert llm.calls == []
+        await tr.aclose()
+
+    async def test_llm_error_falls_back_to_raw(self, httpserver: HTTPServer):
+        """The LLM is down at cleanup time. The caller still gets the raw
+        transcript -- without punctuation, but usable. Cleanup is polish,
+        not a hard requirement."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "raw uncleaned words"})
+
+        failing = _StubLLM(error=LLMUnavailableError("oMLX offline"))
+        tr = _make_transcriber(httpserver)
+        result = await tr.transcribe(b"audio", cleanup_with=failing)
+        assert result == "raw uncleaned words"
+        assert len(failing.calls) == 1  # we did try once
+        await tr.aclose()
+
+    async def test_empty_cleanup_response_falls_back_to_raw(self, httpserver: HTTPServer):
+        """A model that follows the prompt poorly and returns nothing is
+        no better than the LLM being down. Fall back to raw."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "raw words present"})
+
+        empty_llm = _StubLLM(result="   \n  ")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"audio", cleanup_with=empty_llm) == "raw words present"
+        await tr.aclose()
