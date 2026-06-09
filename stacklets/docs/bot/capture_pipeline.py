@@ -70,6 +70,16 @@ TEXT_EXTS = {"md", "markdown", "txt"}
 # show up when people attach a file picker rather than the in-app recorder.
 AUDIO_MIME_PREFIX = "audio/"
 
+# Ratio that the reformatted body must be of the input for the
+# reformat to count as a useful rewrite. A well-behaved reformat
+# tightens whitespace and stitches broken lines but keeps essentially
+# all the words; a result that's a fraction of the input length is
+# the LLM losing content (or replying with a fragment like "ok"). The
+# threshold is permissive enough to absorb legitimate compression
+# (line joins, header normalisation) without letting a half-answer
+# replace the raw OCR.
+_REFORMAT_MIN_RATIO = 0.5
+
 
 @dataclass
 class CaptureOutcome:
@@ -290,12 +300,77 @@ class CapturePipeline:
                 status="extract_failed",
                 failure_reason="transcription" if is_audio else "binary",
             )
+        source = self._cap_pdf_body(source)
+        source = await self._maybe_reformat_pdf(source, kind)
         return await self._publish(
             source=source, kind=kind, sender_mxid=sender_mxid,
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket,
+        )
+
+    def _cap_pdf_body(self, source: SourceContent) -> SourceContent:
+        """Bound the PDF note body to ``classify_max_chars`` so the mirror
+        size stays predictable for very long PDFs.
+
+        Non-PDF sources pass through. PDFs whose text already fits
+        below the cap pass through. Only oversized PDFs are truncated;
+        the LLM-reformat pass downstream then sees the capped text and
+        decides whether to clean it up or fall back to raw.
+        """
+
+        if (source.mime != "application/pdf"
+                or not source.text
+                or len(source.text) <= self.classify_max_chars):
+            return source
+        return SourceContent(
+            text=source.text[: self.classify_max_chars],
+            mime=source.mime,
+            title_hint=source.title_hint,
+            source_uri=source.source_uri,
+        )
+
+    async def _maybe_reformat_pdf(
+        self, source: SourceContent, kind: str,
+    ) -> SourceContent:
+        """Clean PDF OCR/pypdf output into readable markdown.
+
+        ``_cap_pdf_body`` has already truncated the body at
+        ``classify_max_chars``, so the reformat sees the same window
+        the classifier does. The reformat function's own ``max_chars``
+        defaults to the same value, and the capture pipeline passes
+        ``self.classify_max_chars`` through explicitly so the cap
+        stays single-sourced even if the caller raised it.
+
+        Best-effort: when the classifier isn't wired, when the body
+        is empty, or when the LLM returns nothing useful, the source
+        passes through unchanged. The reformat is a polish pass, not
+        a precondition for filing.
+        """
+
+        if (kind != "note"
+                or source.mime != "application/pdf"
+                or not source.text
+                or self._classifier is None):
+            return source
+        formatted = await self._classifier.reformat(
+            source.text, max_chars=self.classify_max_chars,
+        )
+        if not formatted:
+            return source
+        # Sanity guard: reformatted body must keep most of the input
+        # content. The reformat is allowed to compress whitespace and
+        # rejoin broken lines, but a result that's a fraction of the
+        # input length means the LLM lost content or replied with a
+        # fragment -- fall back to the raw text in that case.
+        if len(formatted) < len(source.text) * _REFORMAT_MIN_RATIO:
+            return source
+        return SourceContent(
+            text=formatted,
+            mime=source.mime,
+            title_hint=source.title_hint,
+            source_uri=source.source_uri,
         )
 
     async def _source_from_audio(
@@ -435,13 +510,19 @@ class CapturePipeline:
         if not images and not text_body:
             return (None, [], "bookmark")
 
+        # PDFs file as notes (body preserved in the mirror) so a
+        # downstream `?` query can grep the actual content -- e.g. a
+        # UNO rules sheet, a toy manual, a household instruction
+        # booklet. Bookmark mode (body dropped, summary IS the entry)
+        # would lose the text the user dropped this in for. The body
+        # gets capped + LLM-reformatted upstream in `capture_binary`.
         return (
             SourceContent(
                 text=text_body, mime="application/pdf",
                 title_hint=title_hint, source_uri=source_uri,
             ),
             images,
-            "bookmark",
+            "note",
         )
 
     async def reprocess(

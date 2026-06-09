@@ -46,6 +46,13 @@ class FakeClassifier:
             raise self._raises
         return self._payload
 
+    async def reformat(self, ocr_text: str, *, max_chars: int = 20000):
+        # Default: echo the input (capped to max_chars) prefixed so
+        # tests can detect that reformat ran AND verify the cap was
+        # respected. Subclasses override to return None (LLM down /
+        # not useful) or a short token to exercise the sanity guard.
+        return f"# Reformatted\n\n{ocr_text[:max_chars]}"
+
 
 class FakeMirror:
     def __init__(self):
@@ -691,6 +698,208 @@ class TestTopicSeedMerge:
             seed_topics=["camping", "", None, "  ", 42],  # type: ignore[list-item]
         )
         assert merged["tags"] == ["camping", "gear"]
+
+
+class TestPdfBodyCap:
+    """PDFs file as notes (body preserved in the mirror). The body is
+    capped at ``classify_max_chars`` so a multi-hundred-page manual
+    doesn't bloat the vault file. Non-PDFs and short PDFs pass through
+    unchanged."""
+
+    def test_short_pdf_unchanged(self):
+        pipe = _pipeline(mirror=FakeMirror())
+        source = SimpleNamespace(
+            text="short body", mime="application/pdf",
+            title_hint="manual.pdf", source_uri="mxc://a",
+        )
+        result = pipe._cap_pdf_body(source)
+        assert result is source
+
+    def test_oversized_pdf_truncated(self):
+        pipe = _pipeline(mirror=FakeMirror())
+        pipe.classify_max_chars = 50
+        source = SimpleNamespace(
+            text="A" * 200, mime="application/pdf",
+            title_hint="manual.pdf", source_uri="mxc://a",
+        )
+        result = pipe._cap_pdf_body(source)
+        assert len(result.text) == 50
+        assert result.mime == "application/pdf"
+        assert result.title_hint == "manual.pdf"
+        assert result.source_uri == "mxc://a"
+
+    def test_non_pdf_not_capped(self):
+        """Text files and audio transcripts already cap themselves
+        upstream (or are short by nature). The cap is PDF-only."""
+        pipe = _pipeline(mirror=FakeMirror())
+        pipe.classify_max_chars = 10
+        source = SimpleNamespace(
+            text="A" * 100, mime="text/markdown",
+            title_hint="notes.md", source_uri=None,
+        )
+        result = pipe._cap_pdf_body(source)
+        assert result is source
+
+    def test_empty_pdf_text_unchanged(self):
+        """A vision-only PDF (scan with no text layer) has empty
+        source.text. The cap leaves it alone -- there's nothing to
+        truncate, and the classifier's vision pass still drives the
+        summary callout."""
+        pipe = _pipeline(mirror=FakeMirror())
+        source = SimpleNamespace(
+            text="", mime="application/pdf",
+            title_hint="scan.pdf", source_uri="mxc://a",
+        )
+        result = pipe._cap_pdf_body(source)
+        assert result is source
+
+
+class TestPdfReformat:
+    """The reformat pass cleans pypdf/OCR artifacts into readable
+    markdown before the body lands in the mirror. Best-effort: anything
+    that would lose content (long body) or fail (LLM down) falls back
+    to the raw text."""
+
+    @pytest.mark.asyncio
+    async def test_short_pdf_reformatted(self):
+        """Short PDF body fits within the reformat cap and gets the
+        cleaned markdown back."""
+        pipe = _pipeline(mirror=FakeMirror())
+        source = SimpleNamespace(
+            text="raw   OCR  text  with  bad  spacing", mime="application/pdf",
+            title_hint="uno.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result.text.startswith("# Reformatted")
+        assert "raw   OCR" in result.text
+
+    @pytest.mark.asyncio
+    async def test_reformat_receives_classify_max_chars_cap(self):
+        """The capture pipeline passes its configured classify_max_chars
+        through as the reformat cap, so the reformat and classify halves
+        of the pipeline stay single-sourced on the body window."""
+        captured: dict = {}
+
+        class CapAwareClassifier(FakeClassifier):
+            async def reformat(self, ocr_text, *, max_chars=20000):
+                captured["max_chars"] = max_chars
+                captured["input_len"] = len(ocr_text)
+                return f"# Reformatted\n\n{ocr_text[:max_chars]}"
+
+        pipe = _pipeline(mirror=FakeMirror(), classifier=CapAwareClassifier())
+        pipe.classify_max_chars = 8000
+        source = SimpleNamespace(
+            text="X" * 5000, mime="application/pdf",
+            title_hint="manual.pdf", source_uri="mxc://a",
+        )
+        await pipe._maybe_reformat_pdf(source, kind="note")
+        assert captured["max_chars"] == 8000
+
+    @pytest.mark.asyncio
+    async def test_no_classifier_falls_back_to_raw(self):
+        """Without a classifier, reformat is skipped entirely. The
+        capture still files; the mirror just gets the raw pypdf
+        extract."""
+        pipe = _pipeline(mirror=FakeMirror())
+        pipe._classifier = None
+        source = SimpleNamespace(
+            text="raw text", mime="application/pdf",
+            title_hint="x.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result is source
+
+    @pytest.mark.asyncio
+    async def test_empty_body_skipped(self):
+        """Vision-only PDFs (scans with no text layer) have empty
+        source.text. There's nothing to reformat; pass through."""
+        pipe = _pipeline(mirror=FakeMirror())
+        source = SimpleNamespace(
+            text="", mime="application/pdf",
+            title_hint="scan.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result is source
+
+    @pytest.mark.asyncio
+    async def test_non_pdf_not_reformatted(self):
+        """The reformat is PDF-specific. Markdown and text uploads
+        skip it -- the bytes are already the artifact the user typed."""
+        pipe = _pipeline(mirror=FakeMirror())
+        source = SimpleNamespace(
+            text="# already markdown", mime="text/markdown",
+            title_hint="notes.md", source_uri=None,
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result is source
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_none_falls_back(self):
+        """LLM down or unparseable response returns None. The mirror
+        keeps the raw OCR rather than getting nothing."""
+
+        class NullReformatClassifier(FakeClassifier):
+            async def reformat(self, ocr_text, *, max_chars=20000):
+                return None
+
+        pipe = _pipeline(mirror=FakeMirror(), classifier=NullReformatClassifier())
+        source = SimpleNamespace(
+            text="raw text here", mime="application/pdf",
+            title_hint="x.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result is source
+
+    @pytest.mark.asyncio
+    async def test_lossy_output_falls_back(self):
+        """LLM returning a fragment ("ok") or otherwise much shorter
+        than the input means content was lost. The ratio guard catches
+        it and falls back to the raw OCR rather than overwriting it
+        with a half-answer."""
+
+        class StubClassifier(FakeClassifier):
+            async def reformat(self, ocr_text, *, max_chars=20000):
+                return "ok"
+
+        pipe = _pipeline(mirror=FakeMirror(), classifier=StubClassifier())
+        source = SimpleNamespace(
+            text="raw text here with enough content to be meaningful",
+            mime="application/pdf",
+            title_hint="x.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result is source
+
+    @pytest.mark.asyncio
+    async def test_modest_compression_kept(self):
+        """A reformat that tightens whitespace and rejoins broken lines
+        legitimately produces a slightly shorter output. The ratio
+        guard is permissive enough to keep that result."""
+
+        class CompressingClassifier(FakeClassifier):
+            async def reformat(self, ocr_text, *, max_chars=20000):
+                # Return ~75% of input length -- well above the 50% floor.
+                return ocr_text[: int(len(ocr_text) * 0.75)]
+
+        pipe = _pipeline(mirror=FakeMirror(), classifier=CompressingClassifier())
+        source = SimpleNamespace(
+            text="X" * 100, mime="application/pdf",
+            title_hint="x.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="note")
+        assert result.text == "X" * 75
+
+    @pytest.mark.asyncio
+    async def test_bookmark_kind_not_reformatted(self):
+        """The reformat only fires for note-kind captures. Bookmarks
+        (today's image PDFs) get the vision-driven summary instead."""
+        pipe = _pipeline(mirror=FakeMirror())
+        source = SimpleNamespace(
+            text="some body", mime="application/pdf",
+            title_hint="x.pdf", source_uri="mxc://a",
+        )
+        result = await pipe._maybe_reformat_pdf(source, kind="bookmark")
+        assert result is source
 
 
 class TestCaptureUrlUserHint:

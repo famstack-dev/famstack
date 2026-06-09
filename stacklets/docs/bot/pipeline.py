@@ -80,6 +80,13 @@ class PaperlessDuplicateError(Exception):
 _DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
 
 
+# Cap for the body window the classifier and the reformat pass operate
+# on. Defined here near the other module constants so it's visible to
+# ``Classifier`` methods that take it as a default parameter. The
+# enrichment functions further down the file consume the same value.
+DEFAULT_CLASSIFY_MAX_CHARS = 20000
+
+
 # ── Enrichment result ────────────────────────────────────────────────────
 
 @dataclass
@@ -640,7 +647,9 @@ class Classifier:
             )
             return {}
 
-    async def reformat(self, ocr_text: str) -> str | None:
+    async def reformat(
+        self, ocr_text: str, *, max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
+    ) -> str | None:
         """Reformat raw OCR text into clean, readable Markdown.
 
         OCR output is often messy: broken lines, garbled characters, no
@@ -648,12 +657,18 @@ class Classifier:
         content. The reformatted text replaces the original in Paperless,
         making documents actually readable.
 
+        ``max_chars`` caps the prompt input so the LLM call stays bounded
+        on extremely long documents. Default aligns with the classify
+        cap (``DEFAULT_CLASSIFY_MAX_CHARS``); callers that have already
+        truncated their input can pass through their own cap to keep
+        the pipeline single-sourced.
+
         Non-critical — transport failures return None and the caller's
         fallback is to keep the raw OCR. Length-based usability filtering
         is the pipeline's job (see `reformat_document`); this returns
         whatever the LLM produced, trimmed.
         """
-        prompt = _build_reformat_prompt(ocr_text[:6000])
+        prompt = _build_reformat_prompt(ocr_text[:max_chars])
         try:
             result = await self._llm.complete("reformat", prompt)
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
@@ -1340,9 +1355,6 @@ def extract_bot_summary(doc: dict) -> str:
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _NEW_TOPIC_COLOR = "#4caf50"
-
-
-DEFAULT_CLASSIFY_MAX_CHARS = 20000
 
 
 async def enrich_document(
