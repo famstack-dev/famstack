@@ -306,6 +306,36 @@ def _content_parts(prompt: str, images: list) -> list[dict]:
 _DEFAULT_WHISPER_MODEL = "whisper-1"
 
 
+# whisper.cpp output is raw: no punctuation, no capitalization, no
+# sentence breaks. The optional cleanup pass restores those without
+# changing what was said. The prompt is deliberately strict — content
+# drift would silently corrupt the family's note vault.
+#
+# We send the rules as a single user message because the framework LLM
+# client doesn't take a system role today; modern small models honour
+# these constraints reliably when the rules are imperative and the
+# input is the last thing in the prompt.
+_CLEANUP_ROLE = "transcript_cleanup"
+_CLEANUP_PROMPT = """\
+You are cleaning up a raw speech-to-text transcript that has no \
+punctuation, capitalization, or sentence breaks. Restore them in the \
+SAME language as the input.
+
+Rules you MUST follow:
+- Do not change, add, remove, or reorder any words.
+- Do not correct grammar or word choice.
+- Do not summarise, expand, rephrase, or translate.
+- Keep every word in the original language and original order.
+- Add ONLY: punctuation, capitalization, sentence breaks, paragraph breaks.
+
+Reply with ONLY the cleaned transcript. No preamble, no commentary, no \
+code fences, no quotes around the output.
+
+Raw transcript:
+{raw}
+"""
+
+
 class Transcriber:
     """OpenAI-compatible speech-to-text scoped to one stacklet.
 
@@ -349,7 +379,8 @@ class Transcriber:
         return cls(client, namespace=namespace)
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
-                         model: str | None = None) -> str:
+                         model: str | None = None,
+                         cleanup_with: "LLM | None" = None) -> str:
         """Transcribe audio bytes to text, stripped of leading/trailing space.
 
         ``filename`` lets the server pick a decoder by extension (whisper.cpp
@@ -357,8 +388,16 @@ class Transcriber:
         the SDK for OpenAI-compat servers that route by model name; the
         native whisper-server ignores it.
 
-        SDK errors are translated to the same typed LLM errors ``LLM`` uses
-        so callers can ``except LLMError`` once for both surfaces.
+        ``cleanup_with`` is an optional :class:`LLM` to polish the raw STT
+        output with punctuation and sentence breaks. When provided, the
+        result is the LLM-cleaned text; when omitted or the LLM call
+        fails, the raw transcript is returned unchanged. Cleanup is a
+        best-effort polish, never a hard requirement -- a voice memo
+        without punctuation still beats no transcript at all.
+
+        SDK errors from the STT call are translated to the same typed
+        LLM errors :class:`LLM` uses so callers can ``except LLMError``
+        once for both surfaces.
         """
         try:
             resp = await self._client.audio.transcriptions.create(
@@ -384,8 +423,30 @@ class Transcriber:
         # The SDK returns a Transcription object whose `.text` mirrors
         # whisper-server's `{"text": ...}` response. Strip incidental
         # whitespace so callers don't have to.
-        text = getattr(resp, "text", "") or ""
-        return text.strip()
+        raw = (getattr(resp, "text", "") or "").strip()
+        if not raw or cleanup_with is None:
+            return raw
+        return await self._cleanup(raw, cleanup_with)
+
+    @staticmethod
+    async def _cleanup(raw: str, llm: "LLM") -> str:
+        """Run the LLM-cleanup pass; fall back to raw on any failure.
+
+        Cleanup is best-effort: if the LLM is down or the model returns
+        empty output, the caller still gets a usable transcript. We log
+        a warning so the admin can see drift between raw and clean if
+        they ever want to investigate model quality.
+        """
+        try:
+            cleaned = await llm.complete(
+                _CLEANUP_ROLE, _CLEANUP_PROMPT.format(raw=raw),
+            )
+        except LLMError as e:
+            logger.warning("[transcriber] cleanup failed, returning raw: {}", e)
+            return raw
+        cleaned = (cleaned or "").strip()
+        # A model that returned nothing is no better than no model.
+        return cleaned or raw
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client. Owned by us via from_env()."""

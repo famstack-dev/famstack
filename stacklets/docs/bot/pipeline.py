@@ -475,6 +475,16 @@ class Classifier:
         return cls(llm)
 
     @property
+    def llm(self) -> LLM:
+        """Expose the framework LLM for other components that need it.
+
+        Captures piggyback on this for transcript cleanup -- the LLM is
+        the same one the classifier already built, so we don't open a
+        second HTTP client just to polish a voice memo.
+        """
+        return self._llm
+
+    @property
     def capabilities(self) -> ModelCapabilities:
         """Expose the vision-capability cache for tests + diagnostics."""
         return self._llm.capabilities

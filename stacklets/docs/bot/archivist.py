@@ -422,6 +422,12 @@ class ArchivistBot(MicroBot):
                 "(set up AI with 'stack up ai' to enable transcription)"
             )
 
+        # The capture pipeline borrows the classifier's framework LLM for
+        # transcript cleanup -- punctuating raw whisper output with the
+        # model that's already running. When the classifier isn't built
+        # (AI not configured), cleanup soft-skips and the raw transcript
+        # falls through.
+        capture_llm = self._classifier.llm if self._classifier is not None else None
         self._capture = CapturePipeline(
             url_extractor=self._url_extractor,
             text_extractor=self._text_extractor,
@@ -435,6 +441,7 @@ class ArchivistBot(MicroBot):
             capture_tag_prompt_size=self.capture_tag_prompt_size,
             vision_max_pdf_pages=self.vision_max_pdf_pages,
             transcriber=self._transcriber,
+            llm=capture_llm,
         )
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs

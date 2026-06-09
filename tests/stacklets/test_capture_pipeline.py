@@ -95,7 +95,7 @@ class FakeNotifier:
 
 
 def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
-              transcriber=None):
+              transcriber=None, llm=None):
     return CapturePipeline(
         url_extractor=FakeExtractor(_source(source_uri="http://src")),
         text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
@@ -108,22 +108,31 @@ def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
         capture_keep_body=capture_keep_body,
         capture_tag_prompt_size=50,
         transcriber=transcriber,
+        llm=llm,
     )
 
 
 class FakeTranscriber:
     """Stand-in for stack.ai.client.Transcriber — records calls and
-    returns a configured transcript or raises a configured error."""
+    returns a configured transcript or raises a configured error.
+
+    Mirrors the real signature including ``cleanup_with`` so the capture
+    pipeline can pass an LLM through and we can assert the routing.
+    """
 
     def __init__(self, transcript: str = "I forgot to renew the boiler service",
                  error: Exception | None = None):
         self.transcript = transcript
         self.error = error
-        self.calls: list[tuple[bytes, str]] = []
+        self.calls: list[dict] = []
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
-                         model: str | None = None) -> str:
-        self.calls.append((audio, filename))
+                         model: str | None = None,
+                         cleanup_with=None) -> str:
+        self.calls.append({
+            "audio": audio, "filename": filename,
+            "cleanup_with": cleanup_with,
+        })
         if self.error is not None:
             raise self.error
         return self.transcript
@@ -334,7 +343,9 @@ class TestSourceFromAudio:
             filename="voice-2026-06-09.ogg",
             source_uri="mxc://server/abc",
         )
-        assert tr.calls == [(b"opus-bytes", "voice-2026-06-09.ogg")]
+        assert len(tr.calls) == 1
+        assert tr.calls[0]["audio"] == b"opus-bytes"
+        assert tr.calls[0]["filename"] == "voice-2026-06-09.ogg"
         assert source is not None
         assert source.text == "Reminder: book the boiler service"
         assert source.mime == "audio/ogg"
@@ -401,7 +412,9 @@ class TestCaptureBinaryAudioRouting:
             sender_mxid="@homer:s",
         )
         # The transcript reached the mirror via the classify tail.
-        assert tr.calls == [(b"opus-data", "voice-2026-06-09.ogg")]
+        assert len(tr.calls) == 1
+        assert tr.calls[0]["audio"] == b"opus-data"
+        assert tr.calls[0]["filename"] == "voice-2026-06-09.ogg"
         assert out.status == "captured"
         assert mirror.captures, "expected the transcript to be mirrored as a note"
         published = mirror.captures[0]
@@ -452,5 +465,39 @@ class TestCaptureBinaryAudioRouting:
             sender_mxid="@homer:s",
         )
         assert tr.calls == []
+
+    @pytest.mark.asyncio
+    async def test_llm_passed_to_transcriber_as_cleanup_with(self):
+        """The CapturePipeline.llm kwarg threads through to the Transcriber's
+        cleanup_with on every audio capture. This is the wiring contract
+        that powers transcript cleanup -- the Transcriber owns the prompt;
+        the pipeline only has to hand it the LLM."""
+        # Sentinel object: not actually called by FakeTranscriber, but we
+        # assert it shows up in the recorded call.
+        sentinel_llm = object()
+        tr = FakeTranscriber(transcript="raw words")
+        pipe = _pipeline(
+            mirror=FakeMirror(), transcriber=tr, llm=sentinel_llm,
+        )
+        await pipe.capture_binary(
+            file_data=b"opus-data", mime="audio/ogg",
+            filename="voice.ogg", source_uri="mxc://server/abc",
+            sender_mxid="@homer:s",
+        )
+        assert tr.calls[0]["cleanup_with"] is sentinel_llm
+
+    @pytest.mark.asyncio
+    async def test_no_llm_means_no_cleanup(self):
+        """When the LLM isn't wired (e.g. archivist boots before
+        OPENAI_URL is set), cleanup_with is None and the Transcriber
+        returns the raw transcript verbatim."""
+        tr = FakeTranscriber(transcript="raw words")
+        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr, llm=None)
+        await pipe.capture_binary(
+            file_data=b"opus-data", mime="audio/ogg",
+            filename="voice.ogg", source_uri="mxc://server/abc",
+            sender_mxid="@homer:s",
+        )
+        assert tr.calls[0]["cleanup_with"] is None
 
 
