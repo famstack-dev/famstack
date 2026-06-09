@@ -128,3 +128,46 @@ class TestExistingTags:
         # Cold start — no existing vocabulary. The prompt still works;
         # the LLM gets to invent the seed tags.
         assert "tags" in prompt
+
+
+# ── Tag-quality bias ─────────────────────────────────────────────────────
+
+
+class TestTagQualityBias:
+    """The capture classifier defaults to generic categories ('Travel')
+    when nothing pushes it. These pins keep the prompt biased toward
+    content-specific tags so 'find my camping notes next year' works."""
+
+    def test_enforces_minimum_three_tags(self):
+        """A single generic tag ('Travel') is the failure mode we hit
+        in practice. Pin the minimum so the rule survives future edits."""
+        prompt = _build_capture_prompt(**COMMON)
+        # The exact phrasing varies; what must NOT slip is the floor.
+        # We pin the literal "MINIMUM 3" since that's the strongest form.
+        assert "MINIMUM 3" in prompt
+
+    def test_advertises_specific_over_generic_bias(self):
+        """A short rule isn't enough; concrete contrast examples push
+        the model harder than abstract instructions. The camping vs
+        travel pair is the canonical demo for this rule."""
+        prompt = _build_capture_prompt(**COMMON)
+        # Two contrast pairs is the bar -- one feels like an example,
+        # multiple feels like a pattern.
+        assert "'camping' beats 'travel'" in prompt
+        assert "PREFER SPECIFIC" in prompt or "Prefer specific" in prompt
+
+    def test_includes_german_tag_examples(self):
+        """The family is bilingual; tags follow the content's language.
+        Without German examples, the model defaults to English tags on
+        German voice memos -- which then fail to match German search."""
+        prompt = _build_capture_prompt(**COMMON)
+        # At least one German content-specific tag in the examples
+        # (rotates between voice-memo and document scenarios in real use).
+        assert "wäschesack" in prompt or "campingurlaub" in prompt
+
+    def test_retrieval_test_framing_in_rules(self):
+        """The rules block frames 'is this a good tag' as the retrieval
+        test: would the user type this six months from now? Keeping
+        that framing anchors the model to user intent over tidiness."""
+        prompt = _build_capture_prompt(**COMMON)
+        assert "six months from now" in prompt
