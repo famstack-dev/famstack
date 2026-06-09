@@ -55,8 +55,34 @@ def _setup(client, users, config, secrets=None):
     if space_id:
         results.append({"item": space_name, "action": "Space created"})
     else:
-        # Space might already exist — try to find it via admin API
+        # Space might already exist — resolve it so the rest of the
+        # setup (child-room linking, member joins, PL fix below) still
+        # has the id to work with. Without this, every later step that
+        # references space_id silently skipped on a re-run.
+        space_id = client.resolve_room("family")
         results.append({"item": space_name, "action": "Space already exists"})
+
+    # ── Step 2b: open the space to its members ──────────────────────────
+    # Synapse's `private_chat` preset gives the tech admin PL 100 and
+    # every later joiner PL 0. Adding a room to a space writes an
+    # `m.space.child` state event, which defaults to PL 50, so a freshly-
+    # joined family member sees Element's "Create a room in this space"
+    # button do nothing. Lowering only this one threshold to 0 unblocks
+    # them without granting elevated rights for anything else. Idempotent
+    # by design (only writes when the threshold is not already 0) so a
+    # re-run on an existing production instance auto-heals it without
+    # touching anything else.
+    if space_id:
+        outcome = client.open_space_to_members(space_id)
+        if outcome == "set":
+            results.append({"item": f"{space_name} → child-room creation",
+                            "action": "opened to members"})
+        elif outcome == "ok":
+            results.append({"item": f"{space_name} → child-room creation",
+                            "action": "already open to members"})
+        else:
+            results.append({"item": f"{space_name} → child-room creation",
+                            "action": "could not open (Synapse refused)"})
 
     # ── Step 3: create default rooms ─────────────────────────────────────
 

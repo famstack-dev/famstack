@@ -226,6 +226,92 @@ class MatrixClient:
             token=self.token,
         )
 
+    # ── Room state + power levels ────────────────────────────────────────
+    #
+    # Synapse's "make me an admin" flag controls server-side operations
+    # only -- it does NOT grant room-level power. Inside a room (including
+    # a Space) every action gates on `m.room.power_levels`, an ordinary
+    # state event whose contents look like:
+    #
+    #   {
+    #     "users":   { "@stackadmin:home": 100, ... },
+    #     "events":  { "m.space.child": 50, ... },   # per-event override
+    #     "events_default": 0,
+    #     "state_default": 50,
+    #     "users_default": 0,
+    #     ...
+    #   }
+    #
+    # The `private_chat` preset Synapse seeds gives the creator 100 and
+    # every later joiner 0. Adding a room to a Space requires sending an
+    # `m.space.child` state event, which defaults to PL 50, so a freshly-
+    # joined family member sees Element's "Create a room in this space"
+    # button do nothing. Lowering that one threshold to 0 unblocks them
+    # without granting elevated rights for anything else.
+
+    def get_state(self, room_id, event_type, state_key=""):
+        """Read a room state event. Returns the content dict or None.
+
+        404 (state event absent) returns None so callers can decide
+        whether to write defaults; any other non-200 response also
+        returns None and is logged at the caller.
+        """
+        path = f"/_matrix/client/v3/rooms/{room_id}/state/{event_type}/{state_key}"
+        status, body = _get(self._url(path), token=self.token)
+        if status == 200:
+            return body
+        return None
+
+    def get_power_levels(self, room_id):
+        """Return the room's `m.room.power_levels` content as a dict, or
+        None when Synapse refuses to serve it (rare -- the event is
+        always present in a well-formed room)."""
+        return self.get_state(room_id, "m.room.power_levels")
+
+    def set_power_levels(self, room_id, content):
+        """PUT the full `m.room.power_levels` content. The caller is
+        responsible for merging with existing keys; we never partial-
+        update, because Synapse replaces the whole event on write."""
+        path = f"/_matrix/client/v3/rooms/{room_id}/state/m.room.power_levels"
+        status, _ = _put(self._url(path), content, token=self.token)
+        return status == 200
+
+    def ensure_event_power_level(self, room_id, event_type, level):
+        """Make sure the room's per-event PL for `event_type` is exactly
+        `level`. Returns one of:
+
+          "set"      – the value changed, write succeeded
+          "ok"       – the value already matched, no write
+          "failed"   – we could not read or write the state event
+
+        Idempotent and safe across re-runs. Existing keys in the
+        power_levels event are preserved; only the requested event
+        threshold is touched.
+        """
+        current = self.get_power_levels(room_id)
+        if current is None:
+            return "failed"
+        events = dict(current.get("events") or {})
+        if events.get(event_type) == level:
+            return "ok"
+        events[event_type] = level
+        merged = {**current, "events": events}
+        ok = self.set_power_levels(room_id, merged)
+        return "set" if ok else "failed"
+
+    def open_space_to_members(self, space_id):
+        """Lower the space's `m.space.child` PL threshold to 0 so any
+        joined member can add rooms to the space. Idempotent: returns
+        ``"ok"`` when the threshold was already 0.
+
+        This is the only PL-write performed by ``stack messages setup``;
+        the seed admin keeps their existing PL 100, every other family
+        member stays at the default PL 0, but the specific gate that
+        controls "Create a room in this space" drops to 0 so the UX
+        works for everyone.
+        """
+        return self.ensure_event_power_level(space_id, "m.space.child", 0)
+
     def join_user(self, room_id, user_id):
         """Force-join a user to a room via the Synapse admin API."""
         full = self._full_user(user_id)
