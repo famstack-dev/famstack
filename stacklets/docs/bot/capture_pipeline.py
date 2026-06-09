@@ -41,6 +41,7 @@ from pipeline import (
     LLMUnavailableError,
 )
 from stack import resolve_model
+from stack.ai.client import LLMError
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -63,6 +64,11 @@ TEXT_MIMES = {
     "text/plain", "text/markdown", "text/x-markdown",
 }
 TEXT_EXTS = {"md", "markdown", "txt"}
+
+# Voice memos: when whisper is wired, the transcript IS the note body.
+# Element and most Matrix clients upload Opus-in-OGG; the other formats
+# show up when people attach a file picker rather than the in-app recorder.
+AUDIO_MIME_PREFIX = "audio/"
 
 
 @dataclass
@@ -96,6 +102,7 @@ class CapturePipeline:
         capture_keep_body: bool,
         capture_tag_prompt_size: int,
         vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
+        transcriber=None,
     ):
         self._url_extractor = url_extractor
         self._text_extractor = text_extractor
@@ -108,6 +115,9 @@ class CapturePipeline:
         self.capture_keep_body = capture_keep_body
         self.capture_tag_prompt_size = capture_tag_prompt_size
         self.vision_max_pdf_pages = vision_max_pdf_pages
+        # Optional: when None, audio uploads soft-skip with extract_failed
+        # so the bot tells the sender it can't transcribe right now.
+        self._transcriber = transcriber
 
     async def capture_url(
         self, *, url: str, sender_mxid: str, notifier: Notifier,
@@ -166,10 +176,16 @@ class CapturePipeline:
         wiki entry links back to the original binary -- we don't
         re-store the bytes; Matrix already has them.
         """
-        source, images, kind = self._source_from_binary(
-            file_data=file_data, mime=mime, filename=filename,
-            source_uri=source_uri,
-        )
+        if mime and mime.startswith(AUDIO_MIME_PREFIX):
+            source, images, kind = await self._source_from_audio(
+                file_data=file_data, mime=mime, filename=filename,
+                source_uri=source_uri,
+            )
+        else:
+            source, images, kind = self._source_from_binary(
+                file_data=file_data, mime=mime, filename=filename,
+                source_uri=source_uri,
+            )
         if source is None:
             return CaptureOutcome(status="extract_failed")
         return await self._publish(
@@ -177,6 +193,48 @@ class CapturePipeline:
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
             capture_id=capture_id,
+        )
+
+    async def _source_from_audio(
+        self, *, file_data: bytes, mime: str, filename: str,
+        source_uri: str | None,
+    ) -> tuple[SourceContent | None, list[ImageAttachment], str]:
+        """Transcribe a voice memo into a note-shaped SourceContent.
+
+        The transcript IS the note body: same kind ("note") that md/txt
+        uploads use, so the classifier sees the transcribed text and the
+        mirror writes the words verbatim. Returning ``None`` signals the
+        capture as extract_failed -- the orchestrator already renders a
+        friendly reply for that case, so a missing/down whisper service
+        surfaces uniformly across PDFs and audio.
+        """
+        if self._transcriber is None:
+            logger.info(
+                "[capture] audio dropped: no transcriber configured "
+                "(WHISPER_URL unset?)"
+            )
+            return (None, [], "note")
+        try:
+            transcript = await self._transcriber.transcribe(
+                file_data, filename=filename or "voice.ogg",
+            )
+        except LLMError as e:
+            # Same failure shape the LLM client uses for chat outages;
+            # the orchestrator already maps extract_failed to a user-
+            # visible "I couldn't process that" reply.
+            logger.warning("[capture] transcription failed: {}", e)
+            return (None, [], "note")
+        if not transcript.strip():
+            return (None, [], "note")
+        return (
+            SourceContent(
+                text=transcript,
+                mime=mime,
+                title_hint=filename or None,
+                source_uri=source_uri,
+            ),
+            [],
+            "note",
         )
 
     def _source_from_binary(
