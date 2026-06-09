@@ -359,8 +359,214 @@ Six implementation steps, each independently shippable. Steps 1-4 are shipped on
 
 1. **Topic-aware ontology.** Should the topic slug auto-register as a topic in `stacklets/memory/seeds/ontology.toml`, or stay as a free-form tag? Registering gets language-aware synonyms (`camping` aligned with `Camping` for queries); not registering keeps the seed flat and avoids ontology churn. Default for v1: stay free-form, leave promotion to ontology as an explicit operator step.
 2. **Document-room overlap.** What if a user creates `Thema: Versicherungen` and drops actual insurance documents there? They still go to Paperless (the docs pipeline), but the mirror lands in the topic folder, not in `family/`. The existing capture pipeline already supports this for entity buckets; topic buckets reuse the same path. Worth a test pin.
-3. **Stories inside topic rooms.** A camping trip is a story per [knowledge-structure.md](knowledge-structure.md) §Story-specific mechanics. When does a story page get created — automatic on first capture of a trip-shaped event, or hand-created via CLI? Deferred to the story work; topic rooms do not decide it.
-4. **Bot accounts as humans for scope detection.** A topic room with `scribe-bot` plus `archivist-bot` plus Arthur has one human. The scope-detector must filter known bot users. Implementation reads from `users.toml` or the equivalent registry.
+3. **Bot accounts as humans for scope detection.** A topic room with `scribe-bot` plus `archivist-bot` plus Arthur has one human. The scope-detector must filter known bot users. Implementation reads from `users.toml` or the equivalent registry.
+
+## Future direction: story rooms
+
+This section captures a planned extension agreed in the 2026-06-09 design session. **Not in scope for this branch.** Recorded here so the topic-room implementation does not paint itself into a corner.
+
+### Why stories are a peer concept, not a child
+
+Topics are open-ended (camping as an ongoing interest; cooking as a shared household habit; gravel cycling as Arthur's hobby). Stories are bounded — they have a beginning and an end. The 2027 Italy trip, the bathroom renovation, Marge's 40th birthday party. Conflating them was the earlier mistake: a hobby grows for decades, a trip wraps up in two weeks. The about.md prompt, the lifecycle, and the "find this again later" intent differ enough that one model serves both badly.
+
+Stories live as **peers of topics**, not children. A trip does not nest inside the camping topic. Instead, the story declares which topics it draws from, and the topic page picks up the story's captures via the existing cross-reference grep. This keeps each layer's purpose clean.
+
+### Routing — same engine
+
+Same parser, same bootstrap, same capture pipeline. The story prefix sits alongside `Thema:` / `Topic:` in the prefix recognizer. The room state's `kind: story` discriminates from `kind: topic` everywhere downstream (wiki render, status auto-flip, future deriver pass). The folder shape is identical: `<bucket>/<slug>/notes/`, `<bucket>/<slug>/bookmarks/`, `<bucket>/<slug>/documents/`, `<bucket>/<slug>/about.md`.
+
+### Prefix (open)
+
+Three candidates. Pick before implementation; the parser branches on whichever lands.
+
+- `Projekt:` / `Project:` — reads concrete, matches household vocabulary
+- `Story:` / `Geschichte:` — matches the earlier knowledge-structure design, but "Geschichte" reads as "history" in German first
+- `Plan:` / `Plan:` — emphasises the planning phase
+
+### Room state
+
+```json
+{
+  "type": "dev.famstack.capture",
+  "content": {
+    "kind": "story",
+    "bucket": "family/italien-2027",
+    "slug": "italien-2027",
+    "display_name": "Italien 2027",
+    "default_topics": ["italien-2027"],
+    "parent_topics": ["reisen"],
+    "scope": "shared",
+    "status": "planning",
+    "starts": "2027-07-15",
+    "ends": "2027-07-29",
+    "participants": ["arthur", "marge"],
+    "extract_knowledge": true,
+    "bootstrapped_at": "2026-06-09T12:00:00Z",
+    "bootstrapped_by": "@arthur:home"
+  }
+}
+```
+
+New fields over a topic:
+
+| Field | Purpose |
+|---|---|
+| `parent_topics` | The ongoing topics this story belongs to. The seed-topic invariant expands so every capture in the story gets `[italien-2027, reisen]` tagged; the parent topic's cross-reference grep picks the captures up automatically. |
+| `status` | `planning` (before `starts`), `active` (between `starts` and `ends`), `completed` (after `ends`), `archived` (90 days after `ends`, or manual). |
+| `starts`, `ends` | Date range. `ends` may be null for stories with an open horizon (a renovation with no end date pinned yet). |
+| `participants` | Canonical localparts of the humans the story belongs to. Defaults to the room's joined humans at bootstrap time. |
+
+### Status auto-flip
+
+The wiki command rewrites each story's `status` on every rebuild based on the current date relative to `starts` / `ends`. No background job needed: the rebuild is the only state-changing pass, and it runs frequently enough that "active" never lags reality by more than a wiki rebuild.
+
+### About.md differs
+
+The wiki command branches on `kind: story`. Story about.md leads with a status block (`status: planning`, countdown to `starts`, days since `ends` for completed) and a prominent action-items section. It does not have the open-ended "what does the family use this for" abstract framing topic pages carry — the story IS the thing it is for.
+
+### Capture flow
+
+A capture in `Projekt: Italien 2027` (or whatever prefix lands):
+
+1. Bucket: `family/italien-2027/`
+2. Seed topics: `[italien-2027, reisen]` (story slug + parent topics)
+3. Files at `family/italien-2027/notes/2027/...md` with `tags: [italien-2027, reisen, ...]`
+4. The `family/reisen/about.md` topic page's cross-reference grep finds the capture via the `reisen` tag, lists it under "Cross-references" with a link back to its actual location
+5. The `family/italien-2027/about.md` story page lists the capture under "Recent activity" and surfaces any action items extracted by the classifier
+
+### Lifecycle
+
+| Event | Effect |
+|---|---|
+| Bootstrap | Same as topic bootstrap. Detect `kind` from prefix; carry the date / participant fields when prompted (CLI or later: invite Kit Bot to ask in-chat). |
+| Trip-end date passes | Next wiki rebuild flips `status` to `completed`. About.md drops the countdown, gains a "lessons learned" section. |
+| 90 days after `ends` | Next wiki rebuild flips `status` to `archived`. Story drops from the parent topic's active-stories list; folder and captures stay forever. |
+| Family kicks the bot or leaves the room | Same archive behaviour as a topic. |
+
+### Why this stays simple
+
+Three properties keep the story extension from sprawling:
+
+- **No nesting.** Topics and stories are flat in their bucket. The bridge is the `parent_topics` field on the story, picked up by the topic's existing cross-reference grep. No special hierarchy code.
+- **Status is derived.** Nothing writes `status` at runtime. The wiki command recomputes it from dates on every rebuild. No background job, no state-machine code in the archivist.
+- **Same routing engine.** The parser gains a prefix; the bootstrap gains a kind-discriminating branch; the capture pipeline is untouched (the seed-topic invariant already handles `default_topics` of any length).
+
+### Implementation cost estimate
+
+Roughly half the topic-room work:
+
+- Parser: add story prefix + return `kind` on `ParsedRoomName` (renamed from `ParsedTopicName`)
+- Bootstrap: branch on parsed kind; story bootstrap collects extra fields (interactive prompt or sensible defaults)
+- Wiki: new `_generate_story` + `_build_story_prompt`; status auto-flip pass before the rebuild loop
+- Tests: parser variants, story state shape, status-flip table
+
+~3-5h once the topic-room branch is settled.
+
+## Future direction: personal entity graph
+
+This section captures another planned extension agreed in the 2026-06-09 design session. **Not in scope for this branch.** Recorded here so the topic-room implementation does not paint itself into a corner.
+
+### The problem
+
+Today's classifier extracts persons, dates, topics, and free-form tags per capture. It does *not* learn that "our BMW 320d" is central to this household's camping topic, or that "Thule roof box," "der Thule," and "the rooftop carrier" are three names for the same physical object. Asking "how did we pack the trunk for camping?" relies on tag-level keyword matching; it has no notion of which entities are central to *this* household's camping life.
+
+The fix is a per-topic entity graph the system builds from its own captures, not from a generic vocabulary.
+
+### Generic versus personal
+
+The existing ontology (`stacklets/memory/seeds/ontology.toml`) is generic: universal categories like `insurance`, `vehicle`, `medical`. It ships with the install and applies to every household.
+
+A personal entity graph is the inverse: household-specific things, people, places, products, locations that recur in this household's captures. The BMW 320d, the Karwendel campsite, the Vaude tent, Marge's mosquito allergy. None of these belong in a shipped ontology. They emerge from filings.
+
+The two layers sit alongside each other:
+
+| Layer | Lives in | Scope | Authored by |
+|---|---|---|---|
+| Generic ontology | `stacklets/memory/seeds/ontology.toml` | Universal | famstack maintainers |
+| Personal entity graph | `<bucket>/<topic>/entities.toml` | One household, one topic | The deriver, over time |
+
+### What the data looks like
+
+A per-topic registry of entities with aliases and co-occurrence weights:
+
+```toml
+# family/camping/entities.toml — derived, regenerated by the deriver
+
+[entity.bmw-320d]
+display      = "BMW 320d"
+kind         = "vehicle"
+aliases      = ["BMW", "der 320er", "das Auto"]
+first_seen   = 2024-03-12
+last_seen    = 2026-06-08
+captures     = 14
+co_occurs    = ["thule-roof-box", "karwendel-campsite"]
+
+[entity.thule-roof-box]
+display      = "Thule Roof Box"
+kind         = "gear"
+aliases      = ["Thule", "Dachbox", "rooftop carrier"]
+captures     = 9
+co_occurs    = ["bmw-320d"]
+
+[entity.karwendel-campsite]
+display      = "Karwendel Campsite"
+kind         = "location"
+aliases      = ["Karwendel", "der Karwendel-Platz"]
+captures     = 6
+```
+
+Each entity has a stable slug, a display name, a kind (`vehicle`, `gear`, `location`, `person`, `product`, ...), known aliases (future captures using a different spelling resolve to the same entity), capture counts, and a co-occurrence list (which other entities show up in the same captures).
+
+### How it gets built
+
+A deriver pass per topic, run incrementally on every new capture (or batched per nightly dream cycle):
+
+1. **Extract.** LLM pass: "Read this capture. List every concrete entity mentioned — vehicles, gear, locations, people not in the persons list, products, brands. Return `(display, kind, aliases)`."
+2. **Resolve.** Match each extracted entity against the existing registry (by display, by alias, by similarity). New entities get a new slug; recognised ones increment `captures` and merge new aliases in.
+3. **Co-occur.** Update `co_occurs` for every pair of entities mentioned in the same capture.
+4. **Decay.** Entities not seen in N captures or N months fade in salience, but are not deleted. The campsite the family hasn't visited in five years should still be findable when asked.
+
+The pass is per-topic because the cost scales with the topic's capture count, and because the same entity is rarely relevant outside its home topic (a campsite is a camping entity; a tax accountant is not).
+
+### How it's used
+
+Four downstream consumers, each pulling on a different angle of the registry:
+
+| Surface | Use |
+|---|---|
+| **Topic about.md** | A `## Key entities` section lists the highest-weighted entities with one-line context: "BMW 320d (the family car, 14 camping captures), Thule roof box (9), Karwendel campsite (6 visits)." Grows with the topic. |
+| **Topic cross-references** | When an entity registered to a topic appears in a capture in another bucket (the BMW 320d shows up in `family/documents/2026-04-15-adac-policy.md`), the topic's cross-reference grep includes it even when no topic tag was applied. The entity *is* the bridge. |
+| **Query expansion** | A `?` query in the topic room rewrites "how did we pack the trunk" to include "BMW 320d AND Thule roof box AND camping" for richer recall. Same shape `Classifier.synthesize_answer` already uses for keyword expansion. |
+| **LLM context for synthesis** | The top entities feed the synthesis prompt as ambient context: "When this household says 'the car' under camping, they mean their BMW 320d. When they say 'the box,' they usually mean the Thule." Removes ambiguity in the answer without the user having to specify. |
+
+### Propagation to the parent topic
+
+Entities are local to the topic that learned them, but propagate one level up via `parent_topics` (the same mechanism the story design uses):
+
+- `family/camping/entities.toml` knows the BMW is central to camping
+- The parent topic (`family/reisen/` if Reisen is the parent of Camping) inherits the BMW as a candidate, ranked lower until its own captures reinforce it
+- A future capture in Reisen that says "the car" can resolve to BMW 320d because the parent topic's candidate registry already carries the alias
+
+Propagation is structural (parent-child by `parent_topics`), not heuristic. No cross-bucket leakage; a personal topic's registry never reaches another personal bucket.
+
+### Relation to capture-tags.json
+
+The existing capture-tag cache (`stacklets/docs/bot/capture-tags.json`) records which free-form tags have been used so the classifier prompt can include them as "existing tags" for consistency. The personal entity graph is the same idea at a higher level: where capture-tags learns the vocabulary, the entity graph learns the *entities* and their *relationships*. One is a flat list with counts; the other is a typed graph with aliases and co-occurrence edges. The capture-tag cache will likely fold into the entity graph once the deriver lands — same purpose, richer shape.
+
+### Why this is deriver work
+
+The capture pipeline today files one capture and returns. The entity registry needs a pass that reads *all* of a topic's captures, looks at relationships across them, and persists structured output back to the vault. That is precisely the deriver bot's job per [knowledge-architecture.md §Deriver Bot](knowledge-architecture.md). The personal entity graph lands as one of the deriver's outputs alongside the cross-reference index in `about.md`.
+
+Until the deriver exists, the topic-room work cannot ship entity learning. Two paths to consider when the time comes:
+
+- **Wait.** Personal entity graph lands as a feature of the deriver branch.
+- **Stub.** Add a `stack memory wiki --derive-entities` flag that runs a one-shot LLM pass over a topic's captures and writes `entities.toml`. Useful for proving the model out before the deriver is built, but a temporary scaffold.
+
+Recommended: wait. Build the deriver first; the entity registry is a natural shape inside it.
+
+### Scope estimate
+
+Bigger than the story extension because the LLM pass is per-capture, the persistent store is new, and the merge / decay logic needs care. Roughly the size of the topic-rooms work itself — 8-12h plus the deriver foundation.
 
 ## Status of this document
 
