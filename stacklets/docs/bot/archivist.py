@@ -93,10 +93,19 @@ from reply_presenter import (  # noqa: E402
 from document_pipeline import (  # noqa: E402
     DocumentPipeline,
     FilingOutcome,
+    utc_now_isoformat,
 )
 from search_service import SearchService  # noqa: E402
 from capture_pipeline import CapturePipeline, CaptureOutcome  # noqa: E402
 from notifier import MatrixNotifier  # noqa: E402
+from topic_rooms import (  # noqa: E402
+    TopicBinding,
+    binding_from_state,
+    is_reserved,
+    make_room_state,
+    parse_topic_name,
+    scope_from_members,
+)
 from vault_context import VaultContext  # noqa: E402
 
 
@@ -570,6 +579,152 @@ class ArchivistBot(MicroBot):
         without Paperless) collapses every room to capture mode.
         """
         return bool(self.documents_room_alias) and ctx.alias == self.documents_room_alias
+
+    # ── Topic-room routing ─────────────────────────────────────────────
+    #
+    # A Matrix room whose name starts with `Thema:` (de) or `Topic:` (en)
+    # is a topic room. The archivist reads `dev.famstack.capture` state on
+    # every capture; when no state exists yet, it parses the room name
+    # and bootstraps inline (the lazy path). Future on_invite hook can
+    # call the same bootstrap eagerly. Either way the result is a
+    # `TopicBinding` the capture pipeline threads into routing + tag
+    # seeding. Full design: docs/design/brain/topic-rooms.md.
+
+    def _reserved_topic_slugs(self) -> set[str]:
+        """Slugs the archivist refuses to bootstrap as topics.
+
+        v1 covers the vault built-ins and the configured `shared_bucket`.
+        Personal-bucket localpart collisions (someone names a room
+        `Thema: Arthur` when `arthur/` already exists) belong on the
+        list too, but that requires the household-member registry which
+        ships with the deriver work. Until then a personal-localpart
+        collision overwrites the bucket; v2 turns it into a refusal.
+        """
+
+        return {
+            "meta", "wiki", "archive", "_unfiled", "documents",
+            self.shared_bucket,
+        }
+
+    async def _read_topic_state(self, room_id: str) -> dict | None:
+        """Fetch `dev.famstack.capture` state for the room, or None.
+
+        Returns the parsed state content on success, None on miss or
+        any nio error. Bootstrap treats None as "no state yet"; the
+        nio path either returns the state event or a non-`content`
+        response that we coerce to None too.
+        """
+
+        if self._client is None:
+            return None
+        try:
+            resp = await self._client.room_get_state_event(
+                room_id, "dev.famstack.capture",
+            )
+        except Exception as e:
+            logger.debug(
+                "[archivist] topic state read failed for {}: {}",
+                room_id, e,
+            )
+            return None
+        content = getattr(resp, "content", None)
+        return content if isinstance(content, dict) else None
+
+    async def _write_topic_state(self, room_id: str, content: dict) -> bool:
+        """Write `dev.famstack.capture` state. True on success, False
+        on any nio error (the bootstrap is best-effort; the binding
+        still applies in memory for the current capture)."""
+
+        if self._client is None:
+            return False
+        try:
+            await self._client.room_put_state(
+                room_id, "dev.famstack.capture", content,
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "[archivist] topic state write failed for {}: {}",
+                room_id, e,
+            )
+            return False
+
+    def _count_humans_in_room(self, room) -> int:
+        """Members minus the bot itself.
+
+        Filtering of other bot accounts (scribe-bot, future deriver-bot)
+        lives in the household-member registry, not here. v1 only knows
+        its own user id, so a topic room with two bots and one human
+        bootstraps as `shared` -- a known degraded case mentioned in
+        the design's open questions.
+        """
+
+        users = getattr(room, "users", None) or {}
+        return sum(1 for u in users if u != self.user_id)
+
+    async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
+        """Read existing topic state, or bootstrap if the room name
+        matches the prefix pattern.
+
+        Returns the routing binding for the capture pipeline, or None
+        when the room isn't a topic room (no matching name, no state).
+        Bootstrap is idempotent and best-effort: a write failure
+        leaves the in-memory binding live for the current capture and
+        the next one re-tries.
+        """
+
+        if room is None:
+            return None
+        state = await self._read_topic_state(room.room_id)
+        binding = binding_from_state(state)
+        if binding is not None:
+            return binding
+
+        room_name = (
+            getattr(room, "name", None)
+            or getattr(room, "display_name", None)
+            or ""
+        )
+        parsed = parse_topic_name(room_name)
+        if parsed is None:
+            return None
+        if is_reserved(parsed.slug, self._reserved_topic_slugs()):
+            logger.info(
+                "[archivist] refusing topic bootstrap: slug {!r} from "
+                "room {!r} collides with a reserved bucket name",
+                parsed.slug, parsed.display_name,
+            )
+            return None
+
+        scope = scope_from_members(self._count_humans_in_room(room))
+        sender_localpart = sender_mxid.split(":")[0].lstrip("@").lower()
+        content = make_room_state(
+            parsed=parsed, scope=scope,
+            bootstrapped_by=sender_mxid,
+            sender_localpart=sender_localpart,
+            bootstrapped_at=utc_now_isoformat(),
+        )
+        await self._write_topic_state(room.room_id, content)
+        logger.info(
+            "[archivist] bootstrapped topic {!r} → bucket {!r} (scope={}, "
+            "bootstrapped_by={})",
+            parsed.display_name, content["bucket"], scope, sender_mxid,
+        )
+        return binding_from_state(content)
+
+    def _room_by_id(self, room_id: str):
+        """Look up the live nio Room object for a given room id.
+
+        Capture handlers receive ``room_id`` (a string) from their
+        dispatchers; the topic bootstrap needs the Room object for
+        its display name and member list. Returns None when the
+        client isn't connected or the room isn't tracked locally.
+        """
+
+        if self._client is None:
+            return None
+        rooms = getattr(self._client, "rooms", None) or {}
+        return rooms.get(room_id)
 
     # Paste detection lives in text_utils; exposed as a static method so
     # capture-room routing reads `self._looks_like_paste(...)`.
@@ -1370,11 +1525,16 @@ class ArchivistBot(MicroBot):
         await self._send(
             room_id, self.t("scan_voice_complete", count=n), reply_to,
         )
+        binding = await self._topic_binding(
+            self._room_by_id(room_id), sender,
+        )
         outcome = await self._capture.capture_voice_batch(
             transcripts=[v["transcript"] for v in voice_inputs],
             primary_mxc=voice_inputs[0].get("mxc"),
             sender_mxid=sender,
             capture_id=voice_inputs[0].get("event_id"),
+            seed_topics=binding.seed_topics if binding else None,
+            bucket=binding.bucket if binding else None,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -1406,10 +1566,15 @@ class ArchivistBot(MicroBot):
         self, room_id: str, url: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
     ) -> None:
+        binding = await self._topic_binding(
+            self._room_by_id(room_id), sender_mxid,
+        )
         outcome = await self._capture.capture_url(
             url=url, sender_mxid=sender_mxid,
             notifier=self._notifier(room_id, reply_to),
             capture_id=capture_id,
+            seed_topics=binding.seed_topics if binding else None,
+            bucket=binding.bucket if binding else None,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -1417,9 +1582,14 @@ class ArchivistBot(MicroBot):
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
     ) -> None:
+        binding = await self._topic_binding(
+            self._room_by_id(room_id), sender_mxid,
+        )
         outcome = await self._capture.capture_text(
             text=text, sender_mxid=sender_mxid,
             capture_id=capture_id,
+            seed_topics=binding.seed_topics if binding else None,
+            bucket=binding.bucket if binding else None,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -1440,10 +1610,15 @@ class ArchivistBot(MicroBot):
         the reply-to-correct path) can find this capture later
         without depending on the title-derived path.
         """
+        binding = await self._topic_binding(
+            self._room_by_id(room_id), sender_mxid,
+        )
         outcome = await self._capture.capture_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri, sender_mxid=sender_mxid,
             capture_id=capture_id,
+            seed_topics=binding.seed_topics if binding else None,
+            bucket=binding.bucket if binding else None,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
