@@ -327,7 +327,12 @@ def run(args, stacklet, config):
     secrets = config.get("secrets", {})
     result = _setup(client, users, {"space_name": "Family"}, secrets)
 
-    if sys.stderr.isatty():
-        print(_pretty(result), file=sys.stderr)
+    # Setup is a one-shot operator command; print the result regardless
+    # of how it was invoked. The previous tty gate silently swallowed
+    # output under any scripted or piped invocation (CI runs, log
+    # capture, this assistant's bash tool) so operators couldn't tell
+    # whether a re-run had healed anything. Printing always also makes
+    # the auto-heal idempotency call out visibly on every re-run.
+    print(_pretty(result), file=sys.stderr)
 
     return result
