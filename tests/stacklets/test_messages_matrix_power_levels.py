@@ -256,3 +256,63 @@ class TestOpenSpaceToMembers:
         # Make sure we didn't accidentally bump anyone.
         for user, level in body["users"].items():
             assert level <= 100  # tautological but documents the intent
+
+
+# ── Atomic creation-time override ────────────────────────────────────────
+
+
+class TestCreateRoomSpaceOverride:
+    """Fresh installs get the open-to-members PL baked into the very
+    first ``createRoom`` request via ``power_level_content_override``.
+    No second API call needed; no race window where the space briefly
+    has the default PL 50 threshold.
+
+    The non-space branch must NOT carry the override -- regular rooms
+    have no m.space.child semantics and the extra field would just be
+    noise (and potentially mask a real bug in a regression test)."""
+
+    CREATE_URL = "/_matrix/client/v3/createRoom"
+
+    def test_space_creation_includes_pl_override(self, tmp_path, monkeypatch):
+        client, http = _client_with_http(tmp_path, monkeypatch)
+        # POST goes through _post, which we have to monkeypatch too.
+        post_calls: list[tuple] = []
+
+        def fake_post(url, body=None, **kw):
+            post_calls.append(("POST", url, body))
+            return 200, {"room_id": "!new:home"}
+
+        monkeypatch.setattr(_matrix_mod, "_post", fake_post)
+
+        client.create_room("family", name="Family", space=True)
+
+        assert len(post_calls) == 1
+        body = post_calls[0][2]
+        # The override is present and targets exactly the m.space.child
+        # event.
+        assert body.get("power_level_content_override") == {
+            "events": {"m.space.child": 0},
+        }
+        # The space marker is independently present.
+        assert body.get("creation_content") == {"type": "m.space"}
+
+    def test_regular_room_creation_omits_pl_override(
+        self, tmp_path, monkeypatch,
+    ):
+        """No m.space.child override on plain rooms -- it would have
+        no effect and is the kind of unused payload that drifts into
+        a bug over time."""
+        client, http = _client_with_http(tmp_path, monkeypatch)
+        post_calls: list[tuple] = []
+
+        def fake_post(url, body=None, **kw):
+            post_calls.append(("POST", url, body))
+            return 200, {"room_id": "!new:home"}
+
+        monkeypatch.setattr(_matrix_mod, "_post", fake_post)
+
+        client.create_room("famchat", name="Family Room", space=False)
+
+        body = post_calls[0][2]
+        assert "power_level_content_override" not in body
+        assert "creation_content" not in body

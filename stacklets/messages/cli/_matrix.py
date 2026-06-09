@@ -194,6 +194,14 @@ class MatrixClient:
         Returns the room_id on success, None on failure. If the room
         alias already exists, returns None (idempotent callers should
         resolve first).
+
+        Spaces get a ``power_level_content_override`` that lowers the
+        ``m.space.child`` event threshold to 0 so any joined member
+        can add child rooms (Element's "Create a room in this space"
+        flow). The override is applied atomically at creation time --
+        fresh installs are correct on the very first request, no
+        follow-up API call needed. The matching self-heal path in
+        ``setup.py`` covers existing instances that predate this fix.
         """
         body = {
             "name": name or alias,
@@ -208,6 +216,9 @@ class MatrixClient:
             body["topic"] = topic
         if space:
             body["creation_content"] = {"type": "m.space"}
+            body["power_level_content_override"] = {
+                "events": {"m.space.child": 0},
+            }
         status, resp = _post(
             self._url("/_matrix/client/v3/createRoom"), body, token=self.token,
         )
