@@ -157,8 +157,11 @@ class MicroBot:
         # ── Auto-accept invitations ──────────────────────────────────
         # Two-stage hand-off so subclass `on_room_joined` sees a fully
         # populated room: invite-accept queues the room id, and the
-        # sync-response callback fires `on_room_joined` on the first
-        # sync that contains that room's state.
+        # sync loop fires `on_room_joined` on the first sync that
+        # contains that room's state. The hand-off is driven from the
+        # sync loop directly — NOT via `add_response_callback` — since
+        # nio only dispatches response callbacks inside
+        # `sync_forever()`, which this runner does not use.
 
         async def on_invite(room, event):
             if isinstance(event, InviteMemberEvent) and event.state_key == self.user_id:
@@ -169,9 +172,6 @@ class MicroBot:
                     self._pending_room_joins.add(room.room_id)
 
         self._client.add_event_callback(on_invite, InviteMemberEvent)
-        self._client.add_response_callback(
-            self._on_sync_for_pending_joins, SyncResponse,
-        )
 
         # ── Initial sync ─────────────────────────────────────────────
         logger.info("[{}] Initial sync...", self.name)
@@ -222,8 +222,12 @@ class MicroBot:
         logger.info("[{}] Running", self.name)
         while self._running:
             try:
-                await self._client.sync(timeout=30000)
+                resp = await self._client.sync(timeout=30000)
                 self._trust_all_devices()
+                # Bare `sync()` does NOT dispatch nio response callbacks
+                # (only `sync_forever()` does), so the pending-joins
+                # hand-off must be driven from here explicitly.
+                await self._on_sync_for_pending_joins(resp)
                 await self._drain()
             except asyncio.CancelledError:
                 break
@@ -640,8 +644,16 @@ class MicroBot:
         for room_id in list(self._pending_room_joins):
             room = self._client.rooms.get(room_id) if self._client else None
             if room is None or not getattr(room, "users", None):
+                logger.debug(
+                    "[{}] joined {} but state not in client.rooms yet, "
+                    "waiting for next sync", self.name, room_id,
+                )
                 continue
             self._pending_room_joins.discard(room_id)
+            logger.info(
+                "[{}] room state ready, firing on_room_joined({})",
+                self.name, room_id,
+            )
             try:
                 await self.on_room_joined(room_id)
             except Exception as e:
