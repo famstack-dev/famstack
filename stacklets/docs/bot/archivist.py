@@ -320,6 +320,10 @@ class ArchivistBot(MicroBot):
         )
         self._capture_tags: CaptureTagCache | None = None
         self._scan_sessions: dict[str, dict] = {}
+        # Rooms known to be welcomed this session — caches the
+        # own-messages history query in `_send_room_welcome_if_needed`
+        # so each room pays it at most once per process lifetime.
+        self._welcomed_rooms: set[str] = set()
         self._http: aiohttp.ClientSession | None = None
         self._paperless: PaperlessAPI | None = None
         self._classifier: Classifier | None = None
@@ -542,9 +546,9 @@ class ArchivistBot(MicroBot):
         On a fresh install this delivers the introduction to every
         room the bot was invited to before its first sync completed
         (typically the documents room from the seed install). On bot
-        restart the per-room `dev.famstack.welcome` state event short-
-        circuits this loop -- rooms that were already welcomed in a
-        prior run stay silent.
+        restart the own-messages history gate short-circuits this
+        loop -- rooms that were already welcomed in a prior run stay
+        silent.
 
         For rooms invited after first install, the eager path is
         ``on_room_joined`` (fires from MicroBot's auto-accept of an
@@ -771,12 +775,15 @@ class ArchivistBot(MicroBot):
     #
     # The archivist greets every room it enters with a context-aware
     # welcome (documents / topic / DM / generic capture) the first time
-    # it sees an event there. The gate is a `dev.famstack.welcome`
-    # state event written immediately after the welcome message lands,
-    # so a re-encounter -- whether on bot restart, on reinvite to a
-    # room the bot was previously kicked from, or on the next event in
-    # the same session -- skips the post. The same path serves the
-    # `help` / `hilfe` command so the user re-reads exactly what fits
+    # it sees an event there. The gate is the room's own history: a
+    # sender-filtered `/messages` query asks Synapse whether the bot
+    # has ever posted in the room. A read needs no power level, so the
+    # gate works in user-created rooms where the bot (PL 0) cannot
+    # write state events -- the failure mode of the previous
+    # state-event gate, which silently re-welcomed on every message.
+    # An in-memory cache keeps it to one history query per room per
+    # process lifetime. The `help` / `hilfe` command serves the same
+    # welcome text directly so the user re-reads exactly what fits
     # where they are asking. Project rule: self-explaining UX, see
     # memory `project_self_explaining_ux.md`.
 
@@ -845,74 +852,60 @@ class ArchivistBot(MicroBot):
             return self.t("welcome_personal")
         return self.t("welcome_capture")
 
-    async def _read_welcome_state(self, room_id: str) -> dict | None:
-        """Fetch `dev.famstack.welcome` state for the room, or None.
+    async def _bot_has_posted_in(self, room_id: str) -> bool:
+        """True when the bot's own messages already exist in the room.
 
-        Returns the parsed state content on success, None on miss or
-        any nio error. The "miss" branch is what triggers the welcome
-        post; transient nio errors during a re-encounter would resend
-        the welcome, which is acceptable for a polish surface.
+        One sender-filtered `/messages` page, scanned backwards from
+        the latest event — the homeserver does the filtering, so an
+        active room does not force deep pagination. Returns False on
+        any nio error: a transient hiccup then re-welcomes (rare,
+        visible, recoverable), which beats silently never greeting a
+        brand-new room.
         """
 
         if self._client is None:
-            return None
+            return False
         try:
-            resp = await self._client.room_get_state_event(
-                room_id, "dev.famstack.welcome",
+            resp = await self._client.room_messages(
+                room_id,
+                limit=3,
+                message_filter={
+                    "senders": [self.user_id],
+                    "types": ["m.room.message"],
+                },
             )
         except Exception as e:
             logger.debug(
-                "[archivist] welcome state read failed for {}: {}",
-                room_id, e,
-            )
-            return None
-        content = getattr(resp, "content", None)
-        return content if isinstance(content, dict) else None
-
-    async def _write_welcome_state(self, room_id: str, content: dict) -> bool:
-        """Write `dev.famstack.welcome` state to mark the room as
-        already-welcomed. True on success, False on any nio error
-        (best-effort: a failed write reposts the welcome on the next
-        encounter, which the user notices but does not break)."""
-
-        if self._client is None:
-            return False
-        try:
-            await self._client.room_put_state(
-                room_id, "dev.famstack.welcome", content,
-            )
-            return True
-        except Exception as e:
-            logger.warning(
-                "[archivist] welcome state write failed for {}: {}",
+                "[archivist] welcome history check failed for {}: {}",
                 room_id, e,
             )
             return False
+        chunk = getattr(resp, "chunk", None) or []
+        return any(
+            getattr(ev, "sender", None) == self.user_id for ev in chunk
+        )
 
     async def _send_room_welcome_if_needed(self, room, ctx) -> None:
         """Post the room-appropriate welcome on first encounter.
 
-        Idempotent: the welcome state event gates against duplicates.
-        Read-failures are treated as "no state yet" so a transient nio
-        hiccup does not silently hide the welcome from a brand-new
-        room.
+        Idempotent without write permission: the gate asks the
+        homeserver whether the bot has posted in the room before. The
+        in-memory cache is marked before the send, so a burst of
+        events in a fresh room cannot produce a second welcome while
+        the first send is in flight.
         """
 
         if room is None:
             return
-        state = await self._read_welcome_state(room.room_id)
-        if state is not None:
+        room_id = room.room_id
+        if room_id in self._welcomed_rooms:
             return
+        if await self._bot_has_posted_in(room_id):
+            self._welcomed_rooms.add(room_id)
+            return
+        self._welcomed_rooms.add(room_id)
         text = self._welcome_text_for(room, ctx)
-        await self._send(room.room_id, text)
-        await self._write_welcome_state(
-            room.room_id,
-            {
-                "bot": self.name,
-                "kind": self._welcome_kind_for(room, ctx),
-                "welcomed_at": utc_now_isoformat(),
-            },
-        )
+        await self._send(room_id, text)
 
     # Paste detection lives in text_utils; exposed as a static method so
     # capture-room routing reads `self._looks_like_paste(...)`.

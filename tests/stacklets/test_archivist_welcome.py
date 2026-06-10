@@ -39,42 +39,31 @@ BOT_ID = "@archivist-bot:server"
 # ── Fakes ────────────────────────────────────────────────────────────────
 
 
-class FakeStateClient:
-    """Minimal nio-shaped client for room state reads and writes.
+class FakeHistoryClient:
+    """Minimal nio-shaped client for the own-messages welcome gate.
 
-    Mirrors the topic-bootstrap test fake but tracks reads and writes
-    keyed by event type so welcome state and topic state can coexist
-    in the same test bot without interfering.
+    `room_messages` returns a sender-filtered page the way Synapse
+    would: `own_messages` own events when the bot has greeted the room
+    before, an empty chunk when it has not. `raises` simulates a
+    transient nio error.
     """
 
-    def __init__(self, *, initial_state: dict | None = None,
-                 read_raises: bool = False, write_raises: bool = False):
-        self._states: dict[tuple[str, str], dict | None] = {}
-        if initial_state is not None:
-            self._states[("!room:server", "dev.famstack.welcome")] = initial_state
-        self._read_raises = read_raises
-        self._write_raises = write_raises
-        self.reads: list[tuple] = []
-        self.writes: list[tuple] = []
+    def __init__(self, *, own_messages: int = 0, raises: bool = False):
+        self._own = own_messages
+        self._raises = raises
+        self.queries: list[str] = []
         self.rooms: dict = {}
 
-    async def room_get_state_event(self, room_id, event_type, state_key=""):
-        self.reads.append((room_id, event_type, state_key))
-        if self._read_raises:
+    async def room_messages(self, room_id, start=None, end=None,
+                            direction=None, limit=10, message_filter=None):
+        self.queries.append(room_id)
+        if self._raises:
             raise RuntimeError("network burp")
-        state = self._states.get((room_id, event_type))
-        if state is None:
-            return SimpleNamespace()  # no `content` attr → None
-        return SimpleNamespace(content=state)
-
-    async def room_put_state(self, room_id, event_type, content, state_key=""):
-        if self._write_raises:
-            raise RuntimeError("auth burp")
-        self._states[(room_id, event_type)] = content
-        self.writes.append((room_id, event_type, content, state_key))
+        chunk = [SimpleNamespace(sender=BOT_ID) for _ in range(self._own)]
+        return SimpleNamespace(chunk=chunk)
 
 
-def _bot(tmp_path, *, client: FakeStateClient | None = None,
+def _bot(tmp_path, *, client: FakeHistoryClient | None = None,
          documents_room_alias: str = "documents") -> ArchivistBot:
     bot = ArchivistBot(
         homeserver="http://h", user_id=BOT_ID, password="x",
@@ -234,18 +223,19 @@ class TestWelcomeTextFor:
         assert "Thema:" in text
 
 
-# ── Per-room state gate ─────────────────────────────────────────────────
+# ── Per-room welcome gate ────────────────────────────────────────────────
 
 
-class TestWelcomeStateGate:
-    """`_send_room_welcome_if_needed` posts once, marks the room as
-    welcomed, and short-circuits on every subsequent call. The state
-    event is the single source of truth -- not an in-memory flag --
-    so the gate survives bot restarts."""
+class TestWelcomeGate:
+    """`_send_room_welcome_if_needed` posts once per room. The gate is
+    the bot's own message history (a read needs no power level, so it
+    works in user-created rooms where the bot cannot write state), and
+    an in-memory cache keeps it to one history query per room per
+    process lifetime."""
 
     @pytest.mark.asyncio
     async def test_fresh_room_gets_welcome(self, tmp_path):
-        client = FakeStateClient(initial_state=None)
+        client = FakeHistoryClient(own_messages=0)
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Documents",
@@ -255,22 +245,13 @@ class TestWelcomeStateGate:
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
         bot._send.assert_called_once()
-        # State was written so the next encounter is silent.
-        assert len(client.writes) == 1
-        room_id, event_type, content, _ = client.writes[0]
-        assert event_type == "dev.famstack.welcome"
-        assert content["bot"] == bot.name
-        assert content["kind"] == "documents"
-        assert "welcomed_at" in content
+        assert client.queries == ["!room:server"]
 
     @pytest.mark.asyncio
-    async def test_already_welcomed_room_skipped(self, tmp_path):
-        existing = {
-            "bot": "archivist-bot",
-            "kind": "documents",
-            "welcomed_at": "2026-06-01T12:00:00Z",
-        }
-        client = FakeStateClient(initial_state=existing)
+    async def test_room_with_own_history_skipped(self, tmp_path):
+        """The bot greeted this room in a previous run -- its own
+        message is in the history, so a restart stays silent."""
+        client = FakeHistoryClient(own_messages=1)
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Documents",
@@ -280,15 +261,13 @@ class TestWelcomeStateGate:
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
         bot._send.assert_not_called()
-        assert client.writes == []
 
     @pytest.mark.asyncio
-    async def test_read_failure_treats_as_no_state(self, tmp_path):
-        """A transient nio read failure should NOT silently hide the
-        welcome from a brand-new room -- the gate read is best-effort
-        and falls through to post on failure, the way the topic-room
-        bootstrap does."""
-        client = FakeStateClient(initial_state=None, read_raises=True)
+    async def test_history_check_failure_still_welcomes(self, tmp_path):
+        """A transient nio failure on the history read should NOT
+        silently hide the welcome from a brand-new room -- the gate
+        fails open and posts."""
+        client = FakeHistoryClient(raises=True)
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Documents",
@@ -300,27 +279,12 @@ class TestWelcomeStateGate:
         bot._send.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_write_failure_still_posts_welcome(self, tmp_path):
-        """Forgejo / Synapse hiccups can fail the state write. The
-        welcome itself still goes out; the next encounter reposts
-        (rare, recoverable). Better the duplicate than the silence."""
-        client = FakeStateClient(initial_state=None, write_raises=True)
-        bot = _bot(tmp_path, client=client)
-        room = _room(
-            name="Documents",
-            canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
-        )
-        ctx = bot._room_context(room)
-        await bot._send_room_welcome_if_needed(room, ctx)
-        bot._send.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_welcome_kind_recorded_in_state(self, tmp_path):
-        """The state event records which variant was sent. A future
-        deriver or analytics surface can reason about how each room
-        was introduced without re-running the kind detection."""
-        client = FakeStateClient(initial_state=None)
+    async def test_second_encounter_uses_cache_not_history(self, tmp_path):
+        """Within one session the second event in the same room must
+        neither re-welcome nor re-query the history. This is the
+        production regression: every message in a user-created topic
+        room produced a fresh welcome."""
+        client = FakeHistoryClient(own_messages=0)
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Thema: Camping",
@@ -328,5 +292,23 @@ class TestWelcomeStateGate:
         )
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
-        content = client.writes[0][2]
-        assert content["kind"] == "topic"
+        await bot._send_room_welcome_if_needed(room, ctx)
+        bot._send.assert_called_once()
+        assert client.queries == ["!room:server"]
+
+    @pytest.mark.asyncio
+    async def test_skipped_room_is_cached_too(self, tmp_path):
+        """A room recognized as already-welcomed via history is cached
+        the same way -- one query, then silence."""
+        client = FakeHistoryClient(own_messages=1)
+        bot = _bot(tmp_path, client=client)
+        room = _room(
+            name="Documents",
+            canonical_alias="#documents:server",
+            members=[BOT_ID, "@arthur:server", "@marge:server"],
+        )
+        ctx = bot._room_context(room)
+        await bot._send_room_welcome_if_needed(room, ctx)
+        await bot._send_room_welcome_if_needed(room, ctx)
+        bot._send.assert_not_called()
+        assert client.queries == ["!room:server"]
