@@ -537,9 +537,17 @@ class MicroBot:
         Forgejo) reuse this one session instead of spinning up their
         own, so there's a single pool with a single framework-owned
         lifecycle. Closed in `_aclose` on shutdown.
+
+        The explicit timeout is load-bearing: aiohttp's default is
+        300s total, and one black-holed request (e.g. a host port that
+        accepts the connection and never answers) blocks the bot's
+        whole event loop for five minutes of total silence. Bound it
+        so a hang surfaces as a fast, named ClientError instead.
         """
         if self._http is None:
-            self._http = aiohttp.ClientSession()
+            self._http = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60, connect=10),
+            )
         return self._http
 
     async def _download_media(self, mxc_url: str) -> bytes | None:

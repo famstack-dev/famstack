@@ -190,7 +190,14 @@ class LLM:
                 "No AI endpoint configured — set up AI with 'stack up ai'"
             )
         key = os.environ.get("OPENAI_KEY", "") or "not-needed"
-        client = AsyncOpenAI(base_url=url, api_key=key, max_retries=max_retries)
+        # The SDK default timeout is 600s — a hung local endpoint would
+        # freeze a caller for ten minutes. 120s covers a slow prefill
+        # on a long document; anything beyond that is a stuck server
+        # and should fail loudly.
+        client = AsyncOpenAI(
+            base_url=url, api_key=key, max_retries=max_retries,
+            timeout=120.0,
+        )
         return cls(client, namespace=namespace, capabilities=capabilities)
 
     def _full_role(self, role: str) -> str:
