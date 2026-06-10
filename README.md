@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS_Apple_Silicon-000?style=flat-square&logo=apple" alt="macOS">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="AGPLv3 License">
-  <img src="https://img.shields.io/badge/version-0.2.2-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/github/v/tag/famstack-dev/famstack?style=flat-square&label=version&color=orange" alt="Version">
 </p>
 
 **The vision: Turn your Mac into the brain of your household and operate it from your phone.**
@@ -59,19 +59,23 @@ Everything runs on your Mac. Nothing leaves your network unless you tell it to.
 
 ## Quick Start
 
+You need a Mac with Apple Silicon (M1+), [Homebrew](https://brew.sh), and [OrbStack](https://orbstack.dev) (or Docker Desktop). The installer guides you through anything that's missing. If your `python3` is Apple's Command Line Tools build (3.9), run `brew install python` first.
+
 ```bash
 git clone https://github.com/famstack-dev/famstack.git && cd famstack
 ./stack         # Starts the Installer
 ```
 
+The installer checks dependencies, sets up your data directory, and gets the nervous system running: Matrix and Element X. Once you log in to your private Element X, you operate the stack from your Server Room. Or your Terminal. From there, add what your family needs:
 
+```bash
+./stack up docs        # Paperless-ngx: document archive with OCR
+./stack up ai          # Local AI: TTS, Whisper, oMLX
+./stack up photos      # Immich: family photo library + mobile backup
+./stack status         # check everything is running
+```
 
-- [User Guide](docs/user-guide.md) - Quick start, install, stacklets, operations, troubleshooting
-- [Documentation Index](docs/README.md) - Full docs map and references
-
-Works on any Mac with Apple Silicon. Twenty minutes from clone to a working family server on your machine.
-
-The fastest way to get Immich and Paperless running on your Mac.
+Twenty minutes from clone to a working family server. The [User Guide](docs/user-guide.md) covers install, stacklets, operations, and troubleshooting in detail.
 
 <p align="center">
   <img src="docs/assets/install.gif" alt="famstack install" width="500">
@@ -110,44 +114,6 @@ Private, no subscriptions, and no cloud provider that might shut down next year.
 But it's not just archiving. The goal is a family operating system: something that remembers, organizes, and eventually runs the boring parts of everyday life for you. Think JARVIS, built one stacklet and bot at a time.
 
 [Read more on the website](https://famstack.dev/why/).
-
----
-
-## Getting Started
-
-### Requirements
-
-- macOS on Apple Silicon (M1+)
-- [Homebrew](https://brew.sh) — used to install Python 3.11+, OrbStack, and managed AI
-- [OrbStack](https://orbstack.dev) (recommended) or Docker Desktop
-
-The installer will guide you through what's missing. If your `python3` is
-Apple's Command Line Tools build (3.9), run `brew install python` first.
-
-### Install
-
-The installer checks dependencies, sets up your data directory and gets the nervous system of your Mac running Element X and Matrix:
-It prepares everything. Once you login to your private Element X, you can operate the stack from your Server Room. Or your Terminal. 
-The installer will guide you.
-
-```bash
-git clone https://github.com/famstack-dev/famstack.git
-cd famstack
-./stack
-```
-
-```bash
-./stack up docs        # Paperless-ngx: document archive with OCR
-./stack up ai          # Local AI: TTS, Whisper, oMLX
-./stack up photos      # Immich: family photo library + mobile backup
-
-```
-
-Check everything is running:
-
-```bash
-./stack status
-```
 
 ---
 
@@ -212,76 +178,49 @@ famstack comes with a lightweight bot runtime. The bots are tiny helpers that au
 | code     | beta    | Forgejo                | Private Git server                                       |
 
 Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklets.md) takes about 15 minutes.
-Happy to take contributions! 
 
 ---
 
 ## Roadmap
 
-Document filing, photo backup, and family chat with voice memos all work today. The foundation is here. Now the fun part.
+Document filing, photo backup, and family chat with voice memos all work today. The family brain is taking shape on the [`v0.3-beta`](https://github.com/famstack-dev/famstack/tree/v0.3-beta) branch ([what's coming in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)).
 
-| Feature                                                  | Status                   |
-|----------------------------------------------------------|--------------------------|
-| Photos (Immich)                                          | :white_check_mark: Live  |
-| Document filing with OCR (Paperless)                     | :white_check_mark: Live  |
-| Family chat + voice memos (Matrix)                       | :white_check_mark: Live  |
-| Local AI backend (oMLX, Whisper, TTS)                    | :white_check_mark: Live  |
-| Bot runtime (archivist-bot, scribe-bot, stacker-bot)     | :white_check_mark: Live  |
-| Private Git server (Forgejo)                             | :white_check_mark: Live     |
-| Backups (backup scripts for every stacklet)              | :dart: Next              |
-| Family memory bank (voice + photos matched by day)       | :dart: Next              |
-| Document Q&A ("does our insurance cover this?")          | :dart: Next              |
-| Nice domains setup e.g. `https://photos.home.domain.tld` | :construction: Beta              |
-| AI assistant in chat                                     | :lab_coat: Experimenting |
-| Home Assistant                                           | :dart: Planned           |
-| Talk to your Mac                                         | :dart: Planned           |
-| Refurbish old Tablets/Smartphones                        | :dart: Planned           |
-| Family Brain ("remembers everything shared") RAG         | :dart: Planned           |
-| Dashboard (events, reminders)                            | :dart: Planned           |
-| Living room display (memories from this day, years ago)  | :dart: Planned           |
-| Self-organizing notes                                    | :dart: Planned           |
+| Feature                                                  | Status                       |
+|----------------------------------------------------------|------------------------------|
+| Photos (Immich)                                          | :white_check_mark: Live      |
+| Document filing with OCR (Paperless)                     | :white_check_mark: Live      |
+| Family chat + voice memos (Matrix)                       | :white_check_mark: Live      |
+| Local AI backend (oMLX, Whisper, TTS)                    | :white_check_mark: Live      |
+| Bot runtime (archivist-bot, scribe-bot, stacker-bot)     | :white_check_mark: Live      |
+| Private Git server (Forgejo)                             | :white_check_mark: Live      |
+| Family wiki generated from your documents (memory)       | :construction: 0.3-beta      |
+| Document Q&A with citations, in chat                     | :construction: 0.3-beta      |
+| Voice memos become searchable notes                      | :construction: 0.3-beta      |
+| Topic rooms: the room name is the filing system          | :construction: 0.3-beta      |
+| Nice domains setup e.g. `https://photos.home.domain.tld` | :construction: Beta          |
+| Backups (backup stacklet, append-only to attached disk)  | :dart: Next                  |
+| Bot interaction patterns (how a family talks to bots)    | :dart: Next                  |
+| Dream cycle (vault consolidation, richer wiki pages)     | :dart: Planned               |
+| Family memory bank (voice + photos matched by day)       | :dart: Planned               |
+| Home Assistant                                           | :dart: Planned               |
+| Talk to your Mac                                         | :dart: Planned               |
+| Living room display (memories from this day, years ago)  | :dart: Planned               |
 
 ---
 
 ## Commands
 
-### Lifecycle
+The ones you'll use day to day:
 
-| Command                    | What it does                                                                                              |
-|----------------------------|-----------------------------------------------------------------------------------------------------------|
-| `stack install`            | One-time setup: checks deps, creates data dir, Docker network                                             |
-| `stack up <stacklet>`      | Start (idempotent, renders .env every time)                                                               |
-| `stack down <stacklet>`    | Stop the stacklet (data stays)                                                                            |
-| `stack restart <stacklet>` | Restart stacklet (down & up)                                                                              |
-| `stack destroy <stacklet>` | Stop + delete data of the stacklet (permanent, requires confirmation)                                     |
-| `stack list`               | All stacklets with enabled/disabled state                                                                 |
-| `stack uninstall`          | Destroys all stacklets and removes their data (destructive). Should never be called on productive stacks. |
+```bash
+./stack up <stacklet>      # start (idempotent)
+./stack down <stacklet>    # stop, data stays
+./stack status             # health overview: containers + host + AI
+./stack logs <stacklet>    # tail logs
+./stack errors             # recent error logs (past 24h)
+```
 
-### Observability
-
-| Command | What it does |
-|---------|--------------|
-| `stack status` | Health overview: containers + host + AI |
-| `stack errors` | Recent error logs (past 24h) |
-| `stack logs <stacklet>` | Tail logs for a stacklet |
-| `stack host` | Disk, memory, uptime |
-| `stack updates` | Check for newer Docker images |
-
-### AI
-
-| Command | What it does                       |
-|---------|------------------------------------|
-| `stack ai models` | Available AI models in the backend |
-
-### Config
-
-| Command | What it does |
-|---------|--------------|
-| `stack config` | Show resolved configuration |
-| `stack config --secrets` | Include generated passwords |
-| `stack version` | Print version |
-
-All commands output JSON when piped. Use `--json` to force it, `--pretty` to force human output.
+The full reference (lifecycle, observability, AI, config) lives in the [User Guide](docs/user-guide.md). All commands output JSON when piped; `--json` and `--pretty` force the format.
 
 ---
 
@@ -302,7 +241,17 @@ schedule = "0 0 3 * * *"       # Watchtower nightly image updates
 ```
 
 
-## [Docs](docs/)
+## Docs
+
+Everything lives in [docs/](docs/): the [User Guide](docs/user-guide.md), the [stacklet reference](docs/stack-reference.md), [creating your own stacklet](docs/creating-stacklets.md), and the [architecture decision records](docs/adr/).
+
+## Contributing
+
+famstack is young and shaped by daily family usage. The most useful contributions right now:
+
+- **Run it and report.** A fresh install on hardware I don't have is worth more than code. [Open an issue](https://github.com/famstack-dev/famstack/issues) with what broke.
+- **Build a stacklet.** [Creating a stacklet](docs/creating-stacklets.md) takes about 15 minutes. If it's useful for your family, it's probably useful for others.
+- **Tell me what's missing.** Join the [Discord](https://discord.gg/hfutdmmfBe) and tell me what your family would actually need.
 
 ## License
 

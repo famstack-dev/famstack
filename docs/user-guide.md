@@ -502,6 +502,15 @@ Auto-generated passwords for service accounts. Created once, reused on every `./
 ./stack updates               # check for newer Docker images
 ```
 
+### AI & Config
+
+```bash
+./stack ai models             # available AI models in the backend
+./stack config                # show resolved configuration
+./stack config --secrets      # include generated passwords
+./stack version               # print version
+```
+
 All commands output JSON when piped. Use `--json` to force it, `--pretty` to force human output.
 
 ---
