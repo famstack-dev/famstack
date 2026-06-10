@@ -397,3 +397,60 @@ async def test_group_mention_triggers_search(bdd, paperless, matrix):
     finally:
         await homer.close()
         await marge.close()
+
+
+# ── Topic room: welcome posts exactly once ────────────────────────────────
+
+
+async def test_topic_room_welcomes_only_once(bdd, openai, paperless, code, homer):
+    """The archivist greets a `Topic:` room once, on join — not again on
+    later messages.
+
+    Regression guard: the welcome gate is the `dev.famstack.welcome`
+    state event written right after the greeting. If that write fails
+    (e.g. the bot lacks power to send state events in a user-created
+    room) or the gate is skipped on the per-event fallback path, the
+    bot re-welcomes on every message in the room.
+    """
+    bdd.scenario("Homer creates a topic room and posts two messages")
+
+    welcome_marker = "drop in this room"  # from `welcome_topic` (en)
+
+    def _is_welcome(e) -> bool:
+        return (
+            getattr(e, "sender", None) == ARCHIVIST_MXID
+            and event_type(e) == "m.room.message"
+            and welcome_marker in getattr(e, "body", "")
+        )
+
+    bdd.given("Homer creates `Topic: Treehouse` and invites the archivist")
+    create = await homer.room_create(
+        name="Topic: Treehouse", visibility=RoomVisibility.private,
+    )
+    room_id = create.room_id
+    assert isinstance(
+        await homer.room_invite(room_id, ARCHIVIST_MXID), RoomInviteResponse,
+    )
+    await _wait_for_bot_membership(homer, room_id)
+    bdd.ok(f"topic room {room_id}")
+
+    bdd.then("the archivist posts the topic welcome")
+    first = await _wait_for_reply(homer, room_id, predicate=_is_welcome)
+    assert first, "archivist never posted the topic welcome"
+    bdd.ok(f"welcome {first.event_id}")
+
+    bdd.when("Homer posts two ordinary messages")
+    extra_welcomes = []
+    for body in ("Buy planks and rope", "Bart wants a rope ladder"):
+        await homer.room_send(
+            room_id, "m.room.message", {"msgtype": "m.text", "body": body},
+        )
+        events = await fetch_room_events(homer, room_id, duration=10.0)
+        extra_welcomes += [e for e in events if _is_welcome(e)]
+
+    bdd.then("no further welcome lands")
+    assert not extra_welcomes, (
+        f"archivist re-welcomed {len(extra_welcomes)} time(s) after "
+        f"messages: {[e.event_id for e in extra_welcomes]}"
+    )
+    bdd.ok("welcome stayed a one-time greeting")
