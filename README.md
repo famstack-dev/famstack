@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS_Apple_Silicon-000?style=flat-square&logo=apple" alt="macOS">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="AGPLv3 License">
-  <img src="https://img.shields.io/badge/version-0.2.1-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.2-orange?style=flat-square" alt="Version">
 </p>
 
 **The vision: Turn your Mac into the brain of your household and operate it from your phone.**
@@ -27,12 +27,17 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> **v0.2.1** is tagged as "Beta". 
+> **v0.2.2** is tagged as "Beta". 
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
 > or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
+
+> [!TIP]
+> **Coming in 0.3: your family server gets a memory.**
+> A new `memory` stacklet curates a wiki of your family life out of the documents, notes, and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources.
+> It's in daily use on our own server and lives on the [`v0.3-beta`](https://github.com/famstack-dev/famstack/tree/v0.3-beta) branch until release. [Read what's coming](https://famstack.dev/blog/famstack-0-3-beta/).
 
 ## What you get today
 
