@@ -324,6 +324,9 @@ class ArchivistBot(MicroBot):
         # own-messages history query in `_send_room_welcome_if_needed`
         # so each room pays it at most once per process lifetime.
         self._welcomed_rooms: set[str] = set()
+        # Topic bindings resolved this session — caches the
+        # own-messages history query in `_topic_binding` the same way.
+        self._topic_bindings: dict[str, TopicBinding] = {}
         self._http: aiohttp.ClientSession | None = None
         self._paperless: PaperlessAPI | None = None
         self._classifier: Classifier | None = None
@@ -651,44 +654,60 @@ class ArchivistBot(MicroBot):
         }
 
     async def _read_topic_state(self, room_id: str) -> dict | None:
-        """Fetch `dev.famstack.capture` state for the room, or None.
+        """Fetch the room's `dev.famstack.capture` binding, or None.
 
-        Returns the parsed state content on success, None on miss or
-        any nio error. Bootstrap treats None as "no state yet"; the
-        nio path either returns the state event or a non-`content`
-        response that we coerce to None too.
+        The binding lives as the bot's own custom TIMELINE event, not
+        room state: message events send at PL 0, while state events
+        need PL 50 — which the bot never has in a user-created topic
+        room, so a state-event binding silently failed to persist and
+        the scope re-derived (and could flap) on every capture. Read
+        back via a sender+type-filtered `/messages` page, newest
+        first, so the latest binding wins if the room is ever rebound
+        (future promotion handler). None on miss or any nio error;
+        bootstrap treats both as "no binding yet".
         """
 
         if self._client is None:
             return None
         try:
-            resp = await self._client.room_get_state_event(
-                room_id, "dev.famstack.capture",
+            resp = await self._client.room_messages(
+                room_id,
+                limit=3,
+                message_filter={
+                    "senders": [self.user_id],
+                    "types": ["dev.famstack.capture"],
+                },
             )
         except Exception as e:
             logger.debug(
-                "[archivist] topic state read failed for {}: {}",
+                "[archivist] topic binding read failed for {}: {}",
                 room_id, e,
             )
             return None
-        content = getattr(resp, "content", None)
-        return content if isinstance(content, dict) else None
+        for ev in getattr(resp, "chunk", None) or []:
+            source = getattr(ev, "source", None) or {}
+            content = source.get("content")
+            if isinstance(content, dict):
+                return content
+        return None
 
     async def _write_topic_state(self, room_id: str, content: dict) -> bool:
-        """Write `dev.famstack.capture` state. True on success, False
-        on any nio error (the bootstrap is best-effort; the binding
-        still applies in memory for the current capture)."""
+        """Post the `dev.famstack.capture` binding as the bot's own
+        timeline event. True on success, False on any nio error (the
+        bootstrap is best-effort; the binding still applies in memory
+        for the current capture). Custom event types are invisible in
+        Element, so the room stays clean."""
 
         if self._client is None:
             return False
         try:
-            await self._client.room_put_state(
+            await self._client.room_send(
                 room_id, "dev.famstack.capture", content,
             )
             return True
         except Exception as e:
             logger.warning(
-                "[archivist] topic state write failed for {}: {}",
+                "[archivist] topic binding write failed for {}: {}",
                 room_id, e,
             )
             return False
@@ -719,9 +738,13 @@ class ArchivistBot(MicroBot):
 
         if room is None:
             return None
+        cached = self._topic_bindings.get(room.room_id)
+        if cached is not None:
+            return cached
         state = await self._read_topic_state(room.room_id)
         binding = binding_from_state(state)
         if binding is not None:
+            self._topic_bindings[room.room_id] = binding
             return binding
 
         room_name = (
@@ -749,13 +772,18 @@ class ArchivistBot(MicroBot):
             shared_bucket=self.shared_bucket,
             bootstrapped_at=utc_now_isoformat(),
         )
-        await self._write_topic_state(room.room_id, content)
+        wrote = await self._write_topic_state(room.room_id, content)
         logger.info(
             "[archivist] bootstrapped topic {!r} → bucket {!r} (scope={}, "
             "bootstrapped_by={})",
             parsed.display_name, content["bucket"], scope, sender_mxid,
         )
-        return binding_from_state(content)
+        binding = binding_from_state(content)
+        # Cache only when the binding event landed: a failed write must
+        # leave the next capture free to re-bootstrap and retry it.
+        if binding is not None and wrote:
+            self._topic_bindings[room.room_id] = binding
+        return binding
 
     def _room_by_id(self, room_id: str):
         """Look up the live nio Room object for a given room id.

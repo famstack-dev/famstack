@@ -33,17 +33,19 @@ BOT_ID = "@archivist-bot:server"
 
 
 class FakeStateClient:
-    """Minimal nio-shaped client for room state reads and writes.
+    """Minimal nio-shaped client for the timeline-based topic binding.
 
-    `room_get_state_event` returns either a SimpleNamespace with a
-    `content` attribute or an object with no `content` (the no-state
-    case). `room_put_state` records the write so tests can assert
-    against it.
+    The binding is the bot's own `dev.famstack.capture` TIMELINE event
+    (message events send at PL 0; state events need PL 50 the bot never
+    has in user-created rooms). `room_messages` returns the latest
+    binding event or an empty chunk; `room_send` records the write so
+    tests can assert against it. Constructor knobs mirror the old
+    state-event fake so the tests read the same.
     """
 
     def __init__(self, *, initial_state: dict | None = None,
                  read_raises: bool = False, write_raises: bool = False):
-        self._state = initial_state
+        self._content = initial_state
         self._read_raises = read_raises
         self._write_raises = write_raises
         self.reads: list[tuple] = []
@@ -52,18 +54,25 @@ class FakeStateClient:
         # display name and member list ride on the Room object.
         self.rooms: dict = {}
 
-    async def room_get_state_event(self, room_id, event_type, state_key=""):
-        self.reads.append((room_id, event_type, state_key))
+    async def room_messages(self, room_id, start=None, end=None,
+                            direction=None, limit=10, message_filter=None):
+        types = tuple((message_filter or {}).get("types", ()))
+        self.reads.append((room_id, types))
         if self._read_raises:
             raise RuntimeError("network burp")
-        if self._state is None:
-            return SimpleNamespace()  # no `content` attr => None
-        return SimpleNamespace(content=self._state)
+        chunk = []
+        if self._content is not None:
+            chunk = [SimpleNamespace(source={
+                "type": "dev.famstack.capture",
+                "sender": BOT_ID,
+                "content": self._content,
+            })]
+        return SimpleNamespace(chunk=chunk)
 
-    async def room_put_state(self, room_id, event_type, content, state_key=""):
+    async def room_send(self, room_id, message_type, content, **kwargs):
         if self._write_raises:
-            raise RuntimeError("auth burp")
-        self.writes.append((room_id, event_type, content, state_key))
+            raise RuntimeError("send burp")
+        self.writes.append((room_id, message_type, content, ""))
 
 
 def _bot(tmp_path, *, client: FakeStateClient | None = None) -> ArchivistBot:
