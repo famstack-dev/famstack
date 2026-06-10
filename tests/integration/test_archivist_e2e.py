@@ -454,3 +454,117 @@ async def test_topic_room_welcomes_only_once(bdd, openai, paperless, code, homer
         f"messages: {[e.event_id for e in extra_welcomes]}"
     )
     bdd.ok("welcome stayed a one-time greeting")
+
+
+# ── Topic room: binding survives a bot restart ────────────────────────────
+
+
+async def _topic_binding_events(client, room_id: str) -> list[dict]:
+    """All `dev.famstack.capture` binding events in the room, newest
+    first, via a type-filtered `/messages` page. Returns raw event
+    sources so callers can assert on `content`."""
+    resp = await client.room_messages(
+        room_id, limit=20,
+        message_filter={"types": ["dev.famstack.capture"]},
+    )
+    events = []
+    for ev in getattr(resp, "chunk", None) or []:
+        source = getattr(ev, "source", None) or {}
+        if source.get("type") == "dev.famstack.capture":
+            events.append(source)
+    return events
+
+
+async def test_topic_binding_survives_bot_restart(
+    bdd, openai, paperless, code, test_stack, homer,
+):
+    """The topic binding (scope, bucket) is decided at first capture
+    and must stick. It persists as the bot's own timeline event in the
+    room; after a bot restart the next capture must read it back, not
+    re-bootstrap.
+
+    Regression guard: the binding used to be a state event the bot
+    (PL 0) could never write in a user-created room, so the write
+    failed silently and scope re-derived on every capture — a personal
+    topic could flap to shared the moment a second member joined.
+    """
+    bdd.scenario("Topic binding persists across a bot-runner restart")
+
+    stub_classify(openai, {
+        "title": "Picnic planning",
+        "persons": ["Homer"],
+        "tags": ["Picnic"],
+        "summary": "Notes about the powerplant picnic.",
+        "facts": [],
+    })
+
+    def _is_bot_message(e) -> bool:
+        return (
+            getattr(e, "sender", None) == ARCHIVIST_MXID
+            and event_type(e) == "m.room.message"
+        )
+
+    bdd.given("Homer creates `Topic: Powerplant Picnic` and the bot joins")
+    create = await homer.room_create(
+        name="Topic: Powerplant Picnic", visibility=RoomVisibility.private,
+    )
+    room_id = create.room_id
+    assert isinstance(
+        await homer.room_invite(room_id, ARCHIVIST_MXID), RoomInviteResponse,
+    )
+    await _wait_for_bot_membership(homer, room_id)
+    bdd.ok(f"topic room {room_id}")
+
+    paste = (
+        "The annual powerplant picnic is coming up and somebody has to "
+        "plan it. Lenny suggested the gorge again, Carl wants the lake. "
+        "Either way we need three coolers, a volleyball net, and a "
+        "backup plan for when something inevitably catches fire."
+    )
+
+    bdd.when("Homer pastes capture-shaped text")
+    await homer.room_send(
+        room_id, "m.room.message", {"msgtype": "m.text", "body": paste},
+    )
+
+    bdd.then("the bot posts exactly one binding event")
+    bindings: list[dict] = []
+    for _ in range(12):
+        bindings = await _topic_binding_events(homer, room_id)
+        if bindings:
+            break
+        await asyncio.sleep(5)
+    assert len(bindings) == 1, \
+        f"expected 1 binding event, got {len(bindings)}"
+    bucket = (bindings[0].get("content") or {}).get("bucket")
+    assert bucket == "homer/powerplant-picnic", f"unexpected bucket {bucket!r}"
+    bdd.ok(f"binding → {bucket}")
+
+    bdd.when("the bot-runner restarts")
+    result = test_stack.run("restart", "core", timeout=120)
+    assert result.get("ok", True), f"stack restart core failed: {result}"
+    bdd.ok("core restarted")
+
+    # Advance homer's sync cursor so the post-restart wait below only
+    # matches the bot's reaction to the SECOND paste.
+    await fetch_room_events(homer, room_id, duration=2.0)
+
+    bdd.when("Homer pastes a second capture after the restart")
+    await homer.room_send(
+        room_id, "m.room.message",
+        {"msgtype": "m.text", "body": paste + " Also: invite the Flanders?"},
+    )
+
+    bdd.then("the bot reacts to the second capture")
+    reply = await _wait_for_reply(
+        homer, room_id, predicate=_is_bot_message, timeout=90,
+    )
+    assert reply, "bot did not react to the capture after the restart"
+
+    bdd.then("the room still holds exactly one binding event, same bucket")
+    bindings = await _topic_binding_events(homer, room_id)
+    assert len(bindings) == 1, (
+        f"binding was re-bootstrapped after restart: {len(bindings)} events"
+    )
+    assert (bindings[0].get("content") or {}).get("bucket") == bucket
+    bdd.ok("binding stable across restart")
