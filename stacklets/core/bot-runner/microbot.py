@@ -394,6 +394,25 @@ class MicroBot:
             # source of truth, so a failed receipt never affects delivery.
             await self._set_read_receipt(room_id, getattr(event, "event_id", None))
 
+    async def ack_event(self, room_id: str, event) -> None:
+        """Durably advance the cursor to `event` BEFORE its handler returns.
+
+        Opt-in escape hatch from the drain's at-least-once contract, for
+        handlers whose side effects must run at most once. The concrete
+        case: stacker commands recreate this very container (`stack up`
+        ends in a core refresh), so the handler can never return and
+        advance-after would replay the command on every restart — a
+        self-sustaining loop. Acking first trades a possibly-lost "Done"
+        reply for never re-executing.
+
+        Capture/document handlers must NOT call this: their replays are
+        deliberate (61d2093) and dedup'd downstream.
+        """
+        ts = getattr(event, "server_timestamp", 0)
+        if ts > self._cursors.get(room_id, 0):
+            self._advance_cursor(room_id, ts)
+        await self._set_read_receipt(room_id, getattr(event, "event_id", None))
+
     async def _set_read_receipt(self, room_id: str, event_id: str | None) -> None:
         """Best-effort public m.read receipt for the "Seen by" indicator."""
         if not event_id:

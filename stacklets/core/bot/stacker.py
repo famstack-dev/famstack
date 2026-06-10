@@ -230,6 +230,14 @@ class StackerBot(MicroBot):
         elif cmd == "restart" and sid:
             await self._send_reply(room.room_id, event, f"🔄 Restarting **{sid}**...")
 
+        # Mutating commands can recreate this very container (`stack up`
+        # ends in a core refresh that force-recreates the bot-runner), so
+        # the handler may never return. Ack the event BEFORE executing:
+        # a mid-command restart then never replays the command. Commands
+        # are at-most-once; captures elsewhere stay at-least-once.
+        if cmd in STACKLET_COMMANDS:
+            await self.ack_event(room.room_id, event)
+
         # Execute
         result = _call_api(request)
         response = _format_result(cmd, result)
