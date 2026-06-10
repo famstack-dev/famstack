@@ -61,19 +61,26 @@ def httpserver_listen_address():
 
 @pytest.fixture
 def openai(httpserver):
-    """OpenAI-compatible endpoint backed by pytest-httpserver.
+    """Content-routed OpenAI stub backed by pytest-httpserver.
 
-    Register responses before the archivist call that triggers them:
+    Queue responses before the bot action that triggers them:
 
-        from tests.integration.openai_stub import stub_classify, stub_reformat
-        stub_classify(openai, {"title": "...", "topics": [...], ...})
+        stub_classify(openai, {"title": "...", "tags": [...], ...})
         stub_reformat(openai, "# clean markdown")
+        openai.rewrite(["keyword"])
 
-    pytest-httpserver asserts all ordered expectations were consumed at
-    teardown — tests that register a stub but don't trigger it will fail,
-    keeping the rig honest.
+    Responses are routed by prompt content (classify / reformat /
+    rewrite / synthesize), so a pipeline gaining a call can never steal
+    another call's response — it fails loudly instead. Teardown asserts
+    no unexpected calls arrived and every queued stub was consumed.
+    Polling helpers should call `openai.raise_if_unexpected()` per tick
+    to turn a wrong call count into an instant, named failure.
     """
-    return httpserver
+    from tests.integration.openai_stub import OpenAIStub
+
+    stub = OpenAIStub(httpserver)
+    yield stub
+    stub.assert_done()
 
 
 # ── Test stack handle ────────────────────────────────────────────────────

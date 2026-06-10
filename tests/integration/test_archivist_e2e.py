@@ -550,6 +550,16 @@ async def test_topic_binding_survives_bot_restart(
     await fetch_room_events(homer, room_id, duration=2.0)
 
     bdd.when("Homer pastes a second capture after the restart")
+    # The second capture classifies too. Under the old order-blind stub
+    # this call silently 500'd and the capture failed open; the routed
+    # stub fails the test on unexpected calls, so stub it honestly.
+    stub_classify(openai, {
+        "title": "Picnic planning, continued",
+        "persons": ["Homer"],
+        "tags": ["Picnic"],
+        "summary": "Follow-up notes about the powerplant picnic.",
+        "facts": [],
+    })
     await homer.room_send(
         room_id, "m.room.message",
         {"msgtype": "m.text", "body": paste + " Also: invite the Flanders?"},

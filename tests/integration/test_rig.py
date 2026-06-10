@@ -48,10 +48,12 @@ async def test_openai_mock_serves_canned_response(openai):
     from tests.integration.openai_stub import stub_classify
 
     stub_classify(openai, {"title": "Test", "topics": ["Demo"]})
+    # The stub routes by prompt content -- send a classify-shaped one.
+    prompt = "Summarize and tag this content for a personal knowledge vault.\n\nhi"
     async with aiohttp.ClientSession() as sess:
         async with sess.post(
             f"{openai.url_for('/v1/chat/completions')}",
-            json={"model": "x", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "x", "messages": [{"role": "user", "content": prompt}]},
         ) as resp:
             body = await resp.json()
 

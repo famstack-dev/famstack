@@ -2,9 +2,10 @@
 
 Captures used to be URL-only and text-only. Recent work added:
 
-  - PDFs and images in non-documents rooms become visual bookmarks,
-    with the binary staying on the homeserver (`source_uri: mxc://...`)
-    instead of duplicating into Paperless.
+  - Images in non-documents rooms become visual bookmarks; PDFs file
+    as notes with the extracted text preserved (reformat + classify,
+    two LLM calls). Either way the binary stays on the homeserver
+    (`source_uri: mxc://...`) instead of duplicating into Paperless.
   - `.md` / `.txt` uploads land as `kind: note` with the bytes
     preserved verbatim in the mirror.
   - Replying (without `@`-mention) to a `capture.filed` confirmation
@@ -27,13 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 
 from nio.api import RoomVisibility
 from nio.responses import RoomInviteResponse, UploadResponse
 
 from tests.integration.forgejo import ForgejoError
-from tests.integration.openai_stub import stub_classify
+from tests.integration.openai_stub import stub_classify, stub_reformat
 
 
 MEMORY_OWNER = "family"
@@ -59,9 +59,17 @@ async def _wait_for_bot_membership(client, room_id: str, bot_mxid: str,
 
 
 async def _wait_for_capture_by_title(code, title: str,
-                                     timeout: int = 60) -> str | None:
-    """Find a mirror file whose frontmatter title matches `title`."""
+                                     timeout: int = 60,
+                                     stub=None) -> str | None:
+    """Find a mirror file whose frontmatter title matches `title`.
+
+    `stub` is the OpenAIStub; when given, an unexpected LLM call aborts
+    the wait immediately with the offending prompt instead of burning
+    the full timeout on a title that can no longer appear.
+    """
     for _ in range(timeout):
+        if stub is not None:
+            stub.raise_if_unexpected()
         try:
             tree = code.list_tree(MEMORY_OWNER, MEMORY_REPO)
         except ForgejoError:
@@ -88,15 +96,19 @@ async def _wait_for_bot_reply(
     envelope_type: str | None = None,
     body_substring: str | None = None,
     timeout: int = 60,
+    stub=None,
 ):
     """Sync until the archivist posts a message matching the predicate.
 
     Each round consumes one sync long-poll (~5s); bounded by ``timeout``
-    seconds. Returns the matching event, or None on timeout.
+    seconds. Returns the matching event, or None on timeout. `stub` is
+    the OpenAIStub — see `_wait_for_capture_by_title`.
     """
     from nio import SyncResponse, RoomMessageText
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
+        if stub is not None:
+            stub.raise_if_unexpected()
         resp = await client.sync(timeout=4000)
         if not isinstance(resp, SyncResponse):
             continue
@@ -193,34 +205,44 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-# ── Scenario 1: PDF in capture room → kind=bookmark ────────────────────
+# ── Scenario 1: PDF in capture room → kind=note ────────────────────────
 
 
-async def test_pdf_in_capture_room_becomes_a_bookmark(
+async def test_pdf_in_capture_room_becomes_a_note(
     bdd, openai, paperless, mirror_scope, code, homer,
 ):
-    """Homer drops a small text-layer PDF in a notes room → bookmark.
+    """Homer drops a small text-layer PDF in a notes room → note.
+
+    PDFs file as kind=note with the extracted text preserved in the
+    mirror (4513ff8), so a later `?` query can grep the actual content.
+    The pipeline makes TWO LLM calls per PDF: reformat (cleans the
+    pypdf text into markdown), then classify.
 
     Scenario
     --------
     Given  a notes room with the archivist invited
-    And    the OpenAI mock will classify the upload as a bookmark
+    And    the OpenAI mock will reformat the body, then classify it
     When   Homer uploads a small PDF
-    Then   family/memory has the entry under `homer/bookmarks/`
-    And    the frontmatter carries `kind: bookmark`, the mxc source_uri,
+    Then   family/memory has the entry under `homer/notes/`
+    And    the frontmatter carries `kind: note`, the mxc source_uri,
            and the capture_id matching the upload event_id
     """
     scope = mirror_scope
-    bdd.scenario("PDF in notes room becomes a kind=bookmark mirror entry")
+    bdd.scenario("PDF in notes room becomes a kind=note mirror entry")
 
     expected_title = scope.tag("Springfield travel notes")
     expected_tag = scope.tag("Travel")
 
     bdd.given(f"Homer creates a notes room and invites {ARCHIVIST_MXID}")
-    room_id = await _create_notes_room(homer, f"Homer Bookmarks {scope.uid}")
+    room_id = await _create_notes_room(homer, f"Homer Notes {scope.uid}")
     bdd.detail(f"room_id = {room_id}")
 
-    bdd.given("the OpenAI mock returns a bookmark-shape classification")
+    bdd.given("the OpenAI mock will reformat the PDF body, then classify it")
+    stub_reformat(openai, (
+        "# Springfield Travel Notes\n\n"
+        f"Marker: {scope.uid}\n\n"
+        "Plan a trip in May for the annual chili cook-off."
+    ))
     stub_classify(openai, {
         "title": expected_title,
         "persons": ["Homer"],
@@ -251,20 +273,20 @@ async def test_pdf_in_capture_room_becomes_a_bookmark(
     bdd.detail(f"upload event_id = {upload_event_id}")
 
     bdd.then(f"family/memory has a capture entry titled '{expected_title}'")
-    path = await _wait_for_capture_by_title(code, expected_title)
+    path = await _wait_for_capture_by_title(code, expected_title, stub=openai)
     assert path, (
         f"No capture file titled {expected_title!r} appeared in "
         f"{MEMORY_OWNER}/{MEMORY_REPO} within 60s. Check bot-runner logs."
     )
     bdd.ok(f"mirror path = {path}")
 
-    bdd.and_("the path lives under homer/bookmarks/")
-    assert path.startswith("homer/bookmarks/"), \
-        f"expected homer/bookmarks/ prefix, got {path}"
+    bdd.and_("the path lives under homer/notes/")
+    assert path.startswith("homer/notes/"), \
+        f"expected homer/notes/ prefix, got {path}"
 
-    bdd.then("frontmatter carries kind=bookmark, mxc source_uri, capture_id")
+    bdd.then("frontmatter carries kind=note, mxc source_uri, capture_id")
     fm, _body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)
-    assert fm.get("kind") == "bookmark", f"expected kind=bookmark, got {fm.get('kind')!r}"
+    assert fm.get("kind") == "note", f"expected kind=note, got {fm.get('kind')!r}"
     assert fm.get("title") == expected_title
     assert fm.get("source_uri") == mxc, \
         f"expected source_uri={mxc}, got {fm.get('source_uri')!r}"
@@ -279,6 +301,7 @@ async def test_pdf_in_capture_room_becomes_a_bookmark(
         homer, room_id, after_ts_ms=before,
         envelope_type="capture.filed",
         body_substring=expected_title,
+        stub=openai,
     )
     assert reply is not None, "no capture.filed envelope on the bot's reply"
     env = reply.source["content"][FAMSTACK_EVENT_KEY]
@@ -389,7 +412,14 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
     bdd.given(f"Homer creates a notes room and invites {ARCHIVIST_MXID}")
     room_id = await _create_notes_room(homer, f"Homer Correct {scope.uid}")
 
-    bdd.given("the OpenAI mock will classify twice -- initial, then reprocess")
+    bdd.given("the OpenAI mock will reformat once and classify twice")
+    # The PDF upload runs reformat → classify; the reprocess pass after
+    # Homer's correction re-reads the mirror summary, so classify only.
+    stub_reformat(openai, (
+        "# Capture under test\n\n"
+        f"Marker: {scope.uid}\n\n"
+        "Some captured content for the bot to summarise."
+    ))
     stub_classify(openai, {
         "title": initial_title,
         "persons": ["Homer"],
@@ -428,7 +458,7 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
     )
 
     bdd.then(f"the initial capture is filed as '{initial_title}'")
-    initial_path = await _wait_for_capture_by_title(code, initial_title)
+    initial_path = await _wait_for_capture_by_title(code, initial_title, stub=openai)
     assert initial_path, "initial capture not found within 60s"
     bdd.ok(f"initial path = {initial_path}")
 
@@ -437,6 +467,7 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
         homer, room_id, after_ts_ms=before_initial,
         envelope_type="capture.filed",
         body_substring=initial_title,
+        stub=openai,
     )
     assert filed_reply is not None, "missing capture.filed envelope"
 
@@ -464,7 +495,7 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
     )
 
     bdd.then(f"the mirror is rewritten with the new title '{corrected_title}'")
-    new_path = await _wait_for_capture_by_title(code, corrected_title)
+    new_path = await _wait_for_capture_by_title(code, corrected_title, stub=openai)
     assert new_path, "rewritten capture not found within 60s"
     bdd.ok(f"new path = {new_path}")
 
@@ -498,6 +529,7 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
         homer, room_id, after_ts_ms=before_reprocess,
         envelope_type="capture.reclassified",
         body_substring=corrected_title,
+        stub=openai,
     )
     assert reclassed is not None, (
         "no capture.reclassified envelope -- chained corrections will not work"
@@ -538,30 +570,23 @@ async def test_mention_in_capture_room_routes_to_search_not_reprocess(
     bdd.given(f"Homer creates a notes room and invites {ARCHIVIST_MXID}")
     room_id = await _create_notes_room(homer, f"Homer Search {scope.uid}")
 
-    bdd.given("the OpenAI mock will classify once and rewrite a query once")
+    bdd.given("the OpenAI mock will reformat and classify the upload")
+    # The PDF upload runs reformat → classify. The mention-search that
+    # follows makes NO LLM call -- the capture-room search returns
+    # deterministic results from the test vault state. (The routed stub
+    # proved the rewrite stub the old order-blind version queued here
+    # was never consumed.)
+    stub_reformat(openai, (
+        "# Indexable capture\n\n"
+        f"Marker: {scope.uid}\n\n"
+        "Content to be searched later."
+    ))
     stub_classify(openai, {
         "title": filed_title,
         "persons": ["Homer"],
         "tags": [scope.tag("Searchable")],
         "summary": "A captured doc Homer will later search for.",
         "facts": [],
-    })
-    # Search runs a rewrite_query LLM call -- stub that too. Whatever
-    # tokens come back, the search itself returns deterministic
-    # results from the test vault state.
-    openai.expect_ordered_request(
-        "/v1/chat/completions", method="POST",
-    ).respond_with_json({
-        "id": "cmpl-test", "object": "chat.completion", "model": "test",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": json.dumps({"keywords": ["searchable"]}),
-            },
-            "finish_reason": "stop",
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     })
 
     bdd.when("Homer uploads a small PDF and waits for the filing reply")
@@ -581,6 +606,7 @@ async def test_mention_in_capture_room_routes_to_search_not_reprocess(
     filed = await _wait_for_bot_reply(
         homer, room_id, after_ts_ms=before_initial,
         envelope_type="capture.filed", body_substring=filed_title,
+        stub=openai,
     )
     assert filed is not None
 
@@ -611,6 +637,7 @@ async def test_mention_in_capture_room_routes_to_search_not_reprocess(
     reply = await _wait_for_bot_reply(
         homer, room_id, after_ts_ms=before_search,
         body_substring="\U0001F50D",
+        stub=openai,
     )
     assert reply is not None, (
         "no search-shaped reply -- the mention guard regressed and search "
