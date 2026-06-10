@@ -2,7 +2,8 @@
 
 ## For users
 
-- **[User Guide](user-guide.md)**: install, stacklets, day-to-day operations, troubleshooting. One page on purpose.
+- **[User Guide](user-guide.md)**: using famstack from chat. Filing documents, saving links, voice memos, asking questions. The page you send your family.
+- **[Admin Guide](admin-guide.md)**: install, stacklets, day-to-day operations, troubleshooting. One page on purpose.
 - [Creating Stacklets](creating-stacklets.md): build your own stacklet.
 
 ## Technical reference

@@ -75,7 +75,7 @@ The installer checks dependencies, sets up your data directory, and gets the ner
 ./stack status         # check everything is running
 ```
 
-Twenty minutes from clone to a working family server. The [User Guide](docs/user-guide.md) covers install, stacklets, operations, and troubleshooting in detail.
+Twenty minutes from clone to a working family server. The [Admin Guide](docs/admin-guide.md) covers install, stacklets, operations, and troubleshooting in detail. The [User Guide](docs/user-guide.md) is the page you send your family: what to type in chat and what comes back.
 
 <p align="center">
   <img src="docs/assets/install.gif" alt="famstack install" width="500">
@@ -220,7 +220,7 @@ The ones you'll use day to day:
 ./stack errors             # recent error logs (past 24h)
 ```
 
-The full reference (lifecycle, observability, AI, config) lives in the [User Guide](docs/user-guide.md). All commands output JSON when piped; `--json` and `--pretty` force the format.
+The full reference (lifecycle, observability, AI, config) lives in the [Admin Guide](docs/admin-guide.md). All commands output JSON when piped; `--json` and `--pretty` force the format.
 
 ---
 
@@ -243,7 +243,7 @@ schedule = "0 0 3 * * *"       # Watchtower nightly image updates
 
 ## Docs
 
-Everything lives in [docs/](docs/): the [User Guide](docs/user-guide.md), the [stacklet reference](docs/stack-reference.md), [creating your own stacklet](docs/creating-stacklets.md), and the [architecture decision records](docs/adr/).
+Everything lives in [docs/](docs/): the [User Guide](docs/user-guide.md), the [Admin Guide](docs/admin-guide.md), the [stacklet reference](docs/stack-reference.md), [creating your own stacklet](docs/creating-stacklets.md), and the [architecture decision records](docs/adr/).
 
 ## Contributing
 
