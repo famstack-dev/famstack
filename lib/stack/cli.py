@@ -1255,6 +1255,9 @@ def print_help(name="stack", plugin_cmds=None):
     print(f"    {TEAL}{'version':<{col}}{RESET}Print version")
     print(f"    {TEAL}{'--help':<{col}}{RESET}Show this help\n")
 
+    print(f"  ⚠  {BOLD}Local network only.{RESET} Never install famstack on a machine reachable")
+    print("     from the public internet. Remote access belongs behind a VPN.\n")
+
 
 # ── Main ──────────────────────────────────────────────────────────────────
 

@@ -328,8 +328,9 @@ def wizard():
     banner("famstack", "Your family's private server")
     out("Everything stays on your network. Nothing leaves this machine.")
     nl()
-    out("famstack is built for Apple Silicon Macs on your local network.")
-    out("Do not expose it directly to the public internet.")
+    warn(f"{RED}{BOLD}Local network only.{RESET} famstack runs plain HTTP and trusts your LAN.")
+    out("   Never install it on a machine reachable from the public internet:")
+    out("   no VPS, no forwarded ports. For remote access, use a VPN (e.g. Tailscale).")
     nl()
 
     _ensure_brew()
