@@ -14,6 +14,19 @@ This guide is for everyone in the family: what to type, what comes back, and wha
 
 Setting the server up, or keeping it running? That is the [Admin Guide](admin-guide.md).
 
+## How do I...?
+
+| You want to | Go to |
+|---|---|
+| File a letter, receipt or contract | [File documents](#file-documents) |
+| Find a document again | [Ask questions](#ask-questions) |
+| Save a link, note or PDF for later | [Capture rooms](#save-anything-capture-rooms) |
+| Collect everything about one project | [Topic rooms](#topic-rooms) |
+| Capture a thought without typing | [Voice memos](#voice-memos) |
+| Fix a wrong tag or title | [Correct the bot](#correct-the-bot) |
+| Browse what the family knows | [The family wiki](#the-family-wiki) |
+| Record the kids, keep the stories | [The Memories Room](#the-memories-room) |
+
 ---
 
 ## The rooms

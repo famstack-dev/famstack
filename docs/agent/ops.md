@@ -4,8 +4,8 @@ Goal: run famstack on a Mac safely. Install, lifecycle, troubleshoot,
 back up. **No code changes from this role** - that is the engineer role
 (see [dev.md](dev.md)).
 
-For full prose, see [../user-guide.md](../user-guide.md). This file is
-the compact decision layer; the user guide is the manual.
+For full prose, see [../admin-guide.md](../admin-guide.md). This file is
+the compact decision layer; the admin guide is the manual.
 
 ## Mental model in 3 lines
 

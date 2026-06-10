@@ -75,7 +75,8 @@ Apply to every role, every session.
 | Doc | Purpose |
 |---|---|
 | [README.md](README.md) | Intro + quickstart |
-| [docs/user-guide.md](docs/user-guide.md) | Full operator manual (prose) |
+| [docs/admin-guide.md](docs/admin-guide.md) | Full operator manual (prose) |
+| [docs/user-guide.md](docs/user-guide.md) | Family-facing chat usage guide |
 | [docs/stack-reference.md](docs/stack-reference.md) | Framework reference: manifest, hooks, env, lifecycle |
 | [docs/creating-stacklets.md](docs/creating-stacklets.md) | How to author a stacklet |
 | [docs/adr/](docs/adr/) | Architecture decision records - the "why" |
