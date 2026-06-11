@@ -14,6 +14,14 @@ Design notes that survive it, for whoever touches this next:
   mapping merely *helpful*, never load-bearing — worst case for a
   mapping miss is "stale until tonight". Don't grow the incremental
   heuristics; grow the deriver instead.
+- **Page update strategy — design when it's time, but the tension is
+  known (2026-06-11):** full regeneration resamples page quality (a
+  good page can regress on the next sweep); evolving the existing
+  page accumulates errors that self-cite (the "Bartley [5]" finding).
+  Most promising middle: a fact-checking pass — "page + sources, fix
+  what the sources don't support, touch nothing else" — anchored to
+  ground truth while preserving good prose. Likely CLI shape then:
+  `wiki` = update/check, `wiki rebuild` = fresh full generation.
 - **famstacker `wiki` command** (Server Room chat trigger) is the
   missing third tier: "CLI commands are the primitives, the bot runs
   or offers them". Needs the famstack API to allow the command and an
