@@ -10,6 +10,13 @@ and asks the LLM to compose the browsable pages a family lands on:
     stack memory wiki --topics          every topic page, no home/members
     stack memory wiki --dry-run         preview to stdout, no writes
 
+`--member` and `--topic` repeat and combine with `--home`: any
+selection flag switches from the full sweep to "generate exactly this
+set" — one invocation covers every page a filing burst touched (the
+curator's incremental path). Member values take a slug or a display
+name ("Homer Simpson" hits homer's bucket); unknown slugs warn and
+skip, and the run fails only when nothing in the selection matched.
+
 Pages are published to the memory repo on Forgejo, where the wiki
 container picks them up within seconds. The wiki is Quartz, which
 renders `index.md` as the landing page for the site (vault-root
@@ -68,6 +75,11 @@ _BRANCH = "main"
 _TOKEN_NAME = "stack-memory-wiki-cli"
 _TOKEN_SCOPES = ["write:repository", "read:repository"]
 
+# Subject prefix of every commit this command pushes. The curator's
+# poll loop filters on it so the wiki's own publishes never trigger
+# another rebuild — change it and that loop comes back.
+COMMIT_PREFIX = "docs(memory): refresh"
+
 # Bracketed regenerate markers. Match the correspondent-page convention
 # verbatim so the same human contract holds across every generated page:
 # edits outside the brackets are preserved, inside is ours to rewrite.
@@ -122,10 +134,10 @@ def _extract_citations(text: str) -> list[int]:
 
 async def run(llm: LLM, argv: list[str]) -> int:
     dry_run = "--dry-run" in argv
-    home_only = "--home" in argv
+    home_sel = "--home" in argv
     topics_only = "--topics" in argv
-    single_member = _arg_value(argv, "--member")
-    single_topic = _arg_value(argv, "--topic")
+    members_sel = _arg_values(argv, "--member")
+    topics_sel = _arg_values(argv, "--topic")
 
     vault_dir = os.environ.get("MEMORY_VAULT_DIR", "")
     if not vault_dir:
@@ -163,50 +175,85 @@ async def run(llm: LLM, argv: list[str]) -> int:
         vault, shared_bucket=shared_bucket, member_slugs=roster,
     )
 
-    # ── Single-surface flags ──────────────────────────────────────────
-    # `--topic camping` finds the (bucket, slug) match anywhere in the
-    # vault; ambiguity (both `family/camping/` and `arthur/camping/`)
-    # generates both pages -- they're genuinely separate topics.
-    if single_topic:
-        matched = [t for t in topics if t[1] == single_topic]
-        if not matched:
-            _err(f"no topic folder found with slug '{single_topic}'")
-            return 1
-        rc = 0
-        for bucket_prefix, topic_slug in matched:
-            sub_rc = await _generate_topic(
-                llm, bucket_prefix, topic_slug, index,
+    # ── Selection mode ────────────────────────────────────────────────
+    # Any selection flag (--home, --member, --topic, --topics) switches
+    # from the full sweep to "generate exactly this set". Flags combine
+    # and --member/--topic repeat, so the curator's incremental rebuild
+    # covers every page a filing burst touched in one invocation.
+    # Member values are normalized through `_slugify_person`, the same
+    # mapping the index uses, so display names and slugs both land on
+    # the bucket. Unknown slugs warn and skip — an auto-run fed a name
+    # with no bucket must not sink the batch — and the run fails only
+    # when NOTHING in the selection matched.
+    if home_sel or topics_only or members_sel or topics_sel:
+        generated = 0
+
+        if home_sel:
+            rc = await _generate_home(
+                llm, index, roster=roster,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
-            rc = sub_rc if sub_rc else rc
-        return rc
+            if rc == 0:
+                generated += 1
 
-    if single_member:
-        return await _generate_member(
-            llm, single_member, index, vault,
-            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-        )
-
-    # ── Default loop ──────────────────────────────────────────────────
-    # `--topics` skips home + members; otherwise we cover home, every
-    # member, and every topic in turn.
-    if not topics_only:
-        rc = await _generate_home(
-            llm, index, roster=roster,
-            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-        )
-        if rc != 0 or home_only:
-            return rc
-
-        # A member with no content is skipped (not an error) so one
-        # empty bucket doesn't sink the whole run. `_generate_member`
-        # returns 1 for skipped-empty, which we deliberately swallow
-        # here -- the overall run still succeeds.
-        for slug in roster:
-            await _generate_member(
+        member_slugs: list[str] = []
+        for raw in members_sel:
+            slug = _slugify_person(raw)
+            if slug and slug not in member_slugs:
+                member_slugs.append(slug)
+        for slug in member_slugs:
+            if slug not in roster:
+                _err(f"no member bucket for '{slug}' — skipping")
+                continue
+            rc = await _generate_member(
                 llm, slug, index, vault,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
+            if rc == 0:
+                generated += 1
+
+        # `--topic camping` matches anywhere in the vault; ambiguity
+        # (both `family/camping/` and `arthur/camping/`) generates both
+        # pages -- they're genuinely separate topics.
+        if topics_only:
+            topic_set = topics
+        else:
+            wanted = set(topics_sel)
+            known = {slug for _, slug in topics}
+            for t_slug in sorted(wanted - known):
+                _err(f"no topic folder found with slug '{t_slug}' — skipping")
+            topic_set = [t for t in topics if t[1] in wanted]
+        for bucket_prefix, topic_slug in topic_set:
+            rc = await _generate_topic(
+                llm, bucket_prefix, topic_slug, index,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            )
+            if rc == 0:
+                generated += 1
+
+        if generated == 0:
+            _err("nothing generated — no page in the selection matched")
+            return 1
+        return 0
+
+    # ── Default loop ──────────────────────────────────────────────────
+    # Bare invocation: home, every member, every topic in turn.
+    rc = await _generate_home(
+        llm, index, roster=roster,
+        shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+    )
+    if rc != 0:
+        return rc
+
+    # A member with no content is skipped (not an error) so one
+    # empty bucket doesn't sink the whole run. `_generate_member`
+    # returns 1 for skipped-empty, which we deliberately swallow
+    # here -- the overall run still succeeds.
+    for slug in roster:
+        await _generate_member(
+            llm, slug, index, vault,
+            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+        )
 
     for bucket_prefix, topic_slug in topics:
         await _generate_topic(
@@ -248,7 +295,7 @@ async def _generate_home(
         return 0
     return await _publish(
         page, target_path="index.md", shared_bucket=shared_bucket,
-        commit_msg="docs(memory): refresh the family wiki home page",
+        commit_msg=f"{COMMIT_PREFIX} the family wiki home page",
         # Only used if the seed's root index.md is somehow missing;
         # otherwise the seed already carries this frontmatter.
         default_preamble="---\ntitle: Family Memory\n---",
@@ -283,7 +330,7 @@ async def _generate_member(
         return 0
     return await _publish(
         page, target_path=f"{slug}/about.md", shared_bucket=shared_bucket,
-        commit_msg=f"docs(memory): refresh {slug}'s wiki page",
+        commit_msg=f"{COMMIT_PREFIX} {slug}'s wiki page",
         # First-creation frontmatter seeds the person entity registry on
         # the page itself: `canonical` is the longest synonym (usually
         # the formal first name when the family also uses a nickname),
@@ -346,7 +393,7 @@ async def _generate_topic(
         target_path=f"{page_dir}/about.md",
         shared_bucket=shared_bucket,
         commit_msg=(
-            f"docs(memory): refresh {bucket_prefix}/{topic_slug} topic page"
+            f"{COMMIT_PREFIX} {bucket_prefix}/{topic_slug} topic page"
         ),
         default_preamble=_topic_preamble(topic_slug, display, scope),
     )
@@ -795,13 +842,13 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
 
 # ── Arg helpers ──────────────────────────────────────────────────────────
 
-def _arg_value(argv: list[str], flag: str) -> str | None:
-    """Value following `flag` in argv, or None if the flag is absent."""
-    if flag in argv:
-        i = argv.index(flag)
-        if i + 1 < len(argv):
-            return argv[i + 1]
-    return None
+def _arg_values(argv: list[str], flag: str) -> list[str]:
+    """Every value following an occurrence of `flag`, in argv order."""
+    out: list[str] = []
+    for i, arg in enumerate(argv):
+        if arg == flag and i + 1 < len(argv):
+            out.append(argv[i + 1])
+    return out
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────
