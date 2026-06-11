@@ -208,13 +208,18 @@ class LLM:
     async def complete(self, role: str, prompt: str, *,
                        images: "list | None" = None,
                        json_mode: bool = False,
-                       model_override: str | None = None) -> str:
+                       model_override: str | None = None,
+                       temperature: float | None = None) -> str:
         """Run a single chat completion and return the response text.
 
         ``role`` resolves to a concrete model via `resolve_model`. Pass
         ``images`` (objects with ``.data``/``.mime``) for a multimodal
-        call, and ``json_mode=True`` to ask for a JSON object back. SDK
-        errors are translated to the typed LLM errors above.
+        call, and ``json_mode=True`` to ask for a JSON object back.
+        ``temperature`` pins sampling when output stability matters
+        (the wiki generator regenerates pages and wants the same
+        evidence to yield the same page); None keeps the server
+        default. SDK errors are translated to the typed LLM errors
+        above.
         """
         model = model_override or resolve_model(self._full_role(role))
         content = prompt if not images else _content_parts(prompt, images)
@@ -222,6 +227,8 @@ class LLM:
         kwargs: dict = {}
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
 
         try:
             resp = await self._client.chat.completions.create(

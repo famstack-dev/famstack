@@ -80,6 +80,14 @@ _TOKEN_SCOPES = ["write:repository", "read:repository"]
 # another rebuild — change it and that loop comes back.
 COMMIT_PREFIX = "docs(memory): refresh"
 
+# Greedy decoding for page generation. Pages are regenerated, so
+# sampling temperature turns every rebuild into a dice roll: the same
+# evidence produced visibly different pages run to run (observed live
+# 2026-06-11 — a rich facts list vanished on a one-note evidence
+# change). Pinned to 0 so a page is a near-deterministic function of
+# its evidence and only changes when the evidence does.
+_TEMPERATURE = 0.0
+
 # Bracketed regenerate markers. Match the correspondent-page convention
 # verbatim so the same human contract holds across every generated page:
 # edits outside the brackets are preserved, inside is ours to rewrite.
@@ -278,7 +286,7 @@ async def _generate_home(
     """
     prompt = _build_home_prompt(index, roster=roster, lang=lang)
     try:
-        page = (await llm.complete("overview", prompt)).strip()
+        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
@@ -316,7 +324,7 @@ async def _generate_member(
     facts = _load_facts(vault, slug)
     prompt = _build_member_prompt(display, slug, entries, facts, lang=lang)
     try:
-        page = (await llm.complete("overview", prompt)).strip()
+        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
@@ -374,7 +382,7 @@ async def _generate_topic(
         display, topic_slug, scope, entries, cross_refs, lang=lang,
     )
     try:
-        page = (await llm.complete("overview", prompt)).strip()
+        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
