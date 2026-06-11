@@ -428,7 +428,7 @@ The persistent layer of the household brain: a curated knowledge vault, rendered
 
 Setup seeds the vault with three things: the classification ontology (the topics and document types the archivist files against), household facts, and a hand-curated correspondents layer with aliases, so "Springfield Insurance" and "Springfield Ins. Co." resolve to the same page instead of becoming duplicates.
 
-The wiki rebuilds itself when the vault changes: file a document in chat, refresh the page. Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
+The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault: when new filings settle it regenerates the pages of the family members involved plus the home page (a couple of LLM calls, a few minutes after the burst), and once a night it rebuilds everything — topic pages, cross-references, the lot — while the GPU has nothing better to do. `./stack memory wiki` stays available as the manual trigger, and `[memory]` in `stack.toml` holds the knobs (see [Configuration](#configuration)). Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
 
 | | |
 |---|---|
@@ -468,6 +468,11 @@ schedule = "0 0 3 * * *"         # Watchtower nightly image updates
 [ai]
 default = "mlx-community/Qwen3.5-9B-MLX-4bit"   # change to match your RAM
 language = "en"                                   # "de" for German voice/transcription
+
+[memory]
+wiki_auto_rebuild = true         # curator refreshes member pages after filings
+wiki_rebuild_quiet_secs = 180    # how long the vault must stay quiet first
+wiki_nightly = "03:30"           # nightly full rebuild, local time ("" disables)
 ```
 
 Key things to know:
