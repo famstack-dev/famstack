@@ -58,6 +58,33 @@ SHARED_BUCKET  = "{shared_bucket}"
 # also returns this path, so there is exactly one vault on disk.
 MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
 
+# Bind-mount source for the curator sidecar: the memory data dir as a
+# whole, so one mount covers the vault (read) and the curator's state
+# files (write) at the same /data/memory paths the containers expect.
+MEMORY_DATA_DIR = "{data_dir}/memory"
+
+# Curator runtime — the slim sidecar runs the same wiki generation the
+# CLI does, so it needs the LLM endpoint (docker-side), model config,
+# Forgejo admin credentials (CODE_URL is overridden to the container-
+# network address in docker-compose.yml), language, and timezone.
+OPENAI_URL       = "{ai_openai_url_docker}"
+OPENAI_KEY       = "{ai_openai_key}"
+AI_DEFAULT_MODEL = "{ai_default_model}"
+AI_MODELS_JSON   = "{ai_models_json}"
+LANGUAGE         = "{language}"
+TIMEZONE         = "{timezone}"
+MATRIX_ADMIN_USER     = "{admin_username}"
+MATRIX_ADMIN_PASSWORD = "{admin_password}"
+
+# Wiki freshness knobs (stack.toml [memory]). Incremental rebuilds run
+# after the vault has been quiet for the debounce window, so a stack
+# of documents filed in one go produces one rebuild, not one per
+# document. The nightly full sweep ("HH:MM" local, empty disables) is
+# the self-healing catch-all for topic pages and cross-references.
+WIKI_AUTO_REBUILD       = "{wiki_auto_rebuild}"
+WIKI_REBUILD_QUIET_SECS = "{wiki_rebuild_quiet_secs}"
+WIKI_NIGHTLY            = "{wiki_nightly}"
+
 # Public hostname the wiki renders into absolute URLs (sitemap,
 # social cards, etc). Empty domain (port mode) falls back to the
 # auto-detected LAN IP via `{ip}` so the site stays reachable.
