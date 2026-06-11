@@ -304,6 +304,12 @@ async def main() -> None:
         head = await vault.head()
         if head:
             last = _write(sha_file, head)
+    # Same contract for the nightly: with no recorded date, any boot
+    # after the configured time would fire an immediate full sweep
+    # (found live on the test rig). First boot counts as done-today;
+    # the first real sweep runs tomorrow night.
+    if not _read(nightly_file):
+        _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
 
     logger.info(
         "[curator] watching {} (poll {}s, quiet {}s, nightly {}) from {}",
