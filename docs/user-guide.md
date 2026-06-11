@@ -38,7 +38,7 @@ After install, your chat has these rooms:
 - **#Documents**: the household paper inbox. Everything you drop here lands in the document archive.
 - **#Memories**: a place to record your family's life. More on this [below](#the-memories-room).
 
-You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
+You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). Create bot rooms **with encryption disabled** — the bots cannot read encrypted messages (see [the note below](#save-anything-capture-rooms)). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
 
 ---
 
@@ -74,6 +74,12 @@ Archivist captures your notes, thoughts and links for you. The bot
 creates summaries, tags them so you can find them again and starts to build your 
 personal knowledge base.
 
+> ⚠️ **Create bot rooms with encryption disabled.** The bots cannot read encrypted messages: anything you send in an encrypted room stays private and is simply not processed. If the archivist answers with "I couldn't decrypt that message", the room is encrypted; create a new room and switch encryption off when Element asks (it can't be turned off afterwards).
+>
+> ![The archivist in an encrypted room: "I couldn't decrypt that message. Try re-inviting me to this room, or send from a verified session."](assets/room-not-encrypted-example.png)
+>
+> Everything stays on your own Mac either way; the traffic never leaves your network. Encryption protects against your own server, and the bots ARE your server.
+
 What you can drop there:
 
 - **A link.** Becomes a bookmark with a summary. Write something around it ("gift idea for Lisa: https://...") and your words shape the summary.
@@ -91,7 +97,7 @@ Everything you capture is filed under your own name in the family archive: Homer
 
 > Needs the `docs` and `code` stacklets.
 
-Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`) and invite the archivist. Everything captured in that room files under that subject instead of your personal notes: links, pastes, PDFs, voice memos.
+Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`), disable encryption, and invite the archivist. Everything captured in that room files under that subject instead of your personal notes: links, pastes, PDFs, voice memos.
 
 The room becomes the filing system. Plan the picnic in chat, drop the gear list, the location ideas, the photo of the flyer. When it's over you have a complete, searchable record of the project without ever having organized anything.
 
@@ -172,6 +178,7 @@ Start now. You will wish you had started earlier.
 The archivist is software running on the family Mac, and Macs get rebooted, disks fill up, things happen.
 
 - Give it a minute. Filing a big PDF or answering a deep question takes a moment; the read receipt and typing indicator show it's working.
+- "I couldn't decrypt that message"? The room is encrypted, and the bots can't read encrypted messages. Create a new room with encryption disabled (see [capture rooms](#save-anything-capture-rooms)).
 - Type `help` in the room. If the bot answers, it's alive and the problem is elsewhere.
 - Still nothing? Tell your admin. They'll want to run `./stack status` ([Admin Guide](admin-guide.md#troubleshooting)).
 
