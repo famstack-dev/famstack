@@ -262,7 +262,8 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None):
         "  stack up photos      Private photo library\n"
         "  stack up docs        Document archive with OCR\n"
         "  stack up ai          Local AI engine\n"
-        "  stack up chatai      ChatGPT-like interface\n"
+        "  stack up code        Private git server\n"
+        "  stack up memory      Family wiki and curated knowledge\n"
     )
 
     html = (
@@ -280,7 +281,8 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None):
         "<tr><td><code>stack up photos</code></td><td>Private photo library</td></tr>"
         "<tr><td><code>stack up docs</code></td><td>Document archive with OCR</td></tr>"
         "<tr><td><code>stack up ai</code></td><td>Local AI engine</td></tr>"
-        "<tr><td><code>stack up chatai</code></td><td>ChatGPT-like interface</td></tr>"
+        "<tr><td><code>stack up code</code></td><td>Private git server</td></tr>"
+        "<tr><td><code>stack up memory</code></td><td>Family wiki and curated knowledge</td></tr>"
         "</table>"
     )
 
