@@ -134,7 +134,10 @@ famstack uses the 420xx range to avoid conflicts with anything you might already
 | 42040 | code (Forgejo) |
 | 42050 | chatai (Open WebUI) |
 | 42060 | ai (oMLX) |
+| 42061 | ai (LM Studio, optional GGUF backend) |
 | 42062 | ai (Whisper) |
+| 42063 | ai (Piper TTS) |
+| 42070 | memory (family wiki) |
 
 If a port is taken, stop the offender or switch to `domain` mode (see [stack-reference.md](stack-reference.md)).
 
