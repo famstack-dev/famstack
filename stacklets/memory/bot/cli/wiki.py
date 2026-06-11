@@ -820,17 +820,22 @@ def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str) -> 
     """
     evidence = _format_evidence(entries)
     if roster:
-        targets = "\n".join(
-            f"- `{slug}/about` — the page for {slug.capitalize()}" for slug in roster
+        # Closed enumeration: the model copies this list instead of
+        # deriving the household from the evidence. Deriving is where
+        # small models split one person into two ("Maggie" and
+        # "Margaret") or drop the page links.
+        skeleton = "\n".join(
+            f"- **[<full name of {slug.capitalize()}>]({slug}/about)** — <detail>. [N]"
+            for slug in roster
         )
         member_links = (
-            "\nEach family member has their own page in the wiki:\n"
-            f"{targets}\n"
-            "Make each person's bold name in the Members section a markdown link "
-            "to their page, matching by who the person is, not just spelling (a "
-            "baby named Margaret may have the page `maggie/about`). Link only to "
-            "a page listed above; if a person has no page, leave their name bold "
-            "but unlinked.\n"
+            f"\nThe household has EXACTLY these {len(roster)} members, one bullet "
+            "each, in this order — fill in the full name and detail, keep the "
+            "link target as given:\n"
+            f"{skeleton}\n"
+            "A person can appear under different name variants in the sources "
+            "(the baby Margaret is the same person as Maggie) — never list "
+            "anyone twice, never add a person that is not in the list above.\n"
         )
     else:
         member_links = ""
@@ -846,9 +851,9 @@ Produce a markdown page with this EXACT structure and section order:
 > <Primary Address>
 
 ## Members
-One short paragraph per person living in the household. Format each as:
-**[<Full Name>](<member page>)** *(<synonym 1>, <synonym 2>)* — born <YYYY-MM-DD>, <one or two defining details (profession, role)>. [N]
-{member_links}Omit the italic synonyms parens if the documents don't show any. Omit the birthdate clause if unknown.
+One bullet per person living in the household, oldest first. Format each as exactly:
+- **[<Full Name>](<member page>)** — <their role or occupation, stated about them in a source>. [N]
+{member_links}Nothing else in the bullet: no birthdates, no nicknames, no placeholders. The member pages carry those details.
 
 ## Broader Family
 Relatives outside the household who appear in the documents: parents, in-laws, grandparents, siblings. One bullet per person:
@@ -880,7 +885,7 @@ Rules:
 - Respond in: {lang}.
 - Use ONLY what the source summaries support. If a section has no source material, write "(no information on file)" — never invent.
 - Cite the document that established each fact as [N] inline. Multiple sources: [1, 3].
-- Keep entries dense and skimmable. Single paragraph per member; one bullet per item elsewhere.
+- Keep entries dense and skimmable. One bullet per member; one bullet per item elsewhere.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
 """
 
@@ -894,8 +899,15 @@ def _build_member_prompt(
     Curated facts ride in as ground truth (the family typed them); the
     document summaries are the cited evidence. Section layout is fixed
     for the same reason the home page's is.
+
+    The evidence slice is shared by design: Lisa's birth certificate is
+    on Lisa's page AND describes her parents. Small models conflate
+    those roles onto the page's subject ("Lisa ... her husband Homer"),
+    so the prompt names who each document involves and carries explicit
+    attribution rules. Weakest-model-first: every rule here earned its
+    place by a 9B failure.
     """
-    evidence = _format_evidence(entries)
+    evidence = _format_evidence(entries, with_persons=True)
     if facts:
         fact_lines = "\n".join(f"- ({kind}) {text}" for kind, text in facts)
         facts_block = (
@@ -918,10 +930,10 @@ Source summaries involving {display} (cite as [N] inline where the fact came fro
 Produce a markdown page with this EXACT structure and section order:
 
 # {display}
-> <one short line: who they are in the family — omit the blockquote if not derivable>
+> <one short line: who they are in the family, only if a source states it explicitly — omit the blockquote otherwise>
 
 ## About
-One short paragraph: their role in the household, profession, and defining details drawn from the documents and facts above. [N]
+One short paragraph: {display}'s own role, occupation or school, and defining details — only what the documents and facts state about {display} personally. [N]
 
 ## Facts & Preferences
 Bullet the hand-curated facts above (rules, habits, preferences, goals), one per line. Write "(none on file)" if there are none.
@@ -937,6 +949,9 @@ Organizations and correspondents associated with their documents. One bullet eac
 
 Rules:
 - The H1 is the person's full name as it appears in the documents; fall back to "{display}".
+- The documents above also involve OTHER family members (see each entry's "involves:" list). A birth certificate is mostly about the parents; school papers name a parent. State a fact about {display} ONLY when the source ties it to {display} by name. Never give {display} another person's role, profession, or relationship (mother/father, spouse, caretaker, employer).
+- When a summary says "the mother", "her husband", or similar without naming {display}, that fact belongs to someone else — leave it off this page.
+- Unsure who a fact is about? Leave it out. A short page is correct; a wrong page is not.
 - Respond in: {lang}.
 - Use ONLY what the sources and facts above support. Empty section → "(none on file)". Never invent.
 - Cite the source document as [N] inline. Multiple sources: [1, 3].
@@ -1042,12 +1057,21 @@ Rules:
 """
 
 
-def _format_evidence(entries: list[dict]) -> str:
-    """Number the summaries as `[N]` evidence blocks for a prompt."""
+def _format_evidence(entries: list[dict], *, with_persons: bool = False) -> str:
+    """Number the summaries as `[N]` evidence blocks for a prompt.
+
+    ``with_persons`` appends each entry's `persons:` list to its header
+    line. Member pages need this: a summary's "the mother" or "her
+    husband" has no referent on its own, and a small model will happily
+    pin those roles on whoever the page is about. Naming who a document
+    involves gives the model an anchor to attribute against.
+    """
     lines: list[str] = []
     for n, s in enumerate(entries, start=1):
         meta_bits = [s["date"]] if s["date"] else []
         meta = " · ".join(meta_bits + [s["title"]])
+        if with_persons and s.get("persons"):
+            meta += "  (involves: " + ", ".join(s["persons"]) + ")"
         lines.append(f"[{n}] {meta}")
         lines.append("    " + s["summary"].replace("\n", "\n    "))
         lines.append("")
