@@ -55,16 +55,16 @@ def run(ctx):
     if default_model:
         ensure_model(ctx.stack.root, default_model)
 
-    # ── Disable thinking for Qwen3.5 on managed oMLX ────────────────
+    # ── Disable thinking for Qwen3 on managed oMLX ──────────────────
     if provider == "managed" and default_model:
-        from thinking import is_qwen35, disable_thinking
+        from thinking import is_qwen3, disable_thinking
         from omlx import OMLXClient, is_omlx
         from stack.prompt import dim
 
         url = result.get("url", "")
         key = result.get("key", "")
         admin_url = url.rstrip("/").replace("/v1", "")
-        if is_qwen35(default_model) and is_omlx(admin_url):
+        if is_qwen3(default_model) and is_omlx(admin_url):
             client = OMLXClient(admin_url, api_key=key)
             if client.login():
                 disable_thinking(client, default_model, log=lambda msg: dim(f"  {msg}"))

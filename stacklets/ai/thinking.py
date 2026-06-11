@@ -1,27 +1,29 @@
-"""Disable thinking mode for Qwen3.5 models via the oMLX admin API.
+"""Disable thinking mode for Qwen3-family models via the oMLX admin API.
 
-Qwen3.5 defaults to thinking enabled, outputting a reasoning chain before
-every response. We disable it via oMLX's per-model settings endpoint,
-which sets chat_template_kwargs.enable_thinking = false at the server level.
-This affects all requests to the model without callers needing to know.
+Qwen3 models (3.5, 3.6, ...) default to thinking enabled, outputting a
+reasoning chain before every response. We disable it via oMLX's per-model
+settings endpoint, which sets chat_template_kwargs.enable_thinking = false at
+the server level. This affects all requests to the model without callers
+needing to know. Qwen3.6 dropped the /think /nothink soft switch but still
+honors this kwarg, so the same path works across the family.
 
-This is Qwen3.5-specific. Other model families handle thinking differently
-or don't have it. Only call this for Qwen3.5 models.
+This is Qwen3-specific. Other model families handle thinking differently
+or don't have it. Only call this for Qwen3 models.
 """
 
 
-def is_qwen35(model_id: str) -> bool:
-    """Check if a model ID looks like a Qwen3.5 variant."""
+def is_qwen3(model_id: str) -> bool:
+    """Check if a model ID looks like a Qwen3-family variant (3.5, 3.6, ...)."""
     lower = model_id.lower()
-    return "qwen3.5" in lower or "qwen-3.5" in lower
+    return "qwen3" in lower or "qwen-3" in lower
 
 
 def disable_thinking(client, model_id: str, log=None) -> bool:
-    """Disable thinking for a Qwen3.5 model via oMLX admin API.
+    """Disable thinking for a Qwen3-family model via oMLX admin API.
 
     Args:
         client: Authenticated OMLXClient instance.
-        model_id: The model name (e.g. "Qwen3.5-9B-MLX-8bit")
+        model_id: The model name (e.g. "Qwen3.6-35B-A3B-UD-MLX-4bit")
         log: Callable(str) for status messages. Defaults to no-op.
 
     Returns True if thinking is now disabled, False on failure.
@@ -30,8 +32,8 @@ def disable_thinking(client, model_id: str, log=None) -> bool:
         def log(msg):
             return None
 
-    if not is_qwen35(model_id):
-        log(f"Not a Qwen3.5 model ({model_id}), skipping")
+    if not is_qwen3(model_id):
+        log(f"Not a Qwen3 model ({model_id}), skipping")
         return True
 
     # oMLX uses short model name, not full repo ID
