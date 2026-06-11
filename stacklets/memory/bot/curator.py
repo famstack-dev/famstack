@@ -1,9 +1,9 @@
 """Curator — keeps the family wiki fresh without anyone running a command.
 
 Runs as the `stack-memory-curator` sidecar (own slim image, see
-`curator.Dockerfile`) and watches the vault working copy that the wiki
-container keeps in sync with Forgejo (a `git pull` loop, 20s
-interval). Two jobs:
+`curator.Dockerfile`). The curator is the vault keeper: it owns the
+`git pull` that keeps the working copy in sync with Forgejo (the wiki
+container is a pure view that just watches the files). Jobs:
 
 1. **Incremental, after filings settle.** New commits land — an
    archivist filing, a learn commit, a hand edit pushed from Obsidian.
@@ -28,9 +28,11 @@ interrupted rebuild is simply redone.
 
 Failure shape: a failed rebuild keeps the SHA where it was and
 retries after another quiet window — the trigger is never lost, and
-`stack memory wiki` always works as the manual override. If the wiki
-container is down nothing pulls the vault, so the curator simply
-sees no new commits until it returns.
+`stack memory wiki` always works as the manual override. If the
+curator is down, the vault (and therefore the wiki) goes stale
+together — one component, one failure story. Disabling
+`wiki_auto_rebuild` stops the rebuilds, NOT the pull: the wiki must
+not rot just because the automation is off.
 
 Config surface (rendered from stack.toml by the runtime):
     WIKI_AUTO_REBUILD        "true"/"false" — [memory] wiki_auto_rebuild
@@ -211,6 +213,29 @@ class Vault:
         out = await asyncio.to_thread(self._run, "rev-parse", "HEAD")
         return out.strip() if out else None
 
+    async def sync(self) -> None:
+        """Fast-forward the working copy from Forgejo.
+
+        Same cheap shape the wiki entrypoint used before the curator
+        took ownership: an idle tick is one `ls-remote` ref query, the
+        fetch + ff happens only when the remote actually moved. Never
+        fatal — Forgejo briefly unreachable means the tick is skipped
+        and everything keeps serving what is on disk.
+        """
+        def _sync() -> None:
+            # Same tick shape as the old wiki entrypoint loop: skip on
+            # any read failure, compare refs, pull only on real change.
+            local = self._run("rev-parse", "HEAD")
+            if not local:
+                return
+            remote = self._run("ls-remote", "origin", "HEAD")
+            remote_head = remote.split()[0] if remote and remote.split() else ""
+            if not remote_head or local.strip() == remote_head:
+                return
+            self._run("pull", "--quiet", "--ff-only")
+
+        await asyncio.to_thread(_sync)
+
     async def subjects(self, since: str, until: str) -> list[str]:
         """Commit subjects in `since..until`. A broken range (history
         rewrite) returns [] — which `only_own_commits` treats as not
@@ -270,9 +295,7 @@ async def rebuild(selection: list[str]) -> bool:
 # ── Main loop ────────────────────────────────────────────────────────────
 
 async def main() -> None:
-    if os.environ.get("WIKI_AUTO_REBUILD", "true").lower() != "true":
-        logger.info("[curator] wiki_auto_rebuild is off — idling")
-        await asyncio.Event().wait()
+    rebuild_enabled = os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true"
 
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))
     shared_bucket = os.environ.get("SHARED_BUCKET", "family")
@@ -312,12 +335,19 @@ async def main() -> None:
         _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
 
     logger.info(
-        "[curator] watching {} (poll {}s, quiet {}s, nightly {}) from {}",
-        vault_dir, POLL_SECS, QUIET_SECS, NIGHTLY or "off", last[:10] or "(empty repo)",
+        "[curator] keeping {} in sync (poll {}s, quiet {}s, nightly {}, rebuild {}) from {}",
+        vault_dir, POLL_SECS, QUIET_SECS, NIGHTLY or "off",
+        "on" if rebuild_enabled else "OFF", last[:10] or "(empty repo)",
     )
 
     while True:
         await asyncio.sleep(POLL_SECS)
+        # The curator owns the pull — the wiki container only watches
+        # files. Runs even with rebuilds disabled: the wiki must not
+        # rot just because the automation is off.
+        await vault.sync()
+        if not rebuild_enabled:
+            continue
         head = await vault.head()
         if not head:
             continue

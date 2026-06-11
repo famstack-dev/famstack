@@ -40,8 +40,8 @@ RUN git clone --depth 1 --branch "${QUARTZ_TAG}" https://github.com/jackyzha0/qu
 COPY quartz/quartz.config.ts ./quartz.config.ts
 COPY quartz/quartz.layout.ts ./quartz.layout.ts
 
-# The entrypoint keeps the vault in sync (background git pull loop) and
-# then serves it with Quartz. See quartz/entrypoint.sh.
+# The entrypoint serves the vault with Quartz — a pure view. The
+# curator sidecar owns the git pull. See quartz/entrypoint.sh.
 COPY quartz/entrypoint.sh /usr/local/bin/wiki-entrypoint.sh
 RUN chmod +x /usr/local/bin/wiki-entrypoint.sh
 
