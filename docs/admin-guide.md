@@ -82,9 +82,8 @@ The AI stacklet picks an LLM at install time based on `sysctl hw.memsize`:
 
 | RAM | Default model | Notes |
 |-----|---------------|-------|
-| 48 GB or more | Qwen3.5-35B-A3B 8-bit | Best quality, including for German. |
-| 36 GB or more | Qwen3.5-35B-A3B 4-bit | Strong all-rounder. |
-| 16 GB | Qwen3.5-9B 4-bit | Lightweight. English is fine. German output is noticeably weaker, especially on document classification with long, formal text. |
+| 32 GB or more | Qwen3.6-35B-A3B UD 4-bit | Best quality, including for German. |
+| 16 GB | Qwen3.5-9B 4-bit | Lightweight. English is fine. German output is noticeably weaker, especially on document classification with long, formal text. Qwen3.6 has no small variant, so this tier stays on 3.5. |
 
 If your household uses German (or any non-English language) and you care about how documents get tagged, transcribed and summarized, 32 GB is the sweet spot. 16 GB works but you will feel the difference. You can always switch models later by editing `[ai] default` in `stack.toml` and running `./stack setup ai`.
 

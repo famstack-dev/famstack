@@ -97,10 +97,12 @@ def detect_language(timezone: str) -> str:
 
 
 # (min_ram_gb, model_id, label)
+# Qwen3.6 only shipped a 27B dense and a 35B-A3B MoE — no small variant — so
+# the lightweight tier stays on Qwen3.5-9B (3.6's smallest 4bit is 16 GB of
+# weights, too big for a 16 GB Mac).
 MODEL_TIERS = [
-    (48, "mlx-community/Qwen3.5-35B-A3B-8bit", "48 GB+ RAM — best quality"),
-    (36, "mlx-community/Qwen3.5-35B-A3B-4bit", "36 GB+ RAM"),
-    (0,  "mlx-community/Qwen3.5-9B-MLX-4bit",  "16 GB+ RAM — lightweight"),
+    (32, "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit", "32 GB+ RAM"),
+    (0,  "mlx-community/Qwen3.5-9B-MLX-4bit",    "16 GB+ RAM — lightweight"),
 ]
 
 
@@ -546,7 +548,8 @@ def wizard():
     out(f"  {TEAL}stack up photos{RESET}     Private photo library")
     out(f"  {TEAL}stack up docs{RESET}       Document archive with OCR")
     out(f"  {TEAL}stack up ai{RESET}         Local AI engine")
-    out(f"  {TEAL}stack up chatai{RESET}     ChatGPT-like interface")
+    out(f"  {TEAL}stack up code{RESET}       Private git server")
+    out(f"  {TEAL}stack up memory{RESET}     Family wiki and curated knowledge")
     nl()
     out(f"  {TEAL}stack status{RESET}        See what's running")
     nl()
