@@ -1,17 +1,17 @@
 # stacklets/memory/docker-compose.yml — the family wiki
 #
-# One service. The "wiki" is a Quartz v4 site that renders the
+# Two services. The "wiki" is a Quartz v4 site that renders the
 # family memory vault as a browsable wiki: graph view, backlinks,
 # full-text search, mobile-friendly. The container runs `quartz
 # build --serve`, which watches the bind-mounted vault and rebuilds
-# whenever the hooks pull new commits in from Forgejo.
+# whenever files change. The "curator" is the vault keeper: it owns
+# the `git pull` that keeps the working copy in sync with Forgejo,
+# and regenerates wiki pages when filings land (see bot/curator.py).
 #
-# The vault is mounted read-write so the wiki can keep its working
-# copy in sync with Forgejo (a background `git pull` loop in the
-# entrypoint). Edits still happen in Forgejo, which stays the canonical
-# source of truth; the wiki only ever fast-forwards. The image is
-# built locally from the sibling Dockerfile and Watchtower is told to
-# ignore it (there's no upstream image to track).
+# Forgejo stays the canonical source of truth; the wiki mounts the
+# vault read-only and never touches git. Both images are built
+# locally and Watchtower is told to ignore them (no upstream images
+# to track).
 
 name: stack-memory
 
@@ -28,11 +28,10 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
     networks:
       - stack
-    # Mounted read-write so the entrypoint can fast-forward the working
-    # copy from Forgejo (git pull). Edits still round-trip through
-    # Forgejo so they land as commits; the wiki never writes its own.
+    # Read-only: the wiki is a pure view. The curator below owns the
+    # pull; edits round-trip through Forgejo and land as commits.
     volumes:
-      - ${MEMORY_VAULT_DIR}:/vault
+      - ${MEMORY_VAULT_DIR}:/vault:ro
     environment:
       # Used by quartz.config.ts to build "edit on Forgejo" links and
       # absolute URLs. Resolved by the runtime from stack.toml.
@@ -40,8 +39,6 @@ services:
       WIKI_HOST: ${WIKI_HOST}
       WIKI_IP: ${WIKI_IP}
       WIKI_PORT: "42070"
-      # How often the background loop pulls family/memory from Forgejo.
-      VAULT_SYNC_INTERVAL: "20"
     ports:
       # Container's Quartz preview server listens on 8080; we publish
       # on the stacklet's declared port (42070). PORT_BIND_IP is set
@@ -50,12 +47,12 @@ services:
       - "${PORT_BIND_IP:-127.0.0.1}:42070:8080"
     restart: unless-stopped
 
-  # Curator — keeps the wiki fresh. Debounced incremental rebuilds
-  # (member pages + home) after filings settle, plus a nightly full
-  # sweep as the self-healing catch-all. Own slim image (python + git
-  # + the LLM client deps) — see curator.Dockerfile; code arrives by
-  # bind mount like the bot-runner's, the env is memory's own. See
-  # `bot/curator.py` for the loop.
+  # Curator — the vault keeper. Owns the `git pull` from Forgejo,
+  # runs debounced incremental rebuilds (member pages + home) after
+  # filings settle, plus a nightly full sweep as the self-healing
+  # catch-all. Own slim image (python + git + the LLM client deps) —
+  # see curator.Dockerfile; code arrives by bind mount like the
+  # bot-runner's, the env is memory's own. See `bot/curator.py`.
   stack-memory-curator:
     container_name: stack-memory-curator
     build:
@@ -99,7 +96,7 @@ services:
       # wiki module from /stacklets, the framework from /app/stack.
       - ../../stacklets:/stacklets:ro
       - ../../lib/stack:/app/stack:ro
-      # Vault working copy (read) + curator state dir (write).
+      # Vault working copy (the curator pulls it) + state dir.
       - ${MEMORY_DATA_DIR}:/data/memory
     restart: unless-stopped
 

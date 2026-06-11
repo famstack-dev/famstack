@@ -103,7 +103,8 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | Disk full | `./stack host` | Likely the photo library. Move `data_dir` to external SSD. |
 | Element warns "browser not supported" | n/a | Click Continue. The check is outdated; Element works in every modern browser. |
 | Wiki pages stale after filings | `docker logs stack-memory-curator` | Curator debounces (~3 min quiet) before rebuilding; topic pages wait for the nightly sweep. Manual override: `./stack memory wiki`. |
-| Curator logs "waiting for vault" | `./stack status` → memory, code | Vault not cloned yet (memory hooks) or `stack-memory-wiki` down — the wiki container owns the `git pull` the curator watches. |
+| Wiki shows old content entirely | `docker logs stack-memory-curator` | The curator owns the vault `git pull` (the wiki container is a read-only view). Curator down/stuck → vault and wiki go stale together. |
+| Curator logs "waiting for vault" | `./stack status` → memory, code | Vault not cloned yet — the memory install hooks own the initial clone. |
 
 For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste output to the user. **Do not invent fixes.**
 
