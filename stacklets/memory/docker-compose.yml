@@ -50,6 +50,59 @@ services:
       - "${PORT_BIND_IP:-127.0.0.1}:42070:8080"
     restart: unless-stopped
 
+  # Curator — keeps the wiki fresh. Debounced incremental rebuilds
+  # (member pages + home) after filings settle, plus a nightly full
+  # sweep as the self-healing catch-all. Own slim image (python + git
+  # + the LLM client deps) — see curator.Dockerfile; code arrives by
+  # bind mount like the bot-runner's, the env is memory's own. See
+  # `bot/curator.py` for the loop.
+  stack-memory-curator:
+    container_name: stack-memory-curator
+    build:
+      context: .
+      dockerfile: curator.Dockerfile
+    image: stack-memory-curator:local
+    # Locally-built image — nothing for Watchtower to pull.
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - stack
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # In-container paths: the vault working copy (read-only use; the
+      # wiki container owns the pull) and the curator's state files,
+      # both under the /data/memory mount below.
+      MEMORY_VAULT_DIR: /data/memory/vault
+      CURATOR_STATE_DIR: /data/memory/curator
+      # Forgejo, container-network address — memory's own CODE_URL in
+      # .env is the host-side URL the install hooks use.
+      CODE_URL: http://stack-code:3000
+      MATRIX_ADMIN_USER: ${MATRIX_ADMIN_USER}
+      MATRIX_ADMIN_PASSWORD: ${MATRIX_ADMIN_PASSWORD}
+      # LLM endpoint (docker-side URL) + model config for the wiki
+      # generation the curator subprocesses.
+      OPENAI_URL: ${OPENAI_URL}
+      OPENAI_KEY: ${OPENAI_KEY}
+      AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL}
+      AI_MODELS_JSON: ${AI_MODELS_JSON}
+      LANGUAGE: ${LANGUAGE}
+      SHARED_BUCKET: ${SHARED_BUCKET}
+      # Behavior — rendered from stack.toml [memory].
+      WIKI_AUTO_REBUILD: ${WIKI_AUTO_REBUILD:-true}
+      WIKI_REBUILD_QUIET_SECS: ${WIKI_REBUILD_QUIET_SECS:-180}
+      WIKI_NIGHTLY: ${WIKI_NIGHTLY:-03:30}
+      # Local time for WIKI_NIGHTLY.
+      TZ: ${TIMEZONE:-UTC}
+    volumes:
+      # Code mounts, same shape as the bot-runner's: curator.py + the
+      # wiki module from /stacklets, the framework from /app/stack.
+      - ../../stacklets:/stacklets:ro
+      - ../../lib/stack:/app/stack:ro
+      # Vault working copy (read) + curator state dir (write).
+      - ${MEMORY_DATA_DIR}:/data/memory
+    restart: unless-stopped
+
 networks:
   stack:
     external: true
