@@ -215,6 +215,17 @@ Testing rules:
 - PR body: `## Summary` with 1-3 bullets. **No "Test plan" section** - project preference.
 - **Never `git push` without explicit human approval.** Every push, every branch, every time.
 
+## Releases
+
+Pre-tag gate, in order. A published tag is never moved; anything missed here ships in the next one.
+
+1. Working tree clean - `git status` shows nothing modified, no stale `uv.lock` (the version bump touches `pyproject.toml` AND the lock; commit them together).
+2. Version bumped in `lib/stack/cli.py` (`VERSION`) and `pyproject.toml`.
+3. Full test round green: framework, stacklets, integration.
+4. Fresh-instance install verified.
+5. Stale references updated: README version callouts, docs links, blog "Try it" instructions.
+6. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with Highlights and an "Upgrading from" section.
+
 ## Pre-1.0 conventions
 
 - Invariant changes (marker semantics, field renames, contract shifts) get coherent commits - each stands alone for revert.
