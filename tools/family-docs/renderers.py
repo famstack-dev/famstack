@@ -191,7 +191,7 @@ def render_pdf(spec: dict) -> bytes:
         elif "signature" in block:
             sig = block["signature"]
             story.append(Spacer(1, 18))
-            story.append(Paragraph(f"_______________________", small))
+            story.append(Paragraph("_______________________", small))
             story.append(Paragraph(f"<b>{esc(sig.get('name', ''))}</b>", body))
             if sig.get("role"):
                 story.append(Paragraph(esc(sig["role"]), small))
