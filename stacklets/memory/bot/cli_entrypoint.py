@@ -10,11 +10,13 @@ Same pattern as `stacklets/docs/bot/cli_entrypoint.py`; both stacklets
 re-use the bot-runner as their tools runtime.
 
 Commands:
-    wiki [--home | --member <slug>] [--dry-run]
+    wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
-        `--dry-run` previews to stdout. Bare invocation regenerates the
-        home page plus every member's page. See `cli/wiki.py` for the
-        full prompt-and-splice contract.
+        `--dry-run` previews to stdout. Bare invocation regenerates
+        home + every member + every topic; selection flags repeat and
+        combine to cover exactly the pages a filing burst touched (the
+        curator's incremental path). See `cli/wiki.py` for the full
+        prompt-and-splice contract.
 """
 
 from __future__ import annotations
