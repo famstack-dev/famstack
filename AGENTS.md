@@ -1,4 +1,4 @@
-# AGENT.md
+# AGENTS.md
 
 Load this file first. Then load the file that matches your role.
 Skip the rest until you need it.
@@ -83,6 +83,6 @@ Apply to every role, every session.
 
 ## How to use this file
 
-- **Weaker models:** load only `AGENT.md` + your role file. Stop there until a task requires more.
+- **Weaker models:** load only `AGENTS.md` + your role file. Stop there until a task requires more.
 - **Stronger agents:** load both role files and pull deeper docs as the task demands.
 - **Humans skimming:** the role file is faster than the user guide for "what am I allowed to do here".
