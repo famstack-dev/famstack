@@ -183,6 +183,15 @@ class MicroBot:
         logger.info("[{}] In {} room(s): {}", self.name, len(rooms), list(rooms.keys()))
 
         # ── Undecryptable message handler ────────────────────────────
+        # By design: the bots do not read encrypted rooms. Tell the user
+        # once per room (per process) what is going on and how to fix
+        # it, instead of a cryptic decrypt error on every message.
+        decrypt_notified: set[str] = set()
+        DOCS_URL = (
+            "https://github.com/famstack-dev/famstack/blob/main/"
+            "docs/user-guide.md#save-anything-capture-rooms"
+        )
+
         async def on_encrypted(room, event):
             if isinstance(event, MegolmEvent) and event.sender != self.user_id:
                 logger.warning(
@@ -190,14 +199,34 @@ class MicroBot:
                     self.name, room.room_id, event.sender,
                     getattr(event, "algorithm", "?"),
                 )
+                if room.room_id in decrypt_notified:
+                    return
+                decrypt_notified.add(room.room_id)
                 await self._client.room_send(
                     room_id=room.room_id,
                     message_type="m.room.message",
                     content={
                         "msgtype": "m.notice",
-                        "body": "I couldn't decrypt that message. "
-                                "Try re-inviting me to this room, or send "
-                                "from a verified session.",
+                        "body": (
+                            "This room is encrypted, and I can't read "
+                            "encrypted messages. That's by design: anything "
+                            "sent encrypted stays private and is never "
+                            "processed by famstack.\n\n"
+                            "To work with me, create a new room with "
+                            "encryption disabled (encryption can't be "
+                            "switched off later). Background: " + DOCS_URL
+                        ),
+                        "format": "org.matrix.custom.html",
+                        "formatted_body": (
+                            "This room is encrypted, and I can't read "
+                            "encrypted messages. That's <b>by design</b>: "
+                            "anything sent encrypted stays private and is "
+                            "never processed by famstack.<br/><br/>"
+                            "To work with me, create a new room with "
+                            "<b>encryption disabled</b> (encryption can't be "
+                            "switched off later). "
+                            f'<a href="{DOCS_URL}">Background</a>.'
+                        ),
                     },
                 )
 
