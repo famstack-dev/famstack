@@ -27,7 +27,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> **v0.2.2** is tagged as "Beta". 
+> [**v0.3.0-beta.1**](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) is the current Beta.
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
@@ -35,9 +35,9 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
 > [!TIP]
-> **Coming in 0.3: your family server gets a memory.**
-> A new `memory` stacklet curates a wiki of your family life out of the documents, notes, and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources.
-> It's in daily use on our own server and lives on the [`v0.3-beta`](https://github.com/famstack-dev/famstack/tree/v0.3-beta) branch until release. [Read what's coming](https://famstack.dev/blog/famstack-0-3-beta/).
+> **New in 0.3: your family server gets a memory.**
+> The `memory` stacklet curates a wiki of your family life out of the documents, notes, and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources.
+> It's in daily use on our own server, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1). [Read the introduction](https://famstack.dev/blog/famstack-0-3-beta/).
 
 ## What you get today
 
@@ -183,7 +183,7 @@ Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklet
 
 ## Roadmap
 
-Document filing, photo backup, and family chat with voice memos all work today. The family brain is taking shape on the [`v0.3-beta`](https://github.com/famstack-dev/famstack/tree/v0.3-beta) branch ([what's coming in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)).
+Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)).
 
 | Feature                                                  | Status                       |
 |----------------------------------------------------------|------------------------------|
