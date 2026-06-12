@@ -44,6 +44,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **Private family chat** with native iOS, Android, macOS, Windows and web apps (Matrix + Element X).
 - **Photo library and mobile backup** that replaces iCloud Photos for the whole family (Immich).
 - **Document archive with OCR** that you photograph from your phone and the local AI files for you (Paperless-ngx).
+- **Your family wiki**: an Obsidian-compatible second brain, generated from the documents, notes, and voice memos you file (memory).
 - **Local AI engine** on Apple Metal GPU: voice transcription, text-to-speech, document classification (oMLX + Whisper + Piper).
 - **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
@@ -53,6 +54,13 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 </p>
 
 <p align="center"><em>The archivist files and finds documents from your phone, in chat</em></p>
+
+
+<p align="center">
+  <img src="docs/assets/memory-wiki-answer.webp" alt="Homer asks in the family chat whether driving under the influence of Duff beer is covered by the car insurance. The archivist answers no, citing the policy documents." width="500">
+</p>
+
+<p align="center"><em>Ask the wiki a question in chat, get an answer with sources</em></p>
 
 
 Everything runs on your Mac. Nothing leaves your network unless you tell it to.
