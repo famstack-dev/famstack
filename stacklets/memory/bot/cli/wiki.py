@@ -322,7 +322,37 @@ async def _generate_member(
 
     display = slug.capitalize()
     facts = _load_facts(vault, slug)
-    prompt = _build_member_prompt(display, slug, entries, facts, lang=lang)
+
+    # Anchored regen: renumber the existing page's citations to the
+    # current evidence order, and name what's new since that page was
+    # generated. Both jobs are mechanical here so the model carries
+    # neither (it fails silently at both — see _previous_generated).
+    previous, prev_refs = _previous_generated(vault / slug / "about.md")
+    new_evidence: list[str] = []
+    if previous:
+        link_to_n = {
+            _relative_link(e["rel"], slug): n
+            for n, e in enumerate(entries, start=1)
+            if e.get("rel")
+        }
+        remap = {
+            old: link_to_n[link]
+            for link, old in prev_refs.items()
+            if link in link_to_n
+        }
+        previous = _renumber_citations(previous, remap)
+        for n, e in enumerate(entries, start=1):
+            link = _relative_link(e.get("rel") or "", slug)
+            if link not in prev_refs:
+                meta = " · ".join(
+                    x for x in (e.get("date"), e.get("title")) if x
+                )
+                new_evidence.append(f"[{n}] {meta}")
+
+    prompt = _build_member_prompt(
+        display, slug, entries, facts, lang=lang,
+        previous=previous, new_evidence=new_evidence,
+    )
     try:
         page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
@@ -756,6 +786,55 @@ def _relative_link(rel: str, page_dir: str) -> str:
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
 
+def _previous_generated(page_path: Path) -> tuple[str, dict[str, int]]:
+    """The current generated body of a page, for prompt anchoring.
+
+    Returns ``(body, refs)``: the content between the regenerate
+    markers with the rendered References section stripped, and the
+    reference map that section carried (link path → citation number).
+    The map lets the caller renumber the baseline's citations to the
+    CURRENT evidence order before prompting — new evidence shifts the
+    numbering, and a model asked to renumber silently doesn't
+    (measured 2026-06-12: byte-identical body over a shifted
+    references block — every citation pointing at the wrong source).
+    ``("", {})`` when the page doesn't exist yet.
+    """
+    try:
+        text = page_path.read_text(encoding="utf-8")
+    except OSError:
+        return "", {}
+    start = text.find(_BEGIN)
+    end = text.find(_END)
+    if start == -1 or end == -1 or end <= start:
+        return "", {}
+    body = text[start + len(_BEGIN):end].strip()
+    refs_map = {
+        m.group(2): int(m.group(1))
+        for m in re.finditer(
+            r"^- \[(\d+)\] \[[^\]]*\]\(([^)]+)\)", body, re.M,
+        )
+    }
+    refs = body.find("## References")
+    if refs != -1:
+        body = body[:refs].rstrip()
+    return body, refs_map
+
+
+def _renumber_citations(text: str, remap: dict[int, int]) -> str:
+    """Rewrite every ``[N]``/``[N, M]`` citation through ``remap``.
+
+    Numbers without a mapping pass through unchanged (evidence that
+    vanished from the index; the prompt tells the model to drop those
+    lines). Single-pass over citation groups, so chained renumbering
+    (1→2 while 2→3) cannot double-apply.
+    """
+    def _sub(m: re.Match) -> str:
+        nums = [int(x) for x in re.split(r",\s*", m.group(1))]
+        return "[" + ", ".join(str(remap.get(n, n)) for n in nums) + "]"
+
+    return re.sub(r"\[(\d+(?:,\s*\d+)*)\]", _sub, text)
+
+
 def _splice_generated(existing: str, generated: str, *,
                       default_preamble: str = "") -> str:
     """Place `generated` inside the regenerate region of `existing`.
@@ -948,6 +1027,7 @@ Rules:
 def _build_member_prompt(
     display: str, slug: str, entries: list[dict],
     facts: list[tuple[str, str]], *, lang: str,
+    previous: str = "", new_evidence: list[str] | None = None,
 ) -> str:
     """Prompt for one member's profile card: summaries plus facts.
 
@@ -957,6 +1037,12 @@ def _build_member_prompt(
     content. Curated facts ride in as ground truth (the family typed
     them); the document summaries are the cited evidence. Section
     layout is fixed for the same reason the home page's is.
+
+    ``previous`` is the page's current generated body (sans rendered
+    references): with it the prompt anchors the regen to the existing
+    wording so a new document produces a reviewable diff instead of a
+    full resample — temp 0 alone does NOT give that (evidence+1 changes
+    the input, and everything redraws; measured 2026-06-12).
 
     The evidence slice is shared by design: Lisa's birth certificate is
     on Lisa's page AND describes her parents. Small models conflate
@@ -975,6 +1061,35 @@ def _build_member_prompt(
     else:
         facts_block = f"No hand-curated facts on file for {display}."
 
+    if previous:
+        if new_evidence:
+            fresh = "\n".join(new_evidence)
+            fresh_block = (
+                "NEW since the baseline (not yet on the page) — work it "
+                "into the right sections, citing its [N]:\n" + fresh
+            )
+        else:
+            fresh_block = (
+                "Nothing is new since the baseline — reproduce it, "
+                "applying corrections only where it contradicts the "
+                "evidence above."
+            )
+        anchor_block = f"""
+The page already exists. Its current version is below — treat it as the baseline, not as something to rewrite:
+- Keep its wording, section names, themes, and bullet order EXACTLY wherever the evidence still supports them.
+- The baseline's [N] citations already match the evidence numbering above. Do not change them.
+- Touch existing lines only where new evidence forces it (e.g. the Recent Activity cap pushing out the oldest entry).
+- Drop a line only when its evidence no longer appears above.
+- Never rephrase, restyle, or reorganize anything else.
+
+{fresh_block}
+
+CURRENT PAGE (baseline):
+{previous}
+"""
+    else:
+        anchor_block = ""
+
     return f"""You are composing the profile page for one member of a family's private, self-hosted memory wiki. It is an OVERVIEW, not an archive: the card a family member (or the family's assistant) reads to get a feel for who this person is right now — their role, their current life, their interests and quirks. Detail lives in the cited documents, one click away.
 
 This page is about: {display} (vault slug: {slug}).
@@ -984,7 +1099,7 @@ This page is about: {display} (vault slug: {slug}).
 Source summaries involving {display} (cite as [N] inline where the fact came from a specific document):
 
 {evidence}
-
+{anchor_block}
 Produce a markdown page with this EXACT structure and section order (omit a section entirely when nothing supports it):
 
 # {display}
