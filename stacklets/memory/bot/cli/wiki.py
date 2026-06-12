@@ -918,10 +918,10 @@ Relatives outside the household who appear in the documents: parents, in-laws, g
 Two or three lines about the dwelling itself: ownership/rental, year acquired or moved in, anything structurally noted (mortgage, deed). Skip if nothing on record.
 
 ## Real Estate
-Other properties owned (rentals, second homes, plots). One bullet per property. Write "(no information on file)" if nothing on record.
+Other properties owned (rentals, second homes, plots). One bullet per property.
 
 ## Vehicles
-One bullet per vehicle: year, make/model, owner. Write "(no information on file)" if nothing.
+One bullet per vehicle: year, make/model, owner.
 
 ## Insurance
 One bullet per policy: name / provider — what it covers — owner.
@@ -938,7 +938,7 @@ Rules:
 - The H1 is the family surname prefixed with "The" (e.g. "# The Simpsons"). Pick the surname most frequently associated with household members; if multiple appear (blended family), use the dominant one.
 - The blockquote line below the H1 is the current primary address. Omit the blockquote entirely if no address is on file.
 - Respond in: {lang}.
-- Use ONLY what the source summaries support. If a section has no source material, write "(no information on file)" — never invent.
+- Use ONLY what the source summaries support. A section with no source material is omitted entirely — never invent, never write placeholder lines.
 - Cite the document that established each fact as [N] inline. Multiple sources: [1, 3].
 - Keep entries dense and skimmable. One bullet per member; one bullet per item elsewhere.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
@@ -949,11 +949,14 @@ def _build_member_prompt(
     display: str, slug: str, entries: list[dict],
     facts: list[tuple[str, str]], *, lang: str,
 ) -> str:
-    """Prompt for one member's page: their slice of summaries plus facts.
+    """Prompt for one member's profile card: summaries plus facts.
 
-    Curated facts ride in as ground truth (the family typed them); the
-    document summaries are the cited evidence. Section layout is fixed
-    for the same reason the home page's is.
+    The page is a curated overview for assistants and browsing family,
+    not an archive (docs/design/brain/wiki-page-anatomy.md): recency-
+    weighted About, themed interests, capped activity, no ledger
+    content. Curated facts ride in as ground truth (the family typed
+    them); the document summaries are the cited evidence. Section
+    layout is fixed for the same reason the home page's is.
 
     The evidence slice is shared by design: Lisa's birth certificate is
     on Lisa's page AND describes her parents. Small models conflate
@@ -972,7 +975,7 @@ def _build_member_prompt(
     else:
         facts_block = f"No hand-curated facts on file for {display}."
 
-    return f"""You are composing the personal page for one member of a family's private, self-hosted memory wiki. The page is the landing page when someone opens this person's folder in the wiki. The vault is private — identifying details are fine to include.
+    return f"""You are composing the profile page for one member of a family's private, self-hosted memory wiki. It is an OVERVIEW, not an archive: the card a family member (or the family's assistant) reads to get a feel for who this person is right now — their role, their current life, their interests and quirks. Detail lives in the cited documents, one click away.
 
 This page is about: {display} (vault slug: {slug}).
 
@@ -982,35 +985,32 @@ Source summaries involving {display} (cite as [N] inline where the fact came fro
 
 {evidence}
 
-Produce a markdown page with this EXACT structure and section order:
+Produce a markdown page with this EXACT structure and section order (omit a section entirely when nothing supports it):
 
 # {display}
 > <one short line: who they are in the family, only if a source states it explicitly — omit the blockquote otherwise>
 
 ## About
-One short paragraph: {display}'s own role, occupation or school, and defining details — only what the documents and facts state about {display} personally. [N]
+One short paragraph: who {display} is TODAY — role in the family, occupation or school, current life context. When sources span years, prefer the most recent picture; old contracts and certificates are background, not news. [N]
 
-## Facts & Preferences
-Bullet the hand-curated facts above (rules, habits, preferences, goals), one per line. Write "(none on file)" if there are none.
+## Interests & Preferences
+Themed bullets that give a feel for the person: hobbies, habits, favorite places, pets, preferences, quirks. Merge the hand-curated facts above with what the documents reveal (a league membership, a regular haunt). Format: **<Theme>:** <detail>. [N]
 
 ## Recent Activity
-The most recent notes, bookmarks, and documents involving them, newest first. One bullet each: <date> — <what it was>. [N]
+The most recent events involving them, newest first, AT MOST 8 bullets: <date> — <what happened>. [N]
 
-## Documents
-Key filed documents that name them (insurance, medical, school, financial). One bullet each. [N]
-
-## People & Organizations
-Organizations and correspondents associated with their documents. One bullet each. [N]
+## Key Documents
+The load-bearing documents naming them (identity, contracts, insurance, medical, school, financial). One bullet each. [N] Receipts and everyday ephemera stay out — they remain reachable through Recent Activity citations.
 
 Rules:
+- The whole page stays under roughly 300 words. It is a profile card, not a ledger: never copy line items, account numbers, or ID numbers onto the page — the citations carry that detail.
 - The H1 is the person's full name as it appears in the documents; fall back to "{display}".
 - The documents above also involve OTHER family members (see each entry's "involves:" list). A birth certificate is mostly about the parents; school papers name a parent. State a fact about {display} ONLY when the source ties it to {display} by name. Never give {display} another person's role, profession, or relationship (mother/father, spouse, caretaker, employer).
 - When a summary says "the mother", "her husband", or similar without naming {display}, that fact belongs to someone else — leave it off this page.
 - Unsure who a fact is about? Leave it out. A short page is correct; a wrong page is not.
 - Respond in: {lang}.
-- Use ONLY what the sources and facts above support. Empty section → "(none on file)". Never invent.
+- Use ONLY what the sources and facts above support. Never invent. Omit empty sections — no placeholder lines.
 - Cite the source document as [N] inline. Multiple sources: [1, 3].
-- Keep entries dense and skimmable.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
 """
 
@@ -1079,7 +1079,7 @@ def _build_topic_prompt(
             f"tracking on {display.lower()}."
         )
 
-    return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. The page is the first thing someone sees when they open the topic's folder. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
+    return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. It is an OVERVIEW someone (or the family's assistant) reads to understand what this topic is about and what has happened in it lately — not an archive. Detail lives in the cited captures, one click away. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
 
 This page is about the topic: {display} (vault slug: {slug}, scope: {scope}).
 
@@ -1098,14 +1098,14 @@ Produce a markdown page with this EXACT structure and section order:
 One short paragraph: what this topic covers in the family's memory, what kinds of captures land here, what makes it worth revisiting. [N]
 
 ## Recent Activity
-The most recent captures filed under this topic, newest first. One bullet each: `<date> — <what it was>`. [N]
+The most recent captures filed under this topic, newest first, AT MOST 8 bullets: `<date> — <what it was>`. [N]
 
 ## Cross-references
 {"Captures filed in other buckets that mention this topic. One bullet each: `<date> — <what it was> [from <bucket>]`. [N]" if cross_refs else "(omit this section)"}
 
 Rules:
 - Respond in: {lang}.
-- Use ONLY what the sources above support. Empty section → "(none on file)". Never invent.
+- Use ONLY what the sources above support. Never invent. Omit empty sections — no placeholder lines.
 - Cite the source capture as [N] inline. Multiple sources: [1, 3].
 - Keep entries dense and skimmable.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
