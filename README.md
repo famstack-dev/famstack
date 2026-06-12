@@ -55,7 +55,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
       <video src="https://github.com/user-attachments/assets/9242ab58-2c0f-4fc2-bcc9-e7ce618caca8" controls muted></video>
     </td>
     <td align="center" width="62%">
-      <img src="docs/assets/memory-wiki-answer.webp" alt="Homer asks in the family chat whether driving under the influence of Duff beer is covered by the car insurance. The archivist answers no, citing the policy documents.">
+      <img src="docs/assets/memory-wiki-answer.png" alt="Homer asks in the family chat whether driving under the influence of Duff beer is covered by the car insurance. The archivist answers no, citing the policy documents.">
     </td>
   </tr>
   <tr>
