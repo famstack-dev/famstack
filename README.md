@@ -49,18 +49,20 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/9242ab58-2c0f-4fc2-bcc9-e7ce618caca8" width="280" controls muted></video>
-</p>
-
-<p align="center"><em>The archivist files and finds documents from your phone, in chat</em></p>
-
-
-<p align="center">
-  <img src="docs/assets/memory-wiki-answer.webp" alt="Homer asks in the family chat whether driving under the influence of Duff beer is covered by the car insurance. The archivist answers no, citing the policy documents." width="500">
-</p>
-
-<p align="center"><em>Ask the wiki a question in chat, get an answer with sources</em></p>
+<table align="center">
+  <tr>
+    <td align="center" width="38%">
+      <video src="https://github.com/user-attachments/assets/9242ab58-2c0f-4fc2-bcc9-e7ce618caca8" controls muted></video>
+    </td>
+    <td align="center" width="62%">
+      <img src="docs/assets/memory-wiki-answer.webp" alt="Homer asks in the family chat whether driving under the influence of Duff beer is covered by the car insurance. The archivist answers no, citing the policy documents.">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><em>The archivist files and finds documents from your phone, in chat</em></td>
+    <td align="center"><em>Ask the wiki a question in chat, get an answer with sources</em></td>
+  </tr>
+</table>
 
 
 Everything runs on your Mac. Nothing leaves your network unless you tell it to.
