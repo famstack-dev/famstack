@@ -235,13 +235,22 @@ def invoke_engine(
 
 # ── Result reading ─────────────────────────────────────────────────────────
 
-def read_latest_run(backup_data_dir: Path) -> Optional[dict]:
+def read_latest_run(
+    backup_data_dir: Path,
+    vault_disk: Optional[str] = None,
+) -> Optional[dict]:
     """Return the most recent run's outcome by tail-scanning
     ``history.jsonl``.
 
+    All targets append to the same history file, so when ``vault_disk``
+    is given only runs for that disk are considered — status can ask for
+    one target's last run without picking up another's. With no filter
+    the most recent run overall wins (what sync wants right after
+    invoking one engine).
+
     Returns ``None`` when the file is missing or contains no parseable
-    line. The caller treats that case as "the engine crashed before it
-    could report" — distinct from a written failure result.
+    matching line. The caller treats that case as "the engine crashed
+    before it could report" — distinct from a written failure result.
 
     Tolerates a corrupted trailing line (e.g. a partial write from a
     crashed engine, though our writes fit under PIPE_BUF and should be
@@ -259,9 +268,12 @@ def read_latest_run(backup_data_dir: Path) -> Optional[dict]:
                 if not stripped:
                     continue
                 try:
-                    latest = json.loads(stripped)
+                    entry = json.loads(stripped)
                 except json.JSONDecodeError:
                     continue
+                if vault_disk is not None and entry.get("vault_disk") != vault_disk:
+                    continue
+                latest = entry
     except OSError:
         return None
     return latest
