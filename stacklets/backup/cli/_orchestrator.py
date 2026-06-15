@@ -354,19 +354,19 @@ def _source_lines(result: dict) -> Tuple[List[str], List[str]]:
 
         if status == "ok":
             plain.append(
-                f"{emoji} {display} — {_format_number(total)} files "
+                f"{emoji} {display}: {_format_number(total)} files "
                 f"({_format_number(new)} new)"
             )
             html.append(
-                f"{emoji} {display} — <b>{_format_number(total)}</b> files "
+                f"{emoji} {display}: <b>{_format_number(total)}</b> files "
                 f"(<b>{_format_number(new)}</b> new)"
             )
         elif status == "FAILED":
-            plain.append(f"{emoji} {display} — FAILED")
-            html.append(f"{emoji} {display} — <b>FAILED</b>")
+            plain.append(f"{emoji} {display}: FAILED")
+            html.append(f"{emoji} {display}: <b>FAILED</b>")
         else:
-            plain.append(f"{emoji} {display} — skipped")
-            html.append(f"{emoji} {display} — skipped")
+            plain.append(f"{emoji} {display}: skipped")
+            html.append(f"{emoji} {display}: skipped")
 
     return plain, html
 
