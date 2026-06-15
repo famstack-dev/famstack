@@ -40,7 +40,9 @@ def run(ctx):
         return
 
     schedule = target.get("schedule", "0 2 * * *")
-    cron_command = _cron_command(repo_root, backup_data_dir)
+    cron_command = cron.sync_command(
+        repo_root / "stack", backup_data_dir / "logs" / "cron.log"
+    )
     try:
         changed = cron.install_entry(schedule, cron_command, TARGET_NAME)
     except RuntimeError as e:
@@ -53,11 +55,3 @@ def run(ctx):
         ctx.step(f"Cron entry updated for target '{TARGET_NAME}' ({schedule})")
     else:
         ctx.step(f"Cron entry already current for target '{TARGET_NAME}'")
-
-
-def _cron_command(repo_root: Path, backup_data_dir: Path) -> str:
-    """Mirror the command on_install installs, so reinstalls on every
-    `stack up` keep the entry in sync with current paths."""
-    log_path = backup_data_dir / "logs" / "cron.log"
-    stack_bin = repo_root / "stack"
-    return f"{stack_bin} backup sync >> {log_path} 2>&1"

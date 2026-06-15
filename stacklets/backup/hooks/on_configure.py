@@ -21,7 +21,7 @@ Walks the user through, in order:
    ``_config.write_target`` helper. The framework picks it up on the
    next read.
 
-The .app/FDA/cron install happens in on_install, which runs after this.
+The FDA grant and cron install happen in on_install, which runs after this.
 """
 
 from __future__ import annotations
@@ -80,7 +80,8 @@ def run(ctx):
 
     nl()
     done(f"Target '{TARGET_NAME}' written to stack.toml")
-    dim("  Next: on_install will install the FDA-granted .app wrapper and the cron entry.")
+    dim("  Next: on_install installs the cron entry and walks you through")
+    dim("  granting Full Disk Access to /usr/sbin/cron.")
     nl()
 
 

@@ -27,8 +27,8 @@ Input (environment):
 
 ==================  ==========================================================
 ``BACKUP_DATA_DIR`` Required. The backup stacklet's own state directory
-                    (canary file, audit log, run history, FDA .app
-                    bundle). NOT the source data being backed up, NOT
+                    (canary file, audit log, run history). NOT the
+                    source data being backed up, NOT
                     the target vault disk. Follows the framework
                     convention {STACKLET}_DATA_DIR (cf. PAPERLESS_DATA_DIR).
                     Must NOT be under ``/Volumes/`` — the script refuses,
@@ -693,13 +693,30 @@ def sync_data(
         # Lock only the new files. Existing locked files weren't touched
         # (--ignore-existing), so their uchg flag survives.
         # BSD find: `! -flags +uchg` matches files lacking the flag.
+        #
+        # The lock IS the append-only guarantee. If chflags fails the new
+        # files are sitting unlocked on the vault, so a silent success
+        # here would be a lie — mark the source FAILED rather than report
+        # protection we didn't apply.
         if new_count > 0 and not dry_run:
-            subprocess.run(
+            lock = subprocess.run(
                 ["find", str(dest), "-type", "f",
                  "!", "-flags", "+uchg",
                  "-exec", "chflags", "uchg", "{}", "+"],
                 capture_output=True,
+                text=True,
             )
+            if lock.returncode != 0:
+                error(
+                    f"{src.display}: failed to lock {format_number(new_count)} "
+                    f"new files (chflags exit {lock.returncode}) — append-only "
+                    "protection not applied"
+                )
+                if lock.stderr.strip():
+                    append_log(log_path, f"{src.display} chflags: {lock.stderr.strip()}")
+                results.append(SourceResult(src.id, src.display, "FAILED",
+                                            after_count, new_count))
+                continue
             info(f"{src.display}: locked {format_number(new_count)} new files")
 
         results.append(SourceResult(

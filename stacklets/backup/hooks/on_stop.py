@@ -6,10 +6,10 @@ multiple targets, each gets its own cron entry and its own removal.
 A wildcard fallback (``remove_all_entries``) catches the case where
 stack.toml is missing or unreadable.
 
-Idempotent: re-running after a successful stop is a no-op. The .app
-bundle, BACKUP_DATA_DIR, the vault disk, and the Keychain passphrase
-are left alone — ``stack up backup`` reinstalls the cron without
-re-running on_configure or on_install.
+Idempotent: re-running after a successful stop is a no-op.
+BACKUP_DATA_DIR, the vault disk, and the Keychain passphrase are left
+alone — ``stack up backup`` reinstalls the cron without re-running
+on_configure or on_install.
 
 If the crontab edit fails (locked file, permission denied), this hook
 raises with the exact line to remove manually. Silent failure here is

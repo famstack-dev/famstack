@@ -87,10 +87,10 @@ language = "en"
 
 [backup]
 # Nightly append-only backup of stacklet data. Enable the backup stacklet
-# (`stack up backup`) to install the cron entry and FDA-granted .app
-# wrapper that runs the sync. Each [[backup.targets.*]] block defines one
-# destination; sources are discovered from stacklets that declare
-# [[backup.archive]] (append-only) in their own manifest.
+# (`stack up backup`) to install the cron entry that runs the sync and to
+# grant Full Disk Access to /usr/sbin/cron. Each [[backup.targets.*]] block
+# defines one destination; sources are discovered from stacklets that
+# declare [[backup.archive]] (append-only) in their own manifest.
 #
 # In v1 only the external-disk engine ships. Restic-based encrypted
 # offsite is planned and will slot in as a second target without

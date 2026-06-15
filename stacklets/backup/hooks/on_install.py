@@ -71,7 +71,9 @@ def run(ctx):
 
     # 3. Cron entry.
     schedule = target.get("schedule", "0 2 * * *")
-    cron_command = _cron_command(repo_root, backup_data_dir)
+    cron_command = cron.sync_command(
+        repo_root / "stack", backup_data_dir / "logs" / "cron.log"
+    )
     try:
         changed = cron.install_entry(schedule, cron_command, TARGET_NAME)
     except RuntimeError as e:
@@ -97,32 +99,6 @@ def run(ctx):
     out("Run a sync now:       stack backup sync")
     out("Check the last run:   stack backup status")
     nl()
-
-
-def _homebrew_prefix() -> Path:
-    """Return the Homebrew prefix, arm64 or Intel."""
-    arm = Path("/opt/homebrew")
-    return arm if arm.is_dir() else Path("/usr/local")
-
-
-# ── Cron command ───────────────────────────────────────────────────────────
-
-def _cron_command(repo_root: Path, backup_data_dir: Path) -> str:
-    """The shell command cron runs.
-
-    Output is appended to ``cron.log`` under the state dir so a
-    misbehaving scheduled run leaves a trail.
-
-    PATH is prepended so cron's minimal environment finds the Homebrew
-    Python (the system Python on macOS is too old).
-    """
-    log_path = backup_data_dir / "logs" / "cron.log"
-    stack_bin = repo_root / "stack"
-    homebrew_bin = _homebrew_prefix() / "bin"
-    return (
-        f"PATH={homebrew_bin}:$PATH "
-        f"{stack_bin} backup sync >> {log_path} 2>&1"
-    )
 
 
 # ── Canary planter ────────────────────────────────────────────────────────

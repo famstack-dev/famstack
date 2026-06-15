@@ -175,8 +175,9 @@ def run(args, stacklet, config):
                      "[[backup.archive]] in its manifest."
         }
 
-    # Run each target sequentially. Each engine call overwrites
-    # history.jsonl, so we read the latest entry before invoking the next.
+    # Run each target sequentially. Each engine call appends its run to
+    # history.jsonl; we read the latest entry (this target's) right after
+    # it returns, before the next target appends its own.
     target_results: list = []
     any_failed = False
 

@@ -168,6 +168,20 @@ class TestRemoveEntry:
         assert "famstack-backup-offsite" in fake.content
         assert "/offsite.app" in fake.content
 
+    def test_removing_vault_does_not_touch_prefix_sibling(self):
+        # "vault" is a prefix of "vault-2"; a substring match would strip
+        # both. The marker must match as a whole token.
+        fake = _FakeCron(
+            "0 2 * * * open /a.app  # famstack-backup-vault\n"
+            "0 3 * * * open /b.app  # famstack-backup-vault-2\n"
+        )
+        with _patched_subprocess(fake):
+            cron.remove_entry("vault")
+        assert "famstack-backup-vault-2" in fake.content
+        assert "/b.app" in fake.content
+        # The exact "vault" entry is gone (its line no longer present).
+        assert "/a.app" not in fake.content
+
     def test_idempotent_double_removal(self):
         # Belt-and-suspenders: destroy lifecycle calls on_stop AND
         # on_destroy; both call remove_entry. Second call must be a
@@ -221,6 +235,16 @@ class TestIsInstalled:
         )
         with _patched_subprocess(fake):
             assert cron.is_installed("offsite") is False
+
+    def test_prefix_sibling_is_not_a_match(self):
+        # Only "vault-2" installed; asking about "vault" must be False
+        # (whole-token match, not substring).
+        fake = _FakeCron(
+            "0 3 * * * open /b.app  # famstack-backup-vault-2\n"
+        )
+        with _patched_subprocess(fake):
+            assert cron.is_installed("vault") is False
+            assert cron.is_installed("vault-2") is True
 
 
 # ── remove_all_entries ────────────────────────────────────────────────────

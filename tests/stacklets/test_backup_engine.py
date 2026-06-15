@@ -442,3 +442,74 @@ class TestDetectVaultState:
 
     def test_ejected_when_mount_point_missing(self, tmp_path):
         assert engine.detect_vault_state(tmp_path / "missing", drive_not_connected=False) == "ejected"
+
+
+# ── Sync data: lock enforcement ────────────────────────────────────────────
+
+class TestSyncDataLock:
+    """The chflags lock IS the append-only guarantee. sync_data must
+    report FAILED — not a silent ok — when the lock can't be applied.
+
+    rsync and chflags are mocked: rsync's mock writes a real file into
+    the dest so count_files sees new files (driving the lock branch);
+    chflags's mock chooses success or failure per test.
+    """
+
+    def _source(self, tmp_path: Path) -> Source:
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.jpg").write_text("x")
+        return Source(id="photos/library", display="Photos",
+                      src_path=src, vault_subdir="data/photos-library",
+                      min_files=1)
+
+    def _fake_run(self, chflags_returncode: int):
+        from types import SimpleNamespace
+
+        def run(cmd, *a, **kw):
+            prog = cmd[0]
+            if prog == "/usr/bin/rsync":
+                dest = Path(cmd[-1])
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "a.jpg").write_text("x")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if prog == "find":
+                return SimpleNamespace(
+                    returncode=chflags_returncode,
+                    stdout="",
+                    stderr="chflags: Operation not permitted" if chflags_returncode else "",
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        return run
+
+    def test_lock_failure_marks_source_failed(self, tmp_path, capsys):
+        from unittest.mock import patch
+
+        mount = tmp_path / "vault"
+        mount.mkdir()
+        log = tmp_path / "logs" / "sync.log"
+        sources = [self._source(tmp_path)]
+
+        with patch.object(engine.subprocess, "run",
+                          side_effect=self._fake_run(chflags_returncode=1)):
+            results = engine.sync_data(sources, mount, log, dry_run=False, verbose=False)
+
+        assert results[0].status == "FAILED"
+        # error() writes to stderr.
+        assert "append-only protection not applied" in capsys.readouterr().err
+
+    def test_lock_success_marks_source_ok(self, tmp_path):
+        from unittest.mock import patch
+
+        mount = tmp_path / "vault"
+        mount.mkdir()
+        log = tmp_path / "logs" / "sync.log"
+        sources = [self._source(tmp_path)]
+
+        with patch.object(engine.subprocess, "run",
+                          side_effect=self._fake_run(chflags_returncode=0)):
+            results = engine.sync_data(sources, mount, log, dry_run=False, verbose=False)
+
+        assert results[0].status == "ok"
+        assert results[0].new_files == 1

@@ -25,6 +25,7 @@ operational outcome (see ``project_backup_lifecycle.md``).
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from typing import List
 
 
@@ -36,6 +37,40 @@ def marker_for(target_name: str) -> str:
     is what gets appended to the cron line after ``#`` so removal can
     find and drop it again."""
     return f"famstack-backup-{target_name}"
+
+
+def _homebrew_prefix() -> Path:
+    """Return the Homebrew prefix, arm64 or Intel."""
+    arm = Path("/opt/homebrew")
+    return arm if arm.is_dir() else Path("/usr/local")
+
+
+def sync_command(stack_bin: Path, log_path: Path) -> str:
+    """The shell command a cron entry runs for the nightly sync.
+
+    Both paths are double-quoted so an install or data directory
+    containing spaces doesn't break cron's word-splitting. PATH is
+    prepended with the Homebrew bin so cron's minimal environment finds
+    the Homebrew Python (the system Python on macOS is too old). Output
+    appends to ``log_path`` so a misbehaving scheduled run leaves a
+    trail. Shared by on_install and on_start so the entry stays
+    byte-identical across reinstalls.
+    """
+    homebrew_bin = _homebrew_prefix() / "bin"
+    return (
+        f'PATH="{homebrew_bin}:$PATH" '
+        f'"{stack_bin}" backup sync >> "{log_path}" 2>&1'
+    )
+
+
+def _line_tagged(line: str, marker: str) -> bool:
+    """True if ``line`` is one of our entries for exactly ``marker``.
+
+    Entries end with an inline ``# <marker>`` comment. We match the
+    whole marker token (leading ``# `` plus end-of-line) rather than a
+    substring so removing target ``vault`` can't also strip ``vault-2``.
+    """
+    return line.rstrip().endswith(f"# {marker}")
 
 
 def install_entry(schedule: str, command: str, target_name: str) -> bool:
@@ -54,7 +89,7 @@ def install_entry(schedule: str, command: str, target_name: str) -> bool:
     desired_line = f"{schedule} {command}  # {marker}"
 
     current = _read_crontab()
-    without_ours = [line for line in current if marker not in line]
+    without_ours = [line for line in current if not _line_tagged(line, marker)]
     new_lines = without_ours + [desired_line]
 
     if new_lines == current:
@@ -73,7 +108,7 @@ def remove_entry(target_name: str) -> bool:
     """
     marker = marker_for(target_name)
     current = _read_crontab()
-    filtered = [line for line in current if marker not in line]
+    filtered = [line for line in current if not _line_tagged(line, marker)]
     if filtered == current:
         return False
     _write_crontab("\n".join(filtered) + "\n" if filtered else "")
@@ -84,7 +119,7 @@ def is_installed(target_name: str) -> bool:
     """True if a cron entry tagged with this target's marker is present
     in the current user's crontab."""
     marker = marker_for(target_name)
-    return any(marker in line for line in _read_crontab())
+    return any(_line_tagged(line, marker) for line in _read_crontab())
 
 
 def remove_all_entries() -> int:
