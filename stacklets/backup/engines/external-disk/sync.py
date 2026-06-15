@@ -593,6 +593,17 @@ def check_vault_space(mount_point: Path) -> None:
         info(f"{free_gb}GB free")
 
 
+def _parse_rsync_transferred(stats_output: str) -> int:
+    """Extract 'Number of files transferred' from rsync --stats output."""
+    for line in stats_output.splitlines():
+        if line.startswith("Number of files transferred:"):
+            try:
+                return int(line.split(":")[-1].strip().replace(",", ""))
+            except ValueError:
+                return 0
+    return 0
+
+
 # ── Sync data ──────────────────────────────────────────────────────────────
 
 def sync_data(
@@ -626,7 +637,7 @@ def sync_data(
     results: List[SourceResult] = []
     for src in sources:
         dest = mount_point / src.vault_subdir
-        before_count = count_files(dest) if (dest.is_dir() and not dry_run) else 0
+        before_count = count_files(dest) if dest.is_dir() else 0
 
         if not dry_run:
             dest.mkdir(parents=True, exist_ok=True)
@@ -654,20 +665,30 @@ def sync_data(
                 rsync = subprocess.run(
                     ["/usr/bin/rsync", *rsync_flags,
                      f"{src.src_path}/", f"{dest}/"],
-                    stderr=log_file,
+                    capture_output=True,
+                    text=True,
                 )
+                if rsync.stderr:
+                    log_file.write(rsync.stderr)
         except FileNotFoundError:
             error(f"{src.display}: /usr/bin/rsync not found")
             results.append(SourceResult(src.id, src.display, "FAILED", 0, 0))
             continue
+
+        if verbose and rsync.stdout:
+            print(rsync.stdout, flush=True)
 
         if rsync.returncode not in RSYNC_OK_CODES:
             error(f"{src.display}: rsync failed (exit {rsync.returncode})")
             results.append(SourceResult(src.id, src.display, "FAILED", 0, 0))
             continue
 
-        after_count = before_count if dry_run else count_files(dest)
-        new_count = after_count - before_count
+        if dry_run:
+            new_count = _parse_rsync_transferred(rsync.stdout)
+            after_count = before_count + new_count
+        else:
+            after_count = count_files(dest)
+            new_count = after_count - before_count
 
         # Lock only the new files. Existing locked files weren't touched
         # (--ignore-existing), so their uchg flag survives.
@@ -688,11 +709,17 @@ def sync_data(
             total_files=after_count,
             new_files=new_count,
         ))
-        info(
-            f"{src.display}: done "
-            f"({format_number(after_count)} total, "
-            f"{format_number(new_count)} new)"
-        )
+        if dry_run:
+            info(
+                f"{src.display}: {format_number(new_count)} files "
+                f"would be written to backup archive"
+            )
+        else:
+            info(
+                f"{src.display}: done "
+                f"({format_number(after_count)} total, "
+                f"{format_number(new_count)} new)"
+            )
 
     return results
 
@@ -987,8 +1014,12 @@ def run_sync(
     print()
     if result.success:
         print(f"{GREEN}Sync completed successfully.{NC}")
+        if args.dry_run:
+            print(f"  {BOLD}Dry run, nothing synced!{NC}")
         return 0
     print(f"{RED}Sync completed with errors.{NC}")
+    if args.dry_run:
+        print(f"  {BOLD}Dry run, nothing synced!{NC}")
     return 1
 
 
