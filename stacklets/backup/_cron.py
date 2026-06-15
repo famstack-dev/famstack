@@ -54,7 +54,7 @@ def install_entry(schedule: str, command: str, target_name: str) -> bool:
     desired_line = f"{schedule} {command}  # {marker}"
 
     current = _read_crontab()
-    without_ours = [l for l in current if marker not in l]
+    without_ours = [line for line in current if marker not in line]
     new_lines = without_ours + [desired_line]
 
     if new_lines == current:
@@ -73,7 +73,7 @@ def remove_entry(target_name: str) -> bool:
     """
     marker = marker_for(target_name)
     current = _read_crontab()
-    filtered = [l for l in current if marker not in l]
+    filtered = [line for line in current if marker not in line]
     if filtered == current:
         return False
     _write_crontab("\n".join(filtered) + "\n" if filtered else "")
@@ -84,7 +84,7 @@ def is_installed(target_name: str) -> bool:
     """True if a cron entry tagged with this target's marker is present
     in the current user's crontab."""
     marker = marker_for(target_name)
-    return any(marker in l for l in _read_crontab())
+    return any(marker in line for line in _read_crontab())
 
 
 def remove_all_entries() -> int:
@@ -95,7 +95,7 @@ def remove_all_entries() -> int:
     number of entries removed.
     """
     current = _read_crontab()
-    filtered = [l for l in current if MARKER_PREFIX not in l]
+    filtered = [line for line in current if MARKER_PREFIX not in line]
     removed = len(current) - len(filtered)
     if removed == 0:
         return 0

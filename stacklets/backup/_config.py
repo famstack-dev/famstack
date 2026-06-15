@@ -145,8 +145,8 @@ def _find_block(content: str, target_name: str) -> Optional[tuple]:
         cursor += 1
 
     end_line = last_data_line + 1
-    start_offset = sum(len(l) for l in lines[:start_line])
-    end_offset = sum(len(l) for l in lines[:end_line])
+    start_offset = sum(len(line) for line in lines[:start_line])
+    end_offset = sum(len(line) for line in lines[:end_line])
     return start_offset, end_offset
 
 

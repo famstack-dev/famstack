@@ -29,8 +29,6 @@ from typing import Optional
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from _orchestrator import (
-    SourceRecord,
-    Target,
     discover_archive_sources,
     format_notification,
     get_targets,

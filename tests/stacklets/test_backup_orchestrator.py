@@ -10,19 +10,15 @@ invocation (subprocess) and Matrix posting (live network) are skipped
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "backup" / "cli"))
 
-import _orchestrator as orch
 from _orchestrator import (
     SourceRecord,
-    Target,
     build_engine_command,
     discover_archive_sources,
     format_notification,
