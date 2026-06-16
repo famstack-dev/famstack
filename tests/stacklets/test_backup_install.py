@@ -74,13 +74,21 @@ class TestCronCommand:
         assert '"/Users/My Name/famstack/stack" backup sync' in cmd
         assert '>> "/Users/My Name/data/backup/logs/cron.log" 2>&1' in cmd
 
+    def test_prepends_homebrew_path(self):
+        # cron's minimal PATH finds the too-old system Python; prepend the
+        # Homebrew bin so the nightly run uses Homebrew Python.
+        cmd = cron.sync_command(Path("/repo/stack"), Path("/data/backup/logs/cron.log"))
+        assert cmd.startswith('PATH="')
+        assert "/bin:$PATH" in cmd
+
     def test_uses_absolute_paths(self):
-        # cron's PATH is minimal; relative paths break. Both the binary
-        # and the log destination must be absolute.
+        # cron's PATH is minimal; relative paths break. The binary, the
+        # log destination, and the prepended PATH dirs must all be absolute.
         cmd = cron.sync_command(Path("/repo/stack"), Path("/data/backup/logs/cron.log"))
         for token in cmd.split():
-            # Skip the redirect operators and 2>&1
-            if token in (">>", "2>&1", "backup", "sync"):
+            # Skip the redirect operators, the command words, and the
+            # PATH= assignment (its absolute dirs are checked above).
+            if token in (">>", "2>&1", "backup", "sync") or token.startswith('PATH="'):
                 continue
             assert token.strip('"').startswith("/"), \
                 f"non-absolute token in cron line: {token!r}"

@@ -422,7 +422,7 @@ class TestFormatNotification:
             ],
         )
         plain, html = format_notification("vault", result)
-        assert "Documents — FAILED" in plain
+        assert "Documents: FAILED" in plain
         assert "<b>FAILED</b>" in html
 
     def test_no_sources_renders_cleanly(self):
