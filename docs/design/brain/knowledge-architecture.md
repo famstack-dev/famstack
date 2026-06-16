@@ -13,7 +13,7 @@ The Family Brain connects the silos. It extracts knowledge from every service, o
 
 ## Research Sources
 
-This design synthesizes six external sources and our existing infrastructure.
+This design synthesizes seven external sources and our existing infrastructure.
 
 ### Karpathy's LLM Wiki Pattern
 Source: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
@@ -185,6 +185,17 @@ Source: r/LocalLLaMA (636K+ members), various articles and benchmarks
 - Cognee: fully local, SQLite + LanceDB + Kuzu graph, no cloud
 - Hindsight (MIT): single Docker command, embedded PostgreSQL + pgvector
 - OpenMemory: temporal knowledge graph with composite scoring (salience, recency, coactivation)
+
+### "Second Brain Night Shift" (Khairallah, 2026)
+Source: viral how-to for a 300-agent overnight PKM swarm on Kimi Work + Obsidian
+
+A solo-knowledge-worker build: dump raw captures into one folder, and overnight a swarm of role-specialized agents (scouts fetch, catalogers atomize, cartographers link, critics flag contradictions, editors synthesize + write a briefing) refines them into an interlinked vault. Most of it is vendor marketing (the "300 agents" fan-out, Kimi K2.6) and most of the *architecture* we already arrived at independently: it is Karpathy's wiki + Total Recall's dream cycle restated. Validating, not novel: refinery-by-stage folders (`0-raw` -> `2-atoms` -> `3-threads`) match our L0->L4 layers; "sources sacred, no source no note" matches our immutable-mirror + provenance rule; atomic notes match L2 facts; role decomposition matches our Archivist/Deriver/Scribe split; the same 7 decay types appear (lifted from Total Recall, same TTLs).
+
+**The one genuinely fresh contribution: the morning briefing is the product.** The article's strongest instinct is that the overnight refinement is invisible and worthless until something *lands on your desk* -- "last night surfaced one contradiction worth your attention, here's the link." We do all the refinement (classify, mirror, derive) and emit nothing proactive: briefings are parked in three separate docs (engram stats, wiki-improvements brief, dream-cycle summary). This reframes the briefing from polish to centerpiece, and it is our `smart recall` paid wedge: "famstack noticed the car insurance renews in 9 days and this letter contradicts last year's premium" is the payoff that makes the background work feel alive. For a family it is *more* compelling than for a solo nerd.
+
+**The trap to reject: the human friction queue.** The article's climax -- "spend 20 minutes a week as editor-in-chief resolving the contradiction list" -- is exactly the pending/review queue our design forbids (see the auto-extend principle). It assumes one disciplined knowledge worker; a family has no editor-in-chief, and "whose belief wins" is incoherent across personal buckets. **Decision: adopt contradiction *detection*, reject contradiction *queues*.** When a new doc contradicts an old fact, resolve by newest-wins-with-changelog or surface-in-context-when-asked, never a triage list someone must clear.
+
+**Assessment for famstack:** Steal the briefing, steal the "your server worked while you slept" narrative for marketing, skip the swarm (a family sees a handful of captures a day, not 50 articles -- our few purpose-built bots are correct), keep realtime classify-on-arrival (better chat UX than overnight batch; the night shift is the *consolidation/briefing* layer, not the capture path). Net: this article mostly de-risks the existing design and isolates the briefing as the highest-leverage unbuilt piece.
 
 ---
 
