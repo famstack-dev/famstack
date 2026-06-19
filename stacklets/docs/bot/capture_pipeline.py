@@ -571,14 +571,14 @@ class CapturePipeline:
         source = SourceContent(
             text=source_text,
             title_hint=meta.get("title") or None,
-            source_uri=meta.get("source_uri") or None,
+            source_uri=meta.get("resource") or None,
         )
         kind = meta.get("kind") or "bookmark"
         captured_at = meta.get("date") or _dt.date.today().isoformat()
         capture_id = meta.get("capture_id")
         return await self._publish(
             source=source, kind=str(kind), sender_mxid=sender_mxid,
-            display_link=meta.get("source_uri") or "(capture)",
+            display_link=meta.get("resource") or "(capture)",
             user_hint=user_hint,
             existing_path=vault_path,
             captured_at=str(captured_at),

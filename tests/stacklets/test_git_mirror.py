@@ -489,7 +489,7 @@ class TestCapturePath:
 
 
 class TestCaptureFrontmatter:
-    """Captures carry `kind: bookmark|note` + optional `source_uri`.
+    """Captures carry `kind: bookmark|note` + optional `resource`.
     Bookmark = URL pointer; Note = pasted body the user typed.
 
     Document-shaped fields (correspondent, document_type, category) are
@@ -507,7 +507,7 @@ class TestCaptureFrontmatter:
         )
         assert fm["title"] == "Why local LLMs matter"
         assert fm["kind"] == "bookmark"
-        assert fm["source_uri"] == "https://example.com/llms"
+        assert fm["resource"] == "https://example.com/llms"
         # Document-shaped fields are gone from captures.
         assert "correspondent" not in fm
         assert "document_type" not in fm
@@ -527,7 +527,7 @@ class TestCaptureFrontmatter:
             persons=["Arthur"], tags=["LLMs"], model=None,
         )
         assert fm["kind"] == "note"
-        assert fm["source_uri"] == "https://reddit.com/r/x/comments/y"
+        assert fm["resource"] == "https://reddit.com/r/x/comments/y"
         assert fm["tags"] == ["LLMs"]
 
     def test_note_without_source_uri(self, mirror):
@@ -542,7 +542,7 @@ class TestCaptureFrontmatter:
             persons=["Arthur"], tags=[], model=None,
         )
         assert fm["kind"] == "note"
-        assert "source_uri" not in fm
+        assert "resource" not in fm
 
     def test_full_shape(self, mirror):
         fm = mirror._capture_frontmatter(
@@ -594,7 +594,7 @@ class TestCaptureRender:
             action_items=[],
         )
         assert "kind: bookmark" in out
-        assert "source_uri: https://example.com/llms" in out
+        assert "resource: https://example.com/llms" in out
         assert "# Why local LLMs matter" in out
         assert "**About:** [[Arthur]]" in out
         assert "> [!summary]" in out

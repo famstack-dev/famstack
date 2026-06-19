@@ -263,9 +263,10 @@ def capture_frontmatter(
     paperless_url) are intentionally absent — captures aren't part
     of the Paperless ontology.
 
-    ``source_uri`` is optional — a pure text note with no embedded
-    link omits the field entirely, so a Dataview ``where source_uri``
-    cleanly filters to "captures that point at a source."
+    The OKF ``resource`` field (the source URL) is optional — a pure
+    text note with no embedded link omits it entirely, so a Dataview
+    ``where resource`` cleanly filters to "captures that point at a
+    source." It is fed from the ``source_uri`` argument.
 
     ``date`` carries the capture date — the article's own publish
     date (if any) lives in the briefing block. The capture log is
@@ -303,7 +304,9 @@ def capture_frontmatter(
     if tags:
         fm["tags"] = tags
     if source_uri:
-        fm["source_uri"] = source_uri
+        # OKF `resource`: the URI of the underlying asset this concept
+        # describes (the captured source URL).
+        fm["resource"] = source_uri
     if capture_id:
         # Same identifier the `dev.famstack.event` envelope carries under
         # `data.capture_id`. Stored on the file too so a later grep (or

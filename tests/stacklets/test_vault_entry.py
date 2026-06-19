@@ -275,7 +275,7 @@ class TestCaptureFrontmatter:
         assert fm["type"] == "bookmark"  # OKF concept kind, mirrors kind
         assert fm["kind"] == "bookmark"
         assert fm["date"] == "2025-03-27"
-        assert fm["source_uri"] == "https://reddit.com/r/famstack/..."
+        assert fm["resource"] == "https://reddit.com/r/famstack/..."
         assert fm["persons"] == ["Arthur"]
         assert fm["tags"] == ["Technology"]
         assert fm["model"] == "mlx-model"
@@ -298,7 +298,7 @@ class TestCaptureFrontmatter:
         )
         assert fm["type"] == "note"
         assert fm["kind"] == "note"
-        assert "source_uri" not in fm
+        assert "resource" not in fm
         assert "model" not in fm
 
 
