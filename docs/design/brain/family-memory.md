@@ -74,6 +74,7 @@ family/memory.git                       (Forgejo repo, seeded by `memory` stackl
 
 ```markdown
 ---
+type: document
 title: ADAC Kfz-Versicherung 2026
 date: 2026-03-15
 correspondent: ADAC
@@ -83,10 +84,11 @@ persons: [Homer]
 tags: [Versicherung, Fahrzeug, "Person: Homer"]
 paperless_id: 247
 paperless_url: http://docs.local
+resource: http://docs.local/documents/247/details
 processing: ai_formatted
 model: qwen3.5-vl-7b
 source: paperless
-added: 2026-05-20T14:23:00Z
+timestamp: 2026-05-20T14:23:00Z
 ---
 
 # ADAC Kfz-Versicherung 2026
@@ -113,8 +115,9 @@ Notes:
   in Obsidian; labeled blockquote in Forgejo). Visually distinct from
   the OCR body below.
 - `Show Document` is a per-document link composed from `paperless_url`
-  + `/documents/<id>/details`; frontmatter `paperless_url` keeps the
-  base URL so scripts can compose other deep links.
+  + `/documents/<id>/details`. The same URL is stamped into the OKF
+  `resource` field; frontmatter `paperless_url` keeps the base URL so
+  scripts can compose other deep links.
 - Sections inside the callout use `**Bold labels**` instead of `##`
   headings — Obsidian renders them as section starts within the callout,
   and callouts don't nest H2s cleanly.
@@ -123,14 +126,14 @@ Notes:
 
 ```markdown
 ---
+type: bookmark
 title: Local-LLM benchmarks roundup
-kind: bookmark
 date: 2026-05-17
 persons: [Arthur]
 tags: [local-llms, benchmarks, "Person: Arthur"]
-source_uri: https://example.com/llms
+resource: https://example.com/llms
 model: qwen3.5-vl-7b
-added: 2026-05-17T09:00:00Z
+timestamp: 2026-05-17T09:00:00Z
 ---
 
 # Local-LLM benchmarks roundup
@@ -148,8 +151,8 @@ added: 2026-05-17T09:00:00Z
 ```
 
 Notes:
-- `kind: note` keeps the user's pasted body in a collapsed
-  `> [!quote]- Original paste` callout below the summary. `kind: bookmark`
+- `type: note` keeps the user's pasted body in a collapsed
+  `> [!quote]- Original paste` callout below the summary. `type: bookmark`
   has no body — the URL plus the digest IS the entry.
 - No "Action items" section on captures. A bookmark to a Reddit thread
   is not a todo; pasting links shouldn't flood the system with chores.

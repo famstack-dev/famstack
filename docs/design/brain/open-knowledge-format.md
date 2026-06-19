@@ -1,6 +1,6 @@
 # Open Knowledge Format (OKF) support
 
-> Status: design draft
+> Status: Phase 1 landed (at-rest conformance) on branch `okf-conformance`; Phase 2 (exporter + conformance test) pending
 > Created: 2026-06-16
 > Author: Arthur + Claude
 > Depends on: [knowledge-structure.md](knowledge-structure.md) (vault shape),
@@ -76,8 +76,15 @@ browser we could adopt or fork for families who do not run Obsidian.
 
 ## Gap analysis (grounded in current code)
 
-All field names below are verified against `stacklets/docs/bot/mirror_format.py`
+All field names below are verified against `stacklets/docs/bot/vault_entry.py`
 and `docs/design/brain/family-ontology.md` as of this branch.
+
+> **Phase 1 landed.** The "action" items in the tables below are done at
+> rest: every concept now writes a required `type`; `added` -> `timestamp`,
+> capture `source_uri` -> `resource`, documents carry a per-document
+> `resource`, and capture `kind` was promoted into `type`. The tables are
+> kept as the original analysis. What remains is Phase 2 (the exporter and
+> the wikilink translation).
 
 ### Document mirror frontmatter
 
@@ -156,7 +163,7 @@ Two options:
 2. **Switch natively to relative markdown links.** Conformant by
    construction, no exporter. But it degrades the Obsidian experience
    (wikilinks are why backlinks and the graph view "just work") and is a
-   wider rename touching every renderer in `mirror_format.py`.
+   wider rename touching every renderer in `vault_entry.py`.
 
 **Recommendation: option 1 (translate on export).** The vault's primary
 consumer is a family in Obsidian/Forgejo, not an OKF agent. Optimize the
@@ -210,7 +217,7 @@ just let old entries age out, but a script is safer and trivial.
    <dir>` (or a vault flag) that: emits per-folder `index.md` nav files,
    translates `[[wikilinks]]` to relative links, and writes a top-level
    bundle `index.md`. Reuses the wiki engine's roster + the existing
-   `mirror_format` renderers.
+   `vault_entry` renderers.
 6. **Conformance test.** A small validator (the OKF spec ships conformance
    criteria) run in `stacktests` against a fabricated Simpsons vault, so we
    do not silently drift out of conformance.
@@ -339,7 +346,7 @@ The one nugget worth keeping: **identity lives in frontmatter, the
 filesystem path is derived; reindex by globbing and reading the stored
 id, so files can be renamed/moved without breaking identity.** That
 directly informs our rename work -- if we stamp a stable concept id, the
-"filename is stable after first AI pass" constraint in `mirror_format.py`
+"filename is stable after first AI pass" constraint in `vault_entry.py`
 relaxes. Their separate `.state` checksum file (detect human edits vs
 machine writes, fail-fast on drift) is also a clean pattern for the
 Deriver to avoid clobbering hand-edits.
