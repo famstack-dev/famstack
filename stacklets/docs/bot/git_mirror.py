@@ -43,19 +43,25 @@ paths above.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
-import re
 import secrets
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
+
+from mirror_format import (
+    slug,
+    document_filepath,
+    capture_filepath,
+    document_frontmatter,
+    capture_frontmatter,
+    render_document,
+    render_capture,
+)
 
 
 # The shared family knowledge vault. The memory stacklet creates and
@@ -288,45 +294,13 @@ class GitMirror:
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
     def _slug(self, text: str) -> str:
-        """Filesystem-safe slug: ASCII-ish, lowercase, hyphen-separated.
-
-        The cap is a defensive ceiling, not a primary length control —
-        the classifier title prompt asks for short identifying titles
-        (no dates, no amounts), so well-shaped inputs land far under
-        this cap. The slice is hard at 60 chars; the title prompt is
-        responsible for keeping titles human-scannable, not the slug.
-        """
-        normalized = unicodedata.normalize("NFKD", text)
-        ascii_ = normalized.encode("ascii", "ignore").decode()
-        slug = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_).strip("-").lower()
-        return slug[:60] or "document"
+        """Filesystem-safe slug. Delegates to ``mirror_format.slug``."""
+        return slug(text)
 
     def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_title: bool) -> str:
-        """Build <shared_bucket>/documents/YYYY/MM/YYYY-MM-DD-<slug>-p<id>.md.
-
-        `has_title` is True when we have a slug-worthy title (from AI
-        classification or the caller's fallback filename) — as opposed
-        to the generic `Paperless #N`. The `-p<id>` suffix always appears
-        so the Paperless ID is recoverable from the filename alone,
-        surviving cache loss without needing to scan frontmatter.
-
-        Documents live in the shared bucket because they are institutional
-        artifacts — a marriage certificate or a family insurance bill
-        has no single personal owner. Per-person indexing happens via
-        the frontmatter `persons:` field, not the path.
-        """
-        documents_root = f"{self.shared_bucket}/documents"
-        if date and re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-            y, m, _ = date.split("-")
-            prefix = f"{documents_root}/{y}/{m}/{date}"
-        else:
-            prefix = f"{documents_root}/_unfiled"
-
-        unfiled = f"{documents_root}/_unfiled"
-        if has_title and title:
-            slug = self._slug(title)
-            return f"{prefix}-{slug}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/{slug}-p{paperless_id}.md"
-        return f"{prefix}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/p{paperless_id}.md"
+        """Document mirror path. Delegates to ``mirror_format.document_filepath``,
+        injecting this mirror's configured shared bucket."""
+        return document_filepath(self.shared_bucket, date, paperless_id, title, has_title)
 
     def _frontmatter(
         self,
@@ -343,33 +317,16 @@ class GitMirror:
         processing: str,
         model: str | None,
     ) -> dict:
-        """Assemble the frontmatter dict in a stable key order."""
-        import datetime as dt
-        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        fm: dict = {"title": title}
-        if date:
-            fm["date"] = date
-        if correspondent:
-            fm["correspondent"] = correspondent
-        if document_type:
-            fm["document_type"] = document_type
-        if category:
-            fm["category"] = category
-        if persons:
-            fm["persons"] = persons
-        if tags:
-            fm["tags"] = tags
-        fm["paperless_id"] = paperless_id
-        if paperless_url:
-            fm["paperless_url"] = paperless_url
-        fm["processing"] = processing
-        if model:
-            fm["model"] = model
-        if self.paperless_version:
-            fm["paperless_version"] = self.paperless_version
-        fm["source"] = "paperless"
-        fm["added"] = now
-        return fm
+        """Document frontmatter. Delegates to ``mirror_format.document_frontmatter``,
+        injecting this mirror's known Paperless server version."""
+        return document_frontmatter(
+            title=title, date=date,
+            correspondent=correspondent, document_type=document_type,
+            category=category, persons=persons, tags=tags,
+            paperless_id=paperless_id, paperless_url=paperless_url,
+            processing=processing, model=model,
+            paperless_version=self.paperless_version,
+        )
 
     def _render(
         self,
@@ -382,72 +339,14 @@ class GitMirror:
         facts: list | None = None,
         action_items: list | None = None,
         source_link: tuple[str, str] | None = None,
-        wiki_header: bool = True,
     ) -> str:
-        """Assemble the mirror file.
-
-        Layout, from top to bottom:
-
-          - YAML frontmatter (machine view: structured metadata)
-          - H1 title
-          - wiki-link header  (`**From:** [[ADAC]] · **About:** [[Homer]]`)
-          - **briefing callout** — `> [!summary]` with prose, optional
-            source link, facts, and action items. Wrapped in a callout
-            so the briefing reads as a distinct block from the OCR body
-            (Obsidian renders a tinted box; Forgejo falls back to a
-            labeled blockquote).
-          - the OCR-cleaned document body
-        """
-        fm_yaml = yaml.safe_dump(
-            frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
-        ).strip()
-        parts = ["---", fm_yaml, "---", ""]
-
-        parts.append(f"# {frontmatter.get('title', 'Untitled')}")
-        parts.append("")
-
-        if wiki_header and (correspondent or persons):
-            bits = []
-            if correspondent:
-                bits.append(f"**From:** [[{correspondent}]]")
-            if persons:
-                bits.append("**About:** " + ", ".join(f"[[{p}]]" for p in persons))
-            parts.append("> " + " · ".join(bits))
-            parts.append("")
-
-        briefing = self._briefing_block(
+        """Document mirror markdown. Delegates to ``mirror_format.render_document``."""
+        return render_document(
+            frontmatter=frontmatter, body=body,
+            correspondent=correspondent, persons=persons,
             summary=summary, facts=facts, action_items=action_items,
             source_link=source_link,
         )
-        if briefing:
-            parts.append(briefing)
-            parts.append("")
-
-        # Empty body — bookmark captures stop at the briefing block.
-        # The LLM summary is the content; the URL is the source.
-        body_stripped = body.strip() if body else ""
-        if body_stripped:
-            parts.append(body_stripped)
-            parts.append("")
-        return "\n".join(parts)
-
-    # ── Capture render ───────────────────────────────────────────────────
-    #
-    # Captures diverge from documents in three ways and so render
-    # through their own path rather than overloading `_render`:
-    #
-    #   1. The meta block uses Captured/Kind/Source instead of the
-    #      document's From/About/Date/Type/Category. Frontmatter is
-    #      hidden in viewers; the meta block puts the same facts in
-    #      reading view.
-    #   2. No `## Action items` block. A bookmark to a Reddit thread
-    #      is not a todo. We don't want the LLM manufacturing chores
-    #      out of every paste.
-    #   3. `kind: note` keeps the user's pasted text but tucks it inside
-    #      an Obsidian collapsible callout. The summary is what the eye
-    #      lands on; verifying the original is one click away.
-    #      `kind: bookmark` has no body at all — the URL plus the
-    #      summary IS the entry.
 
     def _render_capture(
         self, *,
@@ -460,146 +359,12 @@ class GitMirror:
         summary: str | None = None,
         facts: list | None = None,
     ) -> str:
-        """Assemble a capture mirror file (kind=note|bookmark)."""
-        fm_yaml = yaml.safe_dump(
-            frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
-        ).strip()
-        parts = ["---", fm_yaml, "---", ""]
-
-        parts.append(f"# {frontmatter.get('title', 'Untitled')}")
-        parts.append("")
-
-        meta_lines: list[str] = []
-        if persons:
-            meta_lines.append(
-                "**About** " + ", ".join(f"[[{p}]]" for p in persons)
-            )
-        line2_bits = []
-        if captured_at:
-            line2_bits.append(f"**Captured** {captured_at}")
-        line2_bits.append(f"**Kind** {kind}")
-        meta_lines.append(" · ".join(line2_bits))
-        if source_uri:
-            meta_lines.append(f"**Source** <{source_uri}>")
-        parts.extend(f"> {ln}" for ln in meta_lines)
-        parts.append("")
-
-        # Briefing — summary + facts only. Action items are intentionally
-        # omitted for captures (see header comment).
-        briefing = self._briefing_block(
-            summary=summary, facts=facts, action_items=None,
+        """Capture mirror markdown. Delegates to ``mirror_format.render_capture``."""
+        return render_capture(
+            frontmatter=frontmatter, body=body, kind=kind,
+            captured_at=captured_at, source_uri=source_uri, persons=persons,
+            summary=summary, facts=facts,
         )
-        if briefing:
-            parts.append(briefing)
-            parts.append("")
-
-        # Notes: collapsible callout around the verbatim paste. The `-`
-        # after [!quote] tells Obsidian to default-collapse the section.
-        # Forgejo's renderer falls back to a labeled blockquote.
-        if kind == "note":
-            body_stripped = body.strip() if body else ""
-            if body_stripped:
-                parts.append("> [!quote]- Original paste")
-                for ln in body_stripped.split("\n"):
-                    parts.append(f"> {ln}" if ln else ">")
-                parts.append("")
-
-        return "\n".join(parts)
-
-    # ── Briefing block ───────────────────────────────────────────────────
-    #
-    # The briefing is the classifier's per-document take, rendered as an
-    # Obsidian `> [!summary]` callout so it reads as a distinct block —
-    # not "yet another H2 section that looks identical to the body". The
-    # callout's tinted styling in Obsidian (and labeled blockquote in
-    # Forgejo) keeps the LLM-extracted view visually separate from the
-    # OCR-cleaned content that follows.
-    #
-    # `source_link`, when present, surfaces a direct link inside the
-    # callout — for documents that's the Paperless web URL, so the user
-    # is one click from the original PDF without scrolling the YAML
-    # frontmatter or opening the file menu.
-    #
-    # Action items stay as standard task checkboxes (work inside callouts
-    # in Obsidian and remain Tasks-plugin-queryable).
-
-    def _briefing_block(
-        self,
-        *,
-        summary: str | None,
-        facts: list | None,
-        action_items: list | None,
-        source_link: tuple[str, str] | None = None,
-    ) -> str:
-        """Render the briefing as a `> [!summary]` callout.
-
-        Sections are conditional: an empty prose summary, empty facts,
-        or empty action items all drop out. When everything is empty the
-        callout itself is suppressed — no stale `> [!summary]` shell.
-
-        `source_link` is `(label, url)`; when both are non-empty it
-        renders as `[label](url)` directly under the prose.
-        """
-        sections: list[str] = []
-
-        if summary and isinstance(summary, str) and summary.strip():
-            sections.append(summary.strip())
-
-        if source_link:
-            label, url = source_link
-            if label and url:
-                sections.append(f"[{label}]({url})")
-
-        fact_lines = self._fact_lines(facts or [])
-        if fact_lines:
-            sections.append("**Facts**\n" + "\n".join(fact_lines))
-
-        task_lines = self._action_item_lines(action_items or [])
-        if task_lines:
-            sections.append("**Action items**\n" + "\n".join(task_lines))
-
-        if not sections:
-            return ""
-
-        inner = "\n\n".join(sections)
-        lines = ["> [!summary]"]
-        for ln in inner.split("\n"):
-            lines.append(f"> {ln}" if ln else ">")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _fact_lines(facts: list) -> list[str]:
-        out = []
-        for f in facts:
-            if isinstance(f, str) and f.strip():
-                out.append(f"- {f.strip()}")
-        return out
-
-    @staticmethod
-    def _action_item_lines(items: list) -> list[str]:
-        out: list[str] = []
-        for ai in items:
-            line = GitMirror._format_action_item(ai)
-            if line:
-                out.append(line)
-        return out
-
-    @staticmethod
-    def _format_action_item(ai) -> str | None:
-        """`{action, due}` → `- [ ] action — YYYY-MM-DD` or `- [ ] action`."""
-        if isinstance(ai, str):
-            return f"- [ ] {ai.strip()}" if ai.strip() else None
-        if not isinstance(ai, dict):
-            return None
-        action = (ai.get("action") or "").strip()
-        if not action:
-            return None
-        due = ai.get("due")
-        if isinstance(due, str):
-            due_clean = due.strip()
-            if due_clean and due_clean.lower() not in ("null", "none", "n/a"):
-                return f"- [ ] {action} — {due_clean}"
-        return f"- [ ] {action}"
 
     def _commit_message(
         self,
@@ -813,32 +578,11 @@ class GitMirror:
         title: str | None,
         hash_key: str,
     ) -> str:
-        """Build <entity>/<kind>s/YYYY/MM/<slug>-<hash>.md.
-
-        `entity` is the sender's slug (Matrix localpart, lowercased).
-        `kind` is "note" or "bookmark"; the folder is the plural.
-
-        `hash_key` is whatever stable string the caller wants to identify
-        this capture by: typically the source URL for fetched/pasted
-        captures with a link, or a content hash when the paste has no
-        embedded source URL. The same key yields the same path on
-        re-publish — idempotent update vs. duplicate.
-
-        Invalid `captured_at` falls back to
-        `<entity>/<kind>s/_unfiled/<slug>-<hash>.md` — same convention
-        the documents path uses for entries without a usable date.
-        """
-        digest = hashlib.sha256(
-            hash_key.encode("utf-8") if hash_key else b"",
-        ).hexdigest()[: self._CAPTURE_HASH_LEN]
-
-        slug = self._slug(title) if title else "capture"
-        kind_dir = f"{kind}s"
-
-        if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
-            y, m, _ = captured_at.split("-")
-            return f"{entity}/{kind_dir}/{y}/{m}/{slug}-{digest}.md"
-        return f"{entity}/{kind_dir}/_unfiled/{slug}-{digest}.md"
+        """Capture mirror path. Delegates to ``mirror_format.capture_filepath``,
+        injecting this mirror's capture-hash length."""
+        return capture_filepath(
+            entity, kind, captured_at, title, hash_key, self._CAPTURE_HASH_LEN,
+        )
 
     def _capture_frontmatter(
         self, *,
@@ -851,48 +595,12 @@ class GitMirror:
         model: str | None,
         capture_id: str | None = None,
     ) -> dict:
-        """Frontmatter for a capture entry.
-
-        `kind` is "bookmark" (URL pointer + LLM summary) or "note"
-        (pasted body the user typed). Document-shaped fields
-        (correspondent, document_type, category, paperless_id,
-        paperless_url) are intentionally absent — captures aren't part
-        of the Paperless ontology.
-
-        `source_uri` is optional — a pure text note with no embedded
-        link omits the field entirely, so a Dataview `where source_uri`
-        cleanly filters to "captures that point at a source."
-
-        `date` carries the capture date — the article's own publish
-        date (if any) lives in the briefing block. The capture log is
-        a record of *when we captured*, not when the source published.
-        """
-        import datetime as dt
-        now = (
-            dt.datetime.now(dt.timezone.utc)
-            .replace(microsecond=0)
-            .isoformat()
-            .replace("+00:00", "Z")
+        """Capture frontmatter. Delegates to ``mirror_format.capture_frontmatter``."""
+        return capture_frontmatter(
+            title=title, captured_at=captured_at, kind=kind,
+            source_uri=source_uri, persons=persons, tags=tags,
+            model=model, capture_id=capture_id,
         )
-        fm: dict = {"title": title, "kind": kind}
-        if captured_at:
-            fm["date"] = captured_at
-        if persons:
-            fm["persons"] = persons
-        if tags:
-            fm["tags"] = tags
-        if source_uri:
-            fm["source_uri"] = source_uri
-        if capture_id:
-            # Same identifier the `dev.famstack.event` envelope carries
-            # under `data.capture_id`. Stored on the file too so a
-            # later grep (or the future deriver) can find this entry
-            # without depending on the mutable `vault_path`.
-            fm["capture_id"] = capture_id
-        if model:
-            fm["model"] = model
-        fm["added"] = now
-        return fm
 
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.

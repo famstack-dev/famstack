@@ -245,6 +245,7 @@ def capture_frontmatter(
     persons: list[str],
     tags: list[str],
     model: str | None,
+    capture_id: str | None = None,
 ) -> dict:
     """Frontmatter for a capture entry.
 
@@ -270,6 +271,8 @@ def capture_frontmatter(
         persons: List of person names.
         tags: List of topic tags.
         model: Model name used for classification, or None.
+        capture_id: Stable capture identifier carried on the
+            ``dev.famstack.event`` envelope, or None.
 
     Returns:
         Frontmatter dict ready for YAML serialization.
@@ -290,6 +293,12 @@ def capture_frontmatter(
         fm["tags"] = tags
     if source_uri:
         fm["source_uri"] = source_uri
+    if capture_id:
+        # Same identifier the `dev.famstack.event` envelope carries under
+        # `data.capture_id`. Stored on the file too so a later grep (or
+        # the deriver) can find this entry without depending on the
+        # mutable vault path.
+        fm["capture_id"] = capture_id
     if model:
         fm["model"] = model
     fm["added"] = now
