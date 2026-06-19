@@ -2,7 +2,7 @@
 
 > Status: Design extension to [knowledge-architecture.md](knowledge-architecture.md) and [family-memory.md](family-memory.md)
 > Created: 2026-06-09
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Depends on: memory vault structure ([family-memory.md](family-memory.md)), the `dev.famstack.capture` room state contract ([knowledge-structure.md](knowledge-structure.md) §Room configuration), the archivist's capture routing pipeline (`stacklets/docs/bot/capture_pipeline.py`).
 
 ## Why this exists
@@ -19,23 +19,23 @@ A Matrix room whose name starts with `Thema:` or `Topic:` is a topic room. The a
 
 | Property | Guarantee |
 |---|---|
-| **Routing** | Captures in `#Thema: Camping` always file under `family/camping/` (shared) or `arthur/camping/` (personal), regardless of the classifier's opinion. |
+| **Routing** | Captures in `#Thema: Camping` always file under `family/camping/` (shared) or `homer/camping/` (personal), regardless of the classifier's opinion. |
 | **Tag invariant** | Every file in the topic folder has `camping` in its frontmatter `topics:`. The classifier may add tags; it can never remove this one. |
 | **Discoverability** | The room list is the topic list. Family members find topics by browsing joined rooms — no separate index UI. |
 
 Topic rooms compose with the existing capture pipeline. The classifier, mirror, search, deriver, ontology-canonicalizer — none of them special-case topic folders. They see a bucket like any other.
 
-**Topics always nest inside the bucket that owns them.** Shared topics live under the household's configured shared bucket (`family/<slug>/`, or `office/<slug>/` for deskstack); personal topics live under the originating person's bucket (`arthur/<slug>/`). The top level of the vault stays pure access-scope: one folder per privacy boundary, never a topic folder. This makes a default sender-scoped search (`["family/", "<localpart>/"]`) automatically include shared-topic content — a family member asking "what did we note about camping?" in #documents finds it without knowing the topic room exists.
+**Topics always nest inside the bucket that owns them.** Shared topics live under the household's configured shared bucket (`family/<slug>/`, or `office/<slug>/` for deskstack); personal topics live under the originating person's bucket (`homer/<slug>/`). The top level of the vault stays pure access-scope: one folder per privacy boundary, never a topic folder. This makes a default sender-scoped search (`["family/", "<localpart>/"]`) automatically include shared-topic content — a family member asking "what did we note about camping?" in #documents finds it without knowing the topic room exists.
 
 ## Naming convention
 
 | Room name | Slug | Bucket path (shared) | Bucket path (personal) | Guaranteed tag |
 |---|---|---|---|---|
-| `Thema: Camping` | `camping` | `family/camping/` | `arthur/camping/` | `camping` |
-| `Topic: Photography` | `photography` | `family/photography/` | `arthur/photography/` | `photography` |
-| `Thema: Van Life` | `van-life` | `family/van-life/` | `arthur/van-life/` | `van-life` |
-| `Topic: 3D printing` | `3d-printing` | `family/3d-printing/` | `arthur/3d-printing/` | `3d-printing` |
-| `Thema: Café Hopping` | `cafe-hopping` | `family/cafe-hopping/` | `arthur/cafe-hopping/` | `cafe-hopping` |
+| `Thema: Camping` | `camping` | `family/camping/` | `homer/camping/` | `camping` |
+| `Topic: Photography` | `photography` | `family/photography/` | `homer/photography/` | `photography` |
+| `Thema: Van Life` | `van-life` | `family/van-life/` | `homer/van-life/` | `van-life` |
+| `Topic: 3D printing` | `3d-printing` | `family/3d-printing/` | `homer/3d-printing/` | `3d-printing` |
+| `Thema: Café Hopping` | `cafe-hopping` | `family/cafe-hopping/` | `homer/cafe-hopping/` | `cafe-hopping` |
 
 (Shared-bucket paths show `family/` because that is the default `[core] shared_bucket`. A deskstack household with `shared_bucket = "office"` gets `office/<slug>/`.)
 
@@ -44,7 +44,7 @@ Topic rooms compose with the existing capture pipeline. The classifier, mirror, 
 - **Prefix recognition.** Match `^\s*(thema|topic)\s*:\s*` case-insensitively. Both languages always accepted, regardless of `[core] language`.
 - **Slug derivation.** NFD-normalize, strip combining marks (`Vélo` → `velo`, `Café` → `cafe`), lowercase, replace runs of non-alphanumeric with `-`, strip leading and trailing `-`. Maximum 40 characters; collisions at the tail receive a numeric suffix during bootstrap.
 - **Empty after prefix.** `Thema:` with no body fails the parser — not a topic room. The archivist treats it as a regular room.
-- **Reserved slugs.** Refused at bootstrap: within-bucket reserved directory names. The mirror writes `notes/`, `bookmarks/`, `documents/` per bucket and the shared bucket also carries `correspondents/` and `_unfiled/`; the derived per-bucket landing page is `about.md`. The reserved set is therefore `{notes, bookmarks, documents, correspondents, _unfiled, about}`. Top-level vault names (`family`, `arthur`, `marge`, `meta`, `wiki`, `archive`) no longer need to be reserved because topics never live at the top level.
+- **Reserved slugs.** Refused at bootstrap: within-bucket reserved directory names. The mirror writes `notes/`, `bookmarks/`, `documents/` per bucket and the shared bucket also carries `correspondents/` and `_unfiled/`; the derived per-bucket landing page is `about.md`. The reserved set is therefore `{notes, bookmarks, documents, correspondents, _unfiled, about}`. Top-level vault names (`family`, `homer`, `marge`, `meta`, `wiki`, `archive`) no longer need to be reserved because topics never live at the top level.
 
 ### Slug stability
 
@@ -66,7 +66,7 @@ The archivist writes `dev.famstack.capture` room state on first detection and re
     "scope": "shared",
     "extract_knowledge": true,
     "bootstrapped_at": "2026-06-09T12:00:00Z",
-    "bootstrapped_by": "@arthur:home"
+    "bootstrapped_by": "@homer:home"
   }
 }
 ```
@@ -123,12 +123,12 @@ Re-joining the room or re-inviting the bot restores `status: active`. Archive de
 
 ### Personal → shared promotion
 
-A personal topic (`arthur/camping/`) receives a second human member. The archivist:
+A personal topic (`homer/camping/`) receives a second human member. The archivist:
 
 1. Debounces ~10 seconds, in case the invite comes in a batch.
 2. Verifies the new joiner is a human (a known Matrix user, not another bot).
 3. Re-detects scope: `personal` → `shared`.
-4. `git mv arthur/camping/ family/camping/` (full history preserved through the rename — bucket-to-bucket move within the vault).
+4. `git mv homer/camping/ family/camping/` (full history preserved through the rename — bucket-to-bucket move within the vault).
 5. Rewrites `bucket: family/camping` and `scope: shared` in the room state.
 6. The wiki command regenerates `family/camping/about.md` on its next run with the new scope and participant list.
 7. Posts: `📁 Topic promoted to shared. Files now live under family/camping/.`
@@ -152,7 +152,7 @@ Reverse (shared → personal) is **not automatic**. Once shared, the topic stays
 |---|---|
 | Room created with multiple humans from the start | Bootstrap detects scope as `shared`. No personal phase. |
 | Slug collides with reserved name (`family`, `meta`, ...) | Refuse bootstrap. Post correction prompt: `Topic name conflicts with reserved name '<x>'. Rename the room.` |
-| Slug collides with existing personal bucket (`arthur` matches a household member) | Refuse bootstrap. |
+| Slug collides with existing personal bucket (`homer` matches a household member) | Refuse bootstrap. |
 | Two archivists in the same room (multi-instance dev) | Both treat room state as truth. Whichever wrote it first wins. Re-bootstrap is a no-op. |
 | Room renamed to no longer match the prefix | Topic state stays. Folder, captures, and tag invariant continue working. The room becomes invisible as a topic in the room-list discovery surface; future captures still file under the original bucket. (Operator can run `stack memory topic archive` to finalize.) |
 | `Thema: Topic: Camping` (both prefixes) | Parser strips the outer prefix once. Display name becomes `Topic: Camping`. Slug derives normally. |
@@ -179,7 +179,7 @@ memory.git
 │   │       └── YYYY/MM/...
 │   └── photography/              (another shared topic)
 │       └── ...
-├── arthur/                       (personal bucket)
+├── homer/                       (personal bucket)
 │   ├── notes/, bookmarks/, documents/, _unfiled/
 │   └── gravel/                   (personal topic, nested under personal bucket)
 │       ├── about.md
@@ -192,7 +192,7 @@ Why this shape:
 
 - **One rule for topic placement:** topics live inside the bucket whose access scope they share. Personal topics under `<localpart>/`; shared topics under `<shared_bucket>/`. No special case for the top level.
 - **Default searches naturally include shared topics.** A sender-scoped search returns `["family/", "<localpart>/"]`. Files under `family/camping/...` are picked up automatically — a family member asking about camping in #documents finds the topic content without knowing the room exists.
-- **Promotion (Step 5) is a bucket-to-bucket move.** `git mv arthur/camping/ family/camping/` — both sides of the move are inside an owning bucket. The top level never changes.
+- **Promotion (Step 5) is a bucket-to-bucket move.** `git mv homer/camping/ family/camping/` — both sides of the move are inside an owning bucket. The top level never changes.
 
 ### about.md is a derived view
 
@@ -204,7 +204,7 @@ type: topic
 slug: camping
 display_name: Camping
 scope: shared
-participants: [arthur, sabrina]
+participants: [homer, marge]
 captures: 47
 last_capture: 2026-06-08
 ---
@@ -278,7 +278,7 @@ async def test_seed_deduplicates_when_classifier_repeats_it():
 The retrieval test ("find anything we noted about camping") becomes a deterministic grep:
 
 ```
-grep -lr 'topics:.*camping' family/camping/ arthur/camping/ marge/camping/
+grep -lr 'topics:.*camping' family/camping/ homer/camping/ marge/camping/
 ```
 
 Plus the deriver's cross-reference index. Guaranteed coverage.
@@ -287,7 +287,7 @@ Plus the deriver's cross-reference index. Guaranteed coverage.
 
 | Surface | Scope behavior |
 |---|---|
-| `?` in `#Thema: Camping` | Search auto-scopes to `family/camping/` (or `arthur/camping/`) plus the topic's cross-references in `about.md`. |
+| `?` in `#Thema: Camping` | Search auto-scopes to `family/camping/` (or `homer/camping/`) plus the topic's cross-references in `about.md`. |
 | `?` in `#documents` or `#assistant` | Default sender-scoped search (`family/`, `<localpart>/`) — naturally includes shared topic content. |
 | `stack memory ask "..." --topic camping` | Explicit topic-scoped CLI search. |
 | `stack memory search "..." --topic camping` | Topic-scoped grep. |
@@ -306,14 +306,14 @@ The deriver (forward reference: [knowledge-architecture.md](knowledge-architectu
 ## Cross-references
 
 <!-- begin: generated -->
-- [doc] 2026-04-15 ADAC camping-trailer policy → [[family/documents/2026/04/adac-camping-policy-p247]]
+- [doc] 2026-04-15 Duff Insurance camping-trailer policy → [[family/documents/2026/04/duff-insurance-camping-policy-p247]]
 - [note] 2026-05-02 Marge's gear list comment → [[marge/notes/2026/05/gear-list-comment]]
 <!-- end: generated -->
 ```
 
-The source file never moves. The ADAC camping-trailer policy belongs in `family/` (it is a household insurance document); camping just receives the citation. Captures live in the bucket they were posted to; topics are views over the vault, not containers that own data.
+The source file never moves. The Duff Insurance camping-trailer policy belongs in `family/` (it is a household insurance document); camping just receives the citation. Captures live in the bucket they were posted to; topics are views over the vault, not containers that own data.
 
-The cross-reference pass is deterministic — a grep for `topics:.*<slug>` across the vault, excluding the topic's own bucket (no point citing yourself). For shared topic `family/camping/`, that means scanning `family/documents/`, `family/correspondents/`, every personal bucket, and every *other* shared topic under `family/`. The intra-`family/` scan is what surfaces an ADAC camping-trailer addendum filed in #documents. No LLM call required. (An LLM pass may augment the cross-reference entry with a one-line summary of *why* the source is relevant; deferred to the deriver work.)
+The cross-reference pass is deterministic — a grep for `topics:.*<slug>` across the vault, excluding the topic's own bucket (no point citing yourself). For shared topic `family/camping/`, that means scanning `family/documents/`, `family/correspondents/`, every personal bucket, and every *other* shared topic under `family/`. The intra-`family/` scan is what surfaces an Duff Insurance camping-trailer addendum filed in #documents. No LLM call required. (An LLM pass may augment the cross-reference entry with a one-line summary of *why* the source is relevant; deferred to the deriver work.)
 
 ## CLI surface
 
@@ -352,14 +352,14 @@ Six implementation steps, each independently shippable. Steps 1-4 are shipped on
 3. ✅ **Archivist lazy bootstrap.** `_topic_binding` reads existing room state or parses the room name and writes state inline. Bootstrap is idempotent and best-effort. Wired into all four capture entry points.
 4. ✅ **In-room query scoping.** `SearchService` accepts `topic_bucket`; the archivist passes the binding's bucket on `?` queries. Default sender-scoped search still picks up shared topic content naturally because shared topics nest under `<shared_bucket>/`.
 5. ⏳ **Wiki-command extension** (replaces the pre-bootstrap scaffold idea). Generate `<bucket>/<topic>/about.md` from captures + room state, the same rebuild path that already builds `family/about.md`.
-6. ⏳ **Promotion handler.** Member-count watcher, debounce, `git mv arthur/<slug>/ family/<slug>/`, room-state rewrite, message.
+6. ⏳ **Promotion handler.** Member-count watcher, debounce, `git mv homer/<slug>/ family/<slug>/`, room-state rewrite, message.
 7. ⏳ **Deriver cross-reference pass.** Grep-based scan, append to `about.md`. Deferred until the deriver bot exists (post-v0.3).
 
 ## Open questions
 
 1. **Topic-aware ontology.** Should the topic slug auto-register as a topic in `stacklets/memory/seeds/ontology.toml`, or stay as a free-form tag? Registering gets language-aware synonyms (`camping` aligned with `Camping` for queries); not registering keeps the seed flat and avoids ontology churn. Default for v1: stay free-form, leave promotion to ontology as an explicit operator step.
 2. **Document-room overlap.** What if a user creates `Thema: Versicherungen` and drops actual insurance documents there? They still go to Paperless (the docs pipeline), but the mirror lands in the topic folder, not in `family/`. The existing capture pipeline already supports this for entity buckets; topic buckets reuse the same path. Worth a test pin.
-3. **Bot accounts as humans for scope detection.** A topic room with `scribe-bot` plus `archivist-bot` plus Arthur has one human. The scope-detector must filter known bot users. Implementation reads from `users.toml` or the equivalent registry.
+3. **Bot accounts as humans for scope detection.** A topic room with `scribe-bot` plus `archivist-bot` plus Homer has one human. The scope-detector must filter known bot users. Implementation reads from `users.toml` or the equivalent registry.
 
 ## Future direction: story rooms
 
@@ -367,7 +367,7 @@ This section captures a planned extension agreed in the 2026-06-09 design sessio
 
 ### Why stories are a peer concept, not a child
 
-Topics are open-ended (camping as an ongoing interest; cooking as a shared household habit; gravel cycling as Arthur's hobby). Stories are bounded — they have a beginning and an end. The 2027 Italy trip, the bathroom renovation, Marge's 40th birthday party. Conflating them was the earlier mistake: a hobby grows for decades, a trip wraps up in two weeks. The about.md prompt, the lifecycle, and the "find this again later" intent differ enough that one model serves both badly.
+Topics are open-ended (camping as an ongoing interest; cooking as a shared household habit; gravel cycling as Homer's hobby). Stories are bounded — they have a beginning and an end. The 2027 Italy trip, the bathroom renovation, Marge's 40th birthday party. Conflating them was the earlier mistake: a hobby grows for decades, a trip wraps up in two weeks. The about.md prompt, the lifecycle, and the "find this again later" intent differ enough that one model serves both badly.
 
 Stories live as **peers of topics**, not children. A trip does not nest inside the camping topic. Instead, the story declares which topics it draws from, and the topic page picks up the story's captures via the existing cross-reference grep. This keeps each layer's purpose clean.
 
@@ -399,10 +399,10 @@ Three candidates. Pick before implementation; the parser branches on whichever l
     "status": "planning",
     "starts": "2027-07-15",
     "ends": "2027-07-29",
-    "participants": ["arthur", "marge"],
+    "participants": ["homer", "marge"],
     "extract_knowledge": true,
     "bootstrapped_at": "2026-06-09T12:00:00Z",
-    "bootstrapped_by": "@arthur:home"
+    "bootstrapped_by": "@homer:home"
   }
 }
 ```
@@ -468,7 +468,7 @@ This section captures another planned extension agreed in the 2026-06-09 design 
 
 ### The problem
 
-Today's classifier extracts persons, dates, topics, and free-form tags per capture. It does *not* learn that "our BMW 320d" is central to this household's camping topic, or that "Thule roof box," "der Thule," and "the rooftop carrier" are three names for the same physical object. Asking "how did we pack the trunk for camping?" relies on tag-level keyword matching; it has no notion of which entities are central to *this* household's camping life.
+Today's classifier extracts persons, dates, topics, and free-form tags per capture. It does *not* learn that "our Canyonero" is central to this household's camping topic, or that "Thule roof box," "der Thule," and "the rooftop carrier" are three names for the same physical object. Asking "how did we pack the trunk for camping?" relies on tag-level keyword matching; it has no notion of which entities are central to *this* household's camping life.
 
 The fix is a per-topic entity graph the system builds from its own captures, not from a generic vocabulary.
 
@@ -476,7 +476,7 @@ The fix is a per-topic entity graph the system builds from its own captures, not
 
 The existing ontology (`stacklets/memory/seeds/ontology.toml`) is generic: universal categories like `insurance`, `vehicle`, `medical`. It ships with the install and applies to every household.
 
-A personal entity graph is the inverse: household-specific things, people, places, products, locations that recur in this household's captures. The BMW 320d, the Karwendel campsite, the Vaude tent, Marge's mosquito allergy. None of these belong in a shipped ontology. They emerge from filings.
+A personal entity graph is the inverse: household-specific things, people, places, products, locations that recur in this household's captures. The Canyonero, the Karwendel campsite, the Vaude tent, Marge's mosquito allergy. None of these belong in a shipped ontology. They emerge from filings.
 
 The two layers sit alongside each other:
 
@@ -492,10 +492,10 @@ A per-topic registry of entities with aliases and co-occurrence weights:
 ```toml
 # family/camping/entities.toml — derived, regenerated by the deriver
 
-[entity.bmw-320d]
-display      = "BMW 320d"
+[entity.canyonero]
+display      = "Canyonero"
 kind         = "vehicle"
-aliases      = ["BMW", "der 320er", "das Auto"]
+aliases      = ["Canyonero", "der Canyonero", "das Auto"]
 first_seen   = 2024-03-12
 last_seen    = 2026-06-08
 captures     = 14
@@ -506,7 +506,7 @@ display      = "Thule Roof Box"
 kind         = "gear"
 aliases      = ["Thule", "Dachbox", "rooftop carrier"]
 captures     = 9
-co_occurs    = ["bmw-320d"]
+co_occurs    = ["canyonero"]
 
 [entity.karwendel-campsite]
 display      = "Karwendel Campsite"
@@ -534,18 +534,18 @@ Four downstream consumers, each pulling on a different angle of the registry:
 
 | Surface | Use |
 |---|---|
-| **Topic about.md** | A `## Key entities` section lists the highest-weighted entities with one-line context: "BMW 320d (the family car, 14 camping captures), Thule roof box (9), Karwendel campsite (6 visits)." Grows with the topic. |
-| **Topic cross-references** | When an entity registered to a topic appears in a capture in another bucket (the BMW 320d shows up in `family/documents/2026-04-15-adac-policy.md`), the topic's cross-reference grep includes it even when no topic tag was applied. The entity *is* the bridge. |
-| **Query expansion** | A `?` query in the topic room rewrites "how did we pack the trunk" to include "BMW 320d AND Thule roof box AND camping" for richer recall. Same shape `Classifier.synthesize_answer` already uses for keyword expansion. |
-| **LLM context for synthesis** | The top entities feed the synthesis prompt as ambient context: "When this household says 'the car' under camping, they mean their BMW 320d. When they say 'the box,' they usually mean the Thule." Removes ambiguity in the answer without the user having to specify. |
+| **Topic about.md** | A `## Key entities` section lists the highest-weighted entities with one-line context: "Canyonero (the family car, 14 camping captures), Thule roof box (9), Karwendel campsite (6 visits)." Grows with the topic. |
+| **Topic cross-references** | When an entity registered to a topic appears in a capture in another bucket (the Canyonero shows up in `family/documents/2026-04-15-duff-insurance-policy.md`), the topic's cross-reference grep includes it even when no topic tag was applied. The entity *is* the bridge. |
+| **Query expansion** | A `?` query in the topic room rewrites "how did we pack the trunk" to include "Canyonero AND Thule roof box AND camping" for richer recall. Same shape `Classifier.synthesize_answer` already uses for keyword expansion. |
+| **LLM context for synthesis** | The top entities feed the synthesis prompt as ambient context: "When this household says 'the car' under camping, they mean their Canyonero. When they say 'the box,' they usually mean the Thule." Removes ambiguity in the answer without the user having to specify. |
 
 ### Propagation to the parent topic
 
 Entities are local to the topic that learned them, but propagate one level up via `parent_topics` (the same mechanism the story design uses):
 
-- `family/camping/entities.toml` knows the BMW is central to camping
-- The parent topic (`family/reisen/` if Reisen is the parent of Camping) inherits the BMW as a candidate, ranked lower until its own captures reinforce it
-- A future capture in Reisen that says "the car" can resolve to BMW 320d because the parent topic's candidate registry already carries the alias
+- `family/camping/entities.toml` knows the Canyonero is central to camping
+- The parent topic (`family/reisen/` if Reisen is the parent of Camping) inherits the Canyonero as a candidate, ranked lower until its own captures reinforce it
+- A future capture in Reisen that says "the car" can resolve to Canyonero because the parent topic's candidate registry already carries the alias
 
 Propagation is structural (parent-child by `parent_topics`), not heuristic. No cross-bucket leakage; a personal topic's registry never reaches another personal bucket.
 
@@ -570,7 +570,7 @@ Bigger than the story extension because the LLM pass is per-capture, the persist
 
 ## Status of this document
 
-This is the design Arthur and Claude agreed to in the 2026-06-09 session. Code follows it. If implementation drifts from the design in non-trivial ways, update this document before shipping the drift — [family-memory.md](family-memory.md) is the descriptive doc for what is running; this is the prescriptive one for topic rooms.
+This is the design Homer and Claude agreed to in the 2026-06-09 session. Code follows it. If implementation drifts from the design in non-trivial ways, update this document before shipping the drift — [family-memory.md](family-memory.md) is the descriptive doc for what is running; this is the prescriptive one for topic rooms.
 
 ## Related
 

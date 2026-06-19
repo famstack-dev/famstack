@@ -2,7 +2,7 @@
 
 > Status: Phase 1 landed (at-rest conformance) on branch `okf-conformance`; Phase 2 (exporter + conformance test) pending
 > Created: 2026-06-16
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Depends on: [knowledge-structure.md](knowledge-structure.md) (vault shape),
 > [family-ontology.md](family-ontology.md) (entity pages),
 > [wiki-engine.md](wiki-engine.md) (derived wiki)

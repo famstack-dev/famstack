@@ -18,7 +18,7 @@ Caddy is opt-in, activated when `domain` is set in stack.toml.
 
 **Port mode (domain empty):**
 - Services bind to `0.0.0.0:<port>` — reachable from the network
-- URLs shown as `hostname:port` (e.g. `mac-arthur.local:42010`)
+- URLs shown as `hostname:port` (e.g. `mac-homer.local:42010`)
 - Caddy does not start, core only runs Watchtower
 - Zero DNS setup required
 

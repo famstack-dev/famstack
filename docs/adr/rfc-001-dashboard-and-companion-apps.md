@@ -470,7 +470,7 @@ Key properties broadcast in the TXT record:
 _famstack._tcp.local.
   uuid     = "a1b2c3d4-..."    # persistent, survives IP changes
   version  = "0.1.0"
-  name     = "Arthur's famstack"
+  name     = "Homer's famstack"
   api_port = 42000
 ```
 
@@ -508,7 +508,7 @@ How does a new device find the famstack server? Full protocol in
    Not found? → Show "Scan QR code" or "Enter address"
 4. App stores the server UUID in Keychain (persistent pairing)
 5. Dashboard shows a QR code at /onboard containing:
-   { "uuid": "a1b2c3d4-...", "host": "mac-arthur.local",
+   { "uuid": "a1b2c3d4-...", "host": "mac-homer.local",
      "port": 42000, "key": "..." }
 6. Phone scans QR → paired, UUID + API key stored in Keychain
 ```

@@ -33,7 +33,7 @@ family/memory.git                       (Forgejo repo, seeded by `memory` stackl
 │   │   │   └── YYYY-MM-DD-<slug>-p<paperless_id>.md
 │   │   └── _unfiled/
 │   │       └── p<paperless_id>.md      (when the doc has no usable date)
-│   └── correspondents/                 (wiki pages for senders: ADAC, Booking.com, …)
+│   └── correspondents/                 (wiki pages for senders: Duff Insurance, Booking.com, …)
 │       └── <slug>.md
 │
 ├── <entity>/                           (one bucket per family member; sender mxid → entity slug)
@@ -75,9 +75,9 @@ family/memory.git                       (Forgejo repo, seeded by `memory` stackl
 ```markdown
 ---
 type: document
-title: ADAC Kfz-Versicherung 2026
+title: Duff Insurance Kfz-Versicherung 2026
 date: 2026-03-15
-correspondent: ADAC
+correspondent: Duff Insurance
 document_type: Rechnung
 category: Versicherung
 persons: [Homer]
@@ -91,9 +91,9 @@ source: paperless
 timestamp: 2026-05-20T14:23:00Z
 ---
 
-# ADAC Kfz-Versicherung 2026
+# Duff Insurance Kfz-Versicherung 2026
 
-> **From:** [ADAC](../../../correspondents/adac.md) · **About:** [Homer](../../../../homer/about.md)
+> **From:** [Duff Insurance](../../../correspondents/duff-insurance.md) · **About:** [Homer](../../../../homer/about.md)
 
 > [!summary]
 > Jährliche Erneuerung der Kfz-Vollkasko, Police KFZ-2026-987.
@@ -129,8 +129,8 @@ Notes:
 type: bookmark
 title: Local-LLM benchmarks roundup
 date: 2026-05-17
-persons: [Arthur]
-tags: [local-llms, benchmarks, "Person: Arthur"]
+persons: [Homer]
+tags: [local-llms, benchmarks, "Person: Homer"]
 resource: https://example.com/llms
 model: qwen3.5-vl-7b
 timestamp: 2026-05-17T09:00:00Z
@@ -138,7 +138,7 @@ timestamp: 2026-05-17T09:00:00Z
 
 # Local-LLM benchmarks roundup
 
-> **About** [Arthur](../../../about.md)
+> **About** [Homer](../../../about.md)
 > **Captured** 2026-05-17 · **Kind** bookmark
 > **Source** <https://example.com/llms>
 
@@ -163,14 +163,14 @@ The classifier writes one note per filed document into Paperless's
 note slot (FTS-searchable):
 
 ```
-Jährliche Erneuerung der Kfz-Vollkasko bei ADAC. Police KFZ-2026-987,
+Jährliche Erneuerung der Kfz-Vollkasko bei Duff Insurance. Police KFZ-2026-987,
 Beitrag EUR 340 jährlich, fällig zum 01.04.
 
 - Versicherungsnummer: KFZ-2026-987
 - Beitrag: EUR 340,00
 - Fälligkeit: 2026-04-01
 
-ADAC → Homer
+Duff Insurance → Homer
 
 <!-- archivist-bot -->
 ```
@@ -199,7 +199,7 @@ shapes:
 {
   "source":  "docs",
   "type":    "document.filed",
-  "summary": "ADAC Kfz-Versicherung 2026 filed (#247)",
+  "summary": "Duff Insurance Kfz-Versicherung 2026 filed (#247)",
   "actor":   "@homer:home",
   "ts":      "2026-05-20T14:23:00Z",
   "data":    {"paperless_id": 247, "title": "…", "topics": [...], ...}
@@ -216,7 +216,7 @@ envelope as a content field:
   "type": "m.room.message",
   "content": {
     "msgtype": "m.text",
-    "body": "Filed: ADAC Kfz-Versicherung 2026 (#247)…",
+    "body": "Filed: Duff Insurance Kfz-Versicherung 2026 (#247)…",
     "format": "org.matrix.custom.html",
     "formatted_body": "<p>…</p>",
     "dev.famstack.event": { …envelope… }
@@ -364,7 +364,7 @@ classifier `persons:` list takes precedence.
 User replies to a bot's filing message with a correction:
 
 ```
-[bot] ✅ Filed: ADAC Kfz-Versicherung 2026 (#247) — Versicherung | Homer | …
+[bot] ✅ Filed: Duff Insurance Kfz-Versicherung 2026 (#247) — Versicherung | Homer | …
 [user reply]: das ist eigentlich Marges Versicherung, nicht Homers
 ```
 

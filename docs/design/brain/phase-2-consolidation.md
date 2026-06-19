@@ -80,17 +80,17 @@ mature problem.
 │                                                                      │
 │   documents/                      documents-domain reference data   │
 │     correspondents/               ours, hand-curated                 │
-│       adac.md                     canonical + aliases + facts        │
-│       aok.md                                                         │
+│       duff-insurance.md                     canonical + aliases + facts        │
+│       springfield-mutual.md                                                         │
 │                                                                      │
 │   raw/                            ← archivist writes here            │
 │     2026/05/                                                         │
-│       2026-05-15-adac-rechnung-p247.md   classified document         │
+│       2026-05-15-duff-insurance-rechnung-p247.md   classified document         │
 │       2026-05-17-reddit-llms-a7b3c2.md   capture (bookmark/note)     │
 │       ...                                                            │
 │                                                                      │
 │   wiki/                           ← olw writes here                  │
-│     ADAC.md                       olw-generated concept page         │
+│     Duff Insurance.md                       olw-generated concept page         │
 │     LLMs.md                                                          │
 │     ...                                                              │
 │                                                                      │
@@ -232,13 +232,13 @@ stacklet with one container.
   documents/                 ← documents-domain reference data
     correspondents/          ← ours, OUTSIDE raw/ and wiki/ (see below)
       README.md
-      adac.md
-      aok.md
+      duff-insurance.md
+      springfield-mutual.md
       ...
   raw/                       ← olw reads (recursive .md glob)
     2026/05/...              ← archivist writes here from bot-runner
   wiki/                      ← olw writes (concept articles)
-    ADAC.md                  ← olw-generated concept page
+    Duff Insurance.md                  ← olw-generated concept page
     LLMs.md
     ...
   .olw/                      ← olw state (sqlite, content hashes)
@@ -266,15 +266,15 @@ the vault root or in other subtrees is invisible to it.
 Moving correspondents from `wiki/correspondents/` to
 `documents/correspondents/` keeps it out of olw's reach without
 needing an exclude feature. Obsidian's wikilink resolution is
-name-based, not path-based, so `[[ADAC]]` still works as a
-cross-reference between `documents/correspondents/adac.md` and the
-olw-generated `wiki/ADAC.md`.
+name-based, not path-based, so `[[Duff Insurance]]` still works as a
+cross-reference between `documents/correspondents/duff-insurance.md` and the
+olw-generated `wiki/Duff Insurance.md`.
 
-Trade-off: two ADAC pages exist (`documents/correspondents/adac.md`
-machine-readable + `wiki/ADAC.md` LLM-summarized). Different
+Trade-off: two Duff Insurance pages exist (`documents/correspondents/duff-insurance.md`
+machine-readable + `wiki/Duff Insurance.md` LLM-summarized). Different
 purposes, both discoverable in Obsidian's quick switcher. Optionally
-link them explicitly: `> See also: [[ADAC]]` at the top of
-`documents/correspondents/adac.md`.
+link them explicitly: `> See also: [[Duff Insurance]]` at the top of
+`documents/correspondents/duff-insurance.md`.
 
 **Two writers, one repo, coordinated via git:**
 
@@ -324,7 +324,7 @@ keeps working on the host side, unchanged.
 Flat by date:
 
 ```
-raw/2026/05/2026-05-15-adac-rechnung-p247.md   document
+raw/2026/05/2026-05-15-duff-insurance-rechnung-p247.md   document
 raw/2026/05/2026-05-17-reddit-llms-a7b3c2.md   capture
 raw/2026/05/2026-05-17-pasted-note-d8e9f.md    capture (note kind)
 ```
@@ -364,7 +364,7 @@ explicitly:
   merging across concept extractions. If capture-specific tag
   canonicalization is still needed after a month of usage, revisit.
 - **Per-person interest derivation.** Dataview queries against
-  `raw/` + `wiki/` answer "what is Arthur reading lately?" without
+  `raw/` + `wiki/` answer "what is Homer reading lately?" without
   new infrastructure.
 - **A second writer for the brain wiki** beyond olw (e.g., an
   archivist-driven wiki-update on every document). Single-writer keeps
@@ -460,7 +460,7 @@ state.
    `stacklet.toml` declares the base image (`python:3.11-slim`),
    not olw itself.
 3. **Hand-edit commits for files outside olw's reach.** When a user
-   edits `documents/correspondents/adac.md` or `ontology.toml` in
+   edits `documents/correspondents/duff-insurance.md` or `ontology.toml` in
    Obsidian, no automatic commit happens (archivist doesn't touch
    those paths, olw doesn't see them). For 0.3.0: users commit + push
    manually (Obsidian Git plugin or terminal). Follow-up: a host-side

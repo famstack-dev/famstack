@@ -2,17 +2,17 @@
 
 > Status: Design document — implementation-ready
 > Created: 2026-04-21
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Companion to: [ontology-design.md](ontology-design.md), [knowledge-architecture.md](knowledge-architecture.md), [knowledge-implementation.md](knowledge-implementation.md)
 > Triggered by: paperless-gpt deep dive — they have no ontology layer; that gap is exactly what blocks LLM Q&A over documents.
 
 ## Why this exists
 
-We are building toward LLM-driven retrieval ("what do we know about car insurance?", "when does the ADAC policy expire?", "which family member has medical bills outstanding?"). Those questions cannot be answered by full-text search alone:
+We are building toward LLM-driven retrieval ("what do we know about car insurance?", "when does the Duff Insurance policy expire?", "which family member has medical bills outstanding?"). Those questions cannot be answered by full-text search alone:
 
 - "car insurance" misses every German document that says *Vollkasko*, *Haftpflicht*, *Kfz-Versicherung*
 - "medical" misses *Gesundheit*, *Arzt*, *Krankenkasse*
-- "Arthur's bills" requires joining persons + categories + custom fields
+- "Homer's bills" requires joining persons + categories + custom fields
 - "expires soon" requires a typed `due_date` / `expiry_date` field, not prose
 
 The ontology is the bridge between the user's natural question and the structured data living in Paperless, the wiki, and (later) the event bus.
@@ -41,8 +41,8 @@ paperless-gpt is the closest comparable project. Their design choice is worth re
 **Why this is limiting (and why we shouldn't copy it):**
 
 1. **No alias resolution.** A German "Vollkasko" doc gets a *Vollkasko* tag; a German "KFZ-Versicherung" doc gets a *Kfz-Versicherung* tag; an English "comprehensive insurance" doc gets a *Comprehensive Insurance* tag. All three are car insurance. Search for any one misses the others.
-2. **No relationships.** Knowing "ADAC is a car insurance correspondent" requires the LLM to re-derive that from prose every time. Wasted tokens, inconsistent results.
-3. **No persons.** Documents about Sabrina vs. Arthur cannot be filtered without manual tagging discipline.
+2. **No relationships.** Knowing "Duff Insurance is a car insurance correspondent" requires the LLM to re-derive that from prose every time. Wasted tokens, inconsistent results.
+3. **No persons.** Documents about Marge vs. Homer cannot be filtered without manual tagging discipline.
 4. **No retrieval surface.** They don't attempt cross-doc Q&A. The product ends at "tag exists in Paperless."
 
 The one piece worth stealing from them is the **typed custom-field schema** (`type: monetary` → `"EUR1664.58"`). We adopt it directly into v1 below.
@@ -98,7 +98,7 @@ Layer 0  Implicit ontology (today)               flat taxonomy.toml + users.toml
 - One I/O backend (`ForgejoClient`) for all bot-managed git data — documents *and* ontology
 - One bot user (`archivist-bot`) with one credential set — already provisioned by the existing setup flow
 - One audit surface (Forgejo's web UI, `git log`) — the family member who clicks "history" in the docs repo will find ontology history in the same UI
-- One mental model — when we add the wiki repos later (`family/shared`, `family/arthur`), they all use the same pattern
+- One mental model — when we add the wiki repos later (`family/shared`, `family/homer`), they all use the same pattern
 
 **Why YAML, not JSON / TOML / Markdown:**
 - YAML is structured-but-readable; survives hand-editing as a fallback
@@ -216,22 +216,22 @@ document_types:
 # ── Persons ────────────────────────────────────────────────────
 # Closed set, seeded from users.toml. The LLM picks from this list
 # but cannot create new entries. Service mappings let other
-# stacklets resolve "Arthur" to a Matrix ID, Immich face, etc.
+# stacklets resolve "Homer" to a Matrix ID, Immich face, etc.
 
 persons:
-  arthur:
-    label: Arthur
+  homer:
+    label: Homer
     aliases: [Papa]
     services:
-      paperless_tag: "Person: Arthur"
-      matrix: "@arthur:merles.eu"
+      paperless_tag: "Person: Homer"
+      matrix: "@homer:merles.eu"
 
-  sabrina:
-    label: Sabrina
+  marge:
+    label: Marge
     aliases: [Mama]
     services:
-      paperless_tag: "Person: Sabrina"
-      matrix: "@sabrina:merles.eu"
+      paperless_tag: "Person: Marge"
+      matrix: "@marge:merles.eu"
 
 # ── Organizations ──────────────────────────────────────────────
 # Open set. Bootstrap with a small list of universally-useful orgs
@@ -250,12 +250,12 @@ persons:
 
 organizations:
   # Pre-seeded entry — no provenance fields, highest trust.
-  adac:
-    label: ADAC
-    aliases: ["ADAC e.V.", "ADAC Autoversicherung", "ADAC Versicherung"]
+  duff-insurance:
+    label: Duff Insurance
+    aliases: ["Duff Insurance e.V.", "Duff Insurance Autoversicherung", "Duff Insurance Versicherung"]
     categories: [insurance, vehicle]
-    persons: [arthur]
-    paperless_correspondent: ADAC
+    persons: [homer]
+    paperless_correspondent: Duff Insurance
 
   # Auto-learned entry — Archivist wrote this after seeing the
   # correspondent on a doc. Categories inferred from that doc's
@@ -265,7 +265,7 @@ organizations:
     label: Stadtwerke München
     aliases: [SWM]
     categories: [utilities]
-    persons: [arthur]
+    persons: [homer]
     paperless_correspondent: Stadtwerke München
     learned: 2026-04-19
     docs_seen: 3
@@ -383,7 +383,7 @@ def expand_query(ontology: Ontology, terms: list[str]) -> ExpandedQuery:
     """Take user query terms, return the alias-expanded set.
     'car insurance' -> {categories: [insurance, vehicle],
                         aliases: [Vollkasko, Haftpflicht, KFZ, ...],
-                        organizations: [ADAC, HUK, ...]}"""
+                        organizations: [Duff Insurance, HUK, ...]}"""
 
 def resolve_to_paperless(ontology: Ontology, key: str, kind: str) -> str | None:
     """Map canonical key -> Paperless tag/correspondent/type name.
@@ -450,12 +450,12 @@ With v1 ontology:
 3. Expand via aliases + related
    vehicle    -> [Vehicle, Fahrzeug, Auto, KFZ, Werkstatt, car]
    insurance  -> [Insurance, Versicherung, Police, Vollkasko, Haftpflicht]
-   related    -> insurance ∩ vehicle organisations: ADAC
+   related    -> insurance ∩ vehicle organisations: Duff Insurance
 
 4. Build the actual queries
    Paperless full-text:    OR(all 11 alias terms)
    Paperless tag filter:   tags ∈ {Versicherung, Fahrzeug}
-   Paperless corresp.:     correspondent ∈ {ADAC, ...}
+   Paperless corresp.:     correspondent ∈ {Duff Insurance, ...}
    Custom-field filter:    pull premium, policy_number, expiry_date
                             from filtered docs
 
@@ -467,7 +467,7 @@ With v1 ontology:
                  stored in Paperless's content)
 
 7. LLM synthesis:
-   "You have an ADAC Vollkasko + Haftpflicht policy
+   "You have an Duff Insurance Vollkasko + Haftpflicht policy
     (#KFZ-2024-XXXXX), premium EUR 340/year, expires
     2026-06-30. Last renewal notice was filed 2026-03-15
     (paperless #247)."
@@ -480,12 +480,12 @@ The ontology turned a 0-result query into a structured answer with citations.
 | User question | What v1 enables |
 |---------------|-----------------|
 | "What do we know about car insurance?" | Category + alias expansion → multi-doc synthesis |
-| "When does my ADAC policy expire?" | Org → docs → custom_field `expiry_date` |
+| "When does my Duff Insurance policy expire?" | Org → docs → custom_field `expiry_date` |
 | "How much do we pay for insurance per year?" | Category insurance → all docs → sum custom_field `premium` |
-| "Show me Sabrina's school documents" | Person filter + category school |
+| "Show me Marge's school documents" | Person filter + category school |
 | "Anything due in the next 30 days?" | Filter all docs by custom_field `due_date` < today + 30d |
 | "Who is the dentist again?" | Org search by category medical with role hint |
-| "What's our marriage certificate number?" | Doc type certificate + persons [Arthur, Sabrina] → custom_field `reference_number` |
+| "What's our marriage certificate number?" | Doc type certificate + persons [Homer, Marge] → custom_field `reference_number` |
 
 The first three would be impossible without ontology v1. The rest become reliable rather than guesswork.
 
@@ -532,7 +532,7 @@ Subsequent docs touching the same entity:
 ontology.yaml is git-tracked (lives with the docs stacklet — eventually in the `knowledge/meta` Forgejo repo). Every auto-extension is a commit with a structured message:
 
 ```
-learn: organisation Stadtwerke München (utilities, arthur)
+learn: organisation Stadtwerke München (utilities, homer)
 
   Paperless-Correspondent: Stadtwerke München
   First-Seen-In-Doc: 312
@@ -551,15 +551,15 @@ Supported correction grammar — kept tiny on purpose, the LLM resolves anything
 ```
 Reply to a "Filed: ..." message:
 
-  "from HUK not ADAC"             → re-classify with hint: correspondent should be HUK
-                                    (this doc gets fixed; ontology gets ADAC's
+  "from HUK not Duff Insurance"             → re-classify with hint: correspondent should be HUK
+                                    (this doc gets fixed; ontology gets Duff Insurance's
                                     docs_seen decremented, HUK's incremented)
 
   "not insurance, vehicle"        → re-classify with hint: category vehicle
                                     (this doc gets re-tagged; downweights the
                                     insurance-on-this-correspondent association)
 
-  "this is Sabrina not Arthur"    → re-classify with person hint
+  "this is Marge not Homer"    → re-classify with person hint
 
   "wrong"                         → strip auto-applied tags, leave the doc for
                                     manual fixing in Paperless
@@ -576,17 +576,17 @@ When something is wrong at the ontology level (an org has the wrong categories, 
 
 ```
 @archivist Stadtwerke München is utilities + finance
-@archivist merge "ADAC e.V." into ADAC
+@archivist merge "Duff Insurance e.V." into Duff Insurance
 @archivist forget the org "Spam Inc"
-@archivist ADAC is also called "ADAC SE"
+@archivist Duff Insurance is also called "Duff Insurance SE"
 ```
 
 Same handler, parsed by the LLM, written directly to ontology.yaml as a commit:
 
 ```
-update: organisation ADAC categories +finance
+update: organisation Duff Insurance categories +finance
 
-  Confirmed-By: @arthur:merles.eu
+  Confirmed-By: @homer:merles.eu
 ```
 
 A correction always sets `confirmed: true` on the affected entries — that locks them against future auto-overrides from low-confidence learning.
@@ -597,7 +597,7 @@ For people who'd rather use the terminal, the same operations work via CLI (`fk 
 
 The dream cycle eventually handles janitor work the Archivist shouldn't synchronously care about:
 
-- **Near-duplicate detection** — "Finanzamt" vs "Finanzamt Springfield" with overlapping doc sets → auto-merge if confidence is high, post a one-line summary in #documents otherwise
+- **Near-duplicate detection** — "Springfield Tax Office" vs "Springfield Tax Office" with overlapping doc sets → auto-merge if confidence is high, post a one-line summary in #documents otherwise
 - **Orphan archival** — entries with `docs_seen: 0` for 6+ months move to an `archive:` section (still queryable, no longer suggested in classification prompts)
 - **Alias mining** — tokens that co-occur near a canonical key in 10+ doc summaries → auto-add as aliases
 - **Confidence promotion** — entries with `docs_seen >= 5` and no corrections → auto-flip `confirmed: true`
@@ -613,7 +613,7 @@ The fear: the LLM hallucinates a correspondent ("DB" extracted from a fragment),
 Three mitigations, in order of how aggressive they are:
 
 1. **Provenance prevents propagation.** `learned: ...` + `confirmed: false` + `docs_seen: 1` entries are *included* in the classification prompt but *deprioritized* — the prompt says "prefer confirmed entries." A single bad guess won't snowball.
-2. **Corrections cascade.** When a user corrects "from HUK not ADAC" on a doc, the Archivist also recalculates ADAC's `docs_seen` and, if the correction reveals the entry was a hallucination (e.g. the only doc citing "DB" gets fixed to "Deutsche Bank"), the entry auto-prunes itself.
+2. **Corrections cascade.** When a user corrects "from HUK not Duff Insurance" on a doc, the Archivist also recalculates Duff Insurance's `docs_seen` and, if the correction reveals the entry was a hallucination (e.g. the only doc citing "DB" gets fixed to "Deutsche Bank"), the entry auto-prunes itself.
 3. **Dream cycle reaps junk.** Entries with `docs_seen: 1` and no corrections after 30 days are archived (not deleted — they go to `archive:` and stay grep-able).
 
 Net: the system errs on the side of writing, but it doesn't err on the side of *trusting* what it wrote.
@@ -678,7 +678,7 @@ Layer 1 only covers what the Archivist needs (categories, doc types, persons, or
 If an org has `categories: [insurance, vehicle]`, should documents from that org auto-get those tags even if the LLM disagrees? **No** — the LLM has read the actual document text and may have good reason to deviate. The ontology hints; the LLM decides. The exception is when classification fails entirely — fallback to org-implied categories rather than untagged.
 
 **4b. Conflicting corrections from different family members.**
-Arthur replies "from HUK not ADAC" on the same doc Sabrina later replies "no, that was actually ADAC after all." Last write wins on the doc; the ontology entries log both events (`docs_seen` jitters but converges). For ontology-wide corrections, `confirmed: true` is sticky — once set, only an explicit `@archivist unconfirm <key>` undoes it. This avoids ping-pong without a conflict-resolution UI.
+Homer replies "from HUK not Duff Insurance" on the same doc Marge later replies "no, that was actually Duff Insurance after all." Last write wins on the doc; the ontology entries log both events (`docs_seen` jitters but converges). For ontology-wide corrections, `confirmed: true` is sticky — once set, only an explicit `@archivist unconfirm <key>` undoes it. This avoids ping-pong without a conflict-resolution UI.
 
 **4c. Auto-extension of the persons list.**
 **No.** Persons stay closed-set, seeded from `users.toml`. The LLM cannot create new ones. Adding a person is a deliberate household action (someone joined the family, a child gets their own account); this happens at the `users.toml` level and propagates on next `stack up docs`. Auto-creating persons would lead to "John Smith" tags from random documents the family received.

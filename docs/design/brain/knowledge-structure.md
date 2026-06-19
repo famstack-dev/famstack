@@ -2,7 +2,7 @@
 
 > Status: Design distillation
 > Created: 2026-04-21
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Companion to: [knowledge-architecture.md](knowledge-architecture.md), [knowledge-implementation.md](knowledge-implementation.md), [ontology-design.md](ontology-design.md)
 
 ## Why this document
@@ -112,7 +112,7 @@ WikiEntity
   kind            "correspondent" | "person" | "topic" | "asset" | "story"
   names           per-language canonical names
   aliases         alternative names that should resolve to this entity
-  bucket          which bucket this entity belongs to (family, arthur, marge, ...)
+  bucket          which bucket this entity belongs to (family, homer, marge, ...)
 
   # story-specific fields (only when kind == "story")
   noun            user-facing word ("trip", "renovation", "birthday", "side project")
@@ -164,7 +164,7 @@ Each layer answers a different reader's question:
 | L0 | Paperless UI, audit | "What's the original artifact?" |
 | L1 | Obsidian browser, search engine | "What did this single document say?" |
 | L2 | Retriever, scripts | "What claims have we accumulated about X?" |
-| L3 | Family member, Kit Bot | "What do we know about ADAC / Homer / insurance?" |
+| L3 | Family member, Kit Bot | "What do we know about Duff Insurance / Homer / insurance?" |
 | L4 | LLM in its first read | "Where is everything?" |
 
 ### L0: Source documents
@@ -183,13 +183,13 @@ One markdown file per Document, written by the Archivist. This layer exists toda
 ---
 type: document
 paperless_id: 247
-title: ADAC - Kfz-Versicherung 2026 EUR 340
+title: Duff Insurance - Kfz-Versicherung 2026 EUR 340
 date: 2026-03-15
 language: de
 doc_type: policy
 topics: [insurance, vehicle]
 persons: [Homer]
-correspondent: ADAC
+correspondent: Duff Insurance
 aliases: []
 tags: [Insurance, Vehicle, "Person: Homer", Policy]
 facts:
@@ -203,7 +203,7 @@ processing: ai_formatted
 model: qwen3-32b
 ---
 
-# ADAC - Kfz-Versicherung 2026 EUR 340
+# Duff Insurance - Kfz-Versicherung 2026 EUR 340
 
 (clean markdown body — either LLM-reformatted OCR or raw OCR fallback)
 
@@ -211,7 +211,7 @@ model: qwen3-32b
 
 ## Related
 
-- [[family/adac]]
+- [[family/duff-insurance]]
 - [[family/homer]]
 - [[family/insurance]]
 - [[family/vehicle]]
@@ -251,7 +251,7 @@ topics = ["medical"]
 **Machine-appended example** (`facts.jsonl`):
 
 ```json
-{"id":"f_2026-04-20T14:22Z_a7b3","kind":"fact","text":"Car insurance premium is EUR 340/year","persons":["Homer"],"topics":["insurance","vehicle"],"source":{"kind":"paperless","doc_id":247},"actor":"@arthur:merles.eu","extracted_at":"2026-04-20T14:22:00Z","expires_at":"2026-07-19T00:00Z","confidence":0.85,"superseded_by":null}
+{"id":"f_2026-04-20T14:22Z_a7b3","kind":"fact","text":"Car insurance premium is EUR 340/year","persons":["Homer"],"topics":["insurance","vehicle"],"source":{"kind":"paperless","doc_id":247},"actor":"@homer:merles.eu","extracted_at":"2026-04-20T14:22:00Z","expires_at":"2026-07-19T00:00Z","confidence":0.85,"superseded_by":null}
 ```
 
 **Invariants:**
@@ -272,8 +272,8 @@ Flat buckets, one entity per file. Privacy and ownership live in *buckets* (top-
 <knowledge>/
 ├── family/                    # shared — everyone in the household
 │   ├── index.md
-│   ├── adac.md                # kind: correspondent
-│   ├── aok.md                 # kind: correspondent
+│   ├── duff-insurance.md                # kind: correspondent
+│   ├── springfield-mutual.md                 # kind: correspondent
 │   ├── homer.md               # kind: person (family-visible profile)
 │   ├── marge.md               # kind: person
 │   ├── insurance.md           # kind: topic
@@ -283,7 +283,7 @@ Flat buckets, one entity per file. Privacy and ownership live in *buckets* (top-
 │   ├── bathroom-2026.md       # kind: story (renovation, completed)
 │   ├── marge-40th.md          # kind: story (birthday, planning)
 │   └── ...
-├── arthur/                    # arthur's personal bucket
+├── homer/                    # homer's personal bucket
 │   ├── index.md
 │   ├── work.md                # kind: topic
 │   ├── side-projects.md       # kind: topic
@@ -305,15 +305,15 @@ Flat buckets, one entity per file. Privacy and ownership live in *buckets* (top-
 4. **One person profile per bucket they appear in.** `family/homer.md` is Homer's family-visible profile. `homer/` (if it exists) is what Homer keeps to himself.
 5. **Sub-folders are an optimization, not the design.** Earn them by file count past ~200 per bucket.
 
-**Correspondent page template** (`family/adac.md`):
+**Correspondent page template** (`family/duff-insurance.md`):
 
 ```markdown
 ---
 type: entity
 kind: correspondent
-id: adac
-name: ADAC
-aliases: ["ADAC e.V.", "Allgemeiner Deutscher Automobil-Club"]
+id: duff-insurance
+name: Duff Insurance
+aliases: ["Duff Insurance e.V.", "Allgemeiner Deutscher Automobil-Club"]
 topics: [insurance, vehicle]
 persons: [Homer]
 documents: 14
@@ -322,7 +322,7 @@ last_seen: 2026-04-15
 updated_at: 2026-04-21T03:00:00Z
 ---
 
-# ADAC
+# Duff Insurance
 
 German automobile club, primary car-insurance provider for the family since 2023.
 
@@ -335,10 +335,10 @@ German automobile club, primary car-insurance provider for the family since 2023
 
 ## Timeline
 
-- 2026-03-15 — Renewal notice [[documents/2026/03/2026-03-15-adac-renewal|#247]]
-- 2025-01-10 — Annual renewal [[documents/2025/01/2025-01-10-adac-policy|#189]]
-- 2024-03-12 — Coverage adjustment [[documents/2024/03/2024-03-12-adac-amendment|#102]]
-- 2023-01-10 — Initial policy [[documents/2023/01/2023-01-10-adac-contract|#54]]
+- 2026-03-15 — Renewal notice [[documents/2026/03/2026-03-15-duff-insurance-renewal|#247]]
+- 2025-01-10 — Annual renewal [[documents/2025/01/2025-01-10-duff-insurance-policy|#189]]
+- 2024-03-12 — Coverage adjustment [[documents/2024/03/2024-03-12-duff-insurance-amendment|#102]]
+- 2023-01-10 — Initial policy [[documents/2023/01/2023-01-10-duff-insurance-contract|#54]]
 
 ## Related
 
@@ -363,7 +363,7 @@ related_persons:
   spouse: Marge
   children: [Bart, Lisa, Maggie]
 topics: [insurance, vehicle, employment, taxes]
-correspondents: [adac, aok, finanzamt_springfield]
+correspondents: [duff-insurance, springfield-mutual, springfield-tax-office_springfield]
 documents: 47
 updated_at: 2026-04-21T03:00:00Z
 ---
@@ -380,14 +380,14 @@ Family member. Married to [[family/marge]]. Father of [[family/bart]], [[family/
 
 ## Areas of activity
 
-- [[family/insurance]] — car (ADAC), health (AOK), liability
-- [[family/vehicle]] — BMW 320d, M-AB-1234
+- [[family/insurance]] — car (Duff Insurance), health (Springfield Mutual), liability
+- [[family/vehicle]] — Canyonero, SPR-1234
 - [[family/employment]] — Springfield Nuclear
-- [[family/taxes]] — annual filing, Finanzamt Springfield
+- [[family/taxes]] — annual filing, Springfield Tax Office
 
 ## Related
 
-[[family/adac]] · [[family/aok]] · [[family/finanzamt_springfield]] · ...
+[[family/duff-insurance]] · [[family/springfield-mutual]] · [[family/springfield-tax-office_springfield]] · ...
 
 ## Sources
 
@@ -403,7 +403,7 @@ kind: topic
 id: insurance
 name.de: Versicherung
 name.en: Insurance
-correspondents: [adac, aok, allianz]
+correspondents: [duff-insurance, springfield-mutual, globex]
 persons: [Homer, Marge, Maggie]
 documents: 31
 updated_at: 2026-04-21T03:00:00Z
@@ -417,24 +417,24 @@ The family carries coverage in four categories: car, health, household liability
 
 | Category | Provider | Insured | Policy | Premium |
 |---|---|---|---|---|
-| Car | [[family/adac]] | Homer | KFZ-2024-XXXXX | EUR 340/yr |
-| Health | [[family/aok]] | family plan | XX-XX | EUR 892/mo |
-| Liability | [[family/allianz]] | household | HFT-XXX | EUR 87/yr |
-| Life | [[family/allianz]] | Homer | LBV-XXX | EUR 412/yr |
+| Car | [[family/duff-insurance]] | Homer | KFZ-2024-XXXXX | EUR 340/yr |
+| Health | [[family/springfield-mutual]] | family plan | XX-XX | EUR 892/mo |
+| Liability | [[family/globex]] | household | HFT-XXX | EUR 87/yr |
+| Life | [[family/globex]] | Homer | LBV-XXX | EUR 412/yr |
 
 ## Recent activity
 
-- 2026-03-15 — ADAC renewal notice [doc:#247]
-- 2026-02-10 — AOK monthly statement [doc:#241]
+- 2026-03-15 — Duff Insurance renewal notice [doc:#247]
+- 2026-02-10 — Springfield Mutual monthly statement [doc:#241]
 - ...
 
 ## Action items
 
-- Compare ADAC prices before renewal (due 2026-11-30)
+- Compare Duff Insurance prices before renewal (due 2026-11-30)
 
 ## Related
 
-[[family/vehicle]] · [[family/medical]] · [[family/adac]] · ...
+[[family/vehicle]] · [[family/medical]] · [[family/duff-insurance]] · ...
 ```
 
 **Story page template** (`family/tuscany-2027.md`):
@@ -452,7 +452,7 @@ starts: 2027-07-15
 ends: 2027-07-29
 participants: [Homer, Marge, Bart, Lisa, Maggie]
 topics: [travel, italy]
-related_correspondents: [lufthansa, agriturismo-il-bosco, hertz]
+related_correspondents: [springfield-air, springfield-lodge, hertz]
 budget: { amount: 8000, currency: "EUR" }
 documents: 6
 updated_at: 2026-04-21T03:00:00Z
@@ -468,8 +468,8 @@ Planning. Flights booked, accommodations confirmed for week 1, week 2 still open
 
 ## Confirmed
 
-- [fact] Lufthansa MUC ↔ FLR, EUR 1,840 family of 5 [doc:#314]
-- [fact] Agriturismo Il Bosco, Lucca, 2027-07-15 to 2027-07-22 [doc:#316]
+- [fact] Springfield Air MUC ↔ FLR, EUR 1,840 family of 5 [doc:#314]
+- [fact] Springfield Lodge, Lucca, 2027-07-15 to 2027-07-22 [doc:#316]
 
 ## Wish list
 
@@ -486,12 +486,12 @@ Planning. Flights booked, accommodations confirmed for week 1, week 2 still open
 ## Timeline
 
 - 2026-04-21 — Booked Agriturismo [[documents/2026/04/2026-04-21-agriturismo-confirmation|#316]]
-- 2026-04-18 — Booked Lufthansa flights [[documents/2026/04/2026-04-18-lufthansa-booking|#314]]
+- 2026-04-18 — Booked Springfield Air flights [[documents/2026/04/2026-04-18-springfield-air-booking|#314]]
 - 2026-03-10 — Marge mentioned wanting to see the David [chat memo]
 
 ## Related
 
-[[family/travel]] · [[family/lufthansa]] · [[family/agriturismo-il-bosco]]
+[[family/travel]] · [[family/springfield-air]] · [[family/springfield-lodge]]
 ```
 
 **Invariants:**
@@ -545,7 +545,7 @@ One markdown file. The LLM's map. Always loaded into Kit Bot's context.
 ---
 type: index
 updated_at: 2026-04-21T03:00:00Z
-domains: [shared, arthur, marge]
+domains: [shared, homer, marge]
 totals: { documents: 312, facts: 487, entities: 47 }
 ---
 
@@ -554,15 +554,15 @@ totals: { documents: 312, facts: 487, entities: 47 }
 ## Domains
 
 - shared (38 entities) — household, contacts, recurring patterns
-- arthur (12 entities) — personal docs, work, hobbies
+- homer (12 entities) — personal docs, work, hobbies
 - marge (9 entities) — personal docs
 
 ## Entities
 
 ### Correspondents (16)
-- [[family/adac]] — car insurance · Homer · 14 docs · last 2026-04-15
-- [[family/aok]] — health insurance · family · 27 docs · last 2026-04-10
-- [[family/finanzamt_springfield]] — tax office · 8 docs · last 2026-03-22
+- [[family/duff-insurance]] — car insurance · Homer · 14 docs · last 2026-04-15
+- [[family/springfield-mutual]] — health insurance · family · 27 docs · last 2026-04-10
+- [[family/springfield-tax-office_springfield]] — tax office · 8 docs · last 2026-03-22
 - ...
 
 ### Persons (5)
@@ -573,13 +573,13 @@ totals: { documents: 312, facts: 487, entities: 47 }
 
 ### Topics (24)
 - [[family/insurance]] — 31 docs · car, health, liability, life
-- [[family/vehicle]] — 19 docs · BMW 320d, registration, service
+- [[family/vehicle]] — 19 docs · Canyonero, registration, service
 - [[family/taxes]] — 14 docs · annual returns, assessments
 - ...
 
 ## Recent facts (last 30)
-- 2026-04-20 [fact] ADAC premium EUR 340/yr [#247]
-- 2026-04-15 [event] AOK annual statement received [#241]
+- 2026-04-20 [fact] Duff Insurance premium EUR 340/yr [#247]
+- 2026-04-15 [event] Springfield Mutual annual statement received [#241]
 - ...
 ```
 
@@ -614,18 +614,18 @@ Matrix gives us authoritative signals about *who* dropped *what* *where*. We tre
 |---|---|
 | **DM with one user** | Bucket = that user's personal bucket. Owner = that user. |
 | **Shared family room** (`#documents`, `#assistant`) | Bucket = `family`. Sender is a strong candidate for `persons`. |
-| **Personal room** (`#arthur-private`, configured) | Bucket = the room's declared bucket. |
+| **Personal room** (`#homer-private`, configured) | Bucket = the room's declared bucket. |
 | **Sender of the message** | Strong candidate for `persons` field, regardless of room. |
 
 These are *defaults*, not hard rules. The classifier overrides when content clearly disagrees:
 
-- Arthur drops a school letter for Bart in `#documents` → defaults: bucket=family, persons=[Homer]. Classifier reads OCR ("Springfield Elementary," "Bart Simpson") → overrides to persons=[Bart], bucket stays family.
-- Marge sends Arthur an electronics receipt photo in DM → defaults: bucket=arthur (Arthur's DM), persons=[Marge]. Classifier sees household appliance → overrides bucket=family, keeps persons=[Marge].
+- Homer drops a school letter for Bart in `#documents` → defaults: bucket=family, persons=[Homer]. Classifier reads OCR ("Springfield Elementary," "Bart Simpson") → overrides to persons=[Bart], bucket stays family.
+- Marge sends Homer an electronics receipt photo in DM → defaults: bucket=homer (Homer's DM), persons=[Marge]. Classifier sees household appliance → overrides bucket=family, keeps persons=[Marge].
 
 Override discipline:
 1. Defaults stand unless content provides a clear, named contradiction.
 2. Ambiguity → keep the default. "Might be Marge's" is not enough to override.
-3. Override decisions are recorded in the L1 mirror's frontmatter (`bucket_default: arthur`, `bucket_resolved: family`, `bucket_override_reason: "household appliance"`).
+3. Override decisions are recorded in the L1 mirror's frontmatter (`bucket_default: homer`, `bucket_resolved: family`, `bucket_override_reason: "household appliance"`).
 
 ### Room configuration
 
@@ -767,7 +767,7 @@ The wiki pages are *regenerated*. But humans might want to edit them too — fix
 
 **Strategy B — frontmatter-as-source-of-truth.** The frontmatter persists human overrides (e.g. `manual_notes: "..."`); the body is regenerated. Bot reads existing frontmatter on regeneration, preserves designated user-fields, rewrites the body around them.
 
-Recommend Strategy A for v1. If real pain emerges (Arthur wants to add a personal note to ADAC's page), add a single `notes:` frontmatter field that survives regeneration. YAGNI everything else.
+Recommend Strategy A for v1. If real pain emerges (Homer wants to add a personal note to Duff Insurance's page), add a single `notes:` frontmatter field that survives regeneration. YAGNI everything else.
 
 ---
 
@@ -811,7 +811,7 @@ Proactive surfacing belongs to Kit Bot — morning briefings or N days before re
 
 ### Accumulating interests
 
-Every new capture about a topic appends to that entity page's Timeline. After months, `arthur/llm-benchmarks.md` has 30 timeline entries showing how Arthur's reading evolved. No special logic required — the entity wiki *is* the accumulation.
+Every new capture about a topic appends to that entity page's Timeline. After months, `homer/llm-benchmarks.md` has 30 timeline entries showing how Homer's reading evolved. No special logic required — the entity wiki *is* the accumulation.
 
 Proactive opportunity: detect engagement velocity per topic. A topic with 8 new docs this month is "active" for that person; one with 0 in 6 months is "dormant." Master index surfaces active interests; the family knows what each person is into right now without asking.
 
@@ -819,7 +819,7 @@ Proactive opportunity: detect engagement velocity per topic. A topic with 8 new 
 
 Insurance renewals, school terms, annual contracts, subscription cycles. Each occurrence is an `[event]` fact with a due date. After 3 occurrences with stable cadence, the dream cycle promotes to a `[habit]` with a "next expected" date. Kit Bot warns proactively:
 
-> ADAC car insurance renews annually in January. Next renewal expected 2027-01-10.
+> Duff Insurance car insurance renews annually in January. Next renewal expected 2027-01-10.
 > Your house contents insurance is due for renewal in 6 weeks.
 
 This is the killer feature of household memory: it remembers cycles so nobody has to.
@@ -856,7 +856,7 @@ The five layers, the entity page templates, and the backend interface are the *i
 
 3. **Asset entities.** A car or a house feels like an entity, but it's often easier to model as a topic + correspondent pair. v1: no asset entity. Revisit when there's clear pain.
 
-4. **Language of synthesized wiki pages.** A German family's `family/adac.md` body — German or English? Probably the user's primary language from `stack.toml`. Frontmatter fields stay English (id, kind, etc); display names follow language.
+4. **Language of synthesized wiki pages.** A German family's `family/duff-insurance.md` body — German or English? Probably the user's primary language from `stack.toml`. Frontmatter fields stay English (id, kind, etc); display names follow language.
 
 5. **Master index format.** Markdown (this doc proposes) or YAML/JSON for machine read + a separate markdown render? Markdown is dual-purpose; bots parse the table sections, humans browse. Start there; add structured sidecars only if parsing pain hits.
 
