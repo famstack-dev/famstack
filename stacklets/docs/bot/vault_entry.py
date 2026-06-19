@@ -177,6 +177,24 @@ def capture_filepath(
     return f"{entity}/{kind_dir}/_unfiled/{slug_str}-{digest}.md"
 
 
+def document_resource_url(paperless_url: str, paperless_id: int) -> str:
+    """The canonical URI of a document: its Paperless details page.
+
+    OKF's ``resource`` field and the human-facing "Show Document" link
+    both point here. ``paperless_url`` is the instance base (not
+    page-specific); this composes the per-document path off it. Empty
+    when no public Paperless URL is configured.
+
+    >>> document_resource_url("http://docs.home.local", 247)
+    'http://docs.home.local/documents/247/details'
+    >>> document_resource_url("", 247)
+    ''
+    """
+    if not paperless_url:
+        return ""
+    return f"{paperless_url.rstrip('/')}/documents/{paperless_id}/details"
+
+
 def document_frontmatter(
     *,
     title: str,
@@ -234,6 +252,9 @@ def document_frontmatter(
     fm["paperless_id"] = paperless_id
     if paperless_url:
         fm["paperless_url"] = paperless_url
+        # OKF `resource`: the URI of this specific document (its Paperless
+        # details page), not the instance root kept in `paperless_url`.
+        fm["resource"] = document_resource_url(paperless_url, paperless_id)
     fm["processing"] = processing
     if model:
         fm["model"] = model

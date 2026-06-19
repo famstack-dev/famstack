@@ -110,11 +110,12 @@ class TestFrontmatter:
             persons=["Homer"],
             tags=["Insurance", "Person: Homer"],
             paperless_id=247,
-            paperless_url="http://docs.home.local/documents/247",
+            paperless_url="http://docs.home.local",
             processing="ai_formatted",
             model="qwen2.5:14b",
         )
         assert fm["type"] == "document"
+        assert fm["resource"] == "http://docs.home.local/documents/247/details"
         assert fm["title"] == "ADAC Rechnung März 2026"
         assert fm["paperless_id"] == 247
         assert fm["processing"] == "ai_formatted"

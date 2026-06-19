@@ -56,6 +56,7 @@ from stack.forgejo import ForgejoClient, ForgejoError
 from vault_entry import (
     slug,
     document_filepath,
+    document_resource_url,
     capture_filepath,
     document_frontmatter,
     capture_frontmatter,
@@ -460,13 +461,9 @@ class GitMirror:
         )
 
         # The briefing's "Show Document" link wants the per-document
-        # details page, not the instance root the caller hands us.
-        # Frontmatter keeps the base URL — that's the canonical
-        # `paperless_url` field; scripts compose deeper paths off it.
-        paperless_doc_url = (
-            f"{paperless_url.rstrip('/')}/documents/{paperless_id}/details"
-            if paperless_url else ""
-        )
+        # details page, not the instance root the caller hands us — the
+        # same URL stamped into the frontmatter `resource` field.
+        paperless_doc_url = document_resource_url(paperless_url, paperless_id)
 
         # Briefing block inputs come straight from the classifier. The
         # `summary` parameter on `publish()` is the multi-section

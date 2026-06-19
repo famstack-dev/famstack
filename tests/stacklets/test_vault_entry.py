@@ -214,6 +214,7 @@ class TestDocumentFrontmatter:
         assert fm["tags"] == ["Insurance", "Vehicle"]
         assert fm["paperless_id"] == 42
         assert fm["paperless_url"] == "http://paperless:8000"
+        assert fm["resource"] == "http://paperless:8000/documents/42/details"
         assert fm["processing"] == "ai_formatted"
         assert fm["model"] == "mlx-model"
         assert fm["source"] == "paperless"
@@ -243,6 +244,7 @@ class TestDocumentFrontmatter:
         assert "tags" not in fm
         assert fm["paperless_id"] == 1
         assert "paperless_url" not in fm
+        assert "resource" not in fm  # no public URL -> no resource
         assert fm["processing"] == "ocr"
         assert "model" not in fm
         assert fm["source"] == "paperless"
