@@ -506,7 +506,7 @@ class TestCaptureFrontmatter:
             persons=[], tags=[], model=None,
         )
         assert fm["title"] == "Why local LLMs matter"
-        assert fm["kind"] == "bookmark"
+        assert fm["type"] == "bookmark"
         assert fm["resource"] == "https://example.com/llms"
         # Document-shaped fields are gone from captures.
         assert "correspondent" not in fm
@@ -526,7 +526,7 @@ class TestCaptureFrontmatter:
             source_uri="https://reddit.com/r/x/comments/y",
             persons=["Arthur"], tags=["LLMs"], model=None,
         )
-        assert fm["kind"] == "note"
+        assert fm["type"] == "note"
         assert fm["resource"] == "https://reddit.com/r/x/comments/y"
         assert fm["tags"] == ["LLMs"]
 
@@ -541,7 +541,7 @@ class TestCaptureFrontmatter:
             source_uri=None,
             persons=["Arthur"], tags=[], model=None,
         )
-        assert fm["kind"] == "note"
+        assert fm["type"] == "note"
         assert "resource" not in fm
 
     def test_full_shape(self, mirror):
@@ -593,7 +593,7 @@ class TestCaptureRender:
             facts=["Mac Mini idles under 10W"],
             action_items=[],
         )
-        assert "kind: bookmark" in out
+        assert "type: bookmark" in out
         assert "resource: https://example.com/llms" in out
         assert "# Why local LLMs matter" in out
         assert "**About:** [[Arthur]]" in out
@@ -617,7 +617,7 @@ class TestCaptureRender:
             summary="Comment thread comparing on-device inference speeds.",
             facts=[], action_items=[],
         )
-        assert "kind: note" in out
+        assert "type: note" in out
         assert "> [!summary]" in out
         assert "Comment thread comparing" in out
         assert "Top comment quotes 60 tok/s" in out

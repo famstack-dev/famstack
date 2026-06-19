@@ -293,10 +293,9 @@ def capture_frontmatter(
         .isoformat()
         .replace("+00:00", "Z")
     )
-    # `type` is the OKF-required concept kind and mirrors `kind`
-    # (note/bookmark). `kind` is retained for now; a later commit
-    # promotes it away once its readers move to `type`.
-    fm: dict = {"type": kind, "title": title, "kind": kind}
+    # `type` is the OKF-required concept kind (note/bookmark). It is the
+    # single home for that distinction; there is no separate `kind` key.
+    fm: dict = {"type": kind, "title": title}
     if captured_at:
         fm["date"] = captured_at
     if persons:

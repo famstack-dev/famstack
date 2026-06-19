@@ -273,7 +273,7 @@ class TestCaptureFrontmatter:
         )
         assert fm["title"] == "Reddit Thread"
         assert fm["type"] == "bookmark"  # OKF concept kind, mirrors kind
-        assert fm["kind"] == "bookmark"
+        assert "kind" not in fm  # promoted to type
         assert fm["date"] == "2025-03-27"
         assert fm["resource"] == "https://reddit.com/r/famstack/..."
         assert fm["persons"] == ["Arthur"]
@@ -297,7 +297,7 @@ class TestCaptureFrontmatter:
             model=None,
         )
         assert fm["type"] == "note"
-        assert fm["kind"] == "note"
+        assert "kind" not in fm  # promoted to type
         assert "resource" not in fm
         assert "model" not in fm
 

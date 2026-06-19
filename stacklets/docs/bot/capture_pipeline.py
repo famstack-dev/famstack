@@ -573,7 +573,7 @@ class CapturePipeline:
             title_hint=meta.get("title") or None,
             source_uri=meta.get("resource") or None,
         )
-        kind = meta.get("kind") or "bookmark"
+        kind = meta.get("type") or "bookmark"
         captured_at = meta.get("date") or _dt.date.today().isoformat()
         capture_id = meta.get("capture_id")
         return await self._publish(
