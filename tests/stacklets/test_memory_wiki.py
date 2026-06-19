@@ -21,6 +21,10 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
+    _correspondent_body,
+    _correspondent_entries,
+    _correspondent_preamble,
+    _correspondent_roster,
     _member_preamble,
     _topic_cross_refs,
     _topic_entries,
@@ -312,6 +316,80 @@ class TestMemberPreamble:
         assert "type: person" in pre
         assert "title: Homer" in pre
         assert "synonyms:" not in pre
+
+
+# ── Correspondents ────────────────────────────────────────────────────
+
+
+def _doc(correspondent, *, title="A Doc", date="2026-03-15", rel=None):
+    """A minimal index entry for a document referencing a correspondent."""
+    return {
+        "title": title,
+        "date": date,
+        "rel": rel or f"family/documents/2026/03/{title.lower().replace(' ', '-')}.md",
+        "correspondent": correspondent,
+        "persons": [],
+    }
+
+
+class TestCorrespondentRoster:
+
+    def test_dedups_and_sorts_by_canonical(self):
+        index = [
+            _doc("Duff Insurance"), _doc("Springfield Mutual"),
+            _doc("Duff Insurance"), _doc(""),
+        ]
+        assert _correspondent_roster(index) == [
+            ("duff-insurance", "Duff Insurance"),
+            ("springfield-mutual", "Springfield Mutual"),
+        ]
+
+    def test_blank_correspondents_excluded(self):
+        index = [_doc(""), _doc("   "), _doc(None)]
+        assert _correspondent_roster(index) == []
+
+    def test_slug_normalises_name(self):
+        roster = _correspondent_roster([_doc("Springfield Tax Office")])
+        assert roster == [("springfield-tax-office", "Springfield Tax Office")]
+
+
+class TestCorrespondentEntries:
+
+    def test_filters_by_canonical_newest_first(self):
+        index = [
+            _doc("Duff Insurance", title="Old", date="2024-01-01"),
+            _doc("Springfield Mutual", title="Other", date="2026-01-01"),
+            _doc("Duff Insurance", title="New", date="2026-05-01"),
+        ]
+        entries = _correspondent_entries(index, "Duff Insurance")
+        assert [e["title"] for e in entries] == ["New", "Old"]
+
+
+class TestCorrespondentPreamble:
+
+    def test_carries_okf_type_and_canonical(self):
+        pre = _correspondent_preamble("duff-insurance", "Duff Insurance")
+        assert "type: correspondent" in pre  # OKF concept kind
+        assert "title: Duff Insurance" in pre
+        assert "canonical: Duff Insurance" in pre
+        assert "slug: duff-insurance" in pre
+        assert pre.startswith("---")
+        assert pre.rstrip().endswith("---")
+
+
+class TestCorrespondentBody:
+
+    def test_lists_documents_as_relative_links(self):
+        entries = _correspondent_entries(
+            [_doc("Duff Insurance", title="Auto Policy", date="2026-03-15",
+                  rel="family/documents/2026/03/auto-policy-p247.md")],
+            "Duff Insurance",
+        )
+        body = _correspondent_body(entries, page_dir="family/correspondents")
+        assert body.startswith("## Documents")
+        # leaf page lives in family/correspondents/ -> climb two to root
+        assert "[Auto Policy](../../family/documents/2026/03/auto-policy-p247.md)" in body
+        assert "2026-03-15" in body
 
 
 # ── _topic_preamble ───────────────────────────────────────────────────

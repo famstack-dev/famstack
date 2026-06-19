@@ -52,7 +52,7 @@ from memory.lib import (  # noqa: E402
     _parse_frontmatter,
     extract_summary_callout,
 )
-from stack.vault import slugify_person  # noqa: E402
+from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
@@ -127,6 +127,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     topics_only = "--topics" in argv
     single_member = _arg_value(argv, "--member")
     single_topic = _arg_value(argv, "--topic")
+    single_correspondent = _arg_value(argv, "--correspondent")
 
     vault_dir = os.environ.get("MEMORY_VAULT_DIR", "")
     if not vault_dir:
@@ -188,6 +189,22 @@ async def run(llm: LLM, argv: list[str]) -> int:
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
 
+    if single_correspondent:
+        matched = [
+            (s, c) for (s, c) in _correspondent_roster(index)
+            if single_correspondent in (c, s)
+        ]
+        if not matched:
+            _err(f"no correspondent named '{single_correspondent}' in documents")
+            return 1
+        rc = 0
+        for s, c in matched:
+            sub_rc = await _generate_correspondent(
+                s, c, index, shared_bucket=shared_bucket, write=not dry_run,
+            )
+            rc = sub_rc if sub_rc else rc
+        return rc
+
     # ── Default loop ──────────────────────────────────────────────────
     # `--topics` skips home + members; otherwise we cover home, every
     # member, and every topic in turn.
@@ -203,10 +220,17 @@ async def run(llm: LLM, argv: list[str]) -> int:
         # empty bucket doesn't sink the whole run. `_generate_member`
         # returns 1 for skipped-empty, which we deliberately swallow
         # here -- the overall run still succeeds.
-        for slug in roster:
+        for member_slug in roster:
             await _generate_member(
-                llm, slug, index, vault,
+                llm, member_slug, index, vault,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            )
+
+        # Correspondent leaf pages, one per name across all documents.
+        for corr_slug, canonical in _correspondent_roster(index):
+            await _generate_correspondent(
+                corr_slug, canonical, index,
+                shared_bucket=shared_bucket, write=not dry_run,
             )
 
     for bucket_prefix, topic_slug in topics:
@@ -410,6 +434,7 @@ def _index_vault(vault: Path) -> list[dict]:
             if isinstance(p, str) and p.strip()
         ]
         slugged = [(slugify_person(p), p) for p in raw_persons]
+        _corr = fm.get("correspondent")
         out.append({
             "title": fm.get("title") or md.stem,
             "date": fm.get("date") or "",
@@ -417,6 +442,9 @@ def _index_vault(vault: Path) -> list[dict]:
             "rel": rel,
             "persons": [s for s, _ in slugged if s],
             "person_names": [n for s, n in slugged if s],
+            # The document's correspondent (already canonicalised by the
+            # classifier). Drives the correspondent leaf-page roster.
+            "correspondent": _corr.strip() if isinstance(_corr, str) else "",
             # Both taxonomy surfaces a capture can carry. Documents
             # use `topics:` for the ontology classification; captures
             # use `tags:` (the topic-room seed merges into the
@@ -495,6 +523,105 @@ def _member_entries(index: list[dict], slug: str) -> list[dict]:
         e for e in index
         if e["rel"].startswith(prefix) or slug in e["persons"]
     ]
+
+
+# ── Correspondents ─────────────────────────────────────────────────────
+#
+# Correspondents (an insurer, a school, a tax office) are leaf entities:
+# a single reference page, no folder. Documents route to the date-filed
+# documents tree and merely name their correspondent in frontmatter, so a
+# correspondent owns no captures -- its page is identity plus a backlink
+# list of the documents that reference it. Discovered from the
+# `correspondent:` field the classifier writes on each document.
+
+def _correspondent_roster(index: list[dict]) -> list[tuple[str, str]]:
+    """(slug, canonical) for every correspondent named across documents.
+
+    The classifier canonicalises the correspondent against the ontology
+    before writing it, so each distinct name is already one entity. Sorted
+    by canonical name for stable, deterministic output.
+    """
+    canon: dict[str, str] = {}
+    for entry in index:
+        name = (entry.get("correspondent") or "").strip()
+        if name:
+            canon[slug(name)] = name
+    return [(s, canon[s]) for s in sorted(canon, key=lambda s: canon[s].lower())]
+
+
+def _correspondent_entries(index: list[dict], canonical: str) -> list[dict]:
+    """Documents whose `correspondent:` matches `canonical`, newest first."""
+    hits = [
+        e for e in index
+        if (e.get("correspondent") or "").strip() == canonical
+    ]
+    return sorted(hits, key=lambda e: e.get("date") or "", reverse=True)
+
+
+def _correspondent_preamble(slug_: str, canonical: str) -> str:
+    """First-creation frontmatter for a correspondent leaf page.
+
+    Leaf entities are a single file, not a folder, so there is no
+    `about.md`/`index.md` split -- the page IS the concept file. Carries
+    `type: correspondent` (the OKF concept kind) and the canonical name
+    the `memory.lib.correspondents()` reader keys on.
+    """
+    return "\n".join([
+        "---",
+        f"title: {canonical}",
+        f"slug: {slug_}",
+        "type: correspondent",
+        f"canonical: {canonical}",
+        "---",
+    ])
+
+
+def _correspondent_body(entries: list[dict], *, page_dir: str) -> str:
+    """A deterministic `## Documents` backlink list (no LLM).
+
+    Each document that names this correspondent becomes a relative link,
+    so the page is the correspondent's index into the vault. Rebuilt on
+    every run, so it auto-extends as new documents arrive -- no queue.
+    """
+    rows = ["## Documents", ""]
+    for e in entries:
+        title = (e.get("title") or "").strip() or "(untitled)"
+        rel = e.get("rel") or ""
+        link = _relative_link(rel, page_dir) if rel else ""
+        date = (e.get("date") or "").strip()
+        row = f"- [{title}]({link})" if link else f"- **{title}**"
+        if date:
+            row += f" - {date}"
+        rows.append(row)
+    return "\n".join(rows)
+
+
+async def _generate_correspondent(
+    slug_: str, canonical: str, index: list[dict], *,
+    shared_bucket: str, write: bool,
+) -> int:
+    """Compose one correspondent's leaf page from its referencing documents.
+
+    Deterministic: no LLM. The page is identity (preamble) plus the
+    backlink list. Lives at `<shared_bucket>/correspondents/<slug>.md`.
+    """
+    entries = _correspondent_entries(index, canonical)
+    if not entries:
+        _err(f"no documents reference '{canonical}' — skipping")
+        return 1
+
+    page_dir = correspondents_dir(shared_bucket)
+    body = _correspondent_body(entries, page_dir=page_dir)
+    target_path = f"{page_dir}/{slug_}.md"
+
+    if not write:
+        print(f"\n<!-- {target_path} -->\n{body}")
+        return 0
+    return await _publish(
+        body, target_path=target_path, shared_bucket=shared_bucket,
+        commit_msg=f"docs(memory): refresh correspondent {canonical}",
+        default_preamble=_correspondent_preamble(slug_, canonical),
+    )
 
 
 # ── Topic folders ──────────────────────────────────────────────────────
