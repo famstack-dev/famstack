@@ -63,7 +63,7 @@ This costs zero extra LLM calls -- it's the same prompt, richer output schema. T
 
 Before creating a new tag, fuzzy-match against existing:
 - Lowercase + strip whitespace comparison
-- Common prefix matching ("Finanzamt Friedrichshafen" matches "Finanzamt")
+- Common prefix matching ("Finanzamt Springfield" matches "Finanzamt")
 - The prompt already asks for this, but code enforces it as a safety net
 
 **Time: 3-4 hours.** Changes to `archivist.py` only: updated prompt, tag validation, richer JSON parsing.

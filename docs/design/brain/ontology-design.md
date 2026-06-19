@@ -115,7 +115,7 @@ organizations:
 
   finanzamt:
     name: Finanzamt
-    aliases: [Finanzamt, "Finanzamt Friedrichshafen", FA]
+    aliases: [Finanzamt, "Finanzamt Springfield", FA]
     categories: [finance]
     paperless_correspondent: Finanzamt
 
@@ -295,7 +295,7 @@ When Kit Bot serves Arthur, it can query "everything associated with Arthur" acr
 
 **Maintenance (dream cycle):** Nightly review:
 - Detect near-duplicate entries (fuzzy matching on names + aliases)
-- Suggest merges ("Finanzamt" and "Finanzamt Friedrichshafen" should be one entry)
+- Suggest merges ("Finanzamt" and "Finanzamt Springfield" should be one entry)
 - Flag orphans (entities referenced nowhere)
 - Update alias lists from observed usage
 - Count usage per tag to identify the most/least used

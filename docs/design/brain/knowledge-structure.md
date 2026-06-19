@@ -363,7 +363,7 @@ related_persons:
   spouse: Marge
   children: [Bart, Lisa, Maggie]
 topics: [insurance, vehicle, employment, taxes]
-correspondents: [adac, aok, finanzamt_friedrichshafen]
+correspondents: [adac, aok, finanzamt_springfield]
 documents: 47
 updated_at: 2026-04-21T03:00:00Z
 ---
@@ -383,11 +383,11 @@ Family member. Married to [[family/marge]]. Father of [[family/bart]], [[family/
 - [[family/insurance]] — car (ADAC), health (AOK), liability
 - [[family/vehicle]] — BMW 320d, M-AB-1234
 - [[family/employment]] — Springfield Nuclear
-- [[family/taxes]] — annual filing, Finanzamt Friedrichshafen
+- [[family/taxes]] — annual filing, Finanzamt Springfield
 
 ## Related
 
-[[family/adac]] · [[family/aok]] · [[family/finanzamt_friedrichshafen]] · ...
+[[family/adac]] · [[family/aok]] · [[family/finanzamt_springfield]] · ...
 
 ## Sources
 
@@ -562,7 +562,7 @@ totals: { documents: 312, facts: 487, entities: 47 }
 ### Correspondents (16)
 - [[family/adac]] — car insurance · Homer · 14 docs · last 2026-04-15
 - [[family/aok]] — health insurance · family · 27 docs · last 2026-04-10
-- [[family/finanzamt_friedrichshafen]] — tax office · 8 docs · last 2026-03-22
+- [[family/finanzamt_springfield]] — tax office · 8 docs · last 2026-03-22
 - ...
 
 ### Persons (5)

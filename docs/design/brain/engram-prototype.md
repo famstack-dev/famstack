@@ -180,7 +180,7 @@ Source: Arthur via Kit Bot, 2026-04-29
 ```
 Dentist appointment for Sabrina
 When: 2026-04-17 10:00
-Where: Dr. Weber, Friedrichshafen
+Where: Dr. Weber, Springfield
 Source: Calendar sync
 ```
 

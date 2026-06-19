@@ -597,7 +597,7 @@ For people who'd rather use the terminal, the same operations work via CLI (`fk 
 
 The dream cycle eventually handles janitor work the Archivist shouldn't synchronously care about:
 
-- **Near-duplicate detection** — "Finanzamt" vs "Finanzamt Friedrichshafen" with overlapping doc sets → auto-merge if confidence is high, post a one-line summary in #documents otherwise
+- **Near-duplicate detection** — "Finanzamt" vs "Finanzamt Springfield" with overlapping doc sets → auto-merge if confidence is high, post a one-line summary in #documents otherwise
 - **Orphan archival** — entries with `docs_seen: 0` for 6+ months move to an `archive:` section (still queryable, no longer suggested in classification prompts)
 - **Alias mining** — tokens that co-occur near a canonical key in 10+ doc summaries → auto-add as aliases
 - **Confidence promotion** — entries with `docs_seen >= 5` and no corrections → auto-flip `confirmed: true`
