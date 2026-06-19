@@ -42,7 +42,7 @@ import yaml
 
 # Slug and entity-path conventions live in the framework (`stack.vault`)
 # so the memory wiki and this docs archivist share one source.
-from stack.vault import slug  # noqa: F401  (re-exported for callers/tests)
+from stack.vault import slug, entity_relpath  # noqa: F401  (slug re-exported for callers/tests)
 
 
 def document_filepath(
@@ -322,6 +322,8 @@ def render_document(
     body: str,
     correspondent: str | None,
     persons: list[str],
+    from_path: str,
+    shared_bucket: str,
     summary: str | None = None,
     facts: list | None = None,
     action_items: list | None = None,
@@ -333,7 +335,9 @@ def render_document(
 
       - YAML frontmatter (machine view: structured metadata)
       - H1 title
-      - wiki-link header  (``**From:** [[ADAC]] · **About:** [[Homer]]``)
+      - entity-link header (``**From:** [ADAC](…) · **About:** [Homer](…)``)
+        as relative markdown links, so they resolve in Obsidian, on
+        GitHub/Forgejo, and as OKF graph edges.
       - **briefing callout** — ``> [!summary]`` with prose, optional
         source link, facts, and action items. Wrapped in a callout
         so the briefing reads as a distinct block from the OCR body
@@ -344,8 +348,10 @@ def render_document(
     Args:
         frontmatter: YAML frontmatter dict.
         body: Document body text (OCR-cleaned or reformatted).
-        correspondent: Correspondent name for wiki header.
-        persons: List of person names for wiki header.
+        correspondent: Correspondent name for the entity header.
+        persons: List of person names for the entity header.
+        from_path: This entry's own vault path, for relative link math.
+        shared_bucket: The institutional bucket slug (for correspondents).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
         action_items: List of action item dicts or strings.
@@ -365,9 +371,13 @@ def render_document(
     if (correspondent or persons):
         bits = []
         if correspondent:
-            bits.append(f"**From:** [[{correspondent}]]")
+            href = entity_relpath(correspondent, "correspondent", from_path, shared_bucket)
+            bits.append(f"**From:** [{correspondent}]({href})")
         if persons:
-            bits.append("**About:** " + ", ".join(f"[[{p}]]" for p in persons))
+            bits.append("**About:** " + ", ".join(
+                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
+                for p in persons
+            ))
         parts.append("> " + " · ".join(bits))
         parts.append("")
 
@@ -394,6 +404,8 @@ def render_capture(
     captured_at: str | None,
     source_uri: str | None,
     persons: list[str],
+    from_path: str,
+    shared_bucket: str,
     summary: str | None = None,
     facts: list | None = None,
 ) -> str:
@@ -418,6 +430,8 @@ def render_capture(
         captured_at: Capture date.
         source_uri: Original source URL, or None.
         persons: List of person names.
+        from_path: This entry's own vault path, for relative link math.
+        shared_bucket: The institutional bucket slug (for correspondents).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
 
@@ -435,7 +449,10 @@ def render_capture(
     meta_lines: list[str] = []
     if persons:
         meta_lines.append(
-            "**About** " + ", ".join(f"[[{p}]]" for p in persons)
+            "**About** " + ", ".join(
+                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
+                for p in persons
+            )
         )
     line2_bits = []
     if captured_at:

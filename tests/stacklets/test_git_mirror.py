@@ -230,6 +230,7 @@ class TestRender:
             "processing": "ai_formatted", "source": "paperless",
         }
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter=fm,
             body="Policy number: KFZ-2024-XXX\n\nAmount: EUR 340.",
             correspondent="ADAC",
@@ -243,12 +244,15 @@ class TestRender:
         assert parsed["paperless_id"] == 247
 
         assert "# ADAC Rechnung" in out
-        assert "**From:** [[ADAC]]" in out
-        assert "**About:** [[Homer]]" in out
+        assert "**From:** [ADAC](" in out
+        assert "correspondents/adac.md)" in out
+        assert "**About:** [Homer](" in out
+        assert "homer/about.md)" in out
         assert "Policy number: KFZ-2024-XXX" in out
 
     def test_no_wiki_header_when_no_entities(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
         )
@@ -264,6 +268,7 @@ class TestBriefingBlock:
 
     def test_full_briefing_in_rendered_output(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "ADAC Rechnung"},
             body="(OCR body)",
             correspondent="ADAC", persons=["Homer"],
@@ -286,6 +291,7 @@ class TestBriefingBlock:
 
     def test_briefing_appears_before_body(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="OCR PAYLOAD",
             correspondent=None, persons=[],
             summary="One liner.",
@@ -295,6 +301,7 @@ class TestBriefingBlock:
 
     def test_omitted_entirely_when_classifier_returned_nothing(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None, facts=None, action_items=None,
@@ -305,6 +312,7 @@ class TestBriefingBlock:
 
     def test_individual_sections_drop_when_empty(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary="Just a summary.", facts=[], action_items=[],
@@ -316,6 +324,7 @@ class TestBriefingBlock:
 
     def test_string_action_item_renders_as_task(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None, facts=None,
@@ -326,6 +335,7 @@ class TestBriefingBlock:
     def test_null_string_due_is_treated_as_no_due(self, mirror):
         # LLMs sometimes return the string "null" instead of true null.
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None, facts=None,
@@ -337,6 +347,7 @@ class TestBriefingBlock:
 
     def test_skips_blank_facts_and_empty_actions(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None,
@@ -352,6 +363,7 @@ class TestBriefingBlock:
 
     def test_source_link_appears_inside_callout(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="(body)",
             correspondent=None, persons=[],
             summary="Prose.",
@@ -366,6 +378,7 @@ class TestBriefingBlock:
         # Half-supplied source_link tuple (label without url, or vice versa)
         # must not produce a malformed `[label]()` link.
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="(body)",
             correspondent=None, persons=[],
             summary="Prose.",
@@ -588,6 +601,7 @@ class TestCaptureRender:
             persons=["Arthur"], tags=["LLMs"], model="qwen2.5:14b",
         )
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter=fm, body="",
             correspondent=None, persons=["Arthur"],
             summary="A 200-word digest of the article's main points.",
@@ -597,7 +611,8 @@ class TestCaptureRender:
         assert "type: bookmark" in out
         assert "resource: https://example.com/llms" in out
         assert "# Why local LLMs matter" in out
-        assert "**About:** [[Arthur]]" in out
+        assert "**About:** [Arthur](" in out
+        assert "arthur/about.md)" in out
         assert "> [!summary]" in out
         assert "A 200-word digest" in out
         # No trailing empty body section — file ends after briefing.
@@ -612,6 +627,7 @@ class TestCaptureRender:
             persons=["Arthur"], tags=["Benchmarks"], model=None,
         )
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter=fm,
             body="Top comment quotes 60 tok/s on M2 Pro.\n\nRest of thread...",
             correspondent=None, persons=["Arthur"],

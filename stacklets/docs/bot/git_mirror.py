@@ -336,6 +336,7 @@ class GitMirror:
         body: str,
         correspondent: str | None,
         persons: list[str],
+        from_path: str,
         summary: str | None = None,
         facts: list | None = None,
         action_items: list | None = None,
@@ -345,6 +346,7 @@ class GitMirror:
         return render_document(
             frontmatter=frontmatter, body=body,
             correspondent=correspondent, persons=persons,
+            from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts, action_items=action_items,
             source_link=source_link,
         )
@@ -357,6 +359,7 @@ class GitMirror:
         captured_at: str | None,
         source_uri: str | None,
         persons: list[str],
+        from_path: str,
         summary: str | None = None,
         facts: list | None = None,
     ) -> str:
@@ -364,6 +367,7 @@ class GitMirror:
         return render_capture(
             frontmatter=frontmatter, body=body, kind=kind,
             captured_at=captured_at, source_uri=source_uri, persons=persons,
+            from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts,
         )
 
@@ -484,6 +488,7 @@ class GitMirror:
         content = self._render(
             frontmatter=fm, body=body_text,
             correspondent=correspondent, persons=persons,
+            from_path=target_path,
             summary=briefing_summary,
             facts=briefing_facts,
             action_items=briefing_actions,
@@ -724,6 +729,7 @@ class GitMirror:
             captured_at=captured_at,
             source_uri=source_uri,
             persons=persons,
+            from_path=target_path,
             summary=briefing_summary,
             facts=briefing_facts,
         )

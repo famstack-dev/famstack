@@ -323,6 +323,7 @@ class TestRenderDocument:
             model="mlx-model",
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Vehicle registration insurance renewal.\nAmount: EUR 340.00.",
             correspondent="ADAC",
@@ -334,8 +335,10 @@ class TestRenderDocument:
         )
         assert "---" in content
         assert "# ADAC - Kfz-Versicherung" in content
-        assert "**From:** [[ADAC]]" in content
-        assert "**About:** [[Homer]]" in content
+        assert "**From:** [ADAC](" in content
+        assert "correspondents/adac.md)" in content
+        assert "**About:** [Homer](" in content
+        assert "homer/about.md)" in content
         assert "> [!summary]" in content
         assert "Kfz-Versicherung renewal" in content
         assert "**Facts**" in content
@@ -352,6 +355,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Test content.",
             correspondent=None,
@@ -374,6 +378,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             correspondent=None,
@@ -395,6 +400,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Content.",
             correspondent=None,
@@ -414,6 +420,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             correspondent=None,
@@ -433,6 +440,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             correspondent=None,
@@ -461,6 +469,7 @@ class TestRenderCapture:
             model="mlx-model",
         )
         content = render_capture(
+            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",  # bookmarks have no body
             kind="bookmark",
@@ -472,7 +481,8 @@ class TestRenderCapture:
         )
         assert "---" in content
         assert "# Reddit Thread" in content
-        assert "**About** [[Arthur]]" in content
+        assert "**About** [Arthur](" in content
+        assert "arthur/about.md)" in content
         assert "**Captured** 2025-03-27" in content
         assert "**Kind** bookmark" in content
         assert "**Source** <https://reddit.com/r/famstack/...>" in content
@@ -491,6 +501,7 @@ class TestRenderCapture:
             model=None,
         )
         content = render_capture(
+            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Discussed Q2 budget.\nAction: review expenses.",
             kind="note",
@@ -502,7 +513,8 @@ class TestRenderCapture:
         )
         assert "---" in content
         assert "# Meeting notes" in content
-        assert "**About** [[Marge]]" in content
+        assert "**About** [Marge](" in content
+        assert "marge/about.md)" in content
         assert "**Kind** note" in content
         assert "**Captured** 2025-03-27" in content
         assert "Q2 budget discussion notes" in content
@@ -522,6 +534,7 @@ class TestRenderCapture:
             model=None,
         )
         content = render_capture(
+            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             kind="note",
