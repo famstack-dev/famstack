@@ -35,6 +35,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+# Vault-layout conventions live in the framework so both stacklets share
+# one source. Re-exported here for memory's own callers (and back-compat
+# with `from lib import correspondents_dir`).
+from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
+
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
 # install hook would crash at import time if we pulled in a third-
@@ -290,14 +295,6 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 # `correspondent_aliases` field on documents from this sender. The
 # classifier prompt embeds the (canonical, aliases) pairs so the LLM
 # can canonicalize new variants before they hit Paperless.
-
-DEFAULT_SHARED_BUCKET = "family"
-
-
-def correspondents_dir(shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
-    """Repo-relative path to the correspondents folder for a bucket."""
-    return f"{shared_bucket}/correspondents"
-
 
 @dataclass
 class Correspondent:

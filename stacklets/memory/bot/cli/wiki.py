@@ -52,6 +52,7 @@ from memory.lib import (  # noqa: E402
     _parse_frontmatter,
     extract_summary_callout,
 )
+from stack.vault import slugify_person  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
@@ -408,7 +409,7 @@ def _index_vault(vault: Path) -> list[dict]:
             for p in (fm.get("persons") or [])
             if isinstance(p, str) and p.strip()
         ]
-        slugged = [(_slugify_person(p), p) for p in raw_persons]
+        slugged = [(slugify_person(p), p) for p in raw_persons]
         out.append({
             "title": fm.get("title") or md.stem,
             "date": fm.get("date") or "",
@@ -600,18 +601,6 @@ def _topic_preamble(slug: str, display: str, scope: str) -> str:
         f"scope: {scope}",
         "---",
     ])
-
-
-def _slugify_person(name: str) -> str:
-    """Map a frontmatter person name to its vault bucket slug.
-
-    Buckets are the Matrix localpart lowercased; for the default family
-    that is the first name lowercased ("Homer Simpson" -> "homer"). We
-    take the first whitespace token so a full name still resolves to the
-    bucket the captures landed in.
-    """
-    token = name.strip().split()[0] if name.strip() else ""
-    return token.lower()
 
 
 # ── Facts ────────────────────────────────────────────────────────────────

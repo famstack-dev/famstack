@@ -37,35 +37,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
 
 import yaml
 
-
-def slug(text: str) -> str:
-    """Filesystem-safe slug: ASCII-ish, lowercase, hyphen-separated.
-
-    The cap is a defensive ceiling, not a primary length control —
-    the classifier title prompt asks for short identifying titles
-    (no dates, no amounts), so well-shaped inputs land far under
-    this cap. The slice is hard at 60 chars; the title prompt is
-    responsible for keeping titles human-scannable, not the slug.
-
-    >>> slug("ADAC - Kfz-Versicherung 2025")
-    'adac-kfz-versicherung-2025'
-    >>> slug("Rechnung Müller & Söhne")
-    'rechnung-muller-sohne'
-    >>> slug("  Leading Spaces  ")
-    'leading-spaces'
-    >>> slug("")
-    'document'
-    >>> slug("!!!")
-    'document'
-    """
-    normalized = unicodedata.normalize("NFKD", text)
-    ascii_ = normalized.encode("ascii", "ignore").decode()
-    slug_str = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_).strip("-").lower()
-    return slug_str[:60] or "document"
+# Slug and entity-path conventions live in the framework (`stack.vault`)
+# so the memory wiki and this docs archivist share one source.
+from stack.vault import slug  # noqa: F401  (re-exported for callers/tests)
 
 
 def document_filepath(
