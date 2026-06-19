@@ -93,7 +93,7 @@ timestamp: 2026-05-20T14:23:00Z
 
 # ADAC Kfz-Versicherung 2026
 
-> **From:** [[ADAC]] · **About:** [[Homer]]
+> **From:** [ADAC](../../../correspondents/adac.md) · **About:** [Homer](../../../../homer/about.md)
 
 > [!summary]
 > Jährliche Erneuerung der Kfz-Vollkasko, Police KFZ-2026-987.
@@ -138,7 +138,7 @@ timestamp: 2026-05-17T09:00:00Z
 
 # Local-LLM benchmarks roundup
 
-> **About** [[Arthur]]
+> **About** [Arthur](../../../about.md)
 > **Captured** 2026-05-17 · **Kind** bookmark
 > **Source** <https://example.com/llms>
 

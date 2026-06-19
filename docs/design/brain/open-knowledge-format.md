@@ -144,36 +144,39 @@ contract, not a break.
 | `index.md` (per-folder nav) | one L4 master `index.md`; entity hubs are `about.md` | add lightweight per-folder `index.md` listings (the wiki rebuild can emit these). `about.md` stays the human hub. |
 | `log.md` | `stack memory log` over git history; no materialized file | optional. Could materialize a `log.md` on export, or leave it (git IS the log). |
 | reserved filenames | `_unfiled`, `about` | check `index.md`/`log.md` do not collide with any generated slug; the archivist's reserved-slug set already guards `about`. |
-| relationship links | Obsidian `[[wikilinks]]` (`[[Homer]]`, `[[ADAC]]`) | **The one real divergence.** OKF wants relative markdown links `[Homer](/family/people/homer.md)`. See below. |
+| relationship links | relative markdown links (`[Homer](../people/homer.md)`) | **Done.** Was the one real divergence (Obsidian `[[wikilinks]]`); now native relative links via `stack.vault.entity_relpath`. See below. |
 
-## The wikilink decision
+## The link decision (landed: native relative markdown links)
 
-This is the only non-trivial fork. OKF's graph is built from standard
-relative markdown links. We author Obsidian `[[wikilinks]]` (name-based,
-resolved by Obsidian's index), which OKF parsers do not understand as
-edges.
+OKF's graph is built from standard relative markdown links. We used to
+author Obsidian `[[wikilinks]]` (name-based, resolved by Obsidian's
+index), which OKF parsers and plain markdown renderers do not understand.
 
-Two options:
+The fork was between two options:
 
-1. **Translate on export.** Keep `[[wikilinks]]` as the internal authoring
-   convention (Obsidian-native, matches `wiki-engine`, matches olw, what
-   families browsing the vault actually use). The OKF exporter rewrites
-   `[[Name]]` -> `[Name](relative/path.md)` by resolving against the entity
-   roster. Internal UX unchanged; OKF surface is clean.
-2. **Switch natively to relative markdown links.** Conformant by
-   construction, no exporter. But it degrades the Obsidian experience
-   (wikilinks are why backlinks and the graph view "just work") and is a
-   wider rename touching every renderer in `vault_entry.py`.
+1. **Translate on export.** Keep `[[wikilinks]]` internally; an exporter
+   rewrites them to relative links on the way out. Adds an export surface
+   to build and maintain, and leaves the vault-at-rest non-portable.
+2. **Author relative markdown links natively.** `[Homer](../people/homer.md)`
+   everywhere, no export.
 
-**Recommendation: option 1 (translate on export).** The vault's primary
-consumer is a family in Obsidian/Forgejo, not an OKF agent. Optimize the
-internal surface for them; treat OKF as the portable export. Resolving
-`[[Name]]` to a path requires the entity roster, which the wiki engine
-already maintains -- the exporter is small.
+We chose **option 2**. The premise behind option 1 -- that wikilinks are
+required for Obsidian's backlinks and graph -- was wrong: Obsidian
+resolves relative markdown links too (backlinks, graph, click-through all
+work). So relative markdown links are the *one syntax all consumers
+understand*: Obsidian, GitHub/Forgejo rendering, and OKF graph edges. The
+vault is dual-format **at rest**, with no export step to build or keep in
+sync. We generate the links (nobody hand-types them), so wikilinks' only
+real advantage -- terseness -- does not apply.
 
-(If we ever find the export translation is lossy or annoying to maintain,
-the beta window is the time to reconsider option 2. Flag it, do not
-silently switch.)
+This shipped on branch `okf-conformance`: the document/capture headers
+render relative links via `stack.vault.entity_relpath`, which resolves an
+entity name to its page path (person -> `<slug>/about.md`, correspondent
+-> `correspondents/<slug>.md`) and computes the relative climb from the
+entry's own location. Broken links (a correspondent referenced before its
+page exists) are valid per OKF ("not-yet-written knowledge"), render
+create-on-click in Obsidian, and self-heal once the wiki pass writes the
+page -- no review queue.
 
 ## The `tags` convention
 
