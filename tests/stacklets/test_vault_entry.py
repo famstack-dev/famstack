@@ -217,7 +217,7 @@ class TestDocumentFrontmatter:
         assert fm["processing"] == "ai_formatted"
         assert fm["model"] == "mlx-model"
         assert fm["source"] == "paperless"
-        assert "added" in fm  # timestamp is always present
+        assert "timestamp" in fm  # always present
 
     def test_minimal_frontmatter(self):
         fm = document_frontmatter(
@@ -279,7 +279,7 @@ class TestCaptureFrontmatter:
         assert fm["persons"] == ["Arthur"]
         assert fm["tags"] == ["Technology"]
         assert fm["model"] == "mlx-model"
-        assert "added" in fm
+        assert "timestamp" in fm
         # Document fields should NOT be present
         assert "paperless_id" not in fm
         assert "paperless_url" not in fm

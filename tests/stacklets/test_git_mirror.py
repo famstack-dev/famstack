@@ -121,10 +121,10 @@ class TestFrontmatter:
         assert fm["model"] == "qwen2.5:14b"
         assert fm["paperless_version"] == "2.14.5"
         assert fm["source"] == "paperless"
-        assert fm["added"].endswith("Z")
-        # key order: type first (OKF convention), added last; reflects insertion
+        assert fm["timestamp"].endswith("Z")
+        # key order: type first (OKF convention), timestamp last; reflects insertion
         assert list(fm.keys())[0] == "type"
-        assert list(fm.keys())[-1] == "added"
+        assert list(fm.keys())[-1] == "timestamp"
 
     def test_ocr_omits_model(self, mirror):
         fm = mirror._frontmatter(
@@ -514,7 +514,7 @@ class TestCaptureFrontmatter:
         assert "category" not in fm
         assert "paperless_id" not in fm
         assert "paperless_url" not in fm
-        assert fm["added"].endswith("Z")
+        assert fm["timestamp"].endswith("Z")
 
     def test_note_with_source_uri(self, mirror):
         # Pasted Reddit thread with the URL in the body — kind=note,

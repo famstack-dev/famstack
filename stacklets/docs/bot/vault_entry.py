@@ -240,7 +240,7 @@ def document_frontmatter(
     if paperless_version:
         fm["paperless_version"] = paperless_version
     fm["source"] = "paperless"
-    fm["added"] = now
+    fm["timestamp"] = now
     return fm
 
 
@@ -312,7 +312,7 @@ def capture_frontmatter(
         fm["capture_id"] = capture_id
     if model:
         fm["model"] = model
-    fm["added"] = now
+    fm["timestamp"] = now
     return fm
 
 
