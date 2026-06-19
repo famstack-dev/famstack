@@ -168,6 +168,23 @@ already maintains -- the exporter is small.
 the beta window is the time to reconsider option 2. Flag it, do not
 silently switch.)
 
+## The `tags` convention
+
+OKF lists `tags` as *optional* (a recommended field, not a required one).
+We considered making it a famstack-required field across every concept.
+**Decision: keep it a convention, present-when-nonempty -- not required.**
+
+Two reasons. First, "always emit `tags`, even empty" breaks the
+presence-as-signal idiom the builders already rely on (the capture
+renderer omits an absent `source_uri` precisely so a Dataview
+`where source_uri` cleanly filters); an always-present `tags: []` is
+noise that defeats "has tags vs untagged" filtering. Second, document
+and capture tags come from the classifier, but entity and topic pages
+have no tag source today -- a required field there would be empty
+theater. So: documents and captures emit `tags` when the classifier
+produced some (already the case); entity/topic pages gain a `tags` slot
+only once something populates it.
+
 ## What we change vs what we build
 
 ### Changes (the beta-window renames -- cheap now, expensive after 1.0)
