@@ -1,4 +1,9 @@
-"""Pure mirror formatting — path generation, frontmatter, markdown rendering.
+"""Vault entry formatting — path generation, frontmatter, markdown rendering.
+
+A vault entry is one markdown file mirroring a Paperless document or a
+capture (an OKF "document" within the vault bundle). This module owns the
+three pure steps that produce it: pick the path, build the frontmatter,
+render the body.
 
 No Forgejo I/O, no git operations, no filesystem writes. These functions
 take structured data and produce strings (filepaths, YAML, markdown).

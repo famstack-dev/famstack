@@ -1,4 +1,4 @@
-"""Unit tests for mirror_format — pure path generation and markdown rendering.
+"""Unit tests for vault_entry — pure path generation and markdown rendering.
 
 No Forgejo I/O, no git operations. Tests use Springfield-themed names."""
 
@@ -11,7 +11,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from mirror_format import (
+from vault_entry import (
     slug,
     document_filepath,
     capture_filepath,

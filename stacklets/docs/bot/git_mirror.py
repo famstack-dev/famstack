@@ -53,7 +53,7 @@ from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
 
-from mirror_format import (
+from vault_entry import (
     slug,
     document_filepath,
     capture_filepath,
@@ -294,11 +294,11 @@ class GitMirror:
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
     def _slug(self, text: str) -> str:
-        """Filesystem-safe slug. Delegates to ``mirror_format.slug``."""
+        """Filesystem-safe slug. Delegates to ``vault_entry.slug``."""
         return slug(text)
 
     def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_title: bool) -> str:
-        """Document mirror path. Delegates to ``mirror_format.document_filepath``,
+        """Document mirror path. Delegates to ``vault_entry.document_filepath``,
         injecting this mirror's configured shared bucket."""
         return document_filepath(self.shared_bucket, date, paperless_id, title, has_title)
 
@@ -317,7 +317,7 @@ class GitMirror:
         processing: str,
         model: str | None,
     ) -> dict:
-        """Document frontmatter. Delegates to ``mirror_format.document_frontmatter``,
+        """Document frontmatter. Delegates to ``vault_entry.document_frontmatter``,
         injecting this mirror's known Paperless server version."""
         return document_frontmatter(
             title=title, date=date,
@@ -340,7 +340,7 @@ class GitMirror:
         action_items: list | None = None,
         source_link: tuple[str, str] | None = None,
     ) -> str:
-        """Document mirror markdown. Delegates to ``mirror_format.render_document``."""
+        """Document mirror markdown. Delegates to ``vault_entry.render_document``."""
         return render_document(
             frontmatter=frontmatter, body=body,
             correspondent=correspondent, persons=persons,
@@ -359,7 +359,7 @@ class GitMirror:
         summary: str | None = None,
         facts: list | None = None,
     ) -> str:
-        """Capture mirror markdown. Delegates to ``mirror_format.render_capture``."""
+        """Capture mirror markdown. Delegates to ``vault_entry.render_capture``."""
         return render_capture(
             frontmatter=frontmatter, body=body, kind=kind,
             captured_at=captured_at, source_uri=source_uri, persons=persons,
@@ -578,7 +578,7 @@ class GitMirror:
         title: str | None,
         hash_key: str,
     ) -> str:
-        """Capture mirror path. Delegates to ``mirror_format.capture_filepath``,
+        """Capture mirror path. Delegates to ``vault_entry.capture_filepath``,
         injecting this mirror's capture-hash length."""
         return capture_filepath(
             entity, kind, captured_at, title, hash_key, self._CAPTURE_HASH_LEN,
@@ -595,7 +595,7 @@ class GitMirror:
         model: str | None,
         capture_id: str | None = None,
     ) -> dict:
-        """Capture frontmatter. Delegates to ``mirror_format.capture_frontmatter``."""
+        """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``."""
         return capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
