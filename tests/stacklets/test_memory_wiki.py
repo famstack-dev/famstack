@@ -21,6 +21,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
+    _member_preamble,
     _topic_cross_refs,
     _topic_entries,
     _topic_locations,
@@ -289,6 +290,28 @@ class TestTopicCrossRefs:
         index = [{"rel": "family/documents/2025/01/old.md"}]
         refs = _topic_cross_refs(index, "family", "camping")
         assert refs == []
+
+
+# ── _member_preamble ──────────────────────────────────────────────────
+
+
+class TestMemberPreamble:
+    """First-creation frontmatter for a member `about.md`."""
+
+    def test_carries_okf_type_and_canonical(self):
+        pre = _member_preamble("maggie", "Maggie", ["Maggie", "Margaret"])
+        assert "type: person" in pre  # OKF concept kind
+        assert "title: Margaret" in pre  # longest synonym is canonical
+        assert "canonical: Margaret" in pre
+        assert "slug: maggie" in pre
+        assert pre.startswith("---")
+        assert pre.rstrip().endswith("---")
+
+    def test_no_synonyms_collapses_to_display(self):
+        pre = _member_preamble("homer", "Homer", [])
+        assert "type: person" in pre
+        assert "title: Homer" in pre
+        assert "synonyms:" not in pre
 
 
 # ── _topic_preamble ───────────────────────────────────────────────────

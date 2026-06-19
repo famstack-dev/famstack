@@ -366,6 +366,7 @@ def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
         "---",
         f"title: {canonical}",
         f"slug: {slug}",
+        "type: person",
         f"canonical: {canonical}",
     ]
     if others:
