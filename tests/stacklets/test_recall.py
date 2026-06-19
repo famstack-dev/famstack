@@ -58,14 +58,14 @@ class TestQuestionTrigger:
     async def test_no_question_mark_skips_rewrite(self):
         c = _StubClassifier(keywords=["should", "not", "run"])
         memory, paperless, kw = await resolve_search_query(
-            "Allianz", classifier=c, ontology_section="(...)", language="de",
+            "Globex", classifier=c, ontology_section="(...)", language="de",
         )
         # Literal path: both queries equal the input (the Paperless
         # client wildcards the bare token downstream), no keywords,
         # classifier never called. This is the fast path the family
         # hits 99% of the time.
-        assert memory == "Allianz"
-        assert paperless == "Allianz"
+        assert memory == "Globex"
+        assert paperless == "Globex"
         assert kw == []
         assert c.calls == []
 

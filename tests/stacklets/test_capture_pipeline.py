@@ -303,23 +303,23 @@ class TestTagList:
     tag per attributed person, normalising types and whitespace."""
 
     def test_tags_and_persons(self):
-        c = {"tags": ["AI", "Productivity"], "persons": ["Arthur"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity", "Person: Arthur"]
+        c = {"tags": ["AI", "Productivity"], "persons": ["Homer"]}
+        assert CapturePipeline._tag_list(c) == ["AI", "Productivity", "Person: Homer"]
 
     def test_single_string_tag_becomes_list(self):
-        c = {"tags": "AI", "persons": ["Arthur"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Person: Arthur"]
+        c = {"tags": "AI", "persons": ["Homer"]}
+        assert CapturePipeline._tag_list(c) == ["AI", "Person: Homer"]
 
     def test_empty_classification_yields_empty(self):
         assert CapturePipeline._tag_list({}) == []
 
     def test_skips_non_string_values(self):
-        c = {"tags": ["AI", None, 42, ""], "persons": ["Arthur", ""]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Person: Arthur"]
+        c = {"tags": ["AI", None, 42, ""], "persons": ["Homer", ""]}
+        assert CapturePipeline._tag_list(c) == ["AI", "Person: Homer"]
 
     def test_strips_whitespace(self):
-        c = {"tags": ["  AI  ", "Productivity"], "persons": ["Arthur"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity", "Person: Arthur"]
+        c = {"tags": ["  AI  ", "Productivity"], "persons": ["Homer"]}
+        assert CapturePipeline._tag_list(c) == ["AI", "Productivity", "Person: Homer"]
 
 
 class TestClassifyDegradation:
@@ -667,7 +667,7 @@ class TestTopicSeedMerge:
         """When the classifier degraded (no tags key in the payload),
         the seed still applies. The result has a fresh `tags` list."""
         merged = CapturePipeline._merge_seed_topics(
-            {"persons": ["Arthur"]}, seed_topics=["camping"],
+            {"persons": ["Homer"]}, seed_topics=["camping"],
         )
         assert merged["tags"] == ["camping"]
 
@@ -970,17 +970,17 @@ class TestTopicSeedEndToEnd:
             classifier=FakeClassifier(payload={
                 "title": "Note",
                 "tags": [],
-                "persons": ["Arthur"],
+                "persons": ["Homer"],
                 "summary": "s",
             }),
         )
         out = await pipe.capture_text(
             text="we packed everything in the roof box",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             seed_topics=["camping"],
         )
         assert out.status == "captured"
-        # Mirror gets the merged list (seed + Person: Arthur).
+        # Mirror gets the merged list (seed + Person: Homer).
         assert "camping" in mirror.captures[0]["tags"]
         # Classification dict also carries the merge.
         assert "camping" in out.classification["tags"]
@@ -995,13 +995,13 @@ class TestTopicSeedEndToEnd:
             classifier=FakeClassifier(payload={
                 "title": "Article",
                 "tags": ["gear", "vans"],
-                "persons": ["Arthur"],
+                "persons": ["Homer"],
                 "summary": "s",
             }),
         )
         out = await pipe.capture_url(
             url="http://example.com/best-vanlife-gear",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             notifier=FakeNotifier(),
             seed_topics=["van-life"],
         )
@@ -1023,7 +1023,7 @@ class TestTopicSeedEndToEnd:
         out = await pipe.capture_voice_batch(
             transcripts=["first memo", "second memo"],
             primary_mxc="mxc://server/abc",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             seed_topics=["camping"],
         )
         assert out.status == "captured"
@@ -1041,7 +1041,7 @@ class TestTopicSeedEndToEnd:
             url_extractor=FakeExtractor(_source(source_uri="http://src")),
             text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
             classifier=FakeClassifier(payload={
-                "title": "Note", "tags": [], "persons": ["Arthur"],
+                "title": "Note", "tags": [], "persons": ["Homer"],
             }),
             mirror=mirror,
             capture_tags=tags,
@@ -1053,7 +1053,7 @@ class TestTopicSeedEndToEnd:
         )
         await pipe.capture_text(
             text="some pasted thought",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             seed_topics=["camping"],
         )
         # The seed survives into the topic-tag list the cache records.
@@ -1069,29 +1069,29 @@ class TestTopicSeedEndToEnd:
         pipe = _pipeline(mirror=mirror)
         out = await pipe.capture_text(
             text="we packed everything in the roof box",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             seed_topics=["camping"],
             bucket="camping",
         )
         assert out.status == "captured"
-        # Mirror sees the topic bucket as entity, not arthur.
+        # Mirror sees the topic bucket as entity, not homer.
         assert mirror.captures[0]["entity"] == "camping"
 
     @pytest.mark.asyncio
     async def test_bucket_override_handles_nested_personal_bucket(self):
         """Personal topic rooms nest under the sender bucket
-        (`arthur/camping/`). The mirror writer treats the entity
+        (`homer/camping/`). The mirror writer treats the entity
         string as a path prefix, so this just works."""
         mirror = FakeMirror()
         pipe = _pipeline(mirror=mirror)
         out = await pipe.capture_text(
             text="solo trip planning",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             seed_topics=["gravel"],
-            bucket="arthur/gravel",
+            bucket="homer/gravel",
         )
         assert out.status == "captured"
-        assert mirror.captures[0]["entity"] == "arthur/gravel"
+        assert mirror.captures[0]["entity"] == "homer/gravel"
 
     @pytest.mark.asyncio
     async def test_no_bucket_override_falls_back_to_sender(self):
@@ -1115,12 +1115,12 @@ class TestTopicSeedEndToEnd:
         pipe = _pipeline(
             mirror=mirror,
             classifier=FakeClassifier(payload={
-                "title": "Note", "tags": [], "persons": ["Arthur"],
+                "title": "Note", "tags": [], "persons": ["Homer"],
             }),
         )
         out = await pipe.capture_text(
             text="a note",
-            sender_mxid="@arthur:s",
+            sender_mxid="@homer:s",
             seed_topics=["camping"],
         )
         assert out.envelope is not None

@@ -24,23 +24,23 @@ class TestExplicitId:
     """When users.toml has an explicit 'id' field, use it unchanged."""
 
     def test_uses_explicit_id(self):
-        assert user_id({"id": "artie", "name": "Arthur Schmidt"}) == "artie"
+        assert user_id({"id": "artie", "name": "Homer Schmidt"}) == "artie"
 
     def test_explicit_id_takes_precedence_over_name(self):
-        assert user_id({"id": "admin", "name": "Arthur"}) == "admin"
+        assert user_id({"id": "admin", "name": "Homer"}) == "admin"
 
 
 class TestDerivedFromName:
     """When no 'id' is set, derive from the name: first word, lowercased."""
 
     def test_single_name(self):
-        assert user_id({"name": "Arthur"}) == "arthur"
+        assert user_id({"name": "Homer"}) == "homer"
 
     def test_full_name_uses_first_word(self):
-        assert user_id({"name": "Arthur Schmidt"}) == "arthur"
+        assert user_id({"name": "Homer Schmidt"}) == "homer"
 
     def test_lowercased(self):
-        assert user_id({"name": "ARTHUR"}) == "arthur"
+        assert user_id({"name": "HOMER"}) == "homer"
 
     def test_mixed_case(self):
         assert user_id({"name": "Sarah-Jane"}) == "sarah-jane"
@@ -49,7 +49,7 @@ class TestDerivedFromName:
 class TestEdgeCases:
 
     def test_empty_id_falls_through_to_name(self):
-        assert user_id({"id": "", "name": "Arthur"}) == "arthur"
+        assert user_id({"id": "", "name": "Homer"}) == "homer"
 
     def test_missing_name_raises(self):
         with pytest.raises(KeyError):

@@ -43,7 +43,7 @@ def _de(key, **kw):
 
 
 FULL = {
-    "summary": "Annual car insurance renewal at ADAC.",
+    "summary": "Annual car insurance renewal at Duff Insurance.",
     "facts": ["EUR 340.00/year", "Contract KFZ-2026"],
     "action_items": [
         {"action": "Pay invoice", "due": "2026-03-15"},
@@ -57,21 +57,21 @@ class TestRenderFilingReply:
     def test_full_happy_path(self):
         out = render_filing_reply(
             _en,
-            display_title="ADAC - Kfz-Versicherung",
+            display_title="Duff Insurance - Kfz-Versicherung",
             doc_id=10,
             resolved_topics=["Insurance"],
             resolved_persons=["Homer"],
             resolved_type="Invoice",
-            resolved_correspondent="ADAC",
+            resolved_correspondent="Duff Insurance",
             date_applied="2026-03-15",
             classification=FULL,
             created_new=["Insurance"],
             reformat_failed=False,
             link="http://paperless/documents/10/details",
         )
-        assert "✅ Filed: ADAC - Kfz-Versicherung (#10)" in out
-        assert "Insurance | Homer | Invoice | ADAC | 2026-03-15" in out
-        assert "Annual car insurance renewal at ADAC." in out
+        assert "✅ Filed: Duff Insurance - Kfz-Versicherung (#10)" in out
+        assert "Insurance | Homer | Invoice | Duff Insurance | 2026-03-15" in out
+        assert "Annual car insurance renewal at Duff Insurance." in out
         assert "- EUR 340.00/year" in out
         assert "Pay invoice (due 2026-03-15)" in out
         assert "File copy" in out and "(due )" not in out
@@ -141,7 +141,7 @@ class TestRenderReprocessedReply:
 
     def test_title_and_meta(self):
         out = render_reprocessed_reply(
-            _en, title="ADAC Invoice", doc_id=42,
+            _en, title="Duff Insurance Invoice", doc_id=42,
             resolved_topics=["Insurance"], resolved_persons=["Homer"],
             resolved_type="Invoice", resolved_correspondent="Globex",
         )
@@ -165,14 +165,14 @@ class TestRenderCaptureReply:
             source_title_hint="Reddit thread",
             classification={
                 "title": "Local LLM benchmarks",
-                "topics": ["AI"], "persons": ["Arthur"],
+                "topics": ["AI"], "persons": ["Homer"],
                 "summary": "M2 numbers.", "facts": ["60 tok/s"],
                 "action_items": [{"action": "ignored for captures", "due": ""}],
             },
             link="https://reddit.com/r/LocalLLaMA/...",
         )
         assert "✅ Captured: Local LLM benchmarks" in out
-        assert "AI | Arthur" in out
+        assert "AI | Homer" in out
         assert "M2 numbers." in out
         assert "- 60 tok/s" in out
         assert "https://reddit.com/r/LocalLLaMA/..." in out

@@ -106,8 +106,8 @@ class TestNonTopicRoom:
     async def test_plain_room_returns_none(self, tmp_path):
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
-        room = _room(name="Family Chat", members=[BOT_ID, "@arthur:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+        room = _room(name="Family Chat", members=[BOT_ID, "@homer:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is None
         # No state was written -- nothing to bootstrap.
         assert client.writes == []
@@ -116,8 +116,8 @@ class TestNonTopicRoom:
     async def test_empty_name_returns_none(self, tmp_path):
         client = FakeStateClient()
         bot = _bot(tmp_path, client=client)
-        room = _room(name=None, members=[BOT_ID, "@arthur:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+        room = _room(name=None, members=[BOT_ID, "@homer:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is None
 
 
@@ -144,8 +144,8 @@ class TestExistingTopicState:
         client = FakeStateClient(initial_state=self.SHARED_STATE)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/camping"
         assert binding.seed_topics == ["camping"]
@@ -163,8 +163,8 @@ class TestExistingTopicState:
             "kind": "capture", "extract_knowledge": True,
         })
         bot = _bot(tmp_path, client=client)
-        room = _room(name="Family Chat", members=[BOT_ID, "@arthur:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+        room = _room(name="Family Chat", members=[BOT_ID, "@homer:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is None
 
 
@@ -185,9 +185,9 @@ class TestBootstrap:
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Thema: Camping",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
-        binding = await bot._topic_binding(room, "@arthur:server")
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/camping"
         assert binding.scope == "shared"
@@ -199,7 +199,7 @@ class TestBootstrap:
         assert content["kind"] == "topic"
         assert content["bucket"] == "family/camping"
         assert content["scope"] == "shared"
-        assert content["bootstrapped_by"] == "@arthur:server"
+        assert content["bootstrapped_by"] == "@homer:server"
 
     @pytest.mark.asyncio
     async def test_personal_topic_bootstrap(self, tmp_path):
@@ -209,14 +209,14 @@ class TestBootstrap:
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Thema: Gravel",
-            members=[BOT_ID, "@arthur:server"],
+            members=[BOT_ID, "@homer:server"],
         )
-        binding = await bot._topic_binding(room, "@arthur:server")
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is not None
-        assert binding.bucket == "arthur/gravel"
+        assert binding.bucket == "homer/gravel"
         assert binding.scope == "personal"
         content = client.writes[0][2]
-        assert content["bucket"] == "arthur/gravel"
+        assert content["bucket"] == "homer/gravel"
         assert content["scope"] == "personal"
 
     @pytest.mark.asyncio
@@ -225,8 +225,8 @@ class TestBootstrap:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client, )
         room = _room(name="Topic: Photography",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.slug == "photography"
 
@@ -235,10 +235,10 @@ class TestBootstrap:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        await bot._topic_binding(room, "@homer:server")
         content = client.writes[0][2]
-        assert content["bootstrapped_by"] == "@arthur:server"
+        assert content["bootstrapped_by"] == "@homer:server"
         # bootstrapped_at is an ISO timestamp ending in Z.
         assert content["bootstrapped_at"].endswith("Z")
 
@@ -251,7 +251,7 @@ class TestReservedSlugRefusal:
     directory (notes, bookmarks, documents, correspondents, _unfiled,
     about) is refused at bootstrap. The archivist logs and returns
     None; routing falls back to sender-based. Top-level vault names
-    (`family`, `arthur`, ...) no longer need to be reserved because
+    (`family`, `homer`, ...) no longer need to be reserved because
     topics never live at the top level."""
 
     @pytest.mark.asyncio
@@ -261,8 +261,8 @@ class TestReservedSlugRefusal:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Notes",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is None
         assert client.writes == []
 
@@ -271,8 +271,8 @@ class TestReservedSlugRefusal:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Correspondents",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is None
         assert client.writes == []
 
@@ -283,8 +283,8 @@ class TestReservedSlugRefusal:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: About",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is None
 
     @pytest.mark.asyncio
@@ -297,8 +297,8 @@ class TestReservedSlugRefusal:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Family",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/family"
 
@@ -320,8 +320,8 @@ class TestResilience:
         client = FakeStateClient(initial_state=None, read_raises=True)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         # Read failed, so we treated it as no-state and bootstrapped.
         assert binding is not None
         assert binding.bucket == "family/camping"
@@ -334,8 +334,8 @@ class TestResilience:
         client = FakeStateClient(initial_state=None, write_raises=True)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
-                     members=[BOT_ID, "@arthur:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@arthur:server")
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/camping"
 
@@ -349,7 +349,7 @@ class TestHumanCounting:
 
     def test_excludes_self(self, tmp_path):
         bot = _bot(tmp_path)
-        room = _room(members=[BOT_ID, "@arthur:server"])
+        room = _room(members=[BOT_ID, "@homer:server"])
         assert bot._count_humans_in_room(room) == 1
 
     def test_no_members_is_zero(self, tmp_path):

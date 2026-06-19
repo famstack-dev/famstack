@@ -142,7 +142,7 @@ class TestSlugDerivation:
     def test_special_characters_become_hyphens(self):
         """Apostrophes, slashes, parens, and other punctuation collapse
         to a single hyphen. The result stays slug-shaped."""
-        assert derive_slug("Sabrina's Garden") == "sabrina-s-garden"
+        assert derive_slug("Marge's Garden") == "marge-s-garden"
         assert derive_slug("Side/Projects") == "side-projects"
         assert derive_slug("Plans (2027)") == "plans-2027"
 
@@ -195,12 +195,12 @@ class TestReservedNames:
         assert is_reserved("", self.RESERVED) is True
 
     def test_personal_localparts_can_be_passed_as_reserved(self):
-        """Personal buckets (`arthur/`, `marge/`) are reserved on a
+        """Personal buckets (`homer/`, `marge/`) are reserved on a
         per-instance basis. The archivist passes them in alongside
         the built-ins. The function does not know the household's
         member list directly."""
-        reserved = (*self.RESERVED, "arthur", "marge")
-        assert is_reserved("arthur", reserved) is True
+        reserved = (*self.RESERVED, "homer", "marge")
+        assert is_reserved("homer", reserved) is True
         assert is_reserved("marge", reserved) is True
         assert is_reserved("camping", reserved) is False
 
@@ -272,7 +272,7 @@ class TestBucketForScope:
     def test_shared_topic_nested_under_shared_bucket(self):
         assert bucket_for_scope(
             "camping", "shared",
-            sender_localpart="arthur", shared_bucket="family",
+            sender_localpart="homer", shared_bucket="family",
         ) == "family/camping"
 
     def test_shared_bucket_slug_is_configurable(self):
@@ -281,7 +281,7 @@ class TestBucketForScope:
         a hard-coded `family`."""
         assert bucket_for_scope(
             "camping", "shared",
-            sender_localpart="arthur", shared_bucket="office",
+            sender_localpart="homer", shared_bucket="office",
         ) == "office/camping"
 
     def test_personal_topic_nested_under_localpart(self):
@@ -289,35 +289,35 @@ class TestBucketForScope:
         `<localpart>/<slug>`. The privacy boundary is unchanged."""
         assert bucket_for_scope(
             "gravel", "personal",
-            sender_localpart="arthur", shared_bucket="family",
-        ) == "arthur/gravel"
+            sender_localpart="homer", shared_bucket="family",
+        ) == "homer/gravel"
 
     def test_different_localparts_get_different_personal_paths(self):
-        """A personal `camping` topic by Arthur is a different bucket
+        """A personal `camping` topic by Homer is a different bucket
         from a personal `camping` topic by Marge. They never collide."""
         assert bucket_for_scope(
             "camping", "personal",
-            sender_localpart="arthur", shared_bucket="family",
-        ) == "arthur/camping"
+            sender_localpart="homer", shared_bucket="family",
+        ) == "homer/camping"
         assert bucket_for_scope(
             "camping", "personal",
             sender_localpart="marge", shared_bucket="family",
         ) == "marge/camping"
 
     def test_shared_and_personal_can_coexist_with_same_slug(self):
-        """`family/camping/` (shared) and `arthur/camping/` (personal)
+        """`family/camping/` (shared) and `homer/camping/` (personal)
         live in different bucket trees. Step 5 promotion is the
         bucket-to-bucket move between them."""
         shared = bucket_for_scope(
             "camping", "shared",
-            sender_localpart="arthur", shared_bucket="family",
+            sender_localpart="homer", shared_bucket="family",
         )
         personal = bucket_for_scope(
             "camping", "personal",
-            sender_localpart="arthur", shared_bucket="family",
+            sender_localpart="homer", shared_bucket="family",
         )
         assert shared == "family/camping"
-        assert personal == "arthur/camping"
+        assert personal == "homer/camping"
         assert shared != personal
 
 
@@ -334,7 +334,7 @@ class TestMakeRoomState:
     def _state(self, scope="shared", shared_bucket="family"):
         return make_room_state(
             parsed=self.PARSED, scope=scope,
-            bootstrapped_by="@arthur:home", sender_localpart="arthur",
+            bootstrapped_by="@homer:home", sender_localpart="homer",
             shared_bucket=shared_bucket,
             bootstrapped_at=self.BOOTSTRAPPED_AT,
         )
@@ -358,7 +358,7 @@ class TestMakeRoomState:
 
     def test_personal_topic_bucket_nests_under_sender(self):
         state = self._state(scope="personal")
-        assert state["bucket"] == "arthur/camping"
+        assert state["bucket"] == "homer/camping"
         assert state["scope"] == "personal"
 
     def test_default_topics_is_single_slug(self):
@@ -381,7 +381,7 @@ class TestMakeRoomState:
         on-invite handler and for `stack memory topic list`."""
         state = self._state()
         assert state["bootstrapped_at"] == self.BOOTSTRAPPED_AT
-        assert state["bootstrapped_by"] == "@arthur:home"
+        assert state["bootstrapped_by"] == "@homer:home"
 
 
 # ── Routing binding ─────────────────────────────────────────────────────
@@ -412,10 +412,10 @@ class TestBindingFromState:
 
     def test_personal_topic_carries_nested_bucket(self):
         state = {**self.SHARED_STATE,
-                 "bucket": "arthur/camping", "scope": "personal"}
+                 "bucket": "homer/camping", "scope": "personal"}
         binding = binding_from_state(state)
         assert binding is not None
-        assert binding.bucket == "arthur/camping"
+        assert binding.bucket == "homer/camping"
         assert binding.scope == "personal"
 
     def test_none_state_returns_none(self):

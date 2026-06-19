@@ -155,11 +155,11 @@ async def test_at_mention_via_m_mentions_detected(family):
         room_id, "m.room.message",
         {
             "msgtype": "m.text",
-            "body": "please search for the ADAC invoice",
+            "body": "please search for the Duff Insurance invoice",
             "m.mentions": {"user_ids": [bart.user_id]},
         },
     )
-    event = await _find_event(bart, room_id, "please search for the ADAC invoice")
+    event = await _find_event(bart, room_id, "please search for the Duff Insurance invoice")
     assert event is not None, "mention message never arrived"
     assert bot._is_bot_mentioned(event) is True
 
@@ -196,12 +196,12 @@ async def test_reply_to_our_filing_resolves_envelope(family):
 
     # The bot files a document, riding the envelope on the message.
     await bot._send(
-        room_id, "Filed: ADAC invoice (#5)",
+        room_id, "Filed: Duff Insurance invoice (#5)",
         metadata={"dev.famstack.event": {
             "type": "document.filed", "data": {"paperless_id": 5},
         }},
     )
-    filing = await _find_event(homer, room_id, "Filed: ADAC invoice (#5)")
+    filing = await _find_event(homer, room_id, "Filed: Duff Insurance invoice (#5)")
     assert filing is not None, "bot filing never reached Homer"
 
     # Homer replies with a correction.

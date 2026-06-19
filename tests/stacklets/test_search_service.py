@@ -94,7 +94,7 @@ class TestScopesWithTopicBucket:
     def test_topic_bucket_overrides_sender_defaults(self):
         svc = _service(FakePaperless())
         scopes = svc.scopes_for_sender(
-            "@arthur:home", topic_bucket="camping",
+            "@homer:home", topic_bucket="camping",
         )
         assert scopes == ["camping/"]
 
@@ -115,13 +115,13 @@ class TestScopesWithTopicBucket:
         ) == ["family/", "marge/"]
 
     def test_personal_topic_bucket_passes_through_intact(self):
-        """A personal topic (`arthur/camping`) is a nested bucket;
+        """A personal topic (`homer/camping`) is a nested bucket;
         the scope writer must not strip the slash inside."""
         svc = _service(FakePaperless())
         scopes = svc.scopes_for_sender(
-            "@arthur:home", topic_bucket="arthur/camping",
+            "@homer:home", topic_bucket="homer/camping",
         )
-        assert scopes == ["arthur/camping/"]
+        assert scopes == ["homer/camping/"]
 
 
 class TestRun:
@@ -130,21 +130,21 @@ class TestRun:
     async def test_no_results(self, tmp_path, monkeypatch):
         monkeypatch.delenv("MEMORY_VAULT_DIR", raising=False)
         svc = _service(FakePaperless(results=[]))
-        reply = await svc.run(query="ADAC", sender="@homer:test", notifier=_FakeNotifier())
+        reply = await svc.run(query="Duff Insurance", sender="@homer:test", notifier=_FakeNotifier())
         assert reply.startswith("search_no_results")
 
     @pytest.mark.asyncio
     async def test_literal_paperless_hits(self, monkeypatch):
         monkeypatch.delenv("MEMORY_VAULT_DIR", raising=False)
         hits = [
-            {"id": 10, "title": "ADAC Invoice", "created": "2026-03-15"},
-            {"id": 11, "title": "ADAC Renewal", "created": "2025-03-01"},
+            {"id": 10, "title": "Duff Insurance Invoice", "created": "2026-03-15"},
+            {"id": 11, "title": "Duff Insurance Renewal", "created": "2025-03-01"},
         ]
         svc = _service(FakePaperless(results=hits))
-        reply = await svc.run(query="ADAC", sender="@homer:test", notifier=_FakeNotifier())
+        reply = await svc.run(query="Duff Insurance", sender="@homer:test", notifier=_FakeNotifier())
         # Literal mode: a Paperless section header + one line per hit.
         assert "search_paperless_results" in reply
-        assert "ADAC Invoice" in reply
-        assert "ADAC Renewal" in reply
+        assert "Duff Insurance Invoice" in reply
+        assert "Duff Insurance Renewal" in reply
         # No question-mode rewrite header on a literal query.
         assert "search_rewritten" not in reply

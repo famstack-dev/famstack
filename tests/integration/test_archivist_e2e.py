@@ -75,28 +75,28 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     homer,
     sample_invoice_pdf,
 ):
-    """Homer sends an ADAC invoice → archivist classifies + files it.
+    """Homer sends an Duff Insurance invoice → archivist classifies + files it.
 
     Scenario
     --------
     Given  the archivist bot is running
     And    the OpenAI mock will classify the document as an insurance
-           invoice from ADAC for Homer
-    When   Homer uploads an ADAC invoice PDF to the #documents room
+           invoice from Duff Insurance for Homer
+    When   Homer uploads an Duff Insurance invoice PDF to the #documents room
     Then   Paperless has the document tagged 'Insurance' and
-           'Person: Homer', with correspondent 'ADAC' and type 'Invoice'
+           'Person: Homer', with correspondent 'Duff Insurance' and type 'Invoice'
     And    the #documents room contains a classification summary
     And    the summary m.room.message carries a dev.famstack.event
            envelope (Matrix is the canonical ledger — one event per
            filing, full payload on the visible message)
     """
     scope = paperless_scope
-    bdd.scenario("Homer uploads an ADAC invoice; archivist classifies it")
+    bdd.scenario("Homer uploads an Duff Insurance invoice; archivist classifies it")
 
     # ── Given ────────────────────────────────────────────────────────
-    expected_title        = scope.tag("ADAC - Kfz-Versicherung 2026")
+    expected_title        = scope.tag("Duff Insurance - Kfz-Versicherung 2026")
     expected_topic        = scope.tag("Insurance")
-    expected_correspondent = scope.tag("ADAC")
+    expected_correspondent = scope.tag("Duff Insurance")
 
     bdd.given("the #documents room exists and Homer has access")
     room_id = await resolve_room(homer, DOCS_ROOM_ALIAS)
@@ -120,11 +120,11 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
         "correspondent": expected_correspondent,
         "document_type": "Invoice",
         "date": "2026-03-15",
-        "summary": "Annual car insurance renewal at ADAC. EUR 340/year.",
+        "summary": "Annual car insurance renewal at Duff Insurance. EUR 340/year.",
         "facts": ["EUR 340.00/year", "Contract KFZ-2026-000123"],
         "action_items": [{"action": "Pay by 2026-03-15", "due": "2026-03-15"}],
     })
-    stub_reformat(openai, "# Kfz-Versicherung 2026\n\nADAC — EUR 340/year.")
+    stub_reformat(openai, "# Kfz-Versicherung 2026\n\nDuff Insurance — EUR 340/year.")
     bdd.detail("classify stub → title, topics, correspondent, type")
     bdd.detail("reformat stub → 1-line markdown")
 
@@ -184,7 +184,7 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     # sweep it; sections are untitled (no '## Summary' label) so the
     # language stays native to the document.
     assert "<!-- archivist-bot -->" in body, f"missing marker in: {body!r}"
-    assert "Annual car insurance renewal at ADAC" in body, body
+    assert "Annual car insurance renewal at Duff Insurance" in body, body
     assert "EUR 340.00/year" in body, body
     assert f"{expected_correspondent} → Homer" in body, body
     bdd.ok(f"summary note present ({len(body)} chars)")
@@ -232,7 +232,7 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
 
     Scenario
     --------
-    Given  the archivist filed Homer's invoice (correspondent ADAC)
+    Given  the archivist filed Homer's invoice (correspondent Duff Insurance)
     When   Homer replies to the filing message with "this is from Globex"
     Then   the archivist reprocesses doc and posts a reclassified
            confirmation carrying the user's hint in its envelope
@@ -240,8 +240,8 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
     scope = paperless_scope
     bdd.scenario("Homer corrects a filing by replying to it")
 
-    title = scope.tag("ADAC - Kfz-Versicherung reprocess")
-    expected_correspondent = scope.tag("ADAC")
+    title = scope.tag("Duff Insurance - Kfz-Versicherung reprocess")
+    expected_correspondent = scope.tag("Duff Insurance")
     bdd.given("the OpenAI mock will classify, reformat, then reclassify")
     # Initial filing pass: classify + reformat.
     stub_classify(openai, {
@@ -250,7 +250,7 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
         "date": "2026-03-15", "summary": "Car insurance renewal.",
         "facts": ["EUR 340.00/year"], "action_items": [],
     })
-    stub_reformat(openai, "# Kfz-Versicherung\n\nADAC.")
+    stub_reformat(openai, "# Kfz-Versicherung\n\nDuff Insurance.")
     # Reprocess pass (triggered by the reply): classify only.
     stub_classify(openai, {
         "title": title, "topics": [scope.tag("Insurance")], "persons": ["Homer"],
@@ -287,7 +287,7 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
     bdd.ok(f"filed doc #{paperless_id}, event {filing.event_id}")
 
     bdd.when("Homer replies to the filing with a correction")
-    hint = "this is from Globex, not ADAC"
+    hint = "this is from Globex, not Duff Insurance"
     await homer.room_send(
         room_id, "m.room.message",
         {
@@ -379,7 +379,7 @@ async def test_group_mention_triggers_search(bdd, paperless, matrix):
             room_id, "m.room.message",
             {
                 "msgtype": "m.text",
-                "body": f"{ARCHIVIST_MXID} ADAC",
+                "body": f"{ARCHIVIST_MXID} Duff Insurance",
                 "m.mentions": {"user_ids": [ARCHIVIST_MXID]},
             },
         )

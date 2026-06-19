@@ -52,51 +52,51 @@ class TestLoadCorrespondents:
         assert load_correspondents_from_vault(tmp_path) == []
 
     def test_loads_a_minimal_page(self, vault):
-        _write_page(vault, "adac", """---
+        _write_page(vault, "duff-insurance", """---
 kind: correspondent
-canonical: ADAC
+canonical: Duff Insurance
 ---
 
-# ADAC
+# Duff Insurance
 """)
         cs = load_correspondents_from_vault(vault)
         assert len(cs) == 1
         c = cs[0]
-        assert c.canonical == "ADAC"
+        assert c.canonical == "Duff Insurance"
         assert c.aliases == []
         assert c.topics == []
 
     def test_loads_aliases_topics_and_contact_fields(self, vault):
-        _write_page(vault, "adac", """---
+        _write_page(vault, "duff-insurance", """---
 kind: correspondent
-canonical: ADAC
+canonical: Duff Insurance
 aliases:
-  - "ADAC Ortsverband Manzell"
-  - "ADAC Versicherung AG"
+  - "Duff Insurance Ortsverband Springfield"
+  - "Duff Insurance Versicherung AG"
 topics: [insurance, vehicle]
 address: "Hansastraße 19, 80686 München"
 phone: "089 7676 0"
-website: "https://www.adac.de"
+website: "https://www.duff-insurance.de"
 ---
 
-# ADAC
+# Duff Insurance
 """)
         c = load_correspondents_from_vault(vault)[0]
-        assert c.aliases == ["ADAC Ortsverband Manzell", "ADAC Versicherung AG"]
+        assert c.aliases == ["Duff Insurance Ortsverband Springfield", "Duff Insurance Versicherung AG"]
         assert c.topics == ["insurance", "vehicle"]
         assert c.address == "Hansastraße 19, 80686 München"
         assert c.phone == "089 7676 0"
-        assert c.website == "https://www.adac.de"
+        assert c.website == "https://www.duff-insurance.de"
 
     def test_falls_back_to_filename_when_canonical_missing(self, vault):
-        _write_page(vault, "aok", """---
+        _write_page(vault, "springfield-mutual", """---
 kind: correspondent
 ---
 
-# AOK
+# Springfield Mutual
 """)
         c = load_correspondents_from_vault(vault)[0]
-        assert c.canonical == "aok"
+        assert c.canonical == "springfield-mutual"
 
     def test_skips_pages_with_wrong_kind(self, vault):
         _write_page(vault, "topic-page", """---
@@ -108,11 +108,11 @@ canonical: insurance
 
     def test_orders_results_by_filename(self, vault):
         _write_page(vault, "zappos", "---\nkind: correspondent\ncanonical: Zappos\n---\n")
-        _write_page(vault, "aok",    "---\nkind: correspondent\ncanonical: AOK\n---\n")
+        _write_page(vault, "springfield-mutual",    "---\nkind: correspondent\ncanonical: Springfield Mutual\n---\n")
         _write_page(vault, "moe",    "---\nkind: correspondent\ncanonical: Moes\n---\n")
 
         names = [c.canonical for c in load_correspondents_from_vault(vault)]
-        assert names == ["AOK", "Moes", "Zappos"]
+        assert names == ["Moes", "Springfield Mutual", "Zappos"]
 
     def test_skips_pages_without_frontmatter(self, vault):
         # A README or stray markdown should not crash the loader.
@@ -122,12 +122,12 @@ canonical: insurance
         assert load_correspondents_from_vault(vault) == []
 
     def test_known_names_includes_canonical_first(self):
-        c = Correspondent(canonical="ADAC", aliases=["ADAC Ortsverband Manzell"])
-        assert c.all_known_names() == ["ADAC", "ADAC Ortsverband Manzell"]
+        c = Correspondent(canonical="Duff Insurance", aliases=["Duff Insurance Ortsverband Springfield"])
+        assert c.all_known_names() == ["Duff Insurance", "Duff Insurance Ortsverband Springfield"]
 
     def test_known_names_deduplicates(self):
-        c = Correspondent(canonical="ADAC", aliases=["ADAC", "ADAC Ortsverband Manzell"])
-        assert c.all_known_names() == ["ADAC", "ADAC Ortsverband Manzell"]
+        c = Correspondent(canonical="Duff Insurance", aliases=["Duff Insurance", "Duff Insurance Ortsverband Springfield"])
+        assert c.all_known_names() == ["Duff Insurance", "Duff Insurance Ortsverband Springfield"]
 
 
 # ─── Prompt renderer ─────────────────────────────────────────────────────
@@ -139,24 +139,24 @@ class TestCorrespondentsPromptSection:
 
     def test_lists_canonical_without_aliases(self):
         section = correspondents_prompt_section([
-            Correspondent(canonical="AOK"),
+            Correspondent(canonical="Springfield Mutual"),
         ])
-        assert section == "Existing correspondents (canonical; aliases in parens):\n  - AOK"
+        assert section == "Existing correspondents (canonical; aliases in parens):\n  - Springfield Mutual"
 
     def test_inlines_aliases_in_parens(self):
         section = correspondents_prompt_section([
             Correspondent(
-                canonical="ADAC",
-                aliases=["ADAC Ortsverband Manzell", "ADAC Versicherung AG"],
+                canonical="Duff Insurance",
+                aliases=["Duff Insurance Ortsverband Springfield", "Duff Insurance Versicherung AG"],
             ),
         ])
-        assert "ADAC (ADAC Ortsverband Manzell, ADAC Versicherung AG)" in section
+        assert "Duff Insurance (Duff Insurance Ortsverband Springfield, Duff Insurance Versicherung AG)" in section
 
     def test_preserves_caller_order(self):
         section = correspondents_prompt_section([
-            Correspondent(canonical="ADAC"),
-            Correspondent(canonical="AOK"),
+            Correspondent(canonical="Duff Insurance"),
+            Correspondent(canonical="Springfield Mutual"),
             Correspondent(canonical="Anthropic"),
         ])
         lines = section.splitlines()[1:]
-        assert lines == ["  - ADAC", "  - AOK", "  - Anthropic"]
+        assert lines == ["  - Duff Insurance", "  - Springfield Mutual", "  - Anthropic"]

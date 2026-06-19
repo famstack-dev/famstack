@@ -72,7 +72,7 @@ class TestTokenize:
         assert _tokenize("Moe's Tavern") == ["moe", "s", "tavern"]
 
     def test_abbreviation_with_dots(self):
-        assert _tokenize("ADAC e.V.") == ["adac", "e", "v"]
+        assert _tokenize("Globex e.V.") == ["globex", "e", "v"]
 
     def test_strips_whitespace(self):
         assert _tokenize("  Burns  Industries  ") == ["burns", "industries"]
@@ -95,7 +95,7 @@ class TestWordBoundaryMatch:
         assert _is_word_boundary_match("Bank", "Bundesbank") is False
 
     def test_name_inside_longer_name_blocked(self):
-        assert _is_word_boundary_match("Art", "Arthur") is False
+        assert _is_word_boundary_match("Art", "Homer") is False
 
     def test_multi_word_prefix(self):
         assert _is_word_boundary_match("Springfield Nuclear", "Springfield Nuclear Power Plant") is True
@@ -104,7 +104,7 @@ class TestWordBoundaryMatch:
         assert _is_word_boundary_match("Kwik-E-Mart", "Kwik-E-Mart Inc.") is True
 
     def test_abbreviation_match(self):
-        assert _is_word_boundary_match("ADAC", "ADAC e.V.") is True
+        assert _is_word_boundary_match("Duff Insurance", "Duff Insurance e.V.") is True
 
     def test_empty_shorter(self):
         assert _is_word_boundary_match("", "Springfield") is False
@@ -142,7 +142,7 @@ class TestWordBoundaryContainment:
         assert fuzzy_match_entity("Springfield Nuclear", {"Springfield Nuclear Power Plant": 1}) == "Springfield Nuclear Power Plant"
 
     def test_abbreviation_suffix(self):
-        assert fuzzy_match_entity("ADAC e.V.", {"ADAC": 1}) == "ADAC"
+        assert fuzzy_match_entity("Duff Insurance e.V.", {"Duff Insurance": 1}) == "Duff Insurance"
 
     def test_single_word_full_token(self):
         assert fuzzy_match_entity("Springfield", {"Springfield Elementary": 1}) == "Springfield Elementary"
@@ -326,8 +326,8 @@ class TestDeduplicateHashtags:
 
     def test_multiple_persons(self):
         # Joint document: topic + two persons + correspondent
-        result = deduplicate_hashtags("Insurance", "Homer", "Marge", "ADAC")
-        assert result == ["#Insurance", "#Homer", "#Marge", "#ADAC"]
+        result = deduplicate_hashtags("Insurance", "Homer", "Marge", "Duff Insurance")
+        assert result == ["#Insurance", "#Homer", "#Marge", "#Duff Insurance"]
 
 
 # ── Topic matching ─────────────────────────────────────────────────────
@@ -540,12 +540,12 @@ class TestBuildDocumentEvent:
     """
 
     def test_envelope_shape(self):
-        evt = build_document_event(42, {"title": "ADAC - Kfz EUR 340"})
+        evt = build_document_event(42, {"title": "Duff Insurance - Kfz EUR 340"})
         assert evt["source"] == "docs"
         assert evt["type"] == "document.filed"
-        assert evt["summary"] == "ADAC - Kfz EUR 340 filed (#42)"
+        assert evt["summary"] == "Duff Insurance - Kfz EUR 340 filed (#42)"
         assert evt["data"]["paperless_id"] == 42
-        assert evt["data"]["title"] == "ADAC - Kfz EUR 340"
+        assert evt["data"]["title"] == "Duff Insurance - Kfz EUR 340"
 
     def test_resolved_fields_land_in_data(self):
         evt = build_document_event(
@@ -553,12 +553,12 @@ class TestBuildDocumentEvent:
             {"title": "Test", "summary": "A test doc"},
             resolved_topics=["Insurance", "Vehicle"],
             resolved_persons=["Homer"],
-            resolved_correspondent="ADAC",
+            resolved_correspondent="Duff Insurance",
             resolved_type="Invoice",
         )
         assert evt["data"]["topics"] == ["Insurance", "Vehicle"]
         assert evt["data"]["persons"] == ["Homer"]
-        assert evt["data"]["correspondent"] == "ADAC"
+        assert evt["data"]["correspondent"] == "Duff Insurance"
         assert evt["data"]["document_type"] == "Invoice"
 
     def test_includes_paperless_url(self):

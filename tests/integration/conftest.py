@@ -188,7 +188,7 @@ def sample_invoice_pdf(scope) -> bytes:
     img = Image.new("RGB", (1200, 1600), "white")
     draw = ImageDraw.Draw(img)
     draw.text((80, 80),
-              "ADAC Autoversicherung\n\n"
+              "Duff Insurance Autoversicherung\n\n"
               "Kfz-Versicherung 2026\n"
               "Jahresbeitrag: EUR 340,00\n"
               "Versicherungsnehmer: Homer Simpson\n"

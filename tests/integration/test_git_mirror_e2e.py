@@ -76,7 +76,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     Scenario
     --------
     Given  the code stacklet is running and the archivist is configured
-    When   Homer uploads an ADAC invoice to #documents
+    When   Homer uploads an Duff Insurance invoice to #documents
     Then   Paperless has the classified document
     And    Forgejo has a mirror file at family/documents/YYYY/MM/<slug>-p<id>.md
     And    the file's frontmatter carries the full classification
@@ -87,9 +87,9 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     bdd.scenario("Archivist mirrors a classified document to Forgejo")
 
     # ── Given ────────────────────────────────────────────────────────
-    expected_title = scope.tag("ADAC - Kfz-Versicherung 2026")
+    expected_title = scope.tag("Duff Insurance - Kfz-Versicherung 2026")
     expected_topic = scope.tag("Insurance")
-    expected_correspondent = scope.tag("ADAC")
+    expected_correspondent = scope.tag("Duff Insurance")
     expected_date = "2026-03-15"
 
     bdd.given("the code (Forgejo) stacklet is reachable")
@@ -109,11 +109,11 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
         "correspondent": expected_correspondent,
         "document_type": "Invoice",
         "date": expected_date,
-        "summary": "Annual car insurance renewal at ADAC. EUR 340/year.",
+        "summary": "Annual car insurance renewal at Duff Insurance. EUR 340/year.",
         "facts": ["EUR 340.00/year", "Contract KFZ-2026-000123"],
         "action_items": [{"action": "Pay by 2026-03-15", "due": expected_date}],
     })
-    reformatted = f"# {expected_title}\n\nADAC — EUR 340/year. Contract KFZ-2026-000123."
+    reformatted = f"# {expected_title}\n\nDuff Insurance — EUR 340/year. Contract KFZ-2026-000123."
     stub_reformat(openai, reformatted)
 
     # ── When ─────────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     bdd.ok(f"processing={fm['processing']} correspondent={fm['correspondent']}")
 
     bdd.and_("the body contains the AI-reformatted content")
-    assert "ADAC — EUR 340/year" in body, f"body missing reformatted text: {body[:200]!r}"
+    assert "Duff Insurance — EUR 340/year" in body, f"body missing reformatted text: {body[:200]!r}"
     bdd.ok(f"body length = {len(body)} chars")
 
     # ── Then: commit carries the Paperless-Id trailer ───────────────

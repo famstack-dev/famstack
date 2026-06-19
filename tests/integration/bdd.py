@@ -9,7 +9,7 @@ so the protocol tells the story:
     [12:04:01.345] GIVEN     OpenAI mock stubbed for classify + reformat
     [12:04:01.580] WHEN      Homer uploads invoice.pdf (1.2 KB)
     [12:04:02.120]   .       room event sent: $abc123
-    [12:04:12.345] THEN      Paperless has a document titled 'ADAC - Kfz…'
+    [12:04:12.345] THEN      Paperless has a document titled 'Duff Insurance - Kfz…'
     [12:04:12.500]   ✓       id=17, tags=['Insurance', 'Person: Homer']
 
 Use `-s` with pytest to stream this live. On failure, the last N lines

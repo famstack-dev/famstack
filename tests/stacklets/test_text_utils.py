@@ -43,7 +43,7 @@ class TestCleanFilename:
         assert clean_filename("a1b2c3d4-e5f6-7890-abcd-ef12345678901.pdf") == "document.pdf"
 
     def test_non_noise_filename_preserved(self):
-        assert clean_filename("Rechnung_ADAC_Marz2025.pdf") == "Rechnung_ADAC_Marz2025.pdf"
+        assert clean_filename("Rechnung_Duff Insurance_Marz2025.pdf") == "Rechnung_Duff Insurance_Marz2025.pdf"
 
     def test_heic_image(self):
         # Non-UUID filename: preserved as-is

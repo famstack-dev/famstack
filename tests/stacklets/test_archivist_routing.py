@@ -98,7 +98,7 @@ class TestIsDocumentsRoom:
     def test_room_with_other_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
         room = _room(
-            canonical_alias="#arthur-notes:server",
+            canonical_alias="#homer-notes:server",
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
@@ -323,18 +323,18 @@ class TestStripReplyFallback:
     def test_strips_single_line_quoted_fallback(self):
         from archivist import _strip_reply_fallback
         body = (
-            "> <@bot:test.local> Filed: ADAC Kfz-Versicherung (#42)\n"
+            "> <@bot:test.local> Filed: Duff Insurance Kfz-Versicherung (#42)\n"
             "\n"
-            "this is for Sabrina, not Homer"
+            "this is for Marge, not Homer"
         )
-        assert _strip_reply_fallback(body) == "this is for Sabrina, not Homer"
+        assert _strip_reply_fallback(body) == "this is for Marge, not Homer"
 
     def test_strips_multi_line_quoted_fallback(self):
         from archivist import _strip_reply_fallback
         body = (
-            "> <@bot:test.local> Filed: ADAC (#42)\n"
+            "> <@bot:test.local> Filed: Duff Insurance (#42)\n"
             "> \n"
-            "> Insurance | Homer | Invoice | ADAC | 2026-03-15\n"
+            "> Insurance | Homer | Invoice | Duff Insurance | 2026-03-15\n"
             "\n"
             "wrong year, it's actually 2025"
         )

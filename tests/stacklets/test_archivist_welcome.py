@@ -100,7 +100,7 @@ class TestWelcomeKindFor:
         room = _room(
             name="Thema: Camping",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         assert bot._welcome_kind_for(room, ctx) == "topic"
@@ -110,14 +110,14 @@ class TestWelcomeKindFor:
         room = _room(
             name="Documents",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         assert bot._welcome_kind_for(room, ctx) == "documents"
 
     def test_dm_falls_back_to_personal(self, tmp_path):
         bot = _bot(tmp_path)
-        room = _room(name="DM", members=[BOT_ID, "@arthur:server"])
+        room = _room(name="DM", members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
         assert bot._welcome_kind_for(room, ctx) == "personal"
 
@@ -125,7 +125,7 @@ class TestWelcomeKindFor:
         bot = _bot(tmp_path)
         room = _room(
             name="Family Chat",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         assert bot._welcome_kind_for(room, ctx) == "capture"
@@ -134,7 +134,7 @@ class TestWelcomeKindFor:
         bot = _bot(tmp_path)
         room = _room(
             name="Topic: Photography",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         assert bot._welcome_kind_for(room, ctx) == "topic"
@@ -153,7 +153,7 @@ class TestWelcomeTextFor:
         bot = _bot(tmp_path)
         room = _room(
             name="Thema: Van Life",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         text = bot._welcome_text_for(room, ctx)
@@ -167,7 +167,7 @@ class TestWelcomeTextFor:
         bot = _bot(tmp_path)
         room = _room(
             name="Thema: Camping",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         text = bot._welcome_text_for(room, ctx)
@@ -180,11 +180,11 @@ class TestWelcomeTextFor:
         bot = _bot(tmp_path)
         room = _room(
             name="Thema: Gravel",
-            members=[BOT_ID, "@arthur:server"],
+            members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
         text = bot._welcome_text_for(room, ctx)
-        assert "arthur/gravel" in text
+        assert "homer/gravel" in text
 
     def test_documents_welcome_carries_paperless_url(self, tmp_path):
         """The documents welcome ends with a link the user can click
@@ -194,7 +194,7 @@ class TestWelcomeTextFor:
         room = _room(
             name="Documents",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         text = bot._welcome_text_for(room, ctx)
@@ -202,7 +202,7 @@ class TestWelcomeTextFor:
 
     def test_personal_welcome_renders(self, tmp_path):
         bot = _bot(tmp_path)
-        room = _room(name="DM", members=[BOT_ID, "@arthur:server"])
+        room = _room(name="DM", members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
         text = bot._welcome_text_for(room, ctx)
         # Variant-specific marker: the DM-shaped welcome calls itself
@@ -216,7 +216,7 @@ class TestWelcomeTextFor:
         bot = _bot(tmp_path)
         room = _room(
             name="Family Chat",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         text = bot._welcome_text_for(room, ctx)
@@ -240,7 +240,7 @@ class TestWelcomeGate:
         room = _room(
             name="Documents",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
@@ -256,7 +256,7 @@ class TestWelcomeGate:
         room = _room(
             name="Documents",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
@@ -272,7 +272,7 @@ class TestWelcomeGate:
         room = _room(
             name="Documents",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
@@ -288,7 +288,7 @@ class TestWelcomeGate:
         bot = _bot(tmp_path, client=client)
         room = _room(
             name="Thema: Camping",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
@@ -305,7 +305,7 @@ class TestWelcomeGate:
         room = _room(
             name="Documents",
             canonical_alias="#documents:server",
-            members=[BOT_ID, "@arthur:server", "@marge:server"],
+            members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
         await bot._send_room_welcome_if_needed(room, ctx)
