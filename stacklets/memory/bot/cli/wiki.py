@@ -167,7 +167,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
     # ── Single-surface flags ──────────────────────────────────────────
     # `--topic camping` finds the (bucket, slug) match anywhere in the
-    # vault; ambiguity (both `family/camping/` and `arthur/camping/`)
+    # vault; ambiguity (both `family/camping/` and `homer/camping/`)
     # generates both pages -- they're genuinely separate topics.
     if single_topic:
         matched = [t for t in topics if t[1] == single_topic]

@@ -598,7 +598,7 @@ def wizard():
         write_users_toml(users)
 
     with Spinner("Writing secrets"):
-        # Default passwords match the user ID (e.g. arthur/arthur).
+        # Default passwords match the user ID (e.g. homer/homer).
         # Simple and frictionless for a local network setup. Users can
         # change their passwords in each service after first login.
         from .secrets import TomlSecretStore

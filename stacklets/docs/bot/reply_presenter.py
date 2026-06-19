@@ -39,11 +39,11 @@ def render_filing_reply(
 
     Layout, optimised for scanning in Element:
 
-        ✅ Filed: ADAC - Kfz-Versicherung (#10)
+        ✅ Filed: Duff Insurance - Kfz-Versicherung (#10)
 
-        Insurance | Homer | Invoice | ADAC | 2026-03-15
+        Insurance | Homer | Invoice | Duff Insurance | 2026-03-15
 
-        Annual car insurance renewal at ADAC.
+        Annual car insurance renewal at Duff Insurance.
 
         - EUR 340.00/year
 

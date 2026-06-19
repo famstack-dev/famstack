@@ -9,7 +9,7 @@ The first user with role=admin becomes the Immich admin (created via
 the one-time admin-sign-up endpoint). All other users are created as
 regular accounts through the admin API.
 
-Passwords default to the user's id (e.g. "arthur") unless overridden
+Passwords default to the user's id (e.g. "homer") unless overridden
 with a password field in users.toml. This is intentional — famstack
 runs on a local network, not the internet.
 """

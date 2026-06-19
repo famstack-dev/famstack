@@ -1,7 +1,7 @@
 """Prompt for the Matrix server name on first setup.
 
 The server name is permanent — it becomes part of every user ID
-(e.g. @arthur:familyname) and cannot be changed after Synapse starts.
+(e.g. @homer:familyname) and cannot be changed after Synapse starts.
 This hook explains the consequences and writes the choice to stack.toml.
 
 Runs before on_install. Only fires on first 'stack up messages'.
@@ -28,7 +28,7 @@ def run(ctx):
 
     section("Messages", "Family messaging and notification backbone")
     out("Every Matrix user ID includes the server name:")
-    out("  @arthur:familyname  ←  this part is permanent")
+    out("  @homer:familyname  ←  this part is permanent")
     nl()
     out("Pick something short and meaningful — your family name")
     out("works well. This cannot be changed later without starting")

@@ -6,7 +6,7 @@ bank, the kids' school, the insurance company, an online service.
 Pages live here, in the shared bucket's `correspondents/` folder
 (typically `family/correspondents/` — the slug is configurable via
 `stack.toml [core] shared_bucket`). The file stem is the
-correspondent's identifier (`adac.md`, `aok.md`). The frontmatter
+correspondent's identifier (`duff-insurance.md`, `springfield-mutual.md`). The frontmatter
 is the machine view — the archivist reads it on startup to
 canonicalize new correspondents before they hit Paperless.
 
@@ -24,16 +24,16 @@ Two things this layout buys us:
 ```markdown
 ---
 kind: correspondent
-canonical: ADAC
+canonical: Duff Insurance
 aliases:
-  - "ADAC Ortsverband Manzell"
-  - "ADAC Versicherung AG"
+  - "Duff Insurance Ortsverband Springfield"
+  - "Duff Insurance Versicherung AG"
 topics: [insurance, vehicle]
 address: "Hansastraße 19, 80686 München"
-website: "https://www.adac.de"
+website: "https://www.duff-insurance.example"
 ---
 
-# ADAC
+# Duff Insurance
 
 > Notes:
 > Hand-write anything here — kept across rebuilds.
@@ -43,8 +43,8 @@ website: "https://www.adac.de"
 [[insurance]], [[vehicle]]
 
 ## Documents
-- 2024-03-15 [[ADAC - Kfz-Versicherung 2024]]
-- 2025-03-12 [[ADAC - Kfz-Versicherung 2025]]
+- 2024-03-15 [[Duff Insurance - Kfz-Versicherung 2024]]
+- 2025-03-12 [[Duff Insurance - Kfz-Versicherung 2025]]
 <!-- end: generated -->
 ```
 

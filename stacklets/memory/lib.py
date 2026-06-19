@@ -276,19 +276,19 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 # Living outside `wiki/` keeps hand-curated correspondents safe from
 # the wiki-engine's regenerate pass.
 #
-# Example shape (family/correspondents/adac.md):
+# Example shape (family/correspondents/duff-insurance.md):
 #
 #     ---
 #     kind: correspondent
-#     canonical: ADAC
+#     canonical: Duff Insurance
 #     aliases:
-#       - "ADAC Ortsverband Manzell"
+#       - "Duff Insurance Ortsverband Springfield"
 #     topics: [insurance, vehicle]
 #     address: "Hansastraße 19, 80686 München"
-#     website: "https://www.adac.de"
+#     website: "https://www.duff-insurance.example"
 #     ---
 #
-#     # ADAC
+#     # Duff Insurance
 #     [free-form notes]
 #
 # `aliases` rolls up everything the classifier has seen as the
@@ -378,8 +378,8 @@ def correspondents_prompt_section(correspondents: List[Correspondent]) -> str:
     Output shape:
 
         Existing correspondents (canonical; aliases in parens):
-          - ADAC (ADAC Ortsverband Manzell, ADAC Versicherung AG)
-          - AOK
+          - Duff Insurance (Duff Insurance Ortsverband Springfield, Duff Insurance Versicherung AG)
+          - Springfield Mutual
           - Anthropic
 
     Returns an empty string when no correspondents are known yet —

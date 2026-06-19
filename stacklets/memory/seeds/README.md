@@ -18,12 +18,12 @@ family/                shared bucket (slug configurable via
                        the default)
   documents/           Paperless documents the archivist writes here
     YYYY/MM/
-      2026-05-15-adac-rechnung-p247.md
+      2026-05-15-duff-insurance-rechnung-p247.md
     _unfiled/          entries with no usable date
   correspondents/      hand-curated sender pages (banks, schools, ...)
     README.md          the shape and conventions
-    adac.md            one file per organization
-    aok.md
+    duff-insurance.md            one file per organization
+    springfield-mutual.md
 
 homer/                 personal entity bucket — one per family member
   notes/               pasted-text captures (Matrix `note` flow)
@@ -64,7 +64,7 @@ other entities.
 - One concept per file. Filename is the slug; canonical name lives
   in frontmatter.
 - Frontmatter is the machine view (Dataview-compatible plain values).
-- Wiki links (`[[ADAC]]`) belong in the body, not in frontmatter.
+- Wiki links (`[[Duff Insurance]]`) belong in the body, not in frontmatter.
 - Generated regions in correspondent pages are bracketed
   `<!-- begin: generated --> ... <!-- end: generated -->`; hand
   edits outside those brackets are preserved.

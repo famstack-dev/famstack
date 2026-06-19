@@ -76,12 +76,12 @@ def document_filepath(
         Vault-relative path string.
 
     Examples:
-        >>> document_filepath("family", "2025-03-27", 42, "ADAC - Kfz", True)
-        'family/documents/2025/03/2025-03-27-adac-kfz-p42.md'
+        >>> document_filepath("family", "2025-03-27", 42, "Duff Insurance - Kfz", True)
+        'family/documents/2025/03/2025-03-27-duff-insurance-kfz-p42.md'
         >>> document_filepath("family", "2025-03-27", 42, None, False)
         'family/documents/2025/03/2025-03-27-p42.md'
-        >>> document_filepath("family", None, 42, "ADAC - Kfz", True)
-        'family/documents/_unfiled/adac-kfz-p42.md'
+        >>> document_filepath("family", None, 42, "Duff Insurance - Kfz", True)
+        'family/documents/_unfiled/duff-insurance-kfz-p42.md'
         >>> document_filepath("family", None, 42, None, False)
         'family/documents/_unfiled/p42.md'
     """
@@ -335,7 +335,7 @@ def render_document(
 
       - YAML frontmatter (machine view: structured metadata)
       - H1 title
-      - entity-link header (``**From:** [ADAC](…) · **About:** [Homer](…)``)
+      - entity-link header (``**From:** [Duff Insurance](…) · **About:** [Homer](…)``)
         as relative markdown links, so they resolve in Obsidian, on
         GitHub/Forgejo, and as OKF graph edges.
       - **briefing callout** — ``> [!summary]`` with prose, optional

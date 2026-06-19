@@ -39,8 +39,8 @@ def slug(text: str) -> str:
     is hard at 60 chars; the title prompt keeps titles human-scannable,
     not the slug.
 
-    >>> slug("ADAC - Kfz-Versicherung 2025")
-    'adac-kfz-versicherung-2025'
+    >>> slug("Duff Insurance - Kfz-Versicherung 2025")
+    'duff-insurance-kfz-versicherung-2025'
     >>> slug("Rechnung Müller & Söhne")
     'rechnung-muller-sohne'
     >>> slug("  Leading Spaces  ")
@@ -91,8 +91,8 @@ def entity_page_path(name: str, kind: str, shared_bucket: str = DEFAULT_SHARED_B
 
     >>> entity_page_path("Homer Simpson", "person")
     'homer/about.md'
-    >>> entity_page_path("ADAC", "correspondent")
-    'family/correspondents/adac.md'
+    >>> entity_page_path("Duff Insurance", "correspondent")
+    'family/correspondents/duff-insurance.md'
     """
     if kind == "person":
         return f"{slugify_person(name)}/about.md"
@@ -116,8 +116,8 @@ def entity_relpath(
 
     >>> entity_relpath("Homer", "person", "family/documents/2026/03/x.md")
     '../../../../homer/about.md'
-    >>> entity_relpath("ADAC", "correspondent", "family/documents/2026/03/x.md")
-    '../../../correspondents/adac.md'
+    >>> entity_relpath("Duff Insurance", "correspondent", "family/documents/2026/03/x.md")
+    '../../../correspondents/duff-insurance.md'
     >>> entity_relpath("Homer", "person", "x.md")
     'homer/about.md'
     """
