@@ -114,6 +114,7 @@ class TestFrontmatter:
             processing="ai_formatted",
             model="qwen2.5:14b",
         )
+        assert fm["type"] == "document"
         assert fm["title"] == "ADAC Rechnung März 2026"
         assert fm["paperless_id"] == 247
         assert fm["processing"] == "ai_formatted"
@@ -121,8 +122,8 @@ class TestFrontmatter:
         assert fm["paperless_version"] == "2.14.5"
         assert fm["source"] == "paperless"
         assert fm["added"].endswith("Z")
-        # key order: title first, added last, key ordering reflects insertion
-        assert list(fm.keys())[0] == "title"
+        # key order: type first (OKF convention), added last; reflects insertion
+        assert list(fm.keys())[0] == "type"
         assert list(fm.keys())[-1] == "added"
 
     def test_ocr_omits_model(self, mirror):

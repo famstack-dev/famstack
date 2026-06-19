@@ -210,7 +210,10 @@ def document_frontmatter(
     """
     import datetime as dt
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    fm: dict = {"title": title}
+    # `type` is the OKF-required concept kind ("document"). It is a
+    # different axis from `document_type` (the Paperless subtype:
+    # invoice, contract); both coexist. First key per OKF convention.
+    fm: dict = {"type": "document", "title": title}
     if date:
         fm["date"] = date
     if correspondent:
@@ -284,7 +287,10 @@ def capture_frontmatter(
         .isoformat()
         .replace("+00:00", "Z")
     )
-    fm: dict = {"title": title, "kind": kind}
+    # `type` is the OKF-required concept kind and mirrors `kind`
+    # (note/bookmark). `kind` is retained for now; a later commit
+    # promotes it away once its readers move to `type`.
+    fm: dict = {"type": kind, "title": title, "kind": kind}
     if captured_at:
         fm["date"] = captured_at
     if persons:

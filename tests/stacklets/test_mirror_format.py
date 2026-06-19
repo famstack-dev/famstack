@@ -204,10 +204,11 @@ class TestDocumentFrontmatter:
             processing="ai_formatted",
             model="mlx-model",
         )
+        assert fm["type"] == "document"  # OKF concept kind
         assert fm["title"] == "ADAC - Kfz-Versicherung"
         assert fm["date"] == "2025-03-27"
         assert fm["correspondent"] == "ADAC"
-        assert fm["document_type"] == "Invoice"
+        assert fm["document_type"] == "Invoice"  # Paperless subtype, separate axis
         assert fm["category"] == "Insurance"
         assert fm["persons"] == ["Homer"]
         assert fm["tags"] == ["Insurance", "Vehicle"]
@@ -232,6 +233,7 @@ class TestDocumentFrontmatter:
             processing="ocr",
             model=None,
         )
+        assert fm["type"] == "document"
         assert fm["title"] == "Untitled"
         assert "date" not in fm
         assert "correspondent" not in fm
@@ -270,6 +272,7 @@ class TestCaptureFrontmatter:
             model="mlx-model",
         )
         assert fm["title"] == "Reddit Thread"
+        assert fm["type"] == "bookmark"  # OKF concept kind, mirrors kind
         assert fm["kind"] == "bookmark"
         assert fm["date"] == "2025-03-27"
         assert fm["source_uri"] == "https://reddit.com/r/famstack/..."
@@ -293,6 +296,7 @@ class TestCaptureFrontmatter:
             tags=[],
             model=None,
         )
+        assert fm["type"] == "note"
         assert fm["kind"] == "note"
         assert "source_uri" not in fm
         assert "model" not in fm
