@@ -21,7 +21,12 @@ import pytest
 _BOT_DIR = Path(__file__).resolve().parent.parent.parent / "stacklets" / "docs" / "bot"
 sys.path.insert(0, str(_BOT_DIR))
 
-from extractors import SourceContent, TextExtractor, UrlExtractor  # noqa: E402
+from extractors import (  # noqa: E402
+    SourceContent,
+    TextExtractor,
+    UrlExtractor,
+    email_to_source,
+)
 
 
 # ── Fixture HTML ─────────────────────────────────────────────────────────
@@ -271,3 +276,38 @@ class TestTextExtractor:
         content = await TextExtractor().extract(body)
         assert "https://example.com/x" in content.text
         assert content.source_uri == "https://example.com/x"
+
+
+# ── Email mapping ──────────────────────────────────────────────────────────
+
+class TestEmailToSource:
+    """`email_to_source` maps fetched email parts into SourceContent.
+
+    Pure mapping, no I/O — the himalaya container already fetched the
+    message. The Message-ID becomes an RFC 2392 `mid:` pointer for dedupe
+    and reprocess."""
+
+    def test_maps_subject_body_and_message_id(self):
+        s = email_to_source(
+            subject="Elternabend am Freitag",
+            body="Bitte Formular zurücksenden.",
+            message_id="<abc123@school.example>",
+        )
+        assert isinstance(s, SourceContent)
+        assert s.text == "Bitte Formular zurücksenden."
+        assert s.title_hint == "Elternabend am Freitag"
+        assert s.source_uri == "mid:abc123@school.example"
+
+    def test_strips_angle_brackets_from_message_id(self):
+        s = email_to_source(subject="x", body="y", message_id="  <id@h>  ")
+        assert s.source_uri == "mid:id@h"
+
+    def test_blank_subject_is_none(self):
+        s = email_to_source(subject="   ", body="y", message_id="<i@h>")
+        assert s.title_hint is None
+
+    def test_missing_message_id_has_no_source_uri(self):
+        s = email_to_source(subject="x", body="y", message_id=None)
+        assert s.source_uri is None
+        s2 = email_to_source(subject="x", body="y", message_id="")
+        assert s2.source_uri is None

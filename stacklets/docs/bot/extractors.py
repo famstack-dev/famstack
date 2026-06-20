@@ -214,3 +214,31 @@ class TextExtractor:
                 continue
             return line[: self._TITLE_HINT_MAX]
         return None
+
+
+# ── Email ────────────────────────────────────────────────────────────────
+#
+# Email is just another source. The `mail` container's himalaya has already
+# fetched the message; this is the pure mapping from its parts into the
+# classifier's `SourceContent`. No fetching, no I/O — fully testable on its
+# own, and the seam ADR-010 wants every new source to slot into.
+
+def email_to_source(
+    *, subject: str | None, body: str, message_id: str | None = None,
+) -> SourceContent:
+    """Map a fetched email into a `SourceContent`.
+
+    The body is the text the classifier reads; the subject is the title
+    hint; the RFC822 Message-ID becomes the canonical pointer as an
+    RFC 2392 ``mid:`` URI — the stable key for dedupe and reprocess.
+    Angle brackets around the Message-ID are stripped; a blank subject or
+    a missing Message-ID collapse to ``None`` so a Dataview `where resource`
+    filters cleanly, same convention as the other capture sources.
+    """
+    mid = (message_id or "").strip().strip("<>").strip()
+    return SourceContent(
+        text=body,
+        mime="text/plain",
+        title_hint=(subject or "").strip() or None,
+        source_uri=f"mid:{mid}" if mid else None,
+    )

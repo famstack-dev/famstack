@@ -1128,3 +1128,36 @@ class TestTopicSeedEndToEnd:
         assert "camping" in envelope_tags
 
 
+
+
+class TestCaptureEmail:
+    """Email is one more capture source: body → text, subject → title,
+    Message-ID → `mid:` pointer, filed as an `email`-kind capture through
+    the same pipeline as URLs and notes. Slice A1 of the email feature."""
+
+    @pytest.mark.asyncio
+    async def test_files_email_as_email_kind_capture(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_email(
+            subject="Elternabend am Freitag",
+            body="Bitte das Formular bis Freitag zurücksenden.",
+            message_id="<abc123@school.example>",
+            sender_mxid="@homer:s",
+            from_addr="schule@example.org",
+        )
+        assert out.status == "captured"
+        cap = mirror.captures[0]
+        assert cap["kind"] == "email"
+        assert cap["source_uri"] == "mid:abc123@school.example"
+        assert cap["title_hint"] == "Elternabend am Freitag"
+
+    @pytest.mark.asyncio
+    async def test_empty_body_is_empty_outcome(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_email(
+            subject="x", body="   ", message_id="<i@h>", sender_mxid="@homer:s",
+        )
+        assert out.status == "empty"
+        assert mirror.captures == []

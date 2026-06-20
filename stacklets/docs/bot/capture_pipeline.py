@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from loguru import logger
 
 from document_pipeline import utc_now_isoformat
-from extractors import SourceContent
+from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from notifier import Notifier
 from pdf_analysis import (
@@ -217,6 +217,40 @@ class CapturePipeline:
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket,
+        )
+
+    async def capture_email(
+        self, *,
+        subject: str | None,
+        body: str,
+        message_id: str | None,
+        sender_mxid: str,
+        from_addr: str | None = None,
+        bucket: str | None = None,
+        capture_id: str | None = None,
+        seed_topics: list[str] | None = None,
+    ) -> CaptureOutcome:
+        """File a fetched email as an `email`-kind capture.
+
+        Reuses the capture pipeline wholesale: the body is the source the
+        classifier reads, the subject the title, the Message-ID the
+        dedupe/reprocess pointer (an RFC 2392 ``mid:`` URI). `from_addr`
+        (the sender) is surfaced to the classifier as a hint so it can
+        resolve the correspondent. Routing — which bucket, which room — is
+        the caller's job; here we just file. The `mail` container's
+        himalaya did the fetch; this is the in-pipeline handoff.
+        """
+        source = email_to_source(
+            subject=subject, body=body, message_id=message_id,
+        )
+        if not source.text.strip():
+            return CaptureOutcome(status="empty")
+        user_hint = f"This is an email from {from_addr}." if from_addr else None
+        return await self._publish(
+            source=source, kind="email", sender_mxid=sender_mxid,
+            display_link=source.source_uri or "(email)",
+            user_hint=user_hint, actor=sender_mxid,
+            capture_id=capture_id, bucket=bucket, seed_topics=seed_topics,
         )
 
     async def capture_voice_batch(
