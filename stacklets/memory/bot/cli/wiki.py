@@ -10,6 +10,13 @@ and asks the LLM to compose the browsable pages a family lands on:
     stack memory wiki --topics          every topic page, no home/members
     stack memory wiki --dry-run         preview to stdout, no writes
 
+`--member` and `--topic` repeat and combine with `--home`: any
+selection flag switches from the full sweep to "generate exactly this
+set" — one invocation covers every page a filing burst touched (the
+curator's incremental path). Member values take a slug or a display
+name ("Homer Simpson" hits homer's bucket); unknown slugs warn and
+skip, and the run fails only when nothing in the selection matched.
+
 Pages are published to the memory repo on Forgejo, where the wiki
 container picks them up within seconds. The wiki is Quartz, which
 renders `index.md` as the landing page for the site (vault-root
@@ -69,6 +76,19 @@ _BRANCH = "main"
 _TOKEN_NAME = "stack-memory-wiki-cli"
 _TOKEN_SCOPES = ["write:repository", "read:repository"]
 
+# Subject prefix of every commit this command pushes. The curator's
+# poll loop filters on it so the wiki's own publishes never trigger
+# another rebuild — change it and that loop comes back.
+COMMIT_PREFIX = "docs(memory): refresh"
+
+# Decoding temperature for page generation. Sampling turns every
+# rebuild into a dice roll: the same evidence produced visibly
+# different pages run to run (observed live 2026-06-11 — a rich facts
+# list vanished on a one-note evidence change). Default 0 (greedy) so
+# a page is a near-deterministic function of its evidence; the env
+# override exists for experiments and unusual models.
+_TEMPERATURE = float(os.environ.get("WIKI_TEMPERATURE", "0.0"))
+
 # Bracketed regenerate markers. Match the correspondent-page convention
 # verbatim so the same human contract holds across every generated page:
 # edits outside the brackets are preserved, inside is ours to rewrite.
@@ -123,11 +143,11 @@ def _extract_citations(text: str) -> list[int]:
 
 async def run(llm: LLM, argv: list[str]) -> int:
     dry_run = "--dry-run" in argv
-    home_only = "--home" in argv
+    home_sel = "--home" in argv
     topics_only = "--topics" in argv
-    single_member = _arg_value(argv, "--member")
-    single_topic = _arg_value(argv, "--topic")
-    single_correspondent = _arg_value(argv, "--correspondent")
+    members_sel = _arg_values(argv, "--member")
+    topics_sel = _arg_values(argv, "--topic")
+    correspondents_sel = _arg_values(argv, "--correspondent")
 
     vault_dir = os.environ.get("MEMORY_VAULT_DIR", "")
     if not vault_dir:
@@ -165,73 +185,109 @@ async def run(llm: LLM, argv: list[str]) -> int:
         vault, shared_bucket=shared_bucket, member_slugs=roster,
     )
 
-    # ── Single-surface flags ──────────────────────────────────────────
-    # `--topic camping` finds the (bucket, slug) match anywhere in the
-    # vault; ambiguity (both `family/camping/` and `homer/camping/`)
-    # generates both pages -- they're genuinely separate topics.
-    if single_topic:
-        matched = [t for t in topics if t[1] == single_topic]
-        if not matched:
-            _err(f"no topic folder found with slug '{single_topic}'")
-            return 1
-        rc = 0
-        for bucket_prefix, topic_slug in matched:
-            sub_rc = await _generate_topic(
+    # ── Selection mode ────────────────────────────────────────────────
+    # Any selection flag (--home, --member, --topic, --topics,
+    # --correspondent) switches from the full sweep to "generate exactly
+    # this set". Flags combine and --member/--topic/--correspondent repeat,
+    # so the curator's incremental rebuild covers every page a filing burst
+    # touched in one invocation. Member values are normalized through
+    # `slugify_person`, the same mapping the index uses, so display names
+    # and slugs both land on the bucket. Unknown selections warn and skip —
+    # an auto-run fed a name with no match must not sink the batch — and the
+    # run fails only when NOTHING in the selection matched.
+    if home_sel or topics_only or members_sel or topics_sel or correspondents_sel:
+        generated = 0
+
+        if home_sel:
+            rc = await _generate_home(
+                llm, index, roster=roster,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            )
+            if rc == 0:
+                generated += 1
+
+        member_slugs: list[str] = []
+        for raw in members_sel:
+            slug = slugify_person(raw)
+            if slug and slug not in member_slugs:
+                member_slugs.append(slug)
+        for slug in member_slugs:
+            if slug not in roster:
+                _err(f"no member bucket for '{slug}' — skipping")
+                continue
+            rc = await _generate_member(
+                llm, slug, index, vault,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            )
+            if rc == 0:
+                generated += 1
+
+        # Correspondents match by canonical name or slug against the roster
+        # discovered from document frontmatter.
+        if correspondents_sel:
+            roster_c = _correspondent_roster(index)
+            for raw in correspondents_sel:
+                matched = [(s, c) for (s, c) in roster_c if raw in (c, s)]
+                if not matched:
+                    _err(f"no correspondent named '{raw}' in documents — skipping")
+                    continue
+                for s, c in matched:
+                    rc = await _generate_correspondent(
+                        s, c, index,
+                        shared_bucket=shared_bucket, write=not dry_run,
+                    )
+                    if rc == 0:
+                        generated += 1
+
+        # `--topic camping` matches anywhere in the vault; ambiguity
+        # (both `family/camping/` and `homer/camping/`) generates both
+        # pages -- they're genuinely separate topics.
+        if topics_only:
+            topic_set = topics
+        else:
+            wanted = set(topics_sel)
+            known = {slug for _, slug in topics}
+            for t_slug in sorted(wanted - known):
+                _err(f"no topic folder found with slug '{t_slug}' — skipping")
+            topic_set = [t for t in topics if t[1] in wanted]
+        for bucket_prefix, topic_slug in topic_set:
+            rc = await _generate_topic(
                 llm, bucket_prefix, topic_slug, index,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
-            rc = sub_rc if sub_rc else rc
-        return rc
+            if rc == 0:
+                generated += 1
 
-    if single_member:
-        return await _generate_member(
-            llm, single_member, index, vault,
-            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-        )
-
-    if single_correspondent:
-        matched = [
-            (s, c) for (s, c) in _correspondent_roster(index)
-            if single_correspondent in (c, s)
-        ]
-        if not matched:
-            _err(f"no correspondent named '{single_correspondent}' in documents")
+        if generated == 0:
+            _err("nothing generated — no page in the selection matched")
             return 1
-        rc = 0
-        for s, c in matched:
-            sub_rc = await _generate_correspondent(
-                s, c, index, shared_bucket=shared_bucket, write=not dry_run,
-            )
-            rc = sub_rc if sub_rc else rc
-        return rc
+        return 0
 
     # ── Default loop ──────────────────────────────────────────────────
-    # `--topics` skips home + members; otherwise we cover home, every
-    # member, and every topic in turn.
-    if not topics_only:
-        rc = await _generate_home(
-            llm, index, roster=roster,
+    # Bare invocation: home, every member, every correspondent, every topic.
+    rc = await _generate_home(
+        llm, index, roster=roster,
+        shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+    )
+    if rc != 0:
+        return rc
+
+    # A member with no content is skipped (not an error) so one
+    # empty bucket doesn't sink the whole run. `_generate_member`
+    # returns 1 for skipped-empty, which we deliberately swallow
+    # here -- the overall run still succeeds.
+    for member_slug in roster:
+        await _generate_member(
+            llm, member_slug, index, vault,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
-        if rc != 0 or home_only:
-            return rc
 
-        # A member with no content is skipped (not an error) so one
-        # empty bucket doesn't sink the whole run. `_generate_member`
-        # returns 1 for skipped-empty, which we deliberately swallow
-        # here -- the overall run still succeeds.
-        for member_slug in roster:
-            await _generate_member(
-                llm, member_slug, index, vault,
-                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-            )
-
-        # Correspondent leaf pages, one per name across all documents.
-        for corr_slug, canonical in _correspondent_roster(index):
-            await _generate_correspondent(
-                corr_slug, canonical, index,
-                shared_bucket=shared_bucket, write=not dry_run,
-            )
+    # Correspondent leaf pages, one per name across all documents.
+    for corr_slug, canonical in _correspondent_roster(index):
+        await _generate_correspondent(
+            corr_slug, canonical, index,
+            shared_bucket=shared_bucket, write=not dry_run,
+        )
 
     for bucket_prefix, topic_slug in topics:
         await _generate_topic(
@@ -239,7 +295,6 @@ async def run(llm: LLM, argv: list[str]) -> int:
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
     return 0
-
 
 # ── Generation ───────────────────────────────────────────────────────────
 
@@ -256,7 +311,7 @@ async def _generate_home(
     """
     prompt = _build_home_prompt(index, roster=roster, lang=lang)
     try:
-        page = (await llm.complete("overview", prompt)).strip()
+        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
@@ -273,7 +328,7 @@ async def _generate_home(
         return 0
     return await _publish(
         page, target_path="index.md", shared_bucket=shared_bucket,
-        commit_msg="docs(memory): refresh the family wiki home page",
+        commit_msg=f"{COMMIT_PREFIX} the family wiki home page",
         # Only used if the seed's root index.md is somehow missing;
         # otherwise the seed already carries this frontmatter.
         default_preamble="---\ntitle: Family Memory\n---",
@@ -292,9 +347,39 @@ async def _generate_member(
 
     display = slug.capitalize()
     facts = _load_facts(vault, slug)
-    prompt = _build_member_prompt(display, slug, entries, facts, lang=lang)
+
+    # Anchored regen: renumber the existing page's citations to the
+    # current evidence order, and name what's new since that page was
+    # generated. Both jobs are mechanical here so the model carries
+    # neither (it fails silently at both — see _previous_generated).
+    previous, prev_refs = _previous_generated(vault / slug / "about.md")
+    new_evidence: list[str] = []
+    if previous:
+        link_to_n = {
+            _relative_link(e["rel"], slug): n
+            for n, e in enumerate(entries, start=1)
+            if e.get("rel")
+        }
+        remap = {
+            old: link_to_n[link]
+            for link, old in prev_refs.items()
+            if link in link_to_n
+        }
+        previous = _renumber_citations(previous, remap)
+        for n, e in enumerate(entries, start=1):
+            link = _relative_link(e.get("rel") or "", slug)
+            if link not in prev_refs:
+                meta = " · ".join(
+                    x for x in (e.get("date"), e.get("title")) if x
+                )
+                new_evidence.append(f"[{n}] {meta}")
+
+    prompt = _build_member_prompt(
+        display, slug, entries, facts, lang=lang,
+        previous=previous, new_evidence=new_evidence,
+    )
     try:
-        page = (await llm.complete("overview", prompt)).strip()
+        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
@@ -308,7 +393,7 @@ async def _generate_member(
         return 0
     return await _publish(
         page, target_path=f"{slug}/about.md", shared_bucket=shared_bucket,
-        commit_msg=f"docs(memory): refresh {slug}'s wiki page",
+        commit_msg=f"{COMMIT_PREFIX} {slug}'s wiki page",
         # First-creation frontmatter seeds the person entity registry on
         # the page itself: `canonical` is the longest synonym (usually
         # the formal first name when the family also uses a nickname),
@@ -352,7 +437,7 @@ async def _generate_topic(
         display, topic_slug, scope, entries, cross_refs, lang=lang,
     )
     try:
-        page = (await llm.complete("overview", prompt)).strip()
+        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
@@ -371,7 +456,7 @@ async def _generate_topic(
         target_path=f"{page_dir}/about.md",
         shared_bucket=shared_bucket,
         commit_msg=(
-            f"docs(memory): refresh {bucket_prefix}/{topic_slug} topic page"
+            f"{COMMIT_PREFIX} {bucket_prefix}/{topic_slug} topic page"
         ),
         default_preamble=_topic_preamble(topic_slug, display, scope),
     )
@@ -818,6 +903,55 @@ def _relative_link(rel: str, page_dir: str) -> str:
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
 
+def _previous_generated(page_path: Path) -> tuple[str, dict[str, int]]:
+    """The current generated body of a page, for prompt anchoring.
+
+    Returns ``(body, refs)``: the content between the regenerate
+    markers with the rendered References section stripped, and the
+    reference map that section carried (link path → citation number).
+    The map lets the caller renumber the baseline's citations to the
+    CURRENT evidence order before prompting — new evidence shifts the
+    numbering, and a model asked to renumber silently doesn't
+    (measured 2026-06-12: byte-identical body over a shifted
+    references block — every citation pointing at the wrong source).
+    ``("", {})`` when the page doesn't exist yet.
+    """
+    try:
+        text = page_path.read_text(encoding="utf-8")
+    except OSError:
+        return "", {}
+    start = text.find(_BEGIN)
+    end = text.find(_END)
+    if start == -1 or end == -1 or end <= start:
+        return "", {}
+    body = text[start + len(_BEGIN):end].strip()
+    refs_map = {
+        m.group(2): int(m.group(1))
+        for m in re.finditer(
+            r"^- \[(\d+)\] \[[^\]]*\]\(([^)]+)\)", body, re.M,
+        )
+    }
+    refs = body.find("## References")
+    if refs != -1:
+        body = body[:refs].rstrip()
+    return body, refs_map
+
+
+def _renumber_citations(text: str, remap: dict[int, int]) -> str:
+    """Rewrite every ``[N]``/``[N, M]`` citation through ``remap``.
+
+    Numbers without a mapping pass through unchanged (evidence that
+    vanished from the index; the prompt tells the model to drop those
+    lines). Single-pass over citation groups, so chained renumbering
+    (1→2 while 2→3) cannot double-apply.
+    """
+    def _sub(m: re.Match) -> str:
+        nums = [int(x) for x in re.split(r",\s*", m.group(1))]
+        return "[" + ", ".join(str(remap.get(n, n)) for n in nums) + "]"
+
+    return re.sub(r"\[(\d+(?:,\s*\d+)*)\]", _sub, text)
+
+
 def _splice_generated(existing: str, generated: str, *,
                       default_preamble: str = "") -> str:
     """Place `generated` inside the regenerate region of `existing`.
@@ -912,13 +1046,13 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
 
 # ── Arg helpers ──────────────────────────────────────────────────────────
 
-def _arg_value(argv: list[str], flag: str) -> str | None:
-    """Value following `flag` in argv, or None if the flag is absent."""
-    if flag in argv:
-        i = argv.index(flag)
-        if i + 1 < len(argv):
-            return argv[i + 1]
-    return None
+def _arg_values(argv: list[str], flag: str) -> list[str]:
+    """Every value following an occurrence of `flag`, in argv order."""
+    out: list[str] = []
+    for i, arg in enumerate(argv):
+        if arg == flag and i + 1 < len(argv):
+            out.append(argv[i + 1])
+    return out
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────
@@ -980,10 +1114,10 @@ Relatives outside the household who appear in the documents: parents, in-laws, g
 Two or three lines about the dwelling itself: ownership/rental, year acquired or moved in, anything structurally noted (mortgage, deed). Skip if nothing on record.
 
 ## Real Estate
-Other properties owned (rentals, second homes, plots). One bullet per property. Write "(no information on file)" if nothing on record.
+Other properties owned (rentals, second homes, plots). One bullet per property.
 
 ## Vehicles
-One bullet per vehicle: year, make/model, owner. Write "(no information on file)" if nothing.
+One bullet per vehicle: year, make/model, owner.
 
 ## Insurance
 One bullet per policy: name / provider — what it covers — owner.
@@ -1000,7 +1134,7 @@ Rules:
 - The H1 is the family surname prefixed with "The" (e.g. "# The Simpsons"). Pick the surname most frequently associated with household members; if multiple appear (blended family), use the dominant one.
 - The blockquote line below the H1 is the current primary address. Omit the blockquote entirely if no address is on file.
 - Respond in: {lang}.
-- Use ONLY what the source summaries support. If a section has no source material, write "(no information on file)" — never invent.
+- Use ONLY what the source summaries support. A section with no source material is omitted entirely — never invent, never write placeholder lines.
 - Cite the document that established each fact as [N] inline. Multiple sources: [1, 3].
 - Keep entries dense and skimmable. One bullet per member; one bullet per item elsewhere.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
@@ -1010,12 +1144,22 @@ Rules:
 def _build_member_prompt(
     display: str, slug: str, entries: list[dict],
     facts: list[tuple[str, str]], *, lang: str,
+    previous: str = "", new_evidence: list[str] | None = None,
 ) -> str:
-    """Prompt for one member's page: their slice of summaries plus facts.
+    """Prompt for one member's profile card: summaries plus facts.
 
-    Curated facts ride in as ground truth (the family typed them); the
-    document summaries are the cited evidence. Section layout is fixed
-    for the same reason the home page's is.
+    The page is a curated overview for assistants and browsing family,
+    not an archive (docs/design/brain/wiki-page-anatomy.md): recency-
+    weighted About, themed interests, capped activity, no ledger
+    content. Curated facts ride in as ground truth (the family typed
+    them); the document summaries are the cited evidence. Section
+    layout is fixed for the same reason the home page's is.
+
+    ``previous`` is the page's current generated body (sans rendered
+    references): with it the prompt anchors the regen to the existing
+    wording so a new document produces a reviewable diff instead of a
+    full resample — temp 0 alone does NOT give that (evidence+1 changes
+    the input, and everything redraws; measured 2026-06-12).
 
     The evidence slice is shared by design: Lisa's birth certificate is
     on Lisa's page AND describes her parents. Small models conflate
@@ -1034,7 +1178,36 @@ def _build_member_prompt(
     else:
         facts_block = f"No hand-curated facts on file for {display}."
 
-    return f"""You are composing the personal page for one member of a family's private, self-hosted memory wiki. The page is the landing page when someone opens this person's folder in the wiki. The vault is private — identifying details are fine to include.
+    if previous:
+        if new_evidence:
+            fresh = "\n".join(new_evidence)
+            fresh_block = (
+                "NEW since the baseline (not yet on the page) — work it "
+                "into the right sections, citing its [N]:\n" + fresh
+            )
+        else:
+            fresh_block = (
+                "Nothing is new since the baseline — reproduce it, "
+                "applying corrections only where it contradicts the "
+                "evidence above."
+            )
+        anchor_block = f"""
+The page already exists. Its current version is below — treat it as the baseline, not as something to rewrite:
+- Keep its wording, section names, themes, and bullet order EXACTLY wherever the evidence still supports them.
+- The baseline's [N] citations already match the evidence numbering above. Do not change them.
+- Touch existing lines only where new evidence forces it (e.g. the Recent Activity cap pushing out the oldest entry).
+- Drop a line only when its evidence no longer appears above.
+- Never rephrase, restyle, or reorganize anything else.
+
+{fresh_block}
+
+CURRENT PAGE (baseline):
+{previous}
+"""
+    else:
+        anchor_block = ""
+
+    return f"""You are composing the profile page for one member of a family's private, self-hosted memory wiki. It is an OVERVIEW, not an archive: the card a family member (or the family's assistant) reads to get a feel for who this person is right now — their role, their current life, their interests and quirks. Detail lives in the cited documents, one click away.
 
 This page is about: {display} (vault slug: {slug}).
 
@@ -1043,36 +1216,33 @@ This page is about: {display} (vault slug: {slug}).
 Source summaries involving {display} (cite as [N] inline where the fact came from a specific document):
 
 {evidence}
-
-Produce a markdown page with this EXACT structure and section order:
+{anchor_block}
+Produce a markdown page with this EXACT structure and section order (omit a section entirely when nothing supports it):
 
 # {display}
 > <one short line: who they are in the family, only if a source states it explicitly — omit the blockquote otherwise>
 
 ## About
-One short paragraph: {display}'s own role, occupation or school, and defining details — only what the documents and facts state about {display} personally. [N]
+One short paragraph: who {display} is TODAY — role in the family, occupation or school, current life context. When sources span years, prefer the most recent picture; old contracts and certificates are background, not news. [N]
 
-## Facts & Preferences
-Bullet the hand-curated facts above (rules, habits, preferences, goals), one per line. Write "(none on file)" if there are none.
+## Interests & Preferences
+Themed bullets that give a feel for the person: hobbies, habits, favorite places, pets, preferences, quirks. Merge the hand-curated facts above with what the documents reveal (a league membership, a regular haunt). Format: **<Theme>:** <detail>. [N]
 
 ## Recent Activity
-The most recent notes, bookmarks, and documents involving them, newest first. One bullet each: <date> — <what it was>. [N]
+The most recent events involving them, newest first, AT MOST 8 bullets: <date> — <what happened>. [N]
 
-## Documents
-Key filed documents that name them (insurance, medical, school, financial). One bullet each. [N]
-
-## People & Organizations
-Organizations and correspondents associated with their documents. One bullet each. [N]
+## Key Documents
+The load-bearing documents naming them (identity, contracts, insurance, medical, school, financial). One bullet each. [N] Receipts and everyday ephemera stay out — they remain reachable through Recent Activity citations.
 
 Rules:
+- The whole page stays under roughly 300 words. It is a profile card, not a ledger: never copy line items, account numbers, or ID numbers onto the page — the citations carry that detail.
 - The H1 is the person's full name as it appears in the documents; fall back to "{display}".
 - The documents above also involve OTHER family members (see each entry's "involves:" list). A birth certificate is mostly about the parents; school papers name a parent. State a fact about {display} ONLY when the source ties it to {display} by name. Never give {display} another person's role, profession, or relationship (mother/father, spouse, caretaker, employer).
 - When a summary says "the mother", "her husband", or similar without naming {display}, that fact belongs to someone else — leave it off this page.
 - Unsure who a fact is about? Leave it out. A short page is correct; a wrong page is not.
 - Respond in: {lang}.
-- Use ONLY what the sources and facts above support. Empty section → "(none on file)". Never invent.
+- Use ONLY what the sources and facts above support. Never invent. Omit empty sections — no placeholder lines.
 - Cite the source document as [N] inline. Multiple sources: [1, 3].
-- Keep entries dense and skimmable.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
 """
 
@@ -1141,7 +1311,7 @@ def _build_topic_prompt(
             f"tracking on {display.lower()}."
         )
 
-    return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. The page is the first thing someone sees when they open the topic's folder. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
+    return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. It is an OVERVIEW someone (or the family's assistant) reads to understand what this topic is about and what has happened in it lately — not an archive. Detail lives in the cited captures, one click away. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
 
 This page is about the topic: {display} (vault slug: {slug}, scope: {scope}).
 
@@ -1160,14 +1330,14 @@ Produce a markdown page with this EXACT structure and section order:
 One short paragraph: what this topic covers in the family's memory, what kinds of captures land here, what makes it worth revisiting. [N]
 
 ## Recent Activity
-The most recent captures filed under this topic, newest first. One bullet each: `<date> — <what it was>`. [N]
+The most recent captures filed under this topic, newest first, AT MOST 8 bullets: `<date> — <what it was>`. [N]
 
 ## Cross-references
 {"Captures filed in other buckets that mention this topic. One bullet each: `<date> — <what it was> [from <bucket>]`. [N]" if cross_refs else "(omit this section)"}
 
 Rules:
 - Respond in: {lang}.
-- Use ONLY what the sources above support. Empty section → "(none on file)". Never invent.
+- Use ONLY what the sources above support. Never invent. Omit empty sections — no placeholder lines.
 - Cite the source capture as [N] inline. Multiple sources: [1, 3].
 - Keep entries dense and skimmable.
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.

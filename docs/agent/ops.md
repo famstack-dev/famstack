@@ -45,6 +45,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 
 **Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success.
 
+**Applying config/compose changes to a running stacklet:** `stack up <id>` is the apply command — it re-renders `.env` and `compose up` creates new services and recreates changed ones, leaving the rest running. `restart` (= `down` + `up`) also works but takes the whole stacklet down first. Plain `docker compose restart` does neither: it won't re-render env or create new services.
+
 ## Invariants
 
 - `stack up` is **always safe to re-run.** Failures leave the system in a valid intermediate state; re-running picks up where it failed.
@@ -82,6 +84,7 @@ Refuse without explicit, scoped human approval:
 | 42050 | chatai | Open WebUI |
 | 42060 | ai | oMLX |
 | 42062 | ai | Whisper |
+| 42070 | memory | Family wiki (Quartz) |
 
 Port collisions: do not silently rebind. Surface them. The user's fix is "stop the offender" or switch to domain mode.
 
@@ -99,6 +102,9 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | LLM OOM / very slow | RAM tier | Edit `[ai] default` to smaller model, then `./stack setup ai`. |
 | Disk full | `./stack host` | Likely the photo library. Move `data_dir` to external SSD. |
 | Element warns "browser not supported" | n/a | Click Continue. The check is outdated; Element works in every modern browser. |
+| Wiki pages stale after filings | `docker logs stack-memory-curator` | Curator debounces (~3 min quiet) before rebuilding; topic pages wait for the nightly sweep. Manual override: `./stack memory wiki`. |
+| Wiki shows old content entirely | `docker logs stack-memory-curator` | The curator owns the vault `git pull` (the wiki container is a read-only view). Curator down/stuck → vault and wiki go stale together. |
+| Curator logs "waiting for vault" | `./stack status` → memory, code | Vault not cloned yet — the memory install hooks own the initial clone. |
 
 For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste output to the user. **Do not invent fixes.**
 

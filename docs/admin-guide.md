@@ -428,7 +428,7 @@ The persistent layer of the household brain: a curated knowledge vault, rendered
 
 Setup seeds the vault with three things: the classification ontology (the topics and document types the archivist files against), household facts, and a hand-curated correspondents layer with aliases, so "Springfield Insurance" and "Springfield Ins. Co." resolve to the same page instead of becoming duplicates.
 
-The wiki rebuilds itself when the vault changes: file a document in chat, refresh the page. Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
+The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault: when new filings settle it regenerates the pages of the family members involved plus the home page (a couple of LLM calls, a few minutes after the burst), and once a night it rebuilds everything — topic pages, cross-references, the lot — while the GPU has nothing better to do. `./stack memory wiki` stays available as the manual trigger, and `[memory]` in `stack.toml` holds the knobs (see [Configuration](#configuration)). Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
 
 | | |
 |---|---|
@@ -468,6 +468,11 @@ schedule = "0 0 3 * * *"         # Watchtower nightly image updates
 [ai]
 default = "mlx-community/Qwen3.5-9B-MLX-4bit"   # change to match your RAM
 language = "en"                                   # "de" for German voice/transcription
+
+[memory]
+wiki_auto_rebuild = true         # curator refreshes member pages after filings
+wiki_rebuild_quiet_secs = 180    # how long the vault must stay quiet first
+wiki_nightly = "03:30"           # nightly full rebuild, local time ("" disables)
 ```
 
 Key things to know:
@@ -545,15 +550,69 @@ All commands output JSON when piped. Use `--json` to force it, `--pretty` to for
 
 ## Backups
 
-This is the part everyone skips and regrets. famstack puts every byte of user data under one directory:
+This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet for the irreplaceable file-level data (photo originals, scanned documents). It does not yet cover stacklet databases or your config files; for those, layer it with Time Machine or a periodic tar.
+
+### The backup stacklet
+
+Run `stack up backup`. You need an APFS-formatted external drive plugged in. The setup wizard asks for the disk name, encryption (default: plain APFS), and a nightly time (default 02:00). It then installs a cron entry that runs `stack backup sync` at that hour, and walks you through granting Full Disk Access to `/usr/sbin/cron` in System Settings. The FDA grant is what lets the scheduled sync reach the archive disk; without it, cron jobs are sandbox-blocked from `/Volumes/*` on macOS Catalina and later. One drag-and-drop, then every cron job on this Mac inherits the access.
+
+**What gets backed up**
+
+| Source | Path on the archive disk |
+|---|---|
+| Immich photo originals | `/Volumes/<disk>/data/photos-library/` |
+| Paperless archived PDFs | `/Volumes/<disk>/data/docs-media/` |
+
+Postgres databases for both are not backed up yet. You get your files back but lose albums, tags, custom fields, and saved views. Pg-dump snapshots will ship as `[[backup.snapshot]]` in a later release.
+
+**How the protection works**
+
+Every file written to the archive gets the kernel `uchg` flag. macOS refuses to modify or delete uchg files, even with `sudo`. `rsync --ignore-existing` means files already in the archive are skipped on every run, so the backup is append-only by design and accidental `rm -rf` on your main system cannot propagate.
+
+A **canary file** is a tripwire (named after the canary miners used to take underground to detect bad air). famstack plants a small file with known contents inside `~/famstack-data`; before every sync the engine reads it and refuses to proceed if the contents have changed. If something has been encrypting or modifying files under the data directory, the canary will not match what was planted and the sync aborts before opening the archive, so the corrupted state cannot propagate.
+
+**Daily operation**
 
 ```bash
-ls ~/famstack-data
+stack backup sync         # run a sync now (from any context)
+stack backup status       # last run, source counts, current mount state
+stack down backup         # remove the cron entry; canary, logs and archive contents stay
+stack destroy backup      # also remove BACKUP_DATA_DIR; archive disk and Keychain are preserved
 ```
 
-That is what you back up. Time Machine works. So does `restic`, `rsync`, or copying it to an external drive every Sunday. Pick one and do it.
+The scheduled nightly run leaves the disk mounted between runs (cron cannot trigger eject under the macOS sandbox; files are kernel-locked regardless). Manual `stack backup sync` from Terminal does eject when it finishes. Results post to the `#famstack` Matrix room via stacker-bot.
 
-What is **not** in `~/famstack-data` and therefore needs separate handling:
+**Recovery (no special tooling needed)**
+
+Plug the archive disk into any Mac and browse the files in Finder. To copy locked files out:
+
+```bash
+sudo chflags -R nouchg /Volumes/<disk>/data/photos-library/<folder>/
+cp -R /Volumes/<disk>/data/photos-library/<folder>/ ~/recovered/
+```
+
+A `stack backup restore` command and `on_restore` hooks for database recovery are planned but not yet shipped.
+
+**What it protects you from**
+
+| Threat | Covered |
+|---|---|
+| Ransomware encrypts your Mac | Yes (uchg + canary) |
+| Accidental `rm -rf` on `~/famstack-data` | Yes (rsync never deletes from the archive) |
+| You delete a photo on your phone | Yes (Immich propagates the delete to disk; the archive keeps the original) |
+| Vault drive stolen from your house | Only if you opted in to APFS encryption |
+| Vault drive hardware failure | No (single physical copy; offsite engine planned) |
+| Fire or flood | No (archive is in the same building; offsite engine planned) |
+
+**Limitations to know about**
+
+Only APFS or HFS+ disks attached via USB or Thunderbolt. Network shares (SMB/NFS/Synology) are refused at probe time because the kernel cannot enforce `uchg` over a network filesystem. One target only; encrypted offsite via restic is planned, not shipped.
+
+### Everything else
+
+`~/famstack-data` holds every byte of user data. Even with the backup stacklet running you may want Time Machine or `restic` against this directory for full coverage (databases, AI model caches).
+
+What is **not** in `~/famstack-data` and needs separate handling:
 
 - `stack.toml`, `users.toml`, `.stack/secrets.toml` in the repo. Small but irreplaceable. Gitignored on purpose, so they will not survive a fresh `git clone`.
 - oMLX models (in `~/.omlx/models`). Re-downloadable.

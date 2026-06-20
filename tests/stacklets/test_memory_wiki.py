@@ -420,3 +420,55 @@ class TestTopicPreamble:
         pre = _topic_preamble("van-life", "Van Life", "shared")
         assert "title: Van Life" in pre
         assert "slug: van-life" in pre
+
+
+# ── Anchored regen helpers ──────────────────────────────────────────────
+
+from wiki import _previous_generated, _renumber_citations  # noqa: E402
+
+
+class TestPreviousGenerated:
+    def _page(self, tmp_path: Path, body: str) -> Path:
+        p = tmp_path / "about.md"
+        p.write_text(
+            "---\ntitle: Homer\n---\n\n"
+            "<!-- begin: generated -->\n\n"
+            f"{body}\n\n"
+            "<!-- end: generated -->\n",
+            encoding="utf-8",
+        )
+        return p
+
+    def test_missing_page_is_empty(self, tmp_path: Path) -> None:
+        assert _previous_generated(tmp_path / "nope.md") == ("", {})
+
+    def test_page_without_markers_is_empty(self, tmp_path: Path) -> None:
+        p = tmp_path / "about.md"
+        p.write_text("# Hand-written page\n", encoding="utf-8")
+        assert _previous_generated(p) == ("", {})
+
+    def test_strips_references_and_returns_map(self, tmp_path: Path) -> None:
+        p = self._page(
+            tmp_path,
+            "# Homer\n\nFact [1]. Other [2].\n\n"
+            "## References\n\n"
+            "- [1] [Birth Cert](../family/documents/bc.md) - 1956-05-15\n"
+            "- [2] [Note](notes/n.md) - 2026-06-12",
+        )
+        body, refs = _previous_generated(p)
+        assert "## References" not in body
+        assert body.startswith("# Homer")
+        assert refs == {"../family/documents/bc.md": 1, "notes/n.md": 2}
+
+
+class TestRenumberCitations:
+    def test_single_and_grouped(self) -> None:
+        out = _renumber_citations("A [1]. B [1, 3]. C [2].", {1: 2, 2: 3, 3: 1})
+        assert out == "A [2]. B [2, 1]. C [3]."
+
+    def test_chained_remap_applies_once(self) -> None:
+        # 1→2 while 2→3: [1] must become [2], not slide on to [3].
+        assert _renumber_citations("[1] [2]", {1: 2, 2: 3}) == "[2] [3]"
+
+    def test_unmapped_numbers_pass_through(self) -> None:
+        assert _renumber_citations("Kept [7].", {1: 2}) == "Kept [7]."

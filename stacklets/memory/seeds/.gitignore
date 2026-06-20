@@ -1,0 +1,6 @@
+# Obsidian per-user state — the vault is meant to be opened in Obsidian,
+# but UI state must not hit git: workspace.json rewrites itself on every
+# click, and any non-curator commit triggers a wiki rebuild.
+.obsidian/
+.trash/
+.DS_Store

@@ -85,6 +85,22 @@ whisper_url = "http://localhost:42062/v1"
 # "en" = English (alloy voice), "de" = German (onyx voice)
 language = "en"
 
+[backup]
+# Nightly append-only backup of stacklet data. Enable the backup stacklet
+# (`stack up backup`) to install the cron entry that runs the sync and to
+# grant Full Disk Access to /usr/sbin/cron. Each [[backup.targets.*]] block
+# defines one destination; sources are discovered from stacklets that
+# declare [[backup.archive]] (append-only) in their own manifest.
+#
+# In v1 only the external-disk engine ships. Restic-based encrypted
+# offsite is planned and will slot in as a second target without
+# touching this file's existing entries.
+
+# [backup.targets.vault]
+# engine   = "external-disk"     # rsync + chflags uchg + diskutil eject
+# disk     = "backup-vault"      # APFS volume name (case-sensitive)
+# schedule = "0 2 * * *"         # 5-field cron, runs nightly at 02:00
+
 [services]
 # Homepage dashboard URL — set automatically when core is enabled.
 homepage_url = "http://localhost:3000"
