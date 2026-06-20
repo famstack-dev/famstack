@@ -84,14 +84,47 @@ Feed that into the existing `CapturePipeline` path (it already has
 `capture_*` sibling) and an email becomes a vault entry with a `> [!summary]`
 briefing and `## Action items` — no new intelligence written.
 
+### himalaya JSON contract
+
+himalaya emits JSON with `--json`. **`envelope list --json`** is verified
+against the himalaya README:
+
+```json
+{"envelopes": [
+  {"id": "...", "message-id": "...", "flags": [{"raw": "...", "iana": "..."}],
+   "subject": "...", "from": [{"name": "...", "email": "..."}],
+   "to": [...], "date": "...", "size": 0, "has-attachment": false}]}
+```
+
+Note `from`/`to` are **arrays of `{name, email}`**, not strings; field is
+`message-id` (hyphen). **`message read <id> --json`** (the body) is **not
+documented in the README** — its exact shape must be pinned by running himalaya
+once installed (Phase A2), not assumed. The code keeps the himalaya-JSON parser
+isolated from the pure `email → SourceContent` mapper for exactly this reason:
+the mapper's contract is famstack's own dataclass and is fully testable now;
+the himalaya body schema is the one thing we confirm against the live binary.
+
 ## Architecture
 
+**Runtime: a container, not a host service.** himalaya needs no host resource
+(unlike `ai`'s Metal or `memory`'s git), and it is the one piece that holds
+credentials and talks to *external* mail servers — exactly what the agent
+plan's "restriction via container" posture is for. So the network-facing
+himalaya runs in a small **`mail` container** with egress scoped to the mail
+host and creds from the secret store. The classify/mirror/route logic is *not*
+re-built: it reuses the existing pipeline in **bot-runner** via a mail bot
+beside the archivist, with the Maildir as the handoff (a shared volume) — no
+cross-container API, no duplicated pipeline. `stack mail …` wraps `docker exec`
+into the container, like other stacklets' CLIs.
+
 ```
-  IMAP mailbox
-     │  himalaya (Maildir sync)
+  IMAP / SMTP mailbox
+     │  himalaya  — mail CONTAINER (only network-facing piece;
+     │             egress scoped to the mail host, creds from secrets)
      ▼
-  `stack mail sync`  (host cron, like the memory curator)
-     │  new messages → SourceContent(text=body, title_hint=subject, source_uri=message-id)
+  Maildir (shared volume)
+     │  mail bot (in bot-runner, beside the archivist) reads new messages,
+     │  maps each → SourceContent(text=body, title_hint=subject, source_uri=message-id)
      ▼
   CapturePipeline (EXISTING)  → classify → mirror to vault → dev.famstack.event
      │
@@ -150,8 +183,9 @@ One account's folders can fan out to different rooms (INBOX → `#Post`, a
 
 ### How a message reaches the room
 
-`stack mail sync` (host cron) fetches IMAP → Maildir and files to the vault as
-above, emitting a `dev.famstack.event` whose `data` carries `account` + `folder`.
+`stack mail sync` (the mail container's himalaya) fetches IMAP → Maildir; the
+mail bot files new messages to the vault as above, emitting a
+`dev.famstack.event` whose `data` carries `account` + `folder`.
 The mail bot — which lives in bot-runner and *can* read room state — routes that
 event to the room whose `dev.famstack.capture` binding matches, posting the
 sender + subject + the `> [!summary]` briefing + a link to the vault entry.
@@ -174,12 +208,15 @@ pattern, reused.
 - himalaya for *all* email I/O.
 
 **Build (small, additive):**
-- `stacklets/mail/` — wraps himalaya as `stack mail` (sync/list/read/draft/send),
-  renders himalaya's TOML config from `stack.toml` + secrets.
-- A thin email→`SourceContent` adapter + a `capture_email` entry on the pipeline.
-- A **mail bot** (MicroBot, same pattern as the archivist — *not* the agent
-  runtime): binds rooms on invite (`kind: mailbox` room state) and routes
-  filing events to the bound room.
+- A thin **email→`SourceContent` mapper** + a `capture_email` entry on the
+  pipeline. Pure, fully unit-testable now — *slice A1*.
+- A small **`mail` container** running himalaya (egress scoped to the mail host,
+  creds from secrets, Maildir on a shared volume), plus `stack mail` wrapping
+  `docker exec` (sync/list/read/draft/send) and rendering himalaya's TOML config
+  from `stack.toml` + secrets — *slice A2, needs the binary + a test account*.
+- A **mail bot** in bot-runner (MicroBot, beside the archivist — *not* the agent
+  runtime): reads new Maildir messages, runs `capture_email`, binds rooms on
+  invite (`kind: mailbox` room state) and routes filings to the bound room.
 - A tasks rollup page (needs `_index_vault` to also surface `action_items` — it
   currently captures summary/persons/topics/tags but not action items; small
   extension).
@@ -209,19 +246,23 @@ agent-callable command honors.
 
 No autonomous outbound. This matches [plan.md](plan.md)'s posture (restricted
 container, local LLM, no cloud calls) and German trust norms (a machine sending
-mail unsupervised is a non-starter). SMTP credentials live in the secret store /
-Keychain, not in the agent container; only the host-side `stack mail send` can
-read them.
+mail unsupervised is a non-starter). SMTP credentials live in the secret store
+and are injected only into the `mail` container's env; nothing else can read
+them, and the container's egress is scoped to the mail host.
 
 ## Sequencing
 
-- **Phase A — ingestion + Matrix surfacing (no agent runtime needed).**
-  `stacklets/mail/` + `stack mail sync/list/read` + the email→pipeline adapter +
-  the mail bot (bind-on-invite room state + route filings to the bound room) +
-  tasks rollup. Uses the *existing* MicroBot/room-state machinery, not the agent
-  runtime. Ships standalone value: family email appears in the right Matrix
-  room, is searchable in the brain, and its tasks are extracted. This is the
-  natural next move and sets the agent up with email context to reason over.
+- **Phase A1 — the pure core (no binary, no mailbox, no rig).** The
+  email→`SourceContent` mapper + `capture_email` on the pipeline, fully
+  unit-tested with fabricated inputs. Proves the ADR seam (does email slot into
+  `SourceContent` cleanly?) and is mergeable on its own.
+- **Phase A2 — ingestion + Matrix surfacing.** The `mail` container (himalaya) +
+  `stack mail sync/list/read` + the mail bot (reads Maildir → `capture_email`,
+  bind-on-invite room state, routes filings to the bound room) + tasks rollup.
+  Needs himalaya installed + a test account; pins the `message read --json`
+  body schema against the live binary. Uses the *existing* MicroBot/room-state
+  machinery, not the agent runtime. Ships standalone value: family email appears
+  in the right Matrix room, searchable, with tasks extracted.
 - **Phase B — agent runtime.** The [plan.md](plan.md) Phase 0 spike (nanobot
   vs pi), run against the **email-draft flow** as the concrete test instead of
   generic Q&A.
@@ -256,9 +297,11 @@ work" milestone and depends on the runtime.
    Matrix `what's on my plate?` query answered live from `action_items`?
 4. **Drafting context budget.** How much vault context feeds the draft LLM?
    Start minimal — the thread plus explicitly cited facts.
-5. **Stacklet boundary.** New `mail` stacklet (distinct domain + credentials,
-   emitting into the shared vault/event bus) vs. a source inside `docs`. Lean
-   new stacklet.
+5. **Stacklet boundary.** RESOLVED. A `mail` container owns the network-facing
+   himalaya (creds, scoped egress); the classify/file/route logic reuses the
+   docs pipeline via a mail bot in bot-runner (shared Maildir handoff). Not a
+   host stacklet (no host-resource need; isolation wanted), not a fork of the
+   docs pipeline (reused).
 6. **Bidirectional rooms?** A bound room shows incoming mail; should *posting*
    in it (or a reply-chain) be able to *send* mail too (via the human-approved
    `stack mail send`)? Natural, but it couples Phase A's bot to Phase C's
