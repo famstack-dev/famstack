@@ -33,7 +33,7 @@ family/memory.git                       (Forgejo repo, seeded by `memory` stackl
 │   │   │   └── YYYY-MM-DD-<slug>-p<paperless_id>.md
 │   │   └── _unfiled/
 │   │       └── p<paperless_id>.md      (when the doc has no usable date)
-│   └── correspondents/                 (wiki pages for senders: ADAC, Booking.com, …)
+│   └── correspondents/                 (wiki pages for senders: Duff Insurance, Booking.com, …)
 │       └── <slug>.md
 │
 ├── <entity>/                           (one bucket per family member; sender mxid → entity slug)
@@ -74,24 +74,26 @@ family/memory.git                       (Forgejo repo, seeded by `memory` stackl
 
 ```markdown
 ---
-title: ADAC Kfz-Versicherung 2026
+type: document
+title: Duff Insurance Kfz-Versicherung 2026
 date: 2026-03-15
-correspondent: ADAC
+correspondent: Duff Insurance
 document_type: Rechnung
 category: Versicherung
 persons: [Homer]
 tags: [Versicherung, Fahrzeug, "Person: Homer"]
 paperless_id: 247
 paperless_url: http://docs.local
+resource: http://docs.local/documents/247/details
 processing: ai_formatted
 model: qwen3.5-vl-7b
 source: paperless
-added: 2026-05-20T14:23:00Z
+timestamp: 2026-05-20T14:23:00Z
 ---
 
-# ADAC Kfz-Versicherung 2026
+# Duff Insurance Kfz-Versicherung 2026
 
-> **From:** [[ADAC]] · **About:** [[Homer]]
+> **From:** [Duff Insurance](../../../correspondents/duff-insurance.md) · **About:** [Homer](../../../../homer/about.md)
 
 > [!summary]
 > Jährliche Erneuerung der Kfz-Vollkasko, Police KFZ-2026-987.
@@ -113,8 +115,9 @@ Notes:
   in Obsidian; labeled blockquote in Forgejo). Visually distinct from
   the OCR body below.
 - `Show Document` is a per-document link composed from `paperless_url`
-  + `/documents/<id>/details`; frontmatter `paperless_url` keeps the
-  base URL so scripts can compose other deep links.
+  + `/documents/<id>/details`. The same URL is stamped into the OKF
+  `resource` field; frontmatter `paperless_url` keeps the base URL so
+  scripts can compose other deep links.
 - Sections inside the callout use `**Bold labels**` instead of `##`
   headings — Obsidian renders them as section starts within the callout,
   and callouts don't nest H2s cleanly.
@@ -123,19 +126,19 @@ Notes:
 
 ```markdown
 ---
+type: bookmark
 title: Local-LLM benchmarks roundup
-kind: bookmark
 date: 2026-05-17
-persons: [Arthur]
-tags: [local-llms, benchmarks, "Person: Arthur"]
-source_uri: https://example.com/llms
+persons: [Homer]
+tags: [local-llms, benchmarks, "Person: Homer"]
+resource: https://example.com/llms
 model: qwen3.5-vl-7b
-added: 2026-05-17T09:00:00Z
+timestamp: 2026-05-17T09:00:00Z
 ---
 
 # Local-LLM benchmarks roundup
 
-> **About** [[Arthur]]
+> **About** [Homer](../../../about.md)
 > **Captured** 2026-05-17 · **Kind** bookmark
 > **Source** <https://example.com/llms>
 
@@ -148,8 +151,8 @@ added: 2026-05-17T09:00:00Z
 ```
 
 Notes:
-- `kind: note` keeps the user's pasted body in a collapsed
-  `> [!quote]- Original paste` callout below the summary. `kind: bookmark`
+- `type: note` keeps the user's pasted body in a collapsed
+  `> [!quote]- Original paste` callout below the summary. `type: bookmark`
   has no body — the URL plus the digest IS the entry.
 - No "Action items" section on captures. A bookmark to a Reddit thread
   is not a todo; pasting links shouldn't flood the system with chores.
@@ -160,14 +163,14 @@ The classifier writes one note per filed document into Paperless's
 note slot (FTS-searchable):
 
 ```
-Jährliche Erneuerung der Kfz-Vollkasko bei ADAC. Police KFZ-2026-987,
+Jährliche Erneuerung der Kfz-Vollkasko bei Duff Insurance. Police KFZ-2026-987,
 Beitrag EUR 340 jährlich, fällig zum 01.04.
 
 - Versicherungsnummer: KFZ-2026-987
 - Beitrag: EUR 340,00
 - Fälligkeit: 2026-04-01
 
-ADAC → Homer
+Duff Insurance → Homer
 
 <!-- archivist-bot -->
 ```
@@ -196,7 +199,7 @@ shapes:
 {
   "source":  "docs",
   "type":    "document.filed",
-  "summary": "ADAC Kfz-Versicherung 2026 filed (#247)",
+  "summary": "Duff Insurance Kfz-Versicherung 2026 filed (#247)",
   "actor":   "@homer:home",
   "ts":      "2026-05-20T14:23:00Z",
   "data":    {"paperless_id": 247, "title": "…", "topics": [...], ...}
@@ -213,7 +216,7 @@ envelope as a content field:
   "type": "m.room.message",
   "content": {
     "msgtype": "m.text",
-    "body": "Filed: ADAC Kfz-Versicherung 2026 (#247)…",
+    "body": "Filed: Duff Insurance Kfz-Versicherung 2026 (#247)…",
     "format": "org.matrix.custom.html",
     "formatted_body": "<p>…</p>",
     "dev.famstack.event": { …envelope… }
@@ -361,7 +364,7 @@ classifier `persons:` list takes precedence.
 User replies to a bot's filing message with a correction:
 
 ```
-[bot] ✅ Filed: ADAC Kfz-Versicherung 2026 (#247) — Versicherung | Homer | …
+[bot] ✅ Filed: Duff Insurance Kfz-Versicherung 2026 (#247) — Versicherung | Homer | …
 [user reply]: das ist eigentlich Marges Versicherung, nicht Homers
 ```
 

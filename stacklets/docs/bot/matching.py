@@ -67,8 +67,8 @@ def _tokenize(name: str) -> list[str]:
     ['kwik', 'e', 'mart', 'inc']
     >>> _tokenize("Moe's Tavern")
     ['moe', 's', 'tavern']
-    >>> _tokenize("ADAC e.V.")
-    ['adac', 'e', 'v']
+    >>> _tokenize("Duff Insurance e.V.")
+    ['duff-insurance', 'e', 'v']
     """
     return [t for t in _WORD_SPLIT.split(name.lower().strip()) if t]
 
@@ -78,12 +78,12 @@ def _is_word_boundary_match(shorter: str, longer: str) -> bool:
 
     Safe:
       "Springfield" in "Springfield Nuclear Power Plant"  -> True
-      "ADAC"        in "ADAC e.V."                        -> True
+      "Duff Insurance"        in "Duff Insurance e.V."                        -> True
 
     Blocked:
       "Spring"      in "Springfield"     -> False (mid-word)
       "Bank"        in "Bundesbank"      -> False (mid-word)
-      "Art"         in "Arthur"          -> False (mid-word)
+      "Art"         in "Homer"          -> False (mid-word)
 
     >>> _is_word_boundary_match("Springfield", "Springfield Nuclear Power Plant")
     True
@@ -331,13 +331,13 @@ def build_document_event(
 
         {source, type, summary, data, actor, ts}
 
-    `summary` is the one-line activity description ("ADAC … filed
+    `summary` is the one-line activity description ("Duff Insurance … filed
     (#42)"); the LLM's prose summary lives inside `data.summary`.
     `actor` is the human who triggered the filing when known, else the
     bot itself; callers pass it in because the matching module has no
     Matrix context.
 
-    >>> evt = build_document_event(42, {"title": "ADAC - Kfz EUR 340", "summary": "Insurance renewal"}, resolved_topics=["Insurance"], resolved_persons=["Homer"], resolved_correspondent="ADAC")
+    >>> evt = build_document_event(42, {"title": "Duff Insurance - Kfz EUR 340", "summary": "Insurance renewal"}, resolved_topics=["Insurance"], resolved_persons=["Homer"], resolved_correspondent="Duff Insurance")
     >>> evt["source"]
     'docs'
     >>> evt["type"]
@@ -494,7 +494,7 @@ def fuzzy_match_entity(
 
     When multiple candidates match:
     - prefer_longest=False (default): picks shortest (most general).
-      Good for correspondents: "ADAC" over "ADAC Versicherung".
+      Good for correspondents: "Duff Insurance" over "Duff Insurance Versicherung".
     - prefer_longest=True: picks longest (most specific).
       Good for persons: "Homer Jr" over "Homer".
 
@@ -520,7 +520,7 @@ def fuzzy_match_entity(
 
     # Strategy 2: word-boundary containment.
     # The shorter name's tokens must be a prefix of the longer name's tokens.
-    #   "ADAC" -> ["adac"] is a prefix of "ADAC e.V." -> ["adac", "e", "v"]  -> match
+    #   "Duff Insurance" -> ["duff-insurance"] is a prefix of "Duff Insurance e.V." -> ["duff-insurance", "e", "v"]  -> match
     #   "Spring" -> ["spring"] is NOT a prefix of "Springfield" -> ["springfield"] -> no match
     containment_matches = []
     for existing_name in existing:

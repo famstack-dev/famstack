@@ -38,7 +38,7 @@ def mirror(tmp_path):
 
 class TestSlug:
     def test_ascii(self, mirror):
-        assert mirror._slug("ADAC Rechnung Marz 2026") == "adac-rechnung-marz-2026"
+        assert mirror._slug("Duff Insurance Rechnung Marz 2026") == "duff-insurance-rechnung-marz-2026"
 
     def test_umlauts_normalize(self, mirror):
         # Non-ASCII (ü, ä, ö) becomes their base letters after NFKD decompose
@@ -66,16 +66,16 @@ class TestFilepath:
     def test_with_title_and_date(self, mirror):
         path = mirror._filepath(
             date="2026-03-15", paperless_id=247,
-            title="ADAC Rechnung", has_title=True,
+            title="Duff Insurance Rechnung", has_title=True,
         )
-        assert path == "family/documents/2026/03/2026-03-15-adac-rechnung-p247.md"
+        assert path == "family/documents/2026/03/2026-03-15-duff-insurance-rechnung-p247.md"
 
     def test_with_title_without_date_goes_to_unfiled(self, mirror):
         path = mirror._filepath(
             date=None, paperless_id=247,
-            title="ADAC Rechnung", has_title=True,
+            title="Duff Insurance Rechnung", has_title=True,
         )
-        assert path == "family/documents/_unfiled/adac-rechnung-p247.md"
+        assert path == "family/documents/_unfiled/duff-insurance-rechnung-p247.md"
 
     def test_with_title_invalid_date_falls_through(self, mirror):
         path = mirror._filepath(
@@ -102,28 +102,30 @@ class TestFilepath:
 class TestFrontmatter:
     def test_ai_full(self, mirror):
         fm = mirror._frontmatter(
-            title="ADAC Rechnung März 2026",
+            title="Duff Insurance Rechnung März 2026",
             date="2026-03-15",
-            correspondent="ADAC",
+            correspondent="Duff Insurance",
             document_type="Invoice",
             category="Insurance",
             persons=["Homer"],
             tags=["Insurance", "Person: Homer"],
             paperless_id=247,
-            paperless_url="http://docs.home.local/documents/247",
+            paperless_url="http://docs.home.local",
             processing="ai_formatted",
             model="qwen2.5:14b",
         )
-        assert fm["title"] == "ADAC Rechnung März 2026"
+        assert fm["type"] == "document"
+        assert fm["resource"] == "http://docs.home.local/documents/247/details"
+        assert fm["title"] == "Duff Insurance Rechnung März 2026"
         assert fm["paperless_id"] == 247
         assert fm["processing"] == "ai_formatted"
         assert fm["model"] == "qwen2.5:14b"
         assert fm["paperless_version"] == "2.14.5"
         assert fm["source"] == "paperless"
-        assert fm["added"].endswith("Z")
-        # key order: title first, added last, key ordering reflects insertion
-        assert list(fm.keys())[0] == "title"
-        assert list(fm.keys())[-1] == "added"
+        assert fm["timestamp"].endswith("Z")
+        # key order: type first (OKF convention), timestamp last; reflects insertion
+        assert list(fm.keys())[0] == "type"
+        assert list(fm.keys())[-1] == "timestamp"
 
     def test_ocr_omits_model(self, mirror):
         fm = mirror._frontmatter(
@@ -168,11 +170,11 @@ class TestFrontmatter:
 class TestCommitMessage:
     def test_learn_with_model(self, mirror):
         msg = mirror._commit_message(
-            verb="learn", title="ADAC Rechnung",
+            verb="learn", title="Duff Insurance Rechnung",
             paperless_id=247, processing="ai_formatted", model="qwen2.5:14b",
         )
         lines = msg.split("\n")
-        assert lines[0] == "learn: ADAC Rechnung"
+        assert lines[0] == "learn: Duff Insurance Rechnung"
         assert lines[1] == ""
         assert "Paperless-Id: 247" in lines
         assert "Processing: ai_formatted" in lines
@@ -191,14 +193,14 @@ class TestCommitMessage:
     def test_summary_rides_between_subject_and_trailers(self, mirror):
         # The body sits in its own paragraph so `git log` renders it as a
         # readable summary and trailers stay parseable as trailers.
-        summary = "## Summary\nADAC car insurance EUR 340/year.\n\n## Parties\nADAC → Homer"
+        summary = "## Summary\nDuff Insurance car insurance EUR 340/year.\n\n## Parties\nDuff Insurance → Homer"
         msg = mirror._commit_message(
-            verb="learn", title="ADAC", paperless_id=42,
+            verb="learn", title="Duff Insurance", paperless_id=42,
             processing="ai_formatted", model="qwen2.5:14b",
             summary=summary,
         )
         lines = msg.split("\n")
-        assert lines[0] == "learn: ADAC"
+        assert lines[0] == "learn: Duff Insurance"
         assert lines[1] == ""
         # Summary block follows, ends with a blank line, then trailers.
         body_start = 2
@@ -224,13 +226,14 @@ class TestCommitMessage:
 class TestRender:
     def test_full_document(self, mirror):
         fm = {
-            "title": "ADAC Rechnung", "paperless_id": 247,
+            "title": "Duff Insurance Rechnung", "paperless_id": 247,
             "processing": "ai_formatted", "source": "paperless",
         }
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter=fm,
             body="Policy number: KFZ-2024-XXX\n\nAmount: EUR 340.",
-            correspondent="ADAC",
+            correspondent="Duff Insurance",
             persons=["Homer"],
         )
         # Frontmatter fenced with ---
@@ -240,13 +243,16 @@ class TestRender:
         parsed = yaml.safe_load(fm_block)
         assert parsed["paperless_id"] == 247
 
-        assert "# ADAC Rechnung" in out
-        assert "**From:** [[ADAC]]" in out
-        assert "**About:** [[Homer]]" in out
+        assert "# Duff Insurance Rechnung" in out
+        assert "**From:** [Duff Insurance](" in out
+        assert "correspondents/duff-insurance.md)" in out
+        assert "**About:** [Homer](" in out
+        assert "homer/about.md)" in out
         assert "Policy number: KFZ-2024-XXX" in out
 
     def test_no_wiki_header_when_no_entities(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
         )
@@ -262,9 +268,10 @@ class TestBriefingBlock:
 
     def test_full_briefing_in_rendered_output(self, mirror):
         out = mirror._render(
-            frontmatter={"title": "ADAC Rechnung"},
+            from_path="family/documents/2026/03/entry.md",
+            frontmatter={"title": "Duff Insurance Rechnung"},
             body="(OCR body)",
-            correspondent="ADAC", persons=["Homer"],
+            correspondent="Duff Insurance", persons=["Homer"],
             summary="Annual renewal of comprehensive auto insurance.",
             facts=["Total: EUR 340.00", "Policy: KH-2026-987"],
             action_items=[
@@ -284,6 +291,7 @@ class TestBriefingBlock:
 
     def test_briefing_appears_before_body(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="OCR PAYLOAD",
             correspondent=None, persons=[],
             summary="One liner.",
@@ -293,6 +301,7 @@ class TestBriefingBlock:
 
     def test_omitted_entirely_when_classifier_returned_nothing(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None, facts=None, action_items=None,
@@ -303,6 +312,7 @@ class TestBriefingBlock:
 
     def test_individual_sections_drop_when_empty(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary="Just a summary.", facts=[], action_items=[],
@@ -314,6 +324,7 @@ class TestBriefingBlock:
 
     def test_string_action_item_renders_as_task(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None, facts=None,
@@ -324,6 +335,7 @@ class TestBriefingBlock:
     def test_null_string_due_is_treated_as_no_due(self, mirror):
         # LLMs sometimes return the string "null" instead of true null.
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None, facts=None,
@@ -335,6 +347,7 @@ class TestBriefingBlock:
 
     def test_skips_blank_facts_and_empty_actions(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="body",
             correspondent=None, persons=[],
             summary=None,
@@ -350,6 +363,7 @@ class TestBriefingBlock:
 
     def test_source_link_appears_inside_callout(self, mirror):
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="(body)",
             correspondent=None, persons=[],
             summary="Prose.",
@@ -364,6 +378,7 @@ class TestBriefingBlock:
         # Half-supplied source_link tuple (label without url, or vice versa)
         # must not produce a malformed `[label]()` link.
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter={"title": "t"}, body="(body)",
             correspondent=None, persons=[],
             summary="Prose.",
@@ -488,7 +503,7 @@ class TestCapturePath:
 
 
 class TestCaptureFrontmatter:
-    """Captures carry `kind: bookmark|note` + optional `source_uri`.
+    """Captures carry `kind: bookmark|note` + optional `resource`.
     Bookmark = URL pointer; Note = pasted body the user typed.
 
     Document-shaped fields (correspondent, document_type, category) are
@@ -505,15 +520,15 @@ class TestCaptureFrontmatter:
             persons=[], tags=[], model=None,
         )
         assert fm["title"] == "Why local LLMs matter"
-        assert fm["kind"] == "bookmark"
-        assert fm["source_uri"] == "https://example.com/llms"
+        assert fm["type"] == "bookmark"
+        assert fm["resource"] == "https://example.com/llms"
         # Document-shaped fields are gone from captures.
         assert "correspondent" not in fm
         assert "document_type" not in fm
         assert "category" not in fm
         assert "paperless_id" not in fm
         assert "paperless_url" not in fm
-        assert fm["added"].endswith("Z")
+        assert fm["timestamp"].endswith("Z")
 
     def test_note_with_source_uri(self, mirror):
         # Pasted Reddit thread with the URL in the body — kind=note,
@@ -523,10 +538,10 @@ class TestCaptureFrontmatter:
             captured_at="2026-05-17",
             kind="note",
             source_uri="https://reddit.com/r/x/comments/y",
-            persons=["Arthur"], tags=["LLMs"], model=None,
+            persons=["Homer"], tags=["LLMs"], model=None,
         )
-        assert fm["kind"] == "note"
-        assert fm["source_uri"] == "https://reddit.com/r/x/comments/y"
+        assert fm["type"] == "note"
+        assert fm["resource"] == "https://reddit.com/r/x/comments/y"
         assert fm["tags"] == ["LLMs"]
 
     def test_note_without_source_uri(self, mirror):
@@ -538,10 +553,10 @@ class TestCaptureFrontmatter:
             captured_at="2026-05-17",
             kind="note",
             source_uri=None,
-            persons=["Arthur"], tags=[], model=None,
+            persons=["Homer"], tags=[], model=None,
         )
-        assert fm["kind"] == "note"
-        assert "source_uri" not in fm
+        assert fm["type"] == "note"
+        assert "resource" not in fm
 
     def test_full_shape(self, mirror):
         fm = mirror._capture_frontmatter(
@@ -549,12 +564,12 @@ class TestCaptureFrontmatter:
             captured_at="2026-05-17",
             kind="bookmark",
             source_uri="https://example.com/llms",
-            persons=["Arthur"],
-            tags=["LLMs", "Local Inference", "Person: Arthur"],
+            persons=["Homer"],
+            tags=["LLMs", "Local Inference", "Person: Homer"],
             model="qwen2.5:14b",
         )
-        assert fm["persons"] == ["Arthur"]
-        assert fm["tags"] == ["LLMs", "Local Inference", "Person: Arthur"]
+        assert fm["persons"] == ["Homer"]
+        assert fm["tags"] == ["LLMs", "Local Inference", "Person: Homer"]
         assert fm["model"] == "qwen2.5:14b"
         # date echoes the capture date, not the article's publish date.
         assert fm["date"] == "2026-05-17"
@@ -583,19 +598,21 @@ class TestCaptureRender:
             captured_at="2026-05-17",
             kind="bookmark",
             source_uri="https://example.com/llms",
-            persons=["Arthur"], tags=["LLMs"], model="qwen2.5:14b",
+            persons=["Homer"], tags=["LLMs"], model="qwen2.5:14b",
         )
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter=fm, body="",
-            correspondent=None, persons=["Arthur"],
+            correspondent=None, persons=["Homer"],
             summary="A 200-word digest of the article's main points.",
             facts=["Mac Mini idles under 10W"],
             action_items=[],
         )
-        assert "kind: bookmark" in out
-        assert "source_uri: https://example.com/llms" in out
+        assert "type: bookmark" in out
+        assert "resource: https://example.com/llms" in out
         assert "# Why local LLMs matter" in out
-        assert "**About:** [[Arthur]]" in out
+        assert "**About:** [Homer](" in out
+        assert "homer/about.md)" in out
         assert "> [!summary]" in out
         assert "A 200-word digest" in out
         # No trailing empty body section — file ends after briefing.
@@ -607,16 +624,17 @@ class TestCaptureRender:
             captured_at="2026-05-17",
             kind="note",
             source_uri="https://reddit.com/r/x/y",
-            persons=["Arthur"], tags=["Benchmarks"], model=None,
+            persons=["Homer"], tags=["Benchmarks"], model=None,
         )
         out = mirror._render(
+            from_path="family/documents/2026/03/entry.md",
             frontmatter=fm,
             body="Top comment quotes 60 tok/s on M2 Pro.\n\nRest of thread...",
-            correspondent=None, persons=["Arthur"],
+            correspondent=None, persons=["Homer"],
             summary="Comment thread comparing on-device inference speeds.",
             facts=[], action_items=[],
         )
-        assert "kind: note" in out
+        assert "type: note" in out
         assert "> [!summary]" in out
         assert "Comment thread comparing" in out
         assert "Top comment quotes 60 tok/s" in out

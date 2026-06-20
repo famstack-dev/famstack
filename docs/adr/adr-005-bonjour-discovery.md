@@ -62,7 +62,7 @@ One instance per famstack server. The service name is the server's
 human-readable name from `stack.toml`:
 
 ```
-Arthur's famstack._famstack._tcp.local.
+Homer's famstack._famstack._tcp.local.
 ```
 
 ### Port
@@ -79,7 +79,7 @@ first API call:
 |---|---|---|
 | `uuid` | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` | Persistent server identity |
 | `version` | `0.1.0` | famstack version (for compatibility checks) |
-| `name` | `Arthur's famstack` | Human-readable display name |
+| `name` | `Homer's famstack` | Human-readable display name |
 | `api` | `/api` | API base path (future-proofing) |
 
 **TXT record size:** ~150 bytes. Well within the DNS-SD 8900-byte limit
@@ -229,7 +229,7 @@ The QR code fallback is more important on Android.
 
 Browsers cannot perform mDNS discovery. The web dashboard has two paths:
 
-1. **Direct URL.** User navigates to `http://mac-arthur.local:42000` or
+1. **Direct URL.** User navigates to `http://mac-homer.local:42000` or
    the server's IP. Works on Apple devices (Safari resolves `.local` via
    mDNS). Inconsistent on Android browsers.
 
@@ -251,7 +251,7 @@ camera, requires no mDNS support, and transfers the API key in one step.
 {
   "famstack": 1,
   "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "host": "mac-arthur.local",
+  "host": "mac-homer.local",
   "ip": "192.0.2.10",
   "port": 42000,
   "key": "fs_ak_..."

@@ -201,6 +201,7 @@ Testing rules:
 
 ## Commit & branch rules
 
+- **Check branch state before major work.** `git fetch origin` and see how the working branch relates to `origin/main` (`git log --oneline origin/main..HEAD` and `HEAD..origin/main`) before starting anything substantial, new branch or existing one alike. The branch may be older than you think: `main` advances, and a local `main` can itself be stale. Branch off (or rebase/merge onto) the latest `origin/main`; a branch left behind silently diverges and lands the PR in merge conflicts.
 - **Feature branches only.** Never commit to `main`.
 - **Semantic prefix required:** `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`, `ci:`, `style:`.
 - **Message style:** short, end-user POV, present tense. *What changed and why a user cares* - not the internal refactor narrative.

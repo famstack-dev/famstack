@@ -496,7 +496,7 @@ class ArchivistBot(MicroBot):
             )
             return
 
-        # @arthur:homestead.me → arthur
+        # @homer:homestead.me → homer
         admin_usernames = []
         for raw in admin_ids.split(","):
             raw = raw.strip()
@@ -600,8 +600,8 @@ class ArchivistBot(MicroBot):
     # filed under the sender's own entity bucket (`<sender>/notes/...`
     # or `<sender>/bookmarks/...`), no Paperless write.
     #
-    # Family members can spin up their own per-person rooms ("arthur
-    # notes", "sabrina notes") or DM the bot directly. As soon as the
+    # Family members can spin up their own per-person rooms ("homer
+    # notes", "marge notes") or DM the bot directly. As soon as the
     # bot accepts the invite, that room is in capture mode by default.
     # No allowlist to curate.
     #
@@ -642,7 +642,7 @@ class ArchivistBot(MicroBot):
         used in the shared bucket, the `_unfiled` rescue folder, and
         the derived `about` page.
 
-        Top-level vault names (`family`, `arthur`, `marge`, `meta`,
+        Top-level vault names (`family`, `homer`, `marge`, `meta`,
         `wiki`, `archive`) no longer need to appear here -- the new
         layout makes top-level collisions impossible because topic
         folders never live at the top level.
@@ -1580,7 +1580,7 @@ class ArchivistBot(MicroBot):
             # Free-text search runs whenever the user explicitly
             # addressed the bot (any room) or the message landed in
             # the documents room (where search is the default). A
-            # short chat-shaped query like "ADAC" is fine — that's
+            # short chat-shaped query like "Duff Insurance" is fine — that's
             # exactly the kind of thing recall is for.
             await self._handle_search(
                 room.room_id, query, reply_to,

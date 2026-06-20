@@ -2,7 +2,7 @@
 
 > Status: Design document
 > Created: 2026-04-14
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Used by: All famstack stacklets, Paperless-ngx, knowledge wiki, Kit Bot
 
 ## The Problem
@@ -14,7 +14,7 @@ Every service in the stack has its own tagging:
 - Calendar: calendars, event categories
 - Knowledge wiki: ontology types, domain tags, wiki links
 
-These don't talk to each other. "ADAC" is a Paperless correspondent, a wiki entry, and maybe a photo album from the roadside assistance visit. The person "Sabrina" is a Paperless person tag, an Immich face, a Matrix user, and a wiki domain. But nothing connects them.
+These don't talk to each other. "Duff Insurance" is a Paperless correspondent, a wiki entry, and maybe a photo album from the roadside assistance visit. The person "Marge" is a Paperless person tag, an Immich face, a Matrix user, and a wiki domain. But nothing connects them.
 
 ## The Design
 
@@ -54,7 +54,7 @@ categories:
 
   school:
     aliases: [Schule, education, Unterricht]
-    persons: [sabrina]
+    persons: [marge]
     paperless_tag: School
     paperless_color: "#ff9800"
 
@@ -81,54 +81,54 @@ categories:
     paperless_color: "#00bcd4"
 
 persons:
-  arthur:
-    aliases: [Arthur, Papa]
+  homer:
+    aliases: [Homer, Papa]
     services:
-      matrix: "@arthur:merles.eu"
-      paperless: "Person: Arthur"
+      matrix: "@homer:merles.eu"
+      paperless: "Person: Homer"
       immich: face-abc123
-      forgejo: arthur
-      calendar: arthur@merles.eu
+      forgejo: homer
+      calendar: homer@merles.eu
 
-  sabrina:
-    aliases: [Sabrina, Mama]
+  marge:
+    aliases: [Marge, Mama]
     services:
-      matrix: "@sabrina:merles.eu"
-      paperless: "Person: Sabrina"
+      matrix: "@marge:merles.eu"
+      paperless: "Person: Marge"
       immich: face-def456
-      calendar: sabrina@merles.eu
+      calendar: marge@merles.eu
 
 organizations:
-  adac:
-    name: ADAC
-    aliases: ["ADAC e.V.", "ADAC Autoversicherung"]
+  duff-insurance:
+    name: Duff Insurance
+    aliases: ["Duff Insurance e.V.", "Duff Insurance Autoversicherung"]
     categories: [insurance, vehicle]
-    persons: [arthur]
-    paperless_correspondent: ADAC
+    persons: [homer]
+    paperless_correspondent: Duff Insurance
 
   tk:
     name: Techniker Krankenkasse
     aliases: [TK, "Techniker Krankenkasse"]
     categories: [insurance, medical]
-    persons: [arthur, sabrina]
+    persons: [homer, marge]
     paperless_correspondent: TK
 
-  finanzamt:
-    name: Finanzamt
-    aliases: [Finanzamt, "Finanzamt Friedrichshafen", FA]
+  springfield-tax-office:
+    name: Springfield Tax Office
+    aliases: [Springfield Tax Office, "Springfield Tax Office", FA]
     categories: [finance]
-    paperless_correspondent: Finanzamt
+    paperless_correspondent: Springfield Tax Office
 
 knowledge_types:
   rule:
     decay: null
     description: Permanent, safety-critical facts
-    examples: ["Sabrina is allergic to peanuts", "Emergency number: 112"]
+    examples: ["Marge is allergic to peanuts", "Emergency number: 112"]
     paperless_action: "Action: Critical"
   habit:
     decay: 365
     description: Recurring pattern, auto-promoted from repeated events
-    examples: ["ADAC invoice arrives in March", "Pizza night every Friday"]
+    examples: ["Duff Insurance invoice arrives in March", "Pizza night every Friday"]
     promotion_threshold: 3  # events before promotion to habit
   goal:
     decay: 365
@@ -137,7 +137,7 @@ knowledge_types:
   preference:
     decay: 180
     description: Personal choice or taste
-    examples: ["Arthur prefers dark roast coffee"]
+    examples: ["Homer prefers dark roast coffee"]
   fact:
     decay: 90
     description: Verifiable information with limited shelf life
@@ -149,11 +149,11 @@ knowledge_types:
   event:
     decay: 14
     description: Something that happened at a specific time
-    examples: ["Sabrina had dentist appointment Apr 17"]
+    examples: ["Marge had dentist appointment Apr 17"]
   reference:
     decay: null
     description: Pointer to external resource
-    examples: ["ADAC phone: 089-XXX", "Insurance policy in Paperless #247"]
+    examples: ["Duff Insurance phone: 089-XXX", "Insurance policy in Paperless #247"]
 ```
 
 ### Projectional Views
@@ -173,13 +173,13 @@ The YAML is the source of truth. Derived views are generated from it:
 - ...
 
 ## Organizations
-- [[ADAC]] -- categories: [[Insurance]], [[Vehicle]] -- persons: [[Arthur]]
-- [[TK]] -- categories: [[Insurance]], [[Medical]] -- persons: [[Arthur]], [[Sabrina]]
+- [[Duff Insurance]] -- categories: [[Insurance]], [[Vehicle]] -- persons: [[Homer]]
+- [[TK]] -- categories: [[Insurance]], [[Medical]] -- persons: [[Homer]], [[Marge]]
 - ...
 
 ## Persons
-- [[Arthur]] -- organizations: [[ADAC]], [[TK]], [[Finanzamt]]
-- [[Sabrina]] -- organizations: [[TK]]
+- [[Homer]] -- organizations: [[Duff Insurance]], [[TK]], [[Springfield Tax Office]]
+- [[Marge]] -- organizations: [[TK]]
 ```
 
 **Paperless tag report** -- generated view showing how ontology maps to current Paperless state:
@@ -189,7 +189,7 @@ fk ontology paperless-sync
   Insurance     → Paperless tag "Insurance" (exists, 23 documents)
   Finance       → Paperless tag "Finance" (exists, 15 documents)
   Vehicle       → Paperless tag "Vehicle" (MISSING — will be created on next classify)
-  ADAC          → Paperless correspondent "ADAC" (exists, 8 documents)
+  Duff Insurance          → Paperless correspondent "Duff Insurance" (exists, 8 documents)
 ```
 
 The projectional views are read-only artifacts. Change the YAML, regenerate the views.
@@ -199,14 +199,14 @@ The projectional views are read-only artifacts. Change the YAML, regenerate the 
 When the Archivist classifies a document, it doesn't just pick a tag string. It resolves through the ontology:
 
 ```
-OCR text mentions "ADAC" and "Rechnung"
-  → Ontology lookup: ADAC is a known correspondent in Insurance category
+OCR text mentions "Duff Insurance" and "Rechnung"
+  → Ontology lookup: Duff Insurance is a known correspondent in Insurance category
   → Category: Insurance (resolved, not guessed)
-  → Person: Arthur (ADAC is associated with Arthur's car)
+  → Person: Homer (Duff Insurance is associated with Homer's car)
   → Knowledge type: fact (it's an invoice with amounts and dates)
-  → Related: [[insurance.md#ADAC]], [[vehicle.md]]
-  → Paperless tags: Insurance, Person: Arthur, Invoice, ADAC
-  → Wiki entry: update shared/household/insurance.md#ADAC
+  → Related: [[insurance.md#Duff Insurance]], [[vehicle.md]]
+  → Paperless tags: Insurance, Person: Homer, Invoice, Duff Insurance
+  → Wiki entry: update shared/household/insurance.md#Duff Insurance
 ```
 
 The LLM gets the ontology as context in its classification prompt. Instead of guessing tags from scratch every time, it picks from a known vocabulary with relationships already defined.
@@ -232,29 +232,29 @@ Categories (use canonical key, not aliases):
   ...
 
 Persons:
-  arthur: [Arthur, Papa]
-  sabrina: [Sabrina, Mama]
+  homer: [Homer, Papa]
+  marge: [Marge, Mama]
 
 Organizations (known correspondents):
-  adac: [ADAC, "ADAC e.V."] → categories: insurance, vehicle → persons: arthur
-  tk: [TK, "Techniker Krankenkasse"] → categories: insurance, medical → persons: arthur, sabrina
-  finanzamt: [Finanzamt, FA] → categories: finance
+  duff-insurance: [Duff Insurance, "Duff Insurance e.V."] → categories: insurance, vehicle → persons: homer
+  tk: [TK, "Techniker Krankenkasse"] → categories: insurance, medical → persons: homer, marge
+  springfield-tax-office: [Springfield Tax Office, FA] → categories: finance
 ```
 
-The LLM now has relationships. It doesn't just see tag strings -- it sees a graph. "This is from ADAC" immediately implies insurance + vehicle + arthur without the LLM having to figure that out from OCR text alone.
+The LLM now has relationships. It doesn't just see tag strings -- it sees a graph. "This is from Duff Insurance" immediately implies insurance + vehicle + homer without the LLM having to figure that out from OCR text alone.
 
 ### Cross-Service Entity Resolution
 
 The ontology connects entities across services. When the Deriver processes events:
 
 ```
-Document event: correspondent=ADAC, person=Arthur
-Photo event: faces=[Arthur], location=Highway A8
-Calendar event: "ADAC Pannenservice", date=2026-03-15
+Document event: correspondent=Duff Insurance, person=Homer
+Photo event: faces=[Homer], location=Highway A8
+Calendar event: "Duff Insurance Pannenservice", date=2026-03-15
 
-→ Ontology resolves: all three relate to entity "ADAC" + person "Arthur"
+→ Ontology resolves: all three relate to entity "Duff Insurance" + person "Homer"
 → Wiki: shared/household/vehicle.md gets updated with the roadside assistance event
-→ Cross-references: [[insurance.md#ADAC]] + [[calendar/2026-03.md]]
+→ Cross-references: [[insurance.md#Duff Insurance]] + [[calendar/2026-03.md]]
 ```
 
 Without the ontology, these three events are unrelated -- different services, different data formats, different tag systems. With the ontology, they're one story.
@@ -265,7 +265,7 @@ Paperless's person tagging is good. Extend it across the stack:
 
 **Every piece of knowledge can be associated with one or more persons.**
 
-- Documents: `Person: Arthur` tag in Paperless + `person` field in classification
+- Documents: `Person: Homer` tag in Paperless + `person` field in classification
 - Photos: face detection in Immich maps to person entities
 - Calendar events: attendees map to persons
 - Wiki entries: `persons` field in frontmatter
@@ -274,18 +274,18 @@ Paperless's person tagging is good. Extend it across the stack:
 The person entity in the ontology is the join key:
 
 ```markdown
-## Arthur
-- matrix: @arthur:merles.eu
-- paperless: "Person: Arthur"
+## Homer
+- matrix: @homer:merles.eu
+- paperless: "Person: Homer"
 - immich: face-id-abc123
-- calendar: arthur@merles.eu
+- calendar: homer@merles.eu
 ```
 
-When Kit Bot serves Arthur, it can query "everything associated with Arthur" across all services by resolving through the ontology. When Sabrina asks Kit something, the person filter scopes results to what's relevant to her.
+When Kit Bot serves Homer, it can query "everything associated with Homer" across all services by resolving through the ontology. When Marge asks Kit something, the person filter scopes results to what's relevant to her.
 
 ### Ontology Lifecycle
 
-**Bootstrap (manual):** Arthur seeds the ontology files by hand. Categories based on Paperless tags that already exist. Persons from the user list. Correspondents from Paperless.
+**Bootstrap (manual):** Homer seeds the ontology files by hand. Categories based on Paperless tags that already exist. Persons from the user list. Correspondents from Paperless.
 
 **Growth (Archivist + Deriver):** When the Archivist encounters a truly new correspondent or category that doesn't match anything in the ontology, it:
 1. Creates the Paperless tag (as today)
@@ -295,7 +295,7 @@ When Kit Bot serves Arthur, it can query "everything associated with Arthur" acr
 
 **Maintenance (dream cycle):** Nightly review:
 - Detect near-duplicate entries (fuzzy matching on names + aliases)
-- Suggest merges ("Finanzamt" and "Finanzamt Friedrichshafen" should be one entry)
+- Suggest merges ("Springfield Tax Office" and "Springfield Tax Office" should be one entry)
 - Flag orphans (entities referenced nowhere)
 - Update alias lists from observed usage
 - Count usage per tag to identify the most/least used
@@ -343,8 +343,8 @@ Updated classification flow:
 
 4. Resolve to Paperless tags via ontology dict lookups:
    category "insurance" → ontology["categories"]["insurance"]["paperless_tag"] → "Insurance"
-   person "arthur" → ontology["persons"]["arthur"]["services"]["paperless"] → "Person: Arthur"
-   org "adac" → ontology["organizations"]["adac"]["paperless_correspondent"] → "ADAC"
+   person "homer" → ontology["persons"]["homer"]["services"]["paperless"] → "Person: Homer"
+   org "duff-insurance" → ontology["organizations"]["duff-insurance"]["paperless_correspondent"] → "Duff Insurance"
 
 5. If new entity: emit tag.created event, Deriver adds to ontology.yaml, commits
 ```
@@ -357,7 +357,7 @@ The ontology makes queries intelligent:
 ```
 fk knowledge search "car insurance"
 → grep for "car insurance" across all files
-→ misses: "ADAC", "Vollkasko", "KFZ", "Autoversicherung"
+→ misses: "Duff Insurance", "Vollkasko", "KFZ", "Autoversicherung"
 ```
 
 **With ontology:**
@@ -365,7 +365,7 @@ fk knowledge search "car insurance"
 fk knowledge search "car insurance"
 → Ontology lookup: "car insurance" matches category Insurance + subcategory Vehicle
 → Aliases: Autoversicherung, KFZ, Vollkasko
-→ Known correspondents: ADAC, HUK, Allianz
+→ Known correspondents: Duff Insurance, HUK, Globex
 → Expanded search: grep for all aliases + correspondent names
 → Finds everything related, regardless of language or terminology
 ```
@@ -374,10 +374,10 @@ This is the "super fast queries" insight. The ontology is a search expansion lay
 
 **Kit Bot uses the same expansion:**
 ```
-Arthur: "What do we know about car insurance?"
+Homer: "What do we know about car insurance?"
 Kit: loads ontology → Insurance+Vehicle → aliases + correspondents + persons
 Kit: fk knowledge search with expanded terms
-Kit: finds insurance.md, ADAC correspondent entry, recent invoice, action item
+Kit: finds insurance.md, Duff Insurance correspondent entry, recent invoice, action item
 Kit: synthesizes answer from all sources
 ```
 
@@ -416,10 +416,10 @@ Each stacklet reads the ontology for context and emits events that the Deriver u
 - fk CLI: `fk ontology` commands
 
 ### Who writes it
-- Arthur: manual bootstrap and corrections (edit YAML directly or via CLI)
+- Homer: manual bootstrap and corrections (edit YAML directly or via CLI)
 - Deriver: adds new entities discovered from events (appends to YAML, commits)
 - Dream cycle: merges, cleanup, alias updates
-- Family assistant: conversational writes ("remember that Dr. Weber is our pediatrician")
+- Family assistant: conversational writes ("remember that Dr. Hibbert is our pediatrician")
 
 ### Runtime loading
 Load `ontology.yaml` once into a Python dict at startup. Refresh on git webhook or periodic poll (every 5 min). The file is ~5-10 KB. All lookups are O(1) dict access. No parsing on every query.

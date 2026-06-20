@@ -2,7 +2,7 @@
 
 > Status: Implementation plan
 > Created: 2026-04-14
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Depends on: [knowledge-architecture.md](knowledge-architecture.md)
 
 ## Starting Point
@@ -25,7 +25,7 @@ Enforce naming conventions so tags are consistent and queryable:
 
 ```
 Category:   Insurance, Finance, Medical, School, Home, Vehicle, Legal, Travel
-Person:     Person: Arthur, Person: Sabrina
+Person:     Person: Homer, Person: Marge
 Status:     Action: Review, Action: Expiring, Action: Paid, Action: Return
 Period:     Year: 2026, Quarter: Q2
 ```
@@ -38,12 +38,12 @@ The LLM already reads the OCR text. Add to the classification response:
 
 ```json
 {
-  "title": "ADAC Rechnung Marz 2026",
+  "title": "Duff Insurance Rechnung Marz 2026",
   "date": "2026-03-15",
   "category": "Insurance",
-  "person": "Person: Arthur",
+  "person": "Person: Homer",
   "document_type": "Invoice",
-  "correspondent": "ADAC",
+  "correspondent": "Duff Insurance",
   "summary": "Annual car insurance invoice, EUR 340, policy KFZ-2024-XXXXX",
   "facts": [
     "Car insurance premium: EUR 340/year",
@@ -53,7 +53,7 @@ The LLM already reads the OCR text. Add to the classification response:
   "action_items": [
     {"action": "Insurance renewal due", "due": "2026-06-30"}
   ],
-  "related_to": "ADAC"
+  "related_to": "Duff Insurance"
 }
 ```
 
@@ -63,7 +63,7 @@ This costs zero extra LLM calls -- it's the same prompt, richer output schema. T
 
 Before creating a new tag, fuzzy-match against existing:
 - Lowercase + strip whitespace comparison
-- Common prefix matching ("Finanzamt Friedrichshafen" matches "Finanzamt")
+- Common prefix matching ("Springfield Tax Office" matches "Springfield Tax Office")
 - The prompt already asks for this, but code enforces it as a safety net
 
 **Time: 3-4 hours.** Changes to `archivist.py` only: updated prompt, tag validation, richer JSON parsing.
@@ -115,32 +115,32 @@ await self.events.emit(
 
 - `knowledge/meta` -- master index, ontology schema
 - `knowledge/shared` -- household facts, insurance, contacts
-- `knowledge/arthur` -- personal
-- `knowledge/sabrina` -- personal
+- `knowledge/homer` -- personal
+- `knowledge/marge` -- personal
 - `knowledge/calendar` -- events, patterns
 
 **3b. Seed with manual knowledge.**
 
-Start with what Arthur already knows: insurance details, emergency contacts, household facts. Use the Obsidian-compatible format:
+Start with what Homer already knows: insurance details, emergency contacts, household facts. Use the Obsidian-compatible format:
 
 ```markdown
 ---
 type: fact
 domain: household
-tags: [insurance, car, ADAC]
+tags: [insurance, car, Duff Insurance]
 created: 2026-04-14
 source: manual
 decay: 90d
 ---
 
-# Car Insurance - ADAC
+# Car Insurance - Duff Insurance
 
 Premium: EUR 340/year
 Policy: KFZ-2024-XXXXX
 Coverage: Vollkasko + Haftpflicht
 Expires: 2026-06-30
 
-See also: [[contacts#ADAC]] | [[actions#insurance-renewal]]
+See also: [[contacts#Duff Insurance]] | [[actions#insurance-renewal]]
 ```
 
 **3c. Implement fk knowledge CLI.**
@@ -169,7 +169,7 @@ For `document.filed` events, the pipeline:
 2. Load relevant domain index via `fk knowledge index shared`
 3. Determine: update existing entry or create new one?
 4. Write Markdown with frontmatter + wiki links
-5. Git commit with structured message: `learn: ADAC invoice, premium EUR 340/yr`
+5. Git commit with structured message: `learn: Duff Insurance invoice, premium EUR 340/yr`
 6. Update domain index
 
 **4b. The extraction prompt.**
@@ -208,15 +208,15 @@ Facts with due dates go to `shared/household/actions.md`. Each entry has a statu
 
 **5a. Context-aware extraction.**
 
-The Deriver loads relevant wiki sections before processing a new event. When a new ADAC invoice arrives, it sees the existing insurance.md and can:
+The Deriver loads relevant wiki sections before processing a new event. When a new Duff Insurance invoice arrives, it sees the existing insurance.md and can:
 - Update the premium if it changed
-- Note the invoice as part of a series ("3rd ADAC invoice this year")
+- Note the invoice as part of a series ("3rd Duff Insurance invoice this year")
 - Flag contradictions ("last document said EUR 340, this one says EUR 380")
 
 **5b. Relationship tracking via wiki links.**
 
 The Deriver adds `[[wiki links]]` between related entries:
-- `insurance.md` links to `contacts.md#ADAC`
+- `insurance.md` links to `contacts.md#Duff Insurance`
 - `contacts.md#Dr-Weber` links to `medical.md`
 - Invoice documents link to the correspondent's wiki entry
 
@@ -224,11 +224,11 @@ Obsidian's graph view renders these connections automatically.
 
 **5c. Series detection.**
 
-The Deriver notices patterns: monthly invoices from the same correspondent, recurring document types. These become `[habit]` entries in the wiki: "ADAC sends annual invoice in March."
+The Deriver notices patterns: monthly invoices from the same correspondent, recurring document types. These become `[habit]` entries in the wiki: "Duff Insurance sends annual invoice in March."
 
 **Time: 4 hours.** Prompt enhancement + cross-reference logic.
 
-**Delivers:** Knowledge graph emerges naturally. Kit can answer "what do we know about ADAC?" with the full picture across all documents.
+**Delivers:** Knowledge graph emerges naturally. Kit can answer "what do we know about Duff Insurance?" with the full picture across all documents.
 
 ### Layer 6: Smart Tag Management
 

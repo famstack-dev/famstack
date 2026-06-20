@@ -141,7 +141,7 @@ Two ways to ask:
 - In **#Documents**, just type. Search is the default there.
 - In **any other room**, @-mention the bot: `@archivist when does the car insurance renew?`
 
-Plain words work as search ("ADAC", "vaccination Bart"). Questions get real answers: the archivist searches the document archive and the family knowledge vault, reads what it finds, and answers with numbered sources you can check:
+Plain words work as search ("Duff Insurance", "vaccination Bart"). Questions get real answers: the archivist searches the document archive and the family knowledge vault, reads what it finds, and answers with numbered sources you can check:
 
 > The car insurance renews on March 1, 2026 [1]. The premium is EUR 340/year [1][2].
 

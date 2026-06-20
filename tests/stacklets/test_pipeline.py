@@ -365,11 +365,11 @@ def seeded_paperless():
             "Person: Homer": 10, "Person: Marge": 11, "Person: Bart": 12,
         },
         doc_types={"Invoice": 100, "Receipt": 101, "Letter": 102},
-        correspondents={"ADAC": 200, "Kwik-E-Mart": 201},
+        correspondents={"Duff Insurance": 200, "Kwik-E-Mart": 201},
     )
 
 
-def _doc(doc_id=42, content="Invoice text from ADAC for car insurance.",
+def _doc(doc_id=42, content="Invoice text from Duff Insurance for car insurance.",
          tags=None, document_type=None):
     """Build a Paperless doc dict in the shape the pipeline expects."""
     return {
@@ -388,11 +388,11 @@ class TestEnrichHappyPath:
     @pytest.mark.asyncio
     async def test_full_classification_applied(self, seeded_paperless):
         classifier = StubClassifier(payload={
-            "title": "ADAC - Kfz-Versicherung 2026 EUR 340",
+            "title": "Duff Insurance - Kfz-Versicherung 2026 EUR 340",
             "date": "2026-03-15",
             "topics": ["Insurance"],
             "persons": ["Homer"],
-            "correspondent": "ADAC",
+            "correspondent": "Duff Insurance",
             "document_type": "Invoice",
             "summary": "Annual renewal.",
             "facts": ["EUR 340.00"],
@@ -406,7 +406,7 @@ class TestEnrichHappyPath:
 
         assert result.resolved_topics == ["Insurance"]
         assert result.resolved_persons == ["Homer"]
-        assert result.resolved_correspondent == "ADAC"
+        assert result.resolved_correspondent == "Duff Insurance"
         assert result.resolved_type == "Invoice"
         assert result.created_new == []
         assert result.llm_error is None
@@ -415,9 +415,9 @@ class TestEnrichHappyPath:
         assert len(seeded_paperless.updates) == 1
         doc_id, updates = seeded_paperless.updates[0]
         assert doc_id == 42
-        assert updates["title"] == "ADAC - Kfz-Versicherung 2026 EUR 340"
+        assert updates["title"] == "Duff Insurance - Kfz-Versicherung 2026 EUR 340"
         assert updates["created"] == "2026-03-15"
-        assert updates["correspondent"] == 200  # ADAC id
+        assert updates["correspondent"] == 200  # Duff Insurance id
         assert updates["document_type"] == 100  # Invoice id
         # Tag ids — Insurance + Person: Homer
         assert set(updates["tags"]) == {1, 10}
@@ -537,14 +537,14 @@ class TestEnrichFuzzyMatching:
 
     @pytest.mark.asyncio
     async def test_correspondent_fuzzy_match_avoids_duplicate(self, seeded_paperless):
-        # LLM says "ADAC e.V." — should match existing "ADAC", not create new
+        # LLM says "Duff Insurance e.V." — should match existing "Duff Insurance", not create new
         classifier = StubClassifier(payload={
-            "title": "Invoice", "correspondent": "ADAC e.V.",
+            "title": "Invoice", "correspondent": "Duff Insurance e.V.",
         })
         result = await enrich_document(
             paperless=seeded_paperless, classifier=classifier, doc=_doc(),
         )
-        assert result.resolved_correspondent == "ADAC"
+        assert result.resolved_correspondent == "Duff Insurance"
         assert seeded_paperless.created_correspondents == []
         _, updates = seeded_paperless.updates[0]
         assert updates["correspondent"] == 200
@@ -854,7 +854,7 @@ class TestEnrichClassifyMaxChars:
     @pytest.mark.asyncio
     async def test_short_content_passes_through_unchanged(self, seeded_paperless):
         classifier = StubClassifier(payload={"title": "x"})
-        doc = _doc(content="Invoice from ADAC")
+        doc = _doc(content="Invoice from Duff Insurance")
 
         await enrich_document(
             paperless=seeded_paperless, classifier=classifier, doc=doc,
@@ -862,7 +862,7 @@ class TestEnrichClassifyMaxChars:
         )
 
         (call,) = classifier.classify_calls
-        assert call["ocr_text"] == "Invoice from ADAC"
+        assert call["ocr_text"] == "Invoice from Duff Insurance"
 
     @pytest.mark.asyncio
     async def test_default_cap_is_generous(self, seeded_paperless):
@@ -1062,13 +1062,13 @@ class TestSummaryFormatter:
                 "action_items": [{"action": "pay", "due": "2026-04-30"}],
             },
             persons=["Homer"],
-            correspondent="ADAC",
+            correspondent="Duff Insurance",
         )
         # No section headings — prose, bulleted facts, parties line all
         # separated by blank lines. The structure is obvious from shape.
         assert "Kfz-Versicherung Jahresbeitrag." in text
         assert "- Total: EUR 340\n- Policy: #12345" in text
-        assert "ADAC → Homer" in text
+        assert "Duff Insurance → Homer" in text
         # Headings the old format used must NOT appear — they forced an
         # English label onto non-English content.
         assert "## Summary" not in text
@@ -1094,8 +1094,8 @@ class TestSummaryFormatter:
         assert "Total: EUR 5" in text
 
     def test_parties_correspondent_only(self):
-        text = self._fmt({"summary": "x"}, correspondent="ADAC")
-        assert "ADAC" in text
+        text = self._fmt({"summary": "x"}, correspondent="Duff Insurance")
+        assert "Duff Insurance" in text
         assert "→" not in text
 
     def test_parties_persons_only(self):
@@ -1110,21 +1110,21 @@ class TestSummaryFormatter:
     def test_parties_alone_still_writes(self):
         """Even with no summary prose, a sender → recipient line is useful
         context on a bare doc."""
-        text = self._fmt({}, persons=["Homer"], correspondent="ADAC")
-        assert text == "ADAC → Homer\n\n<!-- archivist-bot -->"
+        text = self._fmt({}, persons=["Homer"], correspondent="Duff Insurance")
+        assert text == "Duff Insurance → Homer\n\n<!-- archivist-bot -->"
 
     def test_sections_separated_by_blank_lines(self):
         # Without headings, blank lines do the work of section
         # boundaries. Two newlines between every block.
         text = self._fmt(
             {"summary": "Prose.", "facts": ["A", "B"]},
-            persons=["Homer"], correspondent="ADAC",
+            persons=["Homer"], correspondent="Duff Insurance",
         )
         # Prose → blank → facts → blank → parties → blank → marker.
         assert text == (
             "Prose.\n\n"
             "- A\n- B\n\n"
-            "ADAC → Homer\n\n"
+            "Duff Insurance → Homer\n\n"
             "<!-- archivist-bot -->"
         )
 
@@ -1148,7 +1148,7 @@ class TestSummaryWrite:
             "title": "x",
             "summary": "Annual premium renewal.",
             "facts": ["Total: EUR 340"],
-            "correspondent": "ADAC",
+            "correspondent": "Duff Insurance",
             "persons": ["Homer"],
         })
         result = await enrich_document(
@@ -1157,7 +1157,7 @@ class TestSummaryWrite:
         assert result.summary is not None
         assert "Annual premium renewal." in result.summary
         assert "- Total: EUR 340" in result.summary
-        assert "ADAC → Homer" in result.summary
+        assert "Duff Insurance → Homer" in result.summary
         notes = seeded_paperless.notes[42]
         assert len(notes) == 1
         assert notes[0]["note"] == result.summary

@@ -2,7 +2,7 @@
 
 > Status: Design note — future direction, no implementation yet
 > Created: 2026-06-09
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Depends on: [topic-rooms.md](topic-rooms.md) (room-state-as-intent, the seed of this design), [knowledge-architecture.md](knowledge-architecture.md), [wiki-engine.md](wiki-engine.md)
 
 ## Why this exists
@@ -50,7 +50,7 @@ Reactions run in **both directions** — the user reacts to signal intent to the
 | 👎 | "Bot, your classification was wrong" — opens a reply-thread correction prompt |
 | 📅 | Surface this for the calendar / reminder bot (once it lands) |
 
-A 🔖 on Homer's message means "save this." A 👎 on the bot's `Filed: ADAC camping addendum` means "you got the topic wrong." A 🗑 on the bot's own capture confirmation means "undo." Each binding maps to an existing handler the archivist already implements; the reaction is just a different trigger.
+A 🔖 on Homer's message means "save this." A 👎 on the bot's `Filed: Duff Insurance camping addendum` means "you got the topic wrong." A 🗑 on the bot's own capture confirmation means "undo." Each binding maps to an existing handler the archivist already implements; the reaction is just a different trigger.
 
 #### Bot reacts to the user's message to signal processing state
 
@@ -86,10 +86,10 @@ Bounded intent set (so the prompt stays tight and dispatch stays deterministic):
 | Intent | Example | Dispatch |
 |---|---|---|
 | save | `@archivist save this https://...` | `_handle_capture` |
-| forget | `@archivist forget that ADAC stuff` | redaction + tombstone |
+| forget | `@archivist forget that Duff Insurance stuff` | redaction + tombstone |
 | search | `@archivist what did we note about camping?` | `_handle_search` (existing) |
 | reclassify | `@archivist this is actually Marge's, not Homer's` | `_handle_reply_reprocess` (existing) |
-| remind | `@archivist remind me about the ADAC renewal in November` | reminder bot when it lands |
+| remind | `@archivist remind me about the Duff Insurance renewal in November` | reminder bot when it lands |
 | status | `@archivist what have you filed today?` | digest |
 
 A thin LLM pass classifies the mention's intent into one of those slots, then dispatches to the existing handler. The user does not learn a command syntax — they ask naturally; the LLM bridges to the existing surface.
@@ -151,7 +151,7 @@ That alone gives the family a real-feeling per-message knob without ripping out 
 
 ## Status of this document
 
-A design note, not a prescriptive plan. Captures the direction agreed in the 2026-06-09 session as a marker so future-Arthur and future-Claude do not have to rederive the conclusion. When the first layer ships, this document graduates into a proper design doc — until then, it sits here as the canonical reference for "we know the routing is fragile; here's the direction we are taking when we get to it."
+A design note, not a prescriptive plan. Captures the direction agreed in the 2026-06-09 session as a marker so future-Homer and future-Claude do not have to rederive the conclusion. When the first layer ships, this document graduates into a proper design doc — until then, it sits here as the canonical reference for "we know the routing is fragile; here's the direction we are taking when we get to it."
 
 ## Related
 

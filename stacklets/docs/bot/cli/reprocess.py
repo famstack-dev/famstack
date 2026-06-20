@@ -94,7 +94,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
     # flow uses. Examples:
     #
     #   stack docs reprocess 7 --msg "Der Urlaub ist im Februar 2026"
-    #   stack docs reprocess 1-5 --msg "this is for Sabrina"
+    #   stack docs reprocess 1-5 --msg "this is for Marge"
     #
     # Stripped from argv before flag/positional parsing so the rest of
     # the parser only sees id specs and known flags.

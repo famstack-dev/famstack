@@ -170,7 +170,7 @@ class CapturePipeline:
 
         ``bucket`` overrides the sender-derived entity routing. Used
         by topic-room captures so a memo in #Thema:Camping files
-        under ``camping/`` (shared) or ``arthur/camping/`` (personal)
+        under ``camping/`` (shared) or ``homer/camping/`` (personal)
         instead of the sender's default personal bucket. The classifier
         still sees the sender's name in ``persons``; only the path
         changes.
@@ -540,7 +540,7 @@ class CapturePipeline:
         re-reads; this stays cheap (no vision round-trip, no re-fetch
         of the original binary) at the cost of corrections having to
         work against the model's own paraphrase rather than the raw
-        page. Pure text corrections (Arthur's "It is a Mac Studio")
+        page. Pure text corrections (Homer's "It is a Mac Studio")
         compose cleanly under that constraint.
         """
         if self._mirror is None:
@@ -571,14 +571,14 @@ class CapturePipeline:
         source = SourceContent(
             text=source_text,
             title_hint=meta.get("title") or None,
-            source_uri=meta.get("source_uri") or None,
+            source_uri=meta.get("resource") or None,
         )
-        kind = meta.get("kind") or "bookmark"
+        kind = meta.get("type") or "bookmark"
         captured_at = meta.get("date") or _dt.date.today().isoformat()
         capture_id = meta.get("capture_id")
         return await self._publish(
             source=source, kind=str(kind), sender_mxid=sender_mxid,
-            display_link=meta.get("source_uri") or "(capture)",
+            display_link=meta.get("resource") or "(capture)",
             user_hint=user_hint,
             existing_path=vault_path,
             captured_at=str(captured_at),

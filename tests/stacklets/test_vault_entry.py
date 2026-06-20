@@ -1,4 +1,4 @@
-"""Unit tests for mirror_format — pure path generation and markdown rendering.
+"""Unit tests for vault_entry — pure path generation and markdown rendering.
 
 No Forgejo I/O, no git operations. Tests use Springfield-themed names."""
 
@@ -11,7 +11,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from mirror_format import (
+from vault_entry import (
     slug,
     document_filepath,
     capture_filepath,
@@ -45,7 +45,7 @@ class TestSlug:
         assert slug("!!!") == "document"
 
     def test_numbers_preserved(self):
-        assert slug("ADAC 2025") == "adac-2025"
+        assert slug("Duff Insurance 2025") == "duff-insurance-2025"
 
     def test_ampersand(self):
         assert slug("Müller & Söhne") == "muller-sohne"
@@ -69,9 +69,9 @@ class TestDocumentFilepath:
 
     def test_with_date_and_title(self):
         path = document_filepath(
-            "family", "2025-03-27", 42, "ADAC - Kfz", True,
+            "family", "2025-03-27", 42, "Duff Insurance - Kfz", True,
         )
-        assert path == "family/documents/2025/03/2025-03-27-adac-kfz-p42.md"
+        assert path == "family/documents/2025/03/2025-03-27-duff-insurance-kfz-p42.md"
 
     def test_with_date_no_title(self):
         path = document_filepath(
@@ -81,9 +81,9 @@ class TestDocumentFilepath:
 
     def test_no_date_with_title(self):
         path = document_filepath(
-            "family", None, 42, "ADAC - Kfz", True,
+            "family", None, 42, "Duff Insurance - Kfz", True,
         )
-        assert path == "family/documents/_unfiled/adac-kfz-p42.md"
+        assert path == "family/documents/_unfiled/duff-insurance-kfz-p42.md"
 
     def test_no_date_no_title(self):
         path = document_filepath(
@@ -105,14 +105,14 @@ class TestDocumentFilepath:
 
     def test_title_with_special_chars(self):
         path = document_filepath(
-            "family", "2025-03-27", 42, "ADAC - Kfz-Versicherung 2025", True,
+            "family", "2025-03-27", 42, "Duff Insurance - Kfz-Versicherung 2025", True,
         )
-        assert path == "family/documents/2025/03/2025-03-27-adac-kfz-versicherung-2025-p42.md"
+        assert path == "family/documents/2025/03/2025-03-27-duff-insurance-kfz-versicherung-2025-p42.md"
 
     def test_has_title_false_no_slug(self):
         """has_title=False means don't use title in path, even if provided."""
         path = document_filepath(
-            "family", "2025-03-27", 42, "ADAC - Kfz", False,
+            "family", "2025-03-27", 42, "Duff Insurance - Kfz", False,
         )
         assert path == "family/documents/2025/03/2025-03-27-p42.md"
 
@@ -192,9 +192,9 @@ class TestDocumentFrontmatter:
 
     def test_full_frontmatter(self):
         fm = document_frontmatter(
-            title="ADAC - Kfz-Versicherung",
+            title="Duff Insurance - Kfz-Versicherung",
             date="2025-03-27",
-            correspondent="ADAC",
+            correspondent="Duff Insurance",
             document_type="Invoice",
             category="Insurance",
             persons=["Homer"],
@@ -204,19 +204,21 @@ class TestDocumentFrontmatter:
             processing="ai_formatted",
             model="mlx-model",
         )
-        assert fm["title"] == "ADAC - Kfz-Versicherung"
+        assert fm["type"] == "document"  # OKF concept kind
+        assert fm["title"] == "Duff Insurance - Kfz-Versicherung"
         assert fm["date"] == "2025-03-27"
-        assert fm["correspondent"] == "ADAC"
-        assert fm["document_type"] == "Invoice"
+        assert fm["correspondent"] == "Duff Insurance"
+        assert fm["document_type"] == "Invoice"  # Paperless subtype, separate axis
         assert fm["category"] == "Insurance"
         assert fm["persons"] == ["Homer"]
         assert fm["tags"] == ["Insurance", "Vehicle"]
         assert fm["paperless_id"] == 42
         assert fm["paperless_url"] == "http://paperless:8000"
+        assert fm["resource"] == "http://paperless:8000/documents/42/details"
         assert fm["processing"] == "ai_formatted"
         assert fm["model"] == "mlx-model"
         assert fm["source"] == "paperless"
-        assert "added" in fm  # timestamp is always present
+        assert "timestamp" in fm  # always present
 
     def test_minimal_frontmatter(self):
         fm = document_frontmatter(
@@ -232,6 +234,7 @@ class TestDocumentFrontmatter:
             processing="ocr",
             model=None,
         )
+        assert fm["type"] == "document"
         assert fm["title"] == "Untitled"
         assert "date" not in fm
         assert "correspondent" not in fm
@@ -241,6 +244,7 @@ class TestDocumentFrontmatter:
         assert "tags" not in fm
         assert fm["paperless_id"] == 1
         assert "paperless_url" not in fm
+        assert "resource" not in fm  # no public URL -> no resource
         assert fm["processing"] == "ocr"
         assert "model" not in fm
         assert fm["source"] == "paperless"
@@ -265,18 +269,19 @@ class TestCaptureFrontmatter:
             captured_at="2025-03-27",
             kind="bookmark",
             source_uri="https://reddit.com/r/famstack/...",
-            persons=["Arthur"],
+            persons=["Homer"],
             tags=["Technology"],
             model="mlx-model",
         )
         assert fm["title"] == "Reddit Thread"
-        assert fm["kind"] == "bookmark"
+        assert fm["type"] == "bookmark"  # OKF concept kind, mirrors kind
+        assert "kind" not in fm  # promoted to type
         assert fm["date"] == "2025-03-27"
-        assert fm["source_uri"] == "https://reddit.com/r/famstack/..."
-        assert fm["persons"] == ["Arthur"]
+        assert fm["resource"] == "https://reddit.com/r/famstack/..."
+        assert fm["persons"] == ["Homer"]
         assert fm["tags"] == ["Technology"]
         assert fm["model"] == "mlx-model"
-        assert "added" in fm
+        assert "timestamp" in fm
         # Document fields should NOT be present
         assert "paperless_id" not in fm
         assert "paperless_url" not in fm
@@ -293,8 +298,9 @@ class TestCaptureFrontmatter:
             tags=[],
             model=None,
         )
-        assert fm["kind"] == "note"
-        assert "source_uri" not in fm
+        assert fm["type"] == "note"
+        assert "kind" not in fm  # promoted to type
+        assert "resource" not in fm
         assert "model" not in fm
 
 
@@ -304,9 +310,9 @@ class TestRenderDocument:
 
     def test_full_document_render(self):
         fm = document_frontmatter(
-            title="ADAC - Kfz-Versicherung",
+            title="Duff Insurance - Kfz-Versicherung",
             date="2025-03-27",
-            correspondent="ADAC",
+            correspondent="Duff Insurance",
             document_type="Invoice",
             category="Insurance",
             persons=["Homer"],
@@ -317,9 +323,10 @@ class TestRenderDocument:
             model="mlx-model",
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Vehicle registration insurance renewal.\nAmount: EUR 340.00.",
-            correspondent="ADAC",
+            correspondent="Duff Insurance",
             persons=["Homer"],
             summary="Kfz-Versicherung renewal for Homer Simpson's 2025 vehicle.",
             facts=["Policy: 12345678", "Amount: EUR 340.00"],
@@ -327,9 +334,11 @@ class TestRenderDocument:
             source_link=("Show Document", "http://paperless:8000/documents/42/details"),
         )
         assert "---" in content
-        assert "# ADAC - Kfz-Versicherung" in content
-        assert "**From:** [[ADAC]]" in content
-        assert "**About:** [[Homer]]" in content
+        assert "# Duff Insurance - Kfz-Versicherung" in content
+        assert "**From:** [Duff Insurance](" in content
+        assert "correspondents/duff-insurance.md)" in content
+        assert "**About:** [Homer](" in content
+        assert "homer/about.md)" in content
         assert "> [!summary]" in content
         assert "Kfz-Versicherung renewal" in content
         assert "**Facts**" in content
@@ -346,6 +355,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Test content.",
             correspondent=None,
@@ -368,6 +378,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             correspondent=None,
@@ -389,6 +400,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Content.",
             correspondent=None,
@@ -408,6 +420,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             correspondent=None,
@@ -427,6 +440,7 @@ class TestRenderDocument:
             processing="ocr", model=None,
         )
         content = render_document(
+            from_path="family/documents/2026/03/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             correspondent=None,
@@ -450,23 +464,25 @@ class TestRenderCapture:
             captured_at="2025-03-27",
             kind="bookmark",
             source_uri="https://reddit.com/r/famstack/...",
-            persons=["Arthur"],
+            persons=["Marge"],
             tags=["Technology"],
             model="mlx-model",
         )
         content = render_capture(
+            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",  # bookmarks have no body
             kind="bookmark",
             captured_at="2025-03-27",
             source_uri="https://reddit.com/r/famstack/...",
-            persons=["Arthur"],
+            persons=["Marge"],
             summary="Discussion about document filing.",
             facts=["Subreddit: r/famstack"],
         )
         assert "---" in content
         assert "# Reddit Thread" in content
-        assert "**About** [[Arthur]]" in content
+        assert "**About** [Marge](" in content
+        assert "marge/about.md)" in content
         assert "**Captured** 2025-03-27" in content
         assert "**Kind** bookmark" in content
         assert "**Source** <https://reddit.com/r/famstack/...>" in content
@@ -485,6 +501,7 @@ class TestRenderCapture:
             model=None,
         )
         content = render_capture(
+            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="Discussed Q2 budget.\nAction: review expenses.",
             kind="note",
@@ -496,7 +513,8 @@ class TestRenderCapture:
         )
         assert "---" in content
         assert "# Meeting notes" in content
-        assert "**About** [[Marge]]" in content
+        assert "**About** [Marge](" in content
+        assert "marge/about.md)" in content
         assert "**Kind** note" in content
         assert "**Captured** 2025-03-27" in content
         assert "Q2 budget discussion notes" in content
@@ -516,6 +534,7 @@ class TestRenderCapture:
             model=None,
         )
         content = render_capture(
+            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
             body="",
             kind="note",

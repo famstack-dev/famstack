@@ -35,6 +35,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+# Vault-layout conventions live in the framework so both stacklets share
+# one source. Re-exported here for memory's own callers (and back-compat
+# with `from lib import correspondents_dir`).
+from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
+
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
 # install hook would crash at import time if we pulled in a third-
@@ -271,33 +276,25 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 # Living outside `wiki/` keeps hand-curated correspondents safe from
 # the wiki-engine's regenerate pass.
 #
-# Example shape (family/correspondents/adac.md):
+# Example shape (family/correspondents/duff-insurance.md):
 #
 #     ---
 #     kind: correspondent
-#     canonical: ADAC
+#     canonical: Duff Insurance
 #     aliases:
-#       - "ADAC Ortsverband Manzell"
+#       - "Duff Insurance Ortsverband Springfield"
 #     topics: [insurance, vehicle]
 #     address: "Hansastraße 19, 80686 München"
-#     website: "https://www.adac.de"
+#     website: "https://www.duff-insurance.example"
 #     ---
 #
-#     # ADAC
+#     # Duff Insurance
 #     [free-form notes]
 #
 # `aliases` rolls up everything the classifier has seen as the
 # `correspondent_aliases` field on documents from this sender. The
 # classifier prompt embeds the (canonical, aliases) pairs so the LLM
 # can canonicalize new variants before they hit Paperless.
-
-DEFAULT_SHARED_BUCKET = "family"
-
-
-def correspondents_dir(shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
-    """Repo-relative path to the correspondents folder for a bucket."""
-    return f"{shared_bucket}/correspondents"
-
 
 @dataclass
 class Correspondent:
@@ -381,8 +378,8 @@ def correspondents_prompt_section(correspondents: List[Correspondent]) -> str:
     Output shape:
 
         Existing correspondents (canonical; aliases in parens):
-          - ADAC (ADAC Ortsverband Manzell, ADAC Versicherung AG)
-          - AOK
+          - Duff Insurance (Duff Insurance Ortsverband Springfield, Duff Insurance Versicherung AG)
+          - Springfield Mutual
           - Anthropic
 
     Returns an empty string when no correspondents are known yet —

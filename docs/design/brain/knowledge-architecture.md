@@ -2,7 +2,7 @@
 
 > Status: Research & design document
 > Created: 2026-04-14
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Depends on: [ai-hub.md](ai-hub.md) (Matrix as nerve center)
 
 ## Vision
@@ -13,7 +13,7 @@ The Family Brain connects the silos. It extracts knowledge from every service, o
 
 ## Research Sources
 
-This design synthesizes six external sources and our existing infrastructure.
+This design synthesizes seven external sources and our existing infrastructure.
 
 ### Karpathy's LLM Wiki Pattern
 Source: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
@@ -186,6 +186,17 @@ Source: r/LocalLLaMA (636K+ members), various articles and benchmarks
 - Hindsight (MIT): single Docker command, embedded PostgreSQL + pgvector
 - OpenMemory: temporal knowledge graph with composite scoring (salience, recency, coactivation)
 
+### "Second Brain Night Shift" (Khairallah, 2026)
+Source: viral how-to for a 300-agent overnight PKM swarm on Kimi Work + Obsidian
+
+A solo-knowledge-worker build: dump raw captures into one folder, and overnight a swarm of role-specialized agents (scouts fetch, catalogers atomize, cartographers link, critics flag contradictions, editors synthesize + write a briefing) refines them into an interlinked vault. Most of it is vendor marketing (the "300 agents" fan-out, Kimi K2.6) and most of the *architecture* we already arrived at independently: it is Karpathy's wiki + Total Recall's dream cycle restated. Validating, not novel: refinery-by-stage folders (`0-raw` -> `2-atoms` -> `3-threads`) match our L0->L4 layers; "sources sacred, no source no note" matches our immutable-mirror + provenance rule; atomic notes match L2 facts; role decomposition matches our Archivist/Deriver/Scribe split; the same 7 decay types appear (lifted from Total Recall, same TTLs).
+
+**The one genuinely fresh contribution: the morning briefing is the product.** The article's strongest instinct is that the overnight refinement is invisible and worthless until something *lands on your desk* -- "last night surfaced one contradiction worth your attention, here's the link." We do all the refinement (classify, mirror, derive) and emit nothing proactive: briefings are parked in three separate docs (engram stats, wiki-improvements brief, dream-cycle summary). This reframes the briefing from polish to centerpiece, and it is our `smart recall` paid wedge: "famstack noticed the car insurance renews in 9 days and this letter contradicts last year's premium" is the payoff that makes the background work feel alive. For a family it is *more* compelling than for a solo nerd.
+
+**The trap to reject: the human friction queue.** The article's climax -- "spend 20 minutes a week as editor-in-chief resolving the contradiction list" -- is exactly the pending/review queue our design forbids (see the auto-extend principle). It assumes one disciplined knowledge worker; a family has no editor-in-chief, and "whose belief wins" is incoherent across personal buckets. **Decision: adopt contradiction *detection*, reject contradiction *queues*.** When a new doc contradicts an old fact, resolve by newest-wins-with-changelog or surface-in-context-when-asked, never a triage list someone must clear.
+
+**Assessment for famstack:** Steal the briefing, steal the "your server worked while you slept" narrative for marketing, skip the swarm (a family sees a handful of captures a day, not 50 articles -- our few purpose-built bots are correct), keep realtime classify-on-arrival (better chat UX than overnight batch; the night shift is the *consolidation/briefing* layer, not the capture path). Net: this article mostly de-risks the existing design and isolates the briefing as the highest-leverage unbuilt piece.
+
 ---
 
 ## Architecture
@@ -240,8 +251,8 @@ Source: r/LocalLLaMA (636K+ members), various articles and benchmarks
           |  meta/     master index, ontology    |
           |  shared/   household, insurance, etc |
           |  calendar/ events, routines, patterns|
-          |  arthur/   personal knowledge        |
-          |  sabrina/  personal knowledge        |
+          |  homer/   personal knowledge        |
+          |  marge/  personal knowledge        |
           |                                      |
           |  Each repo has:                      |
           |    index.md  (pointer brain)          |
@@ -272,8 +283,8 @@ Each domain gets its own repo on Forgejo. Repos are context boundaries -- Kit Bo
 | `meta` | master index, ontology schema, deriver config | system | never |
 | `shared` | household, insurance, contacts, home, recipes | all family | a subtopic exceeds ~50 entries |
 | `calendar` | events, routines, weekly patterns | all family | probably never |
-| `arthur` | work, hobbies, preferences, private notes | Arthur only | work dominates (split to `arthur-work`) |
-| `sabrina` | her world, preferences, private notes | Sabrina only | by domain as needed |
+| `homer` | work, hobbies, preferences, private notes | Homer only | work dominates (split to `homer-work`) |
+| `marge` | her world, preferences, private notes | Marge only | by domain as needed |
 
 Git makes splitting cheap. `git filter-repo` extracts a subdirectory into a new repo with full history.
 
@@ -293,13 +304,13 @@ household (12 entries): insurance, contacts, home, appliances
 calendar (8 entries): upcoming events, weekly patterns, routines
   [latest: d3c1a0e] calendar/index.md
 
-## Arthur
+## Homer
 personal (15 entries): work/famstack, running, photography, preferences
-  [latest: a7b3e2f] arthur/index.md
+  [latest: a7b3e2f] homer/index.md
 
-## Sabrina
+## Marge
 personal (12 entries): school, dance class, preferences
-  [latest: e1d4c5a] sabrina/index.md
+  [latest: e1d4c5a] marge/index.md
 ```
 
 **Domain index** (per repo, ~300-500 tokens, loaded on demand):
@@ -309,11 +320,11 @@ personal (12 entries): school, dance class, preferences
 # Updated: 2026-04-14T03:00:00Z | Entries: 12
 
 ## Insurance
-- [fact] ADAC car: EUR 340/yr, expires 2026-06-30 [c3d4e5f:household/insurance.md]
+- [fact] Duff Insurance car: EUR 340/yr, expires 2026-06-30 [c3d4e5f:household/insurance.md]
 - [fact] TK health: family plan, EUR 892/mo [c3d4e5f:household/insurance.md#health]
 
 ## Contacts
-- [rule] Emergency pediatrician: Dr. Weber +49-89-XXX [d4e5f6g:household/contacts.md]
+- [rule] Emergency pediatrician: Dr. Hibbert +49-89-XXX [d4e5f6g:household/contacts.md]
 - [rule] Plumber: Firma Huber +49-89-XXX [d4e5f6g:household/contacts.md]
 
 ## Home
@@ -324,9 +335,9 @@ personal (12 entries): school, dance class, preferences
 **Full documents** (variable size, retrieved only when Kit needs details):
 
 ```markdown
-# Car Insurance - ADAC
+# Car Insurance - Duff Insurance
 
-Policy: ADAC Autoversicherung
+Policy: Duff Insurance Autoversicherung
 Number: KFZ-2024-XXXXX
 Coverage: Vollkasko + Haftpflicht
 Premium: EUR 340/year
@@ -366,13 +377,13 @@ Seven types with decay rates, adapted from Total Recall for household use:
 
 | Type | Tag | Decay | Example |
 |------|-----|-------|---------|
-| rule | `[rule]` | never | Sabrina is allergic to peanuts |
+| rule | `[rule]` | never | Marge is allergic to peanuts |
 | habit | `[habit]` | 365d | Family orders pizza on Fridays |
 | goal | `[goal]` | 365d | Save for Italy trip summer 2027 |
-| preference | `[pref]` | 180d | Arthur prefers dark roast coffee |
+| preference | `[pref]` | 180d | Homer prefers dark roast coffee |
 | fact | `[fact]` | 90d | Car insurance is EUR 340/year |
 | context | `[ctx]` | 30d | Renovating the bathroom |
-| event | `[event]` | 14d | Sabrina had dentist Apr 17 |
+| event | `[event]` | 14d | Marge had dentist Apr 17 |
 
 Decay moves entries from `index.md` to `archive/`. Git history always retains them. The dream cycle also handles promotion: an `[event]` that recurs 3+ times becomes a `[habit]`.
 
@@ -399,7 +410,7 @@ class FamstackEvent:
     summary: str         # one-line human-readable summary
     data: dict           # structured payload (varies by type)
     timestamp: datetime  # UTC
-    actor: str | None    # who/what caused it: "@arthur:merles.eu", "archivist-bot"
+    actor: str | None    # who/what caused it: "@homer:merles.eu", "archivist-bot"
 
 class EventSink(ABC):
     """Where events go. First implementation: Matrix."""
@@ -442,14 +453,14 @@ class StackletEventFactory:
 
 | Stacklet | Event Type | Example Summary | Data |
 |----------|-----------|-----------------|------|
-| docs | `document.filed` | "ADAC Rechnung 2026-03 filed" | `{paperless_id, title, correspondent, tags}` |
+| docs | `document.filed` | "Duff Insurance Rechnung 2026-03 filed" | `{paperless_id, title, correspondent, tags}` |
 | docs | `document.classified` | "Classified as invoice/insurance" | `{paperless_id, category, confidence}` |
-| docs | `document.searched` | "Arthur searched for 'insurance'" | `{query, result_count}` |
+| docs | `document.searched` | "Homer searched for 'insurance'" | `{query, result_count}` |
 | messages | `voice.transcribed` | "45s voice message transcribed" | `{room, user, length_s, text_preview}` |
 | messages | `conversation.summary` | "Discussion about vacation plans" | `{room, participants, topics}` |
 | photos | `photo.added` | "12 photos from Munich uploaded" | `{count, faces, location, date}` |
 | photos | `album.created` | "New album: Easter 2026" | `{album_name, photo_count}` |
-| calendar | `event.upcoming` | "Dentist - Sabrina, Apr 17 10:00" | `{title, who, when, calendar}` |
+| calendar | `event.upcoming` | "Dentist - Marge, Apr 17 10:00" | `{title, who, when, calendar}` |
 | calendar | `event.created` | "New event: Family dinner Friday" | `{title, when, recurring}` |
 | core | `service.started` | "Photos stacklet started" | `{stacklet_id, services}` |
 | core | `service.error` | "Paperless health check failed" | `{stacklet_id, error, severity}` |
@@ -470,7 +481,7 @@ A MicroBot that joins all rooms and listens for `dev.famstack.event` typed messa
 4. Send event batch + indexes to Ollama with extraction prompt
 5. LLM produces: updated wiki Markdown files + updated index entries
 6. Commit atomically to the appropriate git repos
-7. Structured commit messages: `learn: ADAC renewal notice, expires 2026-06-30`
+7. Structured commit messages: `learn: Duff Insurance renewal notice, expires 2026-06-30`
 
 **Opt-in conversation extraction (Layer 2, future):**
 For rooms explicitly flagged via room state (`dev.famstack.deriver.config: {extract_knowledge: true}`), the deriver also listens for `RoomMessageText` and batches natural language messages for LLM extraction. DMs and unflagged rooms are never read for NLP -- only structured events are processed there. This respects privacy: organic conversations are only analyzed in rooms where the family explicitly opted in.
@@ -494,7 +505,7 @@ Nightly cron (e.g. 3:00 AM).
 
 ### Cross-Domain Queries
 
-"Find everything about Munich" spans calendar (trip events), shared (photos), and arthur (work notes).
+"Find everything about Munich" spans calendar (trip events), shared (photos), and homer (work notes).
 
 **Phase 1:** `fk knowledge search` runs grep across all repos the requesting user has access to. Simple, fast, no index needed.
 
@@ -528,7 +539,7 @@ $ fk knowledge
 
 $ fk knowledge show
   [error] usage: fk knowledge show <domain> <path> [-r <sha>]
-  Available domains: shared, calendar, arthur, sabrina
+  Available domains: shared, calendar, homer, marge
 
 $ fk knowledge show shared
   [error] usage: fk knowledge show shared <path>
@@ -553,7 +564,7 @@ Not everything needs an agent loop. Some of the highest value is passive or temp
 
 **Household Wiki.** Manually curated pages (emergency contacts, WiFi, appliance warranties, medication lists) are valuable without any AI. Browsable on Forgejo's web UI.
 
-**Smart Tags.** When Archivist files a document, the deriver extracts facts into the wiki. "ADAC sent a renewal. Policy expires 2026-06-30. Premium EUR 340/year." Kit can answer "when does our car insurance expire?" without touching Paperless.
+**Smart Tags.** When Archivist files a document, the deriver extracts facts into the wiki. "Duff Insurance sent a renewal. Policy expires 2026-06-30. Premium EUR 340/year." Kit can answer "when does our car insurance expire?" without touching Paperless.
 
 ---
 
@@ -570,7 +581,7 @@ Not everything needs an agent loop. Some of the highest value is passive or temp
 ## Implementation Path
 
 ### Phase 0: Forgejo repos + manual wiki (3-4 hours)
-- Create `knowledge/meta`, `knowledge/shared`, `knowledge/arthur` on Forgejo
+- Create `knowledge/meta`, `knowledge/shared`, `knowledge/homer` on Forgejo
 - Seed `shared/` with household contacts, insurance, key facts
 - Write master index and shared domain index by hand
 - Test: browse on Forgejo web UI, verify structure
@@ -649,7 +660,7 @@ Hermes-agent's memory system is the most proven in production (83K stars, users 
 
 ## Open Design Questions
 
-**1. Conversational writes.** Should family members be able to update the wiki via Matrix? ("Kit, remember that I'm allergic to peanuts" -> Kit commits `[rule]` to personal repo.) This is the natural UX for non-technical family members. Needs confirmation flow: "I'll remember that Sabrina is allergic to peanuts. Correct?"
+**1. Conversational writes.** Should family members be able to update the wiki via Matrix? ("Kit, remember that I'm allergic to peanuts" -> Kit commits `[rule]` to personal repo.) This is the natural UX for non-technical family members. Needs confirmation flow: "I'll remember that Marge is allergic to peanuts. Correct?"
 
 **2. Conflict resolution.** What happens when the deriver extracts a fact that contradicts an existing entry? Options: flag for human review (safe but requires attention), newer-wins with changelog (automated but lossy), keep both with `[contradiction]` tag and let the dream cycle resolve.
 

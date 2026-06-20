@@ -114,9 +114,9 @@ canonical: Family
         # `kind:` is optional, but when present must be "person".
         # A correspondent-shaped page sitting at a member slug path
         # is still not a person.
-        _write_about(vault, "adac", """---
+        _write_about(vault, "duff-insurance", """---
 kind: correspondent
-canonical: ADAC
+canonical: Duff Insurance
 ---
 """)
         assert load_persons_from_vault(vault) == []

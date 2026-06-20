@@ -32,7 +32,7 @@ COMMON = dict(
     person_names=["Homer"],
     category_tags=["Insurance", "Tax"],
     doc_types=["Invoice", "Letter"],
-    correspondents=["AOK"],
+    correspondents=["Springfield Mutual"],
 )
 
 
@@ -49,7 +49,7 @@ class TestLegacyFallback:
 
     def test_correspondents_line_present_in_either_mode(self):
         prompt = _build_classify_prompt(**COMMON)
-        assert 'Existing correspondents: ["AOK"]' in prompt
+        assert 'Existing correspondents: ["Springfield Mutual"]' in prompt
 
 
 class TestOntologyAware:
@@ -84,7 +84,7 @@ class TestOntologyAware:
         # Persons + correspondents are dynamic (Paperless) and stay
         # alongside the ontology — they're not part of the ontology.
         assert 'Family members: ["Homer"]' in prompt
-        assert 'Existing correspondents: ["AOK"]' in prompt
+        assert 'Existing correspondents: ["Springfield Mutual"]' in prompt
 
 
 class TestCorrespondentsBlock:
@@ -95,21 +95,21 @@ class TestCorrespondentsBlock:
     def test_embeds_section_verbatim(self):
         section = (
             "Existing correspondents (canonical; aliases in parens):\n"
-            "  - ADAC (ADAC Ortsverband Manzell)\n"
-            "  - AOK\n"
+            "  - Duff Insurance (Duff Insurance Ortsverband Springfield)\n"
+            "  - Springfield Mutual\n"
         )
         prompt = _build_classify_prompt(**COMMON, correspondents_section=section)
         assert section in prompt
 
     def test_drops_legacy_existing_correspondents_line(self):
-        section = "Existing correspondents (canonical; aliases in parens):\n  - ADAC\n"
+        section = "Existing correspondents (canonical; aliases in parens):\n  - Duff Insurance\n"
         prompt = _build_classify_prompt(**COMMON, correspondents_section=section)
-        # The flat `Existing correspondents: ["AOK"]` line is suppressed.
-        assert 'Existing correspondents: ["AOK"]' not in prompt
+        # The flat `Existing correspondents: ["Springfield Mutual"]` line is suppressed.
+        assert 'Existing correspondents: ["Springfield Mutual"]' not in prompt
 
     def test_falls_back_to_legacy_line_when_empty(self):
         prompt = _build_classify_prompt(**COMMON, correspondents_section="")
-        assert 'Existing correspondents: ["AOK"]' in prompt
+        assert 'Existing correspondents: ["Springfield Mutual"]' in prompt
 
 
 class TestNewSchemaFields:
@@ -128,8 +128,8 @@ class TestNewSchemaFields:
     def test_prompt_includes_strip_suffix_examples(self):
         prompt = _build_classify_prompt(**COMMON)
         # The strip-suffix rule must be concrete to be useful.
-        assert "ADAC Ortsverband Manzell" in prompt
-        assert "ADAC" in prompt
+        assert "Duff Insurance Ortsverband Springfield" in prompt
+        assert "Duff Insurance" in prompt
         assert "Burns Industries" in prompt
 
 

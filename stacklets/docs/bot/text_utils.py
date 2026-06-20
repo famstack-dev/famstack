@@ -31,8 +31,8 @@ def clean_filename(raw_filename: str, msgtype: str = "") -> str:
     'photo.jpg'
     >>> clean_filename("a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf")
     'document.pdf'
-    >>> clean_filename("Rechnung_ADAC_Marz2025.pdf")
-    'Rechnung_ADAC_Marz2025.pdf'
+    >>> clean_filename("Rechnung_Duff Insurance_Marz2025.pdf")
+    'Rechnung_Duff Insurance_Marz2025.pdf'
     >>> clean_filename("IMG_1234.HEIC")
     'photo.HEIC'
     >>> clean_filename("document")

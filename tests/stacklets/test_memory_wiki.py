@@ -21,6 +21,11 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
+    _correspondent_body,
+    _correspondent_entries,
+    _correspondent_preamble,
+    _correspondent_roster,
+    _member_preamble,
     _topic_cross_refs,
     _topic_entries,
     _topic_locations,
@@ -63,16 +68,16 @@ class TestTopicLocations:
     def test_shared_topic_discovered(self, tmp_path):
         _make_topic_folder(tmp_path, "family", "camping")
         locs = _topic_locations(
-            tmp_path, shared_bucket="family", member_slugs=["arthur", "marge"],
+            tmp_path, shared_bucket="family", member_slugs=["homer", "marge"],
         )
         assert ("family", "camping") in locs
 
     def test_personal_topic_discovered(self, tmp_path):
-        _make_topic_folder(tmp_path, "arthur", "gravel")
+        _make_topic_folder(tmp_path, "homer", "gravel")
         locs = _topic_locations(
-            tmp_path, shared_bucket="family", member_slugs=["arthur", "marge"],
+            tmp_path, shared_bucket="family", member_slugs=["homer", "marge"],
         )
-        assert ("arthur", "gravel") in locs
+        assert ("homer", "gravel") in locs
 
     def test_personal_topic_skipped_for_unknown_member(self, tmp_path):
         """A folder at `bart/whatever/notes/...` doesn't get discovered
@@ -80,7 +85,7 @@ class TestTopicLocations:
         generates pages for known members."""
         _make_topic_folder(tmp_path, "bart", "skateboarding")
         locs = _topic_locations(
-            tmp_path, shared_bucket="family", member_slugs=["arthur"],
+            tmp_path, shared_bucket="family", member_slugs=["homer"],
         )
         assert ("bart", "skateboarding") not in locs
 
@@ -97,19 +102,19 @@ class TestTopicLocations:
 
     def test_correspondents_reserved(self, tmp_path):
         _make_bare_folder(tmp_path, "family", "correspondents")
-        (tmp_path / "family" / "correspondents" / "adac.md").write_text("...")
+        (tmp_path / "family" / "correspondents" / "duff-insurance.md").write_text("...")
         locs = _topic_locations(
             tmp_path, shared_bucket="family", member_slugs=[],
         )
         assert ("family", "correspondents") not in locs
 
     def test_unfiled_reserved(self, tmp_path):
-        _make_bare_folder(tmp_path, "arthur", "_unfiled")
-        (tmp_path / "arthur" / "_unfiled" / "x.md").write_text("...")
+        _make_bare_folder(tmp_path, "homer", "_unfiled")
+        (tmp_path / "homer" / "_unfiled" / "x.md").write_text("...")
         locs = _topic_locations(
-            tmp_path, shared_bucket="family", member_slugs=["arthur"],
+            tmp_path, shared_bucket="family", member_slugs=["homer"],
         )
-        assert ("arthur", "_unfiled") not in locs
+        assert ("homer", "_unfiled") not in locs
 
     def test_empty_folder_is_not_a_topic(self, tmp_path):
         """A folder under a bucket with no `notes/`, `bookmarks/`, or
@@ -135,9 +140,9 @@ class TestTopicLocations:
         which makes test assertions and human review easier."""
         _make_topic_folder(tmp_path, "family", "photography")
         _make_topic_folder(tmp_path, "family", "camping")
-        _make_topic_folder(tmp_path, "arthur", "gravel")
+        _make_topic_folder(tmp_path, "homer", "gravel")
         locs = _topic_locations(
-            tmp_path, shared_bucket="family", member_slugs=["arthur"],
+            tmp_path, shared_bucket="family", member_slugs=["homer"],
         )
         assert locs == sorted(locs)
 
@@ -183,16 +188,16 @@ class TestTopicEntries:
         assert "family/photography/notes/2026/06/d.md" not in rels
 
     def test_personal_topic_slice(self):
-        """A personal topic (`arthur/gravel/`) is isolated from arthur's
-        plain personal notes (`arthur/notes/`)."""
+        """A personal topic (`homer/gravel/`) is isolated from homer's
+        plain personal notes (`homer/notes/`)."""
         index = [
-            {"rel": "arthur/gravel/notes/2026/06/a.md", "title": "Gravel A"},
-            {"rel": "arthur/notes/2026/06/b.md", "title": "Personal B"},
-            {"rel": "arthur/bookmarks/2026/06/c.md", "title": "Personal C"},
+            {"rel": "homer/gravel/notes/2026/06/a.md", "title": "Gravel A"},
+            {"rel": "homer/notes/2026/06/b.md", "title": "Personal B"},
+            {"rel": "homer/bookmarks/2026/06/c.md", "title": "Personal C"},
         ]
-        entries = _topic_entries(index, "arthur", "gravel")
+        entries = _topic_entries(index, "homer", "gravel")
         rels = [e["rel"] for e in entries]
-        assert rels == ["arthur/gravel/notes/2026/06/a.md"]
+        assert rels == ["homer/gravel/notes/2026/06/a.md"]
 
     def test_slug_prefix_collision(self):
         """A topic `camp` must not pull in `camping` content (the slash
@@ -226,7 +231,7 @@ class TestTopicCrossRefs:
             {"rel": "family/camping/notes/a.md",
              "tags": ["camping", "gear"], "topics": []},
             # Outside, has camping in tags — pulled in
-            {"rel": "family/documents/2026/06/adac-camping.md",
+            {"rel": "family/documents/2026/06/duff-insurance-camping.md",
              "tags": ["camping", "Versicherung"], "topics": []},
             # Outside, no camping reference — excluded
             {"rel": "family/documents/2026/06/other.md",
@@ -234,7 +239,7 @@ class TestTopicCrossRefs:
         ]
         refs = _topic_cross_refs(index, "family", "camping")
         rels = [e["rel"] for e in refs]
-        assert "family/documents/2026/06/adac-camping.md" in rels
+        assert "family/documents/2026/06/duff-insurance-camping.md" in rels
         assert "family/documents/2026/06/other.md" not in rels
         assert "family/camping/notes/a.md" not in rels
 
@@ -256,31 +261,31 @@ class TestTopicCrossRefs:
         index = [
             {"rel": "marge/notes/2026/05/gear.md",
              "tags": ["camping", "warmth"], "topics": []},
-            {"rel": "arthur/notes/2026/05/idea.md",
+            {"rel": "homer/notes/2026/05/idea.md",
              "tags": ["camping", "route"], "topics": []},
         ]
         refs = _topic_cross_refs(index, "family", "camping")
         rels = {e["rel"] for e in refs}
         assert rels == {
             "marge/notes/2026/05/gear.md",
-            "arthur/notes/2026/05/idea.md",
+            "homer/notes/2026/05/idea.md",
         }
 
     def test_personal_topic_cross_refs(self):
         """A personal topic's cross-refs are everything OUTSIDE
-        `arthur/gravel/`. The wider scope is intentional — the deriver's
+        `homer/gravel/`. The wider scope is intentional — the deriver's
         view of 'all gravel-relevant captures in the household' still
         includes shared captures."""
         index = [
-            {"rel": "arthur/gravel/notes/a.md",
+            {"rel": "homer/gravel/notes/a.md",
              "tags": ["gravel"], "topics": []},
             {"rel": "family/documents/bike-insurance.md",
              "tags": ["gravel"], "topics": []},
         ]
-        refs = _topic_cross_refs(index, "arthur", "gravel")
+        refs = _topic_cross_refs(index, "homer", "gravel")
         rels = [e["rel"] for e in refs]
         assert "family/documents/bike-insurance.md" in rels
-        assert "arthur/gravel/notes/a.md" not in rels
+        assert "homer/gravel/notes/a.md" not in rels
 
     def test_missing_topics_and_tags_fields(self):
         """Index entries with neither `topics` nor `tags` (a hand-edited
@@ -289,6 +294,102 @@ class TestTopicCrossRefs:
         index = [{"rel": "family/documents/2025/01/old.md"}]
         refs = _topic_cross_refs(index, "family", "camping")
         assert refs == []
+
+
+# ── _member_preamble ──────────────────────────────────────────────────
+
+
+class TestMemberPreamble:
+    """First-creation frontmatter for a member `about.md`."""
+
+    def test_carries_okf_type_and_canonical(self):
+        pre = _member_preamble("maggie", "Maggie", ["Maggie", "Margaret"])
+        assert "type: person" in pre  # OKF concept kind
+        assert "title: Margaret" in pre  # longest synonym is canonical
+        assert "canonical: Margaret" in pre
+        assert "slug: maggie" in pre
+        assert pre.startswith("---")
+        assert pre.rstrip().endswith("---")
+
+    def test_no_synonyms_collapses_to_display(self):
+        pre = _member_preamble("homer", "Homer", [])
+        assert "type: person" in pre
+        assert "title: Homer" in pre
+        assert "synonyms:" not in pre
+
+
+# ── Correspondents ────────────────────────────────────────────────────
+
+
+def _doc(correspondent, *, title="A Doc", date="2026-03-15", rel=None):
+    """A minimal index entry for a document referencing a correspondent."""
+    return {
+        "title": title,
+        "date": date,
+        "rel": rel or f"family/documents/2026/03/{title.lower().replace(' ', '-')}.md",
+        "correspondent": correspondent,
+        "persons": [],
+    }
+
+
+class TestCorrespondentRoster:
+
+    def test_dedups_and_sorts_by_canonical(self):
+        index = [
+            _doc("Duff Insurance"), _doc("Springfield Mutual"),
+            _doc("Duff Insurance"), _doc(""),
+        ]
+        assert _correspondent_roster(index) == [
+            ("duff-insurance", "Duff Insurance"),
+            ("springfield-mutual", "Springfield Mutual"),
+        ]
+
+    def test_blank_correspondents_excluded(self):
+        index = [_doc(""), _doc("   "), _doc(None)]
+        assert _correspondent_roster(index) == []
+
+    def test_slug_normalises_name(self):
+        roster = _correspondent_roster([_doc("Springfield Tax Office")])
+        assert roster == [("springfield-tax-office", "Springfield Tax Office")]
+
+
+class TestCorrespondentEntries:
+
+    def test_filters_by_canonical_newest_first(self):
+        index = [
+            _doc("Duff Insurance", title="Old", date="2024-01-01"),
+            _doc("Springfield Mutual", title="Other", date="2026-01-01"),
+            _doc("Duff Insurance", title="New", date="2026-05-01"),
+        ]
+        entries = _correspondent_entries(index, "Duff Insurance")
+        assert [e["title"] for e in entries] == ["New", "Old"]
+
+
+class TestCorrespondentPreamble:
+
+    def test_carries_okf_type_and_canonical(self):
+        pre = _correspondent_preamble("duff-insurance", "Duff Insurance")
+        assert "type: correspondent" in pre  # OKF concept kind
+        assert "title: Duff Insurance" in pre
+        assert "canonical: Duff Insurance" in pre
+        assert "slug: duff-insurance" in pre
+        assert pre.startswith("---")
+        assert pre.rstrip().endswith("---")
+
+
+class TestCorrespondentBody:
+
+    def test_lists_documents_as_relative_links(self):
+        entries = _correspondent_entries(
+            [_doc("Duff Insurance", title="Auto Policy", date="2026-03-15",
+                  rel="family/documents/2026/03/auto-policy-p247.md")],
+            "Duff Insurance",
+        )
+        body = _correspondent_body(entries, page_dir="family/correspondents")
+        assert body.startswith("## Documents")
+        # leaf page lives in family/correspondents/ -> climb two to root
+        assert "[Auto Policy](../../family/documents/2026/03/auto-policy-p247.md)" in body
+        assert "2026-03-15" in body
 
 
 # ── _topic_preamble ───────────────────────────────────────────────────

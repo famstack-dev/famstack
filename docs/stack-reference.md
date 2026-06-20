@@ -890,9 +890,9 @@ password) live in `secrets.toml`. Never in the same file.
 
 ```toml
 [[users]]
-id = "arthur"
-name = "Arthur"
-email = "arthur@home.local"
+id = "homer"
+name = "Homer"
+email = "homer@home.local"
 role = "admin"
 
 [[users]]

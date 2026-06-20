@@ -2,7 +2,7 @@
 
 > Status: Design document
 > Created: 2026-04-29
-> Author: Arthur + Claude
+> Author: Homer + Claude
 > Depends on: [knowledge-architecture.md](knowledge-architecture.md), [knowledge-implementation.md](knowledge-implementation.md)
 > External: https://github.com/Gentleman-Programming/engram
 
@@ -44,7 +44,7 @@ services, knowledge typing with decay, and proactive intelligence.
   v
   engram (Go binary, MCP + HTTP)
   ├── SQLite + FTS5 full-text search
-  ├── Project-scoped storage (shared, arthur, sabrina, calendar)
+  ├── Project-scoped storage (shared, homer, marge, calendar)
   ├── Topic-key upserts (evolving knowledge updates in place)
   ├── Deduplication via normalized hash
   ├── Conflict detection + judgment flow
@@ -68,9 +68,9 @@ How Family Brain concepts land on engram's data model.
 
 | Family Brain | engram | How it works |
 |---|---|---|
-| Knowledge domain (`shared`, `arthur`, `calendar`) | **Project** | Each domain is a project. `mem_search` filters by project. `mem_context` returns per-project. |
+| Knowledge domain (`shared`, `homer`, `calendar`) | **Project** | Each domain is a project. `mem_search` filters by project. `mem_context` returns per-project. |
 | Knowledge type (`rule`, `fact`, `habit`, `goal`, `preference`, `context`, `event`) | **Type field** | The `type` field is a string, not an enforced enum. We use our own values. |
-| Wiki entry that evolves over time | **Observation + topic_key** | `topic_key="fact/insurance-adac"` -- saving with the same key upserts the existing observation, increments `revision_count`. |
+| Wiki entry that evolves over time | **Observation + topic_key** | `topic_key="fact/insurance-duff-insurance"` -- saving with the same key upserts the existing observation, increments `revision_count`. |
 | Pointer brain / compact index | **`mem_context` per project** | Returns recent sessions + observations. The agent's map of what's known. |
 | Cross-domain search | **`mem_search`** | FTS5 across all projects or filtered to one. Supports type/scope filters. |
 | Short-term memory | **Session-scoped observations** | Tied to a Kit Bot conversation session. Temporal context via `mem_timeline`. |
@@ -91,11 +91,11 @@ How Family Brain concepts land on engram's data model.
 id              INTEGER   auto-increment
 session_id      TEXT      which session created this
 type            TEXT      "rule" | "fact" | "habit" | "goal" | "preference" | "context" | "event"
-title           TEXT      short, searchable -- "Car insurance ADAC"
+title           TEXT      short, searchable -- "Car insurance Duff Insurance"
 content         TEXT      freeform -- structured however we want
-project         TEXT      "shared" | "arthur" | "sabrina" | "calendar"
+project         TEXT      "shared" | "homer" | "marge" | "calendar"
 scope           TEXT      "project" (shared within domain) | "personal"
-topic_key       TEXT      canonical ID for upserts -- "fact/adac/car-insurance"
+topic_key       TEXT      canonical ID for upserts -- "fact/duff-insurance/car-insurance"
 normalized_hash TEXT      deduplication fingerprint
 revision_count  INTEGER   incremented on topic-key upsert
 duplicate_count INTEGER   rolled-up exact duplicates
@@ -109,7 +109,7 @@ deleted_at      TIMESTAMP soft-delete (used by decay)
 
 **Topic-key upsert.** When `mem_save` receives a `topic_key` that already exists
 within the same project + scope, it updates the existing observation instead of
-creating a new one. `revision_count` increments. This is how "ADAC sent a new invoice"
+creating a new one. `revision_count` increments. This is how "Duff Insurance sent a new invoice"
 updates the existing insurance knowledge rather than creating a duplicate.
 
 **Conflict detection.** When `mem_save` finds observations with similar content,
@@ -132,7 +132,7 @@ Core tools available to Kit Bot via MCP:
 | Tool | What Kit does with it |
 |---|---|
 | `mem_search` | "What do we know about insurance?" -- FTS5 query, filter by project/type/scope |
-| `mem_save` | "Remember: Sabrina is allergic to peanuts" -- save with type=rule, topic_key |
+| `mem_save` | "Remember: Marge is allergic to peanuts" -- save with type=rule, topic_key |
 | `mem_context` | Session start -- load recent knowledge for the current domain |
 | `mem_get_observation` | Drill into a search result for full untruncated content |
 | `mem_timeline` | Chronological context around an observation |
@@ -165,22 +165,22 @@ Premium: EUR 340/year
 Policy: KFZ-2024-XXXXX
 Coverage: Vollkasko + Haftpflicht
 Expires: 2026-06-30
-Source: Paperless #247, ADAC Rechnung 2026-03
+Source: Paperless #247, Duff Insurance Rechnung 2026-03
 ```
 
 ### Rules (from conversations or manual)
 
 ```
-Sabrina is allergic to peanuts.
-Source: Arthur via Kit Bot, 2026-04-29
+Marge is allergic to peanuts.
+Source: Homer via Kit Bot, 2026-04-29
 ```
 
 ### Events (from calendar, transient)
 
 ```
-Dentist appointment for Sabrina
+Dentist appointment for Marge
 When: 2026-04-17 10:00
-Where: Dr. Weber, Friedrichshafen
+Where: Dr. Hibbert, Springfield
 Source: Calendar sync
 ```
 
@@ -194,9 +194,9 @@ Source: Dream cycle promotion, 2026-04-29
 ```
 
 Topic keys follow a `{type}/{entity}/{slug}` convention:
-- `fact/adac/car-insurance`
-- `rule/sabrina/allergy-peanuts`
-- `event/calendar/dentist-sabrina-20260417`
+- `fact/duff-insurance/car-insurance`
+- `rule/marge/allergy-peanuts`
+- `event/calendar/dentist-marge-20260417`
 - `habit/family/friday-pizza`
 
 
@@ -255,7 +255,7 @@ After classification, POST each fact to engram:
 ```python
 async def _save_knowledge(self, classification: dict, doc_id: int):
     person = classification.get("person", "").lower()
-    project = person if person in ("arthur", "sabrina") else "shared"
+    project = person if person in ("homer", "marge") else "shared"
 
     for fact in classification.get("facts", []):
         slug = slugify(fact[:60])
@@ -326,7 +326,7 @@ $ fk knowledge show
 
 $ fk knowledge search "insurance" -d personal
   [error] unknown domain: personal
-  Available domains: shared, arthur, sabrina, calendar
+  Available domains: shared, homer, marge, calendar
 ```
 
 
@@ -376,7 +376,7 @@ store later means reimplementing the API contract, not rewriting the whole syste
 
 1. Add engram to Kit Bot's MCP server config
 2. Kit Bot system prompt: explain available memory tools and when to use them
-3. Test: "Kit, remember Sabrina is allergic to peanuts" → `mem_save`
+3. Test: "Kit, remember Marge is allergic to peanuts" → `mem_save`
 4. Test: "What do we know about insurance?" → `mem_search`
 5. Test: "Kit, our insurance went up to EUR 380" → conflict detection + judgment
 

@@ -161,7 +161,7 @@ class TestFormatPaperlessHit:
     def _doc(**overrides) -> dict:
         return {
             "id": 42,
-            "title": "Allianz KFZ Versicherung 2026",
+            "title": "Globex KFZ Versicherung 2026",
             "created": "2026-01-15T08:00:00Z",
         } | overrides
 
@@ -169,7 +169,7 @@ class TestFormatPaperlessHit:
         out = format_paperless_hit(
             self._doc(), 1, public_url="https://paperless.example",
         )
-        assert "[Allianz KFZ Versicherung 2026](https://paperless.example/documents/42/details)" in out
+        assert "[Globex KFZ Versicherung 2026](https://paperless.example/documents/42/details)" in out
 
     def test_meta_carries_date_and_doc_id(self):
         out = format_paperless_hit(
@@ -181,7 +181,7 @@ class TestFormatPaperlessHit:
 
     def test_falls_back_to_bold_title_without_url(self):
         out = format_paperless_hit(self._doc(), 1)
-        assert "**Allianz KFZ Versicherung 2026**" in out
+        assert "**Globex KFZ Versicherung 2026**" in out
         assert "https://" not in out
 
     def test_untitled_doc_renders_placeholder(self):

@@ -2,7 +2,7 @@
 
 The archivist routes most chat messages straight into Paperless +
 memory-vault search as a literal regex. That works for keyword recall
-("Allianz", "Radlager") but fails on natural-language questions:
+("Globex", "Radlager") but fails on natural-language questions:
 "When did Bart get vaccinated?" doesn't literally appear in any
 document, so the regex walker returns nothing.
 

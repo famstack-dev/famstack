@@ -71,11 +71,11 @@ class TestDisplayNameInBody:
         ) == "find MLX"
 
     def test_display_name_with_comma(self):
-        body = "Archivist, search for ADAC"
-        formatted = self._html("Archivist") + ", search for ADAC"
+        body = "Archivist, search for Duff Insurance"
+        formatted = self._html("Archivist") + ", search for Duff Insurance"
         assert MicroBot.strip_mention(
             body, BOT, formatted_body=formatted,
-        ) == "search for ADAC"
+        ) == "search for Duff Insurance"
 
     def test_display_name_bare(self):
         body = "Archivist do the thing"

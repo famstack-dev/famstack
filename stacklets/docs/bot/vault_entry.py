@@ -1,4 +1,9 @@
-"""Pure mirror formatting — path generation, frontmatter, markdown rendering.
+"""Vault entry formatting — path generation, frontmatter, markdown rendering.
+
+A vault entry is one markdown file mirroring a Paperless document or a
+capture (an OKF "document" within the vault bundle). This module owns the
+three pure steps that produce it: pick the path, build the frontmatter,
+render the body.
 
 No Forgejo I/O, no git operations, no filesystem writes. These functions
 take structured data and produce strings (filepaths, YAML, markdown).
@@ -32,35 +37,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
 
 import yaml
 
-
-def slug(text: str) -> str:
-    """Filesystem-safe slug: ASCII-ish, lowercase, hyphen-separated.
-
-    The cap is a defensive ceiling, not a primary length control —
-    the classifier title prompt asks for short identifying titles
-    (no dates, no amounts), so well-shaped inputs land far under
-    this cap. The slice is hard at 60 chars; the title prompt is
-    responsible for keeping titles human-scannable, not the slug.
-
-    >>> slug("ADAC - Kfz-Versicherung 2025")
-    'adac-kfz-versicherung-2025'
-    >>> slug("Rechnung Müller & Söhne")
-    'rechnung-muller-sohne'
-    >>> slug("  Leading Spaces  ")
-    'leading-spaces'
-    >>> slug("")
-    'document'
-    >>> slug("!!!")
-    'document'
-    """
-    normalized = unicodedata.normalize("NFKD", text)
-    ascii_ = normalized.encode("ascii", "ignore").decode()
-    slug_str = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_).strip("-").lower()
-    return slug_str[:60] or "document"
+# Slug and entity-path conventions live in the framework (`stack.vault`)
+# so the memory wiki and this docs archivist share one source.
+from stack.vault import slug, entity_relpath  # noqa: F401  (slug re-exported for callers/tests)
 
 
 def document_filepath(
@@ -94,12 +76,12 @@ def document_filepath(
         Vault-relative path string.
 
     Examples:
-        >>> document_filepath("family", "2025-03-27", 42, "ADAC - Kfz", True)
-        'family/documents/2025/03/2025-03-27-adac-kfz-p42.md'
+        >>> document_filepath("family", "2025-03-27", 42, "Duff Insurance - Kfz", True)
+        'family/documents/2025/03/2025-03-27-duff-insurance-kfz-p42.md'
         >>> document_filepath("family", "2025-03-27", 42, None, False)
         'family/documents/2025/03/2025-03-27-p42.md'
-        >>> document_filepath("family", None, 42, "ADAC - Kfz", True)
-        'family/documents/_unfiled/adac-kfz-p42.md'
+        >>> document_filepath("family", None, 42, "Duff Insurance - Kfz", True)
+        'family/documents/_unfiled/duff-insurance-kfz-p42.md'
         >>> document_filepath("family", None, 42, None, False)
         'family/documents/_unfiled/p42.md'
     """
@@ -172,6 +154,24 @@ def capture_filepath(
     return f"{entity}/{kind_dir}/_unfiled/{slug_str}-{digest}.md"
 
 
+def document_resource_url(paperless_url: str, paperless_id: int) -> str:
+    """The canonical URI of a document: its Paperless details page.
+
+    OKF's ``resource`` field and the human-facing "Show Document" link
+    both point here. ``paperless_url`` is the instance base (not
+    page-specific); this composes the per-document path off it. Empty
+    when no public Paperless URL is configured.
+
+    >>> document_resource_url("http://docs.home.local", 247)
+    'http://docs.home.local/documents/247/details'
+    >>> document_resource_url("", 247)
+    ''
+    """
+    if not paperless_url:
+        return ""
+    return f"{paperless_url.rstrip('/')}/documents/{paperless_id}/details"
+
+
 def document_frontmatter(
     *,
     title: str,
@@ -210,7 +210,10 @@ def document_frontmatter(
     """
     import datetime as dt
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    fm: dict = {"title": title}
+    # `type` is the OKF-required concept kind ("document"). It is a
+    # different axis from `document_type` (the Paperless subtype:
+    # invoice, contract); both coexist. First key per OKF convention.
+    fm: dict = {"type": "document", "title": title}
     if date:
         fm["date"] = date
     if correspondent:
@@ -226,13 +229,16 @@ def document_frontmatter(
     fm["paperless_id"] = paperless_id
     if paperless_url:
         fm["paperless_url"] = paperless_url
+        # OKF `resource`: the URI of this specific document (its Paperless
+        # details page), not the instance root kept in `paperless_url`.
+        fm["resource"] = document_resource_url(paperless_url, paperless_id)
     fm["processing"] = processing
     if model:
         fm["model"] = model
     if paperless_version:
         fm["paperless_version"] = paperless_version
     fm["source"] = "paperless"
-    fm["added"] = now
+    fm["timestamp"] = now
     return fm
 
 
@@ -245,6 +251,7 @@ def capture_frontmatter(
     persons: list[str],
     tags: list[str],
     model: str | None,
+    capture_id: str | None = None,
 ) -> dict:
     """Frontmatter for a capture entry.
 
@@ -254,9 +261,10 @@ def capture_frontmatter(
     paperless_url) are intentionally absent — captures aren't part
     of the Paperless ontology.
 
-    ``source_uri`` is optional — a pure text note with no embedded
-    link omits the field entirely, so a Dataview ``where source_uri``
-    cleanly filters to "captures that point at a source."
+    The OKF ``resource`` field (the source URL) is optional — a pure
+    text note with no embedded link omits it entirely, so a Dataview
+    ``where resource`` cleanly filters to "captures that point at a
+    source." It is fed from the ``source_uri`` argument.
 
     ``date`` carries the capture date — the article's own publish
     date (if any) lives in the briefing block. The capture log is
@@ -270,6 +278,8 @@ def capture_frontmatter(
         persons: List of person names.
         tags: List of topic tags.
         model: Model name used for classification, or None.
+        capture_id: Stable capture identifier carried on the
+            ``dev.famstack.event`` envelope, or None.
 
     Returns:
         Frontmatter dict ready for YAML serialization.
@@ -281,7 +291,9 @@ def capture_frontmatter(
         .isoformat()
         .replace("+00:00", "Z")
     )
-    fm: dict = {"title": title, "kind": kind}
+    # `type` is the OKF-required concept kind (note/bookmark). It is the
+    # single home for that distinction; there is no separate `kind` key.
+    fm: dict = {"type": kind, "title": title}
     if captured_at:
         fm["date"] = captured_at
     if persons:
@@ -289,10 +301,18 @@ def capture_frontmatter(
     if tags:
         fm["tags"] = tags
     if source_uri:
-        fm["source_uri"] = source_uri
+        # OKF `resource`: the URI of the underlying asset this concept
+        # describes (the captured source URL).
+        fm["resource"] = source_uri
+    if capture_id:
+        # Same identifier the `dev.famstack.event` envelope carries under
+        # `data.capture_id`. Stored on the file too so a later grep (or
+        # the deriver) can find this entry without depending on the
+        # mutable vault path.
+        fm["capture_id"] = capture_id
     if model:
         fm["model"] = model
-    fm["added"] = now
+    fm["timestamp"] = now
     return fm
 
 
@@ -302,6 +322,8 @@ def render_document(
     body: str,
     correspondent: str | None,
     persons: list[str],
+    from_path: str,
+    shared_bucket: str,
     summary: str | None = None,
     facts: list | None = None,
     action_items: list | None = None,
@@ -313,7 +335,9 @@ def render_document(
 
       - YAML frontmatter (machine view: structured metadata)
       - H1 title
-      - wiki-link header  (``**From:** [[ADAC]] · **About:** [[Homer]]``)
+      - entity-link header (``**From:** [Duff Insurance](…) · **About:** [Homer](…)``)
+        as relative markdown links, so they resolve in Obsidian, on
+        GitHub/Forgejo, and as OKF graph edges.
       - **briefing callout** — ``> [!summary]`` with prose, optional
         source link, facts, and action items. Wrapped in a callout
         so the briefing reads as a distinct block from the OCR body
@@ -324,8 +348,10 @@ def render_document(
     Args:
         frontmatter: YAML frontmatter dict.
         body: Document body text (OCR-cleaned or reformatted).
-        correspondent: Correspondent name for wiki header.
-        persons: List of person names for wiki header.
+        correspondent: Correspondent name for the entity header.
+        persons: List of person names for the entity header.
+        from_path: This entry's own vault path, for relative link math.
+        shared_bucket: The institutional bucket slug (for correspondents).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
         action_items: List of action item dicts or strings.
@@ -345,9 +371,13 @@ def render_document(
     if (correspondent or persons):
         bits = []
         if correspondent:
-            bits.append(f"**From:** [[{correspondent}]]")
+            href = entity_relpath(correspondent, "correspondent", from_path, shared_bucket)
+            bits.append(f"**From:** [{correspondent}]({href})")
         if persons:
-            bits.append("**About:** " + ", ".join(f"[[{p}]]" for p in persons))
+            bits.append("**About:** " + ", ".join(
+                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
+                for p in persons
+            ))
         parts.append("> " + " · ".join(bits))
         parts.append("")
 
@@ -374,6 +404,8 @@ def render_capture(
     captured_at: str | None,
     source_uri: str | None,
     persons: list[str],
+    from_path: str,
+    shared_bucket: str,
     summary: str | None = None,
     facts: list | None = None,
 ) -> str:
@@ -398,6 +430,8 @@ def render_capture(
         captured_at: Capture date.
         source_uri: Original source URL, or None.
         persons: List of person names.
+        from_path: This entry's own vault path, for relative link math.
+        shared_bucket: The institutional bucket slug (for correspondents).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
 
@@ -415,7 +449,10 @@ def render_capture(
     meta_lines: list[str] = []
     if persons:
         meta_lines.append(
-            "**About** " + ", ".join(f"[[{p}]]" for p in persons)
+            "**About** " + ", ".join(
+                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
+                for p in persons
+            )
         )
     line2_bits = []
     if captured_at:
