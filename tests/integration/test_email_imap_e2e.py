@@ -25,6 +25,7 @@ _BOT_DIR = Path(__file__).resolve().parent.parent.parent / "stacklets" / "docs" 
 sys.path.insert(0, str(_BOT_DIR))
 
 from extractors import parse_email  # noqa: E402
+from mail_fetcher import MailAccount, MailFetcher  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker not available",
@@ -108,3 +109,35 @@ def test_imap_roundtrip_parses_faithfully(greenmail):
     assert p.message_id == "e2e-1@springfield-school.example"
     assert p.date == "2026-06-21"
     assert p.body.strip() == "Bitte das Formular bis Freitag zurücksenden."
+
+
+def _send(user: str, message_id: str, subject: str) -> None:
+    raw = (
+        f"From: Sender <sender@x.example>\r\nTo: {user}\r\n"
+        f"Subject: {subject}\r\nMessage-ID: {message_id}\r\n"
+        "Date: Sat, 21 Jun 2026 09:00:00 +0000\r\n\r\nbody\r\n"
+    ).encode("utf-8")
+    smtp = smtplib.SMTP("localhost", _SMTP_PORT, timeout=10)
+    smtp.sendmail("sender@x.example", [user], raw)
+    smtp.quit()
+
+
+def test_mailfetcher_fetches_new_and_dedups(greenmail):
+    user = "marge@example.org"  # own INBOX, isolated from the other test
+    _send(user, "<m1@h>", "First")
+    _send(user, "<m2@h>", "Second")
+    time.sleep(1)
+
+    fetcher = MailFetcher(MailAccount(
+        host="localhost", port=_IMAP_PORT, user=user, password="x", ssl=False,
+    ))
+
+    first = fetcher.fetch_new(set())
+    assert {p.message_id for p in first} == {"m1@h", "m2@h"}
+
+    # Already-seen Message-IDs are dropped -> idempotent re-run.
+    again = fetcher.fetch_new({"m1@h"})
+    assert {p.message_id for p in again} == {"m2@h"}
+
+    nothing = fetcher.fetch_new({"m1@h", "m2@h"})
+    assert nothing == []

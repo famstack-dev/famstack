@@ -368,3 +368,35 @@ class TestParseEmail:
         p = parse_email(eml.encode("utf-8"))
         assert "the plain part" in p.body
         assert "<p>" not in p.body
+
+
+class TestThreadRoot:
+    """A thread folds into one vault entry keyed by its root Message-ID
+    (ADR-010). References[0] is the root; else In-Reply-To; else the
+    message starts its own thread."""
+
+    def test_standalone_message_is_its_own_root(self):
+        p = parse_email(b"Message-ID: <solo@h>\nSubject: x\n\nbody\n")
+        assert p.references == []
+        assert p.in_reply_to is None
+        assert p.thread_root == "solo@h"
+
+    def test_references_first_entry_is_root(self):
+        eml = (
+            b"Message-ID: <reply2@h>\n"
+            b"In-Reply-To: <reply1@h>\n"
+            b"References: <root@h> <reply1@h>\n"
+            b"Subject: Re: x\n\nlater\n"
+        )
+        p = parse_email(eml)
+        assert p.references == ["root@h", "reply1@h"]
+        assert p.in_reply_to == "reply1@h"
+        assert p.thread_root == "root@h"
+
+    def test_in_reply_to_when_no_references(self):
+        eml = (
+            b"Message-ID: <reply1@h>\nIn-Reply-To: <root@h>\n"
+            b"Subject: Re: x\n\nfirst reply\n"
+        )
+        p = parse_email(eml)
+        assert p.thread_root == "root@h"

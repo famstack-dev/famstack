@@ -26,7 +26,7 @@ production the bot-runner image always carries it (declared in
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email import message_from_bytes
 from email.policy import default as _email_policy
 from email.utils import parseaddr, parsedate_to_datetime
@@ -257,6 +257,24 @@ class ParsedEmail:
     message_id: str | None
     date: str | None   # captured_at, YYYY-MM-DD
     body: str
+    references: list[str] = field(default_factory=list)
+    in_reply_to: str | None = None
+
+    @property
+    def thread_root(self) -> str | None:
+        """The Message-ID the conversation is keyed by.
+
+        A reply carries `References` (ancestors, oldest first); its first
+        entry is the thread root. Failing that, the immediate parent
+        (`In-Reply-To`). A message that starts a thread has neither, so it
+        is its own root. This is the vault entry's identity — every message
+        in a conversation folds into the file keyed by this id (ADR-010).
+        """
+        if self.references:
+            return self.references[0]
+        if self.in_reply_to:
+            return self.in_reply_to
+        return self.message_id
 
 
 def parse_email(raw: bytes) -> ParsedEmail:
@@ -282,6 +300,7 @@ def parse_email(raw: bytes) -> ParsedEmail:
         except (TypeError, ValueError):
             captured_at = None
 
+    in_reply = _parse_msgids(msg["in-reply-to"])
     return ParsedEmail(
         subject=(msg["subject"] or "").strip() or None,
         from_name=(from_name or "").strip() or None,
@@ -289,7 +308,19 @@ def parse_email(raw: bytes) -> ParsedEmail:
         message_id=mid,
         date=captured_at,
         body=_email_body(msg),
+        references=_parse_msgids(msg["references"]),
+        in_reply_to=in_reply[0] if in_reply else None,
     )
+
+
+_MSGID_RE = re.compile(r"<([^<>]+)>")
+
+
+def _parse_msgids(header) -> list[str]:
+    """Bare Message-IDs from a References / In-Reply-To header (angle-bracketed)."""
+    if not header:
+        return []
+    return [m.strip() for m in _MSGID_RE.findall(str(header)) if m.strip()]
 
 
 def _email_body(msg) -> str:
