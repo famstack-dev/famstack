@@ -1,0 +1,110 @@
+"""End-to-end: a real IMAP server (GreenMail) -> imaplib -> parse_email.
+
+Pins the email ingestion transport against a real IMAP server with fabricated
+data only (no real account, no network). The chosen ingestion path is stdlib
+`imaplib` fetch + `parse_email`; this proves it round-trips a UTF-8 message
+faithfully end to end, which a unit test on fixture strings cannot.
+
+Self-contained: spins up and tears down its own GreenMail container, so it
+leaves nothing behind. Skipped when Docker is unavailable.
+"""
+
+from __future__ import annotations
+
+import imaplib
+import shutil
+import smtplib
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+_BOT_DIR = Path(__file__).resolve().parent.parent.parent / "stacklets" / "docs" / "bot"
+sys.path.insert(0, str(_BOT_DIR))
+
+from extractors import parse_email  # noqa: E402
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("docker") is None, reason="docker not available",
+)
+
+_IMAGE = "greenmail/standalone:2.1.3"
+_NAME = "famstack-greenmail-pytest"
+_SMTP_PORT = 3025
+_IMAP_PORT = 3143
+
+
+@pytest.fixture(scope="module")
+def greenmail():
+    """Run a throwaway GreenMail (auth disabled, test ports), tear it down."""
+    subprocess.run(["docker", "rm", "-f", _NAME], capture_output=True)
+    started = subprocess.run(
+        [
+            "docker", "run", "-d", "--name", _NAME,
+            "-p", f"{_SMTP_PORT}:3025", "-p", f"{_IMAP_PORT}:3143",
+            "-e", (
+                "GREENMAIL_OPTS=-Dgreenmail.setup.test.all "
+                "-Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled"
+            ),
+            _IMAGE,
+        ],
+        capture_output=True, text=True,
+    )
+    if started.returncode != 0:
+        pytest.skip(f"could not start GreenMail: {started.stderr.strip()}")
+    try:
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                imaplib.IMAP4("localhost", _IMAP_PORT).logout()
+                break
+            except (OSError, EOFError, imaplib.IMAP4.error):
+                # connection refused, or socket up but banner not ready yet
+                time.sleep(0.5)
+        else:
+            pytest.skip("GreenMail IMAP did not come up in time")
+        yield
+    finally:
+        subprocess.run(["docker", "rm", "-f", _NAME], capture_output=True)
+
+
+def test_imap_roundtrip_parses_faithfully(greenmail):
+    user = "homer@example.org"
+    raw = (
+        "From: Springfield School <office@springfield-school.example>\r\n"
+        f"To: {user}\r\n"
+        "Subject: Elternabend am Freitag\r\n"
+        "Message-ID: <e2e-1@springfield-school.example>\r\n"
+        "Date: Sat, 21 Jun 2026 09:00:00 +0000\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "\r\n"
+        "Bitte das Formular bis Freitag zurücksenden.\r\n"
+    ).encode("utf-8")
+
+    # Send through GreenMail's SMTP.
+    smtp = smtplib.SMTP("localhost", _SMTP_PORT, timeout=10)
+    smtp.sendmail("office@springfield-school.example", [user], raw)
+    smtp.quit()
+    time.sleep(1)
+
+    # Fetch through GreenMail's IMAP with the stdlib client (the ingestion path).
+    imap = imaplib.IMAP4("localhost", _IMAP_PORT)
+    imap.login(user, "irrelevant")  # auth disabled
+    imap.select("INBOX")
+    _, data = imap.search(None, "ALL")
+    ids = data[0].split()
+    assert ids, "message was not delivered to INBOX"
+    _, msgdata = imap.fetch(ids[-1], "(RFC822)")
+    fetched = msgdata[0][1]
+    imap.logout()
+
+    # The full ingestion contract, end to end against a real IMAP server.
+    p = parse_email(fetched)
+    assert p.subject == "Elternabend am Freitag"
+    assert p.from_name == "Springfield School"
+    assert p.from_addr == "office@springfield-school.example"
+    assert p.message_id == "e2e-1@springfield-school.example"
+    assert p.date == "2026-06-21"
+    assert p.body.strip() == "Bitte das Formular bis Freitag zurücksenden."
