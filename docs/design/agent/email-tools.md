@@ -113,6 +113,24 @@ is used only by the human `stack mail list` CLI. This keeps the ingestion parser
 on a standard (RFC822 + stdlib) instead of himalaya's rendering quirks, and it
 is fully unit-testable with fabricated `.eml` strings.
 
+**Transport caveat — himalaya has no IMAP→Maildir sync in the homebrew build**
+(`+imap +smtp +maildir`, no sync feature; `account sync` is absent). So himalaya
+alone cannot populate the Maildir. Options, all behind the same Maildir seam:
+
+- **mbsync/isync** — the gold-standard IMAP→Maildir sync, in the `mail` container.
+  himalaya then handles only SMTP send + the `stack mail` CLI.
+- **stdlib `imaplib`** — the bot fetches new messages by UID/Message-ID directly,
+  no external sync tool, no Maildir even. Simplest and most testable, but puts
+  IMAP creds + external network in bot-runner (less isolated than a `mail`
+  container).
+
+This is the swappable-transport property in action: the **Maildir (or just
+RFC822 bytes) is the integration seam**; himalaya/mbsync/imaplib/msmtp are
+interchangeable behind it, and `parse_email`/`capture_email` never change.
+himalaya is mature (6.4k★, homebrew-core, active, v1.2) but single-maintainer;
+the seam means that bus-factor is not our exposure. Decision between mbsync and
+imaplib is deferred to the A2 build (the GreenMail round-trip informs it).
+
 ## Architecture
 
 **Runtime: a container, not a host service.** himalaya needs no host resource
@@ -202,6 +220,56 @@ Same path documents and captures already take to their rooms; the binding just
 says *which* room. Because the room is bound, a reply in it ("draft an answer",
 "remind me Friday") is scoped to that mailbox — the topic-rooms reply-chain
 pattern, reused.
+
+## Vault layout, threading, and processing
+
+### Paths and bucket
+
+`<bucket>/emails/YYYY/MM/<slug>-<hash>.md` — the capture shape (`<entity>/<kind>s/…`,
+kind `email`), already produced by `capture_email`. The **bucket comes from the
+room binding, not hardcoded**: a shared family mailbox files to `family/emails/…`
+(institutional, like documents); a person's account files to `<person>/emails/…`
+(personal, like their captures). Default = the bucket that owns the account.
+
+**Merge by date, do not subfolder per inbox.** Account + folder live in
+frontmatter (and the room binding), not as a path level — consistent with the
+rest of the vault, where identity is frontmatter + date path and the channel is
+never a directory. Two inboxes to the same bucket merge on disk but stay distinct
+rooms + distinct frontmatter; dedup by Message-ID keeps it safe.
+
+### Threading: one file per thread, folded (per ADR-010)
+
+An email thread *is* a reply chain, and [adr-010](../adr/adr-010-event-pipeline.md)
+already says a filing's source is the whole thread and the vault entry is the
+*fold* of it. So:
+
+- **Key the entry by the thread root, not the message** — resolved from
+  `References` / `In-Reply-To` (root Message-ID). Get this right up front; it
+  changes `capture_email`'s identity model and is painful to retrofit.
+- **Each new message updates the same file** — appends the message, re-renders
+  the conversation chronologically, refreshes a thread-level summary + the
+  accumulated action items.
+- **Reproducible**: re-fetch every message in the thread by Message-ID, re-fold.
+- **Append vs. correct** — both are "reply chains" but mean different things: a
+  real inbound email *appends* to the conversation; a Matrix reply from a family
+  member *corrects* the filing (rewrites). The sender / Message-ID distinguishes
+  them. The thread folder must not treat a human correction as a new email.
+
+Staging: A2 ships per-message append into the thread file; the polished thread
+summary + folded action items can iterate. Thread-keying is day-one.
+
+### Summary gate for short mail
+
+Email runs the same classifier as everything else (title, summary, facts,
+action_items, tags). But a two-line mail does not need an LLM summary — it would
+be longer than the mail and waste a model call. So:
+
+- **Always keep the email body** (unlike a bookmark; the body *is* the content).
+- **Gate the summary on length** — below ~a few hundred chars, skip the
+  `> [!summary]` briefing; the body stands alone.
+- **Still extract action_items + tags when short** — cheap and the highest-value
+  bit ("send the form back Friday" is short but actionable). Short ≠ no
+  processing; short = *no summary*.
 
 ## What we reuse vs. build
 
