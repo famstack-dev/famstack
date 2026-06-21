@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from email import message_from_bytes
+from email.policy import default as _email_policy
+from email.utils import parseaddr, parsedate_to_datetime
 
 import aiohttp
 from loguru import logger
@@ -242,3 +245,60 @@ def email_to_source(
         title_hint=(subject or "").strip() or None,
         source_uri=f"mid:{mid}" if mid else None,
     )
+
+
+@dataclass
+class ParsedEmail:
+    """The fields the capture pipeline needs from one email message."""
+
+    subject: str | None
+    from_name: str | None
+    from_addr: str | None
+    message_id: str | None
+    date: str | None   # captured_at, YYYY-MM-DD
+    body: str
+
+
+def parse_email(raw: bytes) -> ParsedEmail:
+    """Parse an RFC822 message (a Maildir file's bytes) into a `ParsedEmail`.
+
+    himalaya syncs IMAP into a Maildir of plain RFC822 files; the mail bot
+    reads those *as bytes* and parses here rather than via himalaya's
+    rendered JSON, so the contract is the standard email format + stdlib
+    `email` (modern `default` policy), not himalaya's output quirks. Bytes
+    in (not str) so declared charsets decode correctly — a UTF-8 body
+    round-trips. The plain-text body is preferred, falling back to HTML
+    content. Missing headers collapse to None / "" — the classifier copes.
+    """
+    msg = message_from_bytes(raw, policy=_email_policy)
+
+    from_name, from_addr = parseaddr(msg["from"] or "")
+    mid = (msg["message-id"] or "").strip().strip("<>").strip() or None
+
+    captured_at = None
+    if msg["date"]:
+        try:
+            captured_at = parsedate_to_datetime(str(msg["date"])).date().isoformat()
+        except (TypeError, ValueError):
+            captured_at = None
+
+    return ParsedEmail(
+        subject=(msg["subject"] or "").strip() or None,
+        from_name=(from_name or "").strip() or None,
+        from_addr=(from_addr or "").strip() or None,
+        message_id=mid,
+        date=captured_at,
+        body=_email_body(msg),
+    )
+
+
+def _email_body(msg) -> str:
+    """Best-effort plain-text body from an EmailMessage (default policy)."""
+    part = msg.get_body(preferencelist=("plain", "html"))
+    target = part if part is not None else msg
+    try:
+        content = target.get_content()
+    except (KeyError, LookupError):
+        payload = target.get_payload(decode=True)
+        content = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else (payload or "")
+    return (content or "").strip()

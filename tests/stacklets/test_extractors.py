@@ -26,6 +26,7 @@ from extractors import (  # noqa: E402
     TextExtractor,
     UrlExtractor,
     email_to_source,
+    parse_email,
 )
 
 
@@ -311,3 +312,59 @@ class TestEmailToSource:
         assert s.source_uri is None
         s2 = email_to_source(subject="x", body="y", message_id="")
         assert s2.source_uri is None
+
+
+# ── RFC822 parsing ─────────────────────────────────────────────────────────
+
+_EML = """From: Springfield School <office@springfield-school.example>
+To: family@example.org
+Subject: Elternabend am Freitag
+Message-ID: <abc123@springfield-school.example>
+Date: Fri, 20 Jun 2026 10:00:00 +0000
+Content-Type: text/plain; charset=utf-8
+
+Bitte das Formular bis Freitag zurücksenden.
+"""
+
+
+class TestParseEmail:
+    """`parse_email` reads a Maildir RFC822 file with the stdlib email
+    module — the robust ingestion contract, independent of himalaya's
+    rendered output. Pinned against himalaya 1.2.0's Maildir files."""
+
+    def test_extracts_all_fields(self):
+        p = parse_email(_EML.encode("utf-8"))
+        assert p.subject == "Elternabend am Freitag"
+        assert p.from_name == "Springfield School"
+        assert p.from_addr == "office@springfield-school.example"
+        assert p.message_id == "abc123@springfield-school.example"
+        assert p.date == "2026-06-20"
+        assert p.body.strip() == "Bitte das Formular bis Freitag zurücksenden."
+
+    def test_no_content_type_defaults_to_plain(self):
+        eml = (
+            "From: a@b.example\nSubject: Hi\n"
+            "Message-ID: <x@y>\n\nplain body here\n"
+        )
+        p = parse_email(eml.encode("utf-8"))
+        assert p.body.strip() == "plain body here"
+        assert p.from_name is None  # no display name
+        assert p.from_addr == "a@b.example"
+
+    def test_missing_headers_collapse_to_none(self):
+        p = parse_email(b"\njust a body, no headers\n")
+        assert p.subject is None
+        assert p.message_id is None
+        assert p.date is None
+        assert "just a body" in p.body
+
+    def test_multipart_prefers_plain(self):
+        eml = (
+            "From: a@b.example\nSubject: multi\nMessage-ID: <m@id>\n"
+            'Content-Type: multipart/alternative; boundary="B"\n\n'
+            "--B\nContent-Type: text/plain\n\nthe plain part\n"
+            "--B\nContent-Type: text/html\n\n<p>the html part</p>\n--B--\n"
+        )
+        p = parse_email(eml.encode("utf-8"))
+        assert "the plain part" in p.body
+        assert "<p>" not in p.body

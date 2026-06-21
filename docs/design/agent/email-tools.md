@@ -84,25 +84,34 @@ Feed that into the existing `CapturePipeline` path (it already has
 `capture_*` sibling) and an email becomes a vault entry with a `> [!summary]`
 briefing and `## Action items` — no new intelligence written.
 
-### himalaya JSON contract
+### himalaya contract (pinned against v1.2.0, not the README)
 
-himalaya emits JSON with `--json`. **`envelope list --json`** is verified
-against the himalaya README:
+Pinned by running himalaya 1.2.0 against a fabricated local maildir. The README
+was wrong on several points, so these are the real shapes:
 
-```json
-{"envelopes": [
-  {"id": "...", "message-id": "...", "flags": [{"raw": "...", "iana": "..."}],
-   "subject": "...", "from": [{"name": "...", "email": "..."}],
-   "to": [...], "date": "...", "size": 0, "has-attachment": false}]}
-```
+- **JSON flag is `-o json`** (`--output {plain,json}`), *not* `--json`.
+- **Maildir backend needs `backend.maildirpp = true`** or it can't resolve INBOX.
+- **`envelope list -o json`** is a *bare array* (not `{"envelopes": […]}`), and
+  carries **no Message-ID**:
+  ```json
+  [{"id":"2","flags":[],"subject":"…",
+    "from":{"name":"…","addr":"…"},"to":{"name":null,"addr":"…"},
+    "date":"2026-06-20 10:00+00:00","has_attachment":false}]
+  ```
+  `from`/`to` are single objects with **`addr`** (not arrays, not `email`); `id`
+  is a maildir sequence number, **not stable** across syncs.
+- **`message read <id> -o json`** returns a single JSON *string* of the rendered
+  message, body wrapped in himalaya MML (`<#part …>BODY<#/part>`). Awkward, and
+  there is no `--raw`.
 
-Note `from`/`to` are **arrays of `{name, email}`**, not strings; field is
-`message-id` (hyphen). **`message read <id> --json`** (the body) is **not
-documented in the README** — its exact shape must be pinned by running himalaya
-once installed (Phase A2), not assumed. The code keeps the himalaya-JSON parser
-isolated from the pure `email → SourceContent` mapper for exactly this reason:
-the mapper's contract is famstack's own dataclass and is fully testable now;
-the himalaya body schema is the one thing we confirm against the live binary.
+**Decision: ingestion does not parse himalaya's JSON at all.** himalaya's job is
+IMAP↔Maildir transport (and SMTP send). The Maildir it produces is plain
+**RFC822**, so the mail bot reads the message files directly with Python's
+stdlib `email` module — clean Subject / From / Message-ID / Date / body, the
+stable cross-sync key (Message-ID) included. himalaya's `envelope list -o json`
+is used only by the human `stack mail list` CLI. This keeps the ingestion parser
+on a standard (RFC822 + stdlib) instead of himalaya's rendering quirks, and it
+is fully unit-testable with fabricated `.eml` strings.
 
 ## Architecture
 

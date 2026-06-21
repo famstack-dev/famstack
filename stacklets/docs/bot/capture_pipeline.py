@@ -226,6 +226,7 @@ class CapturePipeline:
         message_id: str | None,
         sender_mxid: str,
         from_addr: str | None = None,
+        captured_at: str | None = None,
         bucket: str | None = None,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
@@ -249,7 +250,7 @@ class CapturePipeline:
         return await self._publish(
             source=source, kind="email", sender_mxid=sender_mxid,
             display_link=source.source_uri or "(email)",
-            user_hint=user_hint, actor=sender_mxid,
+            user_hint=user_hint, actor=sender_mxid, captured_at=captured_at,
             capture_id=capture_id, bucket=bucket, seed_topics=seed_topics,
         )
 
