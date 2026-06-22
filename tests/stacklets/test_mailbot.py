@@ -117,9 +117,20 @@ class TestRendering:
         bot = _bot(tmp_path)
         body = bot._human_body(_email(subject="Elternabend", from_addr="o@s",
                                       body="Bitte Formular zurueck."))
-        assert "**Elternabend**" in body
-        assert "from o@s · 2026-06-21" in body
+        assert "📧 **Elternabend**" in body
+        assert "**From** o@s" in body
+        assert "**Date** 2026-06-21" in body
         assert "Bitte Formular zurueck." in body
+        # Blank line between header and body so markdown renders a real break.
+        assert "\n\n" in body
+
+    def test_human_body_shows_name_and_address(self, tmp_path):
+        bot = _bot(tmp_path)
+        p = _email(subject="S", body="b")
+        p.from_name = "Springfield School"
+        p.from_addr = "office@school.example"
+        body = bot._human_body(p)
+        assert "**From** Springfield School (office@school.example)" in body
 
     def test_raw_content_is_message_text(self, tmp_path):
         bot = _bot(tmp_path)

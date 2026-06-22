@@ -201,17 +201,25 @@ class MailBot(MicroBot):
     # ── Rendering ────────────────────────────────────────────────────────
 
     def _human_body(self, p) -> str:
-        """The human-facing view: subject, sender, then the message text."""
+        """The human-facing view: an email-styled header, then the message.
+
+        Subject on its own line (with an envelope marker so it reads as
+        mail), a blockquote carrying sender + date, then the body. Blank
+        lines force real paragraph breaks — single newlines collapse in
+        Matrix's markdown, which is what made the first cut look cramped.
+        """
         subject = p.subject or "(no subject)"
         sender = p.from_name or p.from_addr or "unknown sender"
-        header = f"from {sender}"
+        if p.from_name and p.from_addr:
+            sender = f"{p.from_name} ({p.from_addr})"
+        meta = [f"**From** {sender}"]
         if p.date:
-            header += f" · {p.date}"
-        lines = [f"**{subject}**", header]
+            meta.append(f"**Date** {p.date}")
+        parts = [f"📧 **{subject}**", "", "> " + " · ".join(meta)]
         fragment = self._raw_content(p).strip()
         if fragment:
-            lines += ["", fragment]
-        return "\n".join(lines)
+            parts += ["", fragment]
+        return "\n".join(parts)
 
     def _raw_content(self, p) -> str:
         """The reproducibility anchor: this message's own text.
