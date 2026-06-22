@@ -99,6 +99,20 @@ def document_filepath(
     return f"{prefix}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/p{paperless_id}.md"
 
 
+def capture_hash(hash_key: str, hash_len: int = 6) -> str:
+    """The stable short hash that identifies a capture in its filename.
+
+    Used both to build a capture path and to *find* an existing one: an
+    email thread is keyed by its thread-root URI, so every message in the
+    conversation produces the same hash even as the title (and thus the
+    slug) drifts. The mirror reuses that to append replies to the one
+    thread file instead of spawning a new file per message.
+    """
+    return hashlib.sha256(
+        hash_key.encode("utf-8") if hash_key else b"",
+    ).hexdigest()[:hash_len]
+
+
 def capture_filepath(
     entity: str,
     kind: str,
@@ -141,9 +155,7 @@ def capture_filepath(
         >>> capture_filepath("homer", "note", None, "Random thought", "content hash")
         'homer/notes/_unfiled/random-thought-xxxxxx.md'
     """
-    digest = hashlib.sha256(
-        hash_key.encode("utf-8") if hash_key else b"",
-    ).hexdigest()[:hash_len]
+    digest = capture_hash(hash_key, hash_len)
 
     slug_str = slug(title) if title else "capture"
     kind_dir = f"{kind}s"

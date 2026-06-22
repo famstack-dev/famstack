@@ -95,7 +95,14 @@ def _parse_msgids(header) -> list[str]:
 
 
 def _email_body(msg) -> str:
-    """Best-effort plain-text body from an EmailMessage (default policy)."""
+    """Best-effort readable body from an EmailMessage (default policy).
+
+    Prefers the plain-text part when present. An HTML-only message is
+    converted to Markdown (`html2text`) so the room and the vault get clean,
+    link-preserving text rather than a wall of tags — most non-trivial mail
+    is HTML-only. Conversion failures degrade to the raw HTML, never an
+    exception.
+    """
     part = msg.get_body(preferencelist=("plain", "html"))
     target = part if part is not None else msg
     try:
@@ -103,4 +110,26 @@ def _email_body(msg) -> str:
     except (KeyError, LookupError):
         payload = target.get_payload(decode=True)
         content = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else (payload or "")
-    return (content or "").strip()
+    content = content or ""
+    ctype = target.get_content_type() if hasattr(target, "get_content_type") else "text/plain"
+    if ctype == "text/html":
+        content = _html_to_markdown(content)
+    return content.strip()
+
+
+def _html_to_markdown(html: str) -> str:
+    """Convert an HTML email body to Markdown.
+
+    `html2text` keeps headings, links, and emphasis while dropping styling
+    and (configured here) images — email signatures and tracking pixels are
+    noise. Falls back to the raw HTML if the library is unavailable, so the
+    body is never lost.
+    """
+    try:
+        import html2text
+    except ImportError:
+        return html
+    h = html2text.HTML2Text()
+    h.body_width = 0       # don't hard-wrap; let the renderer reflow
+    h.ignore_images = True  # drop logos, tracking pixels, layout images
+    return h.handle(html)

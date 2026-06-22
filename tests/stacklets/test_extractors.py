@@ -369,6 +369,22 @@ class TestParseEmail:
         assert "the plain part" in p.body
         assert "<p>" not in p.body
 
+    def test_html_only_body_converted_to_markdown(self):
+        raw = (
+            "From: Globex <billing@globex.example>\r\n"
+            "Subject: Statement\r\nMessage-ID: <h1@globex.example>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n\r\n"
+            "<html><body><h2>Statement ready</h2>"
+            "<p>Amount due: <b>EUR 42.00</b>. "
+            "<a href='https://globex.example/stmt'>View</a></p></body></html>\r\n"
+        ).encode("utf-8")
+        p = parse_email(raw)
+        # Tags gone; content + link preserved as Markdown.
+        assert "<html>" not in p.body and "<p>" not in p.body
+        assert "Statement ready" in p.body
+        assert "EUR 42.00" in p.body
+        assert "https://globex.example/stmt" in p.body
+
 
 class TestThreadRoot:
     """A thread folds into one vault entry keyed by its root Message-ID

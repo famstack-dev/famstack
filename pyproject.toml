@@ -34,6 +34,8 @@ test = [
     # Strip quoted history + signatures from an email reply so the mail bot
     # posts only the new message (stack.* / mail bot). Real lib in tests.
     "email_reply_parser>=0.5",
+    # Convert HTML-only email bodies to Markdown (stack.email_message).
+    "html2text>=2024.2",
 ]
 
 # Host-side tooling for generating the demo family-document set

@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from vault_entry import (
     slug,
+    capture_hash,
     document_filepath,
     capture_filepath,
     document_frontmatter,
@@ -190,6 +191,31 @@ class TestCaptureFilepath:
         )
         # Same title but different hash → different paths
         assert path1 != path2
+
+
+# ── Capture hash (stable thread identity) ──────────────────────────────
+
+class TestCaptureHash:
+    """`capture_hash` is the stable id in a capture's filename — an email
+    thread's hash is constant across messages, so the mirror can find and
+    append to the one thread file even as the title/slug drifts."""
+
+    def test_deterministic(self):
+        assert capture_hash("mid:root@h") == capture_hash("mid:root@h")
+
+    def test_differs_by_key(self):
+        assert capture_hash("mid:a@h") != capture_hash("mid:b@h")
+
+    def test_default_length(self):
+        assert len(capture_hash("anything")) == 6
+
+    def test_matches_filepath_suffix(self):
+        # The path the filepath builder produces ends with this exact hash,
+        # which is what the thread lookup keys on.
+        h = capture_hash("https://example.com/x")
+        path = capture_filepath("homer", "bookmark", "2025-03-27", "Title",
+                                "https://example.com/x")
+        assert path.endswith(f"-{h}.md")
 
 
 # ── Document frontmatter ───────────────────────────────────────────────

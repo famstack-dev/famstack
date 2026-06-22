@@ -55,6 +55,7 @@ from stack.forgejo import ForgejoClient, ForgejoError
 
 from vault_entry import (
     slug,
+    capture_hash,
     document_filepath,
     document_resource_url,
     capture_filepath,
@@ -789,6 +790,32 @@ class GitMirror:
     # The shape (frontmatter, sections, markers) is owned by vault_entry;
     # this method is just the Forgejo read-fold-write around it.
 
+    async def _find_email_thread(
+        self, client: ForgejoClient, entity: str, digest: str,
+    ) -> str | None:
+        """The existing thread file for this digest, or None.
+
+        Walks the entity's email tree for a ``…-<digest>.md`` blob. The
+        digest is over the thread root, stable across the conversation, so
+        this returns the file the first message created — replies append to
+        it even when their title (and slug) has drifted.
+        """
+        suffix = f"-{digest}.md"
+        prefix = f"{entity}/emails/"
+        try:
+            tree = await asyncio.to_thread(
+                client.list_tree, self.repo_owner, REPO_NAME,
+            )
+        except ForgejoError:
+            return None
+        for entry in tree:
+            path = entry.get("path", "")
+            if (entry.get("type") == "blob"
+                    and path.startswith(prefix)
+                    and path.endswith(suffix)):
+                return path
+        return None
+
     async def publish_email_message(
         self, *,
         entity: str,
@@ -825,13 +852,22 @@ class GitMirror:
             persons_raw = [persons_raw]
         persons = [p for p in persons_raw if isinstance(p, str) and p]
 
-        target_path = self._capture_filepath(
-            entity=entity,
-            kind="email",
-            captured_at=captured_at,
-            title=title if resolved_title else None,
-            hash_key=thread_uri or body_text,
-        )
+        # Thread files are keyed by the thread-root hash, but the slug comes
+        # from the per-message title, which drifts ("Dental appointment…"
+        # vs a reply's "…fasting inquiry"). So look up an existing thread
+        # file by its hash suffix and append there, instead of spawning a
+        # new file per reply. Mirrors how the document mirror reuses a
+        # renamed doc's `-p<id>.md` path.
+        digest = capture_hash(thread_uri or body_text, self._CAPTURE_HASH_LEN)
+        target_path = await self._find_email_thread(client, entity, digest)
+        if target_path is None:
+            target_path = self._capture_filepath(
+                entity=entity,
+                kind="email",
+                captured_at=captured_at,
+                title=title if resolved_title else None,
+                hash_key=thread_uri or body_text,
+            )
 
         existing = await asyncio.to_thread(
             client.get_file, self.repo_owner, REPO_NAME, target_path,
