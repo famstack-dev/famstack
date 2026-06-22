@@ -247,6 +247,29 @@ the twofold shape for free. No per-bot copy of the wire format.
      → gateway → SMTP
 ```
 
+### Attachments: the whole message, not just the body
+
+`raw_content` (scoped to email for now) holds the verbatim text body, but an
+email is body **plus attachments**, and the body alone is not the whole
+message. So the mail bot posts each attachment into the room as a normal
+Matrix media event (`m.file` / `m.image`) in the **same thread** as the text.
+"The whole message" is then the text event plus its sibling media events,
+co-located under one `m.thread`.
+
+The win: attachments ride a path the archivist **already has**. `_on_file`
+(`archivist.py`) routes `m.file` / `m.image` uploads through the
+DocumentPipeline and `capture_binary` today, so an emailed PDF (a school form,
+an invoice) lands in Paperless exactly as a dragged-in file would, and an image
+lands in the vault. No new attachment code. The email thread file and the
+resulting document correlate by living in the same Matrix thread.
+
+One real concern to settle when we build this, not now: **not every attachment
+is signal.** Sender-signature logos, inline tracking pixels, and tiny images
+would flood Paperless and the room with junk. The bot needs an attachment
+filter (skip below a size threshold / inline-disposition images), and an
+on/off toggle, the way postmoogle exposes one. Body text is unaffected; this
+is purely about which binaries get pasted.
+
 ## Routing email into Matrix rooms
 
 Family email should *appear in Matrix* — in the room the family chose for it —
