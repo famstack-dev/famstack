@@ -543,6 +543,68 @@ class MicroBot:
     # a *separate* custom-typed event for bot-to-bot signalling.
     FAMSTACK_EVENT_KEY = "dev.famstack.event"
 
+    # The raw-ingest block on an inbound message: the verbatim original a
+    # source posts before classification, distinct from the post-classify
+    # `dev.famstack.event` filing envelope above.
+    SOURCE_KEY = "dev.famstack.source"
+
+    async def post_source_message(
+        self,
+        room_id: str,
+        *,
+        body: str,
+        source: str,
+        raw_content: str,
+        fields: dict | None = None,
+        thread_root_event_id: str | None = None,
+    ) -> str | None:
+        """Post a twofold ingest message and return its event id.
+
+        Two faces on one timeline event: a human-readable rendered ``body``
+        (markdown + HTML for rich clients) and a machine ``dev.famstack.source``
+        block carrying the verbatim ``raw_content`` plus per-source ``fields``
+        (an email's from / message_id / thread_root, a future source's own
+        descriptors). ``raw_content`` is the reproducibility anchor (ADR-010):
+        re-deriving the vault entry reads it, never the upstream server.
+
+        When ``thread_root_event_id`` is given the message is posted as an
+        ``m.thread`` reply under that root (with a reply fallback so
+        non-threaded clients still show it in context), so an email
+        conversation maps onto one Matrix thread. Returns the new event's id
+        — the caller uses the first message's id as the thread root for the
+        rest — or None on failure.
+
+        Framework plumbing: any ingest source posts through here and gets the
+        twofold + threaded shape without reimplementing the wire format.
+        """
+        source_block: dict = {"source": source, "raw_content": raw_content}
+        if fields:
+            source_block.update(fields)
+
+        html = markdown.markdown(body, extensions=["tables", "fenced_code"])
+        content: dict = {
+            "msgtype": "m.text",
+            "body": body,
+            "format": "org.matrix.custom.html",
+            "formatted_body": html,
+            self.SOURCE_KEY: source_block,
+        }
+        if thread_root_event_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root_event_id},
+            }
+        try:
+            resp = await self._client.room_send(
+                room_id=room_id, message_type="m.room.message", content=content,
+            )
+        except Exception as e:
+            logger.warning("[{}] post_source_message failed: {}", self.name, e)
+            return None
+        return getattr(resp, "event_id", None)
+
     async def _reply_parent_envelope(self, room_id: str, event) -> dict | None:
         """Return the famstack envelope on the message ``event`` replies to.
 
