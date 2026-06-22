@@ -165,6 +165,37 @@ class TestRendering:
 
 # ── State ─────────────────────────────────────────────────────────────────
 
+class TestPollerStart:
+    """The poller starts in register_callbacks (every launch), not in the
+    once-ever on_first_sync welcome hook."""
+
+    @pytest.mark.asyncio
+    async def test_register_callbacks_starts_poller(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p"), "!r:hs")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher([])
+        bot.register_callbacks(None)
+        try:
+            assert bot._poll_task is not None
+        finally:
+            if bot._poll_task:
+                bot._poll_task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_no_accounts_stays_idle(self, tmp_path):
+        bot = _bot(tmp_path)
+        bot._accounts = []
+        bot.register_callbacks(None)
+        assert bot._poll_task is None
+
+    def test_does_not_define_on_first_sync(self):
+        # on_first_sync is the once-ever welcome hook; the poller must not
+        # ride it, so MailBot leaves it to the framework.
+        assert "on_first_sync" not in MailBot.__dict__
+
+
 class TestJoinWelcome:
 
     @pytest.mark.asyncio

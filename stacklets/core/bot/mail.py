@@ -112,19 +112,26 @@ class MailBot(MicroBot):
     # ── Lifecycle ────────────────────────────────────────────────────────
 
     def register_callbacks(self, client) -> None:
-        # v1 is post-only. The config conversation (bind-on-invite, account
-        # setup) lands later; credentials still never come through chat.
-        pass
+        """Start the IMAP poll loop — once per launch.
 
-    async def on_first_sync(self) -> None:
+        Deliberately here and not in `on_first_sync`: that hook is gated by a
+        `.welcomed` marker to fire once *ever* (for one-time welcomes), so a
+        poller started there silently stops running after the first restart.
+        `register_callbacks` runs on every launch, inside `start()`'s event
+        loop, so the background task comes back with the bot.
+
+        v1 registers no message handlers (post-only); the config conversation
+        lands later, and credentials never come through chat.
+        """
         if not self._accounts:
             logger.info("[mail-bot] no accounts configured; idle")
             return
-        logger.info(
-            "[mail-bot] polling {} account(s) every {}s",
-            len(self._accounts), self._interval,
-        )
-        self._poll_task = asyncio.create_task(self._poll_loop())
+        if self._poll_task is None:
+            logger.info(
+                "[mail-bot] polling {} account(s) every {}s",
+                len(self._accounts), self._interval,
+            )
+            self._poll_task = asyncio.create_task(self._poll_loop())
 
     async def on_room_joined(self, room_id: str) -> None:
         """Introduce the bot and name the mailbox that feeds this room.
