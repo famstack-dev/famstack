@@ -29,6 +29,9 @@ class MailAccount:
     folder: str = "INBOX"
     ssl: bool = True
     timeout: int = 30
+    # The configured account name (stack.toml [[mail.accounts]] name).
+    # Carried so the bot can tag a message with where it came from.
+    name: str = ""
 
 
 class MailFetcher:

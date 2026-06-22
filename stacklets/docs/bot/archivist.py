@@ -1653,6 +1653,17 @@ class ArchivistBot(MicroBot):
         if not raw.strip():
             return
 
+        # Provenance tags: which mailbox + folder this arrived in, so the
+        # vault can filter "all work mail" / "everything in Schule". Same
+        # "Prefix: Value" shape the vault already uses for "Person: X".
+        seed_topics: list[str] = []
+        if source.get("from"):
+            seed_topics.append(f"Sender: {source['from']}")
+        if source.get("account"):
+            seed_topics.append(f"Mailbox: {source['account']}")
+        if source.get("folder"):
+            seed_topics.append(f"Folder: {source['folder']}")
+
         # Email files to the institutional bucket (<shared_bucket>/emails/),
         # like documents — it is household correspondence, not one member's
         # personal note. Per-account bucket routing from the room binding is
@@ -1666,6 +1677,7 @@ class ArchivistBot(MicroBot):
             from_addr=source.get("from"),
             captured_at=source.get("captured_at"),
             bucket=self.shared_bucket,
+            seed_topics=seed_topics or None,
         )
         logger.info(
             "[archivist] email folded ({}) -> {}",

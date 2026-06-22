@@ -257,6 +257,9 @@ class CapturePipeline:
             user_hint=user_hint, actor=sender_mxid, captured_at=captured_at,
             capture_id=capture_id, bucket=bucket, seed_topics=seed_topics,
             email_meta={"message_id": message_id, "from_addr": from_addr},
+            # The "sender" of an email is the mail bot, not a household
+            # member — don't fall it in as the person.
+            default_person=False,
         )
 
     async def capture_voice_batch(
@@ -641,6 +644,7 @@ class CapturePipeline:
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
         email_meta: dict | None = None,
+        default_person: bool = True,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -666,6 +670,7 @@ class CapturePipeline:
         classification = await self._classify(
             source, sender_name, images=images, user_hint=user_hint,
             initial_classification=initial_classification,
+            default_person=default_person,
         )
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
@@ -773,10 +778,17 @@ class CapturePipeline:
         *, images: list[ImageAttachment] | None = None,
         user_hint: str | None = None,
         initial_classification: dict | None = None,
+        default_person: bool = True,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
-        failure — the capture is still useful without a digest."""
+        failure — the capture is still useful without a digest.
+
+        ``default_person`` falls the sender in as the person when the
+        classifier names none — right for a human paste (Homer saved this),
+        wrong for email (the "sender" is the mail bot, not a household
+        member). Email passes False so an email with no named family member
+        gets empty persons rather than the bot."""
         if self._classifier is None:
             # Bot was brought up without AI configured; fall through to the
             # minimal classification below so the capture still files.
@@ -806,10 +818,10 @@ class CapturePipeline:
         if not classification:
             return {
                 "title": source.title_hint or "Capture",
-                "persons": [sender_name],
+                "persons": [sender_name] if default_person else [],
                 "tags": [],
             }
-        if not classification.get("persons"):
+        if default_person and not classification.get("persons"):
             classification["persons"] = [sender_name]
         return classification
 

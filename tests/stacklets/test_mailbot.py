@@ -154,12 +154,16 @@ class TestRendering:
         assert bot._strip_reply("") == ""
 
     def test_source_fields_carry_email_descriptors(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
         bot = _bot(tmp_path)
+        acc = MailAccount(host="h", port=993, user="u", password="p",
+                          folder="INBOX", name="family")
         f = bot._source_fields(_email(from_addr="o@s", mid="root@h",
-                                      subject="S", date="2026-06-21"))
+                                      subject="S", date="2026-06-21"), acc)
         assert f == {
             "from": "o@s", "subject": "S", "message_id": "root@h",
             "thread_root": "root@h", "captured_at": "2026-06-21",
+            "account": "family", "folder": "INBOX",
         }
 
 

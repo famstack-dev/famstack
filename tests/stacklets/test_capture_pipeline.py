@@ -1190,6 +1190,22 @@ class TestCaptureEmail:
         assert mirror.emails[0]["message_id"] != mirror.emails[1]["message_id"]
 
     @pytest.mark.asyncio
+    async def test_does_not_file_the_bot_as_a_person(self):
+        # When the classifier names no persons, an email must NOT fall the
+        # sender (the mail bot) in as the person — unlike a human paste.
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={"title": "T", "tags": [], "summary": "s"}),
+        )
+        await pipe.capture_email(
+            subject="Statement", body="amount due", message_id="<m@h>",
+            sender_mxid="@mail-bot:s",
+        )
+        cls = mirror.emails[0]["classification"]
+        assert not cls.get("persons")  # no "Mail-bot" person
+
+    @pytest.mark.asyncio
     async def test_empty_body_is_empty_outcome(self):
         mirror = FakeMirror()
         pipe = _pipeline(mirror=mirror)

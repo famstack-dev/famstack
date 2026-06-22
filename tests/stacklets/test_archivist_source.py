@@ -64,6 +64,8 @@ _EMAIL_BLOCK = {
     "message_id": "root@school.example",
     "thread_root": "root@school.example",
     "captured_at": "2026-06-21",
+    "account": "family",
+    "folder": "INBOX",
 }
 
 
@@ -102,6 +104,11 @@ async def test_email_source_folds_through_capture(tmp_path):
     assert call["captured_at"] == "2026-06-21"
     # Email files to the institutional bucket, like documents.
     assert call["bucket"] == bot.shared_bucket
+    # Provenance tags: sender, mailbox, folder.
+    st = call["seed_topics"]
+    assert "Sender: office@school.example" in st
+    assert "Mailbox: family" in st
+    assert "Folder: INBOX" in st
     # The filing envelope rides onto the timeline for the deriver/reprocess.
     assert sends and sends[0]["metadata"]["dev.famstack.event"] == {"type": "capture.filed"}
 

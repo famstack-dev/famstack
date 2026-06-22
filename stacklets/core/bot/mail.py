@@ -106,6 +106,7 @@ class MailBot(MicroBot):
             password=password,
             folder=entry.get("folder") or "INBOX",
             ssl=str(entry.get("ssl", "true")).lower() != "false",
+            name=name,
         )
         return (account, room)
 
@@ -183,17 +184,17 @@ class MailBot(MicroBot):
             return
         new.sort(key=lambda p: p.date or "")
         for parsed in new:
-            await self._post(parsed, room_id)
+            await self._post(parsed, room_id, account)
         self._save_state()
 
-    async def _post(self, parsed, room_id: str) -> None:
+    async def _post(self, parsed, room_id: str, account: MailAccount) -> None:
         root = self._threads.get(parsed.thread_root) if parsed.thread_root else None
         event_id = await self.post_source_message(
             room_id,
             body=self._human_body(parsed),
             source="email",
             raw_content=self._raw_content(parsed),
-            fields=self._source_fields(parsed),
+            fields=self._source_fields(parsed, account),
             thread_root_event_id=root,
         )
         if event_id is None:
@@ -255,7 +256,7 @@ class MailBot(MicroBot):
         return reply.strip() or body
 
     @staticmethod
-    def _source_fields(p) -> dict:
+    def _source_fields(p, account: MailAccount) -> dict:
         fields: dict = {}
         if p.from_addr:
             fields["from"] = p.from_addr
@@ -267,6 +268,13 @@ class MailBot(MicroBot):
             fields["thread_root"] = p.thread_root
         if p.date:
             fields["captured_at"] = p.date
+        # Provenance: which mailbox + folder this arrived in, so the
+        # archivist can tag it (filter "all work mail", "everything in
+        # Schule").
+        if account.name:
+            fields["account"] = account.name
+        if account.folder:
+            fields["folder"] = account.folder
         return fields
 
     # ── State (seen Message-IDs + thread roots) ──────────────────────────
