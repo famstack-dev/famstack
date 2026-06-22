@@ -19,7 +19,9 @@ hints = [
 ]
 
 [env]
-generate = ["STACKER_BOT_PASSWORD"]
+# Matrix login passwords for the bots core ships. Auto-generated into the
+# secret store on `up` so the bot runner can create their accounts.
+generate = ["STACKER_BOT_PASSWORD", "MAIL_BOT_PASSWORD"]
 
 [env.defaults]
 # 6-field cron: sec min hour day month weekday
