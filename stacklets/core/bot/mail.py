@@ -88,11 +88,15 @@ class MailBot(MicroBot):
                 entry,
             )
             return (None, None)
+        # Password comes embedded in the rendered JSON (from the secret
+        # store, via stack.toml render); the env var is a manual/test
+        # override. Never read from chat.
         pw_env = f"MAIL_{name.upper()}_IMAP_PASSWORD"
-        password = os.environ.get(pw_env, "")
+        password = entry.get("imap_password") or os.environ.get(pw_env, "")
         if not password:
             logger.warning(
-                "[mail-bot] no password for account '{}' (set {})", name, pw_env,
+                "[mail-bot] no password for account '{}' (set mail__{}_IMAP_PASSWORD)",
+                name, name.upper(),
             )
             return (None, None)
         account = MailAccount(

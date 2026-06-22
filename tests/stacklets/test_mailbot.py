@@ -80,6 +80,17 @@ class TestConfig:
         assert account.password == "secret"
         assert account.folder == "INBOX"
 
+    def test_password_embedded_in_rendered_json(self, tmp_path, monkeypatch):
+        # The installer embeds the secret-store password in the JSON; no
+        # separate env var needed.
+        monkeypatch.delenv("MAIL_FAMILY_IMAP_PASSWORD", raising=False)
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"imap_password":"rendered-secret","room":"!r:hs"}]')
+        bot = _bot(tmp_path)
+        assert len(bot._accounts) == 1
+        assert bot._accounts[0][0].password == "rendered-secret"
+
     def test_account_skipped_without_password(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
             '[{"name":"family","imap_host":"imap.x","imap_user":"f@x","room":"!r:hs"}]')

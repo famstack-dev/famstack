@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import collections
+import json
 import platform
 import shutil
 import subprocess
@@ -22,6 +23,34 @@ from .docker import running_project_ids
 from .hooks import HookResolver, build_hook_ctx
 from .output import SilentOutput
 from .secrets import TomlSecretStore
+
+
+def _mail_accounts_env(mail_cfg: dict, secret_lookup) -> str:
+    """Build MAIL_ACCOUNTS_JSON from stack.toml [mail] + a secret lookup.
+
+    `mail_cfg` is the parsed `[mail]` table; `[[mail.accounts]]` is its
+    `accounts` list. `secret_lookup(name)` returns an account's IMAP password
+    from the secret store, so passwords stay out of stack.toml and ride in the
+    rendered env JSON the same way other container secrets reach .env.
+    Accounts without a `name` are skipped; an empty result ("") means the mail
+    bot has nothing to poll and idles.
+    """
+    accounts = []
+    for acc in mail_cfg.get("accounts", []) or []:
+        name = str(acc.get("name", "")).strip()
+        if not name:
+            continue
+        accounts.append({
+            "name": name,
+            "imap_host": acc.get("imap_host", ""),
+            "imap_port": int(acc.get("imap_port", 993)),
+            "imap_user": acc.get("imap_user", ""),
+            "imap_password": secret_lookup(name) or "",
+            "folder": acc.get("folder", "INBOX"),
+            "room": acc.get("room", ""),
+            "ssl": bool(acc.get("ssl", True)),
+        })
+    return json.dumps(accounts) if accounts else ""
 
 
 class StackletNotHealthyError(RuntimeError):
@@ -225,6 +254,17 @@ class Stack:
             if u.get("role") == "admin"
         ]
         template_vars["admin_user_ids"] = ",".join(admin_ids)
+
+        # Mail accounts — stack.toml [mail] rendered into one JSON env var
+        # for the mail bot. IMAP passwords come from the secret store
+        # (mail__<NAME>_IMAP_PASSWORD), embedded in the JSON the same way
+        # other container secrets reach .env; never written to stack.toml.
+        mail_cfg = self.config.get("mail", {})
+        template_vars["mail_accounts_json"] = _mail_accounts_env(
+            mail_cfg,
+            lambda name: self.secrets.get("mail", f"{name.upper()}_IMAP_PASSWORD"),
+        )
+        template_vars["mail_poll_interval"] = str(mail_cfg.get("poll_interval", 120))
 
         return template_vars
 
