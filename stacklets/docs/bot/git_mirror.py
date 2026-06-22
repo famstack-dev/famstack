@@ -62,6 +62,8 @@ from vault_entry import (
     capture_frontmatter,
     render_document,
     render_capture,
+    render_email_message_section,
+    fold_email_message,
 )
 
 
@@ -772,4 +774,136 @@ class GitMirror:
             return None
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
+        return target_path
+
+    # ── Email threads ─────────────────────────────────────────────────────
+    #
+    # Email is the one capture source that accumulates: every message in a
+    # conversation folds into a single file keyed by the thread root, so the
+    # whole exchange reads top to bottom in one place. New messages append a
+    # dated section; re-folding a message already present is a no-op (its
+    # `mid:` marker is detected). The path lives under the routed bucket:
+    #
+    #   <bucket>/emails/YYYY/MM/<subject-slug>-<thread-hash>.md
+    #
+    # The shape (frontmatter, sections, markers) is owned by vault_entry;
+    # this method is just the Forgejo read-fold-write around it.
+
+    async def publish_email_message(
+        self, *,
+        entity: str,
+        thread_uri: str | None,
+        message_id: str | None,
+        from_addr: str | None,
+        title_hint: str | None,
+        body_text: str,
+        classification: dict,
+        captured_at: str,
+        model: str | None,
+        tags: list[str] | None = None,
+        capture_id: str | None = None,
+    ) -> str | None:
+        """Fold one email message into its thread file.
+
+        `entity` is the routed bucket (mailbox binding) or the sender's
+        slug. `thread_uri` is the ``mid:`` URI of the thread root — it keys
+        the file, so every reply lands in the same entry. Returns the path
+        the thread lives at (even when the message was already folded, an
+        idempotent no-op), or None when Forgejo is unreachable or the write
+        failed. Best-effort like the rest of the mirror.
+        """
+        if not await self.ensure_setup():
+            return None
+
+        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+
+        resolved_title = classification.get("title") or title_hint
+        title = resolved_title or "Email thread"
+
+        persons_raw = classification.get("persons") or classification.get("person") or []
+        if isinstance(persons_raw, str):
+            persons_raw = [persons_raw]
+        persons = [p for p in persons_raw if isinstance(p, str) and p]
+
+        target_path = self._capture_filepath(
+            entity=entity,
+            kind="email",
+            captured_at=captured_at,
+            title=title if resolved_title else None,
+            hash_key=thread_uri or body_text,
+        )
+
+        existing = await asyncio.to_thread(
+            client.get_file, self.repo_owner, REPO_NAME, target_path,
+        )
+        existing_content = (existing.get("content") if existing else None) or None
+
+        section = render_email_message_section(
+            message_id=message_id,
+            from_addr=from_addr,
+            captured_at=captured_at,
+            body=body_text,
+            summary=classification.get("summary"),
+            facts=classification.get("facts") or [],
+            action_items=classification.get("action_items") or [],
+        )
+
+        new_fm = self._capture_frontmatter(
+            title=title,
+            captured_at=captured_at,
+            kind="email",
+            source_uri=thread_uri,
+            persons=persons,
+            tags=tags or [],
+            model=model,
+            capture_id=capture_id,
+        )
+
+        content = fold_email_message(
+            existing_content,
+            section=section,
+            message_id=message_id,
+            new_frontmatter=new_fm,
+            title=title,
+            captured_at=captured_at,
+            source_uri=thread_uri,
+            persons=persons,
+            tags=tags or [],
+            from_path=target_path,
+            shared_bucket=self.shared_bucket,
+        )
+        if content is None:
+            # Already folded into this thread — nothing to write.
+            logger.info("[git-mirror] email already folded → {}", target_path)
+            return target_path
+
+        verb = "update" if existing_content else "capture"
+        summary = classification.get("summary")
+        message_lines = [f"{verb}: {title}", ""]
+        if summary:
+            message_lines.append(summary.strip())
+            message_lines.append("")
+        message_lines.append(f"Thread: {thread_uri or '(none)'}")
+        if message_id:
+            message_lines.append(f"Message-Id: {message_id}")
+        if model:
+            message_lines.append(f"Model: {model}")
+        commit = "\n".join(message_lines)
+
+        try:
+            await asyncio.to_thread(
+                client.put_file,
+                self.repo_owner, REPO_NAME, target_path,
+                content=content, message=commit,
+                sha=existing["sha"] if existing else None,
+                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+            )
+        except ForgejoError as e:
+            logger.warning(
+                "[git-mirror] Email fold failed for {}: {}",
+                thread_uri or "(no thread)", e,
+            )
+            return None
+
+        logger.info("[git-mirror] {} email → {}", verb, target_path)
         return target_path

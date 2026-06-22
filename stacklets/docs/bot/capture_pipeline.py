@@ -225,24 +225,28 @@ class CapturePipeline:
         body: str,
         message_id: str | None,
         sender_mxid: str,
+        thread_root: str | None = None,
         from_addr: str | None = None,
         captured_at: str | None = None,
         bucket: str | None = None,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
     ) -> CaptureOutcome:
-        """File a fetched email as an `email`-kind capture.
+        """Fold a fetched email into its thread file.
 
-        Reuses the capture pipeline wholesale: the body is the source the
-        classifier reads, the subject the title, the Message-ID the
-        dedupe/reprocess pointer (an RFC 2392 ``mid:`` URI). `from_addr`
-        (the sender) is surfaced to the classifier as a hint so it can
-        resolve the correspondent. Routing — which bucket, which room — is
-        the caller's job; here we just file. The `mail` container's
-        himalaya did the fetch; this is the in-pipeline handoff.
+        Reuses the capture pipeline's classify/tag/envelope tail wholesale:
+        the body is the source the classifier reads, the subject the title,
+        the *thread root* the file identity (an RFC 2392 ``mid:`` URI). The
+        write differs from a URL/note capture — email accumulates, so each
+        message folds into one thread file (see `publish_email_message`)
+        rather than replacing a single-shot entry. `from_addr` is surfaced
+        to the classifier as a hint so it can resolve the correspondent,
+        and stamps the message's section heading. Routing — which bucket,
+        which room — is the caller's job; here we just fold. The `mail`
+        container did the fetch; this is the in-pipeline handoff.
         """
         source = email_to_source(
-            subject=subject, body=body, message_id=message_id,
+            subject=subject, body=body, thread_root=thread_root or message_id,
         )
         if not source.text.strip():
             return CaptureOutcome(status="empty")
@@ -252,6 +256,7 @@ class CapturePipeline:
             display_link=source.source_uri or "(email)",
             user_hint=user_hint, actor=sender_mxid, captured_at=captured_at,
             capture_id=capture_id, bucket=bucket, seed_topics=seed_topics,
+            email_meta={"message_id": message_id, "from_addr": from_addr},
         )
 
     async def capture_voice_batch(
@@ -635,6 +640,7 @@ class CapturePipeline:
         initial_classification: dict | None = None,
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
+        email_meta: dict | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -676,24 +682,44 @@ class CapturePipeline:
         tags = self._tag_list(classification)
         captured_at = captured_at or _dt.date.today().isoformat()
 
-        # Bookmarks default to marker mode (body dropped, summary IS the
-        # content); notes always keep the body.
-        keep_body = kind == "note" or self.capture_keep_body
-        body_for_mirror = source.text if keep_body else ""
-
-        vault_path = await self._mirror.publish_capture(
-            entity=entity_slug,
-            kind=kind,
-            source_uri=source.source_uri,
-            title_hint=source.title_hint,
-            body_text=body_for_mirror,
-            classification=classification,
-            captured_at=captured_at,
-            model=model,
-            tags=tags,
-            existing_path=existing_path,
-            capture_id=capture_id,
-        )
+        # Email folds into a thread file (append a dated section) instead
+        # of replacing a single-shot entry; `email_meta` carries the
+        # per-message identity (Message-ID, sender) the fold needs.
+        # Everything else above — classify, tags, the envelope below — is
+        # shared with URL/note captures. Body is always kept: the
+        # conversation IS the content.
+        if kind == "email" and email_meta is not None:
+            vault_path = await self._mirror.publish_email_message(
+                entity=entity_slug,
+                thread_uri=source.source_uri,
+                message_id=email_meta.get("message_id"),
+                from_addr=email_meta.get("from_addr"),
+                title_hint=source.title_hint,
+                body_text=source.text,
+                classification=classification,
+                captured_at=captured_at,
+                model=model,
+                tags=tags,
+                capture_id=capture_id,
+            )
+        else:
+            # Bookmarks default to marker mode (body dropped, summary IS
+            # the content); notes always keep the body.
+            keep_body = kind == "note" or self.capture_keep_body
+            body_for_mirror = source.text if keep_body else ""
+            vault_path = await self._mirror.publish_capture(
+                entity=entity_slug,
+                kind=kind,
+                source_uri=source.source_uri,
+                title_hint=source.title_hint,
+                body_text=body_for_mirror,
+                classification=classification,
+                captured_at=captured_at,
+                model=model,
+                tags=tags,
+                existing_path=existing_path,
+                capture_id=capture_id,
+            )
 
         # Feed topic tags (not the derived Person: X) back into the
         # vocabulary cache so the next capture's prompt sees them.

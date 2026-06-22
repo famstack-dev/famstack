@@ -285,32 +285,32 @@ class TestEmailToSource:
     """`email_to_source` maps fetched email parts into SourceContent.
 
     Pure mapping, no I/O — the himalaya container already fetched the
-    message. The Message-ID becomes an RFC 2392 `mid:` pointer for dedupe
-    and reprocess."""
+    message. The thread root becomes an RFC 2392 `mid:` pointer that keys
+    the thread file (every reply folds into the same entry)."""
 
-    def test_maps_subject_body_and_message_id(self):
+    def test_maps_subject_body_and_thread_root(self):
         s = email_to_source(
             subject="Elternabend am Freitag",
             body="Bitte Formular zurücksenden.",
-            message_id="<abc123@school.example>",
+            thread_root="<abc123@school.example>",
         )
         assert isinstance(s, SourceContent)
         assert s.text == "Bitte Formular zurücksenden."
         assert s.title_hint == "Elternabend am Freitag"
         assert s.source_uri == "mid:abc123@school.example"
 
-    def test_strips_angle_brackets_from_message_id(self):
-        s = email_to_source(subject="x", body="y", message_id="  <id@h>  ")
+    def test_strips_angle_brackets_from_thread_root(self):
+        s = email_to_source(subject="x", body="y", thread_root="  <id@h>  ")
         assert s.source_uri == "mid:id@h"
 
     def test_blank_subject_is_none(self):
-        s = email_to_source(subject="   ", body="y", message_id="<i@h>")
+        s = email_to_source(subject="   ", body="y", thread_root="<i@h>")
         assert s.title_hint is None
 
-    def test_missing_message_id_has_no_source_uri(self):
-        s = email_to_source(subject="x", body="y", message_id=None)
+    def test_missing_thread_root_has_no_source_uri(self):
+        s = email_to_source(subject="x", body="y", thread_root=None)
         assert s.source_uri is None
-        s2 = email_to_source(subject="x", body="y", message_id="")
+        s2 = email_to_source(subject="x", body="y", thread_root="")
         assert s2.source_uri is None
 
 

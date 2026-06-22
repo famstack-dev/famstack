@@ -227,18 +227,19 @@ class TextExtractor:
 # own, and the seam ADR-010 wants every new source to slot into.
 
 def email_to_source(
-    *, subject: str | None, body: str, message_id: str | None = None,
+    *, subject: str | None, body: str, thread_root: str | None = None,
 ) -> SourceContent:
     """Map a fetched email into a `SourceContent`.
 
     The body is the text the classifier reads; the subject is the title
-    hint; the RFC822 Message-ID becomes the canonical pointer as an
-    RFC 2392 ``mid:`` URI — the stable key for dedupe and reprocess.
-    Angle brackets around the Message-ID are stripped; a blank subject or
-    a missing Message-ID collapse to ``None`` so a Dataview `where resource`
-    filters cleanly, same convention as the other capture sources.
+    hint; the *thread root* Message-ID becomes the canonical pointer as an
+    RFC 2392 ``mid:`` URI. It keys the thread file, not the individual
+    message — every reply folds into the same entry (ADR-010). Angle
+    brackets are stripped; a blank subject or a missing thread root
+    collapse to ``None`` so a Dataview `where resource` filters cleanly,
+    same convention as the other capture sources.
     """
-    mid = (message_id or "").strip().strip("<>").strip()
+    mid = (thread_root or "").strip().strip("<>").strip()
     return SourceContent(
         text=body,
         mime="text/plain",

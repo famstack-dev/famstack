@@ -487,6 +487,199 @@ def render_capture(
     return "\n".join(parts)
 
 
+# ── Email threads ──────────────────────────────────────────────────────
+#
+# Email is the one capture source that accumulates. A URL or a note is a
+# single artifact; a conversation is many messages that belong together,
+# so they fold into ONE file keyed by the thread root Message-ID (the
+# identity ADR-010 reprocessing replays):
+#
+#     <bucket>/emails/YYYY/MM/<subject-slug>-<hash>.md
+#
+# where <hash> is over the thread root, so every reply resolves to the
+# same path. The file is a stack of dated message sections under a shared
+# H1 + frontmatter. Each section carries an HTML-comment `mid:` marker so
+# re-folding the same message is a no-op — idempotency lives in the file
+# itself, not in external state (the vault is the source of truth).
+#
+# Unlike bookmarks, email keeps action items: "return the form by Friday"
+# is exactly the kind of task the brain should surface.
+
+
+def email_mid_marker(message_id: str) -> str:
+    """The per-section idempotency marker for one message in a thread."""
+    return f"<!-- mid:{message_id} -->"
+
+
+def render_email_message_section(
+    *,
+    message_id: str | None,
+    from_addr: str | None,
+    captured_at: str | None,
+    body: str,
+    summary: str | None = None,
+    facts: list | None = None,
+    action_items: list | None = None,
+) -> str:
+    """Render one message as a dated section of its thread file.
+
+    Layout: the idempotency marker comment, an H2 heading (date — sender),
+    the per-message briefing callout (summary, facts, action items), then
+    the verbatim message body in a collapsible quote callout. Trailing
+    newline so sections concatenate with a blank line between them.
+    """
+    parts: list[str] = []
+    if message_id:
+        parts.append(email_mid_marker(message_id))
+    heading_bits = [b for b in (captured_at, from_addr) if b]
+    parts.append("## " + (" — ".join(heading_bits) or "Message"))
+    parts.append("")
+
+    briefing = _briefing_block(
+        summary=summary, facts=facts, action_items=action_items,
+    )
+    if briefing:
+        parts.append(briefing)
+        parts.append("")
+
+    body_stripped = body.strip() if body else ""
+    if body_stripped:
+        parts.append("> [!quote]- Message")
+        for ln in body_stripped.split("\n"):
+            parts.append(f"> {ln}" if ln else ">")
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def render_email_thread(
+    *,
+    frontmatter: dict,
+    title: str,
+    captured_at: str | None,
+    source_uri: str | None,
+    persons: list[str],
+    from_path: str,
+    shared_bucket: str,
+    sections: list[str],
+) -> str:
+    """Assemble a fresh thread file: frontmatter + H1 + meta + sections."""
+    fm_yaml = yaml.safe_dump(
+        frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
+    ).strip()
+    parts = ["---", fm_yaml, "---", "", f"# {title}", ""]
+
+    meta_lines: list[str] = []
+    if persons:
+        meta_lines.append(
+            "**About** " + ", ".join(
+                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
+                for p in persons
+            )
+        )
+    line2 = []
+    if captured_at:
+        line2.append(f"**Started** {captured_at}")
+    line2.append("**Kind** email")
+    meta_lines.append(" · ".join(line2))
+    if source_uri:
+        meta_lines.append(f"**Thread** <{source_uri}>")
+    parts.extend(f"> {ln}" for ln in meta_lines)
+
+    for section in sections:
+        parts.append("")
+        parts.append(section.rstrip())
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def split_frontmatter(content: str) -> tuple[dict, str]:
+    """Split a markdown file into (frontmatter dict, body after frontmatter).
+
+    Returns ``({}, content)`` when there is no leading ``---`` block, so a
+    malformed or frontmatter-less file degrades to "all body" rather than
+    raising.
+    """
+    if not content.startswith("---\n"):
+        return ({}, content)
+    end = content.find("\n---\n", 4)
+    if end < 0:
+        return ({}, content)
+    try:
+        fm = yaml.safe_load(content[4:end])
+    except yaml.YAMLError:
+        fm = None
+    body = content[end + len("\n---\n"):]
+    return (fm if isinstance(fm, dict) else {}, body)
+
+
+def merge_email_frontmatter(
+    old: dict, *, persons: list[str], tags: list[str],
+) -> dict:
+    """Union a new message's persons and tags into the thread frontmatter.
+
+    A reply can loop in a new person or surface a new topic; the thread
+    file's frontmatter is the union across every folded message so person-
+    and tag-indexing span the whole conversation. Existing values keep
+    their order, new ones append, duplicates collapse.
+    """
+    fm = dict(old)
+    for key, incoming in (("persons", persons), ("tags", tags)):
+        if not incoming:
+            continue
+        merged = list(fm.get(key) or [])
+        for v in incoming:
+            if v and v not in merged:
+                merged.append(v)
+        if merged:
+            fm[key] = merged
+    return fm
+
+
+def fold_email_message(
+    existing_content: str | None,
+    *,
+    section: str,
+    message_id: str | None,
+    new_frontmatter: dict,
+    title: str,
+    captured_at: str | None,
+    source_uri: str | None,
+    persons: list[str],
+    tags: list[str],
+    from_path: str,
+    shared_bucket: str,
+) -> str | None:
+    """Fold one message into its thread file; return the new file content.
+
+    Three cases:
+      - First message of a thread (no existing file) → render the shell
+        plus this section.
+      - Already-folded message (its ``mid:`` marker is in the file) →
+        return ``None`` so the caller skips the write (idempotent).
+      - A new message in an existing thread → append the section and union
+        its persons/tags into the existing frontmatter.
+    """
+    if not existing_content:
+        return render_email_thread(
+            frontmatter=new_frontmatter, title=title,
+            captured_at=captured_at, source_uri=source_uri,
+            persons=persons, from_path=from_path,
+            shared_bucket=shared_bucket, sections=[section],
+        )
+    if message_id and email_mid_marker(message_id) in existing_content:
+        return None
+    fm_old, body_old = split_frontmatter(existing_content)
+    fm_merged = merge_email_frontmatter(fm_old, persons=persons, tags=tags)
+    fm_yaml = yaml.safe_dump(
+        fm_merged, sort_keys=False, allow_unicode=True, default_flow_style=False,
+    ).strip()
+    return (
+        f"---\n{fm_yaml}\n---\n"
+        + body_old.rstrip()
+        + "\n\n"
+        + section.rstrip()
+        + "\n"
+    )
+
+
 # ── Briefing block ───────────────────────────────────────────────────
 #
 # The briefing is the classifier's per-document take, rendered as an
