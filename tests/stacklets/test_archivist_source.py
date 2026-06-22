@@ -118,6 +118,24 @@ async def test_non_bot_sender_is_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_plain_bot_chatter_is_ignored(tmp_path):
+    # The mail bot's join welcome (a plain message from a -bot sender, no
+    # source block) must not be treated as a capture or query.
+    bot = _bot(tmp_path)
+    cap = _FakeCapture()
+    bot._capture = cap
+    sends = _wire(bot)
+    welcome = SimpleNamespace(
+        body="mail bot here. I'll deliver new email into this room",
+        sender="@mail-bot:server", event_id="$w:server", server_timestamp=1,
+        source={"content": {}},  # no dev.famstack.source
+    )
+    await bot._on_text(_room(), welcome)
+    assert cap.calls == []
+    assert sends == []
+
+
+@pytest.mark.asyncio
 async def test_non_email_source_ignored(tmp_path):
     bot = _bot(tmp_path)
     cap = _FakeCapture()

@@ -1425,6 +1425,13 @@ class ArchivistBot(MicroBot):
             await self._handle_source_message(room, event, source)
             return
 
+        # Plain chatter from another bot (a join welcome, a status line) is
+        # not a user capture or query — only its `dev.famstack.source` events
+        # above are actionable. Ignoring it prevents bot-to-bot capture loops
+        # (e.g. filing the mail bot's welcome as a note).
+        if event.sender.split(":")[0].lstrip("@").endswith("-bot"):
+            return
+
         query = event.body.strip()
         if not query:
             return

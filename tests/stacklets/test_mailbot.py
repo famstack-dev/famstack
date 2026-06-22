@@ -154,6 +154,40 @@ class TestRendering:
 
 # ── State ─────────────────────────────────────────────────────────────────
 
+class TestJoinWelcome:
+
+    @pytest.mark.asyncio
+    async def test_announces_bound_mailbox_and_folder(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        acc = MailAccount(host="h", port=993, user="family@example.org",
+                          password="p", folder="INBOX")
+        bot._accounts = [(acc, "!post:hs")]
+        sent = []
+
+        async def _send(room_id, text, *a, **k):
+            sent.append((room_id, text))
+
+        bot._send = _send
+        await bot.on_room_joined("!post:hs")
+        assert sent[0][0] == "!post:hs"
+        assert "family@example.org" in sent[0][1]
+        assert "INBOX" in sent[0][1]
+
+    @pytest.mark.asyncio
+    async def test_unbound_room_says_so(self, tmp_path):
+        bot = _bot(tmp_path)
+        bot._accounts = []
+        sent = []
+
+        async def _send(room_id, text, *a, **k):
+            sent.append((room_id, text))
+
+        bot._send = _send
+        await bot.on_room_joined("!random:hs")
+        assert "no mailbox" in sent[0][1].lower()
+
+
 class TestState:
 
     def test_seen_and_threads_round_trip(self, tmp_path):

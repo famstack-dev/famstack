@@ -126,6 +126,31 @@ class MailBot(MicroBot):
         )
         self._poll_task = asyncio.create_task(self._poll_loop())
 
+    async def on_room_joined(self, room_id: str) -> None:
+        """Introduce the bot and name the mailbox that feeds this room.
+
+        Self-explaining UX: when invited, the bot states what it will deliver
+        here so the family isn't left guessing which inbox is wired up. Bound
+        mailboxes (from stack.toml [mail]) that route to this room are named
+        with their folder; if none route here, it says so plainly.
+        """
+        matches = [acc for acc, room in self._accounts if room == room_id]
+        if matches:
+            lines = ["mail bot here. I'll deliver new email into this room:"]
+            for acc in matches:
+                lines.append(
+                    f"- **{acc.user}**, folder `{acc.folder}` "
+                    f"(checked every {self._interval}s)"
+                )
+            await self._send(room_id, "\n".join(lines))
+        else:
+            await self._send(
+                room_id,
+                "mail bot here, but no mailbox in `stack.toml [mail]` routes "
+                "to this room yet, so I won't deliver anything. Add this "
+                "room's id to a `[[mail.accounts]]` entry and restart.",
+            )
+
     async def _poll_loop(self) -> None:
         while self._running:
             try:
