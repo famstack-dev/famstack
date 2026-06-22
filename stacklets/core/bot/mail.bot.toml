@@ -1,0 +1,14 @@
+id          = "mail-bot"
+name        = "Mail"
+description = "Fetches email into Matrix rooms and the brain"
+
+# A second bot in the core stacklet (alongside stacker-bot): email is a
+# core ingestion capability, not its own stacklet. No home room — each
+# configured mailbox posts to its own room (per-account `room` in
+# stack.toml [[mail.accounts]]); invite mail-bot to that room.
+
+[settings]
+# Mail config is user-facing and lives in stack.toml [mail], rendered into
+# the container env (MAIL_ACCOUNTS_JSON) by the installer; passwords come
+# from the secret store (MAIL_<NAME>_IMAP_PASSWORD). Nothing mailbox-specific
+# belongs here.
