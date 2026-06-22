@@ -1416,6 +1416,15 @@ class ArchivistBot(MicroBot):
         if event.sender == self.user_id:
             return
 
+        # Inbound source event: a `dev.famstack.source` block means another
+        # bot (the mail bot today) already fetched external content and
+        # posted it here. Fold it through the capture pipeline — one capture
+        # path — then stop; it is not a user query or paste to route.
+        source = event.source.get("content", {}).get(self.SOURCE_KEY)
+        if isinstance(source, dict):
+            await self._handle_source_message(room, event, source)
+            return
+
         query = event.body.strip()
         if not query:
             return
@@ -1605,6 +1614,68 @@ class ArchivistBot(MicroBot):
                 room.room_id, query[:60],
             )
 
+    # ── Inbound source events (mail bot, future ingest channels) ──────────
+
+    async def _handle_source_message(self, room, event, source: dict) -> None:
+        """Fold a source-bot ingest message (mail bot today) into the vault.
+
+        The mail bot posts a `dev.famstack.source` message carrying the raw
+        original (see MicroBot.post_source_message); the archivist files it
+        through the same CapturePipeline a pasted URL uses — one capture
+        path, no duplicated pipeline. Only `source == "email"` is handled
+        today; other kinds are ignored until their consumer lands.
+
+        Trust boundary (revisited in the email security review): only bot
+        senders may emit source events, so a family member cannot spoof an
+        ingest. The raw email is untrusted *data*, never instructions — the
+        classifier must treat it as content to summarise, not commands to
+        obey.
+        """
+        if source.get("source") != "email":
+            return
+        sender_local = event.sender.split(":")[0].lstrip("@")
+        if not sender_local.endswith("-bot"):
+            logger.warning(
+                "[archivist] ignoring dev.famstack.source from non-bot {}",
+                event.sender,
+            )
+            return
+        if self._capture is None:
+            return
+        raw = source.get("raw_content") or ""
+        if not raw.strip():
+            return
+
+        # Email files to the institutional bucket (<shared_bucket>/emails/),
+        # like documents — it is household correspondence, not one member's
+        # personal note. Per-account bucket routing from the room binding is
+        # a follow-up.
+        outcome = await self._capture.capture_email(
+            subject=source.get("subject"),
+            body=raw,
+            message_id=source.get("message_id"),
+            thread_root=source.get("thread_root"),
+            sender_mxid=event.sender,
+            from_addr=source.get("from"),
+            captured_at=source.get("captured_at"),
+            bucket=self.shared_bucket,
+        )
+        logger.info(
+            "[archivist] email folded ({}) -> {}",
+            outcome.status, outcome.vault_path,
+        )
+
+        # Drop the filing envelope onto the timeline (a reply to the email)
+        # so the deriver and reprocess have the ledger event, exactly as a
+        # paste capture does.
+        if outcome.envelope:
+            title = (outcome.classification or {}).get("title") or "Email"
+            await self._send(
+                room.room_id,
+                f"Filed email: {title}",
+                reply_to=event.event_id,
+                metadata={self.FAMSTACK_EVENT_KEY: outcome.envelope},
+            )
 
     # ── Scan mode ────────────────────────────────────────────────────────
 
