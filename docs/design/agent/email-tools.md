@@ -133,42 +133,104 @@ imaplib is deferred to the A2 build (the GreenMail round-trip informs it).
 
 ## Architecture
 
-**Runtime: a container, not a host service.** himalaya needs no host resource
-(unlike `ai`'s Metal or `memory`'s git), and it is the one piece that holds
-credentials and talks to *external* mail servers — exactly what the agent
-plan's "restriction via container" posture is for. So the network-facing
-himalaya runs in a small **`mail` container** with egress scoped to the mail
-host and creds from the secret store. The classify/mirror/route logic is *not*
-re-built: it reuses the existing pipeline in **bot-runner** via a mail bot
-beside the archivist, with the Maildir as the handoff (a shared volume) — no
-cross-container API, no duplicated pipeline. `stack mail …` wraps `docker exec`
-into the container, like other stacklets' CLIs.
+**Two roles, split on the credential boundary.** One component talks to the
+mail server; the component that writes your vault never sees a password.
+
+- **mail gateway** (holds IMAP/SMTP creds, network-facing, runs in the `mail`
+  container with egress scoped to the mail host): fetches new mail, strips the
+  quoted history off replies (`email-reply-parser`), and posts each message
+  into the bound Matrix room as a threaded event. Sends approved drafts back
+  out via SMTP. It is *not* a chat bot: no commands, no conversation. It
+  carries a Matrix identity only so its posts have a sender. The family never
+  talks to it.
+- **archivist** (no mail creds, bot-runner): sees the posted message,
+  classifies, folds it into its thread file, files to the vault, emits
+  `dev.famstack.event`. Identical to what it already does for a pasted URL or
+  note. Email adds no new pipeline; it adds one recognized message shape.
+
+The Matrix room is the handoff, the durable source of record, and the
+family-visible surface at once. This **drops the shared-Maildir volume** the
+earlier draft used: no shared filesystem, no IMAP-reading code in the
+archivist, and the email arrives as a first-class room message instead of a
+silent file plus a separate notification. `stack mail …` wraps `docker exec`
+into the gateway for send and status.
+
+### Email thread maps to a Matrix thread
+
+postmoogle (the reference bridge) folds an email thread onto a native Matrix
+thread and exposes three switches worth mirroring: `threadify` (the message
+body lives in the thread, not the room timeline), `nothreads` (off switch),
+and `stripify` (drop quotes + signatures, their reply-parser). We do the same:
+
+- One **root message per conversation** sits in the room timeline (subject +
+  sender + briefing). The room stays one line per thread, not N.
+- Each later message is a **threaded reply** (`m.thread`, keyed by
+  `thread_root`). The thread holds the conversation; the timeline stays calm.
+  Flood solved, the way the reference implementation solved it.
+- The archivist reads the `m.thread` relation to know which vault thread file
+  the message folds into, reusing the fold already shipped.
+
+### Every ingested message is twofold
+
+A message the archivist ingests carries two faces on one event: the rendered
+view the family reads, and the raw original the machine re-derives from. The
+gateway is the first producer of this shape; every ingest source should adopt
+it.
+
+    m.room.message {
+      msgtype: "m.text",
+      body:    "<rendered, human-readable, derived from the original>",
+      "dev.famstack.source": {
+        source:      "email",            // email | note | url | scan | ...
+        raw_content: "<verbatim original payload, pre-render>",
+        // source-specific descriptors:
+        from:        "office@springfield-school.example",
+        message_id:  "<reply@school.example>",
+        thread_root: "<root@school.example>",
+        captured_at: "2026-06-21"
+      }
+    }
+
+- `body` is the nice view: always present, always derived from the original.
+- `raw_content` is the **reproducibility anchor**. Re-folding and reprocessing
+  read it, never re-fetch IMAP (ADR-010). Naming the field closes the
+  reproducibility gap from the threading section: today `reprocess` re-feeds
+  the model its own prior summary, which is lossy; with `raw_content` it
+  re-reads the real source.
+- the source block lets each inbound type add its own descriptors (email:
+  from / message_id / thread_root; a future scanner: device / page count)
+  with no schema change.
+
+Classification still produces the existing `dev.famstack.event` filing
+envelope (`{source, type, summary, data}`). `dev.famstack.source` is the raw
+input that envelope is derived from, not a replacement for it.
 
 ```
   IMAP / SMTP mailbox
-     │  himalaya  — mail CONTAINER (only network-facing piece;
-     │             egress scoped to the mail host, creds from secrets)
+     │  mail GATEWAY  — mail CONTAINER (only network-facing piece; holds creds)
+     │  fetch → reply-parse (strip quotes) → post; SMTP send for approved drafts
      ▼
-  Maildir (shared volume)
-     │  mail bot (in bot-runner, beside the archivist) reads new messages,
-     │  maps each → SourceContent(text=body, title_hint=subject, source_uri=message-id)
+  Matrix room   (handoff + durable source of record + family-visible surface)
+     │  posts m.room.message: body = rendered,
+     │     dev.famstack.source = {raw_content, from, message_id, thread_root, …}
+     │  email thread → m.thread (root in the timeline, replies in the thread)
      ▼
-  CapturePipeline (EXISTING)  → classify → mirror to vault → dev.famstack.event
-     │
-     ├─ vault entry: <sender|family>/emails/YYYY/MM/<slug>-<thread-hash>.md  (type: email)
-     │     folded by thread; action items extracted per message
-     ├─ tasks rollup (deriver/wiki pattern) → <vault>/tasks.md
-     └─ mail bot routes the filing event → the Matrix room whose
-        dev.famstack.capture {kind: mailbox, account, folder} binding matches
-        (sender + subject + briefing + vault link)
+  archivist (bot-runner, NO mail creds)
+     │  recognizes dev.famstack.source → classify → fold → file to vault
+     ▼
+  vault entry: <bucket>/emails/YYYY/MM/<slug>-<thread-hash>.md   (type: email)
+     │  folded by thread_root; action items extracted per message
+     ├─ emits dev.famstack.event (capture.filed) on the timeline
+     └─ tasks rollup (deriver/wiki pattern) → <vault>/tasks.md
 
   Family Agent runtime (agent v0.4, restricted container)
      ├─ reads:  vault (incl. the email + related facts)        :ro
      ├─ tool:   stack mail draft / stack mail send
      └─ LLM:    local (oMLX), no cloud
-     │  composes a reply → saves a draft → posts the draft into Matrix
+     │  composes a reply → posts the draft into the thread
      ▼
-  Human reviews in Matrix → approves → `stack mail send <draft-id>`  (SMTP)
+  Human reviews in Matrix → approves → `stack mail send <draft-id>`
+     → gateway → SMTP
 ```
 
 ## Routing email into Matrix rooms
@@ -210,16 +272,16 @@ One account's folders can fan out to different rooms (INBOX → `#Post`, a
 
 ### How a message reaches the room
 
-`stack mail sync` (the mail container's himalaya) fetches IMAP → Maildir; the
-mail bot files new messages to the vault as above, emitting a
-`dev.famstack.event` whose `data` carries `account` + `folder`.
-The mail bot — which lives in bot-runner and *can* read room state — routes that
-event to the room whose `dev.famstack.capture` binding matches, posting the
-sender + subject + the `> [!summary]` briefing + a link to the vault entry.
-Same path documents and captures already take to their rooms; the binding just
-says *which* room. Because the room is bound, a reply in it ("draft an answer",
-"remind me Friday") is scoped to that mailbox — the topic-rooms reply-chain
-pattern, reused.
+The **gateway** fetches IMAP, resolves the `(account, folder)` to a bound room
+via the `dev.famstack.capture` binding, and posts the message there: a rendered
+`body` plus the `dev.famstack.source` block (`raw_content`, `from`,
+`message_id`, `thread_root`), threaded under the conversation's root. That post
+*is* the source of record. The **archivist** then does what it does for any
+room message: classify, fold into the vault thread file, and emit
+`dev.famstack.event` back onto the timeline. The gateway routes (it knows the
+binding and holds the creds); the archivist files (it holds no creds). Because
+the room is bound, a reply in it ("draft an answer", "remind me Friday") is
+scoped to that mailbox, reusing the topic-rooms reply-chain pattern.
 
 ## Vault layout, threading, and processing
 
