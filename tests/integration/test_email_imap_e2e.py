@@ -21,11 +21,11 @@ from pathlib import Path
 
 import pytest
 
-_BOT_DIR = Path(__file__).resolve().parent.parent.parent / "stacklets" / "docs" / "bot"
-sys.path.insert(0, str(_BOT_DIR))
+_LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
+sys.path.insert(0, str(_LIB_DIR))
 
-from extractors import parse_email  # noqa: E402
-from mail_fetcher import MailAccount, MailFetcher  # noqa: E402
+from stack.email_message import parse_email  # noqa: E402
+from stack.mail_fetcher import MailAccount, MailFetcher  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker not available",

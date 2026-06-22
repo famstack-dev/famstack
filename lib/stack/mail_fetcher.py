@@ -15,7 +15,7 @@ from __future__ import annotations
 import imaplib
 from dataclasses import dataclass
 
-from extractors import ParsedEmail, parse_email
+from stack.email_message import ParsedEmail, parse_email
 
 
 @dataclass
