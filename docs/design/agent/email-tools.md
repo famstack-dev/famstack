@@ -136,13 +136,14 @@ imaplib is deferred to the A2 build (the GreenMail round-trip informs it).
 **Two roles, split on the credential boundary.** One component talks to the
 mail server; the component that writes your vault never sees a password.
 
-- **mail gateway** (holds IMAP/SMTP creds, network-facing, runs in the `mail`
+- **mail bot** (holds IMAP/SMTP creds, network-facing, runs in the `mail`
   container with egress scoped to the mail host): fetches new mail, strips the
   quoted history off replies (`email-reply-parser`), and posts each message
   into the bound Matrix room as a threaded event. Sends approved drafts back
-  out via SMTP. It is *not* a chat bot: no commands, no conversation. It
-  carries a Matrix identity only so its posts have a sender. The family never
-  talks to it.
+  out via SMTP. It *can* talk for its own configuration (the bind-on-invite
+  question, account setup) like any bot; the invariant is not silence, it is
+  **credential isolation**: it is the only component that touches the mail
+  server. Day to day the family interacts with the archivist, not it.
 - **archivist** (no mail creds, bot-runner): sees the posted message,
   classifies, folds it into its thread file, files to the vault, emits
   `dev.famstack.event`. Identical to what it already does for a pasted URL or
@@ -204,6 +205,19 @@ it.
 Classification still produces the existing `dev.famstack.event` filing
 envelope (`{source, type, summary, data}`). `dev.famstack.source` is the raw
 input that envelope is derived from, not a replacement for it.
+
+### Plumbing lives in the bot framework (MicroBot)
+
+None of the above is email-specific code. Posting a twofold message,
+threading it under an `m.thread` root, stamping `dev.famstack.source` with
+`raw_content` + per-source fields, and recognizing such a message on the way
+in are all **framework concerns**, not bot concerns. They belong in `MicroBot`
+(`stacklets/core/bot-runner/microbot.py`), whose `_send(metadata=…)` already
+carries custom keys onto the visible message. The mail bot and the archivist
+are both `MicroBot` subclasses; the gateway calls a framework helper to *post*
+a source event, the archivist a framework hook to *consume* one. A future
+ingest source (a scanner, a webhook) subclasses the same framework and gets
+the twofold shape for free. No per-bot copy of the wire format.
 
 ```
   IMAP / SMTP mailbox
