@@ -532,7 +532,7 @@ def render_email_message_section(
     if message_id:
         parts.append(email_mid_marker(message_id))
     heading_bits = [b for b in (captured_at, from_addr) if b]
-    parts.append("## " + (" — ".join(heading_bits) or "Message"))
+    parts.append("## " + (" · ".join(heading_bits) or "Message"))
     parts.append("")
 
     briefing = _briefing_block(

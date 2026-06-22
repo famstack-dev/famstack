@@ -155,8 +155,8 @@ into the container, like other stacklets' CLIs.
      ▼
   CapturePipeline (EXISTING)  → classify → mirror to vault → dev.famstack.event
      │
-     ├─ vault entry: <sender|family>/mail/YYYY/MM/<slug>-<hash>.md  (type: email)
-     │     with `## Action items` already extracted
+     ├─ vault entry: <sender|family>/emails/YYYY/MM/<slug>-<thread-hash>.md  (type: email)
+     │     folded by thread; action items extracted per message
      ├─ tasks rollup (deriver/wiki pattern) → <vault>/tasks.md
      └─ mail bot routes the filing event → the Matrix room whose
         dev.famstack.capture {kind: mailbox, account, folder} binding matches
@@ -243,20 +243,53 @@ An email thread *is* a reply chain, and [adr-010](../adr/adr-010-event-pipeline.
 already says a filing's source is the whole thread and the vault entry is the
 *fold* of it. So:
 
-- **Key the entry by the thread root, not the message** — resolved from
-  `References` / `In-Reply-To` (root Message-ID). Get this right up front; it
-  changes `capture_email`'s identity model and is painful to retrofit.
-- **Each new message updates the same file** — appends the message, re-renders
-  the conversation chronologically, refreshes a thread-level summary + the
-  accumulated action items.
+```mermaid
+flowchart TD
+    A["MailFetcher.fetch_new(seen)<br/>read-only IMAP, dedup by Message-ID"] --> B[parse_email → ParsedEmail]
+    B --> C{"thread_root<br/>References[0] / In-Reply-To / own id"}
+    C --> D["capture_email(thread_root, message_id, from_addr)"]
+    D --> E["CapturePipeline._publish<br/>classify · tags · envelope (shared with URL/note)"]
+    E --> F{"kind == email<br/>and email_meta?"}
+    F -- no --> G[publish_capture: replace single-shot entry]
+    F -- yes --> H["publish_email_message<br/>path = bucket/emails/YYYY/MM/&lt;slug&gt;-&lt;thread-hash&gt;.md"]
+    H --> I{thread file exists?}
+    I -- no --> J["render_email_thread<br/>frontmatter + H1 + meta + first section"]
+    I -- yes --> K{"&lt;!-- mid:id --&gt;<br/>already in file?"}
+    K -- yes --> L["no-op (idempotent)"]
+    K -- no --> M["append dated section<br/>union persons + tags into frontmatter"]
+    J --> N[("memory.git<br/>one file per thread")]
+    M --> N
+    E --> O["dev.famstack.event → bound Matrix room"]
+```
+
+The fold rules:
+
+- **Key the entry by the thread root, not the message** — resolved by
+  `ParsedEmail.thread_root` (`References[0]` → `In-Reply-To` → own Message-ID).
+  `email_to_source` keys the vault entry's `mid:` URI off the thread root, so
+  every reply resolves to the same file. (Shipped.)
+- **Each new message appends a dated section** — `publish_email_message` reads
+  the thread file, appends `## YYYY-MM-DD · sender` with the message's own
+  briefing (summary, facts, action items) and the verbatim body, and writes it
+  back. Persons and tags **union** into the thread's frontmatter so indexing
+  spans the whole conversation. (Shipped.)
+- **Idempotent by construction** — each section carries an HTML-comment
+  `<!-- mid:<message-id> -->` marker; folding a message whose marker is already
+  present is a no-op. The file itself records which messages it contains, so a
+  re-run never double-files even before the fetcher's seen-set persists. The
+  vault is the source of truth (ADR-010), not a side cache. (Shipped.)
 - **Reproducible**: re-fetch every message in the thread by Message-ID, re-fold.
 - **Append vs. correct** — both are "reply chains" but mean different things: a
-  real inbound email *appends* to the conversation; a Matrix reply from a family
-  member *corrects* the filing (rewrites). The sender / Message-ID distinguishes
-  them. The thread folder must not treat a human correction as a new email.
+  real inbound email *appends* (routes through `publish_email_message`, carrying
+  per-message `email_meta`); a Matrix reply from a family member *corrects* the
+  filing (a rewrite via `reprocess`). The presence of `email_meta` is what
+  distinguishes them, so a human correction is never folded as a new email.
 
-Staging: A2 ships per-message append into the thread file; the polished thread
-summary + folded action items can iterate. Thread-keying is day-one.
+Staged status: thread-keying, per-message append, frontmatter union, and the
+idempotency marker are **shipped**. Still to iterate: a *thread-level* rolled-up
+summary (today each message keeps its own briefing), folding action items into a
+single thread checklist, and wiring email `reprocess` to re-fold the whole
+thread.
 
 ### Summary gate for short mail
 

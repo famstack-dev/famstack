@@ -570,7 +570,7 @@ class TestRenderEmailMessageSection:
         # Idempotency marker carries the bare Message-ID.
         assert "<!-- mid:m1@school.example -->" in section
         # Heading is date — sender.
-        assert "## 2026-06-21 — office@springfield-school.example" in section
+        assert "## 2026-06-21 · office@springfield-school.example" in section
         # Per-message briefing callout + action item checkbox.
         assert "> [!summary]" in section
         assert "- [ ] Return form — 2026-06-26" in section
@@ -584,7 +584,7 @@ class TestRenderEmailMessageSection:
             body="hi",
         )
         assert "<!-- mid:" not in section
-        assert "## 2026-06-21 — a@b" in section
+        assert "## 2026-06-21 · a@b" in section
 
     def test_empty_body_drops_quote_block(self):
         section = render_email_message_section(
@@ -619,7 +619,7 @@ class TestRenderEmailThread:
         assert "# Elternabend" in out
         assert "**Kind** email" in out
         assert "**Thread** <mid:root@h>" in out
-        assert "## 2026-06-21 — office@s" in out
+        assert "## 2026-06-21 · office@s" in out
 
 
 class TestSplitFrontmatter:
