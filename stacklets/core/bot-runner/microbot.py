@@ -548,6 +548,11 @@ class MicroBot:
     # `dev.famstack.event` filing envelope above.
     SOURCE_KEY = "dev.famstack.source"
 
+    # Marks a media event as bot-posted on behalf of a source (an email
+    # attachment today): tells the archivist not to attribute the bot as a
+    # person and carries provenance for the capture's tags.
+    ATTACHMENT_KEY = "dev.famstack.attachment"
+
     async def post_source_message(
         self,
         room_id: str,

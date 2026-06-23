@@ -173,3 +173,71 @@ async def test_no_envelope_skips_timeline_post(tmp_path):
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
     assert len(cap.calls) == 1  # still filed
     assert sends == []          # but nothing to put on the timeline
+
+
+# ── Bot-posted attachments (_on_file) ──────────────────────────────────────
+
+def _file_event(content, *, sender="@mail-bot:server"):
+    return SimpleNamespace(
+        sender=sender, event_id="$f:server", server_timestamp=1,
+        source={"content": content},
+    )
+
+
+def _wire_file(bot):
+    """Stub _on_file's prerequisites and record the binary-capture call."""
+    captured: dict = {}
+
+    async def rec_binary(**kwargs):
+        captured.update(kwargs)
+
+    bot._handle_binary_capture = rec_binary
+    bot._scan_sessions = set()
+    bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id)
+    bot._send_room_welcome_if_needed = lambda *_a, **_k: _none()
+    bot._is_bot_mentioned = lambda _e: False
+    bot._should_react = lambda *_a, **_k: True
+    bot._is_documents_room = lambda _ctx: False
+    bot._download_media = lambda _url: _bytes()
+    bot._send = lambda *_a, **_k: _none()
+    bot._set_typing = lambda *_a, **_k: _none()
+    return captured
+
+
+async def _bytes():
+    return b"%PDF-1.4 fake"
+
+
+_ATTACH_CONTENT = {
+    "msgtype": "m.file",
+    "url": "mxc://server/abc",
+    "filename": "slip.pdf",
+    "body": "Permission slip",
+    "info": {"mimetype": "application/pdf"},
+    "dev.famstack.attachment": {
+        "source": "email", "from": "office@school.example",
+        "subject": "Permission slip", "message_id": "m@h", "thread_root": "m@h",
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_bot_attachment_files_without_bot_as_person(tmp_path):
+    bot = _bot(tmp_path)
+    captured = _wire_file(bot)
+    await bot._on_file(_room(), _file_event(_ATTACH_CONTENT))
+    assert captured["default_person"] is False
+    assert "email" in captured["extra_seed_topics"]
+    assert "Sender: office@school.example" in captured["extra_seed_topics"]
+
+
+@pytest.mark.asyncio
+async def test_unmarked_file_keeps_sender_attribution(tmp_path):
+    # A human upload (no attachment marker) still attributes the sender.
+    bot = _bot(tmp_path)
+    captured = _wire_file(bot)
+    content = {k: v for k, v in _ATTACH_CONTENT.items()
+               if k != "dev.famstack.attachment"}
+    await bot._on_file(_room(), _file_event(content, sender="@homer:server"))
+    assert captured["default_person"] is True
+    assert captured["extra_seed_topics"] is None

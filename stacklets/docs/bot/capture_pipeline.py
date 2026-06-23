@@ -315,6 +315,7 @@ class CapturePipeline:
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
+        default_person: bool = True,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -350,7 +351,7 @@ class CapturePipeline:
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket,
+            bucket=bucket, default_person=default_person,
         )
 
     def _cap_pdf_body(self, source: SourceContent) -> SourceContent:

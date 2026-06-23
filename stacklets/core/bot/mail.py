@@ -247,6 +247,16 @@ class MailBot(MicroBot):
         a failed upload is logged, not retried — the text message is already
         recorded as seen, and retrying would re-post it.
         """
+        # Mark each file as a bot-posted email attachment so the archivist
+        # files it on behalf of the source (no bot-as-person) with email
+        # provenance, instead of attributing it to the mail bot.
+        marker = {self.ATTACHMENT_KEY: {
+            "source": "email",
+            "from": parsed.from_addr or "",
+            "subject": parsed.subject or "",
+            "message_id": parsed.message_id or "",
+            "thread_root": parsed.thread_root or "",
+        }}
         for att in parsed.attachments:
             ev = await self.send_file(
                 room_id,
@@ -256,6 +266,7 @@ class MailBot(MicroBot):
                 msgtype=_attachment_msgtype(att.content_type),
                 caption=parsed.subject or None,
                 thread_root_event_id=thread_parent,
+                metadata=marker,
             )
             if ev is None:
                 logger.warning(

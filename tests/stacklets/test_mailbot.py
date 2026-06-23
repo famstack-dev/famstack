@@ -373,6 +373,7 @@ class TestAttachments:
                 "room": room_id, "filename": filename, "mimetype": mimetype,
                 "msgtype": msgtype, "caption": caption,
                 "thread": thread_root_event_id, "data": data,
+                "metadata": metadata,
             })
             return f"$f{len(sent)}"
 
@@ -386,6 +387,13 @@ class TestAttachments:
         assert all(f["caption"] == "Permission slip" for f in sent)
         assert all(f["thread"] == "$e1" for f in sent)
         assert all(f["room"] == "!r:hs" for f in sent)
+        # Each carries the bot-attachment marker with email provenance.
+        for f in sent:
+            block = f["metadata"][MailBot.ATTACHMENT_KEY]
+            assert block["source"] == "email"
+            assert block["from"] == "office@school.example"
+            assert block["subject"] == "Permission slip"
+            assert block["message_id"] == "root@h"
 
     @pytest.mark.asyncio
     async def test_no_attachments_posts_no_files(self, tmp_path):

@@ -1401,6 +1401,18 @@ class ArchivistBot(MicroBot):
                 user_hint=caption or None,
             )
         else:
+            # A bot-posted email attachment (dev.famstack.attachment) is filed
+            # on behalf of the source: don't attribute the bot as the person,
+            # and carry email provenance tags. The bucket still comes from the
+            # room's topic binding (e.g. a "Family Email" topic).
+            attach = content.get(self.ATTACHMENT_KEY)
+            bot_attachment = isinstance(attach, dict)
+            extra_seed_topics = None
+            if bot_attachment:
+                extra_seed_topics = ["email"]
+                frm = (attach.get("from") or "").strip()
+                if frm:
+                    extra_seed_topics.append(f"Sender: {frm}")
             await self._handle_binary_capture(
                 room_id=room.room_id,
                 file_data=file_data,
@@ -1411,6 +1423,8 @@ class ArchivistBot(MicroBot):
                 sender_mxid=event.sender,
                 capture_id=event.event_id,
                 reply_to=reply_to,
+                default_person=not bot_attachment,
+                extra_seed_topics=extra_seed_topics,
             )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
@@ -1934,6 +1948,8 @@ class ArchivistBot(MicroBot):
         filename: str, source_uri: str, sender_mxid: str,
         capture_id: str | None = None,
         reply_to: str | None = None,
+        default_person: bool = True,
+        extra_seed_topics: list[str] | None = None,
     ) -> None:
         """Capture a PDF or image as a visual bookmark.
 
@@ -1945,16 +1961,25 @@ class ArchivistBot(MicroBot):
         on the entry as a stable correlation key so a deriver (or
         the reply-to-correct path) can find this capture later
         without depending on the title-derived path.
+
+        ``default_person`` is False for bot-posted content (an email
+        attachment): the sender is a bot, not the owner, so don't fall
+        it in as the person. ``extra_seed_topics`` prepend provenance
+        tags (Sender, ``email``) on top of any topic-room seeds.
         """
         binding = await self._topic_binding(
             self._room_by_id(room_id), sender_mxid,
         )
+        seed_topics = list(extra_seed_topics or [])
+        if binding and binding.seed_topics:
+            seed_topics.extend(binding.seed_topics)
         outcome = await self._capture.capture_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri, sender_mxid=sender_mxid,
             capture_id=capture_id,
-            seed_topics=binding.seed_topics if binding else None,
+            seed_topics=seed_topics or None,
             bucket=binding.bucket if binding else None,
+            default_person=default_person,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

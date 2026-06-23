@@ -1138,6 +1138,54 @@ class TestTopicSeedEndToEnd:
 
 
 
+class TestCaptureBinaryAttribution:
+    """A bot-posted binary (email attachment) is filed on behalf of the
+    source: `default_person=False` keeps the bot out of `persons:`, and the
+    provenance seed tags ride into the mirror."""
+
+    @pytest.mark.asyncio
+    async def test_default_person_false_omits_bot_and_keeps_seed_tags(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Permission slip", "tags": [], "summary": "s",
+            }),
+        )
+        out = await pipe.capture_binary(
+            file_data=b"# Permission slip\n\nPlease sign and return.",
+            mime="text/markdown",
+            filename="slip.md",
+            source_uri="mxc://s/abc",
+            sender_mxid="@mail-bot:s",
+            seed_topics=["email", "Sender: office@school.example"],
+            default_person=False,
+        )
+        assert out.status == "captured"
+        cls = mirror.captures[0]["classification"]
+        assert not cls.get("persons")  # the bot is not filed as a person
+        tags = mirror.captures[0]["tags"]
+        assert "email" in tags
+        assert "Sender: office@school.example" in tags
+
+    @pytest.mark.asyncio
+    async def test_default_person_true_still_attributes_sender(self):
+        # Contrast: a human upload (default) still falls the sender in.
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Scan", "tags": [], "summary": "s",
+            }),
+        )
+        await pipe.capture_binary(
+            file_data=b"# Scan\n\nbody",
+            mime="text/markdown", filename="scan.md",
+            source_uri="mxc://s/d", sender_mxid="@homer:s",
+        )
+        assert mirror.captures[0]["classification"].get("persons") == ["Homer"]
+
+
 class TestCaptureEmail:
     """Email is a capture source that *accumulates*: body → text, subject
     → title, but every message folds into one thread file keyed by the
