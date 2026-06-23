@@ -61,6 +61,7 @@ from pipeline import (
     PaperlessDuplicateError,
 )
 from stack import resolve_model
+from stack.email_message import defang_links
 from stack.ai.client import (
     LLMError,
     LLMUnavailableError,
@@ -1652,6 +1653,10 @@ class ArchivistBot(MicroBot):
         raw = source.get("raw_content") or ""
         if not raw.strip():
             return
+        # Defang links before the body is stored/rendered so a phishing URL
+        # in the vault entry is plain, non-clickable text. The faithful
+        # version stays on the source event's raw_content (reproducibility).
+        body = defang_links(raw)
 
         # Provenance tags: which mailbox + folder this arrived in, so the
         # vault can filter "all work mail" / "everything in Schule". Same
@@ -1670,7 +1675,7 @@ class ArchivistBot(MicroBot):
         # a follow-up.
         outcome = await self._capture.capture_email(
             subject=source.get("subject"),
-            body=raw,
+            body=body,
             message_id=source.get("message_id"),
             thread_root=source.get("thread_root"),
             sender_mxid=event.sender,

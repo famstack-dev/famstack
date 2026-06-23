@@ -136,6 +136,15 @@ class TestRendering:
         bot = _bot(tmp_path)
         assert bot._raw_content(_email(body="the body")) == "the body"
 
+    def test_human_body_defangs_links(self, tmp_path):
+        bot = _bot(tmp_path)
+        body = bot._human_body(_email(
+            subject="S",
+            body="Login at [your bank](https://evil.example/x)",
+        ))
+        assert "your bank (`https://evil.example/x`)" in body
+        assert "](http" not in body  # not a clickable markdown link
+
     def test_raw_content_drops_quoted_history(self, tmp_path):
         bot = _bot(tmp_path)
         body = (

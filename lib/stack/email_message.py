@@ -117,6 +117,35 @@ def _email_body(msg) -> str:
     return content.strip()
 
 
+_MD_LINK_RE = re.compile(r"!?\[([^\]]*)\]\((https?://[^)\s]+)\)")
+_BARE_URL_RE = re.compile(r"(?<![`(])\bhttps?://[^\s)`<>\]]+")
+
+
+def defang_links(text: str) -> str:
+    """Reveal URLs as non-clickable plaintext (anti-phishing).
+
+    A phishing email hides a hostile URL behind friendly link text
+    ("[Your bank](https://evil.example)"). Defanging surfaces the *real*
+    URL next to the label and wraps every URL in a Markdown code span, so
+    neither Matrix nor Obsidian auto-links it — the reader sees where it
+    actually points and can't click it by reflex.
+
+    `[label](url)` -> ``label (`url`)``; a bare `url` -> `` `url` ``. The URL
+    text is preserved (still copyable, reproducible), only its clickability
+    is removed. Applied at render surfaces; the verbatim `raw_content` kept
+    on the source event stays untouched.
+    """
+    if not text:
+        return text
+
+    def _link(m: "re.Match") -> str:
+        label, url = m.group(1).strip(), m.group(2)
+        return f"{label} (`{url}`)" if label else f"`{url}`"
+
+    text = _MD_LINK_RE.sub(_link, text)
+    return _BARE_URL_RE.sub(lambda m: f"`{m.group(0)}`", text)
+
+
 def _html_to_markdown(html: str) -> str:
     """Convert an HTML email body to Markdown.
 

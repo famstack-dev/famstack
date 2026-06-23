@@ -386,6 +386,37 @@ class TestParseEmail:
         assert "https://globex.example/stmt" in p.body
 
 
+class TestDefangLinks:
+    """`defang_links` reveals URLs as non-clickable plaintext (anti-phishing)."""
+
+    def test_markdown_link_shows_real_url(self):
+        from stack.email_message import defang_links
+        out = defang_links("Click [Your bank](https://evil.example/steal) now")
+        # Label kept, real URL revealed, wrapped so it won't auto-link.
+        assert "Your bank (`https://evil.example/steal`)" in out
+        assert "](http" not in out  # the clickable markdown link is gone
+
+    def test_bare_url_is_wrapped(self):
+        from stack.email_message import defang_links
+        assert defang_links("see https://evil.example here") == (
+            "see `https://evil.example` here"
+        )
+
+    def test_label_only_link_becomes_code_url(self):
+        from stack.email_message import defang_links
+        assert defang_links("[](https://x.example)") == "`https://x.example`"
+
+    def test_plain_text_untouched(self):
+        from stack.email_message import defang_links
+        assert defang_links("no links here at all") == "no links here at all"
+
+    def test_does_not_double_wrap(self):
+        from stack.email_message import defang_links
+        # A converted markdown link's URL must not get a second backtick pass.
+        out = defang_links("[site](https://a.example)")
+        assert out.count("`") == 2
+
+
 class TestThreadRoot:
     """A thread folds into one vault entry keyed by its root Message-ID
     (ADR-010). References[0] is the root; else In-Reply-To; else the

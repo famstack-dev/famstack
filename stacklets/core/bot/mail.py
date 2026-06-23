@@ -34,6 +34,7 @@ from loguru import logger
 from email_reply_parser import EmailReplyParser
 
 from microbot import MicroBot
+from stack.email_message import defang_links
 from stack.mail_fetcher import MailAccount, MailFetcher
 
 
@@ -226,7 +227,9 @@ class MailBot(MicroBot):
         parts = [f"📧 **{subject}**", "", "> " + " · ".join(meta)]
         fragment = self._raw_content(p).strip()
         if fragment:
-            parts += ["", fragment]
+            # Defang links so a phishing URL shows as plain, non-clickable
+            # text revealing where it really points.
+            parts += ["", defang_links(fragment)]
         return "\n".join(parts)
 
     def _raw_content(self, p) -> str:
