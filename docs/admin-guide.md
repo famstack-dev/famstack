@@ -510,6 +510,44 @@ Auto-generated passwords for service accounts. Created once, reused on every `./
 ./stack config --secrets    # include generated passwords
 ```
 
+### Email (`[mail]`)
+
+> Needs the `core` stacklet running; `docs` + `code` to file what arrives.
+
+famstack can watch IMAP mailboxes and deliver new mail into chat rooms. The mail bot (part of `core`) fetches; the archivist files the message and its attachments. Configure mailboxes in `stack.toml`:
+
+```toml
+[mail]
+poll_interval = 120                # seconds between checks
+
+[[mail.accounts]]
+name      = "family"               # used for the secret key and provenance tags
+imap_host = "imap.example.org"
+imap_port = 993
+imap_user = "family@example.org"
+ssl       = true
+folder    = "INBOX"
+room      = "!roomid:yourserver"   # where this mailbox delivers
+since     = "2026-01-01"           # optional backfill floor (omit = whole folder)
+```
+
+The password never goes in `stack.toml` or chat. Put it in `.stack/secrets.toml`, keyed by the account name uppercased:
+
+```toml
+mail__FAMILY_IMAP_PASSWORD = "<app-password>"
+```
+
+Then `./stack restart core` to apply.
+
+Key things to know:
+
+- **Invite both bots into the room.** `@mail-bot` delivers, `@archivist-bot` files. Type the handle into Element's invite box; fresh bot accounts don't show up in directory search.
+- **Where mail files = who is in the room.** A room with two or more people files under the shared bucket; a private room or DM (one person) files under that person; a `Topic: ...` room files under the topic. Route work mail and family mail to different rooms to keep them separate.
+- **App passwords.** Gmail, iCloud and most providers need an app-specific password with IMAP enabled, not your login password.
+- **Backfill with `since`.** It is a floor by the date the server received a message. Start narrow (last week) to check it works, then widen (the whole year); widening re-scans and already-filed mail is skipped. Omit `since` to pull the entire folder on first run.
+- **Read-only.** The fetcher never marks mail read or deletes it. It remembers what it has handled by Message-ID and IMAP UID, so restarts don't re-file.
+- **Links are defanged.** URLs in mail are filed as non-clickable plain text, so a phishing link can't be tapped by reflex.
+
 ---
 
 ## Day-to-day operations
