@@ -76,6 +76,23 @@ def _internaldate(fetch_meta) -> str | None:
     return f"{int(m.group(3)):04d}-{month:02d}-{int(m.group(1)):02d}"
 
 
+def _since_widened(new: str | None, old: str | None) -> bool:
+    """True when the date floor moved *earlier* (a wider, more inclusive window).
+
+    ISO dates compare chronologically as strings. ``None`` means "no floor" —
+    the widest possible window. Widening (or dropping the floor) must re-scan
+    the now-in-range older mail; narrowing needs no re-fetch. ``old is None``
+    is already unbounded, so nothing widens it.
+    """
+    if new == old:
+        return False
+    if old is None:
+        return False
+    if new is None:
+        return True
+    return new < old
+
+
 @dataclass
 class MailAccount:
     """Connection details for one IMAP account + folder."""
@@ -108,10 +125,16 @@ class FolderCursor:
     watermark to 0 and rescans; Message-ID dedup keeps the rescan from
     re-filing. The bot owns the object and persists it; the fetcher advances it
     on a clean download, and the bot rolls it back on a post failure.
+
+    ``since`` records the date floor this watermark was built against. When the
+    configured floor is *widened* (moved earlier), the watermark would hide the
+    newly-in-range older mail, so the fetcher resets it and rescans the wider
+    window — the documented "start narrow, then widen" backfill workflow.
     """
 
     uidvalidity: int | None = None
     last_uid: int = 0
+    since: str | None = None
 
 
 class MailFetcher:
@@ -150,6 +173,14 @@ class MailFetcher:
             if validity is not None and validity != cursor.uidvalidity:
                 cursor.uidvalidity = validity
                 cursor.last_uid = 0
+
+            # A widened date floor must re-open the lower UID range so the
+            # older now-in-range mail is fetched; narrowing keeps the watermark.
+            # Normalize an invalid floor to None (no floor) for the comparison.
+            configured_since = self._a.since if _imap_since(self._a.since) else None
+            if _since_widened(configured_since, cursor.since):
+                cursor.last_uid = 0
+            cursor.since = configured_since
 
             lo = cursor.last_uid + 1
             criteria = f"UID {lo}:*"

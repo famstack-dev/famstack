@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
 
-from stack.mail_fetcher import _imap_since, _internaldate  # noqa: E402
+from stack.mail_fetcher import _imap_since, _internaldate, _since_widened  # noqa: E402
 from stack.stack import _mail_accounts_env  # noqa: E402
 
 
@@ -109,3 +109,26 @@ class TestInternaldate:
         assert _internaldate(b"1 (RFC822 {123}") is None
         assert _internaldate(b"") is None
         assert _internaldate(None) is None
+
+
+class TestSinceWidened:
+    """Whether a new date floor is wider (earlier) than the applied one --
+    the trigger to reset the UID watermark and re-scan older mail."""
+
+    def test_earlier_floor_is_widening(self):
+        assert _since_widened("2026-01-01", "2026-06-16") is True
+
+    def test_later_floor_is_narrowing(self):
+        assert _since_widened("2026-06-16", "2026-01-01") is False
+
+    def test_same_floor_no_change(self):
+        assert _since_widened("2026-01-01", "2026-01-01") is False
+
+    def test_dropping_the_floor_widens(self):
+        # Removing `since` entirely opens the window to the whole folder.
+        assert _since_widened(None, "2026-01-01") is True
+
+    def test_adding_a_floor_to_unbounded_does_not_widen(self):
+        # Already unbounded (no floor) -> narrowing to a date needs no re-scan.
+        assert _since_widened("2026-01-01", None) is False
+        assert _since_widened(None, None) is False

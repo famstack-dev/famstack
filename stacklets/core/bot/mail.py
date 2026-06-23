@@ -309,6 +309,7 @@ class MailBot(MicroBot):
                 name: FolderCursor(
                     uidvalidity=c.get("uidvalidity"),
                     last_uid=int(c.get("last_uid") or 0),
+                    since=c.get("since"),
                 )
                 for name, c in (data.get("cursors") or {}).items()
             }
@@ -328,7 +329,11 @@ class MailBot(MicroBot):
             "seen": sorted(self._seen),
             "threads": self._threads,
             "cursors": {
-                name: {"uidvalidity": c.uidvalidity, "last_uid": c.last_uid}
+                name: {
+                    "uidvalidity": c.uidvalidity,
+                    "last_uid": c.last_uid,
+                    "since": c.since,
+                }
                 for name, c in self._cursors.items()
             },
         }))

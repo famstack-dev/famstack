@@ -278,10 +278,14 @@ class TestState:
     def test_cursors_round_trip(self, tmp_path):
         from stack.mail_fetcher import FolderCursor
         bot = _bot(tmp_path)
-        bot._cursors["family"] = FolderCursor(uidvalidity=42, last_uid=17)
+        bot._cursors["family"] = FolderCursor(
+            uidvalidity=42, last_uid=17, since="2026-01-01")
         bot._save_state()
         reborn = _bot(tmp_path)
-        assert reborn._cursors["family"] == FolderCursor(uidvalidity=42, last_uid=17)
+        # `since` must survive the restart so a config widen is detected after
+        # the bot comes back, not silently ignored.
+        assert reborn._cursors["family"] == FolderCursor(
+            uidvalidity=42, last_uid=17, since="2026-01-01")
 
 
 # ── Poll cycle ─────────────────────────────────────────────────────────────

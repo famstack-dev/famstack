@@ -199,6 +199,37 @@ def test_mailfetcher_since_floor(greenmail):
     assert {p.message_id for p in got} == {"s1@h"}
 
 
+def test_mailfetcher_widening_since_refetches_older(greenmail):
+    """The 'start narrow, then widen' workflow: narrowing keeps the watermark,
+    widening resets it so the now-in-range older mail is fetched again."""
+    user = "clancy@example.org"  # own INBOX, isolated from the other tests
+    _send(user, "<w1@h>", "One")
+    _send(user, "<w2@h>", "Two")
+    time.sleep(1)
+
+    cursor = FolderCursor()
+
+    def fetch(since):
+        f = MailFetcher(MailAccount(
+            host="localhost", port=_IMAP_PORT, user=user, password="x",
+            ssl=False, since=since,
+        ))
+        return f.fetch_new(set(), cursor)
+
+    # Wide floor: both fetched, watermark advances to the top.
+    assert {p.message_id for p in fetch("2000-01-01")} == {"w1@h", "w2@h"}
+    assert cursor.last_uid > 0
+
+    # Narrowing (future floor): no reset, watermark held -> nothing re-fetched.
+    high = cursor.last_uid
+    assert fetch("2099-01-01") == []
+    assert cursor.last_uid == high
+
+    # Widening back: watermark reset, the older mail comes back (empty seen
+    # set, so a full rescan is what proves the reset happened).
+    assert {p.message_id for p in fetch("2000-01-01")} == {"w1@h", "w2@h"}
+
+
 def test_mailfetcher_dates_no_date_header_by_internaldate(greenmail):
     """A message with no Date header is still dated (by INTERNALDATE), not
     left None to fall back to the processing date downstream."""
