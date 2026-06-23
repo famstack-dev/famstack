@@ -40,7 +40,7 @@ def _mail_accounts_env(mail_cfg: dict, secret_lookup) -> str:
         name = str(acc.get("name", "")).strip()
         if not name:
             continue
-        accounts.append({
+        entry = {
             "name": name,
             "imap_host": acc.get("imap_host", ""),
             "imap_port": int(acc.get("imap_port", 993)),
@@ -49,7 +49,13 @@ def _mail_accounts_env(mail_cfg: dict, secret_lookup) -> str:
             "folder": acc.get("folder", "INBOX"),
             "room": acc.get("room", ""),
             "ssl": bool(acc.get("ssl", True)),
-        })
+        }
+        # Optional backfill floor: ingest existing mail from this date on
+        # (ISO YYYY-MM-DD). Omitted -> the first poll backfills the whole folder.
+        since = str(acc.get("since", "")).strip()
+        if since:
+            entry["since"] = since
+        accounts.append(entry)
     return json.dumps(accounts) if accounts else ""
 
 

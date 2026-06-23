@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
 
+from stack.mail_fetcher import _imap_since  # noqa: E402
 from stack.stack import _mail_accounts_env  # noqa: E402
 
 
@@ -54,3 +55,37 @@ def test_explicit_port_and_ssl_preserved():
     a = json.loads(_mail_accounts_env(cfg, lambda n: "p"))[0]
     assert a["imap_port"] == 143
     assert a["ssl"] is False
+
+
+def test_since_floor_carried_when_set():
+    cfg = {"accounts": [{
+        "name": "work", "imap_host": "h", "imap_user": "u",
+        "room": "!r:hs", "since": "2026-01-01",
+    }]}
+    a = json.loads(_mail_accounts_env(cfg, lambda n: "p"))[0]
+    assert a["since"] == "2026-01-01"
+
+
+def test_since_omitted_when_absent():
+    cfg = {"accounts": [{
+        "name": "work", "imap_host": "h", "imap_user": "u", "room": "!r:hs",
+    }]}
+    a = json.loads(_mail_accounts_env(cfg, lambda n: "p"))[0]
+    assert "since" not in a  # no floor -> full-folder backfill on first poll
+
+
+class TestImapSince:
+    """ISO date -> IMAP DD-Mon-YYYY, locale-independent."""
+
+    def test_converts_iso_to_imap_date(self):
+        assert _imap_since("2026-06-01") == "01-Jun-2026"
+        assert _imap_since("2026-12-25") == "25-Dec-2026"
+
+    def test_empty_or_none_is_none(self):
+        assert _imap_since(None) is None
+        assert _imap_since("") is None
+
+    def test_malformed_is_none_not_an_exception(self):
+        # A bad floor must not break or silently widen the search.
+        assert _imap_since("not-a-date") is None
+        assert _imap_since("2026-13-01") is None

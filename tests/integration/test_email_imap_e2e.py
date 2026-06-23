@@ -174,3 +174,26 @@ def test_mailfetcher_uid_incremental(greenmail):
     high = cursor.last_uid
     assert fetcher.fetch_new(set(), cursor) == []
     assert cursor.last_uid == high
+
+
+def test_mailfetcher_since_floor(greenmail):
+    """A `since` floor bounds the fetch to mail received on/after that date.
+
+    GreenMail stamps fresh mail with INTERNALDATE = now, so a future floor
+    excludes it and a past floor includes it — proving SINCE is applied."""
+    user = "maggie@example.org"  # own INBOX, isolated from the other tests
+    _send(user, "<s1@h>", "Existing")
+    time.sleep(1)
+
+    def fetcher(since):
+        return MailFetcher(MailAccount(
+            host="localhost", port=_IMAP_PORT, user=user, password="x",
+            ssl=False, since=since,
+        ))
+
+    # Floor in the future -> the just-delivered message is below it.
+    assert fetcher("2099-01-01").fetch_new(set(), FolderCursor()) == []
+
+    # Floor in the past -> the message is included.
+    got = fetcher("2000-01-01").fetch_new(set(), FolderCursor())
+    assert {p.message_id for p in got} == {"s1@h"}

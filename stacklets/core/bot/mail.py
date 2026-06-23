@@ -108,6 +108,7 @@ class MailBot(MicroBot):
             folder=entry.get("folder") or "INBOX",
             ssl=str(entry.get("ssl", "true")).lower() != "false",
             name=name,
+            since=(entry.get("since") or None),
         )
         return (account, room)
 
@@ -147,8 +148,9 @@ class MailBot(MicroBot):
         if matches:
             lines = ["mail bot here. I'll deliver new email into this room:"]
             for acc in matches:
+                since = f", from {acc.since}" if acc.since else ""
                 lines.append(
-                    f"- **{acc.user}**, folder `{acc.folder}` "
+                    f"- **{acc.user}**, folder `{acc.folder}`{since} "
                     f"(checked every {self._interval}s)"
                 )
             await self._send(room_id, "\n".join(lines))

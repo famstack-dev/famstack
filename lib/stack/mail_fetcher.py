@@ -19,8 +19,32 @@ from __future__ import annotations
 
 import imaplib
 from dataclasses import dataclass
+from datetime import date
 
 from stack.email_message import ParsedEmail, parse_email
+
+# IMAP SEARCH dates are DD-Mon-YYYY with English month abbreviations (RFC 3501),
+# independent of the host locale — so build the month from a fixed table rather
+# than strftime, which would localize "Jun" to the server's language.
+_IMAP_MONTHS = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+
+def _imap_since(iso: str | None) -> str | None:
+    """An ISO ``YYYY-MM-DD`` floor as an IMAP ``DD-Mon-YYYY`` date.
+
+    Returns None for an empty or malformed value — a bad `since` must not
+    silently widen or break the search; the fetch falls back to no date floor.
+    """
+    if not iso:
+        return None
+    try:
+        d = date.fromisoformat(iso.strip())
+    except ValueError:
+        return None
+    return f"{d.day:02d}-{_IMAP_MONTHS[d.month - 1]}-{d.year}"
 
 
 @dataclass
@@ -37,6 +61,10 @@ class MailAccount:
     # The configured account name (stack.toml [[mail.accounts]] name).
     # Carried so the bot can tag a message with where it came from.
     name: str = ""
+    # Optional backfill floor (ISO YYYY-MM-DD). When set, the fetch is bounded
+    # to messages the server received on/after this date — so a fresh account
+    # can ingest existing mail from a chosen point instead of the whole folder.
+    since: str | None = None
 
 
 @dataclass
@@ -95,7 +123,13 @@ class MailFetcher:
                 cursor.last_uid = 0
 
             lo = cursor.last_uid + 1
-            typ, data = client.uid("SEARCH", f"UID {lo}:*")
+            criteria = f"UID {lo}:*"
+            since = _imap_since(self._a.since)
+            if since:
+                # Server-side date floor (INTERNALDATE); ANDs with the UID
+                # range, so backfill stays bounded and incremental polls cheap.
+                criteria = f"{criteria} SINCE {since}"
+            typ, data = client.uid("SEARCH", criteria)
             if typ != "OK" or not data or not data[0]:
                 return []
             uids = sorted(int(u) for u in data[0].split())

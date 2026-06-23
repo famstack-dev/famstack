@@ -98,6 +98,20 @@ class TestConfig:
         assert len(bot._accounts) == 1
         assert bot._accounts[0][0].password == "rendered-secret"
 
+    def test_since_floor_parsed_onto_account(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"imap_password":"p","room":"!r:hs","since":"2026-01-01"}]')
+        bot = _bot(tmp_path)
+        assert bot._accounts[0][0].since == "2026-01-01"
+
+    def test_since_absent_is_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"imap_password":"p","room":"!r:hs"}]')
+        bot = _bot(tmp_path)
+        assert bot._accounts[0][0].since is None
+
     def test_account_skipped_without_password(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
             '[{"name":"family","imap_host":"imap.x","imap_user":"f@x","room":"!r:hs"}]')
