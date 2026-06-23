@@ -1683,10 +1683,16 @@ class ArchivistBot(MicroBot):
         if source.get("folder"):
             seed_topics.append(f"Folder: {source['folder']}")
 
-        # Email files to the institutional bucket (<shared_bucket>/emails/),
-        # like documents — it is household correspondence, not one member's
-        # personal note. Per-account bucket routing from the room binding is
-        # a follow-up.
+        # Scope-aware placement: email inherits the bucket of the room it
+        # lands in, then nests under emails/ (kind="email"). The family room
+        # has no binding -> shared_bucket -> family/emails/; a topic room
+        # ("Family E-Mails", "Hobby") routes to its bucket so a mailbox's mail
+        # is filed by the scope of its room, co-located with that room's
+        # attachments. The topic tag rides along as a seed.
+        binding = await self._topic_binding(room, event.sender)
+        bucket = binding.bucket if binding else self.shared_bucket
+        if binding and binding.seed_topics:
+            seed_topics.extend(binding.seed_topics)
         outcome = await self._capture.capture_email(
             subject=source.get("subject"),
             body=body,
@@ -1695,7 +1701,7 @@ class ArchivistBot(MicroBot):
             sender_mxid=event.sender,
             from_addr=source.get("from"),
             captured_at=source.get("captured_at"),
-            bucket=self.shared_bucket,
+            bucket=bucket,
             seed_topics=seed_topics or None,
         )
         logger.info(

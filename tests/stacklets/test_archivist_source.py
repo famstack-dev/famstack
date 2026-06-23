@@ -114,6 +114,46 @@ async def test_email_source_folds_through_capture(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_email_routes_to_topic_room_bucket(tmp_path):
+    # A topic-bound room scopes the email to that bucket (and seeds its tag),
+    # instead of always the shared bucket — co-located with the room's
+    # attachments. The default (no binding) path is covered above.
+    bot = _bot(tmp_path)
+    cap = _FakeCapture()
+    bot._capture = cap
+    _wire(bot)
+
+    async def _binding(room, sender):
+        return SimpleNamespace(
+            bucket="family/family-e-mails", seed_topics=["family-e-mails"],
+        )
+
+    bot._topic_binding = _binding
+    await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+
+    call = cap.calls[0]
+    assert call["bucket"] == "family/family-e-mails"
+    st = call["seed_topics"]
+    assert "family-e-mails" in st                       # topic tag rides along
+    assert "Sender: office@school.example" in st        # provenance kept
+
+
+@pytest.mark.asyncio
+async def test_email_defaults_to_shared_bucket_without_binding(tmp_path):
+    bot = _bot(tmp_path)
+    cap = _FakeCapture()
+    bot._capture = cap
+    _wire(bot)
+
+    async def _no_binding(room, sender):
+        return None
+
+    bot._topic_binding = _no_binding
+    await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+    assert cap.calls[0]["bucket"] == bot.shared_bucket
+
+
+@pytest.mark.asyncio
 async def test_non_bot_sender_is_rejected(tmp_path):
     bot = _bot(tmp_path)
     cap = _FakeCapture()
