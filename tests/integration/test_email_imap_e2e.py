@@ -197,3 +197,27 @@ def test_mailfetcher_since_floor(greenmail):
     # Floor in the past -> the message is included.
     got = fetcher("2000-01-01").fetch_new(set(), FolderCursor())
     assert {p.message_id for p in got} == {"s1@h"}
+
+
+def test_mailfetcher_dates_no_date_header_by_internaldate(greenmail):
+    """A message with no Date header is still dated (by INTERNALDATE), not
+    left None to fall back to the processing date downstream."""
+    user = "abe@example.org"  # own INBOX, isolated from the other tests
+    raw = (
+        f"From: Sender <s@x.example>\r\nTo: {user}\r\n"
+        "Subject: No date header\r\nMessage-ID: <nd@h>\r\n"
+        "\r\nbody without a date\r\n"  # deliberately no Date header
+    ).encode("utf-8")
+    smtp = smtplib.SMTP("localhost", _SMTP_PORT, timeout=10)
+    smtp.sendmail("s@x.example", [user], raw)
+    smtp.quit()
+    time.sleep(1)
+
+    fetcher = MailFetcher(MailAccount(
+        host="localhost", port=_IMAP_PORT, user=user, password="x", ssl=False,
+    ))
+    got = fetcher.fetch_new(set(), FolderCursor())
+    assert len(got) == 1
+    # parse_email alone yields no date; the fetcher backfills from INTERNALDATE.
+    assert got[0].date is not None
+    assert len(got[0].date) == 10 and got[0].date[4] == "-"  # YYYY-MM-DD

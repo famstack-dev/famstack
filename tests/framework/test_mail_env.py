@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
 
-from stack.mail_fetcher import _imap_since  # noqa: E402
+from stack.mail_fetcher import _imap_since, _internaldate  # noqa: E402
 from stack.stack import _mail_accounts_env  # noqa: E402
 
 
@@ -89,3 +89,23 @@ class TestImapSince:
         # A bad floor must not break or silently widen the search.
         assert _imap_since("not-a-date") is None
         assert _imap_since("2026-13-01") is None
+
+
+class TestInternaldate:
+    """INTERNALDATE -> YYYY-MM-DD, the fallback for a message with no Date
+    header so old mail dates by receipt, not by processing time."""
+
+    def test_parses_fetch_metadata_line(self):
+        line = b'1 (INTERNALDATE "15-Mar-2025 08:30:00 +0000" RFC822 {123}'
+        assert _internaldate(line) == "2025-03-15"
+
+    def test_takes_date_in_its_own_offset_not_host_tz(self):
+        # Date portion is read literally — no host-local conversion, so this
+        # is stable regardless of the TZ the suite runs in.
+        line = b'7 (INTERNALDATE "02-Jan-2024 23:59:59 +1300" RFC822 {9}'
+        assert _internaldate(line) == "2024-01-02"
+
+    def test_none_when_absent_or_empty(self):
+        assert _internaldate(b"1 (RFC822 {123}") is None
+        assert _internaldate(b"") is None
+        assert _internaldate(None) is None

@@ -18,6 +18,7 @@ are never mutated.
 from __future__ import annotations
 
 import imaplib
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -45,6 +46,34 @@ def _imap_since(iso: str | None) -> str | None:
     except ValueError:
         return None
     return f"{d.day:02d}-{_IMAP_MONTHS[d.month - 1]}-{d.year}"
+
+
+_INTERNALDATE_RE = re.compile(
+    rb'INTERNALDATE "(\d{2})-(\w{3})-(\d{4})', re.IGNORECASE,
+)
+_MONTH_NUM = {m.lower(): i for i, m in enumerate(_IMAP_MONTHS, start=1)}
+
+
+def _internaldate(fetch_meta) -> str | None:
+    """The server-received date (INTERNALDATE) from a FETCH response line.
+
+    ``fetch_meta`` is the metadata half of an imaplib FETCH tuple, e.g.
+    ``b'1 (INTERNALDATE "15-Mar-2025 08:30:00 +0000" RFC822 {...}'``. We take
+    the calendar date as the server recorded it (its own offset), to stay
+    consistent with the Date-header path and independent of the host timezone.
+    Returns YYYY-MM-DD, or None when no INTERNALDATE is present.
+    """
+    if not fetch_meta:
+        return None
+    if isinstance(fetch_meta, str):
+        fetch_meta = fetch_meta.encode("latin-1", "replace")
+    m = _INTERNALDATE_RE.search(fetch_meta)
+    if not m:
+        return None
+    month = _MONTH_NUM.get(m.group(2).decode("ascii", "replace").lower())
+    if not month:
+        return None
+    return f"{int(m.group(3)):04d}-{month:02d}-{int(m.group(1)):02d}"
 
 
 @dataclass
@@ -142,7 +171,7 @@ class MailFetcher:
 
             out: list[ParsedEmail] = []
             for uid in new_uids:
-                typ, msgdata = client.uid("FETCH", str(uid), "(RFC822)")
+                typ, msgdata = client.uid("FETCH", str(uid), "(RFC822 INTERNALDATE)")
                 if typ != "OK" or not msgdata or not msgdata[0]:
                     continue
                 raw = msgdata[0][1]
@@ -150,6 +179,12 @@ class MailFetcher:
                     continue
                 parsed = parse_email(bytes(raw))
                 parsed.uid = uid
+                # "The date we got the email": prefer the Date header, but a
+                # message without one must still date by when the server
+                # received it (INTERNALDATE) — never by when the bot happened
+                # to process it. Matters when backfilling an old folder.
+                if parsed.date is None:
+                    parsed.date = _internaldate(msgdata[0][0])
                 if parsed.message_id and parsed.message_id in seen_message_ids:
                     continue
                 out.append(parsed)
