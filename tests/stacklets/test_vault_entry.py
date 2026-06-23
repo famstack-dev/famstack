@@ -619,6 +619,21 @@ class TestRenderEmailMessageSection:
         )
         assert "> [!quote]" not in section
 
+    def test_defangs_links_in_model_summary_and_facts(self):
+        """The verbatim body is defanged upstream, but summary/facts are
+        the model's prose — a phishing URL it lifts out must not render as
+        a live link. The URL stays readable, just not clickable."""
+        section = render_email_message_section(
+            message_id="m@h", from_addr="alerts@bank.example",
+            captured_at="2026-06-21", body="see link",
+            summary="Phishing mail linking https://evil.example/steal.",
+            facts=["Phishing link is https://evil.example/steal"],
+        )
+        # URL preserved but wrapped in a code span (non-clickable).
+        assert "`https://evil.example/steal`" in section
+        # No bare, auto-linking occurrence survives in the briefing.
+        assert " https://evil.example/steal" not in section
+
 
 class TestRenderEmailThread:
 

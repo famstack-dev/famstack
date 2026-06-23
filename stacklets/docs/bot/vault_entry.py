@@ -43,6 +43,7 @@ import yaml
 # Slug and entity-path conventions live in the framework (`stack.vault`)
 # so the memory wiki and this docs archivist share one source.
 from stack.vault import slug, entity_relpath  # noqa: F401  (slug re-exported for callers/tests)
+from stack.email_message import defang_links
 
 
 def document_filepath(
@@ -546,6 +547,13 @@ def render_email_message_section(
     heading_bits = [b for b in (captured_at, from_addr) if b]
     parts.append("## " + (" · ".join(heading_bits) or "Message"))
     parts.append("")
+
+    # The body is defanged upstream, but summary/facts are the model's own
+    # prose — a URL the model lifts out of a phishing mail would otherwise
+    # render as a live link. Defang here too: the URL stays readable (knowing
+    # the phishing address is useful), just not clickable.
+    summary = defang_links(summary) if summary else summary
+    facts = [defang_links(f) if isinstance(f, str) else f for f in facts] if facts else facts
 
     briefing = _briefing_block(
         summary=summary, facts=facts, action_items=action_items,
