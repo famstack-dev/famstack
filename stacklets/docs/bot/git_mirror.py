@@ -584,9 +584,15 @@ class GitMirror:
         hash_key: str,
     ) -> str:
         """Capture mirror path. Delegates to ``vault_entry.capture_filepath``,
-        injecting this mirror's capture-hash length."""
+        injecting this mirror's capture-hash length.
+
+        Email threads are date-prefixed so the month folder sorts
+        chronologically (like documents); notes/bookmarks keep the plain
+        slug name.
+        """
         return capture_filepath(
             entity, kind, captured_at, title, hash_key, self._CAPTURE_HASH_LEN,
+            date_prefix=(kind == "email"),
         )
 
     def _capture_frontmatter(

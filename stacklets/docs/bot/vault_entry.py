@@ -121,11 +121,12 @@ def capture_filepath(
     title: str | None,
     hash_key: str,
     hash_len: int = 6,
+    date_prefix: bool = False,
 ) -> str:
     """Build ``<entity>/<kind>s/YYYY/MM/<slug>-<hash>.md``.
 
     ``entity`` is the sender's slug (Matrix localpart, lowercased).
-    ``kind`` is "note" or "bookmark"; the folder is the plural.
+    ``kind`` is "note", "bookmark", or "email"; the folder is the plural.
 
     ``hash_key`` is whatever stable string the caller wants to identify
     this capture by: typically the source URL for fetched/pasted
@@ -133,17 +134,24 @@ def capture_filepath(
     embedded source URL. The same key yields the same path on
     re-publish — idempotent update vs. duplicate.
 
+    ``date_prefix`` prepends ``YYYY-MM-DD-`` to the slug so the month
+    folder sorts chronologically rather than alphabetically — the same
+    convention the documents path uses (``YYYY-MM-DD-<slug>-p<id>.md``).
+    For a folded email thread, the date is the thread's first message, so
+    the prefix is stable as replies append.
+
     Invalid ``captured_at`` falls back to
     ``<entity>/<kind>s/_unfiled/<slug>-<hash>.md`` — same convention
     the documents path uses for entries without a usable date.
 
     Args:
         entity: Sender's slug (lowercased Matrix localpart).
-        kind: "note" or "bookmark".
+        kind: "note", "bookmark", or "email".
         captured_at: Capture date (YYYY-MM-DD) or None.
         title: Classification title or None.
         hash_key: Stable string for idempotent path generation.
         hash_len: Length of the hash prefix (default 6).
+        date_prefix: Prepend the date to the slug for chronological sort.
 
     Returns:
         Vault-relative path string.
@@ -155,6 +163,8 @@ def capture_filepath(
         'marge/notes/2025/03/meeting-notes-xxxxxx.md'
         >>> capture_filepath("homer", "note", None, "Random thought", "content hash")
         'homer/notes/_unfiled/random-thought-xxxxxx.md'
+        >>> capture_filepath("family", "email", "2026-06-21", "Elternabend", "mid:x", date_prefix=True)
+        'family/emails/2026/06/2026-06-21-elternabend-xxxxxx.md'
     """
     digest = capture_hash(hash_key, hash_len)
 
@@ -163,7 +173,8 @@ def capture_filepath(
 
     if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
         y, m, _ = captured_at.split("-")
-        return f"{entity}/{kind_dir}/{y}/{m}/{slug_str}-{digest}.md"
+        name = f"{captured_at}-{slug_str}" if date_prefix else slug_str
+        return f"{entity}/{kind_dir}/{y}/{m}/{name}-{digest}.md"
     return f"{entity}/{kind_dir}/_unfiled/{slug_str}-{digest}.md"
 
 

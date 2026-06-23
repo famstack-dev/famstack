@@ -192,6 +192,30 @@ class TestCaptureFilepath:
         # Same title but different hash → different paths
         assert path1 != path2
 
+    def test_date_prefix_prepends_date_for_chronological_sort(self):
+        path = capture_filepath(
+            "family", "email", "2026-06-21", "Elternabend", "mid:x",
+            date_prefix=True,
+        )
+        assert path.startswith("family/emails/2026/06/2026-06-21-elternabend-")
+        assert path.endswith(".md")
+
+    def test_date_prefix_preserves_hash_suffix(self):
+        # Thread lookup keys on the hash suffix, so the date prefix must not
+        # disturb it — a date-prefixed thread file is still found by `-<hash>.md`.
+        h = capture_hash("mid:x")
+        path = capture_filepath(
+            "family", "email", "2026-06-21", "Subject", "mid:x", date_prefix=True,
+        )
+        assert path.endswith(f"-{h}.md")
+
+    def test_date_prefix_off_keeps_plain_slug(self):
+        path = capture_filepath(
+            "homer", "note", "2026-06-21", "A note", "k", date_prefix=False,
+        )
+        assert "/2026/06/a-note-" in path
+        assert "2026-06-21-a-note" not in path
+
 
 # ── Capture hash (stable thread identity) ──────────────────────────────
 
