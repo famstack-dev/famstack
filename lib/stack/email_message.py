@@ -31,6 +31,10 @@ class ParsedEmail:
     body: str
     references: list[str] = field(default_factory=list)
     in_reply_to: str | None = None
+    # The IMAP UID this message was fetched at, when known. The fetcher sets
+    # it so the bot can advance its per-folder watermark; it is None for
+    # transports without UIDs (a Maildir file) and irrelevant to parsing.
+    uid: int | None = None
 
     @property
     def thread_root(self) -> str | None:

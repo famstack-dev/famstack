@@ -22,10 +22,12 @@ from mail import MailBot  # noqa: E402
 
 
 def _email(*, subject="Hi", from_addr="office@school.example", mid="root@h",
-           date="2026-06-21", body="hello", in_reply_to=None, references=None):
+           date="2026-06-21", body="hello", in_reply_to=None, references=None,
+           uid=None):
     return ParsedEmail(
         subject=subject, from_name=None, from_addr=from_addr, message_id=mid,
         date=date, body=body, references=references or [], in_reply_to=in_reply_to,
+        uid=uid,
     )
 
 
@@ -37,12 +39,17 @@ def _bot(tmp_path):
 
 
 class _FakeFetcher:
-    """Mirrors MailFetcher.fetch_new: returns messages not in the seen set."""
+    """Mirrors MailFetcher.fetch_new: returns messages not in the seen set.
+
+    Accepts the optional cursor so it matches the real signature; the fake
+    doesn't model UIDs, so the bot's watermark logic is exercised with the
+    real fetcher in the e2e test.
+    """
 
     def __init__(self, messages):
         self.messages = messages
 
-    def fetch_new(self, seen):
+    def fetch_new(self, seen, cursor=None):
         return [m for m in self.messages if m.message_id not in seen]
 
 
@@ -254,6 +261,14 @@ class TestState:
         assert reborn._seen == {"root@h"}
         assert reborn._threads == {"root@h": "$e1"}
 
+    def test_cursors_round_trip(self, tmp_path):
+        from stack.mail_fetcher import FolderCursor
+        bot = _bot(tmp_path)
+        bot._cursors["family"] = FolderCursor(uidvalidity=42, last_uid=17)
+        bot._save_state()
+        reborn = _bot(tmp_path)
+        assert reborn._cursors["family"] == FolderCursor(uidvalidity=42, last_uid=17)
+
 
 # ── Poll cycle ─────────────────────────────────────────────────────────────
 
@@ -311,3 +326,38 @@ class TestPoll:
         bot.post_source_message = fail
         await bot._poll_once()
         assert bot._seen == set()  # not marked seen -> retried next cycle
+
+
+class TestWatermark:
+    """The bot rolls the UID watermark back on a post failure so the failed
+    message (and everything after it) is re-fetched next poll. Advancing the
+    watermark to the folder top is the fetcher's job (covered e2e)."""
+
+    @pytest.mark.asyncio
+    async def test_post_failure_rolls_back_and_stops(self, tmp_path):
+        from stack.mail_fetcher import FolderCursor, MailAccount
+        bot = _bot(tmp_path)
+        account = MailAccount(host="h", port=993, user="u", password="p",
+                              name="acc")
+        bot._accounts = [(account, "!room:hs")]
+        msgs = [_email(mid="m5@h", uid=5, body="five"),
+                _email(mid="m6@h", uid=6, body="six"),
+                _email(mid="m7@h", uid=7, body="seven")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher(msgs)
+        # As if the fetcher had advanced the watermark to the folder's top.
+        bot._cursors["acc"] = FolderCursor(uidvalidity=1, last_uid=7)
+
+        posts: list = []
+
+        async def rec(room_id, **k):
+            posts.append(k)
+            return None if len(posts) == 2 else f"$e{len(posts)}"  # m6 fails
+
+        bot.post_source_message = rec
+        await bot._poll_account(account, "!room:hs")
+
+        # m5 posted, m6 failed -> watermark rolled back below 6, loop stopped
+        # before m7. The seen set holds only the delivered message.
+        assert len(posts) == 2
+        assert bot._cursors["acc"].last_uid == 5
+        assert bot._seen == {"m5@h"}

@@ -25,7 +25,7 @@ _LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
 sys.path.insert(0, str(_LIB_DIR))
 
 from stack.email_message import parse_email  # noqa: E402
-from stack.mail_fetcher import MailAccount, MailFetcher  # noqa: E402
+from stack.mail_fetcher import FolderCursor, MailAccount, MailFetcher  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker not available",
@@ -141,3 +141,36 @@ def test_mailfetcher_fetches_new_and_dedups(greenmail):
 
     nothing = fetcher.fetch_new({"m1@h", "m2@h"})
     assert nothing == []
+
+
+def test_mailfetcher_uid_incremental(greenmail):
+    """With a persistent cursor, a second poll fetches only what arrived
+    since the first — proving the whole folder isn't re-downloaded."""
+    user = "lisa@example.org"  # own INBOX, isolated from the other tests
+    _send(user, "<u1@h>", "First")
+    time.sleep(1)
+
+    fetcher = MailFetcher(MailAccount(
+        host="localhost", port=_IMAP_PORT, user=user, password="x", ssl=False,
+    ))
+    cursor = FolderCursor()
+
+    first = fetcher.fetch_new(set(), cursor)
+    assert {p.message_id for p in first} == {"u1@h"}
+    assert first[0].uid is not None
+    # The watermark advanced past the first message and pinned UIDVALIDITY.
+    assert cursor.last_uid == first[0].uid
+    assert cursor.uidvalidity is not None
+
+    _send(user, "<u2@h>", "Second")
+    time.sleep(1)
+
+    # Empty seen set: a full rescan would return BOTH. Incremental returns
+    # only the message above the watermark.
+    second = fetcher.fetch_new(set(), cursor)
+    assert {p.message_id for p in second} == {"u2@h"}
+
+    # Nothing new -> empty, watermark unchanged.
+    high = cursor.last_uid
+    assert fetcher.fetch_new(set(), cursor) == []
+    assert cursor.last_uid == high

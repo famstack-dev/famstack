@@ -35,7 +35,7 @@ from email_reply_parser import EmailReplyParser
 
 from microbot import MicroBot
 from stack.email_message import defang_links
-from stack.mail_fetcher import MailAccount, MailFetcher
+from stack.mail_fetcher import FolderCursor, MailAccount, MailFetcher
 
 
 class MailBot(MicroBot):
@@ -47,7 +47,7 @@ class MailBot(MicroBot):
         # [(MailAccount, room_id), ...] — one entry per configured mailbox.
         self._accounts = self._load_accounts()
         self._state_file = self._session_dir / f"{self.name}-mail-state.json"
-        self._seen, self._threads = self._load_state()
+        self._seen, self._threads, self._cursors = self._load_state()
         self._poll_task: asyncio.Task | None = None
         # Indirection so tests inject a fake fetcher; production builds a real
         # read-only IMAP fetcher per account.
@@ -175,20 +175,35 @@ class MailBot(MicroBot):
     async def _poll_account(self, account: MailAccount, room_id: str) -> None:
         """Fetch new mail for one account and post each message to its room.
 
-        Blocking IMAP runs in a thread (like the git mirror). Messages are
-        posted oldest-first so a thread's root is in place before its
-        replies. State is saved once per account after posting.
+        Blocking IMAP runs in a thread (like the git mirror). The fetcher only
+        downloads UIDs above this folder's watermark and advances it to the
+        folder's highest UID. Messages are posted oldest-UID-first so a thread's
+        root is in place before its replies. On the first post failure the
+        watermark is rolled back below that message and the loop stops, so the
+        failure and everything after it is re-fetched next poll (no silent
+        drop); the Message-ID seen set dedups anything already delivered.
         """
+        cursor = self._cursors.setdefault(account.name, FolderCursor())
         fetcher = self._fetcher_factory(account)
-        new = await asyncio.to_thread(fetcher.fetch_new, set(self._seen))
+        new = await asyncio.to_thread(fetcher.fetch_new, set(self._seen), cursor)
         if not new:
+            self._save_state()  # the watermark may have advanced past dedups
             return
-        new.sort(key=lambda p: p.date or "")
+        new.sort(key=lambda p: (p.uid if p.uid is not None else 0, p.date or ""))
         for parsed in new:
-            await self._post(parsed, room_id, account)
+            if not await self._post(parsed, room_id, account):
+                if parsed.uid is not None:
+                    cursor.last_uid = min(cursor.last_uid, parsed.uid - 1)
+                break
         self._save_state()
 
-    async def _post(self, parsed, room_id: str, account: MailAccount) -> None:
+    async def _post(self, parsed, room_id: str, account: MailAccount) -> bool:
+        """Post one message; True on success, False if the send failed.
+
+        A False return tells the caller to hold the watermark so the message is
+        retried; the archivist's mid: marker keeps a retried double-post from
+        duplicating the vault section.
+        """
         root = self._threads.get(parsed.thread_root) if parsed.thread_root else None
         event_id = await self.post_source_message(
             room_id,
@@ -199,13 +214,12 @@ class MailBot(MicroBot):
             thread_root_event_id=root,
         )
         if event_id is None:
-            # Leave unseen so the next cycle retries; the archivist's mid:
-            # marker keeps a double-post from duplicating the vault section.
-            return
+            return False
         if parsed.thread_root and parsed.thread_root not in self._threads:
             self._threads[parsed.thread_root] = event_id
         if parsed.message_id:
             self._seen.add(parsed.message_id)
+        return True
 
     # ── Rendering ────────────────────────────────────────────────────────
 
@@ -282,20 +296,38 @@ class MailBot(MicroBot):
 
     # ── State (seen Message-IDs + thread roots) ──────────────────────────
 
-    def _load_state(self) -> tuple[set[str], dict[str, str]]:
+    def _load_state(
+        self,
+    ) -> tuple[set[str], dict[str, str], dict[str, FolderCursor]]:
         if not self._state_file.exists():
-            return (set(), {})
+            return (set(), {}, {})
         try:
             data = json.loads(self._state_file.read_text())
-            return (set(data.get("seen") or []), dict(data.get("threads") or {}))
-        except (json.JSONDecodeError, OSError) as e:
+            cursors = {
+                name: FolderCursor(
+                    uidvalidity=c.get("uidvalidity"),
+                    last_uid=int(c.get("last_uid") or 0),
+                )
+                for name, c in (data.get("cursors") or {}).items()
+            }
+            return (
+                set(data.get("seen") or []),
+                dict(data.get("threads") or {}),
+                cursors,
+            )
+        except (json.JSONDecodeError, OSError, AttributeError, TypeError) as e:
             logger.warning("[mail-bot] bad state file ({}), starting empty", e)
-            return (set(), {})
+            return (set(), {}, {})
 
     def _save_state(self) -> None:
         self._session_dir.mkdir(parents=True, exist_ok=True)
         tmp = self._state_file.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "seen": sorted(self._seen), "threads": self._threads,
+            "seen": sorted(self._seen),
+            "threads": self._threads,
+            "cursors": {
+                name: {"uidvalidity": c.uidvalidity, "last_uid": c.last_uid}
+                for name, c in self._cursors.items()
+            },
         }))
         tmp.replace(self._state_file)
