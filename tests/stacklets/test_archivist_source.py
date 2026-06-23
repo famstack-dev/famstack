@@ -113,6 +113,35 @@ async def test_email_source_folds_through_capture(tmp_path):
     assert sends and sends[0]["metadata"]["dev.famstack.event"] == {"type": "capture.filed"}
 
 
+def _room_with(users):
+    return SimpleNamespace(room_id="!r:server", canonical_alias=None,
+                           name=None, users=users)
+
+
+def test_human_members_excludes_all_bots(tmp_path):
+    bot = _bot(tmp_path)
+    room = _room_with({
+        "@homer:server": 1, "@mail-bot:server": 1, "@archivist-bot:server": 1,
+    })
+    assert bot._human_members(room) == ["@homer:server"]
+    assert bot._count_humans_in_room(room) == 1  # not 2 — bots don't count
+
+
+def test_scope_owner_is_sole_human_not_bot_sender(tmp_path):
+    # The bot-sender fix: a personal topic from a bot-posted email nests
+    # under the room's lone human, not under @mail-bot.
+    bot = _bot(tmp_path)
+    room = _room_with({"@homer:server": 1, "@mail-bot:server": 1})
+    assert bot._scope_owner_localpart(room, "@mail-bot:server", "personal") == "homer"
+
+
+def test_scope_owner_uses_sender_when_shared(tmp_path):
+    bot = _bot(tmp_path)
+    room = _room_with({"@homer:server": 1, "@marge:server": 1, "@mail-bot:server": 1})
+    # Shared scope: owner localpart isn't used for the bucket; returns sender.
+    assert bot._scope_owner_localpart(room, "@mail-bot:server", "shared") == "mail-bot"
+
+
 @pytest.mark.asyncio
 async def test_email_routes_to_topic_room_bucket(tmp_path):
     # A topic-bound room scopes the email to that bucket (and seeds its tag),
@@ -150,6 +179,44 @@ async def test_email_defaults_to_shared_bucket_without_binding(tmp_path):
 
     bot._topic_binding = _no_binding
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+    assert cap.calls[0]["bucket"] == bot.shared_bucket
+
+
+@pytest.mark.asyncio
+async def test_email_in_dm_files_under_the_sole_human(tmp_path):
+    # A DM is just a room with one human + the bots. Email there scopes to
+    # that person's bucket, not the shared one — the bot sender is ignored.
+    bot = _bot(tmp_path)
+    cap = _FakeCapture()
+    bot._capture = cap
+    _wire(bot)
+
+    async def _no_binding(room, sender):
+        return None
+
+    bot._topic_binding = _no_binding
+    dm = _room_with({
+        "@homer:server": 1, "@mail-bot:server": 1, "@archivist-bot:server": 1,
+    })
+    await bot._on_text(dm, _source_event(_EMAIL_BLOCK))
+    assert cap.calls[0]["bucket"] == "homer"
+
+
+@pytest.mark.asyncio
+async def test_email_in_multi_human_room_is_shared(tmp_path):
+    bot = _bot(tmp_path)
+    cap = _FakeCapture()
+    bot._capture = cap
+    _wire(bot)
+
+    async def _no_binding(room, sender):
+        return None
+
+    bot._topic_binding = _no_binding
+    room = _room_with({
+        "@homer:server": 1, "@marge:server": 1, "@mail-bot:server": 1,
+    })
+    await bot._on_text(room, _source_event(_EMAIL_BLOCK))
     assert cap.calls[0]["bucket"] == bot.shared_bucket
 
 

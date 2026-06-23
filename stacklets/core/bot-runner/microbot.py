@@ -553,6 +553,18 @@ class MicroBot:
     # person and carries provenance for the capture's tags.
     ATTACHMENT_KEY = "dev.famstack.attachment"
 
+    @staticmethod
+    def is_bot_user(user_id: str) -> bool:
+        """Whether a Matrix user is a famstack bot, by convention.
+
+        Bot accounts have a localpart ending in ``-bot`` (mail-bot,
+        archivist-bot, scribe-bot, …). The framework owns this one
+        definition so every surface agrees on it — counting the humans in
+        a room (scope/visibility), ignoring bot-to-bot chatter, deciding
+        on-behalf-of attribution. A non-bot string is simply not a bot.
+        """
+        return (user_id or "").split(":")[0].lstrip("@").endswith("-bot")
+
     async def post_source_message(
         self,
         room_id: str,

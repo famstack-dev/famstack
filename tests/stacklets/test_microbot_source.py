@@ -101,3 +101,21 @@ async def test_returns_none_on_send_error(tmp_path):
         "!r:hs", body="x", source="email", raw_content="y",
     )
     assert evt is None
+
+
+class TestIsBotUser:
+    """The framework's one definition of a bot account (localpart ends -bot),
+    shared by member-counting, scope, and ignore-self loops."""
+
+    def test_bot_accounts(self):
+        assert MicroBot.is_bot_user("@mail-bot:simpson")
+        assert MicroBot.is_bot_user("@archivist-bot:simpson")
+        assert MicroBot.is_bot_user("scribe-bot")  # bare localpart
+
+    def test_humans(self):
+        assert not MicroBot.is_bot_user("@homer:simpson")
+        assert not MicroBot.is_bot_user("@marge:simpson")
+
+    def test_empty_or_none(self):
+        assert not MicroBot.is_bot_user("")
+        assert not MicroBot.is_bot_user(None)
