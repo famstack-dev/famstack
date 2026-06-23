@@ -22,6 +22,7 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 | Find a document again | [Ask questions](#ask-questions) |
 | Save a link, note or PDF for later | [Capture rooms](#save-anything-capture-rooms) |
 | Collect everything about one project | [Topic rooms](#topic-rooms) |
+| Get email into the family chat | [Email](#email) |
 | Capture a thought without typing | [Voice memos](#voice-memos) |
 | Fix a wrong tag or title | [Correct the bot](#correct-the-bot) |
 | Browse what the family knows | [The family wiki](#the-family-wiki) |
@@ -102,6 +103,28 @@ Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`), disable encryptio
 The room becomes the filing system. Plan the picnic in chat, drop the gear list, the location ideas, the photo of the flyer. When it's over you have a complete, searchable record of the project without ever having organized anything.
 
 Questions asked inside a topic room automatically search just that topic. Ask "@archivist what did Lenny suggest?" in the picnic room and the answer comes from the picnic material, not from your tax documents.
+
+---
+
+## Email
+
+> Needs the `core` stacklet, plus `docs` and `code` to file what arrives. Connected by the admin (see the admin guide).
+
+famstack can watch an email account and deliver new mail into a chat room. Once the admin points a mailbox at a room, the family sees each new email as a message, and the archivist files it like anything else you capture.
+
+Each email arrives as a tidy message: subject, sender, date, and the text. Links are shown as plain text, never as something you can tap, so a phishing email can't trick anyone into opening a bad address. The real address is still there to read; it just isn't clickable.
+
+Attachments come in right under the email: a PDF, a photo, a form. Each one is filed the way a document or photo you drop yourself would be: read, summarized, tagged, findable later.
+
+Where mail gets filed depends on who is in the room:
+
+- **A family email room** (more than one person in it) files under the shared family archive.
+- **Your own mail** (a private room, or a direct message with the bot, where you are the only person) files under your name.
+- **A `Topic: ...` room** files under that subject, like any other topic room.
+
+So you separate work from family, or one person's mail from everyone's, just by choosing which room a mailbox delivers to. When the mail bot joins a room it says which mailbox feeds it; type `help` to read that again.
+
+When a mailbox is first connected, the admin can pull in existing mail from a chosen date (the last week, the whole year) so your history is there from the start, not just new messages.
 
 ---
 
