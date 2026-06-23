@@ -23,11 +23,11 @@ from mail import MailBot  # noqa: E402
 
 def _email(*, subject="Hi", from_addr="office@school.example", mid="root@h",
            date="2026-06-21", body="hello", in_reply_to=None, references=None,
-           uid=None):
+           uid=None, attachments=None):
     return ParsedEmail(
         subject=subject, from_name=None, from_addr=from_addr, message_id=mid,
         date=date, body=body, references=references or [], in_reply_to=in_reply_to,
-        uid=uid,
+        uid=uid, attachments=attachments or [],
     )
 
 
@@ -344,6 +344,68 @@ class TestPoll:
         bot.post_source_message = fail
         await bot._poll_once()
         assert bot._seen == set()  # not marked seen -> retried next cycle
+
+
+class TestAttachments:
+    """The mail bot re-posts each attachment as a Matrix file under the
+    email's thread; the archivist's existing file path then files it."""
+
+    @pytest.mark.asyncio
+    async def test_posts_each_attachment_threaded_with_subject_caption(self, tmp_path):
+        from stack.email_message import Attachment
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        atts = [
+            Attachment(filename="slip.pdf", content_type="application/pdf", data=b"x"),
+            Attachment(filename="logo.png", content_type="image/png", data=b"y"),
+        ]
+        msg = _email(mid="root@h", subject="Permission slip", uid=1, attachments=atts)
+        bot._fetcher_factory = lambda acc: _FakeFetcher([msg])
+        _record_posts(bot)  # post_source_message -> "$e1" for the first message
+
+        sent: list[dict] = []
+
+        async def rec_file(room_id, *, data, filename, mimetype, msgtype,
+                           caption=None, thread_root_event_id=None, metadata=None):
+            sent.append({
+                "room": room_id, "filename": filename, "mimetype": mimetype,
+                "msgtype": msgtype, "caption": caption,
+                "thread": thread_root_event_id, "data": data,
+            })
+            return f"$f{len(sent)}"
+
+        bot.send_file = rec_file
+        await bot._poll_once()
+
+        assert [f["filename"] for f in sent] == ["slip.pdf", "logo.png"]
+        assert [f["msgtype"] for f in sent] == ["m.file", "m.image"]
+        assert [f["data"] for f in sent] == [b"x", b"y"]
+        # Subject rides as the caption; both thread under the email's event.
+        assert all(f["caption"] == "Permission slip" for f in sent)
+        assert all(f["thread"] == "$e1" for f in sent)
+        assert all(f["room"] == "!r:hs" for f in sent)
+
+    @pytest.mark.asyncio
+    async def test_no_attachments_posts_no_files(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher([_email(mid="root@h")])
+        _record_posts(bot)
+        sent = []
+        bot.send_file = lambda *a, **k: sent.append(1)
+        await bot._poll_once()
+        assert sent == []
+
+    def test_msgtype_mapping(self):
+        from mail import _attachment_msgtype
+        assert _attachment_msgtype("application/pdf") == "m.file"
+        assert _attachment_msgtype("image/jpeg") == "m.image"
+        assert _attachment_msgtype("audio/ogg") == "m.audio"
+        assert _attachment_msgtype("") == "m.file"
 
 
 class TestWatermark:

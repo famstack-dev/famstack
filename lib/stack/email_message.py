@@ -20,6 +20,20 @@ from email.utils import parseaddr, parsedate_to_datetime
 
 
 @dataclass
+class Attachment:
+    """One file attached to an email: its name, MIME type, and raw bytes.
+
+    The mail bot re-posts these into the room as Matrix media so the
+    archivist files them through its existing binary-capture path; the bytes
+    are carried verbatim, never re-encoded.
+    """
+
+    filename: str
+    content_type: str
+    data: bytes
+
+
+@dataclass
 class ParsedEmail:
     """The fields the capture pipeline needs from one email message."""
 
@@ -35,6 +49,7 @@ class ParsedEmail:
     # it so the bot can advance its per-folder watermark; it is None for
     # transports without UIDs (a Maildir file) and irrelevant to parsing.
     uid: int | None = None
+    attachments: list[Attachment] = field(default_factory=list)
 
     @property
     def thread_root(self) -> str | None:
@@ -85,7 +100,40 @@ def parse_email(raw: bytes) -> ParsedEmail:
         body=_email_body(msg),
         references=_parse_msgids(msg["references"]),
         in_reply_to=in_reply[0] if in_reply else None,
+        attachments=_attachments(msg),
     )
+
+
+def _attachments(msg) -> list[Attachment]:
+    """Named attachments on the message — the body parts are excluded.
+
+    `iter_attachments` (default policy) yields the non-body parts; we keep the
+    ones with a filename, which is what a real attachment carries. Unnamed
+    inline parts (a signature image, a tracking pixel) are skipped — a richer
+    noise filter is a later refinement. Decode failures drop that one part
+    rather than failing the whole message.
+    """
+    if not msg.is_multipart():
+        return []
+    out: list[Attachment] = []
+    for part in msg.iter_attachments():
+        filename = part.get_filename()
+        if not filename:
+            continue
+        try:
+            payload = part.get_content()
+        except (KeyError, LookupError):
+            payload = part.get_payload(decode=True)
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8", "replace")
+        if not isinstance(payload, (bytes, bytearray)):
+            continue
+        out.append(Attachment(
+            filename=filename,
+            content_type=part.get_content_type(),
+            data=bytes(payload),
+        ))
+    return out
 
 
 _MSGID_RE = re.compile(r"<([^<>]+)>")

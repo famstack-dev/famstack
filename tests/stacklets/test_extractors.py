@@ -386,6 +386,58 @@ class TestParseEmail:
         assert "https://globex.example/stmt" in p.body
 
 
+class TestParseEmailAttachments:
+    """`parse_email` surfaces named attachments (bytes verbatim) and leaves
+    the body parts out — the mail bot re-posts these into the room."""
+
+    def _build(self, *, with_attachments=True, unnamed=False):
+        from email.message import EmailMessage
+        m = EmailMessage()
+        m["From"] = "office@school.example"
+        m["Subject"] = "Permission slip"
+        m["Message-ID"] = "<a1@school.example>"
+        m.set_content("Please sign the attached slip.")
+        if with_attachments:
+            m.add_attachment(b"%PDF-1.4 fake pdf bytes", maintype="application",
+                             subtype="pdf", filename="slip.pdf")
+            m.add_attachment(b"\x89PNG fake png bytes", maintype="image",
+                             subtype="png", filename="logo.png")
+        if unnamed:
+            # An attachment part with no filename (an inline blob).
+            m.add_attachment(b"inline blob", maintype="application",
+                             subtype="octet-stream")
+        return m.as_bytes()
+
+    def test_extracts_named_attachments_with_bytes(self):
+        p = parse_email(self._build())
+        by_name = {a.filename: a for a in p.attachments}
+        assert set(by_name) == {"slip.pdf", "logo.png"}
+        assert by_name["slip.pdf"].content_type == "application/pdf"
+        assert by_name["slip.pdf"].data == b"%PDF-1.4 fake pdf bytes"
+        assert by_name["logo.png"].content_type == "image/png"
+        # Body still parsed alongside the attachments.
+        assert "Please sign" in p.body
+
+    def test_plain_email_has_no_attachments(self):
+        p = parse_email(self._build(with_attachments=False))
+        assert p.attachments == []
+
+    def test_unnamed_part_is_skipped(self):
+        # No richer noise filter yet; a part with no filename is dropped.
+        p = parse_email(self._build(with_attachments=True, unnamed=True))
+        assert {a.filename for a in p.attachments} == {"slip.pdf", "logo.png"}
+
+    def test_multipart_alternative_body_is_not_an_attachment(self):
+        eml = (
+            "From: a@b.example\nSubject: multi\nMessage-ID: <m@id>\n"
+            'Content-Type: multipart/alternative; boundary="B"\n\n'
+            "--B\nContent-Type: text/plain\n\nthe plain part\n"
+            "--B\nContent-Type: text/html\n\n<p>html</p>\n--B--\n"
+        )
+        p = parse_email(eml.encode("utf-8"))
+        assert p.attachments == []
+
+
 class TestDefangLinks:
     """`defang_links` reveals URLs as non-clickable plaintext (anti-phishing)."""
 

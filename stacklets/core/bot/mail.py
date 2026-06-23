@@ -38,6 +38,20 @@ from stack.email_message import defang_links
 from stack.mail_fetcher import FolderCursor, MailAccount, MailFetcher
 
 
+def _attachment_msgtype(content_type: str) -> str:
+    """Matrix msgtype for an attachment's MIME type.
+
+    The archivist files m.image/m.audio/m.file; everything that isn't an
+    image or audio clip (PDFs, docs, spreadsheets) rides as a generic m.file.
+    """
+    ct = (content_type or "").lower()
+    if ct.startswith("image/"):
+        return "m.image"
+    if ct.startswith("audio/"):
+        return "m.audio"
+    return "m.file"
+
+
 class MailBot(MicroBot):
     name = "mail-bot"
 
@@ -221,7 +235,33 @@ class MailBot(MicroBot):
             self._threads[parsed.thread_root] = event_id
         if parsed.message_id:
             self._seen.add(parsed.message_id)
+        await self._post_attachments(parsed, room_id, root or event_id)
         return True
+
+    async def _post_attachments(self, parsed, room_id: str, thread_parent: str) -> None:
+        """Post the email's attachments as Matrix files under its thread.
+
+        Each lands as an `m.file`/`m.image` the archivist files through its
+        existing binary-capture path (vault summary/text extraction). The
+        subject rides as the caption so the capture has context. Best-effort:
+        a failed upload is logged, not retried — the text message is already
+        recorded as seen, and retrying would re-post it.
+        """
+        for att in parsed.attachments:
+            ev = await self.send_file(
+                room_id,
+                data=att.data,
+                filename=att.filename,
+                mimetype=att.content_type,
+                msgtype=_attachment_msgtype(att.content_type),
+                caption=parsed.subject or None,
+                thread_root_event_id=thread_parent,
+            )
+            if ev is None:
+                logger.warning(
+                    "[mail-bot] attachment '{}' ({}) failed to post",
+                    att.filename, att.content_type,
+                )
 
     # ── Rendering ────────────────────────────────────────────────────────
 

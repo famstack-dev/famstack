@@ -230,6 +230,38 @@ def test_mailfetcher_widening_since_refetches_older(greenmail):
     assert {p.message_id for p in fetch("2000-01-01")} == {"w1@h", "w2@h"}
 
 
+def test_mailfetcher_extracts_attachments(greenmail):
+    """A real attachment survives SMTP -> IMAP -> parse with its bytes intact."""
+    from email.message import EmailMessage
+
+    user = "selma@example.org"  # own INBOX, isolated from the other tests
+    m = EmailMessage()
+    m["From"] = "office@school.example"
+    m["To"] = user
+    m["Subject"] = "Permission slip"
+    m["Message-ID"] = "<att-1@school.example>"
+    m["Date"] = "Sat, 21 Jun 2026 09:00:00 +0000"
+    m.set_content("Please sign the attached slip.")
+    m.add_attachment(b"%PDF-1.4 fake pdf bytes", maintype="application",
+                     subtype="pdf", filename="slip.pdf")
+
+    smtp = smtplib.SMTP("localhost", _SMTP_PORT, timeout=10)
+    smtp.sendmail("office@school.example", [user], m.as_bytes())
+    smtp.quit()
+    time.sleep(1)
+
+    fetcher = MailFetcher(MailAccount(
+        host="localhost", port=_IMAP_PORT, user=user, password="x", ssl=False,
+    ))
+    got = fetcher.fetch_new(set(), FolderCursor())
+    assert len(got) == 1
+    atts = got[0].attachments
+    assert [a.filename for a in atts] == ["slip.pdf"]
+    assert atts[0].content_type == "application/pdf"
+    assert atts[0].data == b"%PDF-1.4 fake pdf bytes"
+    assert "Please sign" in got[0].body  # body still extracted
+
+
 def test_mailfetcher_dates_no_date_header_by_internaldate(greenmail):
     """A message with no Date header is still dated (by INTERNALDATE), not
     left None to fall back to the processing date downstream."""

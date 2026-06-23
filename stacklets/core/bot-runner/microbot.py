@@ -688,6 +688,85 @@ class MicroBot:
             )
             return None
 
+    async def _upload_media(
+        self, data: bytes, filename: str, content_type: str,
+    ) -> str | None:
+        """Upload bytes to the media repo, returning the ``mxc://`` URI.
+
+        Goes straight to ``/_matrix/media/v3/upload`` with the bot's token
+        (same authenticated-HTTP approach as `_download_media`, sidestepping
+        nio's data-provider upload API). Returns None on any non-200 (logged).
+        """
+        session = self._ensure_http()
+        url = f"{self.homeserver}/_matrix/media/v3/upload"
+        async with session.post(
+            url,
+            params={"filename": filename},
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self._client.access_token}",
+                "Content-Type": content_type or "application/octet-stream",
+            },
+        ) as resp:
+            if resp.status == 200:
+                return (await resp.json()).get("content_uri")
+            body = await resp.text()
+            logger.error(
+                "[{}] Media upload failed (HTTP {}): {}",
+                self.name, resp.status, body,
+            )
+            return None
+
+    async def send_file(
+        self,
+        room_id: str,
+        *,
+        data: bytes,
+        filename: str,
+        mimetype: str,
+        msgtype: str = "m.file",
+        caption: str | None = None,
+        thread_root_event_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> str | None:
+        """Upload bytes and post them as an ``m.file``/``m.image`` message.
+
+        Framework plumbing so any bot can hand a file to the room without
+        reimplementing upload + the event shape. ``caption`` rides in ``body``
+        (MSC4274: ``filename`` is the real name, ``body`` the human note) so a
+        downstream consumer can read it as a hint while keeping the true
+        filename. ``thread_root_event_id`` threads it under a root (e.g. an
+        email's message), ``metadata`` merges custom keys (a future
+        attachment-reference block). Returns the event id, or None on failure.
+        """
+        mxc = await self._upload_media(data, filename, mimetype)
+        if not mxc:
+            return None
+        content: dict = {
+            "msgtype": msgtype,
+            "body": caption or filename,
+            "filename": filename,
+            "url": mxc,
+            "info": {"mimetype": mimetype, "size": len(data)},
+        }
+        if thread_root_event_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root_event_id},
+            }
+        if metadata:
+            content.update(metadata)
+        try:
+            resp = await self._client.room_send(
+                room_id=room_id, message_type="m.room.message", content=content,
+            )
+        except Exception as e:
+            logger.warning("[{}] send_file failed: {}", self.name, e)
+            return None
+        return getattr(resp, "event_id", None)
+
     def _format_handler_error(self, event, exc: BaseException) -> str:
         """Render an exception as a user-facing message.
 
