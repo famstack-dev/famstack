@@ -119,3 +119,45 @@ class TestIsBotUser:
     def test_empty_or_none(self):
         assert not MicroBot.is_bot_user("")
         assert not MicroBot.is_bot_user(None)
+
+
+class TestSyncDisplayName:
+    """The bot applies bot.toml's display name to its Matrix profile on
+    launch, so a rename reaches an already-provisioned account (account
+    setup is skipped once a session exists)."""
+
+    class _ProfileClient:
+        def __init__(self, current):
+            self._current = current
+            self.set_calls: list[str] = []
+
+        async def get_displayname(self, user_id):
+            from types import SimpleNamespace
+            return SimpleNamespace(displayname=self._current)
+
+        async def set_displayname(self, name):
+            self.set_calls.append(name)
+
+    @pytest.mark.asyncio
+    async def test_sets_when_different(self, tmp_path):
+        b = _bot(tmp_path)
+        b.display_name = "Mail Carrier"
+        b._client = self._ProfileClient(current="Mail")
+        await b._sync_display_name()
+        assert b._client.set_calls == ["Mail Carrier"]
+
+    @pytest.mark.asyncio
+    async def test_skips_when_already_correct(self, tmp_path):
+        b = _bot(tmp_path)
+        b.display_name = "Mail Carrier"
+        b._client = self._ProfileClient(current="Mail Carrier")
+        await b._sync_display_name()
+        assert b._client.set_calls == []
+
+    @pytest.mark.asyncio
+    async def test_noop_when_unset(self, tmp_path):
+        b = _bot(tmp_path)
+        b.display_name = None
+        b._client = self._ProfileClient(current="whatever")
+        await b._sync_display_name()
+        assert b._client.set_calls == []

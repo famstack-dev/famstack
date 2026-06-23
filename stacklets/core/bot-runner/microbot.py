@@ -95,6 +95,11 @@ class MicroBot:
         self.user_id = user_id
         self.password = password
         self.config = config
+        # The display name from bot.toml, applied to the Matrix profile on
+        # launch (the runner sets it post-construction). bot.toml is
+        # authoritative; account setup only runs for new bots, so this is how a
+        # rename reaches an already-provisioned account.
+        self.display_name: str | None = config.get("display_name")
         self._session_dir = Path(session_dir)
         self.session_file = self._session_dir / f"{self.name}.session.json"
         self._cursor_file = self._session_dir / f"{self.name}-cursor"
@@ -181,6 +186,8 @@ class MicroBot:
 
         rooms = self._client.rooms
         logger.info("[{}] In {} room(s): {}", self.name, len(rooms), list(rooms.keys()))
+
+        await self._sync_display_name()
 
         # ── Undecryptable message handler ────────────────────────────
         # By design: the bots do not read encrypted rooms. Tell the user
@@ -676,6 +683,27 @@ class MicroBot:
                 timeout=aiohttp.ClientTimeout(total=60, connect=10),
             )
         return self._http
+
+    async def _sync_display_name(self) -> None:
+        """Make the Matrix profile match the configured display name.
+
+        bot.toml's `name` is authoritative. Account provisioning only runs for
+        bots without a session, so a rename would otherwise never reach an
+        already-created account — this applies it on every launch. Best-effort:
+        only writes when it differs, and a profile error is logged, not fatal.
+        """
+        if not self.display_name:
+            return
+        try:
+            resp = await self._client.get_displayname(self.user_id)
+            current = getattr(resp, "displayname", None)
+            if current != self.display_name:
+                await self._client.set_displayname(self.display_name)
+                logger.info(
+                    "[{}] Display name set to {!r}", self.name, self.display_name,
+                )
+        except Exception as e:
+            logger.warning("[{}] Could not set display name: {}", self.name, e)
 
     async def _download_media(self, mxc_url: str) -> bytes | None:
         """Download a file from Matrix via the authenticated media API.

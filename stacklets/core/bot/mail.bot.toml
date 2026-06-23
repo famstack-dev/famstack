@@ -1,5 +1,5 @@
 id          = "mail-bot"
-name        = "Mail"
+name        = "Mail Carrier"
 description = "Fetches email into Matrix rooms and the brain"
 
 # A second bot in the core stacklet (alongside stacker-bot): email is a

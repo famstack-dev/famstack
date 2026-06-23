@@ -293,6 +293,9 @@ async def main():
             session_dir=cfg["session_dir"],
             **cfg["settings"],
         )
+        # bot.toml's display name is authoritative; the bot applies it to its
+        # Matrix profile on launch so renames reach existing accounts too.
+        bot.display_name = cfg["display_name"]
         bot_instances.append(bot)
         tasks.append(asyncio.create_task(bot.start()))
         logger.info("Launching {} as {}", bot.name, cfg["user_id"])
