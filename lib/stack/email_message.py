@@ -138,22 +138,76 @@ def _is_noise(msg, from_addr: str) -> bool:
     return local in _NOISE_LOCALPARTS
 
 
-def _attachments(msg) -> list[Attachment]:
-    """Named attachments on the message — the body parts are excluded.
+# Image parts below this size, unless declared a real attachment, are treated
+# as chrome (icons, spacers, stray tracking images) and dropped.
+_MIN_IMAGE_BYTES = 10_000
+_CID_RE = re.compile(r"""cid:([^"')\s>]+)""", re.IGNORECASE)
 
-    `iter_attachments` (default policy) yields the non-body parts; we keep the
-    ones with a filename, which is what a real attachment carries. Unnamed
-    inline parts (a signature image, a tracking pixel) are skipped — a richer
-    noise filter is a later refinement. Decode failures drop that one part
-    rather than failing the whole message.
+# Only file types the capture pipeline handles well are kept: PDFs and images
+# (Paperless / vision), and plain-text / markdown notes. Everything else (zip,
+# office docs, calendar invites) is dropped rather than filed as junk. Matched
+# by declared content type OR filename extension, since senders mislabel
+# .md/.txt as application/octet-stream.
+_ALLOWED_TYPES = frozenset({
+    "application/pdf", "text/plain", "text/markdown", "text/x-markdown",
+})
+_ALLOWED_EXTS = frozenset({
+    ".pdf", ".txt", ".md", ".markdown",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic",
+})
+
+
+def _is_allowed_attachment(content_type: str, filename: str) -> bool:
+    """Whether an attachment is a type we want to ingest (PDF, image, txt, md)."""
+    if content_type.split("/", 1)[0] == "image" or content_type in _ALLOWED_TYPES:
+        return True
+    _, _, ext = filename.rpartition(".")
+    return bool(ext) and f".{ext.lower()}" in _ALLOWED_EXTS
+
+
+def _referenced_cids(msg) -> set[str]:
+    """Content-IDs the HTML body embeds as ``<img src="cid:...">``.
+
+    These images are part of the message's display (logos, signatures, hero
+    banners, tracking pixels), not files the sender attached. Lowercased,
+    angle-brackets stripped, for matching against each part's Content-ID.
+    """
+    html_part = msg.get_body(preferencelist=("html",))
+    if html_part is None:
+        return set()
+    try:
+        html = html_part.get_content()
+    except (KeyError, LookupError):
+        return set()
+    return {m.group(1).strip().strip("<>").lower() for m in _CID_RE.finditer(html or "")}
+
+
+def _attachments(msg) -> list[Attachment]:
+    """Real attachments on the message, with display chrome filtered out.
+
+    `iter_attachments` yields the non-body parts; a real attachment carries a
+    filename, so unnamed parts (most tracking pixels) are skipped. The harder
+    noise is *named* images that are really display chrome — logos, signatures,
+    footer banners. Email itself marks these: they are embedded in the HTML as
+    ``cid:`` references, so any image part whose Content-ID is referenced there
+    is dropped. A size backstop catches stray small icons that have a filename
+    but no cid and weren't declared a real attachment. Finally, only types the
+    pipeline handles are kept (PDF, image, txt, md); zip/office/calendar parts
+    are dropped. Genuine attachments survive. Decode failures drop that part.
     """
     if not msg.is_multipart():
         return []
+    inline_cids = _referenced_cids(msg)
     out: list[Attachment] = []
     for part in msg.iter_attachments():
         filename = part.get_filename()
         if not filename:
             continue
+        cid = (part["content-id"] or "").strip().strip("<>").lower()
+        if cid and cid in inline_cids:
+            continue  # embedded display image (logo / signature / pixel)
+        if not _is_allowed_attachment(part.get_content_type(), filename):
+            continue  # only PDF / image / txt / md; skip zip, docx, ics, …
         try:
             payload = part.get_content()
         except (KeyError, LookupError):
@@ -162,10 +216,16 @@ def _attachments(msg) -> list[Attachment]:
             payload = payload.encode("utf-8", "replace")
         if not isinstance(payload, (bytes, bytearray)):
             continue
+        data = bytes(payload)
+        disposition = (part.get_content_disposition() or "").lower()
+        if (part.get_content_maintype() == "image"
+                and disposition != "attachment"
+                and len(data) < _MIN_IMAGE_BYTES):
+            continue  # stray icon/spacer, not a real attachment
         out.append(Attachment(
             filename=filename,
             content_type=part.get_content_type(),
-            data=bytes(payload),
+            data=data,
         ))
     return out
 

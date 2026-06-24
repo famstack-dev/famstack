@@ -427,6 +427,66 @@ class TestParseEmailAttachments:
         p = parse_email(self._build(with_attachments=True, unnamed=True))
         assert {a.filename for a in p.attachments} == {"slip.pdf", "logo.png"}
 
+    def test_filters_inline_chrome_keeps_real_attachments(self):
+        # The hard case: named display images (logo via cid, tiny spacer) must
+        # be dropped, real attachments (PDF, a real-size photo) kept.
+        import base64
+
+        def part(headers, data):
+            return f"--B\r\n{headers}\r\nContent-Transfer-Encoding: base64\r\n\r\n" \
+                   + base64.b64encode(data).decode() + "\r\n"
+
+        raw = (
+            "From: shop@x\r\nTo: fam@x\r\nSubject: Order\r\nMessage-ID: <o@x>\r\n"
+            'MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="B"\r\n\r\n'
+            '--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n'
+            '<html><body>Your order <img src="cid:logo123"></body></html>\r\n'
+            + part('Content-Type: image/png\r\nContent-ID: <logo123>\r\n'
+                   'Content-Disposition: inline; filename="logo.png"',
+                   b"\x89PNG" + b"l" * 500)
+            + part('Content-Type: image/gif\r\n'
+                   'Content-Disposition: inline; filename="spacer.gif"',
+                   b"GIF89a" + b"s" * 200)
+            + part('Content-Type: image/jpeg\r\n'
+                   'Content-Disposition: attachment; filename="photo.jpg"',
+                   b"\xff\xd8\xff" + b"x" * 15000)
+            + part('Content-Type: application/pdf\r\n'
+                   'Content-Disposition: attachment; filename="invoice.pdf"',
+                   b"%PDF-1.4 invoice")
+            + "--B--\r\n"
+        ).encode("utf-8")
+
+        p = parse_email(raw)
+        names = sorted(a.filename for a in p.attachments)
+        # logo.png dropped (cid-referenced), spacer.gif dropped (tiny inline
+        # image); the real photo and the PDF survive.
+        assert names == ["invoice.pdf", "photo.jpg"]
+
+    def test_only_pdf_image_txt_md_are_kept(self):
+        # Allowlist: PDF, image, txt, md survive; zip/docx/calendar are dropped.
+        from email.message import EmailMessage
+        m = EmailMessage()
+        m["From"] = "a@b"
+        m["Subject"] = "S"
+        m["Message-ID"] = "<t@x>"
+        m.set_content("see attached")
+        for data, mt, st, fn in [
+            (b"%PDF-1.4 " + b"x" * 2000, "application", "pdf", "doc.pdf"),
+            (b"\xff\xd8\xff" + b"x" * 15000, "image", "jpeg", "photo.jpg"),
+            (b"hello notes", "text", "plain", "notes.txt"),
+            (b"# heading", "text", "markdown", "readme.md"),
+            (b"PK\x03\x04" + b"z" * 2000, "application", "zip", "archive.zip"),
+            (b"d" * 2000, "application",
+             "vnd.openxmlformats-officedocument.wordprocessingml.document",
+             "report.docx"),
+            (b"BEGIN:VCALENDAR", "text", "calendar", "invite.ics"),
+        ]:
+            m.add_attachment(data, maintype=mt, subtype=st, filename=fn)
+        p = parse_email(m.as_bytes())
+        assert sorted(a.filename for a in p.attachments) == [
+            "doc.pdf", "notes.txt", "photo.jpg", "readme.md",
+        ]
+
     def test_multipart_alternative_body_is_not_an_attachment(self):
         eml = (
             "From: a@b.example\nSubject: multi\nMessage-ID: <m@id>\n"
