@@ -98,3 +98,4 @@ AI_MODELS_JSON   = "{ai_models_json}"
 # written to stack.toml. Empty when [mail] has no accounts -> the bot idles.
 MAIL_ACCOUNTS_JSON = "{mail_accounts_json}"
 MAIL_POLL_INTERVAL = "{mail_poll_interval}"
+MAIL_FILTER_NOISE = "{mail_filter_noise}"

@@ -124,6 +124,8 @@ Where mail gets filed depends on who is in the room:
 
 So you separate work from family, or one person's mail from everyone's, just by choosing which room a mailbox delivers to. When the mail bot joins a room it says which mailbox feeds it; type `help` to read that again.
 
+Newsletters, marketing blasts, and automated noreply mail are filtered out by default, so the brain stays personal and isn't buried in mailing-list noise. (The admin can turn that off if you want everything.)
+
 When a mailbox is first connected, the admin can pull in existing mail from a chosen date (the last week, the whole year) so your history is there from the start, not just new messages.
 
 ---

@@ -438,6 +438,39 @@ class TestParseEmailAttachments:
         assert p.attachments == []
 
 
+class TestNoiseDetection:
+    """Automated/marketing mail is flagged at parse time so `filter_noise`
+    can drop it before it reaches the brain."""
+
+    def _eml(self, extra="", from_addr="alice@example.org"):
+        return (
+            f"From: {from_addr}\r\nTo: fam@x\r\nSubject: S\r\n"
+            f"Message-ID: <n@x>\r\n{extra}\r\nbody\r\n"
+        ).encode("utf-8")
+
+    def test_list_unsubscribe_is_noise(self):
+        assert parse_email(self._eml("List-Unsubscribe: <https://x/u>\r\n")).noise
+
+    def test_list_id_is_noise(self):
+        assert parse_email(self._eml("List-Id: school-parents <l.school.example>\r\n")).noise
+
+    def test_precedence_bulk_is_noise(self):
+        assert parse_email(self._eml("Precedence: bulk\r\n")).noise
+
+    def test_auto_submitted_is_noise(self):
+        assert parse_email(self._eml("Auto-Submitted: auto-generated\r\n")).noise
+
+    def test_auto_submitted_no_is_not_noise(self):
+        assert not parse_email(self._eml("Auto-Submitted: no\r\n")).noise
+
+    def test_machine_sender_is_noise(self):
+        assert parse_email(self._eml(from_addr="noreply@shop.example")).noise
+        assert parse_email(self._eml(from_addr="mailer-daemon@x")).noise
+
+    def test_personal_mail_is_not_noise(self):
+        assert not parse_email(self._eml(from_addr="marge@example.org")).noise
+
+
 class TestTableSpacing:
     """A markdown table needs a blank line before it or python-markdown
     renders raw `|` pipes (the mangled table seen in Element)."""

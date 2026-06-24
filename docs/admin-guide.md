@@ -519,6 +519,7 @@ famstack can watch IMAP mailboxes and deliver new mail into chat rooms. The mail
 ```toml
 [mail]
 poll_interval = 120                # seconds between checks
+filter_noise  = true               # drop newsletters/automated mail (default true)
 
 [[mail.accounts]]
 name      = "family"               # used for the secret key and provenance tags
@@ -552,6 +553,7 @@ Key things to know:
 - **Where mail files = who is in the room.** A room with two or more people files under the shared bucket; a private room or DM (one person) files under that person; a `Topic: ...` room files under the topic. Route work mail and family mail to different rooms to keep them separate.
 - **App passwords.** Gmail, iCloud and most providers need an app-specific password with IMAP enabled, not your login password.
 - **Backfill with `since`.** It is a floor by the date the server received a message. Start narrow (last week) to check it works, then widen (the whole year); widening re-scans and already-filed mail is skipped. Omit `since` to pull the entire folder on first run.
+- **Noise filtering.** `filter_noise` (default on) drops automated and marketing mail before it reaches the room: newsletters and mailing lists (a `List-Unsubscribe` or `List-Id` header), `Precedence: bulk`, auto-replies (`Auto-Submitted`), and machine senders (`noreply@`, `mailer-daemon@`, `bounce@`). Detection is header-only, never body text, so personal mail that merely mentions "unsubscribe" is not dropped. Set `filter_noise = false` to ingest everything.
 - **Read-only.** The fetcher never marks mail read or deletes it. It remembers what it has handled by Message-ID and IMAP UID, so restarts don't re-file.
 - **Links are defanged.** URLs in mail are filed as non-clickable plain text, so a phishing link can't be tapped by reflex.
 

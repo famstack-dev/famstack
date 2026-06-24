@@ -442,6 +442,46 @@ class TestAttachments:
         assert _attachment_msgtype("") == "m.file"
 
 
+class TestNoiseFilter:
+    """filter_noise (default on) drops automated/marketing mail before the
+    room; a dropped message is marked seen so it isn't re-evaluated."""
+
+    @pytest.mark.asyncio
+    async def test_drops_noise_when_enabled(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        assert bot._filter_noise is True  # default
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        noise = _email(mid="news@h", uid=1)
+        noise.noise = True
+        ham = _email(mid="real@h", uid=2)
+        bot._fetcher_factory = lambda acc: _FakeFetcher([noise, ham])
+        posts = _record_posts(bot)
+
+        await bot._poll_once()
+
+        # Only the personal mail posts; the noise is skipped but marked seen.
+        assert len(posts) == 1
+        assert posts[0]["fields"]["message_id"] == "real@h"
+        assert bot._seen == {"news@h", "real@h"}
+
+    @pytest.mark.asyncio
+    async def test_keeps_noise_when_disabled(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._filter_noise = False
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        noise = _email(mid="news@h", uid=1)
+        noise.noise = True
+        bot._fetcher_factory = lambda acc: _FakeFetcher([noise])
+        posts = _record_posts(bot)
+
+        await bot._poll_once()
+        assert len(posts) == 1  # not filtered -> posted
+
+
 class TestWatermark:
     """The bot rolls the UID watermark back on a post failure so the failed
     message (and everything after it) is re-fetched next poll. Advancing the

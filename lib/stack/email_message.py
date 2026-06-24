@@ -50,6 +50,10 @@ class ParsedEmail:
     # transports without UIDs (a Maildir file) and irrelevant to parsing.
     uid: int | None = None
     attachments: list[Attachment] = field(default_factory=list)
+    # Automated/marketing mail (a newsletter, a noreply notice, a bounce).
+    # Set at parse time from the headers; the mail bot drops these when
+    # `[mail] filter_noise` is on, so the brain isn't filled with marketing.
+    noise: bool = False
 
     @property
     def thread_root(self) -> str | None:
@@ -101,7 +105,37 @@ def parse_email(raw: bytes) -> ParsedEmail:
         references=_parse_msgids(msg["references"]),
         in_reply_to=in_reply[0] if in_reply else None,
         attachments=_attachments(msg),
+        noise=_is_noise(msg, from_addr),
     )
+
+
+# Sender localparts that mark machine-sent mail (no human behind them).
+_NOISE_LOCALPARTS = frozenset({
+    "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+    "mailer-daemon", "mailerdaemon", "bounce", "bounces", "postmaster",
+})
+
+
+def _is_noise(msg, from_addr: str) -> bool:
+    """Whether a message is automated/marketing (not personal mail).
+
+    Standard mail-gateway signals, all from headers (never the body, which
+    would false-positive on personal mail that merely mentions "unsubscribe"):
+    a ``List-Unsubscribe`` or ``List-Id`` header (newsletter / mailing-list
+    mail), ``Precedence: bulk|list|junk``, an ``Auto-Submitted`` other than
+    ``no`` (auto-replies, notifications), or a machine sender localpart
+    (noreply@, mailer-daemon@, bounce@). The mail bot drops these when
+    ``[mail] filter_noise`` is on so the brain stays personal.
+    """
+    if msg["list-unsubscribe"] or msg["list-id"]:
+        return True
+    if (msg["precedence"] or "").strip().lower() in ("bulk", "list", "junk"):
+        return True
+    auto = (msg["auto-submitted"] or "").strip().lower()
+    if auto and auto != "no":
+        return True
+    local = (from_addr or "").split("@", 1)[0].strip().lower()
+    return local in _NOISE_LOCALPARTS
 
 
 def _attachments(msg) -> list[Attachment]:

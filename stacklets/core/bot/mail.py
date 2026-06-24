@@ -63,6 +63,9 @@ class MailBot(MicroBot):
     def __init__(self, *, homeserver, user_id, password, session_dir, **config):
         super().__init__(homeserver, user_id, password, session_dir, **config)
         self._interval = int(os.environ.get("MAIL_POLL_INTERVAL", "120"))
+        # Drop automated/marketing mail before the room (default on). From
+        # stack.toml [mail] filter_noise via MAIL_FILTER_NOISE.
+        self._filter_noise = os.environ.get("MAIL_FILTER_NOISE", "true").lower() != "false"
         # [(MailAccount, room_id), ...] — one entry per configured mailbox.
         self._accounts = self._load_accounts()
         self._state_file = self._session_dir / f"{self.name}-mail-state.json"
@@ -190,6 +193,16 @@ class MailBot(MicroBot):
             return
         new.sort(key=lambda p: (p.uid if p.uid is not None else 0, p.date or ""))
         for parsed in new:
+            # Drop automated/bulk/marketing mail before it reaches the room —
+            # a family brain has no use for newsletters and noreply notices.
+            # Mark it seen so it isn't re-evaluated; the watermark already
+            # advanced past it, so this is just belt-and-suspenders.
+            if self._filter_noise and parsed.noise:
+                if parsed.message_id:
+                    self._seen.add(parsed.message_id)
+                logger.info("[mail-bot] skipping noise (bulk/automated): {!r}",
+                            parsed.subject or "(no subject)")
+                continue
             if not await self._post(parsed, room_id, account):
                 if parsed.uid is not None:
                     cursor.last_uid = min(cursor.last_uid, parsed.uid - 1)

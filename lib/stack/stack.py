@@ -271,6 +271,10 @@ class Stack:
             lambda name: self.secrets.get("mail", f"{name.upper()}_IMAP_PASSWORD"),
         )
         template_vars["mail_poll_interval"] = str(mail_cfg.get("poll_interval", 120))
+        # Drop automated/marketing mail before it reaches the brain (default on).
+        template_vars["mail_filter_noise"] = str(
+            mail_cfg.get("filter_noise", True)
+        ).lower()
 
         return template_vars
 
