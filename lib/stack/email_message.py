@@ -213,4 +213,30 @@ def _html_to_markdown(html: str) -> str:
     h = html2text.HTML2Text()
     h.body_width = 0       # don't hard-wrap; let the renderer reflow
     h.ignore_images = True  # drop logos, tracking pixels, layout images
-    return h.handle(html)
+    return _ensure_table_spacing(h.handle(html))
+
+
+def _is_table_separator(line: str) -> bool:
+    """A markdown table separator row, e.g. ``---|---|---`` or ``:--|:-:``."""
+    s = line.strip()
+    return bool(s) and "|" in s and "-" in s and set(s) <= set("-:| ")
+
+
+def _ensure_table_spacing(md: str) -> str:
+    """Guarantee a blank line before each markdown table.
+
+    html2text doesn't always leave a blank line before a table, and
+    python-markdown's `tables` extension only recognizes a table that begins
+    a fresh block. Without the blank line the table renders as a paragraph of
+    raw ``|`` pipes (the mangled rendering seen in Element). Insert the missing
+    blank line before the header row — the line directly above a ``---|---``
+    separator.
+    """
+    lines = md.split("\n")
+    out: list[str] = []
+    for line in lines:
+        if (_is_table_separator(line) and len(out) >= 2
+                and out[-1].strip() and out[-2].strip()):
+            out.insert(len(out) - 1, "")  # blank line before the header row
+        out.append(line)
+    return "\n".join(out)

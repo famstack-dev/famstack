@@ -438,6 +438,46 @@ class TestParseEmailAttachments:
         assert p.attachments == []
 
 
+class TestTableSpacing:
+    """A markdown table needs a blank line before it or python-markdown
+    renders raw `|` pipes (the mangled table seen in Element)."""
+
+    def test_inserts_blank_before_table(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "Your order:\nTag| Menge\n---|---\nDo| 4\n"
+        out = _ensure_table_spacing(md)
+        assert "Your order:\n\nTag| Menge\n---|---" in out
+
+    def test_keeps_existing_blank(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "Your order:\n\nTag| Menge\n---|---\nDo| 4\n"
+        assert _ensure_table_spacing(md) == md
+
+    def test_non_table_text_unchanged(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "just a line\nanother line\n"
+        assert _ensure_table_spacing(md) == md
+
+    def test_table_at_block_start_unchanged(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "Tag| Menge\n---|---\nDo| 4\n"
+        assert _ensure_table_spacing(md) == md
+
+    def test_html_table_email_renders_as_table(self):
+        # End to end: an HTML email with a table converts to markdown that
+        # python-markdown turns into a real <table>, not raw pipes.
+        import markdown
+        raw = (
+            "From: shop@x\r\nSubject: Order\r\nMessage-ID: <t@x>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n\r\n"
+            "<p>Your order:</p><table><tr><th>Item</th><th>Qty</th></tr>"
+            "<tr><td>Milk</td><td>4</td></tr></table>"
+        ).encode("utf-8")
+        p = parse_email(raw)
+        html = markdown.markdown(p.body, extensions=["tables", "fenced_code"])
+        assert "<table>" in html and "<th>Item</th>" in html
+
+
 class TestDefangLinks:
     """`defang_links` reveals URLs as non-clickable plaintext (anti-phishing)."""
 
