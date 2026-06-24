@@ -31,6 +31,11 @@ from dataclasses import dataclass
 import aiohttp
 from loguru import logger
 
+# Email parsing is framework plumbing (stack.email_message); re-exported
+# here so existing `from extractors import parse_email, ParsedEmail`
+# callers and tests keep working after the move.
+from stack.email_message import ParsedEmail, parse_email  # noqa: F401
+
 
 # ── SourceContent ────────────────────────────────────────────────────────
 
@@ -214,3 +219,38 @@ class TextExtractor:
                 continue
             return line[: self._TITLE_HINT_MAX]
         return None
+
+
+# ── Email ────────────────────────────────────────────────────────────────
+#
+# Email is just another source. The `mail` container's himalaya has already
+# fetched the message; this is the pure mapping from its parts into the
+# classifier's `SourceContent`. No fetching, no I/O — fully testable on its
+# own, and the seam ADR-010 wants every new source to slot into.
+
+def email_to_source(
+    *, subject: str | None, body: str, thread_root: str | None = None,
+) -> SourceContent:
+    """Map a fetched email into a `SourceContent`.
+
+    The body is the text the classifier reads; the subject is the title
+    hint; the *thread root* Message-ID becomes the canonical pointer as an
+    RFC 2392 ``mid:`` URI. It keys the thread file, not the individual
+    message — every reply folds into the same entry (ADR-010). Angle
+    brackets are stripped; a blank subject or a missing thread root
+    collapse to ``None`` so a Dataview `where resource` filters cleanly,
+    same convention as the other capture sources.
+
+    Parsing of the raw RFC822 bytes into a `ParsedEmail` lives in the
+    framework (`stack.email_message`) so the mail bot, the host CLI, and
+    this docs-side mapping all share one parser; this function is the
+    docs-specific step that turns a parsed email into the classifier's
+    `SourceContent`.
+    """
+    mid = (thread_root or "").strip().strip("<>").strip()
+    return SourceContent(
+        text=body,
+        mime="text/plain",
+        title_hint=(subject or "").strip() or None,
+        source_uri=f"mid:{mid}" if mid else None,
+    )

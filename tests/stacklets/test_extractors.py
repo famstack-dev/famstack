@@ -21,7 +21,13 @@ import pytest
 _BOT_DIR = Path(__file__).resolve().parent.parent.parent / "stacklets" / "docs" / "bot"
 sys.path.insert(0, str(_BOT_DIR))
 
-from extractors import SourceContent, TextExtractor, UrlExtractor  # noqa: E402
+from extractors import (  # noqa: E402
+    SourceContent,
+    TextExtractor,
+    UrlExtractor,
+    email_to_source,
+    parse_email,
+)
 
 
 # ── Fixture HTML ─────────────────────────────────────────────────────────
@@ -271,3 +277,358 @@ class TestTextExtractor:
         content = await TextExtractor().extract(body)
         assert "https://example.com/x" in content.text
         assert content.source_uri == "https://example.com/x"
+
+
+# ── Email mapping ──────────────────────────────────────────────────────────
+
+class TestEmailToSource:
+    """`email_to_source` maps fetched email parts into SourceContent.
+
+    Pure mapping, no I/O — the himalaya container already fetched the
+    message. The thread root becomes an RFC 2392 `mid:` pointer that keys
+    the thread file (every reply folds into the same entry)."""
+
+    def test_maps_subject_body_and_thread_root(self):
+        s = email_to_source(
+            subject="Elternabend am Freitag",
+            body="Bitte Formular zurücksenden.",
+            thread_root="<abc123@school.example>",
+        )
+        assert isinstance(s, SourceContent)
+        assert s.text == "Bitte Formular zurücksenden."
+        assert s.title_hint == "Elternabend am Freitag"
+        assert s.source_uri == "mid:abc123@school.example"
+
+    def test_strips_angle_brackets_from_thread_root(self):
+        s = email_to_source(subject="x", body="y", thread_root="  <id@h>  ")
+        assert s.source_uri == "mid:id@h"
+
+    def test_blank_subject_is_none(self):
+        s = email_to_source(subject="   ", body="y", thread_root="<i@h>")
+        assert s.title_hint is None
+
+    def test_missing_thread_root_has_no_source_uri(self):
+        s = email_to_source(subject="x", body="y", thread_root=None)
+        assert s.source_uri is None
+        s2 = email_to_source(subject="x", body="y", thread_root="")
+        assert s2.source_uri is None
+
+
+# ── RFC822 parsing ─────────────────────────────────────────────────────────
+
+_EML = """From: Springfield School <office@springfield-school.example>
+To: family@example.org
+Subject: Elternabend am Freitag
+Message-ID: <abc123@springfield-school.example>
+Date: Fri, 20 Jun 2026 10:00:00 +0000
+Content-Type: text/plain; charset=utf-8
+
+Bitte das Formular bis Freitag zurücksenden.
+"""
+
+
+class TestParseEmail:
+    """`parse_email` reads a Maildir RFC822 file with the stdlib email
+    module — the robust ingestion contract, independent of himalaya's
+    rendered output. Pinned against himalaya 1.2.0's Maildir files."""
+
+    def test_extracts_all_fields(self):
+        p = parse_email(_EML.encode("utf-8"))
+        assert p.subject == "Elternabend am Freitag"
+        assert p.from_name == "Springfield School"
+        assert p.from_addr == "office@springfield-school.example"
+        assert p.message_id == "abc123@springfield-school.example"
+        assert p.date == "2026-06-20"
+        assert p.body.strip() == "Bitte das Formular bis Freitag zurücksenden."
+
+    def test_no_content_type_defaults_to_plain(self):
+        eml = (
+            "From: a@b.example\nSubject: Hi\n"
+            "Message-ID: <x@y>\n\nplain body here\n"
+        )
+        p = parse_email(eml.encode("utf-8"))
+        assert p.body.strip() == "plain body here"
+        assert p.from_name is None  # no display name
+        assert p.from_addr == "a@b.example"
+
+    def test_missing_headers_collapse_to_none(self):
+        p = parse_email(b"\njust a body, no headers\n")
+        assert p.subject is None
+        assert p.message_id is None
+        assert p.date is None
+        assert "just a body" in p.body
+
+    def test_multipart_prefers_plain(self):
+        eml = (
+            "From: a@b.example\nSubject: multi\nMessage-ID: <m@id>\n"
+            'Content-Type: multipart/alternative; boundary="B"\n\n'
+            "--B\nContent-Type: text/plain\n\nthe plain part\n"
+            "--B\nContent-Type: text/html\n\n<p>the html part</p>\n--B--\n"
+        )
+        p = parse_email(eml.encode("utf-8"))
+        assert "the plain part" in p.body
+        assert "<p>" not in p.body
+
+    def test_html_only_body_converted_to_markdown(self):
+        raw = (
+            "From: Globex <billing@globex.example>\r\n"
+            "Subject: Statement\r\nMessage-ID: <h1@globex.example>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n\r\n"
+            "<html><body><h2>Statement ready</h2>"
+            "<p>Amount due: <b>EUR 42.00</b>. "
+            "<a href='https://globex.example/stmt'>View</a></p></body></html>\r\n"
+        ).encode("utf-8")
+        p = parse_email(raw)
+        # Tags gone; content + link preserved as Markdown.
+        assert "<html>" not in p.body and "<p>" not in p.body
+        assert "Statement ready" in p.body
+        assert "EUR 42.00" in p.body
+        assert "https://globex.example/stmt" in p.body
+
+
+class TestParseEmailAttachments:
+    """`parse_email` surfaces named attachments (bytes verbatim) and leaves
+    the body parts out — the mail bot re-posts these into the room."""
+
+    def _build(self, *, with_attachments=True, unnamed=False):
+        from email.message import EmailMessage
+        m = EmailMessage()
+        m["From"] = "office@school.example"
+        m["Subject"] = "Permission slip"
+        m["Message-ID"] = "<a1@school.example>"
+        m.set_content("Please sign the attached slip.")
+        if with_attachments:
+            m.add_attachment(b"%PDF-1.4 fake pdf bytes", maintype="application",
+                             subtype="pdf", filename="slip.pdf")
+            m.add_attachment(b"\x89PNG fake png bytes", maintype="image",
+                             subtype="png", filename="logo.png")
+        if unnamed:
+            # An attachment part with no filename (an inline blob).
+            m.add_attachment(b"inline blob", maintype="application",
+                             subtype="octet-stream")
+        return m.as_bytes()
+
+    def test_extracts_named_attachments_with_bytes(self):
+        p = parse_email(self._build())
+        by_name = {a.filename: a for a in p.attachments}
+        assert set(by_name) == {"slip.pdf", "logo.png"}
+        assert by_name["slip.pdf"].content_type == "application/pdf"
+        assert by_name["slip.pdf"].data == b"%PDF-1.4 fake pdf bytes"
+        assert by_name["logo.png"].content_type == "image/png"
+        # Body still parsed alongside the attachments.
+        assert "Please sign" in p.body
+
+    def test_plain_email_has_no_attachments(self):
+        p = parse_email(self._build(with_attachments=False))
+        assert p.attachments == []
+
+    def test_unnamed_part_is_skipped(self):
+        # No richer noise filter yet; a part with no filename is dropped.
+        p = parse_email(self._build(with_attachments=True, unnamed=True))
+        assert {a.filename for a in p.attachments} == {"slip.pdf", "logo.png"}
+
+    def test_filters_inline_chrome_keeps_real_attachments(self):
+        # The hard case: named display images (logo via cid, tiny spacer) must
+        # be dropped, real attachments (PDF, a real-size photo) kept.
+        import base64
+
+        def part(headers, data):
+            return f"--B\r\n{headers}\r\nContent-Transfer-Encoding: base64\r\n\r\n" \
+                   + base64.b64encode(data).decode() + "\r\n"
+
+        raw = (
+            "From: shop@x\r\nTo: fam@x\r\nSubject: Order\r\nMessage-ID: <o@x>\r\n"
+            'MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="B"\r\n\r\n'
+            '--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n'
+            '<html><body>Your order <img src="cid:logo123"></body></html>\r\n'
+            + part('Content-Type: image/png\r\nContent-ID: <logo123>\r\n'
+                   'Content-Disposition: inline; filename="logo.png"',
+                   b"\x89PNG" + b"l" * 500)
+            + part('Content-Type: image/gif\r\n'
+                   'Content-Disposition: inline; filename="spacer.gif"',
+                   b"GIF89a" + b"s" * 200)
+            + part('Content-Type: image/jpeg\r\n'
+                   'Content-Disposition: attachment; filename="photo.jpg"',
+                   b"\xff\xd8\xff" + b"x" * 15000)
+            + part('Content-Type: application/pdf\r\n'
+                   'Content-Disposition: attachment; filename="invoice.pdf"',
+                   b"%PDF-1.4 invoice")
+            + "--B--\r\n"
+        ).encode("utf-8")
+
+        p = parse_email(raw)
+        names = sorted(a.filename for a in p.attachments)
+        # logo.png dropped (cid-referenced), spacer.gif dropped (tiny inline
+        # image); the real photo and the PDF survive.
+        assert names == ["invoice.pdf", "photo.jpg"]
+
+    def test_only_pdf_image_txt_md_are_kept(self):
+        # Allowlist: PDF, image, txt, md survive; zip/docx/calendar are dropped.
+        from email.message import EmailMessage
+        m = EmailMessage()
+        m["From"] = "a@b"
+        m["Subject"] = "S"
+        m["Message-ID"] = "<t@x>"
+        m.set_content("see attached")
+        for data, mt, st, fn in [
+            (b"%PDF-1.4 " + b"x" * 2000, "application", "pdf", "doc.pdf"),
+            (b"\xff\xd8\xff" + b"x" * 15000, "image", "jpeg", "photo.jpg"),
+            (b"hello notes", "text", "plain", "notes.txt"),
+            (b"# heading", "text", "markdown", "readme.md"),
+            (b"PK\x03\x04" + b"z" * 2000, "application", "zip", "archive.zip"),
+            (b"d" * 2000, "application",
+             "vnd.openxmlformats-officedocument.wordprocessingml.document",
+             "report.docx"),
+            (b"BEGIN:VCALENDAR", "text", "calendar", "invite.ics"),
+        ]:
+            m.add_attachment(data, maintype=mt, subtype=st, filename=fn)
+        p = parse_email(m.as_bytes())
+        assert sorted(a.filename for a in p.attachments) == [
+            "doc.pdf", "notes.txt", "photo.jpg", "readme.md",
+        ]
+
+    def test_multipart_alternative_body_is_not_an_attachment(self):
+        eml = (
+            "From: a@b.example\nSubject: multi\nMessage-ID: <m@id>\n"
+            'Content-Type: multipart/alternative; boundary="B"\n\n'
+            "--B\nContent-Type: text/plain\n\nthe plain part\n"
+            "--B\nContent-Type: text/html\n\n<p>html</p>\n--B--\n"
+        )
+        p = parse_email(eml.encode("utf-8"))
+        assert p.attachments == []
+
+
+class TestNoiseDetection:
+    """Automated/marketing mail is flagged at parse time so `filter_noise`
+    can drop it before it reaches the brain."""
+
+    def _eml(self, extra="", from_addr="alice@example.org"):
+        return (
+            f"From: {from_addr}\r\nTo: fam@x\r\nSubject: S\r\n"
+            f"Message-ID: <n@x>\r\n{extra}\r\nbody\r\n"
+        ).encode("utf-8")
+
+    def test_list_unsubscribe_is_noise(self):
+        assert parse_email(self._eml("List-Unsubscribe: <https://x/u>\r\n")).noise
+
+    def test_list_id_is_noise(self):
+        assert parse_email(self._eml("List-Id: school-parents <l.school.example>\r\n")).noise
+
+    def test_precedence_bulk_is_noise(self):
+        assert parse_email(self._eml("Precedence: bulk\r\n")).noise
+
+    def test_auto_submitted_is_noise(self):
+        assert parse_email(self._eml("Auto-Submitted: auto-generated\r\n")).noise
+
+    def test_auto_submitted_no_is_not_noise(self):
+        assert not parse_email(self._eml("Auto-Submitted: no\r\n")).noise
+
+    def test_machine_sender_is_noise(self):
+        assert parse_email(self._eml(from_addr="noreply@shop.example")).noise
+        assert parse_email(self._eml(from_addr="mailer-daemon@x")).noise
+
+    def test_personal_mail_is_not_noise(self):
+        assert not parse_email(self._eml(from_addr="marge@example.org")).noise
+
+
+class TestTableSpacing:
+    """A markdown table needs a blank line before it or python-markdown
+    renders raw `|` pipes (the mangled table seen in Element)."""
+
+    def test_inserts_blank_before_table(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "Your order:\nTag| Menge\n---|---\nDo| 4\n"
+        out = _ensure_table_spacing(md)
+        assert "Your order:\n\nTag| Menge\n---|---" in out
+
+    def test_keeps_existing_blank(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "Your order:\n\nTag| Menge\n---|---\nDo| 4\n"
+        assert _ensure_table_spacing(md) == md
+
+    def test_non_table_text_unchanged(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "just a line\nanother line\n"
+        assert _ensure_table_spacing(md) == md
+
+    def test_table_at_block_start_unchanged(self):
+        from stack.email_message import _ensure_table_spacing
+        md = "Tag| Menge\n---|---\nDo| 4\n"
+        assert _ensure_table_spacing(md) == md
+
+    def test_html_table_email_renders_as_table(self):
+        # End to end: an HTML email with a table converts to markdown that
+        # python-markdown turns into a real <table>, not raw pipes.
+        import markdown
+        raw = (
+            "From: shop@x\r\nSubject: Order\r\nMessage-ID: <t@x>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n\r\n"
+            "<p>Your order:</p><table><tr><th>Item</th><th>Qty</th></tr>"
+            "<tr><td>Milk</td><td>4</td></tr></table>"
+        ).encode("utf-8")
+        p = parse_email(raw)
+        html = markdown.markdown(p.body, extensions=["tables", "fenced_code"])
+        assert "<table>" in html and "<th>Item</th>" in html
+
+
+class TestDefangLinks:
+    """`defang_links` reveals URLs as non-clickable plaintext (anti-phishing)."""
+
+    def test_markdown_link_shows_real_url(self):
+        from stack.email_message import defang_links
+        out = defang_links("Click [Your bank](https://evil.example/steal) now")
+        # Label kept, real URL revealed, wrapped so it won't auto-link.
+        assert "Your bank (`https://evil.example/steal`)" in out
+        assert "](http" not in out  # the clickable markdown link is gone
+
+    def test_bare_url_is_wrapped(self):
+        from stack.email_message import defang_links
+        assert defang_links("see https://evil.example here") == (
+            "see `https://evil.example` here"
+        )
+
+    def test_label_only_link_becomes_code_url(self):
+        from stack.email_message import defang_links
+        assert defang_links("[](https://x.example)") == "`https://x.example`"
+
+    def test_plain_text_untouched(self):
+        from stack.email_message import defang_links
+        assert defang_links("no links here at all") == "no links here at all"
+
+    def test_does_not_double_wrap(self):
+        from stack.email_message import defang_links
+        # A converted markdown link's URL must not get a second backtick pass.
+        out = defang_links("[site](https://a.example)")
+        assert out.count("`") == 2
+
+
+class TestThreadRoot:
+    """A thread folds into one vault entry keyed by its root Message-ID
+    (ADR-010). References[0] is the root; else In-Reply-To; else the
+    message starts its own thread."""
+
+    def test_standalone_message_is_its_own_root(self):
+        p = parse_email(b"Message-ID: <solo@h>\nSubject: x\n\nbody\n")
+        assert p.references == []
+        assert p.in_reply_to is None
+        assert p.thread_root == "solo@h"
+
+    def test_references_first_entry_is_root(self):
+        eml = (
+            b"Message-ID: <reply2@h>\n"
+            b"In-Reply-To: <reply1@h>\n"
+            b"References: <root@h> <reply1@h>\n"
+            b"Subject: Re: x\n\nlater\n"
+        )
+        p = parse_email(eml)
+        assert p.references == ["root@h", "reply1@h"]
+        assert p.in_reply_to == "reply1@h"
+        assert p.thread_root == "root@h"
+
+    def test_in_reply_to_when_no_references(self):
+        eml = (
+            b"Message-ID: <reply1@h>\nIn-Reply-To: <root@h>\n"
+            b"Subject: Re: x\n\nfirst reply\n"
+        )
+        p = parse_email(eml)
+        assert p.thread_root == "root@h"

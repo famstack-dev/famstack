@@ -57,6 +57,10 @@ famstack/
 4. **Convention over configuration.** If a file exists with the documented name (`hooks/on_install.py`, `cli/foo.py`, `caddy.snippet`, `bot/bot.toml`), it is picked up. No registration step.
 5. **The `stack` CLI is the sanctioned agent interface.** Bots, hooks, and external automations call `./stack <id> <cmd>` - they do not import from `lib/`. Commands have stable exit codes, JSON output, and idempotent semantics.
 
+## Reprocessing replays the source
+
+Reprocessing re-derives from the source, never from the vault file. For a chat filing the source is the **whole thread** - the original message **plus its reply chain** (corrections) - folded in timeline order. Machine-derived vault state must stay reproducible this way; only user hand-edits are irreducible. See [adr-010](../adr/adr-010-event-pipeline.md).
+
 ## Stacklet anatomy
 
 Required:

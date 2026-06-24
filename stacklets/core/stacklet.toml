@@ -19,7 +19,9 @@ hints = [
 ]
 
 [env]
-generate = ["STACKER_BOT_PASSWORD"]
+# Matrix login passwords for the bots core ships. Auto-generated into the
+# secret store on `up` so the bot runner can create their accounts.
+generate = ["STACKER_BOT_PASSWORD", "MAIL_BOT_PASSWORD"]
 
 [env.defaults]
 # 6-field cron: sec min hour day month weekday
@@ -88,3 +90,12 @@ TOOLS_PORT = "42000"
 LANGUAGE         = "{language}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"
+
+# Mail — the mail bot's accounts, rendered from stack.toml [mail] into one
+# JSON env var (host/user/folder/room per account). IMAP passwords are
+# pulled from the secret store (mail__<NAME>_IMAP_PASSWORD) and embedded
+# here, the same way other container secrets reach .env; they are never
+# written to stack.toml. Empty when [mail] has no accounts -> the bot idles.
+MAIL_ACCOUNTS_JSON = "{mail_accounts_json}"
+MAIL_POLL_INTERVAL = "{mail_poll_interval}"
+MAIL_FILTER_NOISE = "{mail_filter_noise}"

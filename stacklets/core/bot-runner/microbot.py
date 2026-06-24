@@ -95,6 +95,11 @@ class MicroBot:
         self.user_id = user_id
         self.password = password
         self.config = config
+        # The display name from bot.toml, applied to the Matrix profile on
+        # launch (the runner sets it post-construction). bot.toml is
+        # authoritative; account setup only runs for new bots, so this is how a
+        # rename reaches an already-provisioned account.
+        self.display_name: str | None = config.get("display_name")
         self._session_dir = Path(session_dir)
         self.session_file = self._session_dir / f"{self.name}.session.json"
         self._cursor_file = self._session_dir / f"{self.name}-cursor"
@@ -181,6 +186,8 @@ class MicroBot:
 
         rooms = self._client.rooms
         logger.info("[{}] In {} room(s): {}", self.name, len(rooms), list(rooms.keys()))
+
+        await self._sync_display_name()
 
         # ── Undecryptable message handler ────────────────────────────
         # By design: the bots do not read encrypted rooms. Tell the user
@@ -503,15 +510,18 @@ class MicroBot:
 
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,
-        *, metadata: dict | None = None,
+        *, metadata: dict | None = None, thread_root_event_id: str | None = None,
+        line_breaks: bool = False,
     ) -> None:
         """Send a formatted ``m.room.message``: markdown body + HTML.
 
         The single formatted-reply path for every bot. ``text`` is sent
         verbatim as the plaintext ``body`` and rendered to
         ``formatted_body`` for rich clients (tables + fenced code
-        enabled). ``reply_to`` threads the message under a prior event;
-        ``metadata`` merges extra top-level keys into the content dict.
+        enabled). ``reply_to`` quotes a prior event; ``thread_root_event_id``
+        posts it as an ``m.thread`` reply under that root (e.g. an email's
+        full body under its card); ``metadata`` merges extra top-level keys
+        into the content dict.
 
         Matrix content is a JSON object, so custom keys (e.g.
         ``dev.famstack.event``) are invisible to clients but readable by
@@ -523,15 +533,27 @@ class MicroBot:
         after every send: Matrix clients clear the indicator when they
         see a new bot message, so a long handler that posts an
         intermediate status would otherwise run silently afterwards.
+
+        ``line_breaks`` adds the ``nl2br`` markdown extension so every newline
+        becomes a ``<br>`` — chat behaviour (Slack/WhatsApp), needed for a
+        pasted email body where single newlines would otherwise collapse.
         """
-        html = markdown.markdown(text, extensions=["tables", "fenced_code"])
+        exts = ["tables", "fenced_code"] + (["nl2br"] if line_breaks else [])
+        html = markdown.markdown(text, extensions=exts)
         content: dict = {
             "msgtype": "m.text",
             "body": text,
             "format": "org.matrix.custom.html",
             "formatted_body": html,
         }
-        if reply_to:
+        if thread_root_event_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": reply_to or thread_root_event_id},
+            }
+        elif reply_to:
             content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
         if metadata:
             content.update(metadata)
@@ -542,6 +564,85 @@ class MicroBot:
     # replayable timeline event. Distinct from `emit_event`, which posts
     # a *separate* custom-typed event for bot-to-bot signalling.
     FAMSTACK_EVENT_KEY = "dev.famstack.event"
+
+    # The raw-ingest block on an inbound message: the verbatim original a
+    # source posts before classification, distinct from the post-classify
+    # `dev.famstack.event` filing envelope above.
+    SOURCE_KEY = "dev.famstack.source"
+
+    # Marks a media event as bot-posted on behalf of a source (an email
+    # attachment today): tells the archivist not to attribute the bot as a
+    # person and carries provenance for the capture's tags.
+    ATTACHMENT_KEY = "dev.famstack.attachment"
+
+    @staticmethod
+    def is_bot_user(user_id: str) -> bool:
+        """Whether a Matrix user is a famstack bot, by convention.
+
+        Bot accounts have a localpart ending in ``-bot`` (mail-bot,
+        archivist-bot, scribe-bot, …). The framework owns this one
+        definition so every surface agrees on it — counting the humans in
+        a room (scope/visibility), ignoring bot-to-bot chatter, deciding
+        on-behalf-of attribution. A non-bot string is simply not a bot.
+        """
+        return (user_id or "").split(":")[0].lstrip("@").endswith("-bot")
+
+    async def post_source_message(
+        self,
+        room_id: str,
+        *,
+        body: str,
+        source: str,
+        raw_content: str,
+        fields: dict | None = None,
+        thread_root_event_id: str | None = None,
+    ) -> str | None:
+        """Post a twofold ingest message and return its event id.
+
+        Two faces on one timeline event: a human-readable rendered ``body``
+        (markdown + HTML for rich clients) and a machine ``dev.famstack.source``
+        block carrying the verbatim ``raw_content`` plus per-source ``fields``
+        (an email's from / message_id / thread_root, a future source's own
+        descriptors). ``raw_content`` is the reproducibility anchor (ADR-010):
+        re-deriving the vault entry reads it, never the upstream server.
+
+        When ``thread_root_event_id`` is given the message is posted as an
+        ``m.thread`` reply under that root (with a reply fallback so
+        non-threaded clients still show it in context), so an email
+        conversation maps onto one Matrix thread. Returns the new event's id
+        — the caller uses the first message's id as the thread root for the
+        rest — or None on failure.
+
+        Framework plumbing: any ingest source posts through here and gets the
+        twofold + threaded shape without reimplementing the wire format.
+        """
+        source_block: dict = {"source": source, "raw_content": raw_content}
+        if fields:
+            source_block.update(fields)
+
+        html = markdown.markdown(body, extensions=["tables", "fenced_code"])
+        content: dict = {
+            "msgtype": "m.text",
+            "body": body,
+            "format": "org.matrix.custom.html",
+            "formatted_body": html,
+            self.SOURCE_KEY: source_block,
+        }
+        if thread_root_event_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root_event_id},
+            }
+        try:
+            resp = await self._client.room_send(
+                room_id=room_id, message_type="m.room.message", content=content,
+            )
+        except Exception as e:
+            logger.warning("[{}] post_source_message failed: {}", self.name, e)
+            return None
+        return getattr(resp, "event_id", None)
 
     async def _reply_parent_envelope(self, room_id: str, event) -> dict | None:
         """Return the famstack envelope on the message ``event`` replies to.
@@ -598,6 +699,27 @@ class MicroBot:
             )
         return self._http
 
+    async def _sync_display_name(self) -> None:
+        """Make the Matrix profile match the configured display name.
+
+        bot.toml's `name` is authoritative. Account provisioning only runs for
+        bots without a session, so a rename would otherwise never reach an
+        already-created account — this applies it on every launch. Best-effort:
+        only writes when it differs, and a profile error is logged, not fatal.
+        """
+        if not self.display_name:
+            return
+        try:
+            resp = await self._client.get_displayname(self.user_id)
+            current = getattr(resp, "displayname", None)
+            if current != self.display_name:
+                await self._client.set_displayname(self.display_name)
+                logger.info(
+                    "[{}] Display name set to {!r}", self.name, self.display_name,
+                )
+        except Exception as e:
+            logger.warning("[{}] Could not set display name: {}", self.name, e)
+
     async def _download_media(self, mxc_url: str) -> bytes | None:
         """Download a file from Matrix via the authenticated media API.
 
@@ -625,6 +747,85 @@ class MicroBot:
                 self.name, resp.status, body,
             )
             return None
+
+    async def _upload_media(
+        self, data: bytes, filename: str, content_type: str,
+    ) -> str | None:
+        """Upload bytes to the media repo, returning the ``mxc://`` URI.
+
+        Goes straight to ``/_matrix/media/v3/upload`` with the bot's token
+        (same authenticated-HTTP approach as `_download_media`, sidestepping
+        nio's data-provider upload API). Returns None on any non-200 (logged).
+        """
+        session = self._ensure_http()
+        url = f"{self.homeserver}/_matrix/media/v3/upload"
+        async with session.post(
+            url,
+            params={"filename": filename},
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self._client.access_token}",
+                "Content-Type": content_type or "application/octet-stream",
+            },
+        ) as resp:
+            if resp.status == 200:
+                return (await resp.json()).get("content_uri")
+            body = await resp.text()
+            logger.error(
+                "[{}] Media upload failed (HTTP {}): {}",
+                self.name, resp.status, body,
+            )
+            return None
+
+    async def send_file(
+        self,
+        room_id: str,
+        *,
+        data: bytes,
+        filename: str,
+        mimetype: str,
+        msgtype: str = "m.file",
+        caption: str | None = None,
+        thread_root_event_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> str | None:
+        """Upload bytes and post them as an ``m.file``/``m.image`` message.
+
+        Framework plumbing so any bot can hand a file to the room without
+        reimplementing upload + the event shape. ``caption`` rides in ``body``
+        (MSC4274: ``filename`` is the real name, ``body`` the human note) so a
+        downstream consumer can read it as a hint while keeping the true
+        filename. ``thread_root_event_id`` threads it under a root (e.g. an
+        email's message), ``metadata`` merges custom keys (a future
+        attachment-reference block). Returns the event id, or None on failure.
+        """
+        mxc = await self._upload_media(data, filename, mimetype)
+        if not mxc:
+            return None
+        content: dict = {
+            "msgtype": msgtype,
+            "body": caption or filename,
+            "filename": filename,
+            "url": mxc,
+            "info": {"mimetype": mimetype, "size": len(data)},
+        }
+        if thread_root_event_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root_event_id},
+            }
+        if metadata:
+            content.update(metadata)
+        try:
+            resp = await self._client.room_send(
+                room_id=room_id, message_type="m.room.message", content=content,
+            )
+        except Exception as e:
+            logger.warning("[{}] send_file failed: {}", self.name, e)
+            return None
+        return getattr(resp, "event_id", None)
 
     def _format_handler_error(self, event, exc: BaseException) -> str:
         """Render an exception as a user-facing message.

@@ -13,12 +13,19 @@ sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from vault_entry import (
     slug,
+    capture_hash,
     document_filepath,
     capture_filepath,
     document_frontmatter,
     capture_frontmatter,
     render_document,
     render_capture,
+    email_mid_marker,
+    render_email_message_section,
+    render_email_thread,
+    split_frontmatter,
+    merge_email_frontmatter,
+    fold_email_message,
 )
 
 
@@ -184,6 +191,55 @@ class TestCaptureFilepath:
         )
         # Same title but different hash → different paths
         assert path1 != path2
+
+    def test_date_prefix_prepends_date_for_chronological_sort(self):
+        path = capture_filepath(
+            "family", "email", "2026-06-21", "Elternabend", "mid:x",
+            date_prefix=True,
+        )
+        assert path.startswith("family/emails/2026/06/2026-06-21-elternabend-")
+        assert path.endswith(".md")
+
+    def test_date_prefix_preserves_hash_suffix(self):
+        # Thread lookup keys on the hash suffix, so the date prefix must not
+        # disturb it — a date-prefixed thread file is still found by `-<hash>.md`.
+        h = capture_hash("mid:x")
+        path = capture_filepath(
+            "family", "email", "2026-06-21", "Subject", "mid:x", date_prefix=True,
+        )
+        assert path.endswith(f"-{h}.md")
+
+    def test_date_prefix_off_keeps_plain_slug(self):
+        path = capture_filepath(
+            "homer", "note", "2026-06-21", "A note", "k", date_prefix=False,
+        )
+        assert "/2026/06/a-note-" in path
+        assert "2026-06-21-a-note" not in path
+
+
+# ── Capture hash (stable thread identity) ──────────────────────────────
+
+class TestCaptureHash:
+    """`capture_hash` is the stable id in a capture's filename — an email
+    thread's hash is constant across messages, so the mirror can find and
+    append to the one thread file even as the title/slug drifts."""
+
+    def test_deterministic(self):
+        assert capture_hash("mid:root@h") == capture_hash("mid:root@h")
+
+    def test_differs_by_key(self):
+        assert capture_hash("mid:a@h") != capture_hash("mid:b@h")
+
+    def test_default_length(self):
+        assert len(capture_hash("anything")) == 6
+
+    def test_matches_filepath_suffix(self):
+        # The path the filepath builder produces ends with this exact hash,
+        # which is what the thread lookup keys on.
+        h = capture_hash("https://example.com/x")
+        path = capture_filepath("homer", "bookmark", "2025-03-27", "Title",
+                                "https://example.com/x")
+        assert path.endswith(f"-{h}.md")
 
 
 # ── Document frontmatter ───────────────────────────────────────────────
@@ -545,3 +601,199 @@ class TestRenderCapture:
             facts=[],
         )
         assert "> [!quote]" not in content  # no body → no quote block
+
+
+# ── Email thread folding ───────────────────────────────────────────────
+
+class TestRenderEmailMessageSection:
+
+    def test_marker_heading_briefing_and_body(self):
+        section = render_email_message_section(
+            message_id="m1@school.example",
+            from_addr="office@springfield-school.example",
+            captured_at="2026-06-21",
+            body="Bitte das Formular zurücksenden.",
+            summary="School wants the form back.",
+            facts=["Deadline Friday"],
+            action_items=[{"action": "Return form", "due": "2026-06-26"}],
+        )
+        # Idempotency marker carries the bare Message-ID.
+        assert "<!-- mid:m1@school.example -->" in section
+        # Heading is date — sender.
+        assert "## 2026-06-21 · office@springfield-school.example" in section
+        # Per-message briefing callout + action item checkbox.
+        assert "> [!summary]" in section
+        assert "- [ ] Return form — 2026-06-26" in section
+        # Verbatim body in a collapsible quote callout.
+        assert "> [!quote]- Message" in section
+        assert "> Bitte das Formular zurücksenden." in section
+
+    def test_no_message_id_omits_marker(self):
+        section = render_email_message_section(
+            message_id=None, from_addr="a@b", captured_at="2026-06-21",
+            body="hi",
+        )
+        assert "<!-- mid:" not in section
+        assert "## 2026-06-21 · a@b" in section
+
+    def test_empty_body_drops_quote_block(self):
+        section = render_email_message_section(
+            message_id="m@h", from_addr="a@b", captured_at="2026-06-21",
+            body="   ",
+        )
+        assert "> [!quote]" not in section
+
+    def test_defangs_links_in_model_summary_and_facts(self):
+        """The verbatim body is defanged upstream, but summary/facts are
+        the model's prose — a phishing URL it lifts out must not render as
+        a live link. The URL stays readable, just not clickable."""
+        section = render_email_message_section(
+            message_id="m@h", from_addr="alerts@bank.example",
+            captured_at="2026-06-21", body="see link",
+            summary="Phishing mail linking https://evil.example/steal.",
+            facts=["Phishing link is https://evil.example/steal"],
+        )
+        # URL preserved but wrapped in a code span (non-clickable).
+        assert "`https://evil.example/steal`" in section
+        # No bare, auto-linking occurrence survives in the briefing.
+        assert " https://evil.example/steal" not in section
+
+
+class TestRenderEmailThread:
+
+    def _fm(self):
+        return capture_frontmatter(
+            title="Elternabend", captured_at="2026-06-21", kind="email",
+            source_uri="mid:root@h", persons=["Homer"], tags=["school"],
+            model=None,
+        )
+
+    def test_shell_has_frontmatter_title_meta_and_section(self):
+        section = render_email_message_section(
+            message_id="root@h", from_addr="office@s", captured_at="2026-06-21",
+            body="first",
+        )
+        out = render_email_thread(
+            frontmatter=self._fm(), title="Elternabend",
+            captured_at="2026-06-21", source_uri="mid:root@h",
+            persons=["Homer"], from_path="family/emails/2026/06/x.md",
+            shared_bucket="family", sections=[section],
+        )
+        assert out.startswith("---\n")
+        assert "type: email" in out
+        assert "# Elternabend" in out
+        assert "**Kind** email" in out
+        assert "**Thread** <mid:root@h>" in out
+        assert "## 2026-06-21 · office@s" in out
+
+
+class TestSplitFrontmatter:
+
+    def test_round_trips_body(self):
+        content = "---\ntype: email\ntitle: X\n---\n\n# X\n\nbody here\n"
+        fm, body = split_frontmatter(content)
+        assert fm == {"type": "email", "title": "X"}
+        assert body == "\n# X\n\nbody here\n"
+
+    def test_no_frontmatter_is_all_body(self):
+        fm, body = split_frontmatter("# just a title\n")
+        assert fm == {}
+        assert body == "# just a title\n"
+
+
+class TestMergeEmailFrontmatter:
+
+    def test_unions_persons_and_tags_preserving_order(self):
+        old = {"type": "email", "persons": ["Homer"], "tags": ["school"]}
+        merged = merge_email_frontmatter(
+            old, persons=["Homer", "Marge"], tags=["school", "form"],
+        )
+        assert merged["persons"] == ["Homer", "Marge"]
+        assert merged["tags"] == ["school", "form"]
+        # Original dict untouched.
+        assert old["persons"] == ["Homer"]
+
+    def test_adds_keys_when_absent(self):
+        merged = merge_email_frontmatter(
+            {"type": "email"}, persons=["Bart"], tags=[],
+        )
+        assert merged["persons"] == ["Bart"]
+        assert "tags" not in merged
+
+
+class TestFoldEmailMessage:
+
+    def _section(self, mid, body="msg"):
+        return render_email_message_section(
+            message_id=mid, from_addr="office@s", captured_at="2026-06-21",
+            body=body,
+        )
+
+    def _fm(self, persons, tags):
+        return capture_frontmatter(
+            title="Elternabend", captured_at="2026-06-21", kind="email",
+            source_uri="mid:root@h", persons=persons, tags=tags, model=None,
+        )
+
+    def test_first_message_renders_shell(self):
+        out = fold_email_message(
+            None,
+            section=self._section("root@h"), message_id="root@h",
+            new_frontmatter=self._fm(["Homer"], ["school"]),
+            title="Elternabend", captured_at="2026-06-21",
+            source_uri="mid:root@h", persons=["Homer"], tags=["school"],
+            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+        )
+        assert out is not None
+        assert "# Elternabend" in out
+        assert "<!-- mid:root@h -->" in out
+
+    def test_reply_appends_section_and_unions_frontmatter(self):
+        first = fold_email_message(
+            None,
+            section=self._section("root@h"), message_id="root@h",
+            new_frontmatter=self._fm(["Homer"], ["school"]),
+            title="Elternabend", captured_at="2026-06-21",
+            source_uri="mid:root@h", persons=["Homer"], tags=["school"],
+            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+        )
+        second = fold_email_message(
+            first,
+            section=self._section("reply@h", body="the reply"),
+            message_id="reply@h",
+            new_frontmatter=self._fm(["Marge"], ["form"]),
+            title="Elternabend", captured_at="2026-06-22",
+            source_uri="mid:root@h", persons=["Marge"], tags=["form"],
+            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+        )
+        # Both message markers present → one growing file.
+        assert "<!-- mid:root@h -->" in second
+        assert "<!-- mid:reply@h -->" in second
+        assert "the reply" in second
+        # Frontmatter unioned the reply's person and tag.
+        fm, _ = split_frontmatter(second)
+        assert fm["persons"] == ["Homer", "Marge"]
+        assert fm["tags"] == ["school", "form"]
+
+    def test_already_folded_message_is_noop(self):
+        first = fold_email_message(
+            None,
+            section=self._section("root@h"), message_id="root@h",
+            new_frontmatter=self._fm(["Homer"], ["school"]),
+            title="Elternabend", captured_at="2026-06-21",
+            source_uri="mid:root@h", persons=["Homer"], tags=["school"],
+            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+        )
+        again = fold_email_message(
+            first,
+            section=self._section("root@h"), message_id="root@h",
+            new_frontmatter=self._fm(["Homer"], ["school"]),
+            title="Elternabend", captured_at="2026-06-21",
+            source_uri="mid:root@h", persons=["Homer"], tags=["school"],
+            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+        )
+        assert again is None  # idempotent: marker already present
+
+    def test_marker_helper_matches_section(self):
+        section = self._section("abc@h")
+        assert email_mid_marker("abc@h") in section

@@ -18,3 +18,10 @@ trafilatura>=1.12,<3.0
 # against any /v1/chat/completions provider (oMLX, Ollama, BYO) via
 # base_url. Pulls httpx + pydantic.
 openai>=1.50,<3.0
+# Extract just the latest reply from an email body (drop quoted history +
+# signature) so the mail bot posts only the new message — the Matrix thread
+# already holds the prior ones. See stacklets/core/bot/mail.py.
+email_reply_parser>=0.5
+# Convert HTML-only email bodies to clean Markdown (stack.email_message), so
+# the room and the vault get readable text instead of raw tags.
+html2text>=2024.2

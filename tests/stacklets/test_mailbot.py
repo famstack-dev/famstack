@@ -1,0 +1,543 @@
+"""Unit tests for MailBot — config, rendering, state, and the poll cycle.
+
+No real Matrix and no real IMAP: a fake fetcher feeds ParsedEmail objects and
+`post_source_message` is replaced with a recorder. Exercises the bot's own
+logic — account parsing from env, the twofold mapping, thread tracking, dedup,
+and state persistence.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for _p in (_ROOT / "stacklets" / "core" / "bot-runner", _ROOT / "stacklets" / "core" / "bot"):
+    sys.path.insert(0, str(_p))
+
+from stack.email_message import ParsedEmail  # noqa: E402
+from mail import MailBot  # noqa: E402
+
+
+def _email(*, subject="Hi", from_addr="office@school.example", mid="root@h",
+           date="2026-06-21", body="hello", in_reply_to=None, references=None,
+           uid=None, attachments=None):
+    return ParsedEmail(
+        subject=subject, from_name=None, from_addr=from_addr, message_id=mid,
+        date=date, body=body, references=references or [], in_reply_to=in_reply_to,
+        uid=uid, attachments=attachments or [],
+    )
+
+
+def _bot(tmp_path):
+    return MailBot(
+        homeserver="http://hs", user_id="@mail-bot:hs", password="x",
+        session_dir=str(tmp_path),
+    )
+
+
+class _FakeFetcher:
+    """Mirrors MailFetcher.fetch_new: returns messages not in the seen set.
+
+    Accepts the optional cursor so it matches the real signature; the fake
+    doesn't model UIDs, so the bot's watermark logic is exercised with the
+    real fetcher in the e2e test.
+    """
+
+    def __init__(self, messages):
+        self.messages = messages
+
+    def fetch_new(self, seen, cursor=None):
+        return [m for m in self.messages if m.message_id not in seen]
+
+
+def _stub_send(bot):
+    """Stub `_send` (the full-body threaded reply) and record its calls."""
+    sent: list[dict] = []
+
+    async def rec(room_id, text, reply_to=None, *, metadata=None,
+                  thread_root_event_id=None, line_breaks=False):
+        sent.append({"room": room_id, "text": text,
+                     "thread": thread_root_event_id, "line_breaks": line_breaks})
+
+    bot._send = rec
+    return sent
+
+
+def _record_posts(bot):
+    posts: list[dict] = []
+
+    async def rec(room_id, *, body, source, raw_content, fields,
+                  thread_root_event_id=None):
+        posts.append({
+            "room": room_id, "body": body, "source": source,
+            "raw_content": raw_content, "fields": fields,
+            "root": thread_root_event_id,
+        })
+        return f"$e{len(posts)}"
+
+    bot.post_source_message = rec
+    # The card is posted via post_source_message; the full body via _send.
+    # Stub both so a poll exercises the whole _post path. Sends land on
+    # bot._sent_full for tests that inspect the threaded full body.
+    bot._sent_full = _stub_send(bot)
+    return posts
+
+
+# ── Config ───────────────────────────────────────────────────────────────
+
+class TestConfig:
+
+    def test_loads_account_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"folder":"INBOX","room":"!post:hs"}]')
+        monkeypatch.setenv("MAIL_FAMILY_IMAP_PASSWORD", "secret")
+        bot = _bot(tmp_path)
+        assert len(bot._accounts) == 1
+        account, room = bot._accounts[0]
+        assert room == "!post:hs"
+        assert account.host == "imap.x"
+        assert account.user == "f@x"
+        assert account.password == "secret"
+        assert account.folder == "INBOX"
+
+    def test_password_embedded_in_rendered_json(self, tmp_path, monkeypatch):
+        # The installer embeds the secret-store password in the JSON; no
+        # separate env var needed.
+        monkeypatch.delenv("MAIL_FAMILY_IMAP_PASSWORD", raising=False)
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"imap_password":"rendered-secret","room":"!r:hs"}]')
+        bot = _bot(tmp_path)
+        assert len(bot._accounts) == 1
+        assert bot._accounts[0][0].password == "rendered-secret"
+
+    def test_since_floor_parsed_onto_account(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"imap_password":"p","room":"!r:hs","since":"2026-01-01"}]')
+        bot = _bot(tmp_path)
+        assert bot._accounts[0][0].since == "2026-01-01"
+
+    def test_since_absent_is_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x",'
+            '"imap_password":"p","room":"!r:hs"}]')
+        bot = _bot(tmp_path)
+        assert bot._accounts[0][0].since is None
+
+    def test_account_skipped_without_password(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON",
+            '[{"name":"family","imap_host":"imap.x","imap_user":"f@x","room":"!r:hs"}]')
+        monkeypatch.delenv("MAIL_FAMILY_IMAP_PASSWORD", raising=False)
+        bot = _bot(tmp_path)
+        assert bot._accounts == []  # no secret -> not configured
+
+    def test_no_config_is_idle(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("MAIL_ACCOUNTS_JSON", raising=False)
+        bot = _bot(tmp_path)
+        assert bot._accounts == []
+
+    def test_bad_json_does_not_crash(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIL_ACCOUNTS_JSON", "{not json")
+        bot = _bot(tmp_path)
+        assert bot._accounts == []
+
+
+# ── Rendering ─────────────────────────────────────────────────────────────
+
+class TestRendering:
+
+    def test_card_has_subject_sender_date(self, tmp_path):
+        bot = _bot(tmp_path)
+        card = bot._card(_email(subject="Elternabend", from_addr="o@s",
+                                body="Bitte Formular zurueck."))
+        assert "📧 **Elternabend**" in card
+        assert "**From** o@s" in card
+        assert "**Date** 2026-06-21" in card
+        # The card is compact: the body text lives in the thread, not here.
+        assert "Bitte Formular zurueck." not in card
+
+    def test_card_shows_name_and_address(self, tmp_path):
+        bot = _bot(tmp_path)
+        p = _email(subject="S", body="b")
+        p.from_name = "Springfield School"
+        p.from_addr = "office@school.example"
+        assert "**From** Springfield School (office@school.example)" in bot._card(p)
+
+    def test_card_shows_attachment_count(self, tmp_path):
+        from stack.email_message import Attachment
+        bot = _bot(tmp_path)
+        card = bot._card(_email(subject="S", attachments=[
+            Attachment(filename="a.pdf", content_type="application/pdf", data=b"x")]))
+        assert "📎 1 attachment" in card
+
+    def test_raw_content_is_message_text(self, tmp_path):
+        bot = _bot(tmp_path)
+        assert bot._raw_content(_email(body="the body")) == "the body"
+
+    def test_full_body_is_message_text(self, tmp_path):
+        bot = _bot(tmp_path)
+        assert "the body" in bot._full_body_text(_email(body="the body"))
+
+    def test_full_body_defangs_links(self, tmp_path):
+        bot = _bot(tmp_path)
+        out = bot._full_body_text(_email(
+            body="Login at [your bank](https://evil.example/x)"))
+        assert "your bank (`https://evil.example/x`)" in out
+        assert "](http" not in out  # not a clickable markdown link
+
+    def test_raw_content_drops_quoted_history(self, tmp_path):
+        bot = _bot(tmp_path)
+        body = (
+            "Yes that works, see you Friday.\n\n"
+            "On Fri, Nov 16, 2012 at 1:48 PM, Office <o@s> wrote:\n"
+            "> Please confirm the parents-evening time.\n"
+            "> Thanks\n"
+        )
+        # Only the new reply survives; the quoted ancestor is gone (the
+        # Matrix thread already holds it).
+        assert bot._raw_content(_email(body=body)) == "Yes that works, see you Friday."
+
+    def test_strip_reply_falls_back_when_empty(self, tmp_path):
+        bot = _bot(tmp_path)
+        # A quote-only body that parses to nothing falls back to the original.
+        assert bot._strip_reply("") == ""
+
+    def test_source_fields_carry_email_descriptors(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        acc = MailAccount(host="h", port=993, user="u", password="p",
+                          folder="INBOX", name="family")
+        f = bot._source_fields(_email(from_addr="o@s", mid="root@h",
+                                      subject="S", date="2026-06-21"), acc)
+        assert f == {
+            "from": "o@s", "subject": "S", "message_id": "root@h",
+            "thread_root": "root@h", "captured_at": "2026-06-21",
+            "account": "family", "folder": "INBOX",
+        }
+
+
+# ── State ─────────────────────────────────────────────────────────────────
+
+class TestPollerStart:
+    """The poller starts in register_callbacks (every launch), not in the
+    once-ever on_first_sync welcome hook."""
+
+    @pytest.mark.asyncio
+    async def test_register_callbacks_starts_poller(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p"), "!r:hs")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher([])
+        bot.register_callbacks(None)
+        try:
+            assert bot._poll_task is not None
+        finally:
+            if bot._poll_task:
+                bot._poll_task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_no_accounts_stays_idle(self, tmp_path):
+        bot = _bot(tmp_path)
+        bot._accounts = []
+        bot.register_callbacks(None)
+        assert bot._poll_task is None
+
+    def test_does_not_define_on_first_sync(self):
+        # on_first_sync is the once-ever welcome hook; the poller must not
+        # ride it, so MailBot leaves it to the framework.
+        assert "on_first_sync" not in MailBot.__dict__
+
+
+class TestJoinWelcome:
+
+    @pytest.mark.asyncio
+    async def test_announces_bound_mailbox_and_folder(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        acc = MailAccount(host="h", port=993, user="family@example.org",
+                          password="p", folder="INBOX")
+        bot._accounts = [(acc, "!post:hs")]
+        sent = []
+
+        async def _send(room_id, text, *a, **k):
+            sent.append((room_id, text))
+
+        bot._send = _send
+        await bot.on_room_joined("!post:hs")
+        assert sent[0][0] == "!post:hs"
+        assert "family@example.org" in sent[0][1]
+        assert "INBOX" in sent[0][1]
+
+    @pytest.mark.asyncio
+    async def test_unbound_room_says_so(self, tmp_path):
+        bot = _bot(tmp_path)
+        bot._accounts = []
+        sent = []
+
+        async def _send(room_id, text, *a, **k):
+            sent.append((room_id, text))
+
+        bot._send = _send
+        await bot.on_room_joined("!random:hs")
+        assert "no mailbox" in sent[0][1].lower()
+
+
+class TestState:
+
+    def test_seen_and_threads_round_trip(self, tmp_path):
+        bot = _bot(tmp_path)
+        bot._seen.add("root@h")
+        bot._threads["root@h"] = "$e1"
+        bot._save_state()
+        reborn = _bot(tmp_path)
+        assert reborn._seen == {"root@h"}
+        assert reborn._threads == {"root@h": "$e1"}
+
+    def test_cursors_round_trip(self, tmp_path):
+        from stack.mail_fetcher import FolderCursor
+        bot = _bot(tmp_path)
+        bot._cursors["family"] = FolderCursor(
+            uidvalidity=42, last_uid=17, since="2026-01-01")
+        bot._save_state()
+        reborn = _bot(tmp_path)
+        # `since` must survive the restart so a config widen is detected after
+        # the bot comes back, not silently ignored.
+        assert reborn._cursors["family"] == FolderCursor(
+            uidvalidity=42, last_uid=17, since="2026-01-01")
+
+
+# ── Poll cycle ─────────────────────────────────────────────────────────────
+
+class TestPoll:
+
+    @pytest.mark.asyncio
+    async def test_posts_each_message_and_tracks_thread(self, tmp_path):
+        bot = _bot(tmp_path)
+        from stack.mail_fetcher import MailAccount
+        account = MailAccount(host="h", port=993, user="u", password="p")
+        bot._accounts = [(account, "!room:hs")]
+        root = _email(mid="root@h", date="2026-06-21", body="first")
+        reply = _email(mid="reply@h", date="2026-06-22", body="the reply",
+                       in_reply_to="root@h")
+        bot._fetcher_factory = lambda acc: _FakeFetcher([reply, root])  # unsorted
+        posts = _record_posts(bot)
+
+        await bot._poll_once()
+
+        # Cards post oldest-first; the full bodies go into the thread (_send).
+        assert [s["text"] for s in bot._sent_full] == ["first", "the reply"]
+        # The root card has no parent; the reply card threads under it.
+        assert posts[0]["root"] is None
+        assert posts[1]["root"] == "$e1"
+        # Both full bodies thread under the root card, with line breaks kept.
+        assert all(s["thread"] == "$e1" for s in bot._sent_full)
+        assert all(s["line_breaks"] for s in bot._sent_full)
+        assert bot._threads == {"root@h": "$e1"}
+        assert bot._seen == {"root@h", "reply@h"}
+
+    @pytest.mark.asyncio
+    async def test_second_poll_dedups(self, tmp_path):
+        bot = _bot(tmp_path)
+        from stack.mail_fetcher import MailAccount
+        bot._accounts = [(MailAccount(host="h", port=993, user="u", password="p"),
+                          "!room:hs")]
+        msgs = [_email(mid="root@h"), _email(mid="reply@h", in_reply_to="root@h")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher(msgs)
+        posts = _record_posts(bot)
+
+        await bot._poll_once()
+        assert len(posts) == 2
+        await bot._poll_once()
+        assert len(posts) == 2  # nothing new -> no re-post
+
+    @pytest.mark.asyncio
+    async def test_failed_post_leaves_message_unseen(self, tmp_path):
+        bot = _bot(tmp_path)
+        from stack.mail_fetcher import MailAccount
+        bot._accounts = [(MailAccount(host="h", port=993, user="u", password="p"),
+                          "!room:hs")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher([_email(mid="root@h")])
+
+        async def fail(*a, **k):
+            return None  # post failed
+
+        bot.post_source_message = fail
+        await bot._poll_once()
+        assert bot._seen == set()  # not marked seen -> retried next cycle
+
+
+class TestAttachments:
+    """The mail bot re-posts each attachment as a Matrix file under the
+    email's thread; the archivist's existing file path then files it."""
+
+    @pytest.mark.asyncio
+    async def test_posts_each_attachment_threaded_with_subject_caption(self, tmp_path):
+        from stack.email_message import Attachment
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        atts = [
+            Attachment(filename="slip.pdf", content_type="application/pdf", data=b"x"),
+            Attachment(filename="logo.png", content_type="image/png", data=b"y"),
+        ]
+        msg = _email(mid="root@h", subject="Permission slip", uid=1, attachments=atts)
+        bot._fetcher_factory = lambda acc: _FakeFetcher([msg])
+        _record_posts(bot)  # post_source_message -> "$e1" for the first message
+
+        sent: list[dict] = []
+
+        async def rec_file(room_id, *, data, filename, mimetype, msgtype,
+                           caption=None, thread_root_event_id=None, metadata=None):
+            sent.append({
+                "room": room_id, "filename": filename, "mimetype": mimetype,
+                "msgtype": msgtype, "caption": caption,
+                "thread": thread_root_event_id, "data": data,
+                "metadata": metadata,
+            })
+            return f"$f{len(sent)}"
+
+        bot.send_file = rec_file
+        await bot._poll_once()
+
+        assert [f["filename"] for f in sent] == ["slip.pdf", "logo.png"]
+        assert [f["msgtype"] for f in sent] == ["m.file", "m.image"]
+        assert [f["data"] for f in sent] == [b"x", b"y"]
+        # Subject rides as the caption; both thread under the email's event.
+        assert all(f["caption"] == "Permission slip" for f in sent)
+        assert all(f["thread"] == "$e1" for f in sent)
+        assert all(f["room"] == "!r:hs" for f in sent)
+        # Each carries the bot-attachment marker with email provenance.
+        for f in sent:
+            block = f["metadata"][MailBot.ATTACHMENT_KEY]
+            assert block["source"] == "email"
+            assert block["from"] == "office@school.example"
+            assert block["subject"] == "Permission slip"
+            assert block["message_id"] == "root@h"
+
+    @pytest.mark.asyncio
+    async def test_no_attachments_posts_no_files(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher([_email(mid="root@h")])
+        _record_posts(bot)
+        sent = []
+        bot.send_file = lambda *a, **k: sent.append(1)
+        await bot._poll_once()
+        assert sent == []
+
+    def test_msgtype_mapping(self):
+        from mail import _attachment_msgtype
+        assert _attachment_msgtype("application/pdf") == "m.file"
+        assert _attachment_msgtype("image/jpeg") == "m.image"
+        assert _attachment_msgtype("audio/ogg") == "m.audio"
+        assert _attachment_msgtype("") == "m.file"
+
+
+class TestNoiseFilter:
+    """filter_noise (default on) drops automated/marketing mail before the
+    room; a dropped message is marked seen so it isn't re-evaluated."""
+
+    @pytest.mark.asyncio
+    async def test_drops_noise_when_enabled(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        assert bot._filter_noise is True  # default
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        noise = _email(mid="news@h", uid=1)
+        noise.noise = True
+        ham = _email(mid="real@h", uid=2)
+        bot._fetcher_factory = lambda acc: _FakeFetcher([noise, ham])
+        posts = _record_posts(bot)
+
+        await bot._poll_once()
+
+        # Only the personal mail posts; the noise is skipped but marked seen.
+        assert len(posts) == 1
+        assert posts[0]["fields"]["message_id"] == "real@h"
+        assert bot._seen == {"news@h", "real@h"}
+
+    @pytest.mark.asyncio
+    async def test_keeps_noise_when_disabled(self, tmp_path):
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        bot._filter_noise = False
+        bot._accounts = [(MailAccount(host="h", port=993, user="u",
+                                      password="p", name="a"), "!r:hs")]
+        noise = _email(mid="news@h", uid=1)
+        noise.noise = True
+        bot._fetcher_factory = lambda acc: _FakeFetcher([noise])
+        posts = _record_posts(bot)
+
+        await bot._poll_once()
+        assert len(posts) == 1  # not filtered -> posted
+
+
+class TestWatermark:
+    """The bot rolls the UID watermark back on a post failure so the failed
+    message (and everything after it) is re-fetched next poll. Advancing the
+    watermark to the folder top is the fetcher's job (covered e2e)."""
+
+    @pytest.mark.asyncio
+    async def test_post_failure_rolls_back_and_stops(self, tmp_path):
+        from stack.mail_fetcher import FolderCursor, MailAccount
+        bot = _bot(tmp_path)
+        account = MailAccount(host="h", port=993, user="u", password="p",
+                              name="acc")
+        bot._accounts = [(account, "!room:hs")]
+        msgs = [_email(mid="m5@h", uid=5, body="five"),
+                _email(mid="m6@h", uid=6, body="six"),
+                _email(mid="m7@h", uid=7, body="seven")]
+        bot._fetcher_factory = lambda acc: _FakeFetcher(msgs)
+        _stub_send(bot)  # the full-body threaded reply after a successful card
+        # As if the fetcher had advanced the watermark to the folder's top.
+        bot._cursors["acc"] = FolderCursor(uidvalidity=1, last_uid=7)
+
+        posts: list = []
+
+        async def rec(room_id, **k):
+            posts.append(k)
+            return None if len(posts) == 2 else f"$e{len(posts)}"  # m6 fails
+
+        bot.post_source_message = rec
+        await bot._poll_account(account, "!room:hs")
+
+        # m5 posted, m6 failed -> watermark rolled back below 6, loop stopped
+        # before m7. The seen set holds only the delivered message.
+        assert len(posts) == 2
+        assert bot._cursors["acc"].last_uid == 5
+        assert bot._seen == {"m5@h"}
+
+
+class TestMaskSecret:
+    """`stack core mail` previews a credential to confirm the secret handed
+    over, without printing it. Empty is the tell for a secret-store key
+    mismatch (renders blank, looks like a wrong password)."""
+
+    def test_empty_is_flagged_loudly(self):
+        from mail_cli import _mask_secret
+        assert "EMPTY" in _mask_secret("")
+
+    def test_long_shows_ends_and_length_hides_middle(self):
+        from mail_cli import _mask_secret
+        out = _mask_secret("abcdef123456")  # 12 chars
+        assert out.startswith("ab") and "56" in out and "(12 chars)" in out
+        assert "cdef1234" not in out  # middle is masked
+
+    def test_short_shows_length_only(self):
+        from mail_cli import _mask_secret
+        out = _mask_secret("abc")
+        assert "3 chars" in out and "abc" not in out
+
+    def test_boundary_eight_chars_previews(self):
+        from mail_cli import _mask_secret
+        assert _mask_secret("ab345678").startswith("ab")  # 8 = long enough

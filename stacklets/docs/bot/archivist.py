@@ -61,6 +61,7 @@ from pipeline import (
     PaperlessDuplicateError,
 )
 from stack import resolve_model
+from stack.email_message import defang_links
 from stack.ai.client import (
     LLMError,
     LLMUnavailableError,
@@ -712,18 +713,49 @@ class ArchivistBot(MicroBot):
             )
             return False
 
-    def _count_humans_in_room(self, room) -> int:
-        """Members minus the bot itself.
+    def _human_members(self, room) -> list[str]:
+        """Room members that are humans — every bot account excluded.
 
-        Filtering of other bot accounts (scribe-bot, future deriver-bot)
-        lives in the household-member registry, not here. v1 only knows
-        its own user id, so a topic room with two bots and one human
-        bootstraps as `shared` -- a known degraded case mentioned in
-        the design's open questions.
+        Uses the framework's `-bot` convention (MicroBot.is_bot_user), so a
+        room with mail-bot + archivist-bot + one person counts as one human,
+        not three. This is the basis of scope/visibility: one human → personal,
+        two or more → shared.
         """
-
         users = getattr(room, "users", None) or {}
-        return sum(1 for u in users if u != self.user_id)
+        return [u for u in users if not self.is_bot_user(u)]
+
+    def _count_humans_in_room(self, room) -> int:
+        return len(self._human_members(room))
+
+    def _scope_owner_localpart(self, room, sender_mxid: str, scope) -> str:
+        """Localpart that owns a personal-scope topic bucket.
+
+        For a human paste the sender *is* the sole human, so the sender works.
+        But a bot-posted source (email) has a bot sender — so a personal topic
+        must nest under the room's lone human, not the bot. Resolve that here:
+        the single human member when personal, else the sender (shared scope,
+        or any non-single-human fallback).
+        """
+        if scope == "personal":
+            humans = self._human_members(room)
+            if len(humans) == 1:
+                return humans[0].split(":")[0].lstrip("@").lower()
+        return sender_mxid.split(":")[0].lstrip("@").lower()
+
+    def _scope_bucket(self, room) -> str:
+        """Bucket for bot-posted content from a room with no topic binding.
+
+        The membership rule without a topic slug: a sole human (a DM, a
+        one-person private room) files under that person; two or more humans
+        file under the shared bucket. This is what makes email delivered to a
+        DM land in that person's bucket — a DM is just a room with one human.
+        Human-sent captures keep their own sender-based routing; this is only
+        the fallback for bot-posted content (which has a bot sender).
+        """
+        humans = self._human_members(room)
+        if len(humans) == 1:
+            return humans[0].split(":")[0].lstrip("@").lower()
+        return self.shared_bucket
 
     async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
         """Read existing topic state, or bootstrap if the room name
@@ -764,11 +796,14 @@ class ArchivistBot(MicroBot):
             return None
 
         scope = scope_from_members(self._count_humans_in_room(room))
-        sender_localpart = sender_mxid.split(":")[0].lstrip("@").lower()
+        # Personal scope nests under the room's sole human, not the message
+        # sender — so a bot-posted email in a one-person room lands under that
+        # person, not under @mail-bot.
+        owner_localpart = self._scope_owner_localpart(room, sender_mxid, scope)
         content = make_room_state(
             parsed=parsed, scope=scope,
             bootstrapped_by=sender_mxid,
-            sender_localpart=sender_localpart,
+            sender_localpart=owner_localpart,
             shared_bucket=self.shared_bucket,
             bootstrapped_at=utc_now_isoformat(),
         )
@@ -1400,6 +1435,18 @@ class ArchivistBot(MicroBot):
                 user_hint=caption or None,
             )
         else:
+            # A bot-posted email attachment (dev.famstack.attachment) is filed
+            # on behalf of the source: don't attribute the bot as the person,
+            # and carry email provenance tags. The bucket still comes from the
+            # room's topic binding (e.g. a "Family Email" topic).
+            attach = content.get(self.ATTACHMENT_KEY)
+            bot_attachment = isinstance(attach, dict)
+            extra_seed_topics = None
+            if bot_attachment:
+                extra_seed_topics = ["email"]
+                frm = (attach.get("from") or "").strip()
+                if frm:
+                    extra_seed_topics.append(f"Sender: {frm}")
             await self._handle_binary_capture(
                 room_id=room.room_id,
                 file_data=file_data,
@@ -1410,10 +1457,28 @@ class ArchivistBot(MicroBot):
                 sender_mxid=event.sender,
                 capture_id=event.event_id,
                 reply_to=reply_to,
+                default_person=not bot_attachment,
+                extra_seed_topics=extra_seed_topics,
             )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
         if event.sender == self.user_id:
+            return
+
+        # Inbound source event: a `dev.famstack.source` block means another
+        # bot (the mail bot today) already fetched external content and
+        # posted it here. Fold it through the capture pipeline — one capture
+        # path — then stop; it is not a user query or paste to route.
+        source = event.source.get("content", {}).get(self.SOURCE_KEY)
+        if isinstance(source, dict):
+            await self._handle_source_message(room, event, source)
+            return
+
+        # Plain chatter from another bot (a join welcome, a status line) is
+        # not a user capture or query — only its `dev.famstack.source` events
+        # above are actionable. Ignoring it prevents bot-to-bot capture loops
+        # (e.g. filing the mail bot's welcome as a note).
+        if event.sender.split(":")[0].lstrip("@").endswith("-bot"):
             return
 
         query = event.body.strip()
@@ -1605,6 +1670,95 @@ class ArchivistBot(MicroBot):
                 room.room_id, query[:60],
             )
 
+    # ── Inbound source events (mail bot, future ingest channels) ──────────
+
+    async def _handle_source_message(self, room, event, source: dict) -> None:
+        """Fold a source-bot ingest message (mail bot today) into the vault.
+
+        The mail bot posts a `dev.famstack.source` message carrying the raw
+        original (see MicroBot.post_source_message); the archivist files it
+        through the same CapturePipeline a pasted URL uses — one capture
+        path, no duplicated pipeline. Only `source == "email"` is handled
+        today; other kinds are ignored until their consumer lands.
+
+        Trust boundary (revisited in the email security review): only bot
+        senders may emit source events, so a family member cannot spoof an
+        ingest. The raw email is untrusted *data*, never instructions — the
+        classifier must treat it as content to summarise, not commands to
+        obey.
+        """
+        if source.get("source") != "email":
+            return
+        sender_local = event.sender.split(":")[0].lstrip("@")
+        if not sender_local.endswith("-bot"):
+            logger.warning(
+                "[archivist] ignoring dev.famstack.source from non-bot {}",
+                event.sender,
+            )
+            return
+        if self._capture is None:
+            return
+        raw = source.get("raw_content") or ""
+        if not raw.strip():
+            return
+        # Defang links before the body is stored/rendered so a phishing URL
+        # in the vault entry is plain, non-clickable text. The faithful
+        # version stays on the source event's raw_content (reproducibility).
+        body = defang_links(raw)
+
+        # Provenance tags: which mailbox + folder this arrived in, so the
+        # vault can filter "all work mail" / "everything in Schule". Same
+        # "Prefix: Value" shape the vault already uses for "Person: X".
+        seed_topics: list[str] = []
+        if source.get("from"):
+            seed_topics.append(f"Sender: {source['from']}")
+        if source.get("account"):
+            seed_topics.append(f"Mailbox: {source['account']}")
+        if source.get("folder"):
+            seed_topics.append(f"Folder: {source['folder']}")
+
+        # Scope-aware placement: email inherits the bucket of the room it
+        # lands in, then nests under emails/ (kind="email"). The family room
+        # has no binding -> shared_bucket -> family/emails/; a topic room
+        # ("Family E-Mails", "Hobby") routes to its bucket so a mailbox's mail
+        # is filed by the scope of its room, co-located with that room's
+        # attachments. The topic tag rides along as a seed.
+        binding = await self._topic_binding(room, event.sender)
+        if binding:
+            bucket = binding.bucket
+            if binding.seed_topics:
+                seed_topics.extend(binding.seed_topics)
+        else:
+            # No topic: scope by room membership (a DM/private room → its
+            # human; the shared family room → the shared bucket).
+            bucket = self._scope_bucket(room)
+        outcome = await self._capture.capture_email(
+            subject=source.get("subject"),
+            body=body,
+            message_id=source.get("message_id"),
+            thread_root=source.get("thread_root"),
+            sender_mxid=event.sender,
+            from_addr=source.get("from"),
+            captured_at=source.get("captured_at"),
+            bucket=bucket,
+            seed_topics=seed_topics or None,
+        )
+        logger.info(
+            "[archivist] email folded ({}) -> {}",
+            outcome.status, outcome.vault_path,
+        )
+
+        # Drop the filing envelope onto the timeline (a reply to the email)
+        # so the deriver and reprocess have the ledger event, exactly as a
+        # paste capture does.
+        if outcome.envelope:
+            title = (outcome.classification or {}).get("title") or "Email"
+            await self._send(
+                room.room_id,
+                f"Filed email: {title}",
+                reply_to=event.event_id,
+                metadata={self.FAMSTACK_EVENT_KEY: outcome.envelope},
+            )
 
     # ── Scan mode ────────────────────────────────────────────────────────
 
@@ -1839,6 +1993,8 @@ class ArchivistBot(MicroBot):
         filename: str, source_uri: str, sender_mxid: str,
         capture_id: str | None = None,
         reply_to: str | None = None,
+        default_person: bool = True,
+        extra_seed_topics: list[str] | None = None,
     ) -> None:
         """Capture a PDF or image as a visual bookmark.
 
@@ -1850,16 +2006,33 @@ class ArchivistBot(MicroBot):
         on the entry as a stable correlation key so a deriver (or
         the reply-to-correct path) can find this capture later
         without depending on the title-derived path.
+
+        ``default_person`` is False for bot-posted content (an email
+        attachment): the sender is a bot, not the owner, so don't fall
+        it in as the person. ``extra_seed_topics`` prepend provenance
+        tags (Sender, ``email``) on top of any topic-room seeds.
         """
-        binding = await self._topic_binding(
-            self._room_by_id(room_id), sender_mxid,
-        )
+        room = self._room_by_id(room_id)
+        binding = await self._topic_binding(room, sender_mxid)
+        seed_topics = list(extra_seed_topics or [])
+        if binding:
+            bucket = binding.bucket
+            if binding.seed_topics:
+                seed_topics.extend(binding.seed_topics)
+        elif not default_person:
+            # Bot-posted (email attachment) with no topic: scope by membership
+            # so a DM/private room files under its human, not @mail-bot. Human
+            # uploads keep bucket=None -> the sender-bucket fallback.
+            bucket = self._scope_bucket(room)
+        else:
+            bucket = None
         outcome = await self._capture.capture_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri, sender_mxid=sender_mxid,
             capture_id=capture_id,
-            seed_topics=binding.seed_topics if binding else None,
-            bucket=binding.bucket if binding else None,
+            seed_topics=seed_topics or None,
+            bucket=bucket,
+            default_person=default_person,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

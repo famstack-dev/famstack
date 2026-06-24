@@ -57,6 +57,7 @@ class FakeClassifier:
 class FakeMirror:
     def __init__(self):
         self.captures: list[dict] = []
+        self.emails: list[dict] = []
 
     async def publish_capture(self, **kwargs):
         self.captures.append(kwargs)
@@ -66,6 +67,13 @@ class FakeMirror:
         kind = kwargs.get("kind") or "bookmark"
         entity = "homer"
         return f"{entity}/{kind}s/test-capture.md"
+
+    async def publish_email_message(self, **kwargs):
+        # Email folds into a thread file via its own mirror entrypoint;
+        # the path is keyed by the thread, not the individual message.
+        self.emails.append(kwargs)
+        entity = kwargs.get("entity") or "homer"
+        return f"{entity}/emails/test-thread.md"
 
     async def read_capture(self, path):
         # The simplest re-readable shape for reprocess tests.
@@ -1128,3 +1136,130 @@ class TestTopicSeedEndToEnd:
         assert "camping" in envelope_tags
 
 
+
+
+class TestCaptureBinaryAttribution:
+    """A bot-posted binary (email attachment) is filed on behalf of the
+    source: `default_person=False` keeps the bot out of `persons:`, and the
+    provenance seed tags ride into the mirror."""
+
+    @pytest.mark.asyncio
+    async def test_default_person_false_omits_bot_and_keeps_seed_tags(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Permission slip", "tags": [], "summary": "s",
+            }),
+        )
+        out = await pipe.capture_binary(
+            file_data=b"# Permission slip\n\nPlease sign and return.",
+            mime="text/markdown",
+            filename="slip.md",
+            source_uri="mxc://s/abc",
+            sender_mxid="@mail-bot:s",
+            seed_topics=["email", "Sender: office@school.example"],
+            default_person=False,
+        )
+        assert out.status == "captured"
+        cls = mirror.captures[0]["classification"]
+        assert not cls.get("persons")  # the bot is not filed as a person
+        tags = mirror.captures[0]["tags"]
+        assert "email" in tags
+        assert "Sender: office@school.example" in tags
+
+    @pytest.mark.asyncio
+    async def test_default_person_true_still_attributes_sender(self):
+        # Contrast: a human upload (default) still falls the sender in.
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={
+                "title": "Scan", "tags": [], "summary": "s",
+            }),
+        )
+        await pipe.capture_binary(
+            file_data=b"# Scan\n\nbody",
+            mime="text/markdown", filename="scan.md",
+            source_uri="mxc://s/d", sender_mxid="@homer:s",
+        )
+        assert mirror.captures[0]["classification"].get("persons") == ["Homer"]
+
+
+class TestCaptureEmail:
+    """Email is a capture source that *accumulates*: body → text, subject
+    → title, but every message folds into one thread file keyed by the
+    thread root, not a single-shot entry. So it routes through the mirror's
+    `publish_email_message` (append a section) rather than `publish_capture`
+    (replace). The classify/tag/envelope tail is shared with URLs/notes."""
+
+    @pytest.mark.asyncio
+    async def test_files_email_through_thread_fold_path(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_email(
+            subject="Elternabend am Freitag",
+            body="Bitte das Formular bis Freitag zurücksenden.",
+            message_id="<abc123@school.example>",
+            sender_mxid="@homer:s",
+            from_addr="schule@example.org",
+        )
+        assert out.status == "captured"
+        # Routed to the fold path, not the single-shot capture path.
+        assert mirror.captures == []
+        assert len(mirror.emails) == 1
+        msg = mirror.emails[0]
+        # Thread-starting message is its own thread root.
+        assert msg["thread_uri"] == "mid:abc123@school.example"
+        assert msg["message_id"] == "<abc123@school.example>"
+        assert msg["from_addr"] == "schule@example.org"
+        assert msg["title_hint"] == "Elternabend am Freitag"
+        assert msg["body_text"] == "Bitte das Formular bis Freitag zurücksenden."
+
+    @pytest.mark.asyncio
+    async def test_reply_folds_into_same_thread(self):
+        # Two messages, distinct Message-IDs, same thread root → both land
+        # in the same thread file (same thread_uri) as separate sections.
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        await pipe.capture_email(
+            subject="Elternabend", body="first message",
+            message_id="<root@school.example>", sender_mxid="@homer:s",
+        )
+        await pipe.capture_email(
+            subject="Re: Elternabend", body="the reply",
+            message_id="<reply@school.example>",
+            thread_root="<root@school.example>",
+            sender_mxid="@homer:s",
+        )
+        assert len(mirror.emails) == 2
+        assert mirror.emails[0]["thread_uri"] == "mid:root@school.example"
+        assert mirror.emails[1]["thread_uri"] == "mid:root@school.example"
+        assert mirror.emails[0]["message_id"] != mirror.emails[1]["message_id"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_file_the_bot_as_a_person(self):
+        # When the classifier names no persons, an email must NOT fall the
+        # sender (the mail bot) in as the person — unlike a human paste.
+        mirror = FakeMirror()
+        pipe = _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={"title": "T", "tags": [], "summary": "s"}),
+        )
+        await pipe.capture_email(
+            subject="Statement", body="amount due", message_id="<m@h>",
+            sender_mxid="@mail-bot:s",
+        )
+        cls = mirror.emails[0]["classification"]
+        assert not cls.get("persons")  # no "Mail-bot" person
+
+    @pytest.mark.asyncio
+    async def test_empty_body_is_empty_outcome(self):
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror)
+        out = await pipe.capture_email(
+            subject="x", body="   ", message_id="<i@h>", sender_mxid="@homer:s",
+        )
+        assert out.status == "empty"
+        assert mirror.emails == []
+        assert mirror.captures == []

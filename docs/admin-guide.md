@@ -510,6 +510,53 @@ Auto-generated passwords for service accounts. Created once, reused on every `./
 ./stack config --secrets    # include generated passwords
 ```
 
+### Email (`[mail]`)
+
+> Needs the `core` stacklet running; `docs` + `code` to file what arrives.
+
+famstack can watch IMAP mailboxes and deliver new mail into chat rooms. The mail bot (part of `core`) fetches; the archivist files the message and its attachments. Configure mailboxes in `stack.toml`:
+
+```toml
+[mail]
+poll_interval = 120                # seconds between checks
+filter_noise  = true               # drop newsletters/automated mail (default true)
+
+[[mail.accounts]]
+name      = "family"               # used for the secret key and provenance tags
+imap_host = "imap.example.org"
+imap_port = 993                    # 993 = IMAP over SSL (the default)
+imap_user = "family@example.org"
+ssl       = true                   # default; set false only for a local/test server
+folder    = "INBOX"
+room      = "!roomid:yourserver"   # where this mailbox delivers
+since     = "2026-01-01"           # optional backfill floor (omit = whole folder)
+```
+
+The password never goes in `stack.toml` or chat. Put it in `.stack/secrets.toml`, keyed by the account name uppercased:
+
+```toml
+mail__FAMILY_IMAP_PASSWORD = "<app-password>"
+```
+
+Then `./stack restart core` to apply.
+
+**Check the connection and find folder names:**
+```bash
+./stack core mail                 # all accounts: log in, count INBOX, list folders
+./stack core mail --account work  # just one
+```
+This logs in read-only and prints the server's **real folder names** (Gmail's `[Gmail]/All Mail`, a localized `Gesendet`, nested paths), which often differ from the webmail labels. Use it to confirm the `folder` value points where you expect, and to debug a wrong host/password before pointing the bot at the mailbox.
+
+Key things to know:
+
+- **Invite both bots into the room.** `@mail-bot` delivers, `@archivist-bot` files. Type the handle into Element's invite box; fresh bot accounts don't show up in directory search.
+- **Where mail files = who is in the room.** A room with two or more people files under the shared bucket; a private room or DM (one person) files under that person; a `Topic: ...` room files under the topic. Route work mail and family mail to different rooms to keep them separate.
+- **App passwords.** Gmail, iCloud and most providers need an app-specific password with IMAP enabled, not your login password.
+- **Backfill with `since`.** It is a floor by the date the server received a message. Start narrow (last week) to check it works, then widen (the whole year); widening re-scans and already-filed mail is skipped. Omit `since` to pull the entire folder on first run.
+- **Noise filtering.** `filter_noise` (default on) drops automated and marketing mail before it reaches the room: newsletters and mailing lists (a `List-Unsubscribe` or `List-Id` header), `Precedence: bulk`, auto-replies (`Auto-Submitted`), and machine senders (`noreply@`, `mailer-daemon@`, `bounce@`). Detection is header-only, never body text, so personal mail that merely mentions "unsubscribe" is not dropped. Set `filter_noise = false` to ingest everything.
+- **Read-only.** The fetcher never marks mail read or deletes it. It remembers what it has handled by Message-ID and IMAP UID, so restarts don't re-file.
+- **Links are defanged.** URLs in mail are filed as non-clickable plain text, so a phishing link can't be tapped by reflex.
+
 ---
 
 ## Day-to-day operations
@@ -750,6 +797,22 @@ Shows free space. If the photo library filled the disk, move `data_dir` to an ex
 ```
 
 Removes everything. Only use this if you really mean it.
+
+### Email: can't connect, or mail isn't filed
+
+Run the diagnostic first. It logs in and lists the real folders:
+
+```bash
+./stack core mail
+```
+
+- **"connection failed" / "authentication failed".** Use an **app password** (not your login password) with IMAP enabled at the provider, and check `imap_host`/`imap_port` (993 for SSL). The `credential:` line reads `(EMPTY …)` when the secret-store key doesn't match the account name; it must be `mail__<NAME>_IMAP_PASSWORD` (account name uppercased) in `.stack/secrets.toml`.
+- **Mail shows in the room but never gets filed.** The **archivist must be a member of that room**. Invite `@archivist-bot` by typing the handle into Element's invite box (bot accounts don't show in directory search).
+- **Edited `stack.toml` but nothing changed.** `stack core mail` and the bot read the *rendered* config, which only refreshes on `./stack restart core`. Restart after any `[mail]` change.
+- **Wrong or empty folder.** IMAP folder names differ from the webmail labels (Gmail's `[Gmail]/All Mail`, a localized `Gesendet`). `stack core mail` lists the exact names to copy into `folder`.
+- **A whole inbox of old mail flooded in.** Set a `since` date floor and start narrow (last week), then widen it. With `since` unset, the first poll takes the whole folder.
+- **Wanted mail is missing.** `filter_noise` (default on) drops newsletters and automated mail; set `filter_noise = false` to keep everything.
+- **Threads render oddly on mobile.** Element X needs **beta features** enabled (Settings, then Labs) for threads.
 
 ### Something else
 

@@ -78,64 +78,81 @@ def discover_bots():
     bots = []
 
     for stacklet_id in sorted(enabled):
-        bot_toml = STACKLETS_DIR / stacklet_id / "bot" / "bot.toml"
-        if not bot_toml.exists():
-            continue
-
-        logger.info("Found bot declaration: {}", bot_toml)
-
-        try:
-            with open(bot_toml, "rb") as f:
-                decl = tomllib.load(f)
-        except Exception as e:
-            logger.warning("Failed to parse {}: {}", bot_toml, e)
-            continue
-
-        bot_id = decl.get("id", "")
-        if not bot_id:
-            logger.warning("Bot in {} has no 'id' field, skipping", bot_toml)
-            continue
-
-        if not MATRIX_SERVER_NAME:
-            logger.error("MATRIX_SERVER_NAME not set — run 'stack up messages' first")
-            continue
-
-        # Password resolution: {stacklet}__{BOT_ID}_PASSWORD
-        secret_key = f"{stacklet_id}__{bot_id.upper().replace('-', '_')}_PASSWORD"
-        password = secrets.get(secret_key, "")
-
-        if not password:
-            logger.warning("Bot {} has no password (expected {} in secrets.toml), skipping", bot_id, secret_key)
-            continue
-
-        # Session dir: per-stacklet under data
-        session_dir = DATA_DIR / stacklet_id / "bot"
-        session_dir.mkdir(parents=True, exist_ok=True)
-        logger.debug("Bot {} session dir: {}", bot_id, session_dir)
-
-        # Module resolution: strip -bot suffix for the Python file
-        module_stem = bot_id.removesuffix("-bot") if bot_id.endswith("-bot") else bot_id
-        class_name = module_stem.capitalize() + "Bot"
         bot_dir = STACKLETS_DIR / stacklet_id / "bot"
-        logger.info("Bot {} -> {}/{}.py -> class {}", bot_id, bot_dir, module_stem, class_name)
+        for bot_toml in _bot_toml_files(bot_dir):
+            logger.info("Found bot declaration: {}", bot_toml)
 
-        bots.append({
-            "bot_id": bot_id,
-            "stacklet_id": stacklet_id,
-            "bot_dir": str(bot_dir),
-            "module_stem": module_stem,
-            "class_name": class_name,
-            "homeserver": MATRIX_HOMESERVER,
-            "user_id": f"@{bot_id}:{MATRIX_SERVER_NAME}",
-            "password": password,
-            "session_dir": str(session_dir),
-            "display_name": decl.get("name", bot_id),
-            "room": decl.get("room"),
-            "room_topic": decl.get("room_topic"),
-            "settings": decl.get("settings", {}),
-        })
+            try:
+                with open(bot_toml, "rb") as f:
+                    decl = tomllib.load(f)
+            except Exception as e:
+                logger.warning("Failed to parse {}: {}", bot_toml, e)
+                continue
+
+            bot_id = decl.get("id", "")
+            if not bot_id:
+                logger.warning("Bot in {} has no 'id' field, skipping", bot_toml)
+                continue
+
+            if not MATRIX_SERVER_NAME:
+                logger.error("MATRIX_SERVER_NAME not set — run 'stack up messages' first")
+                continue
+
+            # Password resolution: {stacklet}__{BOT_ID}_PASSWORD
+            secret_key = f"{stacklet_id}__{bot_id.upper().replace('-', '_')}_PASSWORD"
+            password = secrets.get(secret_key, "")
+
+            if not password:
+                logger.warning("Bot {} has no password (expected {} in secrets.toml), skipping", bot_id, secret_key)
+                continue
+
+            # Session dir: per-stacklet under data. Multiple bots in one
+            # stacklet share it safely — MicroBot namespaces its files by
+            # bot name (stacker-bot.session.json vs mail-bot.session.json).
+            session_dir = DATA_DIR / stacklet_id / "bot"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug("Bot {} session dir: {}", bot_id, session_dir)
+
+            # Module resolution: strip -bot suffix for the Python file
+            module_stem = bot_id.removesuffix("-bot") if bot_id.endswith("-bot") else bot_id
+            class_name = module_stem.capitalize() + "Bot"
+            logger.info("Bot {} -> {}/{}.py -> class {}", bot_id, bot_dir, module_stem, class_name)
+
+            bots.append({
+                "bot_id": bot_id,
+                "stacklet_id": stacklet_id,
+                "bot_dir": str(bot_dir),
+                "module_stem": module_stem,
+                "class_name": class_name,
+                "homeserver": MATRIX_HOMESERVER,
+                "user_id": f"@{bot_id}:{MATRIX_SERVER_NAME}",
+                "password": password,
+                "session_dir": str(session_dir),
+                "display_name": decl.get("name", bot_id),
+                "room": decl.get("room"),
+                "room_topic": decl.get("room_topic"),
+                "settings": decl.get("settings", {}),
+            })
 
     return bots
+
+
+def _bot_toml_files(bot_dir):
+    """Every bot declaration in a stacklet's bot/ dir.
+
+    The primary `bot.toml` plus any `<name>.bot.toml` siblings, so one
+    stacklet can ship several bots — core hosts both stacker-bot
+    (`bot.toml`) and mail-bot (`mail.bot.toml`). Email is a core ingestion
+    capability, not its own stacklet, so it rides here.
+    """
+    if not bot_dir.is_dir():
+        return []
+    files = []
+    primary = bot_dir / "bot.toml"
+    if primary.exists():
+        files.append(primary)
+    files.extend(sorted(bot_dir.glob("*.bot.toml")))
+    return files
 
 
 async def wait_for_matrix(timeout=None):
@@ -276,6 +293,9 @@ async def main():
             session_dir=cfg["session_dir"],
             **cfg["settings"],
         )
+        # bot.toml's display name is authoritative; the bot applies it to its
+        # Matrix profile on launch so renames reach existing accounts too.
+        bot.display_name = cfg["display_name"]
         bot_instances.append(bot)
         tasks.append(asyncio.create_task(bot.start()))
         logger.info("Launching {} as {}", bot.name, cfg["user_id"])

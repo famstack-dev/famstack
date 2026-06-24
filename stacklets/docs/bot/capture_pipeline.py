@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from loguru import logger
 
 from document_pipeline import utc_now_isoformat
-from extractors import SourceContent
+from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from notifier import Notifier
 from pdf_analysis import (
@@ -219,6 +219,49 @@ class CapturePipeline:
             bucket=bucket,
         )
 
+    async def capture_email(
+        self, *,
+        subject: str | None,
+        body: str,
+        message_id: str | None,
+        sender_mxid: str,
+        thread_root: str | None = None,
+        from_addr: str | None = None,
+        captured_at: str | None = None,
+        bucket: str | None = None,
+        capture_id: str | None = None,
+        seed_topics: list[str] | None = None,
+    ) -> CaptureOutcome:
+        """Fold a fetched email into its thread file.
+
+        Reuses the capture pipeline's classify/tag/envelope tail wholesale:
+        the body is the source the classifier reads, the subject the title,
+        the *thread root* the file identity (an RFC 2392 ``mid:`` URI). The
+        write differs from a URL/note capture — email accumulates, so each
+        message folds into one thread file (see `publish_email_message`)
+        rather than replacing a single-shot entry. `from_addr` is surfaced
+        to the classifier as a hint so it can resolve the correspondent,
+        and stamps the message's section heading. Routing — which bucket,
+        which room — is the caller's job; here we just fold. The `mail`
+        container did the fetch; this is the in-pipeline handoff.
+        """
+        source = email_to_source(
+            subject=subject, body=body, thread_root=thread_root or message_id,
+        )
+        if not source.text.strip():
+            return CaptureOutcome(status="empty")
+        user_hint = f"This is an email from {from_addr}." if from_addr else None
+        return await self._publish(
+            source=source, kind="email", sender_mxid=sender_mxid,
+            display_link=source.source_uri or "(email)",
+            user_hint=user_hint, actor=sender_mxid, captured_at=captured_at,
+            capture_id=capture_id, bucket=bucket, seed_topics=seed_topics,
+            email_meta={"message_id": message_id, "from_addr": from_addr},
+            # The "sender" of an email is the mail bot, not a household
+            # member — don't fall it in as the person.
+            default_person=False,
+        )
+
     async def capture_voice_batch(
         self, *,
         transcripts: list[str],
@@ -272,6 +315,7 @@ class CapturePipeline:
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
+        default_person: bool = True,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -307,7 +351,7 @@ class CapturePipeline:
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket,
+            bucket=bucket, default_person=default_person,
         )
 
     def _cap_pdf_body(self, source: SourceContent) -> SourceContent:
@@ -600,6 +644,8 @@ class CapturePipeline:
         initial_classification: dict | None = None,
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
+        email_meta: dict | None = None,
+        default_person: bool = True,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -625,6 +671,7 @@ class CapturePipeline:
         classification = await self._classify(
             source, sender_name, images=images, user_hint=user_hint,
             initial_classification=initial_classification,
+            default_person=default_person,
         )
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
@@ -641,24 +688,44 @@ class CapturePipeline:
         tags = self._tag_list(classification)
         captured_at = captured_at or _dt.date.today().isoformat()
 
-        # Bookmarks default to marker mode (body dropped, summary IS the
-        # content); notes always keep the body.
-        keep_body = kind == "note" or self.capture_keep_body
-        body_for_mirror = source.text if keep_body else ""
-
-        vault_path = await self._mirror.publish_capture(
-            entity=entity_slug,
-            kind=kind,
-            source_uri=source.source_uri,
-            title_hint=source.title_hint,
-            body_text=body_for_mirror,
-            classification=classification,
-            captured_at=captured_at,
-            model=model,
-            tags=tags,
-            existing_path=existing_path,
-            capture_id=capture_id,
-        )
+        # Email folds into a thread file (append a dated section) instead
+        # of replacing a single-shot entry; `email_meta` carries the
+        # per-message identity (Message-ID, sender) the fold needs.
+        # Everything else above — classify, tags, the envelope below — is
+        # shared with URL/note captures. Body is always kept: the
+        # conversation IS the content.
+        if kind == "email" and email_meta is not None:
+            vault_path = await self._mirror.publish_email_message(
+                entity=entity_slug,
+                thread_uri=source.source_uri,
+                message_id=email_meta.get("message_id"),
+                from_addr=email_meta.get("from_addr"),
+                title_hint=source.title_hint,
+                body_text=source.text,
+                classification=classification,
+                captured_at=captured_at,
+                model=model,
+                tags=tags,
+                capture_id=capture_id,
+            )
+        else:
+            # Bookmarks default to marker mode (body dropped, summary IS
+            # the content); notes always keep the body.
+            keep_body = kind == "note" or self.capture_keep_body
+            body_for_mirror = source.text if keep_body else ""
+            vault_path = await self._mirror.publish_capture(
+                entity=entity_slug,
+                kind=kind,
+                source_uri=source.source_uri,
+                title_hint=source.title_hint,
+                body_text=body_for_mirror,
+                classification=classification,
+                captured_at=captured_at,
+                model=model,
+                tags=tags,
+                existing_path=existing_path,
+                capture_id=capture_id,
+            )
 
         # Feed topic tags (not the derived Person: X) back into the
         # vocabulary cache so the next capture's prompt sees them.
@@ -712,10 +779,17 @@ class CapturePipeline:
         *, images: list[ImageAttachment] | None = None,
         user_hint: str | None = None,
         initial_classification: dict | None = None,
+        default_person: bool = True,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
-        failure — the capture is still useful without a digest."""
+        failure — the capture is still useful without a digest.
+
+        ``default_person`` falls the sender in as the person when the
+        classifier names none — right for a human paste (Homer saved this),
+        wrong for email (the "sender" is the mail bot, not a household
+        member). Email passes False so an email with no named family member
+        gets empty persons rather than the bot."""
         if self._classifier is None:
             # Bot was brought up without AI configured; fall through to the
             # minimal classification below so the capture still files.
@@ -745,10 +819,10 @@ class CapturePipeline:
         if not classification:
             return {
                 "title": source.title_hint or "Capture",
-                "persons": [sender_name],
+                "persons": [sender_name] if default_person else [],
                 "tags": [],
             }
-        if not classification.get("persons"):
+        if default_person and not classification.get("persons"):
             classification["persons"] = [sender_name]
         return classification
 

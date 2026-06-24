@@ -334,6 +334,15 @@ wheels = [
 ]
 
 [[package]]
+name = "email-reply-parser"
+version = "0.5.12"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/f9/3fbd22530467a831a0506267477c5005d24661d07abf776678ab42d51b35/email_reply_parser-0.5.12.tar.gz", hash = "sha256:9dbf3eca69990932234f09e7f50aa73756574fc1f88e88c324fec1a741ee6a74", size = 4694, upload-time = "2020-10-07T17:26:34.734Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/8d/11696d31eafc68ceea8108f635d30aefc6df9cb27640949f45aec963d637/email_reply_parser-0.5.12-py3-none-any.whl", hash = "sha256:3499c02284679e020acf8aa30ef9e43c62f9ab5ccee0a35bfac85a0c1fa685fd", size = 4139, upload-time = "2020-10-07T17:26:46.835Z" },
+]
+
+[[package]]
 name = "famstack"
 version = "0.3.0b1"
 source = { virtual = "." }
@@ -346,6 +355,8 @@ demo = [
 ]
 test = [
     { name = "aiohttp" },
+    { name = "email-reply-parser" },
+    { name = "html2text" },
     { name = "loguru" },
     { name = "markdown" },
     { name = "matrix-nio" },
@@ -364,6 +375,8 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'test'", specifier = ">=3.8" },
+    { name = "email-reply-parser", marker = "extra == 'test'", specifier = ">=0.5" },
+    { name = "html2text", marker = "extra == 'test'", specifier = ">=2024.2" },
     { name = "loguru", marker = "extra == 'test'" },
     { name = "markdown", marker = "extra == 'test'" },
     { name = "matrix-nio", marker = "extra == 'test'", specifier = ">=0.25" },
@@ -517,6 +530,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/2c/48/71de9ed269fdae9c8057e5a4c0aa7402e8bb16f2c6e90b3aa53327b113f8/hpack-4.1.0.tar.gz", hash = "sha256:ec5eca154f7056aa06f196a557655c5b009b382873ac8d1e66e79e87535f1dca", size = 51276, upload-time = "2025-01-22T21:44:58.347Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/c6/80c95b1b2b94682a72cbdbfb85b81ae2daffa4291fbfa1b1464502ede10d/hpack-4.1.0-py3-none-any.whl", hash = "sha256:157ac792668d995c657d93111f46b4535ed114f0c9c8d672271bbec7eae1b496", size = 34357, upload-time = "2025-01-22T21:44:56.92Z" },
+]
+
+[[package]]
+name = "html2text"
+version = "2025.4.15"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/27/e158d86ba1e82967cc2f790b0cb02030d4a8bef58e0c79a8590e9678107f/html2text-2025.4.15.tar.gz", hash = "sha256:948a645f8f0bc3abe7fd587019a2197a12436cd73d0d4908af95bfc8da337588", size = 64316, upload-time = "2025-04-15T04:02:30.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/84/1a0f9555fd5f2b1c924ff932d99b40a0f8a6b12f6dd625e2a47f415b00ea/html2text-2025.4.15-py3-none-any.whl", hash = "sha256:00569167ffdab3d7767a4cdf589b7f57e777a5ed28d12907d8c58769ec734acc", size = 34656, upload-time = "2025-04-15T04:02:28.44Z" },
 ]
 
 [[package]]

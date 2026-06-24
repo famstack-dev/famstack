@@ -47,6 +47,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **Your family wiki**: an Obsidian-compatible second brain, generated from the documents, notes, and voice memos you file (memory).
 - **Local AI engine** on Apple Metal GPU: voice transcription, text-to-speech, document classification (oMLX + Whisper + Piper).
 - **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
+- **Email into the family brain**: point a mailbox at a chat room and new mail (with its attachments) lands there for the archivist to file, newsletters and marketing filtered out (IMAP, read-only, private).
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
 
 <table align="center">
