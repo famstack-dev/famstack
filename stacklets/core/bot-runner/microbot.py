@@ -510,15 +510,18 @@ class MicroBot:
 
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,
-        *, metadata: dict | None = None,
+        *, metadata: dict | None = None, thread_root_event_id: str | None = None,
+        line_breaks: bool = False,
     ) -> None:
         """Send a formatted ``m.room.message``: markdown body + HTML.
 
         The single formatted-reply path for every bot. ``text`` is sent
         verbatim as the plaintext ``body`` and rendered to
         ``formatted_body`` for rich clients (tables + fenced code
-        enabled). ``reply_to`` threads the message under a prior event;
-        ``metadata`` merges extra top-level keys into the content dict.
+        enabled). ``reply_to`` quotes a prior event; ``thread_root_event_id``
+        posts it as an ``m.thread`` reply under that root (e.g. an email's
+        full body under its card); ``metadata`` merges extra top-level keys
+        into the content dict.
 
         Matrix content is a JSON object, so custom keys (e.g.
         ``dev.famstack.event``) are invisible to clients but readable by
@@ -530,15 +533,27 @@ class MicroBot:
         after every send: Matrix clients clear the indicator when they
         see a new bot message, so a long handler that posts an
         intermediate status would otherwise run silently afterwards.
+
+        ``line_breaks`` adds the ``nl2br`` markdown extension so every newline
+        becomes a ``<br>`` — chat behaviour (Slack/WhatsApp), needed for a
+        pasted email body where single newlines would otherwise collapse.
         """
-        html = markdown.markdown(text, extensions=["tables", "fenced_code"])
+        exts = ["tables", "fenced_code"] + (["nl2br"] if line_breaks else [])
+        html = markdown.markdown(text, extensions=exts)
         content: dict = {
             "msgtype": "m.text",
             "body": text,
             "format": "org.matrix.custom.html",
             "formatted_body": html,
         }
-        if reply_to:
+        if thread_root_event_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": reply_to or thread_root_event_id},
+            }
+        elif reply_to:
             content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
         if metadata:
             content.update(metadata)

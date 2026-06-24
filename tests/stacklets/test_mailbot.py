@@ -53,6 +53,19 @@ class _FakeFetcher:
         return [m for m in self.messages if m.message_id not in seen]
 
 
+def _stub_send(bot):
+    """Stub `_send` (the full-body threaded reply) and record its calls."""
+    sent: list[dict] = []
+
+    async def rec(room_id, text, reply_to=None, *, metadata=None,
+                  thread_root_event_id=None, line_breaks=False):
+        sent.append({"room": room_id, "text": text,
+                     "thread": thread_root_event_id, "line_breaks": line_breaks})
+
+    bot._send = rec
+    return sent
+
+
 def _record_posts(bot):
     posts: list[dict] = []
 
@@ -66,6 +79,10 @@ def _record_posts(bot):
         return f"$e{len(posts)}"
 
     bot.post_source_message = rec
+    # The card is posted via post_source_message; the full body via _send.
+    # Stub both so a poll exercises the whole _post path. Sends land on
+    # bot._sent_full for tests that inspect the threaded full body.
+    bot._sent_full = _stub_send(bot)
     return posts
 
 
@@ -134,37 +151,44 @@ class TestConfig:
 
 class TestRendering:
 
-    def test_human_body_has_subject_sender_and_text(self, tmp_path):
+    def test_card_has_subject_sender_date(self, tmp_path):
         bot = _bot(tmp_path)
-        body = bot._human_body(_email(subject="Elternabend", from_addr="o@s",
-                                      body="Bitte Formular zurueck."))
-        assert "📧 **Elternabend**" in body
-        assert "**From** o@s" in body
-        assert "**Date** 2026-06-21" in body
-        assert "Bitte Formular zurueck." in body
-        # Blank line between header and body so markdown renders a real break.
-        assert "\n\n" in body
+        card = bot._card(_email(subject="Elternabend", from_addr="o@s",
+                                body="Bitte Formular zurueck."))
+        assert "📧 **Elternabend**" in card
+        assert "**From** o@s" in card
+        assert "**Date** 2026-06-21" in card
+        # The card is compact: the body text lives in the thread, not here.
+        assert "Bitte Formular zurueck." not in card
 
-    def test_human_body_shows_name_and_address(self, tmp_path):
+    def test_card_shows_name_and_address(self, tmp_path):
         bot = _bot(tmp_path)
         p = _email(subject="S", body="b")
         p.from_name = "Springfield School"
         p.from_addr = "office@school.example"
-        body = bot._human_body(p)
-        assert "**From** Springfield School (office@school.example)" in body
+        assert "**From** Springfield School (office@school.example)" in bot._card(p)
+
+    def test_card_shows_attachment_count(self, tmp_path):
+        from stack.email_message import Attachment
+        bot = _bot(tmp_path)
+        card = bot._card(_email(subject="S", attachments=[
+            Attachment(filename="a.pdf", content_type="application/pdf", data=b"x")]))
+        assert "📎 1 attachment" in card
 
     def test_raw_content_is_message_text(self, tmp_path):
         bot = _bot(tmp_path)
         assert bot._raw_content(_email(body="the body")) == "the body"
 
-    def test_human_body_defangs_links(self, tmp_path):
+    def test_full_body_is_message_text(self, tmp_path):
         bot = _bot(tmp_path)
-        body = bot._human_body(_email(
-            subject="S",
-            body="Login at [your bank](https://evil.example/x)",
-        ))
-        assert "your bank (`https://evil.example/x`)" in body
-        assert "](http" not in body  # not a clickable markdown link
+        assert "the body" in bot._full_body_text(_email(body="the body"))
+
+    def test_full_body_defangs_links(self, tmp_path):
+        bot = _bot(tmp_path)
+        out = bot._full_body_text(_email(
+            body="Login at [your bank](https://evil.example/x)"))
+        assert "your bank (`https://evil.example/x`)" in out
+        assert "](http" not in out  # not a clickable markdown link
 
     def test_raw_content_drops_quoted_history(self, tmp_path):
         bot = _bot(tmp_path)
@@ -306,12 +330,14 @@ class TestPoll:
 
         await bot._poll_once()
 
-        # Oldest-first: the root posts before its reply (fragment is the
-        # last body line, after the subject/sender header + blank line).
-        assert [p["body"].splitlines()[-1] for p in posts] == ["first", "the reply"]
-        # First message of the thread has no parent; reply threads under it.
+        # Cards post oldest-first; the full bodies go into the thread (_send).
+        assert [s["text"] for s in bot._sent_full] == ["first", "the reply"]
+        # The root card has no parent; the reply card threads under it.
         assert posts[0]["root"] is None
         assert posts[1]["root"] == "$e1"
+        # Both full bodies thread under the root card, with line breaks kept.
+        assert all(s["thread"] == "$e1" for s in bot._sent_full)
+        assert all(s["line_breaks"] for s in bot._sent_full)
         assert bot._threads == {"root@h": "$e1"}
         assert bot._seen == {"root@h", "reply@h"}
 
@@ -432,6 +458,7 @@ class TestWatermark:
                 _email(mid="m6@h", uid=6, body="six"),
                 _email(mid="m7@h", uid=7, body="seven")]
         bot._fetcher_factory = lambda acc: _FakeFetcher(msgs)
+        _stub_send(bot)  # the full-body threaded reply after a successful card
         # As if the fetcher had advanced the watermark to the folder's top.
         bot._cursors["acc"] = FolderCursor(uidvalidity=1, last_uid=7)
 

@@ -204,9 +204,11 @@ class MailBot(MicroBot):
         duplicating the vault section.
         """
         root = self._threads.get(parsed.thread_root) if parsed.thread_root else None
+        # The timeline entry is a compact card; it carries the verbatim
+        # raw_content for the archivist, so the visible card stays scannable.
         event_id = await self.post_source_message(
             room_id,
-            body=self._human_body(parsed),
+            body=self._card(parsed),
             source="email",
             raw_content=self._raw_content(parsed),
             fields=self._source_fields(parsed, account),
@@ -218,7 +220,16 @@ class MailBot(MicroBot):
             self._threads[parsed.thread_root] = event_id
         if parsed.message_id:
             self._seen.add(parsed.message_id)
-        await self._post_attachments(parsed, room_id, root or event_id)
+        thread_parent = root or event_id
+        # Full body as the first item in the thread (the human read-full view).
+        # Plain message, no source block — the archivist ignores it and files
+        # from the card's raw_content. line_breaks so the email's own newlines
+        # survive markdown.
+        body = self._full_body_text(parsed)
+        if body:
+            await self._send(room_id, body, thread_root_event_id=thread_parent,
+                             line_breaks=True)
+        await self._post_attachments(parsed, room_id, thread_parent)
         return True
 
     async def _post_attachments(self, parsed, room_id: str, thread_parent: str) -> None:
@@ -259,13 +270,13 @@ class MailBot(MicroBot):
 
     # ── Rendering ────────────────────────────────────────────────────────
 
-    def _human_body(self, p) -> str:
-        """The human-facing view: an email-styled header, then the message.
+    def _card(self, p) -> str:
+        """The timeline card: subject, sender, date, attachment count.
 
-        Subject on its own line (with an envelope marker so it reads as
-        mail), a blockquote carrying sender + date, then the body. Blank
-        lines force real paragraph breaks — single newlines collapse in
-        Matrix's markdown, which is what made the first cut look cramped.
+        The scannable inbox-row view. The full body rides as a threaded reply
+        (see `_post`) so the timeline stays clean; the archivist files from the
+        card's machine `raw_content`, not this visible text, so trimming it to
+        a card is free.
         """
         subject = p.subject or "(no subject)"
         sender = p.from_name or p.from_addr or "unknown sender"
@@ -274,13 +285,19 @@ class MailBot(MicroBot):
         meta = [f"**From** {sender}"]
         if p.date:
             meta.append(f"**Date** {p.date}")
-        parts = [f"📧 **{subject}**", "", "> " + " · ".join(meta)]
-        fragment = self._raw_content(p).strip()
-        if fragment:
-            # Defang links so a phishing URL shows as plain, non-clickable
-            # text revealing where it really points.
-            parts += ["", defang_links(fragment)]
-        return "\n".join(parts)
+        if p.attachments:
+            n = len(p.attachments)
+            meta.append(f"📎 {n} attachment" + ("s" if n != 1 else ""))
+        return f"📧 **{subject}**\n\n> " + " · ".join(meta)
+
+    def _full_body_text(self, p) -> str:
+        """The full email body for the threaded reply.
+
+        Links defanged (a phishing URL shows as plain, non-clickable text);
+        `_post` sends it with `line_breaks` so the email's own newlines survive
+        markdown. The verbatim `raw_content` on the card stays untouched.
+        """
+        return defang_links(self._raw_content(p).strip())
 
     def _raw_content(self, p) -> str:
         """The reproducibility anchor: this message's own text.
