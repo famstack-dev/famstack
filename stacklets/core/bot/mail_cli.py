@@ -25,6 +25,23 @@ sys.path.insert(0, "/app")  # stack.mail_fetcher
 from stack.mail_fetcher import MailFetcher, account_from_entry  # noqa: E402
 
 
+def _mask_secret(secret: str) -> str:
+    """A safe preview of a credential, to confirm the secret handed over.
+
+    Empty is called out loudly — that is the tell that the secret-store key
+    didn't match the account name (the rendered password is blank, which then
+    looks like a wrong password). Otherwise show first/last 2 chars + length,
+    enough to eyeball against the password manager without printing it. Short
+    secrets show length only, so a weak one isn't half-revealed.
+    """
+    if not secret:
+        return "(EMPTY — secret did not hand over; check the .stack/secrets.toml key)"
+    n = len(secret)
+    if n < 8:
+        return f"(set, {n} chars — too short to preview safely)"
+    return f"{secret[:2]}***{secret[-2:]}  ({n} chars)"
+
+
 def _configured_accounts() -> list:
     """Accounts parsed from MAIL_ACCOUNTS_JSON (the rendered env)."""
     raw = os.environ.get("MAIL_ACCOUNTS_JSON", "").strip()
@@ -71,6 +88,7 @@ def main(argv: list[str]) -> int:
     for a in accounts:
         security = "SSL" if a.ssl else "plaintext"
         print(f"\n● {a.name}: {a.user} @ {a.host}:{a.port} ({security})")
+        print(f"  credential: {_mask_secret(a.password)}")
         try:
             info = MailFetcher(a).probe()
         except Exception as e:  # noqa: BLE001 — surface any IMAP/socket error

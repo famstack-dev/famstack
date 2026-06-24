@@ -449,3 +449,28 @@ class TestWatermark:
         assert len(posts) == 2
         assert bot._cursors["acc"].last_uid == 5
         assert bot._seen == {"m5@h"}
+
+
+class TestMaskSecret:
+    """`stack core mail` previews a credential to confirm the secret handed
+    over, without printing it. Empty is the tell for a secret-store key
+    mismatch (renders blank, looks like a wrong password)."""
+
+    def test_empty_is_flagged_loudly(self):
+        from mail_cli import _mask_secret
+        assert "EMPTY" in _mask_secret("")
+
+    def test_long_shows_ends_and_length_hides_middle(self):
+        from mail_cli import _mask_secret
+        out = _mask_secret("abcdef123456")  # 12 chars
+        assert out.startswith("ab") and "56" in out and "(12 chars)" in out
+        assert "cdef1234" not in out  # middle is masked
+
+    def test_short_shows_length_only(self):
+        from mail_cli import _mask_secret
+        out = _mask_secret("abc")
+        assert "3 chars" in out and "abc" not in out
+
+    def test_boundary_eight_chars_previews(self):
+        from mail_cli import _mask_secret
+        assert _mask_secret("ab345678").startswith("ab")  # 8 = long enough
