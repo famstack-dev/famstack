@@ -18,6 +18,7 @@ are never mutated.
 from __future__ import annotations
 
 import imaplib
+import os
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -111,6 +112,39 @@ class MailAccount:
     # to messages the server received on/after this date — so a fresh account
     # can ingest existing mail from a chosen point instead of the whole folder.
     since: str | None = None
+
+
+def account_from_entry(entry: dict) -> "MailAccount | None":
+    """Build a ``MailAccount`` from one rendered ``MAIL_ACCOUNTS_JSON`` entry.
+
+    The single parser shared by the mail bot and the ``stack core mail``
+    diagnostic, so connection details are read one way. The password rides in
+    the entry (``imap_password``, rendered from the secret store) or falls back
+    to ``MAIL_<NAME>_IMAP_PASSWORD`` in the env. Returns None when a required
+    field (name, host, user, password) is missing — the caller decides whether
+    that is a skip or an error. The ``room`` binding is the bot's concern and
+    is read separately.
+    """
+    name = (entry.get("name") or "").strip()
+    host = entry.get("imap_host")
+    user = entry.get("imap_user")
+    if not (name and host and user):
+        return None
+    password = entry.get("imap_password") or os.environ.get(
+        f"MAIL_{name.upper()}_IMAP_PASSWORD", "",
+    )
+    if not password:
+        return None
+    return MailAccount(
+        host=host,
+        port=int(entry.get("imap_port") or 993),
+        user=user,
+        password=password,
+        folder=entry.get("folder") or "INBOX",
+        ssl=str(entry.get("ssl", "true")).lower() != "false",
+        name=name,
+        since=(entry.get("since") or None),
+    )
 
 
 @dataclass
@@ -245,3 +279,57 @@ class MailFetcher:
         client = cls(self._a.host, self._a.port, timeout=self._a.timeout)
         client.login(self._a.user, self._a.password)
         return client
+
+    def probe(self) -> dict:
+        """Connect and report the server's folders for diagnosing config.
+
+        Powers ``stack core mail``: logs in (so a bad host/credential surfaces
+        as the raised exception), lists every folder with its flags — the real
+        IMAP names, which often differ from the webmail labels (Gmail's
+        ``[Gmail]/All Mail``, a localized ``Gesendet``, nested paths) — and
+        counts the configured folder so the admin can confirm the `folder`
+        value points where they think. Read-only. Raises on connection or
+        auth failure; the caller renders the per-account result.
+        """
+        client = self._connect()
+        try:
+            folders: list[tuple[str, str]] = []
+            typ, data = client.list()
+            if typ == "OK":
+                for line in data or []:
+                    if line:
+                        folders.append(_parse_list_line(line))
+            count = None
+            typ, data = client.select(self._a.folder, readonly=True)
+            if typ == "OK" and data and data[0] is not None:
+                try:
+                    count = int(data[0])
+                except (TypeError, ValueError):
+                    count = None
+            return {"folders": folders, "folder": self._a.folder, "count": count}
+        finally:
+            try:
+                client.logout()
+            except (imaplib.IMAP4.error, OSError):
+                pass
+
+
+_LIST_RE = re.compile(r'^\((?P<flags>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$')
+
+
+def _parse_list_line(line) -> tuple[str, str]:
+    """Parse an IMAP LIST response line into ``(flags, folder_name)``.
+
+    A line looks like ``(\\HasNoChildren \\Sent) "/" "[Gmail]/Sent Mail"``:
+    flags in parens, a hierarchy delimiter, then the (often quoted) name.
+    Falls back to the raw line as the name when the shape is unexpected.
+    Modified UTF-7 in names is left as-is (rare for the folder-picking use).
+    """
+    s = line.decode("utf-8", "replace") if isinstance(line, (bytes, bytearray)) else str(line)
+    m = _LIST_RE.match(s.strip())
+    if not m:
+        return ("", s.strip())
+    name = m.group("name").strip()
+    if len(name) >= 2 and name[0] == '"' and name[-1] == '"':
+        name = name[1:-1]
+    return (m.group("flags").strip(), name)

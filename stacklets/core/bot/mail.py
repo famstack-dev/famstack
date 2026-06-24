@@ -35,7 +35,12 @@ from email_reply_parser import EmailReplyParser
 
 from microbot import MicroBot
 from stack.email_message import defang_links
-from stack.mail_fetcher import FolderCursor, MailAccount, MailFetcher
+from stack.mail_fetcher import (
+    FolderCursor,
+    MailAccount,
+    MailFetcher,
+    account_from_entry,
+)
 
 
 def _attachment_msgtype(content_type: str) -> str:
@@ -88,42 +93,20 @@ class MailBot(MicroBot):
     def _account_from_entry(self, entry: dict):
         """One `[[mail.accounts]]` entry -> (MailAccount, room_id).
 
-        The password is never in the entry (it lives in the secret store);
-        it is read from ``MAIL_<NAME>_IMAP_PASSWORD``. Missing required fields
-        or password -> the account is skipped with a warning rather than
-        crashing the bot.
+        Connection details are parsed by the shared `account_from_entry`
+        (the same parser `stack core mail` uses); the bot adds the `room`
+        binding. A missing connection field/password or no room -> the account
+        is skipped with a warning rather than crashing the bot.
         """
-        name = (entry.get("name") or "").strip()
-        host = entry.get("imap_host")
-        user = entry.get("imap_user")
+        account = account_from_entry(entry)
         room = entry.get("room")
-        if not (name and host and user and room):
+        if account is None or not room:
             logger.warning(
-                "[mail-bot] account missing name/imap_host/imap_user/room: {}",
-                entry,
+                "[mail-bot] skipping incomplete mail account (need name, "
+                "imap_host, imap_user, password, room): {}",
+                {k: entry.get(k) for k in ("name", "imap_host", "imap_user", "room")},
             )
             return (None, None)
-        # Password comes embedded in the rendered JSON (from the secret
-        # store, via stack.toml render); the env var is a manual/test
-        # override. Never read from chat.
-        pw_env = f"MAIL_{name.upper()}_IMAP_PASSWORD"
-        password = entry.get("imap_password") or os.environ.get(pw_env, "")
-        if not password:
-            logger.warning(
-                "[mail-bot] no password for account '{}' (set mail__{}_IMAP_PASSWORD)",
-                name, name.upper(),
-            )
-            return (None, None)
-        account = MailAccount(
-            host=host,
-            port=int(entry.get("imap_port") or 993),
-            user=user,
-            password=password,
-            folder=entry.get("folder") or "INBOX",
-            ssl=str(entry.get("ssl", "true")).lower() != "false",
-            name=name,
-            since=(entry.get("since") or None),
-        )
         return (account, room)
 
     # ── Lifecycle ────────────────────────────────────────────────────────

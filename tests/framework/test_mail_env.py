@@ -13,7 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
 
-from stack.mail_fetcher import _imap_since, _internaldate, _since_widened  # noqa: E402
+from stack.mail_fetcher import (  # noqa: E402
+    _imap_since,
+    _internaldate,
+    _parse_list_line,
+    _since_widened,
+    account_from_entry,
+)
 from stack.stack import _mail_accounts_env  # noqa: E402
 
 
@@ -132,3 +138,61 @@ class TestSinceWidened:
         # Already unbounded (no floor) -> narrowing to a date needs no re-scan.
         assert _since_widened("2026-01-01", None) is False
         assert _since_widened(None, None) is False
+
+
+class TestAccountFromEntry:
+    """The shared MAIL_ACCOUNTS_JSON-entry parser (mail bot + `stack core mail`)."""
+
+    def test_builds_account_with_embedded_password(self):
+        acc = account_from_entry({
+            "name": "work", "imap_host": "imap.x", "imap_port": 143,
+            "imap_user": "u@x", "imap_password": "secret", "folder": "Archive",
+            "ssl": False, "since": "2026-01-01",
+        })
+        assert acc is not None
+        assert (acc.host, acc.port, acc.user, acc.password) == ("imap.x", 143, "u@x", "secret")
+        assert acc.folder == "Archive" and acc.ssl is False
+        assert acc.name == "work" and acc.since == "2026-01-01"
+
+    def test_defaults_port_folder_ssl(self):
+        acc = account_from_entry({
+            "name": "fam", "imap_host": "h", "imap_user": "f@x", "imap_password": "p",
+        })
+        assert acc.port == 993 and acc.folder == "INBOX" and acc.ssl is True
+
+    def test_password_from_env_fallback(self, monkeypatch):
+        monkeypatch.setenv("MAIL_FAM_IMAP_PASSWORD", "from-env")
+        acc = account_from_entry({"name": "fam", "imap_host": "h", "imap_user": "f@x"})
+        assert acc is not None and acc.password == "from-env"
+
+    def test_none_without_required_fields(self):
+        assert account_from_entry({"imap_host": "h", "imap_user": "u"}) is None  # no name
+        assert account_from_entry({"name": "x", "imap_user": "u", "imap_password": "p"}) is None  # no host
+
+    def test_none_without_password(self, monkeypatch):
+        monkeypatch.delenv("MAIL_X_IMAP_PASSWORD", raising=False)
+        assert account_from_entry({"name": "x", "imap_host": "h", "imap_user": "u"}) is None
+
+
+class TestParseListLine:
+    """IMAP LIST response line -> (flags, folder name)."""
+
+    def test_simple_quoted_name(self):
+        assert _parse_list_line(b'(\\HasNoChildren) "/" "INBOX"') == ("\\HasNoChildren", "INBOX")
+
+    def test_special_use_flags_and_bracketed_name(self):
+        flags, name = _parse_list_line(b'(\\HasChildren \\Noselect) "/" "[Gmail]"')
+        assert "\\Noselect" in flags and name == "[Gmail]"
+
+    def test_nested_gmail_name(self):
+        flags, name = _parse_list_line(b'(\\All \\HasNoChildren) "/" "[Gmail]/All Mail"')
+        assert name == "[Gmail]/All Mail"
+
+    def test_unquoted_name(self):
+        assert _parse_list_line(b'(\\HasNoChildren) "." Archive') == ("\\HasNoChildren", "Archive")
+
+    def test_nil_delimiter(self):
+        assert _parse_list_line(b'(\\Noselect) NIL "Shared"')[1] == "Shared"
+
+    def test_unparseable_falls_back_to_raw(self):
+        assert _parse_list_line(b'garbage line') == ("", "garbage line")

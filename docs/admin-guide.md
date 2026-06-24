@@ -539,6 +539,13 @@ mail__FAMILY_IMAP_PASSWORD = "<app-password>"
 
 Then `./stack restart core` to apply.
 
+**Check the connection and find folder names:**
+```bash
+./stack core mail                 # all accounts: log in, count INBOX, list folders
+./stack core mail --account work  # just one
+```
+This logs in read-only and prints the server's **real folder names** (Gmail's `[Gmail]/All Mail`, a localized `Gesendet`, nested paths), which often differ from the webmail labels. Use it to confirm the `folder` value points where you expect, and to debug a wrong host/password before pointing the bot at the mailbox.
+
 Key things to know:
 
 - **Invite both bots into the room.** `@mail-bot` delivers, `@archivist-bot` files. Type the handle into Element's invite box; fresh bot accounts don't show up in directory search.

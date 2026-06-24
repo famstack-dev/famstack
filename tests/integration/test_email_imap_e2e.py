@@ -262,6 +262,25 @@ def test_mailfetcher_extracts_attachments(greenmail):
     assert "Please sign" in got[0].body  # body still extracted
 
 
+def test_mailfetcher_probe_lists_folders_and_counts(greenmail):
+    """`probe` (behind `stack core mail`) logs in, lists folders, and counts
+    the configured folder — the IMAP-config diagnostic."""
+    user = "ned@example.org"  # own INBOX, isolated from the other tests
+    _send(user, "<p1@h>", "One")
+    _send(user, "<p2@h>", "Two")
+    time.sleep(1)
+
+    fetcher = MailFetcher(MailAccount(
+        host="localhost", port=_IMAP_PORT, user=user, password="x", ssl=False,
+    ))
+    info = fetcher.probe()
+
+    assert info["folder"] == "INBOX"
+    assert info["count"] == 2
+    names = [name for _flags, name in info["folders"]]
+    assert "INBOX" in names  # the real server folder names, for picking `folder`
+
+
 def test_mailfetcher_dates_no_date_header_by_internaldate(greenmail):
     """A message with no Date header is still dated (by INTERNALDATE), not
     left None to fall back to the processing date downstream."""
