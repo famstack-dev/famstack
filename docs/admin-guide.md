@@ -524,9 +524,9 @@ filter_noise  = true               # drop newsletters/automated mail (default tr
 [[mail.accounts]]
 name      = "family"               # used for the secret key and provenance tags
 imap_host = "imap.example.org"
-imap_port = 993
+imap_port = 993                    # 993 = IMAP over SSL (the default)
 imap_user = "family@example.org"
-ssl       = true
+ssl       = true                   # default; set false only for a local/test server
 folder    = "INBOX"
 room      = "!roomid:yourserver"   # where this mailbox delivers
 since     = "2026-01-01"           # optional backfill floor (omit = whole folder)
@@ -797,6 +797,22 @@ Shows free space. If the photo library filled the disk, move `data_dir` to an ex
 ```
 
 Removes everything. Only use this if you really mean it.
+
+### Email: can't connect, or mail isn't filed
+
+Run the diagnostic first. It logs in and lists the real folders:
+
+```bash
+./stack core mail
+```
+
+- **"connection failed" / "authentication failed".** Use an **app password** (not your login password) with IMAP enabled at the provider, and check `imap_host`/`imap_port` (993 for SSL). The `credential:` line reads `(EMPTY …)` when the secret-store key doesn't match the account name; it must be `mail__<NAME>_IMAP_PASSWORD` (account name uppercased) in `.stack/secrets.toml`.
+- **Mail shows in the room but never gets filed.** The **archivist must be a member of that room**. Invite `@archivist-bot` by typing the handle into Element's invite box (bot accounts don't show in directory search).
+- **Edited `stack.toml` but nothing changed.** `stack core mail` and the bot read the *rendered* config, which only refreshes on `./stack restart core`. Restart after any `[mail]` change.
+- **Wrong or empty folder.** IMAP folder names differ from the webmail labels (Gmail's `[Gmail]/All Mail`, a localized `Gesendet`). `stack core mail` lists the exact names to copy into `folder`.
+- **A whole inbox of old mail flooded in.** Set a `since` date floor and start narrow (last week), then widen it. With `since` unset, the first poll takes the whole folder.
+- **Wanted mail is missing.** `filter_noise` (default on) drops newsletters and automated mail; set `filter_noise = false` to keep everything.
+- **Threads render oddly on mobile.** Element X needs **beta features** enabled (Settings, then Labs) for threads.
 
 ### Something else
 
