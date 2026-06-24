@@ -84,6 +84,10 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
+    # This reads the *bound* config (the rendered env), not stack.toml live —
+    # so a `stack.toml [mail]` edit needs a `stack restart core` to show here.
+    print("Bound mail config (run `stack restart core` to apply stack.toml edits):")
+
     rc = 0
     for a in accounts:
         security = "SSL" if a.ssl else "plaintext"
