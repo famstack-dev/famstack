@@ -323,16 +323,30 @@ async def _generate_home(
     # at the vault root, so links are root-relative (page_dir="").
     page = _with_references(page, index, page_dir="")
 
+    # Index pages for the shared bucket's own captures (notes dropped in the
+    # main family room, not under a topic). The `<shared>/notes/` prefix won't
+    # match a topic's `<shared>/<topic>/notes/`, so the two don't overlap.
+    home_display = shared_bucket.replace("-", " ").title()
+
     if not write:
         print(page)
+        await _publish_capture_indexes(
+            index, page_dir=shared_bucket, display=home_display,
+            shared_bucket=shared_bucket, write=write,
+        )
         return 0
-    return await _publish(
+    rc = await _publish(
         page, target_path="index.md", shared_bucket=shared_bucket,
         commit_msg=f"{COMMIT_PREFIX} the family wiki home page",
         # Only used if the seed's root index.md is somehow missing;
         # otherwise the seed already carries this frontmatter.
         default_preamble="---\ntitle: Family Memory\n---",
     )
+    await _publish_capture_indexes(
+        index, page_dir=shared_bucket, display=home_display,
+        shared_bucket=shared_bucket, write=write,
+    )
+    return rc
 
 
 async def _generate_member(
