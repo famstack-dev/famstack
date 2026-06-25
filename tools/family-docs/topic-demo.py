@@ -49,8 +49,8 @@ ROOM_TOPIC = "Planning the family trip to Itchy & Scratchy Land"
 # ignored, and the checkbox list to land as a note (no task list yet).
 MESSAGES: list[tuple[str, str, str]] = [
     ("homer", "bookmark + framing",
-     "found the hotel, looks decent and not too pricey "
-     "https://springfield-resorts.example/itchy-scratchy-lodge"),
+     "ok THIS is the place we're going, the park itself "
+     "https://en.wikipedia.org/wiki/Itchy_%26_Scratchy_Land"),
     ("homer", "messy note (buried todos)",
      "ok plan so far: leave friday after my shift, the drive is like 6 hours, "
      "stop at the cheese place near the gorge. bart NEEDS the parasol ride or "
@@ -68,15 +68,16 @@ MESSAGES: list[tuple[str, str, str]] = [
      "- [ ] first aid kit\n"
      "- [ ] Lisa's allergy meds"),
     ("marge", "bookmark + framing",
-     "the reviews all say get there early, the parking lot fills by 10am "
-     "https://travel-reviews.example/itchy-scratchy-land-tips"),
+     "found a big list of all the Itchy & Scratchy attractions and episodes "
+     "to look through before we go "
+     "https://en.wikipedia.org/wiki/Itchy_%26_Scratchy"),
     ("marge", "short decision note (borderline drop)",
      "Homer I booked the lodge for the 14th to the 16th, two rooms. "
      "confirmation came by email."),
     ("marge", "loose todo (expect dropped)",
      "we still need to sort out who watches Santa's Little Helper while we are gone"),
     ("homer", "duplicate link (dedup + re-attribution)",
-     "https://springfield-resorts.example/itchy-scratchy-lodge"),
+     "https://en.wikipedia.org/wiki/Itchy_%26_Scratchy_Land"),
 ]
 
 
