@@ -456,6 +456,159 @@ class TestSend:
         assert "<table>" in client.sends[0][2]["formatted_body"]
 
 
+# ── Emoji reactions ─────────────────────────────────────────────────────
+
+
+class TestReact:
+    """`_react` annotates a message with an emoji (MSC2677) — the bot's
+    way to signal state on a specific event without adding a timeline
+    reply (e.g. 👀 the moment it picks up a capture). It routes through
+    `_room_send` like every other send, and is best-effort: a reaction
+    that fails must not crash the handler mid-capture."""
+
+    @pytest.mark.asyncio
+    async def test_sends_annotation_relation(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r:server", "$evt:server", "👀")
+
+        assert len(client.sends) == 1
+        room_id, mtype, content = client.sends[0]
+        assert room_id == "!r:server"
+        assert mtype == "m.reaction"
+        rel = content["m.relates_to"]
+        assert rel["rel_type"] == "m.annotation"
+        assert rel["event_id"] == "$evt:server"
+        assert rel["key"] == "👀"
+
+    @pytest.mark.asyncio
+    async def test_eyes_is_the_processing_signal(self, tmp_path):
+        # The framework's "I'm working on this" convention, used to
+        # replace the old "Received X, analyzing..." status messages.
+        from microbot import EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$e", EYES)
+        assert client.sends[0][2]["m.relates_to"]["key"] == "\U0001F440"
+
+    @pytest.mark.asyncio
+    async def test_no_event_id_is_noop(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r:server", "", "👀")
+        assert client.sends == []
+
+    @pytest.mark.asyncio
+    async def test_best_effort_swallows_send_failure(self, tmp_path):
+        # A failed liveness reaction (homeserver hiccup, room not joined)
+        # can't be allowed to kill the capture handler mid-flow.
+        bot, client = _bare_bot(tmp_path)
+        client.send_raises = RuntimeError("homeserver down")
+        await bot._react("!r:server", "$evt:server", "👀")
+
+
+# ── Answer placement (thread vs inline) ─────────────────────────────────
+
+
+class TestAnswer:
+    """`_answer` posts the bot's reply to a processed item. It threads
+    under the source message by default so routine filings stay out of
+    the main timeline; the inline-reply path is preserved for rooms that
+    opt out (a per-room knob — see interaction-patterns.md)."""
+
+    @pytest.mark.asyncio
+    async def test_threads_under_source_by_default(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._answer("!r:server", "Filed: passport", "$src:server")
+
+        rel = client.sends[0][2]["m.relates_to"]
+        assert rel["rel_type"] == "m.thread"
+        assert rel["event_id"] == "$src:server"
+        # First message in the thread falls back to replying to the root.
+        assert rel["m.in_reply_to"]["event_id"] == "$src:server"
+
+    @pytest.mark.asyncio
+    async def test_inline_reply_when_room_opts_out(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        bot.REPLY_IN_THREAD = False  # the future per-room override, off
+        await bot._answer("!r:server", "Filed: passport", "$src:server")
+
+        rel = client.sends[0][2]["m.relates_to"]
+        assert "rel_type" not in rel  # plain reply, not a thread
+        assert rel["m.in_reply_to"]["event_id"] == "$src:server"
+
+    @pytest.mark.asyncio
+    async def test_no_source_event_posts_plain(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._answer("!r:server", "hello", None)
+        assert "m.relates_to" not in client.sends[0][2]
+
+    @pytest.mark.asyncio
+    async def test_metadata_rides_along_in_thread(self, tmp_path):
+        # The filing envelope must survive whichever placement is chosen.
+        bot, client = _bare_bot(tmp_path)
+        env = {"dev.famstack.event": {"type": "document.filed"}}
+        await bot._answer("!r:server", "Filed", "$src:server", metadata=env)
+
+        content = client.sends[0][2]
+        assert content["m.relates_to"]["rel_type"] == "m.thread"
+        assert content["dev.famstack.event"]["type"] == "document.filed"
+
+    @pytest.mark.asyncio
+    async def test_joins_existing_thread_when_source_is_threaded(self, tmp_path):
+        # Filing a message that already lives in a thread must land the
+        # answer in that thread (Matrix forbids nested threads), not root
+        # a new one at the in-thread event.
+        bot, client = _bare_bot(tmp_path)
+        client.parent_events["$src:server"] = SimpleNamespace(
+            source={"content": {"m.relates_to": {
+                "rel_type": "m.thread", "event_id": "$root:server",
+            }}},
+        )
+        await bot._answer("!r:server", "Filed", "$src:server")
+
+        rel = client.sends[0][2]["m.relates_to"]
+        assert rel["rel_type"] == "m.thread"
+        assert rel["event_id"] == "$root:server"           # joins the existing thread
+        assert rel["m.in_reply_to"]["event_id"] == "$src:server"  # quotes the upload
+
+    @pytest.mark.asyncio
+    async def test_thread_root_fetch_failure_falls_back_to_source(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        client.get_event_raises = ConnectionError("synapse down")
+        await bot._answer("!r:server", "Filed", "$src:server")
+
+        rel = client.sends[0][2]["m.relates_to"]
+        assert rel["event_id"] == "$src:server"  # treated as top-level root
+
+
+class TestThreadHelpers:
+    """`get_thread_root` / `check_in_thread` — pure framework parsers so
+    any bot can tell whether a message lives in a thread (and which one)
+    straight off the event, no homeserver round-trip."""
+
+    def test_root_of_threaded_event(self):
+        evt = SimpleNamespace(source={"content": {"m.relates_to": {
+            "rel_type": "m.thread", "event_id": "$root:server",
+        }}})
+        assert MicroBot.get_thread_root(evt) == "$root:server"
+        assert MicroBot.check_in_thread(evt) is True
+
+    def test_plain_reply_is_not_a_thread(self):
+        # An m.in_reply_to that is NOT a thread relation is top-level.
+        evt = SimpleNamespace(source={"content": {"m.relates_to": {
+            "m.in_reply_to": {"event_id": "$x:server"},
+        }}})
+        assert MicroBot.get_thread_root(evt) is None
+        assert MicroBot.check_in_thread(evt) is False
+
+    def test_top_level_message(self):
+        evt = SimpleNamespace(source={"content": {"body": "hi"}})
+        assert MicroBot.get_thread_root(evt) is None
+        assert MicroBot.check_in_thread(evt) is False
+
+    def test_none_event_is_safe(self):
+        assert MicroBot.get_thread_root(None) is None
+        assert MicroBot.check_in_thread(None) is False
+
+
 # ── Reply-parent envelope ──────────────────────────────────────────────────
 
 

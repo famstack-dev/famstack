@@ -182,7 +182,7 @@ class CapturePipeline:
         actually wrote, not just whatever the article extractor pulled
         out. Empty/None leaves the prompt unchanged.
         """
-        await notifier.status("capture_fetching", url=url)
+        await notifier.acknowledge()
         source = await self._url_extractor.extract(url)
         if source is None:
             return CaptureOutcome(

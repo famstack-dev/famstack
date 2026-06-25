@@ -49,7 +49,7 @@ from nio import (
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
-from microbot import MicroBot
+from microbot import EYES, MicroBot
 from pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -1272,16 +1272,16 @@ class ArchivistBot(MicroBot):
         translator) so it lives here, not in the pipeline.
         """
         if o.status == "upload_failed":
-            await self._send(room_id, self.t("upload_failed", name=o.display_name), reply_to)
+            await self._answer(room_id, self.t("upload_failed", name=o.display_name), reply_to)
             return
         if o.status == "duplicate":
-            await self._send(room_id, self._duplicate_reply(o.display_name, o.duplicate), reply_to)
+            await self._answer(room_id, self._duplicate_reply(o.display_name, o.duplicate), reply_to)
             return
         if o.status == "ocr_failed":
-            await self._send(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
+            await self._answer(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
             return
         if o.status == "filed_no_details":
-            await self._send(
+            await self._answer(
                 room_id, self.t("filed_no_details", name=o.display_name, link=o.link),
                 reply_to,
             )
@@ -1293,19 +1293,19 @@ class ArchivistBot(MicroBot):
         )
         if llm_error:
             key, kwargs = llm_error
-            await self._send(room_id, self.t(key, **kwargs), reply_to)
+            await self._answer(room_id, self.t(key, **kwargs), reply_to)
         elif not o.has_text:
-            await self._send(
+            await self._answer(
                 room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
                 reply_to,
             )
         elif not o.classify_enabled:
-            await self._send(
+            await self._answer(
                 room_id, f"{self.t('filed', title=o.display_name)}\n\n  {o.link}",
                 reply_to,
             )
         elif not o.classification:
-            await self._send(
+            await self._answer(
                 room_id, self.t("classify_failed", name=o.display_name, link=o.link),
                 reply_to,
             )
@@ -1326,7 +1326,7 @@ class ArchivistBot(MicroBot):
             )
             # The `dev.famstack.event` envelope rides on the visible
             # message — one replayable timeline event per filing.
-            await self._send(
+            await self._answer(
                 room_id, reply_text, reply_to,
                 metadata={"dev.famstack.event": o.envelope},
             )
@@ -1379,7 +1379,6 @@ class ArchivistBot(MicroBot):
         raw_filename = content.get("filename") or content.get("body") or "document"
         caption = _attachment_caption(content)
         display_name = _clean_filename(raw_filename, msgtype)
-        sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
         reply_to = event.event_id
 
         # Multi-page scan / multi-message batch mode. PDFs and images
@@ -1403,19 +1402,18 @@ class ArchivistBot(MicroBot):
             await self._send(room.room_id, self.t("download_failed_matrix", name=display_name), reply_to)
             return
 
-        if msgtype == "m.image":
-            await self._send(room.room_id, self.t("received_photo", sender=sender_name), reply_to)
-        elif msgtype == "m.audio":
-            await self._send(room.room_id, self.t("received_voice", sender=sender_name), reply_to)
-        else:
-            await self._send(room.room_id, self.t("received_document", sender=sender_name), reply_to)
+        # Acknowledge the upload with a 👀 reaction on the source message
+        # the moment work starts, instead of a "Received X, analyzing..."
+        # reply. The reaction is attached to the message being processed
+        # and adds no separate timeline event per capture; the final
+        # filing reply (or an error reply) is the real closure signal.
+        await self._react(room.room_id, reply_to, EYES)
 
-        # Start typing AFTER the confirmation message. Sending a chat
-        # message clears the typing indicator on Element's side, so a
-        # typing notice issued before the confirmation gets immediately
-        # wiped by the message itself. Setting it here keeps the
-        # indicator alive for the rest of the OCR + classify + mirror
-        # work that follows.
+        # Set typing after the ack so the indicator stays alive through
+        # the OCR + classify + mirror work that follows. (The old code
+        # had to send the "Received X" reply first because a chat message
+        # clears the indicator; a reaction is the last send before this,
+        # so typing set here survives.)
         await self._set_typing(room.room_id, on=True)
 
         # Documents room → full archivist pipeline (Paperless + classify
@@ -1781,8 +1779,10 @@ class ArchivistBot(MicroBot):
         session["files"].append((raw_filename, file_data))
         if caption:
             session["caption"] = _join_captions(session.get("caption", ""), caption)
-        page_num = len(session["files"])
-        await self._send(room_id, self.t("page_received", num=page_num), reply_to)
+        # 👀 on the page instead of a "Page N received." line — the
+        # batch can run several pages deep, so a reaction per page keeps
+        # the timeline clean; the scan-complete reply is the closure.
+        await self._react(room_id, reply_to, EYES)
 
     async def _handle_voice_batch_message(
         self, room_id: str, event, url: str, raw_filename: str,
@@ -1836,8 +1836,9 @@ class ArchivistBot(MicroBot):
             "mxc": url,
             "event_id": event.event_id,
         })
-        n = len(session["voice_inputs"])
-        await self._send(room_id, self.t("scan_voice_received", num=n), reply_to)
+        # 👀 acknowledges the memo landed in the batch; the scan-complete
+        # reply is the closure (mirrors _handle_scan_page).
+        await self._react(room_id, reply_to, EYES)
 
     async def _handle_scan_complete(
         self, room_id: str, sender: str, reply_to: str | None = None,
@@ -1950,9 +1951,16 @@ class ArchivistBot(MicroBot):
     # capture this is — the rule is "you pasted it, it's yours."
 
     def _notifier(self, room_id: str, reply_to: str | None) -> MatrixNotifier:
-        """A Notifier bound to this room + reply thread for mid-flow status."""
+        """A Notifier bound to this room + reply thread for mid-flow status.
+
+        Carries a 👀 react thunk so the capture pipeline can acknowledge
+        the source message instead of posting a "Reading ..." status line."""
+        async def react(rid: str, eid: str) -> None:
+            await self._react(rid, eid, EYES)
+
         return MatrixNotifier(
             room_id=room_id, reply_to=reply_to, send=self._send, t=self.t,
+            react=react,
         )
 
     async def _handle_capture(
@@ -2059,10 +2067,10 @@ class ArchivistBot(MicroBot):
                 "binary": "capture_failed_binary",
             }
             key = failure_keys.get(o.failure_reason or "", "capture_failed")
-            await self._send(room_id, self.t(key), reply_to)
+            await self._answer(room_id, self.t(key), reply_to)
             return
         if o.status == "no_mirror":
-            await self._send(room_id, self.t("capture_no_mirror"), reply_to)
+            await self._answer(room_id, self.t("capture_no_mirror"), reply_to)
             return
         if o.status == "reclassified":
             reply = render_reprocessed_reply(
@@ -2087,7 +2095,7 @@ class ArchivistBot(MicroBot):
         metadata = (
             {"dev.famstack.event": o.envelope} if o.envelope else None
         )
-        await self._send(room_id, reply, reply_to, metadata=metadata)
+        await self._answer(room_id, reply, reply_to, metadata=metadata)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 

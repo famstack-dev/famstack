@@ -16,14 +16,19 @@ from typing import Awaitable, Callable, Optional, Protocol
 
 
 class Notifier(Protocol):
-    """Posts a translated, ephemeral status message into the conversation."""
+    """Posts an ephemeral progress signal into the conversation — either
+    a translated status line or a reaction on the source message."""
 
     async def status(self, key: str, **kwargs) -> None: ...
+
+    async def acknowledge(self) -> None:
+        """Signal 'picked this up, working on it' without a reply line."""
+        ...
 
 
 class MatrixNotifier:
     """A Notifier bound to one room + reply thread, backed by the bot's
-    formatted send and translator."""
+    formatted send, translator, and (optionally) reaction transport."""
 
     def __init__(
         self, *,
@@ -31,11 +36,21 @@ class MatrixNotifier:
         reply_to: Optional[str],
         send: Callable[..., Awaitable[None]],
         t: Callable[..., str],
+        react: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ):
         self._room_id = room_id
         self._reply_to = reply_to
         self._send = send
         self._t = t
+        self._react = react
 
     async def status(self, key: str, **kwargs) -> None:
         await self._send(self._room_id, self._t(key, **kwargs), self._reply_to)
+
+    async def acknowledge(self) -> None:
+        """React 👀 on the bound source message — the reaction-based
+        replacement for the old "Reading …" status text. A no-op when no
+        reaction transport or no source event is bound (e.g. a text-only
+        flow), so callers never need to guard the call."""
+        if self._react is not None and self._reply_to is not None:
+            await self._react(self._room_id, self._reply_to)
