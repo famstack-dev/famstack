@@ -609,7 +609,10 @@ def _member_slugs(vault: Path, index: list[dict], shared_bucket: str) -> list[st
             slugs.add(child.name.lower())
     for entry in index:
         slugs.update(entry["persons"])
-    return sorted(slugs)
+    # Bots (the `-bot` convention, e.g. mail-bot) can end up with a bucket of
+    # their own, but they aren't family members — keep them out of the roster
+    # so they don't get a member page.
+    return sorted(s for s in slugs if not s.endswith("-bot"))
 
 
 def _member_synonyms(index: list[dict], slug: str) -> list[str]:

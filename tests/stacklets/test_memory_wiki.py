@@ -31,6 +31,7 @@ from wiki import (  # noqa: E402
     _format_topic_evidence,
     _index_vault,
     _member_preamble,
+    _member_slugs,
     _month_label,
     _render_capture_index,
     _topic_cross_refs,
@@ -650,3 +651,20 @@ class TestCaptureIndexPages:
         index = [_idx_entry("family/camping/notes/2026/06/a-1.md", "N", "2026-06-01")]
         pages = _capture_index_pages(index, "family/camping", "Camping")
         assert {kind for kind, _t, _c in pages} == {"note"}
+
+
+class TestMemberSlugs:
+    """The wiki roster is family members, not bots."""
+
+    def test_excludes_bot_buckets(self, tmp_path):
+        for name in ("homer", "marge", "mail-bot", "family"):
+            (tmp_path / name).mkdir()
+        slugs = _member_slugs(tmp_path, [], shared_bucket="family")
+        assert "homer" in slugs and "marge" in slugs
+        assert "mail-bot" not in slugs   # bot, not a member
+        assert "family" not in slugs     # shared bucket, not a member
+
+    def test_excludes_bot_named_in_persons(self, tmp_path):
+        index = [{"persons": ["homer", "scribe-bot"]}]
+        slugs = _member_slugs(tmp_path, index, shared_bucket="family")
+        assert "homer" in slugs and "scribe-bot" not in slugs
