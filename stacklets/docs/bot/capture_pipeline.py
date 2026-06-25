@@ -725,6 +725,7 @@ class CapturePipeline:
                 tags=tags,
                 existing_path=existing_path,
                 capture_id=capture_id,
+                submitter=sender_mxid,
             )
 
         # Feed topic tags (not the derived Person: X) back into the

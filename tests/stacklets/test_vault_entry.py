@@ -359,6 +359,21 @@ class TestCaptureFrontmatter:
         assert "resource" not in fm
         assert "model" not in fm
 
+    def test_filed_by_recorded_when_given(self):
+        fm = capture_frontmatter(
+            title="Gear list", captured_at="2026-06-22", kind="note",
+            source_uri=None, persons=["Marge"], tags=[], model=None,
+            filed_by="marge",
+        )
+        assert fm["filed_by"] == "marge"
+
+    def test_filed_by_absent_by_default(self):
+        fm = capture_frontmatter(
+            title="Gear list", captured_at="2026-06-22", kind="note",
+            source_uri=None, persons=[], tags=[], model=None,
+        )
+        assert "filed_by" not in fm
+
 
 # ── Document rendering ─────────────────────────────────────────────────
 

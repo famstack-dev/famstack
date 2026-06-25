@@ -18,7 +18,31 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from git_mirror import GitMirror  # noqa: E402
+from git_mirror import (  # noqa: E402
+    BOT_EMAIL,
+    BOT_USERNAME,
+    GitMirror,
+    _commit_author,
+    _filer_localpart,
+)
+
+
+class TestCommitAuthor:
+    """Captures are attributed to the family member who filed them, derived
+    from their Matrix id; a missing/malformed id falls back to the bot."""
+
+    def test_derives_name_and_email_from_mxid(self):
+        assert _commit_author("@marge:merles.eu") == ("marge", "marge@merles.eu")
+
+    def test_localpart_only_id_falls_back_to_local_domain(self):
+        assert _commit_author("@homer") == ("homer", "homer@local")
+
+    def test_no_submitter_is_the_bot(self):
+        assert _commit_author(None) == (BOT_USERNAME, BOT_EMAIL)
+
+    def test_filer_localpart(self):
+        assert _filer_localpart("@Marge:merles.eu") == "marge"
+        assert _filer_localpart(None) is None
 
 
 @pytest.fixture
