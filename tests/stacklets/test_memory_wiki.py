@@ -22,6 +22,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
     _build_topic_prompt,
+    _capture_index_pages,
     _correspondent_body,
     _correspondent_entries,
     _correspondent_preamble,
@@ -30,6 +31,8 @@ from wiki import (  # noqa: E402
     _format_topic_evidence,
     _index_vault,
     _member_preamble,
+    _month_label,
+    _render_capture_index,
     _topic_cross_refs,
     _topic_entries,
     _topic_locations,
@@ -582,3 +585,69 @@ class TestIndexFiledBy:
         index = _index_vault(tmp_path)
         assert len(index) == 1
         assert index[0]["filed_by"] == "marge"
+
+
+# ── Folder index pages (notes/ and bookmarks/ landing pages) ────────────────
+
+class TestMonthLabel:
+    def test_parses_month_year(self):
+        assert _month_label("2026-06-25") == "June 2026"
+
+    def test_undated_fallback(self):
+        assert _month_label("") == "Undated"
+        assert _month_label("not-a-date") == "Undated"
+
+
+def _idx_entry(rel, title, date, *, filed_by="", tags=None):
+    return {"rel": rel, "title": title, "date": date,
+            "filed_by": filed_by, "tags": tags or []}
+
+
+class TestRenderCaptureIndex:
+    """The folder landing page: newest-first, grouped by month, with who
+    filed each item, its tags, and absolute links."""
+
+    def test_newest_first_month_grouped_attributed(self):
+        entries = [
+            _idx_entry("family/camping/notes/2026/06/a-1.md", "Older note",
+                       "2026-06-10", filed_by="homer", tags=["camping"]),
+            _idx_entry("family/camping/notes/2026/06/b-2.md", "Newer note",
+                       "2026-06-22", filed_by="marge", tags=["packliste"]),
+        ]
+        out = _render_capture_index(entries, "note", "Camping")
+        assert out.startswith("# Notes — Camping")
+        assert out.index("Newer note") < out.index("Older note")   # newest first
+        assert "## June 2026" in out
+        assert "_marge_" in out and "`packliste`" in out
+        assert "[Newer note](/family/camping/notes/2026/06/b-2.md)" in out  # absolute link
+
+    def test_count_is_singular_for_one(self):
+        out = _render_capture_index(
+            [_idx_entry("x/notes/n.md", "T", "2026-06-01")], "note", "X")
+        assert "1 note, newest first" in out
+
+    def test_person_tags_filtered_out(self):
+        out = _render_capture_index(
+            [_idx_entry("x/notes/n.md", "T", "2026-06-01",
+                        tags=["camping", "Person: Bart"])], "note", "X")
+        assert "`camping`" in out
+        assert "Person: Bart" not in out
+
+
+class TestCaptureIndexPages:
+    def test_only_folders_with_entries_under_page_dir(self):
+        index = [
+            _idx_entry("family/camping/notes/2026/06/a-1.md", "N", "2026-06-01"),
+            _idx_entry("family/camping/bookmarks/2026/06/b-2.md", "B", "2026-06-01"),
+            _idx_entry("family/other/notes/x.md", "Other", "2026-06-01"),  # ignored
+        ]
+        pages = _capture_index_pages(index, "family/camping", "Camping")
+        assert {kind for kind, _t, _c in pages} == {"bookmark", "note"}
+        targets = {t for _k, t, _c in pages}
+        assert "family/camping/notes/index.md" in targets
+        assert "family/camping/bookmarks/index.md" in targets
+
+    def test_absent_kind_gets_no_page(self):
+        index = [_idx_entry("family/camping/notes/2026/06/a-1.md", "N", "2026-06-01")]
+        pages = _capture_index_pages(index, "family/camping", "Camping")
+        assert {kind for kind, _t, _c in pages} == {"note"}

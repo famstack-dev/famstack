@@ -390,8 +390,12 @@ async def _generate_member(
 
     if not write:
         print(f"\n<!-- {slug}/about.md -->\n{page}")
+        await _publish_capture_indexes(
+            index, page_dir=slug, display=display,
+            shared_bucket=shared_bucket, write=write,
+        )
         return 0
-    return await _publish(
+    rc = await _publish(
         page, target_path=f"{slug}/about.md", shared_bucket=shared_bucket,
         commit_msg=f"{COMMIT_PREFIX} {slug}'s wiki page",
         # First-creation frontmatter seeds the person entity registry on
@@ -403,6 +407,11 @@ async def _generate_member(
         # ownership of the registry from here.
         default_preamble=_member_preamble(slug, display, _member_synonyms(index, slug)),
     )
+    await _publish_capture_indexes(
+        index, page_dir=slug, display=display,
+        shared_bucket=shared_bucket, write=write,
+    )
+    return rc
 
 
 async def _generate_topic(
@@ -451,8 +460,12 @@ async def _generate_topic(
 
     if not write:
         print(f"\n<!-- {page_dir}/about.md -->\n{page}")
+        await _publish_capture_indexes(
+            index, page_dir=page_dir, display=display,
+            shared_bucket=shared_bucket, write=write,
+        )
         return 0
-    return await _publish(
+    rc = await _publish(
         page,
         target_path=f"{page_dir}/about.md",
         shared_bucket=shared_bucket,
@@ -461,6 +474,11 @@ async def _generate_topic(
         ),
         default_preamble=_topic_preamble(topic_slug, display, scope),
     )
+    await _publish_capture_indexes(
+        index, page_dir=page_dir, display=display,
+        shared_bucket=shared_bucket, write=write,
+    )
+    return rc
 
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
@@ -900,6 +918,100 @@ def _relative_link(rel: str, page_dir: str) -> str:
     return "/" + rel.lstrip("/")
 
 
+# ── Folder index pages ──────────────────────────────────────────────────────
+#
+# Each capture folder (`<bucket-or-topic>/notes/`, `.../bookmarks/`) gets an
+# `index.md`, so clicking the folder lands on a real, newest-first list instead
+# of Quartz's bare auto-listing or a drill through YYYY/MM. Built from the vault
+# index — no LLM — with who filed each item and its tags, links absolute so they
+# resolve at any depth.
+
+# Capture kinds: one canonical source for the display label, the order
+# sections appear on a page, and the subset of folders that get an index page.
+_KIND_LABEL = {"bookmark": "Bookmarks", "note": "Notes", "document": "Documents"}
+_TOPIC_KIND_ORDER = ("bookmark", "note", "document")  # section order on a page
+_CAPTURE_INDEX_KINDS = ("bookmark", "note")           # folders that get index.md
+_MONTHS = ("", "January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+
+def _month_label(date_str: str) -> str:
+    """`2026-06-25` -> `June 2026`; anything unparseable -> `Undated`."""
+    m = re.match(r"^(\d{4})-(\d{2})", date_str or "")
+    return f"{_MONTHS[int(m.group(2))]} {m.group(1)}" if m else "Undated"
+
+
+def _render_capture_index(folder_entries: list[dict], kind: str, display: str) -> str:
+    """A folder landing page: every capture newest-first, grouped by month,
+    each line carrying who filed it and its tags. Deterministic, no LLM."""
+    label = _KIND_LABEL.get(kind, f"{kind.title()}s")
+    items = sorted(
+        folder_entries,
+        key=lambda e: (e.get("date") or "", e.get("title") or ""),
+        reverse=True,
+    )
+    count = len(items)
+    noun = label.lower() if count != 1 else label.lower().rstrip("s")
+    lines = [f"# {label} — {display}", "", f"*{count} {noun}, newest first*", ""]
+    month = None
+    for e in items:
+        date = (e.get("date") or "").strip()
+        label_month = _month_label(date)
+        if label_month != month:
+            lines += [f"## {label_month}", ""]
+            month = label_month
+        title = (e.get("title") or "(untitled)").strip()
+        link = _relative_link(e.get("rel") or "", "")
+        line = f"- **{date or 'undated'}** · [{title}]({link})"
+        who = (e.get("filed_by") or "").strip()
+        if who:
+            line += f" — _{who}_"
+        # Content themes only; `Person: X` markers are a separate axis and
+        # who filed it is already shown above.
+        tags = [
+            t for t in (e.get("tags") or [])
+            if t and not t.lower().startswith("person:")
+        ]
+        if tags:
+            line += " · " + " ".join(f"`{t}`" for t in tags)
+        lines.append(line)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _capture_index_pages(
+    index: list[dict], page_dir: str, display: str,
+) -> list[tuple[str, str, str]]:
+    """`(kind, target_path, content)` for each capture folder under `page_dir`
+    that holds entries — the notes/ and bookmarks/ index pages."""
+    pages: list[tuple[str, str, str]] = []
+    for kind in _CAPTURE_INDEX_KINDS:
+        prefix = f"{page_dir}/{kind}s/"
+        folder_entries = [
+            e for e in index if (e.get("rel") or "").startswith(prefix)
+        ]
+        if folder_entries:
+            content = _render_capture_index(folder_entries, kind, display)
+            pages.append((kind, f"{prefix}index.md", content))
+    return pages
+
+
+async def _publish_capture_indexes(
+    index: list[dict], *, page_dir: str, display: str,
+    shared_bucket: str, write: bool,
+) -> None:
+    """Generate, then publish (or print under --dry-run), the folder index
+    pages for `page_dir`'s notes/ and bookmarks/."""
+    for kind, target_path, content in _capture_index_pages(index, page_dir, display):
+        if not write:
+            print(f"\n<!-- {target_path} -->\n{content}")
+            continue
+        await _publish(
+            content, target_path=target_path, shared_bucket=shared_bucket,
+            commit_msg=f"{COMMIT_PREFIX} {page_dir} {kind} index",
+            default_preamble=f"---\ntitle: {_KIND_LABEL[kind]} — {display}\n---",
+        )
+
+
 # ── Bracketed-region splice ────────────────────────────────────────────────
 
 def _previous_generated(page_path: Path) -> tuple[str, dict[str, int]]:
@@ -1246,15 +1358,6 @@ Rules:
 """
 
 
-# Capture kinds, in the order their sections appear on a topic page. Each
-# tuple is (frontmatter/folder kind, section heading, prompt description).
-_TOPIC_KIND_SECTIONS = [
-    ("bookmark", "Bookmarks", "saved links and references"),
-    ("note", "Notes", "the household's own typed notes and messages"),
-    ("document", "Documents", "filed documents"),
-]
-
-
 def _entry_kind(rel: str, slug: str) -> str:
     """The capture kind of an entry, read from its vault path.
 
@@ -1295,9 +1398,9 @@ def _format_topic_evidence(entries: list[dict], slug: str) -> str:
         block = f"[{n}] {meta}\n    " + (s.get("summary") or "").replace("\n", "\n    ")
         groups.setdefault(kind, []).append(block)
     out: list[str] = []
-    for kind, label, _desc in _TOPIC_KIND_SECTIONS:
+    for kind in _TOPIC_KIND_ORDER:
         if groups.get(kind):
-            out.append(f"{label}:")
+            out.append(f"{_KIND_LABEL[kind]}:")
             out.append("\n\n".join(groups[kind]))
             out.append("")
     return "\n".join(out).rstrip()
@@ -1374,14 +1477,14 @@ def _build_topic_prompt(
     # Only emit a typed section for a kind that actually has captures, so a
     # topic with no bookmarks doesn't carry an empty Bookmarks heading.
     present = [
-        (label, desc)
-        for kind, label, desc in _TOPIC_KIND_SECTIONS
+        _KIND_LABEL[kind]
+        for kind in _TOPIC_KIND_ORDER
         if any(_entry_kind(e.get("rel", ""), slug) == kind for e in entries)
     ]
     section_specs = "\n\n".join(
         f"## {label}\nEvery {label[:-1].lower()} from above, newest first, one "
         f"bullet each: `<what it is> — <who filed it, if known> [N]`."
-        for label, _desc in present
+        for label in present
     )
 
     return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. It is an OVERVIEW someone (or the family's assistant) reads to understand what this topic is about and what has happened in it lately — not an archive. Detail lives in the cited captures, one click away. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
