@@ -72,6 +72,12 @@ from nio import (
 
 from room_context import RoomContext, context_for
 
+# The framework's "I picked this up and I'm working on it" signal. A
+# bot reacts with 👀 on the source message the moment it starts a
+# capture — the same liveness role the typing indicator plays, but
+# attached to the specific message instead of a separate timeline event.
+EYES = "\U0001F440"
+
 
 class MicroBot:
     """Base class for lightweight Matrix bots.
@@ -507,6 +513,31 @@ class MicroBot:
         await self._client.room_send(
             room_id=room_id, message_type=message_type, content=content,
         )
+
+    async def _react(self, room_id: str, event_id: str, emoji: str) -> None:
+        """Annotate an event with an emoji reaction (MSC2677).
+
+        The bot's way to signal state on a specific message without a
+        separate timeline reply — e.g. 👀 the moment it picks up a
+        capture. Routes through `_room_send` so the transport seam stays
+        in one place. Best-effort, like the typing indicator and read
+        receipt: a reaction that fails (homeserver hiccup, room not
+        joined) must not crash a handler mid-capture.
+        """
+        if not event_id:
+            return
+        content = {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": event_id,
+                "key": emoji,
+            },
+        }
+        try:
+            await self._room_send(room_id, content, message_type="m.reaction")
+        except Exception as e:
+            logger.warning("[{}] reaction {} failed in {}: {}",
+                           self.name, emoji, room_id, e)
 
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,

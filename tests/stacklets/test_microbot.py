@@ -456,6 +456,54 @@ class TestSend:
         assert "<table>" in client.sends[0][2]["formatted_body"]
 
 
+# ── Emoji reactions ─────────────────────────────────────────────────────
+
+
+class TestReact:
+    """`_react` annotates a message with an emoji (MSC2677) — the bot's
+    way to signal state on a specific event without adding a timeline
+    reply (e.g. 👀 the moment it picks up a capture). It routes through
+    `_room_send` like every other send, and is best-effort: a reaction
+    that fails must not crash the handler mid-capture."""
+
+    @pytest.mark.asyncio
+    async def test_sends_annotation_relation(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r:server", "$evt:server", "👀")
+
+        assert len(client.sends) == 1
+        room_id, mtype, content = client.sends[0]
+        assert room_id == "!r:server"
+        assert mtype == "m.reaction"
+        rel = content["m.relates_to"]
+        assert rel["rel_type"] == "m.annotation"
+        assert rel["event_id"] == "$evt:server"
+        assert rel["key"] == "👀"
+
+    @pytest.mark.asyncio
+    async def test_eyes_is_the_processing_signal(self, tmp_path):
+        # The framework's "I'm working on this" convention, used to
+        # replace the old "Received X, analyzing..." status messages.
+        from microbot import EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$e", EYES)
+        assert client.sends[0][2]["m.relates_to"]["key"] == "\U0001F440"
+
+    @pytest.mark.asyncio
+    async def test_no_event_id_is_noop(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r:server", "", "👀")
+        assert client.sends == []
+
+    @pytest.mark.asyncio
+    async def test_best_effort_swallows_send_failure(self, tmp_path):
+        # A failed liveness reaction (homeserver hiccup, room not joined)
+        # can't be allowed to kill the capture handler mid-flow.
+        bot, client = _bare_bot(tmp_path)
+        client.send_raises = RuntimeError("homeserver down")
+        await bot._react("!r:server", "$evt:server", "👀")
+
+
 # ── Reply-parent envelope ──────────────────────────────────────────────────
 
 

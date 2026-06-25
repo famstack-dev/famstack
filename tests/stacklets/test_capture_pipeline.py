@@ -104,9 +104,13 @@ class FakePaperless:
 class FakeNotifier:
     def __init__(self):
         self.statuses: list[tuple] = []
+        self.acknowledged = 0
 
     async def status(self, key, **kwargs):
         self.statuses.append((key, kwargs))
+
+    async def acknowledge(self):
+        self.acknowledged += 1
 
 
 def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
@@ -156,7 +160,7 @@ class FakeTranscriber:
 class TestCaptureUrl:
 
     @pytest.mark.asyncio
-    async def test_announces_fetching_then_captures(self):
+    async def test_acknowledges_then_captures(self):
         mirror = FakeMirror()
         pipe = _pipeline(mirror=mirror)
         notifier = FakeNotifier()
@@ -164,7 +168,9 @@ class TestCaptureUrl:
             url="http://example.com", sender_mxid="@homer:s", notifier=notifier,
         )
         assert out.status == "captured"
-        assert ("capture_fetching", {"url": "http://example.com"}) in notifier.statuses
+        # The bot reacts 👀 on the source message instead of posting a
+        # "Reading example.com..." status reply.
+        assert notifier.acknowledged == 1
         assert len(mirror.captures) == 1
         assert mirror.captures[0]["kind"] == "bookmark"
         assert out.display_link == "http://example.com"
@@ -187,8 +193,8 @@ class TestCaptureUrl:
         # URL-shaped failure -> the reply layer renders the link error
         # message (`Couldn't read that link...`).
         assert out.failure_reason == "url"
-        # Fetching was still announced before the failed extract.
-        assert notifier.statuses[0][0] == "capture_fetching"
+        # The 👀 acknowledgement still fired before the failed extract.
+        assert notifier.acknowledged == 1
 
     @pytest.mark.asyncio
     async def test_no_mirror(self):

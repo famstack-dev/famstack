@@ -9,9 +9,6 @@ en:
   startup: "\u270D\uFE0F The Archivist has returned. Hand me your documents."
 
   # File upload
-  received_photo: "\U0001F4F7 Received photo from {sender} — analyzing..."
-  received_document: "\U0001F4C4 Received document from {sender} — analyzing..."
-  received_voice: "\U0001F3A4 Received voice memo from {sender}. Transcribing..."
   download_failed: "\u274C Failed to download {name}: {error}"
   download_failed_matrix: "\u274C Failed to download {name} from Matrix."
 
@@ -67,14 +64,12 @@ en:
 
   # Scan
   scan_started: "\U0001F4F8 Batch started for {sender}. Send pages, photos, or voice memos, then ) or 'fertig' to combine."
-  page_received: "\U0001F4C4 Page {num} received."
   scan_page_failed: "\u274C Failed to download page: {error}"
   scan_page_failed_matrix: "\u274C Failed to download page from Matrix."
   scan_cancelled: "No pages received — scan cancelled."
   scan_complete_single: "\U0001F4CB Scan complete (1 page) — analyzing..."
   scan_complete_multi: "\U0001F4CB Scan complete — combining {count} pages into PDF..."
   scan_combine_failed: "\u274C Failed to combine pages into PDF: {error}"
-  scan_voice_received: "\U0001F3A4 Voice memo {num} received."
   scan_voice_failed: "\u274C Failed to download voice memo: {error}"
   scan_voice_failed_matrix: "\u274C Failed to download voice memo from Matrix."
   scan_voice_no_transcriber: "\U0001F3A4 Voice transcription is not configured. Set up AI with 'stack up ai'."
@@ -92,7 +87,6 @@ en:
   url_not_pdf: "\u274C URL does not point to a PDF (Content-Type: {content_type}).\n  Currently only PDF links and Google Docs are supported."
 
   # URL capture (knowledge rooms — links become summarized notes, not Paperless docs)
-  capture_fetching: "\U0001F50D Reading {url}..."
   capture_failed: "\u274C Couldn't read that link. Either the host is unreachable or there's no article body to extract."
   capture_failed_transcription: "\U0001F3A4 Couldn't transcribe that voice memo. Whisper may be down or misconfigured."
   capture_failed_binary: "\u274C Couldn't read that file."
@@ -221,9 +215,6 @@ de:
   startup: "\u270D\uFE0F Der Archivar ist zurück. Gebt mir eure Dokumente."
 
   # File upload
-  received_photo: "\U0001F4F7 Foto von {sender} empfangen — wird analysiert..."
-  received_document: "\U0001F4C4 Dokument von {sender} empfangen — wird analysiert..."
-  received_voice: "\U0001F3A4 Sprachnachricht von {sender} empfangen. Wird transkribiert..."
   download_failed: "\u274C Download von {name} fehlgeschlagen: {error}"
   download_failed_matrix: "\u274C Download von {name} aus Matrix fehlgeschlagen."
 
@@ -279,14 +270,12 @@ de:
 
   # Scan
   scan_started: "\U0001F4F8 Batch gestartet für {sender}. Sende Seiten, Fotos oder Sprachnachrichten, dann ) oder 'fertig' zum Zusammenfassen."
-  page_received: "\U0001F4C4 Seite {num} empfangen."
   scan_page_failed: "\u274C Seite konnte nicht heruntergeladen werden: {error}"
   scan_page_failed_matrix: "\u274C Seite konnte nicht aus Matrix heruntergeladen werden."
   scan_cancelled: "Keine Seiten empfangen — Scan abgebrochen."
   scan_complete_single: "\U0001F4CB Scan abgeschlossen (1 Seite) — wird analysiert..."
   scan_complete_multi: "\U0001F4CB Scan abgeschlossen — {count} Seiten werden zu PDF zusammengefasst..."
   scan_combine_failed: "\u274C Seiten konnten nicht zu PDF zusammengefasst werden: {error}"
-  scan_voice_received: "\U0001F3A4 Sprachnachricht {num} empfangen."
   scan_voice_failed: "\u274C Sprachnachricht konnte nicht heruntergeladen werden: {error}"
   scan_voice_failed_matrix: "\u274C Sprachnachricht konnte nicht aus Matrix heruntergeladen werden."
   scan_voice_no_transcriber: "\U0001F3A4 Sprach-Transkription ist nicht eingerichtet. 'stack up ai' ausführen."
@@ -304,7 +293,6 @@ de:
   url_not_pdf: "\u274C URL zeigt nicht auf ein PDF (Content-Type: {content_type}).\n  Aktuell werden nur PDF-Links und Google Docs unterstützt."
 
   # URL-Capture (Wissensräume — Links werden zu zusammengefassten Notizen, nicht zu Paperless-Dokumenten)
-  capture_fetching: "\U0001F50D Lese {url}..."
   capture_failed: "\u274C Konnte den Link nicht lesen. Entweder ist die Seite nicht erreichbar, oder es gibt keinen Artikel-Inhalt zum Extrahieren."
   capture_failed_transcription: "\U0001F3A4 Konnte die Sprachnachricht nicht transkribieren. Whisper ist möglicherweise nicht erreichbar oder falsch konfiguriert."
   capture_failed_binary: "\u274C Konnte diese Datei nicht lesen."
