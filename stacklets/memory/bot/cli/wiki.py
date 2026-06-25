@@ -967,16 +967,8 @@ def _render_capture_index(folder_entries: list[dict], kind: str, display: str) -
         if who:
             line += f" — _{who}_"
         lines.append(line)
-        # Content themes on their own line, linked to Quartz's `/tags/` pages so
-        # they are clickable here too (inline code-spans were dead text). Person
-        # markers are a separate axis; who filed it already shows above.
-        tags = [
-            t for t in (e.get("tags") or [])
-            if t and not t.lower().startswith("person:")
-        ]
-        if tags:
-            lines.append("")
-            lines.append("  " + " ".join(f"[#{t}](/tags/{t})" for t in tags))
+        # Tags are deliberately omitted here: a chip row per item buried the
+        # title and added noise. They live (clickable) on each capture page.
     return "\n".join(lines).rstrip() + "\n"
 
 

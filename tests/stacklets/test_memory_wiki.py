@@ -619,7 +619,6 @@ class TestRenderCaptureIndex:
         assert out.index("Newer note") < out.index("Older note")   # newest first
         assert "## June 2026" in out
         assert "_marge_" in out
-        assert "[#packliste](/tags/packliste)" in out  # clickable tag
         assert "[Newer note](/family/camping/notes/2026/06/b-2.md)" in out  # absolute link
 
     def test_count_is_singular_for_one(self):
@@ -627,12 +626,11 @@ class TestRenderCaptureIndex:
             [_idx_entry("x/notes/n.md", "T", "2026-06-01")], "note", "X")
         assert "1 note, newest first" in out
 
-    def test_person_tags_filtered_out(self):
+    def test_tags_omitted_to_stay_scannable(self):
         out = _render_capture_index(
             [_idx_entry("x/notes/n.md", "T", "2026-06-01",
                         tags=["camping", "Person: Bart"])], "note", "X")
-        assert "[#camping](/tags/camping)" in out
-        assert "Person: Bart" not in out
+        assert "/tags/" not in out and "camping" not in out
 
 
 class TestCaptureIndexPages:
