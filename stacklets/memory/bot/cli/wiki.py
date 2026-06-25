@@ -323,16 +323,30 @@ async def _generate_home(
     # at the vault root, so links are root-relative (page_dir="").
     page = _with_references(page, index, page_dir="")
 
+    # Index pages for the shared bucket's own captures (notes dropped in the
+    # main family room, not under a topic). The `<shared>/notes/` prefix won't
+    # match a topic's `<shared>/<topic>/notes/`, so the two don't overlap.
+    home_display = shared_bucket.replace("-", " ").title()
+
     if not write:
         print(page)
+        await _publish_capture_indexes(
+            index, page_dir=shared_bucket, display=home_display,
+            shared_bucket=shared_bucket, write=write,
+        )
         return 0
-    return await _publish(
+    rc = await _publish(
         page, target_path="index.md", shared_bucket=shared_bucket,
         commit_msg=f"{COMMIT_PREFIX} the family wiki home page",
         # Only used if the seed's root index.md is somehow missing;
         # otherwise the seed already carries this frontmatter.
         default_preamble="---\ntitle: Family Memory\n---",
     )
+    await _publish_capture_indexes(
+        index, page_dir=shared_bucket, display=home_display,
+        shared_bucket=shared_bucket, write=write,
+    )
+    return rc
 
 
 async def _generate_member(
@@ -390,8 +404,12 @@ async def _generate_member(
 
     if not write:
         print(f"\n<!-- {slug}/about.md -->\n{page}")
+        await _publish_capture_indexes(
+            index, page_dir=slug, display=display,
+            shared_bucket=shared_bucket, write=write,
+        )
         return 0
-    return await _publish(
+    rc = await _publish(
         page, target_path=f"{slug}/about.md", shared_bucket=shared_bucket,
         commit_msg=f"{COMMIT_PREFIX} {slug}'s wiki page",
         # First-creation frontmatter seeds the person entity registry on
@@ -403,6 +421,11 @@ async def _generate_member(
         # ownership of the registry from here.
         default_preamble=_member_preamble(slug, display, _member_synonyms(index, slug)),
     )
+    await _publish_capture_indexes(
+        index, page_dir=slug, display=display,
+        shared_bucket=shared_bucket, write=write,
+    )
+    return rc
 
 
 async def _generate_topic(
@@ -412,10 +435,11 @@ async def _generate_topic(
     """Compose one topic's `about.md` from its slice plus cross-refs.
 
     Mirror of `_generate_member`. The topic's own captures drive the
-    `Recent Activity` section; cross-references (captures elsewhere
-    whose `topics:` or `tags:` mention the slug) drive a dedicated
-    section so the topic page collects the household's relevant
-    material even when it lives in another bucket.
+    typed Bookmarks / Notes / Documents sections (split by kind);
+    cross-references (captures elsewhere whose `topics:` or `tags:`
+    mention the slug) drive a dedicated section so the topic page
+    collects the household's relevant material even when it lives in
+    another bucket.
 
     `bucket_prefix` is the topic's owning bucket: `<shared_bucket>`
     for a shared topic, `<localpart>` for a personal one. The scope
@@ -450,8 +474,12 @@ async def _generate_topic(
 
     if not write:
         print(f"\n<!-- {page_dir}/about.md -->\n{page}")
+        await _publish_capture_indexes(
+            index, page_dir=page_dir, display=display,
+            shared_bucket=shared_bucket, write=write,
+        )
         return 0
-    return await _publish(
+    rc = await _publish(
         page,
         target_path=f"{page_dir}/about.md",
         shared_bucket=shared_bucket,
@@ -460,6 +488,11 @@ async def _generate_topic(
         ),
         default_preamble=_topic_preamble(topic_slug, display, scope),
     )
+    await _publish_capture_indexes(
+        index, page_dir=page_dir, display=display,
+        shared_bucket=shared_bucket, write=write,
+    )
+    return rc
 
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
@@ -520,6 +553,7 @@ def _index_vault(vault: Path) -> list[dict]:
         ]
         slugged = [(slugify_person(p), p) for p in raw_persons]
         _corr = fm.get("correspondent")
+        _fb = fm.get("filed_by")
         out.append({
             "title": fm.get("title") or md.stem,
             "date": fm.get("date") or "",
@@ -527,6 +561,9 @@ def _index_vault(vault: Path) -> list[dict]:
             "rel": rel,
             "persons": [s for s, _ in slugged if s],
             "person_names": [n for s, n in slugged if s],
+            # Who filed this capture (Matrix localpart), for attribution on
+            # topic pages. Mirrors the git commit author set at capture time.
+            "filed_by": _fb.strip() if isinstance(_fb, str) else "",
             # The document's correspondent (already canonicalised by the
             # classifier). Drives the correspondent leaf-page roster.
             "correspondent": _corr.strip() if isinstance(_corr, str) else "",
@@ -572,7 +609,10 @@ def _member_slugs(vault: Path, index: list[dict], shared_bucket: str) -> list[st
             slugs.add(child.name.lower())
     for entry in index:
         slugs.update(entry["persons"])
-    return sorted(slugs)
+    # Bots (the `-bot` convention, e.g. mail-bot) can end up with a bucket of
+    # their own, but they aren't family members — keep them out of the roster
+    # so they don't get a member page.
+    return sorted(s for s in slugs if not s.endswith("-bot"))
 
 
 def _member_synonyms(index: list[dict], slug: str) -> list[str]:
@@ -883,22 +923,104 @@ def _build_references_section(
 
 
 def _relative_link(rel: str, page_dir: str) -> str:
-    """Path to a vault file `rel` as seen from a page living in `page_dir`.
+    """Link to vault file `rel`, as a full path from the vault root.
 
-    `page_dir` is the vault-relative directory of the page: "" for the
-    root home page, "homer" for a member page. A target inside the same
-    directory drops the shared prefix; anything else climbs out with one
-    `../` per path segment, then descends. Pure string work -- the bucket
-    boundary is structural in the layout, not a runtime fact, so no
-    `os.path.relpath` rerouting through the local FS.
+    Every internal link is rendered absolute-from-root rather than relative to
+    the page. Quartz resolves links absolute-from-root (markdownLinkResolution
+    "absolute"), and Obsidian resolves a vault-root path identically, so one
+    form works at every page depth. Page-relative paths broke on nested topic
+    pages: Quartz's "shortest" mode shortened a `notes/...` link to a root slug
+    that 404s. `page_dir` is unused now but kept so callers don't change.
     """
-    if not page_dir:
-        return rel
-    prefix = page_dir.strip("/") + "/"
-    if rel.startswith(prefix):
-        return rel[len(prefix):]
-    depth = len([p for p in page_dir.strip("/").split("/") if p])
-    return "../" * depth + rel
+    return "/" + rel.lstrip("/")
+
+
+# ── Folder index pages ──────────────────────────────────────────────────────
+#
+# Each capture folder (`<bucket-or-topic>/notes/`, `.../bookmarks/`) gets an
+# `index.md`, so clicking the folder lands on a real, newest-first list instead
+# of Quartz's bare auto-listing or a drill through YYYY/MM. Built from the vault
+# index — no LLM — with who filed each item and its tags, links absolute so they
+# resolve at any depth.
+
+# Capture kinds: one canonical source for the display label, the order
+# sections appear on a page, and the subset of folders that get an index page.
+_KIND_LABEL = {"bookmark": "Bookmarks", "note": "Notes", "document": "Documents"}
+_TOPIC_KIND_ORDER = ("bookmark", "note", "document")  # section order on a page
+_CAPTURE_INDEX_KINDS = ("bookmark", "note")           # folders that get index.md
+_MONTHS = ("", "January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+
+def _month_label(date_str: str) -> str:
+    """`2026-06-25` -> `June 2026`; anything unparseable -> `Undated`."""
+    m = re.match(r"^(\d{4})-(\d{2})", date_str or "")
+    return f"{_MONTHS[int(m.group(2))]} {m.group(1)}" if m else "Undated"
+
+
+def _render_capture_index(folder_entries: list[dict], kind: str, display: str) -> str:
+    """A folder landing page: every capture newest-first, grouped by month,
+    each line carrying who filed it and its tags. Deterministic, no LLM."""
+    label = _KIND_LABEL.get(kind, f"{kind.title()}s")
+    items = sorted(
+        folder_entries,
+        key=lambda e: (e.get("date") or "", e.get("title") or ""),
+        reverse=True,
+    )
+    count = len(items)
+    noun = label.lower() if count != 1 else label.lower().rstrip("s")
+    lines = [f"# {label}: {display}", "", f"*{count} {noun}, newest first*", ""]
+    month = None
+    for e in items:
+        date = (e.get("date") or "").strip()
+        label_month = _month_label(date)
+        if label_month != month:
+            lines += [f"## {label_month}", ""]
+            month = label_month
+        title = (e.get("title") or "(untitled)").strip()
+        link = _relative_link(e.get("rel") or "", "")
+        line = f"- **{date or 'undated'}** · [{title}]({link})"
+        who = (e.get("filed_by") or "").strip()
+        if who:
+            line += f" · _{who}_"
+        lines.append(line)
+        # Tags are deliberately omitted here: a chip row per item buried the
+        # title and added noise. They live (clickable) on each capture page.
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _capture_index_pages(
+    index: list[dict], page_dir: str, display: str,
+) -> list[tuple[str, str, str]]:
+    """`(kind, target_path, content)` for each capture folder under `page_dir`
+    that holds entries — the notes/ and bookmarks/ index pages."""
+    pages: list[tuple[str, str, str]] = []
+    for kind in _CAPTURE_INDEX_KINDS:
+        prefix = f"{page_dir}/{kind}s/"
+        folder_entries = [
+            e for e in index if (e.get("rel") or "").startswith(prefix)
+        ]
+        if folder_entries:
+            content = _render_capture_index(folder_entries, kind, display)
+            pages.append((kind, f"{prefix}index.md", content))
+    return pages
+
+
+async def _publish_capture_indexes(
+    index: list[dict], *, page_dir: str, display: str,
+    shared_bucket: str, write: bool,
+) -> None:
+    """Generate, then publish (or print under --dry-run), the folder index
+    pages for `page_dir`'s notes/ and bookmarks/."""
+    for kind, target_path, content in _capture_index_pages(index, page_dir, display):
+        if not write:
+            print(f"\n<!-- {target_path} -->\n{content}")
+            continue
+        await _publish(
+            content, target_path=target_path, shared_bucket=shared_bucket,
+            commit_msg=f"{COMMIT_PREFIX} {page_dir} {kind} index",
+            default_preamble=f"---\ntitle: {_KIND_LABEL[kind]}: {display}\n---",
+        )
 
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
@@ -1247,6 +1369,54 @@ Rules:
 """
 
 
+def _entry_kind(rel: str, slug: str) -> str:
+    """The capture kind of an entry, read from its vault path.
+
+    A topic's captures live at `<bucket>/<slug>/<folder>/...`; the folder
+    right after the topic slug carries the kind (`bookmarks`, `notes`,
+    `documents`). Anything unrecognised collapses to "note" — the
+    catch-all the capture pipeline itself defaults to.
+    """
+    parts = rel.split("/")
+    try:
+        i = parts.index(slug)
+    except ValueError:
+        return "note"
+    folder = parts[i + 1] if i + 1 < len(parts) else ""
+    return {
+        "bookmarks": "bookmark", "notes": "note", "documents": "document",
+    }.get(folder, "note")
+
+
+def _format_topic_evidence(entries: list[dict], slug: str) -> str:
+    """Number entries `[N]` in list order, grouped under their kind.
+
+    The `[N]` index matches each entry's position in `entries`, so the
+    deterministic References section (which maps `[N]` back to
+    `entries[N-1]`) stays aligned no matter how the LLM orders the page.
+    Grouping by kind tells the model which captures are saved links vs.
+    the family's own notes, so it can split them into the right sections.
+    """
+    groups: dict[str, list[str]] = {}
+    for n, s in enumerate(entries, start=1):
+        kind = _entry_kind(s.get("rel", ""), slug)
+        parts = [s["date"]] if s.get("date") else []
+        parts.append(s.get("title") or "(untitled)")
+        who = (s.get("filed_by") or "").strip()
+        if who:
+            parts.append(f"filed by {who}")
+        meta = " · ".join(parts)
+        block = f"[{n}] {meta}\n    " + (s.get("summary") or "").replace("\n", "\n    ")
+        groups.setdefault(kind, []).append(block)
+    out: list[str] = []
+    for kind in _TOPIC_KIND_ORDER:
+        if groups.get(kind):
+            out.append(f"{_KIND_LABEL[kind]}:")
+            out.append("\n\n".join(groups[kind]))
+            out.append("")
+    return "\n".join(out).rstrip()
+
+
 def _build_topic_prompt(
     display: str, slug: str, scope: str,
     entries: list[dict], cross_refs: list[dict], *, lang: str,
@@ -1261,12 +1431,16 @@ def _build_topic_prompt(
     `[N]` evidence; the LLM cites by number.
 
     Scope branches the tone: a shared topic reads as the family's
-    common interest; a personal topic frames it as one person's. The
-    section layout is fixed so re-runs produce comparable output and
-    a future deriver can read the page back into structured form.
+    common interest; a personal topic frames it as one person's.
+
+    Captures are grouped by kind so the page separates saved links
+    (Bookmarks) from the household's own notes (Notes) and filed
+    documents (Documents) instead of flattening everything into one
+    feed. About is a recency-weighted overview, not a changelog — the
+    latest developments are folded into the prose.
     """
 
-    main_evidence = _format_evidence(entries)
+    main_evidence = _format_topic_evidence(entries, slug)
     if cross_refs:
         # Numbering continues from main_evidence so a single citation
         # space spans the whole prompt -- the LLM and the rendered
@@ -1311,6 +1485,19 @@ def _build_topic_prompt(
             f"tracking on {display.lower()}."
         )
 
+    # Only emit a typed section for a kind that actually has captures, so a
+    # topic with no bookmarks doesn't carry an empty Bookmarks heading.
+    present = [
+        _KIND_LABEL[kind]
+        for kind in _TOPIC_KIND_ORDER
+        if any(_entry_kind(e.get("rel", ""), slug) == kind for e in entries)
+    ]
+    section_specs = "\n\n".join(
+        f"## {label}\nEvery {label[:-1].lower()} from above, newest first, one "
+        f"bullet each: `<what it is> — <who filed it, if known> [N]`."
+        for label in present
+    )
+
     return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. It is an OVERVIEW someone (or the family's assistant) reads to understand what this topic is about and what has happened in it lately — not an archive. Detail lives in the cited captures, one click away. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
 
 This page is about the topic: {display} (vault slug: {slug}, scope: {scope}).
@@ -1327,10 +1514,9 @@ Produce a markdown page with this EXACT structure and section order:
 > <one short line: what this topic is, in the household's voice — omit the blockquote if not derivable>
 
 ## About
-One short paragraph: what this topic covers in the family's memory, what kinds of captures land here, what makes it worth revisiting. [N]
+One paragraph that reads as a CURRENT overview of the topic — what it is and where it stands right now — weighting recent captures more heavily than older ones. Fold the latest developments into the prose; do not list them as a separate changelog. [N]
 
-## Recent Activity
-The most recent captures filed under this topic, newest first, AT MOST 8 bullets: `<date> — <what it was>`. [N]
+{section_specs}
 
 ## Cross-references
 {"Captures filed in other buckets that mention this topic. One bullet each: `<date> — <what it was> [from <bucket>]`. [N]" if cross_refs else "(omit this section)"}

@@ -875,3 +875,79 @@ The five layers, the entity page templates, and the backend interface are the *i
 | L4 master index | `<knowledge>/index.md` | wiki-rebuild CLI, dream cycle | Kit's system prompt, humans |
 
 Concepts, layers, formats — pinned. Backends, bots, and CLIs — swappable. Obsidian and Karpathy both happy. Engram or SQLite or LanceDB plug in later without rewriting any of the above.
+
+---
+
+## Addendum (2026-06-25): what shipped vs. this design
+
+> Everything above is the original 2026-04-21 design and is kept as the design
+> record, not patched in place. Where it and this addendum disagree, **the
+> addendum is the current reality.** One thing moved: where the ontology lives.
+
+The shape held. The five layers, the entity-page templates, eager entity
+creation, and the Obsidian + backend-agnostic contracts all shipped roughly as
+written. What changed is the **home of the ontology**.
+
+### Original framing
+
+`ontology.toml` was *"the static schema … loaded once, referenced everywhere"*
+(see **Vocabulary — the static schema**, and the **Summary** table, which lists
+Topic/Type/Person *schema* as living there). The implication: a central,
+hand-maintained file is the source of truth for what entities exist and how
+they relate.
+
+### Current reality
+
+The **ontology of record is the entity graph in the vault** — one `.md` per
+entity (`kind: person | correspondent | topic | asset | story`), frontmatter as
+identity, `[[wikilinks]]` as edges. Persons, correspondents, and topics are
+generated as entity pages today; correspondents auto-create as leaf pages with
+deterministic backlinks.
+
+`ontology.toml` did **not** disappear, but it **demoted** to a single job: the
+**classifier vocabulary seed** (topics, doctypes, synonyms, aliases) that the
+capture and query-rewrite prompts read as an `ontology_section` (via
+`stack.ontology.Ontology`, loaded from the vault or the shipped seed). It no
+longer holds entity identity or the relation graph — the vault does.
+
+So the **Summary** table above now reads:
+
+| Concept | Original doc says | Current reality |
+|---|---|---|
+| Entity identity + relations | schema in `ontology.toml` | **vault entity pages** (`<bucket>/<id>.md`, `kind:` frontmatter, `[[links]]`) |
+| Tagging vocabulary (topics, doctypes, synonyms) | `ontology.toml` | `ontology.toml` — unchanged, but now its *only* job |
+| Durable facts | `facts.toml` / `facts.jsonl` | unchanged |
+
+### Identity vs. overview, on one page
+
+A consequence worth pinning: an entity page splits by **mutability**.
+Frontmatter is the **durable identity** (slots, aliases, relations) and is never
+regenerated; the body is the **current overview** (LLM, batch-regenerated,
+recency-weighted). That split is the guard against recency-weighted prose
+washing out stable facts — the stable facts sit in frontmatter, which the regen
+never touches. Durable facts about an entity live on *that entity's* page;
+other entities point at them with `[[links]]` rather than copying them.
+
+### Why we moved this way
+
+1. **Obsidian-native, no second source of truth.** Entity pages give backlinks
+   and graph view for free. A central registry has to be kept in sync with the
+   vault it describes; the vault describing itself removes that class of drift.
+2. **One source per fact.** A fact lives on the entity it belongs to (the bus's
+   specs on the bus's page); relations are edges. A central ontology would
+   duplicate facts and force reconciliation.
+3. **It auto-extends; a hand-file doesn't.** A new topic or correspondent
+   becomes a page on first sighting. A hand-maintained `ontology.toml` is a
+   manual gate, and in practice it stopped being maintained — which was the
+   signal that the entity graph had already become the real ontology.
+4. **Portability.** A vault of OKF entity pages opens in any Obsidian/OKF tool
+   as a graph. A central proprietary schema does not travel.
+
+### What this leaves open
+
+Vocabulary (`ontology.toml`) and the entity graph (the vault) are still **two
+stores**. The logical next step — the *living-ontology loader* in
+[wiki-improvements-backlog.md](wiki-improvements-backlog.md) — would derive the
+classifier vocabulary *from* the entity pages and tags-in-use, collapsing the
+two into one. It is specced, not built. Until it lands, `ontology.toml` stays
+the vocabulary seed and the entity graph stays the ontology of record.

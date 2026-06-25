@@ -77,6 +77,29 @@ REPO_NAME = "memory"
 
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
+
+
+def _commit_author(submitter: str | None) -> tuple[str, str]:
+    """`(author_name, author_email)` for a capture commit.
+
+    Attributes the commit to the family member who filed it, derived from
+    their Matrix id (`@marge:merles.eu` -> `marge`, `marge@merles.eu`), so
+    `git log --author` answers "who added this". Falls back to the bot when
+    there is no submitter or the id is malformed — the commit still lands.
+    """
+    if submitter:
+        local = submitter.split(":")[0].lstrip("@").strip().lower()
+        domain = submitter.split(":", 1)[1].strip() if ":" in submitter else ""
+        if local:
+            return local, f"{local}@{domain}" if domain else f"{local}@local"
+    return BOT_USERNAME, BOT_EMAIL
+
+
+def _filer_localpart(submitter: str | None) -> str | None:
+    """The submitter's Matrix localpart, for the `filed_by` frontmatter field."""
+    if not submitter:
+        return None
+    return submitter.split(":")[0].lstrip("@").strip().lower() or None
 TOKEN_NAME = "archivist-git-mirror"
 TOKEN_SCOPES = ["write:repository", "read:repository", "read:user"]
 
@@ -294,6 +317,41 @@ class GitMirror:
                 self._save_cache()
                 return path
         return None
+
+    async def _lookup_capture_path(
+        self, client: ForgejoClient, target_path: str,
+    ) -> str | None:
+        """An existing capture with `target_path`'s identity, ignoring its title.
+
+        A capture's filename is `<title-slug>-<hash>.md`; the hash is stable
+        per URL/body, the slug is not. So the same link re-pasted with different
+        framing, or content re-classified to a different title, would otherwise
+        fork a near-duplicate. Match on the `<entity>/<kind>s/` folder + the
+        `-<hash>.md` suffix instead: return the exact path when it exists
+        (in-place update), else a same-hash file under a different slug (so the
+        caller renames it), else None.
+        """
+        parts = target_path.split("/")
+        if len(parts) < 2:
+            return None
+        prefix = f"{parts[0]}/{parts[1]}/"              # <entity>/<kind>s/
+        suffix = "-" + target_path.rsplit("-", 1)[-1]   # -<hash>.md
+        try:
+            tree = await asyncio.to_thread(
+                client.list_tree, self.repo_owner, REPO_NAME,
+            )
+        except ForgejoError:
+            return None
+        match = None
+        for entry in tree:
+            path = entry.get("path", "")
+            if entry.get("type") != "blob":
+                continue
+            if path.startswith(prefix) and path.endswith(suffix):
+                if path == target_path:
+                    return path        # exact identity + title → update in place
+                match = path           # same identity, different title → rename
+        return match
 
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
@@ -605,12 +663,13 @@ class GitMirror:
         tags: list[str],
         model: str | None,
         capture_id: str | None = None,
+        filed_by: str | None = None,
     ) -> dict:
         """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``."""
         return capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
-            model=model, capture_id=capture_id,
+            model=model, capture_id=capture_id, filed_by=filed_by,
         )
 
     async def read_capture(self, path: str) -> str | None:
@@ -648,6 +707,7 @@ class GitMirror:
         tags: list[str] | None = None,
         existing_path: str | None = None,
         capture_id: str | None = None,
+        submitter: str | None = None,
     ) -> str | None:
         """Create or update a capture entry in the mirror.
 
@@ -698,6 +758,14 @@ class GitMirror:
             hash_key=hash_key,
         )
 
+        # Dedup on identity, not filename: if this URL/body already lives under
+        # a different title (a re-paste with new framing, an older differently-
+        # titled capture), find it by its hash so we update/rename that entry
+        # instead of forking a duplicate. The reprocess caller already knows the
+        # path, so only look when it didn't pass one.
+        if existing_path is None:
+            existing_path = await self._lookup_capture_path(client, target_path)
+
         # Reprocess path: read the previous file at its old path. When
         # the title changes the slug changes too, so we'll delete the
         # old entry after writing the new one (same as the doc
@@ -717,6 +785,10 @@ class GitMirror:
             )
             existing_at_new = existing if lookup_path == target_path else None
 
+        # Attribute the capture to whoever filed it: the localpart goes in
+        # `filed_by` frontmatter, and the same identity becomes the git commit
+        # author (committer stays the bot). Both come from `submitter`.
+        author_name, author_email = _commit_author(submitter)
         fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
@@ -726,6 +798,7 @@ class GitMirror:
             tags=tags or [],
             model=model,
             capture_id=capture_id,
+            filed_by=_filer_localpart(submitter),
         )
 
         briefing_summary = classification.get("summary")
@@ -762,7 +835,7 @@ class GitMirror:
                 self.repo_owner, REPO_NAME, target_path,
                 content=content, message=message,
                 sha=existing_at_new["sha"] if existing_at_new else None,
-                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+                author_name=author_name, author_email=author_email,
             )
             # Title rename on reprocess: remove the prior file after
             # the new one is in place so the vault never has both.

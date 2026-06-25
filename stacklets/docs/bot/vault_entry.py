@@ -276,6 +276,7 @@ def capture_frontmatter(
     tags: list[str],
     model: str | None,
     capture_id: str | None = None,
+    filed_by: str | None = None,
 ) -> dict:
     """Frontmatter for a capture entry.
 
@@ -322,6 +323,11 @@ def capture_frontmatter(
         fm["date"] = captured_at
     if persons:
         fm["persons"] = persons
+    if filed_by:
+        # The Matrix localpart of whoever filed this capture. Mirrors the git
+        # commit author so "who added this" survives outside a git context
+        # (Dataview queries, a plain read of the file).
+        fm["filed_by"] = filed_by
     if tags:
         fm["tags"] = tags
     if source_uri:

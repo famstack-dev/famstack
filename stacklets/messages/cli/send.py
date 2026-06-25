@@ -1,8 +1,10 @@
 """
-stack messages send <room> "message" — send a message to a Matrix room
+stack messages send <room> "message" [--as <user>] — send a message to a room
 
-Sends a plain text message to the specified room as the admin user.
-The room can be a bare alias (e.g. 'chat') or a full Matrix room ID.
+Sends a plain text message to the specified room. By default it posts as
+stacker-bot (the system account); pass `--as <user>` to post as a family
+member, the text counterpart to `stack messages upload --as`. The room can
+be a bare alias (e.g. 'chat') or a full Matrix room ID.
 
 This is the building block other stacklets use for notifications:
   - photos could notify #notifications when a backup completes
@@ -20,7 +22,7 @@ from pathlib import Path
 
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
-from _matrix import MatrixClient
+from _matrix import MatrixClient, resolve_login
 
 
 def _simple_markdown_to_html(text):
@@ -82,34 +84,48 @@ def run(args, stacklet, config):
     if not config["is_healthy"]():
         return {"error": "Messages is not running — start it with 'stack up messages'"}
 
-    # Parse room and message from the remaining argv
-    # sys.argv looks like: ['stack', 'messages', 'send', '<room>', '<message>']
+    # Parse room, message, and optional `--as <user>` from the remaining argv.
+    # sys.argv: ['stack', 'messages', 'send', '<room>', '<message>', ...]
+    sender = None
+    rest = []
     argv = sys.argv[3:]  # skip 'stack', 'messages', 'send'
-    if len(argv) < 2:
-        return {"error": "Usage: stack messages send <room> \"message\""}
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--as":
+            if i + 1 >= len(argv):
+                return {"error": "--as needs a username"}
+            sender = argv[i + 1]
+            i += 2
+            continue
+        rest.append(argv[i])
+        i += 1
+    if len(rest) < 2:
+        return {"error": 'Usage: stack messages send <room> "message" [--as <user>]'}
 
-    room = argv[0]
-    message = " ".join(argv[1:])
+    room = rest[0]
+    message = " ".join(rest[1:])
 
     instance_dir = config.get("instance_dir", config.get("repo_root", "."))
     stack_cfg = config.get("stack", {})
     secrets = config.get("secrets", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
 
-    # Use stacker-bot for sending — it's the system notification account
-    # Password lives in core (new convention) or messages (legacy)
-    bot_pass = (secrets.get("core__STACKER_BOT_PASSWORD")
-                or secrets.get("messages__STACKER_BOT_PASSWORD", ""))
-    if not bot_pass:
-        return {"error": "stacker-bot not set up. Run 'stack up core' first."}
+    # Default sender is stacker-bot; `--as <user>` posts as a family member so
+    # the archivist captures and attributes it the way a real person would.
+    username, password, err = resolve_login(sender, secrets)
+    if err:
+        return {"error": err}
 
     manifest = config.get("manifest", {})
     synapse_port = manifest.get("ports", {}).get("synapse", 42031)
     base_url = f"http://localhost:{synapse_port}"
     client = MatrixClient(base_url, server_name, instance_dir)
 
-    if not client.login("stacker-bot", bot_pass):
-        return {"error": "stacker-bot can't log in. Run 'stack messages setup' first."}
+    if not client.login(username, password):
+        return {"error": f"{username} can't log in — check the password in secrets."}
+
+    # Best-effort join so a family member not yet in the room can still post.
+    client.join(room)
 
     html = _simple_markdown_to_html(message)
 

@@ -29,6 +29,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -575,6 +576,7 @@ class Classifier:
 
         response = await self._llm.complete(
             "classifier", prompt, images=attach, json_mode=True,
+            temperature=0.0,
         )
         if not response:
             return {}
@@ -620,6 +622,7 @@ class Classifier:
             existing_tags=existing_tags or [],
             user_hint=user_hint,
             initial_classification=initial_classification,
+            today=date.today().isoformat(),
         )
         valid_images = [
             img for img in (images or [])
@@ -635,6 +638,7 @@ class Classifier:
             )
         response = await self._llm.complete(
             "classifier", prompt, images=attach, json_mode=True,
+            temperature=0.0,
         )
         if not response:
             return {}
@@ -978,6 +982,7 @@ def _build_capture_prompt(
     existing_tags: list[str] | None = None,
     user_hint: str | None = None,
     initial_classification: dict | None = None,
+    today: str | None = None,
 ) -> str:
     """The capture prompt — smaller and focused on summary + tags.
 
@@ -995,6 +1000,13 @@ def _build_capture_prompt(
     synonyms across the whole corpus later.
     """
     existing_tags = existing_tags or []
+    # The model needs an anchor to turn relative-time phrases ("this Friday",
+    # "the 14th to 16th") in a note into concrete dates in the facts.
+    today_line = (
+        f'\nToday\'s date is {today}. Use it to resolve relative-time phrases '
+        f'("this Friday", "next week", "the 14th to 16th") into concrete dates.\n'
+        if today else ""
+    )
     tags_hint = (
         f"Existing tags in use: {json.dumps(existing_tags, ensure_ascii=False)}\n"
         "Prefer these when they fit. Only invent new tags when nothing existing matches.\n"
@@ -1005,7 +1017,7 @@ def _build_capture_prompt(
 
     return f"""Summarize and tag this content for a personal knowledge vault.
 Return ONLY a JSON object.
-
+{today_line}
 The user is bookmarking or noting this content to find it later. Your
 job: produce a digest they can scan in 10 seconds and tags that
 position this content among their interests.{_initial_classification_block(initial_classification)}{_user_hint_block(user_hint)}

@@ -28,6 +28,29 @@ _SSL = ssl.create_default_context()
 _SSL.check_hostname = False
 _SSL.verify_mode = ssl.CERT_NONE
 
+
+def resolve_login(sender, secrets):
+    """`(username, password, error)` for a message sender.
+
+    `--as <user>` reads `global__USER_<NAME>_PASSWORD` so the message shows up
+    as that family member; the default is stacker-bot, the system account.
+    Shared by `stack messages send` and `upload` so both attribute the same
+    way — a family member's text or file lands under their name, which is what
+    the archivist routes and attributes on.
+    """
+    if sender:
+        key = f"global__USER_{sender.upper()}_PASSWORD"
+        password = secrets.get(key, "")
+        if not password:
+            return None, None, f"No password for '{sender}' in secrets ({key})"
+        return sender, password, None
+    bot_pass = (secrets.get("core__STACKER_BOT_PASSWORD")
+                or secrets.get("messages__STACKER_BOT_PASSWORD", ""))
+    if not bot_pass:
+        return None, None, "stacker-bot not set up. Run 'stack up core' first."
+    return "stacker-bot", bot_pass, None
+
+
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 def _api(method, url, body=None, token=None):

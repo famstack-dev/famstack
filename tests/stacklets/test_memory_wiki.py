@@ -21,11 +21,19 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
+    _build_topic_prompt,
+    _capture_index_pages,
     _correspondent_body,
     _correspondent_entries,
     _correspondent_preamble,
     _correspondent_roster,
+    _entry_kind,
+    _format_topic_evidence,
+    _index_vault,
     _member_preamble,
+    _member_slugs,
+    _month_label,
+    _render_capture_index,
     _topic_cross_refs,
     _topic_entries,
     _topic_locations,
@@ -387,8 +395,9 @@ class TestCorrespondentBody:
         )
         body = _correspondent_body(entries, page_dir="family/correspondents")
         assert body.startswith("## Documents")
-        # leaf page lives in family/correspondents/ -> climb two to root
-        assert "[Auto Policy](../../family/documents/2026/03/auto-policy-p247.md)" in body
+        # Links are full paths from the vault root (Quartz "absolute"), so the
+        # same form resolves no matter how deep the page lives.
+        assert "[Auto Policy](/family/documents/2026/03/auto-policy-p247.md)" in body
         assert "2026-03-15" in body
 
 
@@ -472,3 +481,190 @@ class TestRenumberCitations:
 
     def test_unmapped_numbers_pass_through(self) -> None:
         assert _renumber_citations("Kept [7].", {1: 2}) == "Kept [7]."
+
+
+# ── Topic page: typed sections (bookmarks vs notes) + living About ──────────
+
+def _topic_entry(rel: str, title: str, *, date: str = "2026-06-10",
+                 summary: str = "a summary", filed_by: str = "") -> dict:
+    return {"rel": rel, "title": title, "date": date,
+            "summary": summary, "filed_by": filed_by}
+
+
+class TestEntryKind:
+    """A capture's kind is read from the folder after the topic slug."""
+
+    def test_bookmark_note_document(self):
+        assert _entry_kind("family/camping/bookmarks/2026/06/x.md", "camping") == "bookmark"
+        assert _entry_kind("family/camping/notes/2026/06/x.md", "camping") == "note"
+        assert _entry_kind("family/camping/documents/2026/06/x.md", "camping") == "document"
+
+    def test_unknown_folder_defaults_to_note(self):
+        assert _entry_kind("family/camping/misc/x.md", "camping") == "note"
+
+    def test_slug_absent_defaults_to_note(self):
+        assert _entry_kind("family/other/notes/x.md", "camping") == "note"
+
+
+class TestFormatTopicEvidence:
+    """Evidence is grouped by kind, but [N] tracks list order so the
+    deterministic References mapping ([N] -> entries[N-1]) stays aligned."""
+
+    def test_grouped_by_kind_with_list_order_citations(self):
+        # note first in the list, bookmark second -> bookmark keeps [2]
+        entries = [
+            _topic_entry("family/camping/notes/2026/06/n.md", "Checkliste"),
+            _topic_entry("family/camping/bookmarks/2026/06/b.md", "Fenstertasche"),
+        ]
+        ev = _format_topic_evidence(entries, "camping")
+        assert "Bookmarks:" in ev and "Notes:" in ev
+        assert ev.index("Bookmarks:") < ev.index("Notes:")  # section order by kind
+        assert "[2] 2026-06-10 · Fenstertasche" in ev        # bookmark kept its index
+        assert "[1] 2026-06-10 · Checkliste" in ev
+
+    def test_filer_surfaced_in_evidence(self):
+        entries = [_topic_entry("family/camping/bookmarks/2026/06/b.md",
+                                "Fenstertasche", filed_by="marge")]
+        ev = _format_topic_evidence(entries, "camping")
+        assert "filed by marge" in ev
+
+
+class TestBuildTopicPrompt:
+    """The page separates bookmarks from notes and frames About as a
+    living, recency-weighted overview rather than a flat activity feed."""
+
+    BOOKMARK = _topic_entry("family/camping/bookmarks/2026/06/b.md", "Fenstertasche")
+    NOTE = _topic_entry("family/camping/notes/2026/06/n.md", "Checkliste")
+
+    def test_typed_sections_for_present_kinds_only(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.BOOKMARK, self.NOTE], [], lang="de",
+        )
+        assert "## Bookmarks" in prompt
+        assert "## Notes" in prompt
+        assert "## Documents" not in prompt   # no document capture present
+
+    def test_no_flat_recent_activity_section(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.BOOKMARK], [], lang="de",
+        )
+        assert "Recent Activity" not in prompt
+
+    def test_about_is_recency_weighted_overview(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.NOTE], [], lang="de",
+        )
+        lower = prompt.lower()
+        assert "weighting recent captures" in lower
+        assert "current overview" in lower
+
+    def test_cross_references_section_when_present(self):
+        cross = [_topic_entry("family/insurance/documents/2026/06/d.md", "Police")]
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.NOTE], cross, lang="de",
+        )
+        assert "## Cross-references" in prompt
+
+    def test_sections_request_attribution(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.BOOKMARK], [], lang="de",
+        )
+        assert "who filed it" in prompt.lower()
+
+
+class TestIndexFiledBy:
+    """The vault index carries filed_by so attribution reaches the page."""
+
+    def test_filed_by_indexed_from_frontmatter(self, tmp_path):
+        d = tmp_path / "family" / "camping" / "bookmarks" / "2026" / "06"
+        d.mkdir(parents=True)
+        (d / "b.md").write_text(
+            "---\ntype: bookmark\ntitle: Fenstertasche\nfiled_by: marge\n---\n"
+            "# Fenstertasche\n\n> [!summary]\n> Eine Fenstertasche.\n",
+            encoding="utf-8",
+        )
+        index = _index_vault(tmp_path)
+        assert len(index) == 1
+        assert index[0]["filed_by"] == "marge"
+
+
+# ── Folder index pages (notes/ and bookmarks/ landing pages) ────────────────
+
+class TestMonthLabel:
+    def test_parses_month_year(self):
+        assert _month_label("2026-06-25") == "June 2026"
+
+    def test_undated_fallback(self):
+        assert _month_label("") == "Undated"
+        assert _month_label("not-a-date") == "Undated"
+
+
+def _idx_entry(rel, title, date, *, filed_by="", tags=None):
+    return {"rel": rel, "title": title, "date": date,
+            "filed_by": filed_by, "tags": tags or []}
+
+
+class TestRenderCaptureIndex:
+    """The folder landing page: newest-first, grouped by month, with who
+    filed each item, its tags, and absolute links."""
+
+    def test_newest_first_month_grouped_attributed(self):
+        entries = [
+            _idx_entry("family/camping/notes/2026/06/a-1.md", "Older note",
+                       "2026-06-10", filed_by="homer", tags=["camping"]),
+            _idx_entry("family/camping/notes/2026/06/b-2.md", "Newer note",
+                       "2026-06-22", filed_by="marge", tags=["packliste"]),
+        ]
+        out = _render_capture_index(entries, "note", "Camping")
+        assert out.startswith("# Notes: Camping")
+        assert out.index("Newer note") < out.index("Older note")   # newest first
+        assert "## June 2026" in out
+        assert "_marge_" in out
+        assert "[Newer note](/family/camping/notes/2026/06/b-2.md)" in out  # absolute link
+
+    def test_count_is_singular_for_one(self):
+        out = _render_capture_index(
+            [_idx_entry("x/notes/n.md", "T", "2026-06-01")], "note", "X")
+        assert "1 note, newest first" in out
+
+    def test_tags_omitted_to_stay_scannable(self):
+        out = _render_capture_index(
+            [_idx_entry("x/notes/n.md", "T", "2026-06-01",
+                        tags=["camping", "Person: Bart"])], "note", "X")
+        assert "/tags/" not in out and "camping" not in out
+
+
+class TestCaptureIndexPages:
+    def test_only_folders_with_entries_under_page_dir(self):
+        index = [
+            _idx_entry("family/camping/notes/2026/06/a-1.md", "N", "2026-06-01"),
+            _idx_entry("family/camping/bookmarks/2026/06/b-2.md", "B", "2026-06-01"),
+            _idx_entry("family/other/notes/x.md", "Other", "2026-06-01"),  # ignored
+        ]
+        pages = _capture_index_pages(index, "family/camping", "Camping")
+        assert {kind for kind, _t, _c in pages} == {"bookmark", "note"}
+        targets = {t for _k, t, _c in pages}
+        assert "family/camping/notes/index.md" in targets
+        assert "family/camping/bookmarks/index.md" in targets
+
+    def test_absent_kind_gets_no_page(self):
+        index = [_idx_entry("family/camping/notes/2026/06/a-1.md", "N", "2026-06-01")]
+        pages = _capture_index_pages(index, "family/camping", "Camping")
+        assert {kind for kind, _t, _c in pages} == {"note"}
+
+
+class TestMemberSlugs:
+    """The wiki roster is family members, not bots."""
+
+    def test_excludes_bot_buckets(self, tmp_path):
+        for name in ("homer", "marge", "mail-bot", "family"):
+            (tmp_path / name).mkdir()
+        slugs = _member_slugs(tmp_path, [], shared_bucket="family")
+        assert "homer" in slugs and "marge" in slugs
+        assert "mail-bot" not in slugs   # bot, not a member
+        assert "family" not in slugs     # shared bucket, not a member
+
+    def test_excludes_bot_named_in_persons(self, tmp_path):
+        index = [{"persons": ["homer", "scribe-bot"]}]
+        slugs = _member_slugs(tmp_path, index, shared_bucket="family")
+        assert "homer" in slugs and "scribe-bot" not in slugs

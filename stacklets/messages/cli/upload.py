@@ -24,7 +24,7 @@ from pathlib import Path
 
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
-from _matrix import MatrixClient
+from _matrix import MatrixClient, resolve_login
 
 # Extension → (mime type, Matrix msgtype). Images go as m.image so the
 # archivist takes its vision path; everything else is m.file.
@@ -58,22 +58,6 @@ def _parse_argv(argv):
     return rest[0], rest[1], sender, None
 
 
-def _resolve_login(sender, secrets):
-    """(username, password) for the sender. --as <user> reads
-    global__USER_<NAME>_PASSWORD; the default is stacker-bot."""
-    if sender:
-        key = f"global__USER_{sender.upper()}_PASSWORD"
-        password = secrets.get(key, "")
-        if not password:
-            return None, None, f"No password for '{sender}' in secrets ({key})"
-        return sender, password, None
-    bot_pass = (secrets.get("core__STACKER_BOT_PASSWORD")
-                or secrets.get("messages__STACKER_BOT_PASSWORD", ""))
-    if not bot_pass:
-        return None, None, "stacker-bot not set up. Run 'stack up core' first."
-    return "stacker-bot", bot_pass, None
-
-
 def run(args, stacklet, config):
     if not config["is_healthy"]():
         return {"error": "Messages is not running — start it with 'stack up messages'"}
@@ -94,7 +78,7 @@ def run(args, stacklet, config):
     secrets = config.get("secrets", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
 
-    username, password, err = _resolve_login(sender, secrets)
+    username, password, err = resolve_login(sender, secrets)
     if err:
         return {"error": err}
 
