@@ -391,8 +391,9 @@ class TestCorrespondentBody:
         )
         body = _correspondent_body(entries, page_dir="family/correspondents")
         assert body.startswith("## Documents")
-        # leaf page lives in family/correspondents/ -> climb two to root
-        assert "[Auto Policy](../../family/documents/2026/03/auto-policy-p247.md)" in body
+        # Links are full paths from the vault root (Quartz "absolute"), so the
+        # same form resolves no matter how deep the page lives.
+        assert "[Auto Policy](/family/documents/2026/03/auto-policy-p247.md)" in body
         assert "2026-03-15" in body
 
 

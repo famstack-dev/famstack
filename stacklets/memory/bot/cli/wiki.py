@@ -888,22 +888,16 @@ def _build_references_section(
 
 
 def _relative_link(rel: str, page_dir: str) -> str:
-    """Path to a vault file `rel` as seen from a page living in `page_dir`.
+    """Link to vault file `rel`, as a full path from the vault root.
 
-    `page_dir` is the vault-relative directory of the page: "" for the
-    root home page, "homer" for a member page. A target inside the same
-    directory drops the shared prefix; anything else climbs out with one
-    `../` per path segment, then descends. Pure string work -- the bucket
-    boundary is structural in the layout, not a runtime fact, so no
-    `os.path.relpath` rerouting through the local FS.
+    Every internal link is rendered absolute-from-root rather than relative to
+    the page. Quartz resolves links absolute-from-root (markdownLinkResolution
+    "absolute"), and Obsidian resolves a vault-root path identically, so one
+    form works at every page depth. Page-relative paths broke on nested topic
+    pages: Quartz's "shortest" mode shortened a `notes/...` link to a root slug
+    that 404s. `page_dir` is unused now but kept so callers don't change.
     """
-    if not page_dir:
-        return rel
-    prefix = page_dir.strip("/") + "/"
-    if rel.startswith(prefix):
-        return rel[len(prefix):]
-    depth = len([p for p in page_dir.strip("/").split("/") if p])
-    return "../" * depth + rel
+    return "/" + rel.lstrip("/")
 
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
