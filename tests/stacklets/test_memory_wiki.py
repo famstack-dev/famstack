@@ -21,10 +21,13 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
+    _build_topic_prompt,
     _correspondent_body,
     _correspondent_entries,
     _correspondent_preamble,
     _correspondent_roster,
+    _entry_kind,
+    _format_topic_evidence,
     _member_preamble,
     _topic_cross_refs,
     _topic_entries,
@@ -472,3 +475,79 @@ class TestRenumberCitations:
 
     def test_unmapped_numbers_pass_through(self) -> None:
         assert _renumber_citations("Kept [7].", {1: 2}) == "Kept [7]."
+
+
+# ── Topic page: typed sections (bookmarks vs notes) + living About ──────────
+
+def _topic_entry(rel: str, title: str, *, date: str = "2026-06-10",
+                 summary: str = "a summary") -> dict:
+    return {"rel": rel, "title": title, "date": date, "summary": summary}
+
+
+class TestEntryKind:
+    """A capture's kind is read from the folder after the topic slug."""
+
+    def test_bookmark_note_document(self):
+        assert _entry_kind("family/camping/bookmarks/2026/06/x.md", "camping") == "bookmark"
+        assert _entry_kind("family/camping/notes/2026/06/x.md", "camping") == "note"
+        assert _entry_kind("family/camping/documents/2026/06/x.md", "camping") == "document"
+
+    def test_unknown_folder_defaults_to_note(self):
+        assert _entry_kind("family/camping/misc/x.md", "camping") == "note"
+
+    def test_slug_absent_defaults_to_note(self):
+        assert _entry_kind("family/other/notes/x.md", "camping") == "note"
+
+
+class TestFormatTopicEvidence:
+    """Evidence is grouped by kind, but [N] tracks list order so the
+    deterministic References mapping ([N] -> entries[N-1]) stays aligned."""
+
+    def test_grouped_by_kind_with_list_order_citations(self):
+        # note first in the list, bookmark second -> bookmark keeps [2]
+        entries = [
+            _topic_entry("family/camping/notes/2026/06/n.md", "Checkliste"),
+            _topic_entry("family/camping/bookmarks/2026/06/b.md", "Fenstertasche"),
+        ]
+        ev = _format_topic_evidence(entries, "camping")
+        assert "Bookmarks:" in ev and "Notes:" in ev
+        assert ev.index("Bookmarks:") < ev.index("Notes:")  # section order by kind
+        assert "[2] 2026-06-10 · Fenstertasche" in ev        # bookmark kept its index
+        assert "[1] 2026-06-10 · Checkliste" in ev
+
+
+class TestBuildTopicPrompt:
+    """The page separates bookmarks from notes and frames About as a
+    living, recency-weighted overview rather than a flat activity feed."""
+
+    BOOKMARK = _topic_entry("family/camping/bookmarks/2026/06/b.md", "Fenstertasche")
+    NOTE = _topic_entry("family/camping/notes/2026/06/n.md", "Checkliste")
+
+    def test_typed_sections_for_present_kinds_only(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.BOOKMARK, self.NOTE], [], lang="de",
+        )
+        assert "## Bookmarks" in prompt
+        assert "## Notes" in prompt
+        assert "## Documents" not in prompt   # no document capture present
+
+    def test_no_flat_recent_activity_section(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.BOOKMARK], [], lang="de",
+        )
+        assert "Recent Activity" not in prompt
+
+    def test_about_is_recency_weighted_overview(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.NOTE], [], lang="de",
+        )
+        lower = prompt.lower()
+        assert "weighting recent captures" in lower
+        assert "current overview" in lower
+
+    def test_cross_references_section_when_present(self):
+        cross = [_topic_entry("family/insurance/documents/2026/06/d.md", "Police")]
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.NOTE], cross, lang="de",
+        )
+        assert "## Cross-references" in prompt

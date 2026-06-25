@@ -412,10 +412,11 @@ async def _generate_topic(
     """Compose one topic's `about.md` from its slice plus cross-refs.
 
     Mirror of `_generate_member`. The topic's own captures drive the
-    `Recent Activity` section; cross-references (captures elsewhere
-    whose `topics:` or `tags:` mention the slug) drive a dedicated
-    section so the topic page collects the household's relevant
-    material even when it lives in another bucket.
+    typed Bookmarks / Notes / Documents sections (split by kind);
+    cross-references (captures elsewhere whose `topics:` or `tags:`
+    mention the slug) drive a dedicated section so the topic page
+    collects the household's relevant material even when it lives in
+    another bucket.
 
     `bucket_prefix` is the topic's owning bucket: `<shared_bucket>`
     for a shared topic, `<localpart>` for a personal one. The scope
@@ -1247,6 +1248,59 @@ Rules:
 """
 
 
+# Capture kinds, in the order their sections appear on a topic page. Each
+# tuple is (frontmatter/folder kind, section heading, prompt description).
+_TOPIC_KIND_SECTIONS = [
+    ("bookmark", "Bookmarks", "saved links and references"),
+    ("note", "Notes", "the household's own typed notes and messages"),
+    ("document", "Documents", "filed documents"),
+]
+
+
+def _entry_kind(rel: str, slug: str) -> str:
+    """The capture kind of an entry, read from its vault path.
+
+    A topic's captures live at `<bucket>/<slug>/<folder>/...`; the folder
+    right after the topic slug carries the kind (`bookmarks`, `notes`,
+    `documents`). Anything unrecognised collapses to "note" — the
+    catch-all the capture pipeline itself defaults to.
+    """
+    parts = rel.split("/")
+    try:
+        i = parts.index(slug)
+    except ValueError:
+        return "note"
+    folder = parts[i + 1] if i + 1 < len(parts) else ""
+    return {
+        "bookmarks": "bookmark", "notes": "note", "documents": "document",
+    }.get(folder, "note")
+
+
+def _format_topic_evidence(entries: list[dict], slug: str) -> str:
+    """Number entries `[N]` in list order, grouped under their kind.
+
+    The `[N]` index matches each entry's position in `entries`, so the
+    deterministic References section (which maps `[N]` back to
+    `entries[N-1]`) stays aligned no matter how the LLM orders the page.
+    Grouping by kind tells the model which captures are saved links vs.
+    the family's own notes, so it can split them into the right sections.
+    """
+    groups: dict[str, list[str]] = {}
+    for n, s in enumerate(entries, start=1):
+        kind = _entry_kind(s.get("rel", ""), slug)
+        meta_bits = [s["date"]] if s.get("date") else []
+        meta = " · ".join(meta_bits + [s.get("title") or "(untitled)"])
+        block = f"[{n}] {meta}\n    " + (s.get("summary") or "").replace("\n", "\n    ")
+        groups.setdefault(kind, []).append(block)
+    out: list[str] = []
+    for kind, label, _desc in _TOPIC_KIND_SECTIONS:
+        if groups.get(kind):
+            out.append(f"{label}:")
+            out.append("\n\n".join(groups[kind]))
+            out.append("")
+    return "\n".join(out).rstrip()
+
+
 def _build_topic_prompt(
     display: str, slug: str, scope: str,
     entries: list[dict], cross_refs: list[dict], *, lang: str,
@@ -1261,12 +1315,16 @@ def _build_topic_prompt(
     `[N]` evidence; the LLM cites by number.
 
     Scope branches the tone: a shared topic reads as the family's
-    common interest; a personal topic frames it as one person's. The
-    section layout is fixed so re-runs produce comparable output and
-    a future deriver can read the page back into structured form.
+    common interest; a personal topic frames it as one person's.
+
+    Captures are grouped by kind so the page separates saved links
+    (Bookmarks) from the household's own notes (Notes) and filed
+    documents (Documents) instead of flattening everything into one
+    feed. About is a recency-weighted overview, not a changelog — the
+    latest developments are folded into the prose.
     """
 
-    main_evidence = _format_evidence(entries)
+    main_evidence = _format_topic_evidence(entries, slug)
     if cross_refs:
         # Numbering continues from main_evidence so a single citation
         # space spans the whole prompt -- the LLM and the rendered
@@ -1311,6 +1369,19 @@ def _build_topic_prompt(
             f"tracking on {display.lower()}."
         )
 
+    # Only emit a typed section for a kind that actually has captures, so a
+    # topic with no bookmarks doesn't carry an empty Bookmarks heading.
+    present = [
+        (label, desc)
+        for kind, label, desc in _TOPIC_KIND_SECTIONS
+        if any(_entry_kind(e.get("rel", ""), slug) == kind for e in entries)
+    ]
+    section_specs = "\n\n".join(
+        f"## {label}\nEvery {label[:-1].lower()} from above, newest first, "
+        f"one bullet each: `<what it is> [N]`."
+        for label, _desc in present
+    )
+
     return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. It is an OVERVIEW someone (or the family's assistant) reads to understand what this topic is about and what has happened in it lately — not an archive. Detail lives in the cited captures, one click away. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
 
 This page is about the topic: {display} (vault slug: {slug}, scope: {scope}).
@@ -1327,10 +1398,9 @@ Produce a markdown page with this EXACT structure and section order:
 > <one short line: what this topic is, in the household's voice — omit the blockquote if not derivable>
 
 ## About
-One short paragraph: what this topic covers in the family's memory, what kinds of captures land here, what makes it worth revisiting. [N]
+One paragraph that reads as a CURRENT overview of the topic — what it is and where it stands right now — weighting recent captures more heavily than older ones. Fold the latest developments into the prose; do not list them as a separate changelog. [N]
 
-## Recent Activity
-The most recent captures filed under this topic, newest first, AT MOST 8 bullets: `<date> — <what it was>`. [N]
+{section_specs}
 
 ## Cross-references
 {"Captures filed in other buckets that mention this topic. One bullet each: `<date> — <what it was> [from <bucket>]`. [N]" if cross_refs else "(omit this section)"}
