@@ -662,3 +662,45 @@ class TestCaptureRender:
         assert "> [!summary]" in out
         assert "Comment thread comparing" in out
         assert "Top comment quotes 60 tok/s" in out
+
+
+class _FakeTreeClient:
+    """Stands in for ForgejoClient.list_tree with a fixed file list."""
+
+    def __init__(self, paths):
+        self._paths = paths
+
+    def list_tree(self, owner, repo):
+        return [{"path": p, "type": "blob"} for p in self._paths]
+
+
+class TestCaptureIdentityDedup:
+    """Captures dedup on their stable hash suffix, not the title slug, so the
+    same URL/body re-saved under a different title updates one file."""
+
+    async def test_finds_same_hash_under_different_title(self, mirror):
+        client = _FakeTreeClient([
+            "homer/bookmarks/2026/06/old-framing-449437.md",
+            "homer/notes/2026/06/unrelated-abcdef.md",
+        ])
+        found = await mirror._lookup_capture_path(
+            client, "homer/bookmarks/2026/06/new-framing-449437.md")
+        assert found == "homer/bookmarks/2026/06/old-framing-449437.md"
+
+    async def test_prefers_exact_path(self, mirror):
+        target = "homer/bookmarks/2026/06/same-449437.md"
+        assert await mirror._lookup_capture_path(_FakeTreeClient([target]), target) == target
+
+    async def test_none_when_hash_absent(self, mirror):
+        client = _FakeTreeClient(["homer/bookmarks/2026/06/x-zzzzzz.md"])
+        assert await mirror._lookup_capture_path(
+            client, "homer/bookmarks/2026/06/y-449437.md") is None
+
+    async def test_scoped_to_entity_and_kind(self, mirror):
+        # Same hash under a different person or kind folder is a different capture.
+        client = _FakeTreeClient([
+            "marge/bookmarks/2026/06/x-449437.md",
+            "homer/notes/2026/06/x-449437.md",
+        ])
+        assert await mirror._lookup_capture_path(
+            client, "homer/bookmarks/2026/06/y-449437.md") is None

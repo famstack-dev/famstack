@@ -318,6 +318,41 @@ class GitMirror:
                 return path
         return None
 
+    async def _lookup_capture_path(
+        self, client: ForgejoClient, target_path: str,
+    ) -> str | None:
+        """An existing capture with `target_path`'s identity, ignoring its title.
+
+        A capture's filename is `<title-slug>-<hash>.md`; the hash is stable
+        per URL/body, the slug is not. So the same link re-pasted with different
+        framing, or content re-classified to a different title, would otherwise
+        fork a near-duplicate. Match on the `<entity>/<kind>s/` folder + the
+        `-<hash>.md` suffix instead: return the exact path when it exists
+        (in-place update), else a same-hash file under a different slug (so the
+        caller renames it), else None.
+        """
+        parts = target_path.split("/")
+        if len(parts) < 2:
+            return None
+        prefix = f"{parts[0]}/{parts[1]}/"              # <entity>/<kind>s/
+        suffix = "-" + target_path.rsplit("-", 1)[-1]   # -<hash>.md
+        try:
+            tree = await asyncio.to_thread(
+                client.list_tree, self.repo_owner, REPO_NAME,
+            )
+        except ForgejoError:
+            return None
+        match = None
+        for entry in tree:
+            path = entry.get("path", "")
+            if entry.get("type") != "blob":
+                continue
+            if path.startswith(prefix) and path.endswith(suffix):
+                if path == target_path:
+                    return path        # exact identity + title → update in place
+                match = path           # same identity, different title → rename
+        return match
+
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
     def _slug(self, text: str) -> str:
@@ -722,6 +757,14 @@ class GitMirror:
             title=title if resolved_title else None,
             hash_key=hash_key,
         )
+
+        # Dedup on identity, not filename: if this URL/body already lives under
+        # a different title (a re-paste with new framing, an older differently-
+        # titled capture), find it by its hash so we update/rename that entry
+        # instead of forking a duplicate. The reprocess caller already knows the
+        # path, so only look when it didn't pass one.
+        if existing_path is None:
+            existing_path = await self._lookup_capture_path(client, target_path)
 
         # Reprocess path: read the previous file at its old path. When
         # the title changes the slug changes too, so we'll delete the

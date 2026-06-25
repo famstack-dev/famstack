@@ -1317,10 +1317,11 @@ class _StubLLM:
         self.calls: list[dict] = []
 
     async def complete(self, role, prompt, *, images=None,
-                       json_mode=False, model_override=None):
+                       json_mode=False, model_override=None, temperature=None):
         self.calls.append({
             "role": role, "prompt": prompt, "images": images,
             "json_mode": json_mode, "model_override": model_override,
+            "temperature": temperature,
         })
         return self._response
 
