@@ -28,6 +28,7 @@ from wiki import (  # noqa: E402
     _correspondent_roster,
     _entry_kind,
     _format_topic_evidence,
+    _index_vault,
     _member_preamble,
     _topic_cross_refs,
     _topic_entries,
@@ -480,8 +481,9 @@ class TestRenumberCitations:
 # ── Topic page: typed sections (bookmarks vs notes) + living About ──────────
 
 def _topic_entry(rel: str, title: str, *, date: str = "2026-06-10",
-                 summary: str = "a summary") -> dict:
-    return {"rel": rel, "title": title, "date": date, "summary": summary}
+                 summary: str = "a summary", filed_by: str = "") -> dict:
+    return {"rel": rel, "title": title, "date": date,
+            "summary": summary, "filed_by": filed_by}
 
 
 class TestEntryKind:
@@ -514,6 +516,12 @@ class TestFormatTopicEvidence:
         assert ev.index("Bookmarks:") < ev.index("Notes:")  # section order by kind
         assert "[2] 2026-06-10 · Fenstertasche" in ev        # bookmark kept its index
         assert "[1] 2026-06-10 · Checkliste" in ev
+
+    def test_filer_surfaced_in_evidence(self):
+        entries = [_topic_entry("family/camping/bookmarks/2026/06/b.md",
+                                "Fenstertasche", filed_by="marge")]
+        ev = _format_topic_evidence(entries, "camping")
+        assert "filed by marge" in ev
 
 
 class TestBuildTopicPrompt:
@@ -551,3 +559,25 @@ class TestBuildTopicPrompt:
             "Camping", "camping", "shared", [self.NOTE], cross, lang="de",
         )
         assert "## Cross-references" in prompt
+
+    def test_sections_request_attribution(self):
+        prompt = _build_topic_prompt(
+            "Camping", "camping", "shared", [self.BOOKMARK], [], lang="de",
+        )
+        assert "who filed it" in prompt.lower()
+
+
+class TestIndexFiledBy:
+    """The vault index carries filed_by so attribution reaches the page."""
+
+    def test_filed_by_indexed_from_frontmatter(self, tmp_path):
+        d = tmp_path / "family" / "camping" / "bookmarks" / "2026" / "06"
+        d.mkdir(parents=True)
+        (d / "b.md").write_text(
+            "---\ntype: bookmark\ntitle: Fenstertasche\nfiled_by: marge\n---\n"
+            "# Fenstertasche\n\n> [!summary]\n> Eine Fenstertasche.\n",
+            encoding="utf-8",
+        )
+        index = _index_vault(tmp_path)
+        assert len(index) == 1
+        assert index[0]["filed_by"] == "marge"

@@ -521,6 +521,7 @@ def _index_vault(vault: Path) -> list[dict]:
         ]
         slugged = [(slugify_person(p), p) for p in raw_persons]
         _corr = fm.get("correspondent")
+        _fb = fm.get("filed_by")
         out.append({
             "title": fm.get("title") or md.stem,
             "date": fm.get("date") or "",
@@ -528,6 +529,9 @@ def _index_vault(vault: Path) -> list[dict]:
             "rel": rel,
             "persons": [s for s, _ in slugged if s],
             "person_names": [n for s, n in slugged if s],
+            # Who filed this capture (Matrix localpart), for attribution on
+            # topic pages. Mirrors the git commit author set at capture time.
+            "filed_by": _fb.strip() if isinstance(_fb, str) else "",
             # The document's correspondent (already canonicalised by the
             # classifier). Drives the correspondent leaf-page roster.
             "correspondent": _corr.strip() if isinstance(_corr, str) else "",
@@ -1288,8 +1292,12 @@ def _format_topic_evidence(entries: list[dict], slug: str) -> str:
     groups: dict[str, list[str]] = {}
     for n, s in enumerate(entries, start=1):
         kind = _entry_kind(s.get("rel", ""), slug)
-        meta_bits = [s["date"]] if s.get("date") else []
-        meta = " · ".join(meta_bits + [s.get("title") or "(untitled)"])
+        parts = [s["date"]] if s.get("date") else []
+        parts.append(s.get("title") or "(untitled)")
+        who = (s.get("filed_by") or "").strip()
+        if who:
+            parts.append(f"filed by {who}")
+        meta = " · ".join(parts)
         block = f"[{n}] {meta}\n    " + (s.get("summary") or "").replace("\n", "\n    ")
         groups.setdefault(kind, []).append(block)
     out: list[str] = []
@@ -1377,8 +1385,8 @@ def _build_topic_prompt(
         if any(_entry_kind(e.get("rel", ""), slug) == kind for e in entries)
     ]
     section_specs = "\n\n".join(
-        f"## {label}\nEvery {label[:-1].lower()} from above, newest first, "
-        f"one bullet each: `<what it is> [N]`."
+        f"## {label}\nEvery {label[:-1].lower()} from above, newest first, one "
+        f"bullet each: `<what it is> — <who filed it, if known> [N]`."
         for label, _desc in present
     )
 
