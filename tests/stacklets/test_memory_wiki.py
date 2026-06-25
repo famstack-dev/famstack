@@ -616,7 +616,7 @@ class TestRenderCaptureIndex:
                        "2026-06-22", filed_by="marge", tags=["packliste"]),
         ]
         out = _render_capture_index(entries, "note", "Camping")
-        assert out.startswith("# Notes — Camping")
+        assert out.startswith("# Notes: Camping")
         assert out.index("Newer note") < out.index("Older note")   # newest first
         assert "## June 2026" in out
         assert "_marge_" in out

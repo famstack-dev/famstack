@@ -969,7 +969,7 @@ def _render_capture_index(folder_entries: list[dict], kind: str, display: str) -
     )
     count = len(items)
     noun = label.lower() if count != 1 else label.lower().rstrip("s")
-    lines = [f"# {label} — {display}", "", f"*{count} {noun}, newest first*", ""]
+    lines = [f"# {label}: {display}", "", f"*{count} {noun}, newest first*", ""]
     month = None
     for e in items:
         date = (e.get("date") or "").strip()
@@ -982,7 +982,7 @@ def _render_capture_index(folder_entries: list[dict], kind: str, display: str) -
         line = f"- **{date or 'undated'}** · [{title}]({link})"
         who = (e.get("filed_by") or "").strip()
         if who:
-            line += f" — _{who}_"
+            line += f" · _{who}_"
         lines.append(line)
         # Tags are deliberately omitted here: a chip row per item buried the
         # title and added noise. They live (clickable) on each capture page.
@@ -1019,7 +1019,7 @@ async def _publish_capture_indexes(
         await _publish(
             content, target_path=target_path, shared_bucket=shared_bucket,
             commit_msg=f"{COMMIT_PREFIX} {page_dir} {kind} index",
-            default_preamble=f"---\ntitle: {_KIND_LABEL[kind]} — {display}\n---",
+            default_preamble=f"---\ntitle: {_KIND_LABEL[kind]}: {display}\n---",
         )
 
 
