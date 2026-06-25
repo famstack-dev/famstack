@@ -590,6 +590,75 @@ class MicroBot:
             content.update(metadata)
         await self._room_send(room_id, content)
 
+    # Whether a bot's answer to a processed item threads under the source
+    # message (keeping the main timeline quiet) or posts inline. On by
+    # default; a per-room override is a planned knob — see
+    # docs/design/brain/interaction-patterns.md.
+    REPLY_IN_THREAD = True
+
+    def _reply_in_thread(self, room_id: str) -> bool:
+        """Per-room reply-placement policy. Today a single default for
+        every room; the seam where per-room configuration will plug in."""
+        return self.REPLY_IN_THREAD
+
+    @staticmethod
+    def get_thread_root(event) -> str | None:
+        """The id of the thread ``event`` belongs to, or None if it's a
+        top-level message.
+
+        Reads the event's own ``m.thread`` relation. Matrix is the
+        ledger, so the relation on the source event is authoritative —
+        the bot keeps no thread bookkeeping of its own. A None/eventless
+        argument is simply not in a thread.
+        """
+        rel = (
+            getattr(event, "source", None) or {}
+        ).get("content", {}).get("m.relates_to", {})
+        if rel.get("rel_type") == "m.thread":
+            return rel.get("event_id")
+        return None
+
+    @classmethod
+    def check_in_thread(cls, event) -> bool:
+        """Whether ``event`` was posted inside a thread."""
+        return cls.get_thread_root(event) is not None
+
+    async def _answer(
+        self, room_id: str, text: str, source_event: str | None,
+        *, metadata: dict | None = None,
+    ) -> None:
+        """Post the bot's answer to a processed item.
+
+        Threads under the source message by default so routine filings
+        don't crowd the main timeline; falls back to an inline reply
+        when the room opts out (the historic behavior, kept for the
+        per-room knob). With no source event there's nothing to attach
+        to, so it posts plain.
+
+        Matrix forbids nested threads: when the source message already
+        lives in a thread, the answer joins *that* thread rather than
+        spawning a malformed one rooted at an in-thread event. We fetch
+        the source (Matrix is the ledger) and reuse its root; a top-
+        level source roots a fresh thread at itself. Either way the
+        answer quotes the source via the reply fallback.
+        """
+        if not (source_event and self._reply_in_thread(room_id)):
+            await self._send(room_id, text, source_event, metadata=metadata)
+            return
+        root = source_event
+        try:
+            resp = await self._client.room_get_event(room_id, source_event)
+            existing = self.get_thread_root(getattr(resp, "event", None))
+            if existing:
+                root = existing
+        except Exception as e:
+            logger.debug("[{}] thread-root fetch failed for {}: {}",
+                         self.name, source_event, e)
+        await self._send(
+            room_id, text, reply_to=source_event,
+            thread_root_event_id=root, metadata=metadata,
+        )
+
     # The famstack event envelope rides as a custom key on the visible
     # m.room.message (see `_send`'s `metadata`), so a filing is a single
     # replayable timeline event. Distinct from `emit_event`, which posts

@@ -1272,16 +1272,16 @@ class ArchivistBot(MicroBot):
         translator) so it lives here, not in the pipeline.
         """
         if o.status == "upload_failed":
-            await self._send(room_id, self.t("upload_failed", name=o.display_name), reply_to)
+            await self._answer(room_id, self.t("upload_failed", name=o.display_name), reply_to)
             return
         if o.status == "duplicate":
-            await self._send(room_id, self._duplicate_reply(o.display_name, o.duplicate), reply_to)
+            await self._answer(room_id, self._duplicate_reply(o.display_name, o.duplicate), reply_to)
             return
         if o.status == "ocr_failed":
-            await self._send(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
+            await self._answer(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
             return
         if o.status == "filed_no_details":
-            await self._send(
+            await self._answer(
                 room_id, self.t("filed_no_details", name=o.display_name, link=o.link),
                 reply_to,
             )
@@ -1293,19 +1293,19 @@ class ArchivistBot(MicroBot):
         )
         if llm_error:
             key, kwargs = llm_error
-            await self._send(room_id, self.t(key, **kwargs), reply_to)
+            await self._answer(room_id, self.t(key, **kwargs), reply_to)
         elif not o.has_text:
-            await self._send(
+            await self._answer(
                 room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
                 reply_to,
             )
         elif not o.classify_enabled:
-            await self._send(
+            await self._answer(
                 room_id, f"{self.t('filed', title=o.display_name)}\n\n  {o.link}",
                 reply_to,
             )
         elif not o.classification:
-            await self._send(
+            await self._answer(
                 room_id, self.t("classify_failed", name=o.display_name, link=o.link),
                 reply_to,
             )
@@ -1326,7 +1326,7 @@ class ArchivistBot(MicroBot):
             )
             # The `dev.famstack.event` envelope rides on the visible
             # message — one replayable timeline event per filing.
-            await self._send(
+            await self._answer(
                 room_id, reply_text, reply_to,
                 metadata={"dev.famstack.event": o.envelope},
             )
@@ -2067,10 +2067,10 @@ class ArchivistBot(MicroBot):
                 "binary": "capture_failed_binary",
             }
             key = failure_keys.get(o.failure_reason or "", "capture_failed")
-            await self._send(room_id, self.t(key), reply_to)
+            await self._answer(room_id, self.t(key), reply_to)
             return
         if o.status == "no_mirror":
-            await self._send(room_id, self.t("capture_no_mirror"), reply_to)
+            await self._answer(room_id, self.t("capture_no_mirror"), reply_to)
             return
         if o.status == "reclassified":
             reply = render_reprocessed_reply(
@@ -2095,7 +2095,7 @@ class ArchivistBot(MicroBot):
         metadata = (
             {"dev.famstack.event": o.envelope} if o.envelope else None
         )
-        await self._send(room_id, reply, reply_to, metadata=metadata)
+        await self._answer(room_id, reply, reply_to, metadata=metadata)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 

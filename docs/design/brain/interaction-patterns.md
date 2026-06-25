@@ -73,6 +73,16 @@ Replace with **👀 reaction on the source message** the moment the bot starts w
 
 **Closure semantics for 👀:** Leave the eyes in place after success. They double as a visual marker in scrollback that the bot processed this message. The final detailed filing reply takes over the closure role. On failure the error reply does the same; the 👀 just means "we tried."
 
+#### Thread the answer, not just the eyes
+
+The 👀 removes the intermediate noise; the final filing reply is still a top-level message in the channel. In a busy family room that reply is itself the bulk of the noise. So the bot posts its answer as an `m.thread` reply under the source message (the same event it reacted to), not inline. The user's upload, the 👀, and the filing summary collapse into one threaded unit, and the main timeline shows only what the family actually said.
+
+This is on by default. Some rooms may want the answer inline: a quiet archive room where the filing summary *is* the content, or a room where threads hurt on a given client. So the placement is a per-room knob. The framework keeps both paths. `MicroBot._answer` threads or replies inline based on `_reply_in_thread(room_id)`, which today returns a single default and is the seam where per-room config plugs in. Errors thread too: in Element a thread with an unread error still surfaces, and keeping every signal about one item in its own thread beats scattering them.
+
+If the filed message already lives in a thread (the user dropped a doc mid-conversation), the answer joins *that* thread rather than starting a new one, since Matrix forbids nested threads. `MicroBot.get_thread_root` / `check_in_thread` read the source event's own relation to decide, so any bot gets the same handling for free.
+
+Framework-resident on purpose: `_react`, `_answer`, and the 👀 acknowledgement live on `MicroBot`, not the archivist, so scribe-bot and mail-bot inherit the same quiet-timeline behavior for free.
+
 #### Cost
 
 ~2-3h for the user-to-bot bindings (the four-emoji table) plus unit tests around reaction-event parsing. Add ~1-2h to flip the existing "Received X, processing..." messages to 👀 reactions on the source. Both halves use the same `EventType.REACTION` plumbing — the bot half is just emitting reactions instead of subscribing to them.
