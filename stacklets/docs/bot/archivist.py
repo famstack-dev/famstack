@@ -39,6 +39,7 @@ from loguru import logger
 from PIL import Image
 from nio import (
     AsyncClient,
+    ReactionEvent,
     RoomMessageMedia,
     RoomMessageImage,
     RoomMessageFile,
@@ -350,6 +351,9 @@ class ArchivistBot(MicroBot):
             (RoomMessageMedia, RoomMessageImage, RoomMessageFile, RoomMessageAudio),
         )
         self.add_event_callback(self._on_text, RoomMessageText)
+        # User → bot reactions: 🔖 to save the reacted message. The drain
+        # delivers reactions as typed ReactionEvents (verified on the rig).
+        self.add_event_callback(self._on_reaction, ReactionEvent)
 
     async def start(self) -> None:
         logger.info("[archivist] Config: paperless={} openai={} language={} classify={} reformat={}",
@@ -1363,7 +1367,7 @@ class ArchivistBot(MicroBot):
         # always sees the intro before any other reply from the bot.
         await self._send_room_welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
-        if not self._should_react(ctx, mentioned=mentioned):
+        if not await self._should_react(ctx, mentioned=mentioned):
             logger.debug(
                 "[archivist] skipping file from {} in {} per room mode",
                 event.sender, ctx.room_id,
@@ -1482,6 +1486,11 @@ class ArchivistBot(MicroBot):
         query = event.body.strip()
         if not query:
             return
+        # Room-config commands (`!config ...`) are handled before the
+        # room-mode gate, so a room can always be switched back out of
+        # react mode, and before routing so they never read as a capture.
+        if await self._maybe_handle_config_command(room, event):
+            return
         query_lower = query.lower()
         reply_to = event.event_id
 
@@ -1498,7 +1507,7 @@ class ArchivistBot(MicroBot):
             event.sender, ctx.room_id, ctx.alias, ctx.is_dm,
             is_documents, len(ctx.members), mentioned,
         )
-        if not self._should_react(ctx, mentioned=mentioned):
+        if not await self._should_react(ctx, mentioned=mentioned):
             logger.debug(
                 "[archivist] skipping {} in {} per room mode",
                 event.sender, ctx.room_id,
@@ -1666,6 +1675,81 @@ class ArchivistBot(MicroBot):
             logger.debug(
                 "[archivist] capture room {} ignored short text: {!r}",
                 room.room_id, query[:60],
+            )
+
+    # ── Reactions: user → bot per-message routing ────────────────────────
+    #
+    # A small hard-coded registry maps a (normalized) emoji to the handler
+    # method that runs when a family member drops it on a message. To add a
+    # binding — 🗑 redact, 👎 reclassify — add one entry here and write the
+    # `_react_*` method; the dispatcher needs no changes. Handlers receive
+    # the already-fetched target event, so they decide for themselves
+    # whether a bot-authored target is valid (bookmark says no, redact yes).
+
+    def _reaction_handlers(self) -> dict:
+        return {
+            "🔖": self._react_bookmark,
+            "📌": self._react_bookmark,
+        }
+
+    async def _on_reaction(self, room, event) -> None:
+        """Dispatch a user's reaction to its registered handler.
+
+        Generic and binding-agnostic: ignore the bot's own (and other
+        bots') reactions, normalize the emoji, look up the handler, fetch
+        the reacted message once, and hand it off. Idempotency and any
+        bot-target policy live in the handlers, keyed on the target event
+        id so a drain replay dedups rather than acting twice.
+        """
+        if event.sender == self.user_id or self.is_bot_user(event.sender):
+            return
+        emoji = self.normalize_emoji(getattr(event, "key", ""))
+        handler = self._reaction_handlers().get(emoji)
+        if handler is None:
+            return
+        target_id = getattr(event, "reacts_to", None)
+        if not target_id:
+            return
+        try:
+            resp = await self._client.room_get_event(room.room_id, target_id)
+        except Exception as e:
+            logger.debug("[archivist] reaction target fetch failed: {}", e)
+            return
+        target = getattr(resp, "event", None)
+        if target is None:
+            return
+        await handler(room, event, target, target_id)
+
+    async def _react_bookmark(self, room, event, target, target_id) -> None:
+        """🔖 / 📌 — bookmark the reacted message into the room: the same
+        capture auto-mode would make, but on demand. The only capture path
+        in a `!config process react` room.
+
+        Never bookmarks a bot message (a filing, a welcome). Attribution
+        is the message author, not the reactor — we're saving their
+        content — and the capture is keyed on the target event id so a
+        replay or a second reactor dedups downstream.
+        """
+        if self.is_bot_user(getattr(target, "sender", "")):
+            return
+        body = (getattr(target, "body", "") or "").strip()
+        if not body:
+            # v1 bookmarks text/URL messages; file uploads are a follow-up.
+            return
+        author = target.sender
+        if _is_just_url(body):
+            await self._handle_capture(
+                room.room_id, body, author, target_id, capture_id=target_id,
+            )
+        elif (embedded_url := _first_url(body)) is not None:
+            hint = body.replace(embedded_url, "", 1).strip(" \t\n\r:.,;!?—-")
+            await self._handle_capture(
+                room.room_id, embedded_url, author, target_id,
+                capture_id=target_id, user_hint=hint or None,
+            )
+        else:
+            await self._handle_text_capture(
+                room.room_id, body, author, target_id, capture_id=target_id,
             )
 
     # ── Inbound source events (mail bot, future ingest channels) ──────────

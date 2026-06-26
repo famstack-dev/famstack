@@ -678,3 +678,182 @@ class TestReplyParentEnvelope:
         bot, client = _bare_bot(tmp_path)
         client.get_event_raises = ConnectionError("synapse down")
         assert await bot._reply_parent_envelope("!r:server", self._reply_to("$x")) is None
+
+
+# ── Per-room config + emoji + !config command ────────────────────────────
+
+
+class _FakeResp:
+    """Minimal aiohttp-response stand-in (async context manager)."""
+
+    def __init__(self, status, data=None):
+        self.status = status
+        self._data = data
+
+    async def json(self):
+        return self._data
+
+    async def text(self):
+        return str(self._data)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeHttp:
+    """Test double for the bot's aiohttp session backing room account
+    data: an in-memory key→json store. ``raise_on`` forces a transport
+    error to exercise the best-effort read path. We stub the network
+    boundary here, not nio — the real REST round-trip is covered e2e."""
+
+    def __init__(self):
+        self.store: dict[str, dict] = {}
+        self.raise_on: set[str] = set()
+
+    def get(self, url, headers=None):
+        if "get" in self.raise_on:
+            raise RuntimeError("homeserver hiccup")
+        if url in self.store:
+            return _FakeResp(200, self.store[url])
+        return _FakeResp(404)
+
+    def put(self, url, headers=None, json=None):
+        if "put" in self.raise_on:
+            raise RuntimeError("homeserver hiccup")
+        self.store[url] = json
+        return _FakeResp(200, json)
+
+
+class TestRoomConfig:
+    """`get_room_config` / `set_room_config` read+write the bot's room
+    account data over the Matrix REST API. No local cache — a read hits
+    the homeserver every time, and a 404 or transient error reads as "no
+    config" rather than crashing routing."""
+
+    @staticmethod
+    def _bot(tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        return bot, bot._http
+
+    @pytest.mark.asyncio
+    async def test_get_returns_empty_when_unset(self, tmp_path):
+        bot, _ = self._bot(tmp_path)
+        assert await bot.get_room_config("!r:server") == {}
+
+    @pytest.mark.asyncio
+    async def test_set_then_get_roundtrips(self, tmp_path):
+        bot, http = self._bot(tmp_path)
+        assert await bot.set_room_config("!r:server", process="react") is True
+        assert await bot.get_room_config("!r:server") == {"process": "react"}
+        # Stored under the room-scoped account-data URL for this bot.
+        assert any("/account_data/dev.famstack.room" in u for u in http.store)
+
+    @pytest.mark.asyncio
+    async def test_set_merges_into_existing(self, tmp_path):
+        bot, _ = self._bot(tmp_path)
+        await bot.set_room_config("!r:server", process="react")
+        await bot.set_room_config("!r:server", other="x")
+        assert await bot.get_room_config("!r:server") == {
+            "process": "react", "other": "x",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_swallows_read_error(self, tmp_path):
+        bot, http = self._bot(tmp_path)
+        http.raise_on.add("get")
+        assert await bot.get_room_config("!r:server") == {}
+
+    @pytest.mark.asyncio
+    async def test_set_reports_failure(self, tmp_path):
+        bot, http = self._bot(tmp_path)
+        http.raise_on.add("put")
+        assert await bot.set_room_config("!r:server", process="react") is False
+
+
+class TestNormalizeEmoji:
+    """Reaction keys often carry the U+FE0F variation selector; matching
+    a binding without normalizing silently misses those reactions."""
+
+    def test_strips_variation_selector(self):
+        assert MicroBot.normalize_emoji("\U0001F44D\uFE0F") == "\U0001F44D"
+
+    def test_plain_emoji_unchanged(self):
+        assert MicroBot.normalize_emoji("\U0001F516") == "\U0001F516"
+
+    def test_none_is_safe(self):
+        assert MicroBot.normalize_emoji(None) == ""
+
+
+class TestConfigCommand:
+    """`!config process auto|react` writes the room mode. Handled (returns
+    True) so the caller stops routing it; non-config text passes through
+    (returns False)."""
+
+    @staticmethod
+    def _bot(tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        return bot, client
+
+    @staticmethod
+    def _evt(body):
+        return SimpleNamespace(body=body, event_id="$e", source={"content": {}})
+
+    @pytest.mark.asyncio
+    async def test_sets_react_mode(self, tmp_path):
+        bot, _ = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server")
+        handled = await bot._maybe_handle_config_command(
+            room, self._evt("!config process react"),
+        )
+        assert handled is True
+        assert await bot.get_room_config("!r:server") == {"process": "react"}
+
+    @pytest.mark.asyncio
+    async def test_sets_auto_mode(self, tmp_path):
+        bot, _ = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server")
+        await bot._maybe_handle_config_command(
+            room, self._evt("!config process auto"),
+        )
+        assert (await bot.get_room_config("!r:server"))["process"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_non_config_message_passes_through(self, tmp_path):
+        bot, _ = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server")
+        handled = await bot._maybe_handle_config_command(
+            room, self._evt("just chatting"),
+        )
+        assert handled is False
+
+    @pytest.mark.asyncio
+    async def test_unknown_subcommand_consumed_with_usage(self, tmp_path):
+        bot, client = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server")
+        handled = await bot._maybe_handle_config_command(
+            room, self._evt("!config wat"),
+        )
+        assert handled is True              # consumed, not routed onward
+        assert await bot.get_room_config("!r:server") == {}  # nothing written
+        assert any("Usage" in c[2].get("body", "") for c in client.sends)
+
+    @pytest.mark.asyncio
+    async def test_write_failure_reported_not_acked(self, tmp_path):
+        # A failed write must not be acked as success — the regression the
+        # power-level eval exposed (state-event write silently rejected).
+        bot, client = self._bot(tmp_path)
+        bot._http.raise_on.add("put")
+        room = SimpleNamespace(room_id="!r:server")
+        handled = await bot._maybe_handle_config_command(
+            room, self._evt("!config process react"),
+        )
+        assert handled is True
+        body = client.sends[-1][2].get("body", "")
+        assert "Couldn't save" in body and "react mode" not in body

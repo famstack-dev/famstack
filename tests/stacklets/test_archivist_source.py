@@ -85,6 +85,10 @@ async def _none():
     return None
 
 
+async def _true():
+    return True
+
+
 @pytest.mark.asyncio
 async def test_email_source_folds_through_capture(tmp_path):
     bot = _bot(tmp_path)
@@ -303,7 +307,7 @@ def _wire_file(bot):
     bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id)
     bot._send_room_welcome_if_needed = lambda *_a, **_k: _none()
     bot._is_bot_mentioned = lambda _e: False
-    bot._should_react = lambda *_a, **_k: True
+    bot._should_react = lambda *_a, **_k: _true()
     bot._is_documents_room = lambda _ctx: False
     bot._download_media = lambda _url: _bytes()
     bot._send = lambda *_a, **_k: _none()

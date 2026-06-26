@@ -54,6 +54,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import aiohttp
 import markdown
@@ -1065,7 +1066,7 @@ class MicroBot:
         body = getattr(event, "body", "") or ""
         return self.user_id in body
 
-    def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
+    async def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
         """Decide whether the bot acts on the current event at all.
 
         Two cases are never gated — the bot always reacts:
@@ -1078,35 +1079,134 @@ class MicroBot:
             message to be aimed at.
 
         Everything else (group rooms with 3+ members, no mention) is
-        subject to ``_room_mode_allows_react`` — the single seam a
-        subclass overrides when it wants per-room mode config. The
-        framework default lets every event through.
+        subject to ``_room_mode_allows_react``, which reads the room's
+        config. Async because that read hits the room state.
         """
         if mentioned:
             return True
         if ctx.is_dm:
             return True
-        return self._room_mode_allows_react(ctx)
+        return await self._room_mode_allows_react(ctx)
 
-    def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
+    async def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
         """The configurable branch of ``_should_react``.
 
-        Group-room behavior is the only thing rooms might want to gate.
-        Anticipated shape — once a subclass / config lands:
+        Reads the room's ``process`` mode from its config state event:
 
-            [room_modes]
-            "#family:home.local"  = "mention"  # only when @-tagged
-            "#friends:home.local" = "off"      # ignore entirely
-            "#open-chat:home"     = "always"   # current default
+          * ``react`` — the bot ignores plain messages; the only trigger
+            is an explicit user reaction (e.g. 🔖 to save). Returns False.
+          * ``auto`` / unset — the bot processes messages as they arrive
+            (the default). Returns True.
 
-        With the two always-on cases handled upstream, "mention" mode
-        collapses to "ignore" here (mentions never reach this branch).
-        The framework default — react in every group room — is the
-        least-surprise baseline; bots that want to be quieter override
-        this method.
+        Set per room with ``!config process auto|react``.
         """
-        del ctx
+        cfg = await self.get_room_config(ctx.room_id)
+        return cfg.get("process") != "react"
+
+    # ── Per-room config (the bot's room account data) ────────────────────
+    #
+    # Per-room bot settings live in the bot's *room account data*, not a
+    # room state event. Writing room state needs power level 50 (a room
+    # moderator), which a bot invited to a family room does not have, so a
+    # state-event write is silently rejected. Account data is the bot's
+    # own: writable regardless of power level, server-stored (survives
+    # restarts), and read fresh — no local cache. nio has no high-level
+    # account-data setter, so we hit the REST endpoint directly with the
+    # bot's token. The friendly `!config` command is the write interface.
+
+    ROOM_CONFIG_TYPE = "dev.famstack.room"
+
+    def _room_config_url(self, room_id: str) -> str:
+        return (
+            f"{self.homeserver}/_matrix/client/v3/user/"
+            f"{quote(self.user_id)}/rooms/{quote(room_id)}"
+            f"/account_data/{self.ROOM_CONFIG_TYPE}"
+        )
+
+    def _auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self._client.access_token}"}
+
+    async def get_room_config(self, room_id: str) -> dict:
+        """The bot's config for this room (its ``dev.famstack.room`` room
+        account data), or ``{}`` when unset. Read fresh; best-effort, so a
+        404 or a transient error reads as "no config" rather than crashing
+        routing."""
+        try:
+            async with self._ensure_http().get(
+                self._room_config_url(room_id), headers=self._auth_headers(),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data if isinstance(data, dict) else {}
+                return {}
+        except Exception as e:
+            logger.debug("[{}] room config read failed in {}: {}",
+                         self.name, room_id, e)
+            return {}
+
+    async def set_room_config(self, room_id: str, **updates) -> bool:
+        """Merge ``updates`` into the room's config. Returns True on a
+        confirmed write — the caller reports honestly rather than acking a
+        write that never landed."""
+        merged = {**await self.get_room_config(room_id), **updates}
+        try:
+            async with self._ensure_http().put(
+                self._room_config_url(room_id),
+                headers=self._auth_headers(), json=merged,
+            ) as resp:
+                if resp.status >= 400:
+                    logger.warning("[{}] room config write failed in {}: {} {}",
+                                   self.name, room_id, resp.status,
+                                   await resp.text())
+                    return False
+                return True
+        except Exception as e:
+            logger.warning("[{}] room config write error in {}: {}",
+                           self.name, room_id, e)
+            return False
+
+    async def _maybe_handle_config_command(self, room, event) -> bool:
+        """Handle a ``!config`` room-config command. Returns True when the
+        message was a config command (and is now handled), so the caller
+        stops routing it as anything else.
+
+        v1 grammar: ``!config process auto|react``. Any room member may
+        set it — families are high-trust; power-level gating is a later
+        refinement. Must be dispatched ahead of the room-mode gate so a
+        room can always be switched back out of react mode.
+        """
+        body = (getattr(event, "body", "") or "").strip()
+        if not body.startswith("!config"):
+            return False
+        reply_to = getattr(event, "event_id", None)
+        parts = body.split()
+        if len(parts) >= 3 and parts[1] == "process" and parts[2] in ("auto", "react"):
+            mode = parts[2]
+            if not await self.set_room_config(room.room_id, process=mode):
+                msg = ("⚠️ Couldn't save that setting (homeserver error). "
+                       "The room mode is unchanged.")
+            elif mode == "react":
+                msg = ("✅ This room is now in react mode. I'll only act on "
+                       "messages you react to (🔖 to save).")
+            else:
+                msg = ("✅ This room is now in auto mode. I'll process "
+                       "messages as they come in.")
+            await self._send(room.room_id, msg, reply_to)
+        else:
+            await self._send(
+                room.room_id,
+                "Usage: `!config process auto|react`",
+                reply_to,
+            )
         return True
+
+    @staticmethod
+    def normalize_emoji(key: str) -> str:
+        """Strip the emoji variation selector so a reaction key like
+        ``'👍️'`` (👍 + U+FE0F) compares equal to ``'👍'``. Reaction keys
+        frequently carry the selector; matching a binding without
+        normalizing silently misses those reactions."""
+        return (key or "").replace("\uFE0F", "").strip()
 
     @staticmethod
     def strip_mention(
