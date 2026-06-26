@@ -1,10 +1,11 @@
 """stack memory wiki — regenerate the family wiki's entry pages.
 
-Walks the memory vault, asks the LLM to compose the household home
+Walks the source vault, asks the LLM to compose the household home
 page, a personal page for every household member, and a topic page
 for every topic folder (bootstrapped from `Thema:` / `Topic:` Matrix
-rooms); publishes the result to the memory repo on Forgejo. The
-wiki container picks the change up within seconds.
+rooms); writes the result into the brain projection working copy. The
+curator commits and pushes brain and the wiki container picks the
+change up within seconds. The memory (source) repo is never written.
 
 Apply by default; `--dry-run` is the opt-in preview that streams the
 generated pages to stdout without writing anywhere.

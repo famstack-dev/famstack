@@ -69,6 +69,13 @@ CODE_PUBLIC_URL = "{code_url}"
 # design before memory is installed.
 MEMORY_VAULT_DIR = "/data/memory/vault"
 
+# Brain projection working copy — where `stack memory wiki` (run from
+# the bot-runner) writes generated pages. The memory stacklet maintains
+# it under <data_dir>/memory/brain/ and the curator commits + pushes it;
+# the bot-runner mounts <data_dir> at /data, so the in-container path is
+# /data/memory/brain.
+BRAIN_REPO_DIR = "/data/memory/brain"
+
 # Shared-bucket slug — the entity that owns institutional artifacts
 # (documents, correspondents) inside the memory vault. Personal
 # entities (homer, marge, …) live at <vault>/<slug>/. Defaults to

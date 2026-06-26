@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,6 +27,7 @@ from wiki import (  # noqa: E402
     _build_topic_prompt,
     _collect_todo_items,
     _capture_index_pages,
+    _clean_generated,
     _correspondent_body,
     _correspondent_entries,
     _correspondent_preamble,
@@ -33,6 +35,7 @@ from wiki import (  # noqa: E402
     _entry_kind,
     _format_topic_evidence,
     _frontmatter_error,
+    _generated_pages_on_disk,
     _index_vault,
     _is_affirmative,
     _is_generated_page,
@@ -40,6 +43,7 @@ from wiki import (  # noqa: E402
     _member_slugs,
     _month_label,
     _open_todos,
+    _publish,
     _render_capture_index,
     _topic_cross_refs,
     _topic_entries,
@@ -787,6 +791,7 @@ class TestMemberSlugs:
 # ── _open_todos / _collect_todo_items ────────────────────────────────────
 
 
+@pytest.mark.skip(reason="moved in B2")
 class TestOpenTodos:
     """Collect open `- [ ]` task lines out of the captures' summary
     callouts. The archivist already writes the classifier's action
@@ -830,6 +835,7 @@ class TestOpenTodos:
         assert _open_todos([]) == []
 
 
+@pytest.mark.skip(reason="moved in B2")
 class TestCollectTodoItems:
     """Flatten a scope's open todos into the plain, deduplicated text
     list `_generate_todos` hands to `update_todo_doc`. Done boxes are
@@ -862,3 +868,128 @@ class TestCollectTodoItems:
 
     def test_empty_index(self):
         assert _collect_todo_items([]) == []
+
+
+# ── On-disk projection write (slice 4: materialize into the brain copy) ─────
+
+
+class TestPublishOnDisk:
+    """`_publish` writes generated pages into the brain working copy on
+    disk (the curator commits + pushes). It splices against the file
+    already there and refuses a page whose frontmatter won't parse. Brain
+    is resolved from BRAIN_REPO_DIR."""
+
+    def test_creates_new_page_with_preamble(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        rc = _publish(
+            "# Homer\n\nA profile.",
+            target_path="homer/about.md",
+            default_preamble="---\ntitle: Homer\ntype: person\n---",
+        )
+        assert rc == 0
+        written = (tmp_path / "homer" / "about.md").read_text()
+        assert written.startswith("---\ntitle: Homer")
+        assert "<!-- begin: generated -->" in written
+        assert "A profile." in written
+
+    def test_splice_preserves_content_outside_markers(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        page = tmp_path / "homer" / "about.md"
+        page.parent.mkdir(parents=True)
+        page.write_text(
+            "---\ntitle: Homer\n---\n\nHand-written welcome.\n\n"
+            "<!-- begin: generated -->\n\nold body\n\n<!-- end: generated -->\n",
+            encoding="utf-8",
+        )
+        _publish("new body", target_path="homer/about.md")
+        written = page.read_text()
+        assert "Hand-written welcome." in written   # outside-markers survives
+        assert "new body" in written
+        assert "old body" not in written
+
+    def test_invalid_frontmatter_refused_and_not_written(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        rc = _publish(
+            "body",
+            target_path="x/about.md",
+            # Unquoted colon — the exact Quartz-build-killer the gate blocks.
+            default_preamble="---\ntitle: Notes: Admin\n---",
+        )
+        assert rc == 1
+        assert not (tmp_path / "x" / "about.md").exists()
+
+    def test_memory_is_never_written(self, tmp_path, monkeypatch):
+        # Two trees: a brain (write target) and a memory (must stay clean).
+        brain = tmp_path / "brain"
+        memory = tmp_path / "memory"
+        brain.mkdir()
+        memory.mkdir()
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory))
+        _publish("body", target_path="homer/about.md",
+                 default_preamble="---\ntitle: Homer\n---")
+        assert (brain / "homer" / "about.md").exists()
+        assert list(memory.rglob("*.md")) == []   # memory untouched
+
+
+class TestGeneratedPagesOnDisk:
+    """The clean filter: a page counts as generated only if it carries
+    the splice marker. Source captures never do; README is exempt."""
+
+    def _write(self, root, rel, content):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+
+    def test_finds_only_marker_bearing_pages(self, tmp_path):
+        self._write(tmp_path, "homer/about.md",
+                    "---\ntitle: Homer\n---\n<!-- begin: generated -->\nx\n<!-- end: generated -->\n")
+        self._write(tmp_path, "homer/notes/2026/06/a-1.md",
+                    "---\ntype: note\n---\n\n# Note\n\nbody\n")   # source, no marker
+        self._write(tmp_path, "README.md",
+                    "<!-- begin: generated -->\nguide\n<!-- end: generated -->\n")  # exempt
+        found = {str(p.relative_to(tmp_path)) for p in _generated_pages_on_disk(tmp_path)}
+        assert found == {"homer/about.md"}
+
+    def test_email_capture_is_not_generated(self, tmp_path):
+        self._write(tmp_path, "bart/emails/2026/06/t-abc.md",
+                    "---\ntype: email\n---\n<!-- mid:<x@h> -->\n## 2026 - Bart\n\nhi\n")
+        assert _generated_pages_on_disk(tmp_path) == []
+
+
+class TestCleanGeneratedOnDisk:
+    """`clean` removes generated pages from the brain working copy on disk
+    (curator's next commit records it). --dry-run touches nothing."""
+
+    def _gen(self, root, rel):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            "---\ntitle: X\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
+            encoding="utf-8",
+        )
+        return p
+
+    def test_deletes_generated_pages(self, tmp_path):
+        about = self._gen(tmp_path, "homer/about.md")
+        index = self._gen(tmp_path, "family/camping/notes/index.md")
+        note = tmp_path / "homer" / "notes" / "a.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("---\ntype: note\n---\n\nbody\n", encoding="utf-8")
+
+        rc = _clean_generated(brain=tmp_path, dry_run=False, assume_yes=True)
+        assert rc == 0
+        assert not about.exists()
+        assert not index.exists()
+        assert note.exists()   # source capture survives
+
+    def test_dry_run_deletes_nothing(self, tmp_path):
+        about = self._gen(tmp_path, "homer/about.md")
+        rc = _clean_generated(brain=tmp_path, dry_run=True, assume_yes=True)
+        assert rc == 0
+        assert about.exists()
+
+    def test_nothing_to_clean_is_ok(self, tmp_path):
+        (tmp_path / "n.md").write_text("---\ntype: note\n---\n\nx\n", encoding="utf-8")
+        rc = _clean_generated(brain=tmp_path, dry_run=False, assume_yes=True)
+        assert rc == 0

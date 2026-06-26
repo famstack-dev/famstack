@@ -636,6 +636,9 @@ async def main() -> None:
             if await mirror_reconcile():
                 mirror_sha = _write(mirror_file, head)
             if await rebuild([]):
+                # Generation wrote pages into brain's working tree; commit
+                # and push them (one commit alongside the reconcile).
+                await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} nightly rebuild")
                 last = _write(sha_file, head)
                 debounce.reset()
             continue
@@ -664,6 +667,9 @@ async def main() -> None:
             continue
 
         if await rebuild(selection):
+            # Commit + push the regenerated pages the wiki CLI wrote into
+            # brain's working tree.
+            await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
             last = _write(sha_file, head)
             debounce.reset()
         else:

@@ -20,12 +20,14 @@ curator's incremental path). Member values take a slug or a display
 name ("Homer Simpson" hits homer's bucket); unknown slugs warn and
 skip, and the run fails only when nothing in the selection matched.
 
-Pages are published to the memory repo on Forgejo, where the wiki
-container picks them up within seconds. The wiki is Quartz, which
-renders `index.md` as the landing page for the site (vault-root
-`index.md`) and for each folder (`<member>/index.md`) -- so the
-household overview becomes the wiki home and each member's overview
-becomes the landing page for their folder.
+Pages are written into the brain projection working copy on disk
+(`BRAIN_REPO_DIR`); the curator commits and pushes brain, where the
+wiki container picks them up within seconds. Memory (the source repo)
+is never written by generation. The wiki is Quartz, which renders
+`index.md` as the landing page for the site (vault-root `index.md`)
+and for each folder (`<member>/index.md`) -- so the household overview
+becomes the wiki home and each member's overview becomes the landing
+page for their folder.
 
 Topic folders (`<bucket>/<slug>/`, bootstrapped from `Thema:` /
 `Topic:` Matrix rooms by the archivist) get the same treatment:
@@ -48,7 +50,6 @@ client needs the bot-runner's Python environment.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 import sys
@@ -68,30 +69,15 @@ from memory.lib import (  # noqa: E402
 from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
-from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
-
-# `todo_list` is a sibling in this cli/ package. It runs both as a top-level
-# module (tests put cli/ on the path) and as `cli.todo_list` (the entrypoint
-# puts bot/ on the path), so we add our own directory before importing by
-# bare name — the form that works in both.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from todo_list import render_todo_doc, update_todo_doc  # noqa: E402
-
 
 HELP = "Regenerate the family wiki's home and member pages"
 
-# Repo + branch defaults match the memory stacklet's layout. Hard-coded
-# rather than env-driven because the layout is stable across deploys
-# (the memory stacklet owns the repo name) and we don't want a typo in
-# bot config to silently retarget the write.
-_REPO_NAME = "memory"
-_BRANCH = "main"
-_TOKEN_NAME = "stack-memory-wiki-cli"
-_TOKEN_SCOPES = ["write:repository", "read:repository"]
-
-# Subject prefix of every commit this command pushes. The curator's
-# poll loop filters on it so the wiki's own publishes never trigger
-# another rebuild — change it and that loop comes back.
+# Subject prefix the curator's poll loop still filters on. Generation
+# now writes the brain working copy on disk (the curator commits and
+# pushes), so this is no longer the wiki publishing its own commits to
+# memory — but the curator imports it and `only_own_commits` still uses
+# it as a guard. Retiring the self-filter is slice 7 of the projection
+# plan; kept here until then.
 COMMIT_PREFIX = "docs(memory): refresh"
 
 # Decoding temperature for page generation. Sampling turns every
@@ -191,15 +177,29 @@ def _extract_citations(text: str) -> list[int]:
 async def run(llm: LLM, argv: list[str]) -> int:
     dry_run = "--dry-run" in argv or "--dry" in argv
 
+    # Generation reads source and writes generated pages into ONE tree:
+    # the brain projection working copy. The curator's mirror has already
+    # put memory's source there, so `_index_vault` reads it and `_publish`
+    # writes generated pages beside it on disk. The curator commits and
+    # pushes brain — generation never touches git or Forgejo, and memory
+    # (source) is never written. `BRAIN_REPO_DIR` is the write+read tree;
+    # `MEMORY_VAULT_DIR` is the read-only fallback for a dry-run preview
+    # before the brain working copy exists.
+    brain_dir = os.environ.get("BRAIN_REPO_DIR", "") or os.environ.get(
+        "MEMORY_VAULT_DIR", "",
+    )
+
     # `clean` is a slate-wiper, not a generator: it removes every
-    # generated page so a following bare `wiki` rebuilds the whole site
-    # from the captures. It talks only to Forgejo, so it runs before the
-    # local-vault checks below (it needs no vault mount).
+    # generated page from the brain working copy so a following bare
+    # `wiki` rebuilds the whole site from the captures. The curator's
+    # next commit carries the deletions.
     if argv and argv[0] == "clean":
-        shared_bucket = os.environ.get("SHARED_BUCKET", "family")
+        if not brain_dir:
+            _err("BRAIN_REPO_DIR not set — is the memory stacklet installed?")
+            return 1
         assume_yes = "--yes" in argv or "-y" in argv
-        return await _clean_generated(
-            shared_bucket=shared_bucket, dry_run=dry_run, assume_yes=assume_yes,
+        return _clean_generated(
+            brain=Path(brain_dir), dry_run=dry_run, assume_yes=assume_yes,
         )
 
     home_sel = "--home" in argv
@@ -208,13 +208,12 @@ async def run(llm: LLM, argv: list[str]) -> int:
     topics_sel = _arg_values(argv, "--topic")
     correspondents_sel = _arg_values(argv, "--correspondent")
 
-    vault_dir = os.environ.get("MEMORY_VAULT_DIR", "")
-    if not vault_dir:
-        _err("MEMORY_VAULT_DIR not set — is the memory stacklet installed?")
+    if not brain_dir:
+        _err("BRAIN_REPO_DIR not set — is the memory stacklet installed?")
         return 1
-    vault = Path(vault_dir)
+    vault = Path(brain_dir)
     if not vault.exists():
-        _err(f"vault path does not exist: {vault}")
+        _err(f"brain working copy does not exist: {vault}")
         return 1
 
     # In the default install the org name and the in-repo bucket
@@ -389,19 +388,18 @@ async def _generate_home(
 
     if not write:
         print(page)
-        await _publish_capture_indexes(
+        _publish_capture_indexes(
             index, page_dir=shared_bucket, display=home_display,
             shared_bucket=shared_bucket, write=write,
         )
         return 0
-    rc = await _publish(
-        page, target_path="index.md", shared_bucket=shared_bucket,
-        commit_msg=f"{COMMIT_PREFIX} the family wiki home page",
+    rc = _publish(
+        page, target_path="index.md",
         # Only used if the seed's root index.md is somehow missing;
         # otherwise the seed already carries this frontmatter.
         default_preamble="---\ntitle: Family Memory\n---",
     )
-    await _publish_capture_indexes(
+    _publish_capture_indexes(
         index, page_dir=shared_bucket, display=home_display,
         shared_bucket=shared_bucket, write=write,
     )
@@ -463,14 +461,13 @@ async def _generate_member(
 
     if not write:
         print(f"\n<!-- {slug}/about.md -->\n{page}")
-        await _publish_capture_indexes(
+        _publish_capture_indexes(
             index, page_dir=slug, display=display,
             shared_bucket=shared_bucket, write=write,
         )
         return 0
-    rc = await _publish(
-        page, target_path=f"{slug}/about.md", shared_bucket=shared_bucket,
-        commit_msg=f"{COMMIT_PREFIX} {slug}'s wiki page",
+    rc = _publish(
+        page, target_path=f"{slug}/about.md",
         # First-creation frontmatter seeds the person entity registry on
         # the page itself: `canonical` is the longest synonym (usually
         # the formal first name when the family also uses a nickname),
@@ -480,7 +477,7 @@ async def _generate_member(
         # ownership of the registry from here.
         default_preamble=_member_preamble(slug, display, _member_synonyms(index, slug)),
     )
-    await _publish_capture_indexes(
+    _publish_capture_indexes(
         index, page_dir=slug, display=display,
         shared_bucket=shared_bucket, write=write,
     )
@@ -531,33 +528,19 @@ async def _generate_topic(
     page_dir = f"{bucket_prefix}/{topic_slug}"
     page = _with_references(page, entries + cross_refs, page_dir=page_dir)
 
-    # The topic's open action items live on their own persistent page
-    # (`<page_dir>/todos.md`), not inline on about.md: a checklist someone
-    # ticks off in Forgejo must survive the next about.md regeneration. Only
-    # this topic's own captures feed it -- a cross-referenced capture's todos
-    # belong to its home scope's list, not this one's.
-    await _generate_todos(
-        entries, page_dir=page_dir, display=display,
-        shared_bucket=shared_bucket, write=write,
-    )
-
     if not write:
         print(f"\n<!-- {page_dir}/about.md -->\n{page}")
-        await _publish_capture_indexes(
+        _publish_capture_indexes(
             index, page_dir=page_dir, display=display,
             shared_bucket=shared_bucket, write=write,
         )
         return 0
-    rc = await _publish(
+    rc = _publish(
         page,
         target_path=f"{page_dir}/about.md",
-        shared_bucket=shared_bucket,
-        commit_msg=(
-            f"{COMMIT_PREFIX} {bucket_prefix}/{topic_slug} topic page"
-        ),
         default_preamble=_topic_preamble(topic_slug, display, scope),
     )
-    await _publish_capture_indexes(
+    _publish_capture_indexes(
         index, page_dir=page_dir, display=display,
         shared_bucket=shared_bucket, write=write,
     )
@@ -568,29 +551,8 @@ async def _generate_todos(
     entries: list[dict], *,
     page_dir: str, display: str, shared_bucket: str, write: bool,
 ) -> int:
-    """Merge the scope's open action items into a persistent `todos.md`.
-
-    Unlike about.md (rebuilt whole each run), todos.md is a living
-    checklist: `update_todo_doc` folds in newly-extracted action items
-    while keeping the boxes the family already ticked off in Forgejo, and
-    never resurrects a done one. Skips entirely when the scope has no open
-    items -- an empty todos page helps no one, and a scope whose items are
-    all done keeps its existing list untouched rather than being wiped.
-    """
-    items = _collect_todo_items(entries)
-    if not items:
-        return 0
-    target_path = f"{page_dir}/todos.md"
-    title = f"{display} todos"
-    if not write:
-        print(f"\n<!-- {target_path} -->\n{render_todo_doc(title, items)}")
-        return 0
-    return await _publish(
-        target_path=target_path,
-        shared_bucket=shared_bucket,
-        commit_msg=f"{COMMIT_PREFIX} {page_dir} todos",
-        transform=lambda prior: update_todo_doc(prior or None, title, items),
-    )
+    """Disabled between B1 and B2; todos stay memory-owned meanwhile."""
+    return 0
 
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
@@ -840,9 +802,8 @@ async def _generate_correspondent(
     if not write:
         print(f"\n<!-- {target_path} -->\n{body}")
         return 0
-    return await _publish(
-        body, target_path=target_path, shared_bucket=shared_bucket,
-        commit_msg=f"docs(memory): refresh correspondent {canonical}",
+    return _publish(
+        body, target_path=target_path,
         default_preamble=_correspondent_preamble(slug_, canonical),
     )
 
@@ -1163,7 +1124,7 @@ def _capture_index_pages(
     return pages
 
 
-async def _publish_capture_indexes(
+def _publish_capture_indexes(
     index: list[dict], *, page_dir: str, display: str,
     shared_bucket: str, write: bool,
 ) -> None:
@@ -1173,9 +1134,8 @@ async def _publish_capture_indexes(
         if not write:
             print(f"\n<!-- {target_path} -->\n{content}")
             continue
-        await _publish(
-            content, target_path=target_path, shared_bucket=shared_bucket,
-            commit_msg=f"{COMMIT_PREFIX} {page_dir} {kind} index",
+        _publish(
+            content, target_path=target_path,
             default_preamble=f"---\ntitle: {_yaml_str(f'{_KIND_LABEL[kind]}: {display}')}\n---",
         )
 
@@ -1265,35 +1225,14 @@ def _splice_generated(existing: str, generated: str, *,
     return f"{block}\n"
 
 
-# ── Forgejo publish ─────────────────────────────────────────────────────────
-
-async def _admin_forgejo_client() -> "ForgejoClient | None":
-    """A Forgejo client authenticated as the Matrix admin user.
-
-    Issues a short-lived token from the admin creds in the env rather
-    than reusing the archivist-bot's persisted token -- the CLI is a
-    manual one-shot, so its auth stays independent of the bot's
-    lifecycle. Returns None (after logging) when the creds aren't set.
-    The caller wraps the call in its own try so a `ForgejoError` from
-    token issue surfaces with the caller's context.
-    """
-    code_url = os.environ.get("CODE_URL", "")
-    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
-    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-    if not (code_url and admin_user and admin_password):
-        _err("CODE_URL / MATRIX_ADMIN_USER / MATRIX_ADMIN_PASSWORD not set")
-        return None
-    # issue_token deletes and reissues on name collision, so repeated CLI
-    # runs are safe.
-    admin_client = await asyncio.to_thread(
-        ForgejoClient,
-        url=code_url, admin_user=admin_user, admin_password=admin_password,
-    )
-    token = await asyncio.to_thread(
-        admin_client.issue_token,
-        admin_user, admin_password, _TOKEN_NAME, _TOKEN_SCOPES,
-    )
-    return await asyncio.to_thread(ForgejoClient, url=code_url, token=token)
+# ── Projection write (brain working copy on disk) ───────────────────────────
+#
+# Generation writes generated pages straight into the brain working copy
+# on disk. The curator commits and pushes brain (one commit per cycle),
+# so generation never touches git or Forgejo and memory stays source-
+# only. `_publish` splices against the file already on disk (the mirror
+# put memory's source there; a previous regen put any prior generated
+# body there), and `_clean_generated` is a local `rm`.
 
 
 def _is_generated_page(content: str) -> bool:
@@ -1313,147 +1252,133 @@ def _is_affirmative(response: str) -> bool:
     return response.strip().lower() in ("y", "yes")
 
 
-async def _clean_generated(*, shared_bucket: str, dry_run: bool,
-                           assume_yes: bool = False) -> int:
-    """Delete every wiki-generated page, leaving a clean rebuild slate.
+def _generated_pages_on_disk(brain: Path) -> list[Path]:
+    """Every generated `.md` file in the brain working copy.
+
+    Walks the tree, reads each markdown file, and keeps the ones bearing
+    the generated splice marker. `.git/` and `README.md` are skipped:
+    README pairs hand-written guidance with a generated region, so it is
+    not a pure projection to throw away. Pure helper — no deletes — so
+    `clean` and its tests share one definition of "what is generated".
+    """
+    out: list[Path] = []
+    for md in sorted(brain.rglob("*.md")):
+        if ".git" in md.parts or md.name == "README.md":
+            continue
+        try:
+            content = md.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if _is_generated_page(content):
+            out.append(md)
+    return out
+
+
+def _clean_generated(*, brain: Path, dry_run: bool,
+                     assume_yes: bool = False) -> int:
+    """Delete every generated page from the brain working copy.
 
     "Generated" means the page carries the splice marker (see
     `_is_generated_page`); source captures never do, so this only ever
-    removes derived pages -- and each removal is its own commit, so git
-    history keeps the copy. `README.md` files are skipped: they pair
-    hand-written guidance with a generated region, so they are not a
-    pure projection to throw away. `--dry-run` lists what would go,
-    one path per line, without touching the repo.
+    removes derived pages — and the curator's next commit records the
+    deletions, so git history keeps the copy. `--dry-run` lists what
+    would go, one path per line, without touching disk.
     """
-    repo_owner = shared_bucket
-    try:
-        client = await _admin_forgejo_client()
-        if client is None:
-            return 1
-
-        tree = await asyncio.to_thread(
-            client.list_tree, repo_owner, _REPO_NAME, _BRANCH,
-        )
-        candidates = [
-            e["path"] for e in tree
-            if e.get("type") == "blob"
-            and e.get("path", "").endswith(".md")
-            and Path(e["path"]).name != "README.md"
-        ]
-
-        targets: list[tuple[str, str]] = []
-        for path in candidates:
-            existing = await asyncio.to_thread(
-                client.get_file, repo_owner, _REPO_NAME, path, _BRANCH,
-            )
-            if existing and _is_generated_page(existing.get("content", "")):
-                targets.append((path, existing["sha"]))
-
-        if not targets:
-            _err("no generated wiki pages found -- nothing to clean")
-            return 0
-
-        # Destructive: confirm before deleting (skipped under --dry-run,
-        # which deletes nothing, and --yes, for scripted rebuilds). A
-        # non-interactive stdin reads as "no" so an automated caller
-        # without --yes aborts safely rather than wiping the wiki.
-        if not dry_run and not assume_yes:
-            for path, _ in targets:
-                _err(f"  {path}")
-            prompt = f"Delete {len(targets)} generated wiki page(s)? [y/N] "
-            try:
-                answer = await asyncio.to_thread(input, prompt)
-            except EOFError:
-                answer = ""
-            if not _is_affirmative(answer):
-                _err("aborted -- nothing deleted")
-                return 0
-
-        for path, sha in targets:
-            if dry_run:
-                print(path)
-                continue
-            await asyncio.to_thread(
-                client.delete_file, repo_owner, _REPO_NAME, path,
-                sha=sha, message=f"{COMMIT_PREFIX} clean {path}", branch=_BRANCH,
-            )
-            _err(f"deleted {path}")
-
-        _err(f"{'would delete' if dry_run else 'deleted'} {len(targets)} generated page(s)")
+    targets = _generated_pages_on_disk(brain)
+    if not targets:
+        _err("no generated wiki pages found -- nothing to clean")
         return 0
-    except ForgejoError as e:
-        _err(f"forgejo clean failed: {e}")
-        return 1
 
+    rels = [str(p.relative_to(brain)) for p in targets]
 
-async def _publish(page: str = "", *, target_path: str, shared_bucket: str,
-                   commit_msg: str, default_preamble: str = "",
-                   transform: "Callable[[str], str] | None" = None) -> int:
-    """Splice the generated page into `target_path` on the memory repo.
-
-    Uses admin credentials to issue a short-lived token rather than
-    reusing the archivist-bot's persisted token. The CLI is a manual
-    one-shot; spinning a per-invocation token keeps it independent of the
-    bot's auth lifecycle, and the same admin creds the framework uses
-    elsewhere are already in our env.
-
-    The existing page is read from Forgejo (the canonical source, not the
-    wiki's working copy on disk) so the merge preserves whatever the family
-    last committed. By default that merge is the marker splice, which keeps
-    human edits outside the brackets; a caller can pass `transform` to fold
-    prior→new some other way (todos.md preserves the family's ticked boxes
-    with `update_todo_doc`), in which case `page` is unused.
-    """
-    repo_owner = shared_bucket  # default-install convention; see run()
-
-    try:
-        client = await _admin_forgejo_client()
-        if client is None:
-            return 1
-
-        existing = await asyncio.to_thread(
-            client.get_file, repo_owner, _REPO_NAME, target_path, _BRANCH,
-        )
-        sha = existing.get("sha") if existing else None
-        prior = existing.get("content", "") if existing else ""
-        if transform is not None:
-            merged = transform(prior)
-        else:
-            merged = _splice_generated(prior, page, default_preamble=default_preamble)
-
-        # An identical regen is a no-op: skip the write so re-runs don't
-        # churn the repo with empty commits (a topic whose todos haven't
-        # changed, an about.md the model reproduced verbatim).
-        if merged == prior:
-            _err(f"unchanged {target_path}, skipped")
+    # Destructive: confirm before deleting (skipped under --dry-run,
+    # which deletes nothing, and --yes, for scripted rebuilds). A
+    # non-interactive stdin reads as "no" so an automated caller without
+    # --yes aborts safely rather than wiping the wiki.
+    if not dry_run and not assume_yes:
+        for rel in rels:
+            _err(f"  {rel}")
+        prompt = f"Delete {len(targets)} generated wiki page(s)? [y/N] "
+        try:
+            answer = input(prompt)
+        except EOFError:
+            answer = ""
+        if not _is_affirmative(answer):
+            _err("aborted -- nothing deleted")
             return 0
 
-        # Refuse to publish a page whose frontmatter won't parse -- one
-        # bad page takes the entire Quartz build down, so it never leaves
-        # this process. The previously published version stays live.
-        fm_error = _frontmatter_error(merged)
-        if fm_error:
-            _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
-            return 1
+    for page, rel in zip(targets, rels):
+        if dry_run:
+            print(rel)
+            continue
+        try:
+            page.unlink()
+        except OSError as e:
+            _err(f"could not delete {rel}: {e}")
+            continue
+        _err(f"deleted {rel}")
 
-        # Refuse to publish a page whose frontmatter won't parse -- one
-        # bad page takes the entire Quartz build down, so it never leaves
-        # this process. The previously published version stays live.
-        fm_error = _frontmatter_error(merged)
-        if fm_error:
-            _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
-            return 1
+    _err(f"{'would delete' if dry_run else 'deleted'} {len(targets)} generated page(s)")
+    return 0
 
-        await asyncio.to_thread(
-            client.put_file,
-            repo_owner, _REPO_NAME, target_path,
-            content=merged, message=commit_msg, branch=_BRANCH, sha=sha,
-        )
-    except ForgejoError as e:
-        _err(f"forgejo publish failed: {e}")
+
+def _brain_dir() -> Path:
+    """The brain working copy generation writes into.
+
+    `BRAIN_REPO_DIR` is the projection tree; `MEMORY_VAULT_DIR` is the
+    read-only fallback only relevant to a dry-run preview (which never
+    calls `_publish`). Resolved here so the write path has one source of
+    truth, the same way the old code resolved Forgejo creds internally.
+    """
+    return Path(
+        os.environ.get("BRAIN_REPO_DIR", "")
+        or os.environ.get("MEMORY_VAULT_DIR", ""),
+    )
+
+
+def _publish(page: str, *, target_path: str,
+             default_preamble: str = "",
+             transform: "Callable[[str], str] | None" = None) -> int:
+    """Splice the generated page into `target_path` in the brain working copy.
+
+    The previous file is read from disk (the mirror put memory's source
+    there; a previous regen put any prior generated body there) so the
+    merge preserves whatever lives outside the brackets. By default that
+    merge is the marker splice; a caller can pass `transform` to fold
+    prior to new some other way. The write is to disk only -- the
+    curator's commit+push carries it to Forgejo and on to Quartz, so
+    memory (source) is never touched.
+    """
+    page_path = _brain_dir() / target_path
+    try:
+        prior = page_path.read_text(encoding="utf-8")
+    except OSError:
+        prior = ""
+    if transform is not None:
+        merged = transform(prior)
+    else:
+        merged = _splice_generated(prior, page, default_preamble=default_preamble)
+
+    if merged == prior:
+        _err(f"unchanged {target_path}, skipped")
+        return 0
+
+    # Refuse to write a page whose frontmatter won't parse -- one bad
+    # page takes the entire Quartz build down, so it never reaches disk.
+    # The previously written version stays live.
+    fm_error = _frontmatter_error(merged)
+    if fm_error:
+        _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
         return 1
 
-    _err(f"published {repo_owner}/{_REPO_NAME}:{target_path}")
+    try:
+        page_path.parent.mkdir(parents=True, exist_ok=True)
+        page_path.write_text(merged, encoding="utf-8")
+    except OSError as e:
+        _err(f"failed to write {target_path}: {e}")
+        return 1
+
+    _err(f"published {target_path}")
     return 0
 
 
