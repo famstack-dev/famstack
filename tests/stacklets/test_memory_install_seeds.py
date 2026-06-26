@@ -25,10 +25,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                        / "stacklets" / "memory"))
 
 from lib import (  # noqa: E402
+    BRAIN_REPO_NAME,
     REPO_NAME,
     REPO_OWNER,
+    brain_remote_url,
+    ensure_brain_repo,
     ensure_memory_repo,
     install_seeds,
+    seed_brain,
 )
 from stack.forgejo import ForgejoClient  # noqa: E402
 
@@ -220,3 +224,74 @@ class TestInstallSeeds:
         assert decoded == "[topic.x]\nnames = {en = 'X'}\n"
         assert body["message"] == "seed: test"
         assert body["author"] == {"name": "memory-bot", "email": "memory-bot@local"}
+
+
+# ─── brain projection repo ───────────────────────────────────────────────
+
+class TestBrainRemoteUrl:
+    """The projection repo's git remote sits beside memory's, same org."""
+
+    def test_points_at_family_brain(self):
+        assert brain_remote_url("http://stack-code:3000") == (
+            "http://stack-code:3000/family/brain.git"
+        )
+
+    def test_trailing_slash_stripped(self):
+        assert brain_remote_url("http://stack-code:3000/") == (
+            "http://stack-code:3000/family/brain.git"
+        )
+
+
+class TestEnsureBrainRepo:
+    """`ensure_brain_repo` only makes the repo — the `family` org is
+    already there because memory installs first."""
+
+    def test_creates_when_missing(self, httpserver):
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}", method="GET",
+        ).respond_with_data("not found", status=404)
+        httpserver.expect_request(
+            f"/api/v1/orgs/{REPO_OWNER}/repos", method="POST",
+        ).respond_with_json({"id": 3, "name": BRAIN_REPO_NAME}, status=201)
+
+        assert ensure_brain_repo(_admin_client(httpserver)) == {"created_repo": True}
+
+    def test_no_op_when_present(self, httpserver):
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}", method="GET",
+        ).respond_with_json({"id": 3, "name": BRAIN_REPO_NAME})
+
+        assert ensure_brain_repo(_admin_client(httpserver)) == {"created_repo": False}
+
+
+class TestSeedBrain:
+    """Brain carries only a .gitignore + README scaffold; the rest fills
+    in from the mirror. Idempotent: present files are left alone."""
+
+    def test_pushes_both_scaffold_files_when_empty(self, httpserver):
+        for repo_path in (".gitignore", "README.md"):
+            httpserver.expect_request(
+                f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}/contents/{repo_path}",
+                method="GET",
+            ).respond_with_data("not found", status=404)
+            httpserver.expect_request(
+                f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}/contents/{repo_path}",
+                method="POST",
+            ).respond_with_json({}, status=201)
+
+        result = seed_brain(_admin_client(httpserver))
+
+        assert sorted(result["created"]) == [".gitignore", "README.md"]
+        assert result["skipped"] == []
+
+    def test_skips_present_files(self, httpserver):
+        for repo_path in (".gitignore", "README.md"):
+            httpserver.expect_request(
+                f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}/contents/{repo_path}",
+                method="GET",
+            ).respond_with_json(_file_response(repo_path, "existing"))
+
+        result = seed_brain(_admin_client(httpserver))
+
+        assert result["created"] == []
+        assert sorted(result["skipped"]) == [".gitignore", "README.md"]
