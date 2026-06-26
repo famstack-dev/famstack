@@ -31,6 +31,7 @@ from wiki import (  # noqa: E402
     _correspondent_roster,
     _entry_kind,
     _format_topic_evidence,
+    _frontmatter_error,
     _index_vault,
     _member_preamble,
     _member_slugs,
@@ -479,6 +480,30 @@ class TestYamlStr:
         # Leading `&`, `*`, `#`, `-` all change meaning in a bare scalar.
         for value in ("&anchor", "*alias", "# not a comment", "- dash"):
             assert yaml.safe_load(f"x: {_yaml_str(value)}") == {"x": value}
+
+
+# ── _frontmatter_error (write-boundary gate) ───────────────────────────
+
+
+class TestFrontmatterError:
+    """The publish gate parses a page's frontmatter the strict way Quartz
+    does, so a page that would crash the build never reaches Forgejo."""
+
+    def test_valid_page_passes(self):
+        page = '---\ntitle: "Notes: Admin"\ntype: note\n---\n\n# body\n'
+        assert _frontmatter_error(page) is None
+
+    def test_unquoted_colon_title_is_rejected(self):
+        # The exact prod page that took the wiki down.
+        page = "---\ntitle: Notes: Admin\n---\n\n# body\n"
+        assert _frontmatter_error(page) is not None
+
+    def test_no_frontmatter_is_not_an_error(self):
+        # A bodyless page or one without a block is valid, not malformed.
+        assert _frontmatter_error("# just a heading\n") is None
+
+    def test_unterminated_block_is_rejected(self):
+        assert _frontmatter_error("---\ntitle: x\nno closing fence\n") is not None
 
 
 # ── Anchored regen helpers ──────────────────────────────────────────────

@@ -52,6 +52,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import yaml
+
 # Sibling stacklets — memory.lib gives us summary callout extraction
 # and frontmatter parsing without re-implementing them here.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -130,6 +132,28 @@ def _err(msg: str) -> None:
 def _yaml_str(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+# Write-boundary gate. Quartz parses frontmatter with a strict YAML
+# parser and hard-fails the whole site build on one bad page; the
+# failure surfaces three hops downstream, in the running wiki container,
+# not here where the page is composed. So we parse the page's own
+# frontmatter with the same strictness before pushing it to Forgejo. A
+# page that won't load is refused at the source -- the previous good
+# version stays live. `_parse_frontmatter` in memory.lib is deliberately
+# lenient (skips malformed lines), so it can't stand in for this check.
+def _frontmatter_error(page: str) -> str | None:
+    """Return a YAML error string if `page`'s frontmatter won't parse, else None."""
+    if not page.startswith("---\n"):
+        return None  # no frontmatter block to validate
+    end = page.find("\n---", 4)
+    if end < 0:
+        return "unterminated frontmatter block"
+    try:
+        yaml.safe_load(page[4:end])
+    except yaml.YAMLError as e:
+        return str(e).replace("\n", " ")
+    return None
 
 
 # Citation extractor — single use here, inlined to keep the command
@@ -1164,6 +1188,14 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
         sha = existing.get("sha") if existing else None
         prior = existing.get("content", "") if existing else ""
         merged = _splice_generated(prior, page, default_preamble=default_preamble)
+
+        # Refuse to publish a page whose frontmatter won't parse -- one
+        # bad page takes the entire Quartz build down, so it never leaves
+        # this process. The previously published version stays live.
+        fm_error = _frontmatter_error(merged)
+        if fm_error:
+            _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
+            return 1
 
         await asyncio.to_thread(
             client.put_file,
