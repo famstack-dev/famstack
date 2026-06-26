@@ -79,6 +79,12 @@ from room_context import RoomContext, context_for
 # attached to the specific message instead of a separate timeline event.
 EYES = "\U0001F440"
 
+# Terminal outcome glyphs added alongside the 👀 when work finishes: ✅
+# on success, ❌ on failure. They give an at-a-glance result in the main
+# timeline, since the detailed filing reply now lives in a thread.
+CHECK = "\U00002705"
+CROSS = "\U0000274C"
+
 
 class MicroBot:
     """Base class for lightweight Matrix bots.

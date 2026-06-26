@@ -50,7 +50,7 @@ from nio import (
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
-from microbot import EYES, MicroBot
+from microbot import CHECK, CROSS, EYES, MicroBot
 from pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -1275,6 +1275,14 @@ class ArchivistBot(MicroBot):
         That chain depends on chat-only inputs (openai_url, the
         translator) so it lives here, not in the pipeline.
         """
+        # Terminal glyph alongside the 👀: ❌ when nothing was filed
+        # (upload/OCR failed), ✅ otherwise (filed, even if classification
+        # was partial or the document was already on file).
+        if o.status in ("upload_failed", "ocr_failed"):
+            await self._react(room_id, reply_to, CROSS)
+        else:
+            await self._react(room_id, reply_to, CHECK)
+
         if o.status == "upload_failed":
             await self._answer(room_id, self.t("upload_failed", name=o.display_name), reply_to)
             return
@@ -2139,6 +2147,13 @@ class ArchivistBot(MicroBot):
         `capture.*` envelope as metadata so the user can reply-to-
         correct the same way they do with document filings.
         """
+        # Terminal glyph alongside the 👀: ❌ on a genuine failure, ✅
+        # otherwise. `empty` did nothing, so it gets no glyph.
+        if o.status in ("extract_failed", "no_mirror"):
+            await self._react(room_id, reply_to, CROSS)
+        elif o.status != "empty":
+            await self._react(room_id, reply_to, CHECK)
+
         if o.status == "empty":
             return
         if o.status == "extract_failed":

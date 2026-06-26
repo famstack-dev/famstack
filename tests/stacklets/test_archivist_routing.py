@@ -388,6 +388,64 @@ class TestReactionDispatch:
         assert not cap and not txt
 
 
+class TestOutcomeGlyph:
+    """After a capture/filing finishes, the bot marks the source message
+    with a terminal glyph alongside the 👀: ✅ when something was filed,
+    ❌ on a genuine failure, nothing for a silent drop. The detailed
+    reply lives in a thread, so this is the at-a-glance timeline signal."""
+
+    CHECK = "✅"
+    CROSS = "❌"
+
+    def _bot(self, tmp_path):
+        bot = _build_bot(tmp_path)
+        reacts = []
+
+        async def _react(room_id, eid, emoji):
+            reacts.append(emoji)
+
+        async def _noop(*a, **k):
+            return None
+
+        bot._react = _react
+        bot._answer = _noop
+        bot._send = _noop
+        return bot, reacts
+
+    async def test_capture_success_checks(self, tmp_path, monkeypatch):
+        bot, reacts = self._bot(tmp_path)
+        monkeypatch.setattr("archivist.render_capture_reply", lambda *a, **k: "x")
+        o = SimpleNamespace(
+            status="captured", source_title_hint="t", classification={},
+            display_link="http://x", transcript=None, envelope=None,
+        )
+        await bot._reply_for_capture("!r:server", o, "$tgt")
+        assert reacts == [self.CHECK]
+
+    async def test_capture_extract_failed_crosses(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        o = SimpleNamespace(status="extract_failed", failure_reason="url")
+        await bot._reply_for_capture("!r:server", o, "$tgt")
+        assert reacts == [self.CROSS]
+
+    async def test_capture_empty_gets_no_glyph(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        await bot._reply_for_capture("!r:server", SimpleNamespace(status="empty"), "$tgt")
+        assert reacts == []
+
+    async def test_filing_success_checks(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        o = SimpleNamespace(status="filed_no_details", display_name="x", link="y")
+        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        assert reacts == [self.CHECK]
+
+    async def test_filing_ocr_failed_crosses(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        o = SimpleNamespace(status="ocr_failed", display_name="x")
+        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        assert reacts == [self.CROSS]
+
+
 class TestPastePredicate:
     """`_looks_like_paste` is the gate between "chat in a capture room"
     and "this is content to summarize and file." The heuristic is
