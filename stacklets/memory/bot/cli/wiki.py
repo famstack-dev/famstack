@@ -120,6 +120,18 @@ def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
+# YAML-safe scalar for a frontmatter value. Human strings (a display
+# name, a section title like "Notes: Admin") carry colons, leading `&`,
+# `#`, quotes -- all of which a bare YAML scalar mis-parses. Quartz's
+# parser hard-fails the whole page on one of these (observed live: a
+# `title: Notes: Admin` index page took the entire wiki build down).
+# Always-quote and escape; double quotes with backslash-escaped `"` and
+# `\` is the one form that round-trips every printable string.
+def _yaml_str(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 # Citation extractor — single use here, inlined to keep the command
 # stacklet-local. Matches `[N]`, `[N, M]`, and back-to-back `[N][M]`
 # patterns. Returns unique numbers in first-seen order so the caller
@@ -507,14 +519,14 @@ def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
     others = [s for s in synonyms if s != canonical]
     lines = [
         "---",
-        f"title: {canonical}",
+        f"title: {_yaml_str(canonical)}",
         f"slug: {slug}",
         "type: person",
-        f"canonical: {canonical}",
+        f"canonical: {_yaml_str(canonical)}",
     ]
     if others:
         lines.append("synonyms:")
-        lines.extend(f"  - {s}" for s in others)
+        lines.extend(f"  - {_yaml_str(s)}" for s in others)
     lines.append("---")
     return "\n".join(lines)
 
@@ -693,10 +705,10 @@ def _correspondent_preamble(slug_: str, canonical: str) -> str:
     """
     return "\n".join([
         "---",
-        f"title: {canonical}",
+        f"title: {_yaml_str(canonical)}",
         f"slug: {slug_}",
         "type: correspondent",
-        f"canonical: {canonical}",
+        f"canonical: {_yaml_str(canonical)}",
         "---",
     ])
 
@@ -847,10 +859,10 @@ def _topic_preamble(slug: str, display: str, scope: str) -> str:
 
     return "\n".join([
         "---",
-        f"title: {display}",
+        f"title: {_yaml_str(display)}",
         f"slug: {slug}",
         "type: topic",
-        f"scope: {scope}",
+        f"scope: {_yaml_str(scope)}",
         "---",
     ])
 
@@ -1019,7 +1031,7 @@ async def _publish_capture_indexes(
         await _publish(
             content, target_path=target_path, shared_bucket=shared_bucket,
             commit_msg=f"{COMMIT_PREFIX} {page_dir} {kind} index",
-            default_preamble=f"---\ntitle: {_KIND_LABEL[kind]}: {display}\n---",
+            default_preamble=f"---\ntitle: {_yaml_str(f'{_KIND_LABEL[kind]}: {display}')}\n---",
         )
 
 
