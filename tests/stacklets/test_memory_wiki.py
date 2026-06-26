@@ -16,6 +16,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
@@ -29,7 +31,10 @@ from wiki import (  # noqa: E402
     _correspondent_roster,
     _entry_kind,
     _format_topic_evidence,
+    _frontmatter_error,
     _index_vault,
+    _is_affirmative,
+    _is_generated_page,
     _member_preamble,
     _member_slugs,
     _month_label,
@@ -38,7 +43,20 @@ from wiki import (  # noqa: E402
     _topic_entries,
     _topic_locations,
     _topic_preamble,
+    _yaml_str,
 )
+
+
+def _frontmatter(preamble: str) -> dict:
+    """Parse a `---`-fenced preamble the way Quartz's YAML parser does.
+
+    The wiki publishes these blocks verbatim; a value YAML mis-reads
+    (a bare colon, a leading `&`) hard-fails the whole site build. These
+    tests assert the block round-trips through a real YAML parser.
+    """
+    body = preamble.strip()
+    assert body.startswith("---") and body.endswith("---")
+    return yaml.safe_load(body.strip("-\n")) or {}
 
 
 # ── Fixture helpers ─────────────────────────────────────────────────────
@@ -312,18 +330,18 @@ class TestMemberPreamble:
 
     def test_carries_okf_type_and_canonical(self):
         pre = _member_preamble("maggie", "Maggie", ["Maggie", "Margaret"])
-        assert "type: person" in pre  # OKF concept kind
-        assert "title: Margaret" in pre  # longest synonym is canonical
-        assert "canonical: Margaret" in pre
-        assert "slug: maggie" in pre
-        assert pre.startswith("---")
-        assert pre.rstrip().endswith("---")
+        fm = _frontmatter(pre)
+        assert fm["type"] == "person"  # OKF concept kind
+        assert fm["title"] == "Margaret"  # longest synonym is canonical
+        assert fm["canonical"] == "Margaret"
+        assert fm["slug"] == "maggie"
 
     def test_no_synonyms_collapses_to_display(self):
         pre = _member_preamble("homer", "Homer", [])
-        assert "type: person" in pre
-        assert "title: Homer" in pre
-        assert "synonyms:" not in pre
+        fm = _frontmatter(pre)
+        assert fm["type"] == "person"
+        assert fm["title"] == "Homer"
+        assert "synonyms" not in fm
 
 
 # ── Correspondents ────────────────────────────────────────────────────
@@ -377,12 +395,19 @@ class TestCorrespondentPreamble:
 
     def test_carries_okf_type_and_canonical(self):
         pre = _correspondent_preamble("duff-insurance", "Duff Insurance")
-        assert "type: correspondent" in pre  # OKF concept kind
-        assert "title: Duff Insurance" in pre
-        assert "canonical: Duff Insurance" in pre
-        assert "slug: duff-insurance" in pre
-        assert pre.startswith("---")
-        assert pre.rstrip().endswith("---")
+        fm = _frontmatter(pre)
+        assert fm["type"] == "correspondent"  # OKF concept kind
+        assert fm["title"] == "Duff Insurance"
+        assert fm["canonical"] == "Duff Insurance"
+        assert fm["slug"] == "duff-insurance"
+
+    def test_canonical_with_colon_stays_valid_yaml(self):
+        # A correspondent like "Müller: Steuerberatung" carries a colon;
+        # unquoted it would break the whole Quartz build (the prod bug).
+        pre = _correspondent_preamble("mueller", "Müller: Steuerberatung")
+        fm = _frontmatter(pre)
+        assert fm["title"] == "Müller: Steuerberatung"
+        assert fm["canonical"] == "Müller: Steuerberatung"
 
 
 class TestCorrespondentBody:
@@ -411,24 +436,111 @@ class TestTopicPreamble:
 
     def test_shared_topic_carries_scope_and_slug(self):
         pre = _topic_preamble("camping", "Camping", "shared")
-        assert "title: Camping" in pre
-        assert "slug: camping" in pre
-        assert "scope: shared" in pre
-        assert "type: topic" in pre
-        # Opens and closes with the YAML fence.
-        assert pre.startswith("---")
-        assert pre.rstrip().endswith("---")
+        fm = _frontmatter(pre)
+        assert fm["title"] == "Camping"
+        assert fm["slug"] == "camping"
+        assert fm["scope"] == "shared"
+        assert fm["type"] == "topic"
 
     def test_personal_topic_scope_recorded(self):
         pre = _topic_preamble("gravel", "Gravel", "personal")
-        assert "scope: personal" in pre
+        assert _frontmatter(pre)["scope"] == "personal"
 
     def test_display_with_special_chars(self):
         """A topic named `Van Life` keeps the casing + spaces in the
         display title, even though the slug is hyphenated."""
         pre = _topic_preamble("van-life", "Van Life", "shared")
-        assert "title: Van Life" in pre
-        assert "slug: van-life" in pre
+        fm = _frontmatter(pre)
+        assert fm["title"] == "Van Life"
+        assert fm["slug"] == "van-life"
+
+    def test_display_with_colon_stays_valid_yaml(self):
+        # A topic display carrying a colon ("Itchy: The Park") must quote,
+        # or the YAML parser reads a nested mapping and fails the build.
+        pre = _topic_preamble("itchy", "Itchy: The Park", "shared")
+        assert _frontmatter(pre)["title"] == "Itchy: The Park"
+
+
+# ── _yaml_str ──────────────────────────────────────────────────────────
+
+
+class TestYamlStr:
+    """Every human string in frontmatter routes through `_yaml_str`. A
+    bare colon here is what took the live wiki build down."""
+
+    def test_index_title_with_colon_round_trips(self):
+        # The exact prod failure: a folder-index title `Notes: Admin`
+        # emitted unquoted as `title: Notes: Admin` is invalid YAML.
+        title = _yaml_str("Notes: Admin")
+        assert yaml.safe_load(f"title: {title}") == {"title": "Notes: Admin"}
+
+    def test_quotes_and_backslashes_escaped(self):
+        value = 'He said "hi" \\ bye'
+        assert yaml.safe_load(f"x: {_yaml_str(value)}") == {"x": value}
+
+    def test_yaml_special_leads_round_trip(self):
+        # Leading `&`, `*`, `#`, `-` all change meaning in a bare scalar.
+        for value in ("&anchor", "*alias", "# not a comment", "- dash"):
+            assert yaml.safe_load(f"x: {_yaml_str(value)}") == {"x": value}
+
+
+# ── _frontmatter_error (write-boundary gate) ───────────────────────────
+
+
+class TestFrontmatterError:
+    """The publish gate parses a page's frontmatter the strict way Quartz
+    does, so a page that would crash the build never reaches Forgejo."""
+
+    def test_valid_page_passes(self):
+        page = '---\ntitle: "Notes: Admin"\ntype: note\n---\n\n# body\n'
+        assert _frontmatter_error(page) is None
+
+    def test_unquoted_colon_title_is_rejected(self):
+        # The exact prod page that took the wiki down.
+        page = "---\ntitle: Notes: Admin\n---\n\n# body\n"
+        assert _frontmatter_error(page) is not None
+
+    def test_no_frontmatter_is_not_an_error(self):
+        # A bodyless page or one without a block is valid, not malformed.
+        assert _frontmatter_error("# just a heading\n") is None
+
+    def test_unterminated_block_is_rejected(self):
+        assert _frontmatter_error("---\ntitle: x\nno closing fence\n") is not None
+
+
+# ── _is_generated_page (clean's delete filter) ─────────────────────────
+
+
+class TestIsGeneratedPage:
+    """`clean` deletes a page only if this returns True. It must never
+    match a source capture, or clean would eat real content."""
+
+    def test_generated_page_matches(self):
+        page = '---\ntitle: "Camping"\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n'
+        assert _is_generated_page(page) is True
+
+    def test_note_capture_does_not_match(self):
+        # A note capture carries frontmatter + body, no splice marker.
+        note = "---\ntype: note\ntopics: [camping]\n---\n\n# Tent idea\n\nbuy a bigger tent\n"
+        assert _is_generated_page(note) is False
+
+    def test_email_capture_with_mid_marker_does_not_match(self):
+        # Email threads carry `mid:` markers, which must not be confused
+        # with the generated-region marker.
+        email = "---\ntype: email\n---\n<!-- mid:<abc@host> -->\n## 2026-06-01 - Bart\n\nhi\n"
+        assert _is_generated_page(email) is False
+
+
+class TestIsAffirmative:
+    """The clean confirmation defaults to no -- only an explicit yes deletes."""
+
+    def test_yes_variants(self):
+        for r in ("y", "Y", "yes", "YES", " yes "):
+            assert _is_affirmative(r) is True
+
+    def test_everything_else_is_no(self):
+        for r in ("", "n", "no", "\n", "yeah", "sure"):
+            assert _is_affirmative(r) is False
 
 
 # ── Anchored regen helpers ──────────────────────────────────────────────

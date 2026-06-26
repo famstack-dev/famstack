@@ -9,6 +9,9 @@ and asks the LLM to compose the browsable pages a family lands on:
     stack memory wiki --topic camping   just one topic's page
     stack memory wiki --topics          every topic page, no home/members
     stack memory wiki --dry-run         preview to stdout, no writes
+    stack memory wiki clean             delete every generated page (asks first)
+    stack memory wiki clean --dry-run   list the pages clean would delete
+    stack memory wiki clean --yes       skip the confirmation (scripted rebuild)
 
 `--member` and `--topic` repeat and combine with `--home`: any
 selection flag switches from the full sweep to "generate exactly this
@@ -51,6 +54,8 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+
+import yaml
 
 # Sibling stacklets — memory.lib gives us summary callout extraction
 # and frontmatter parsing without re-implementing them here.
@@ -120,6 +125,40 @@ def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
+# YAML-safe scalar for a frontmatter value. Human strings (a display
+# name, a section title like "Notes: Admin") carry colons, leading `&`,
+# `#`, quotes -- all of which a bare YAML scalar mis-parses. Quartz's
+# parser hard-fails the whole page on one of these (observed live: a
+# `title: Notes: Admin` index page took the entire wiki build down).
+# Always-quote and escape; double quotes with backslash-escaped `"` and
+# `\` is the one form that round-trips every printable string.
+def _yaml_str(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+# Write-boundary gate. Quartz parses frontmatter with a strict YAML
+# parser and hard-fails the whole site build on one bad page; the
+# failure surfaces three hops downstream, in the running wiki container,
+# not here where the page is composed. So we parse the page's own
+# frontmatter with the same strictness before pushing it to Forgejo. A
+# page that won't load is refused at the source -- the previous good
+# version stays live. `_parse_frontmatter` in memory.lib is deliberately
+# lenient (skips malformed lines), so it can't stand in for this check.
+def _frontmatter_error(page: str) -> str | None:
+    """Return a YAML error string if `page`'s frontmatter won't parse, else None."""
+    if not page.startswith("---\n"):
+        return None  # no frontmatter block to validate
+    end = page.find("\n---", 4)
+    if end < 0:
+        return "unterminated frontmatter block"
+    try:
+        yaml.safe_load(page[4:end])
+    except yaml.YAMLError as e:
+        return str(e).replace("\n", " ")
+    return None
+
+
 # Citation extractor — single use here, inlined to keep the command
 # stacklet-local. Matches `[N]`, `[N, M]`, and back-to-back `[N][M]`
 # patterns. Returns unique numbers in first-seen order so the caller
@@ -142,7 +181,19 @@ def _extract_citations(text: str) -> list[int]:
 
 
 async def run(llm: LLM, argv: list[str]) -> int:
-    dry_run = "--dry-run" in argv
+    dry_run = "--dry-run" in argv or "--dry" in argv
+
+    # `clean` is a slate-wiper, not a generator: it removes every
+    # generated page so a following bare `wiki` rebuilds the whole site
+    # from the captures. It talks only to Forgejo, so it runs before the
+    # local-vault checks below (it needs no vault mount).
+    if argv and argv[0] == "clean":
+        shared_bucket = os.environ.get("SHARED_BUCKET", "family")
+        assume_yes = "--yes" in argv or "-y" in argv
+        return await _clean_generated(
+            shared_bucket=shared_bucket, dry_run=dry_run, assume_yes=assume_yes,
+        )
+
     home_sel = "--home" in argv
     topics_only = "--topics" in argv
     members_sel = _arg_values(argv, "--member")
@@ -507,14 +558,14 @@ def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
     others = [s for s in synonyms if s != canonical]
     lines = [
         "---",
-        f"title: {canonical}",
+        f"title: {_yaml_str(canonical)}",
         f"slug: {slug}",
         "type: person",
-        f"canonical: {canonical}",
+        f"canonical: {_yaml_str(canonical)}",
     ]
     if others:
         lines.append("synonyms:")
-        lines.extend(f"  - {s}" for s in others)
+        lines.extend(f"  - {_yaml_str(s)}" for s in others)
     lines.append("---")
     return "\n".join(lines)
 
@@ -693,10 +744,10 @@ def _correspondent_preamble(slug_: str, canonical: str) -> str:
     """
     return "\n".join([
         "---",
-        f"title: {canonical}",
+        f"title: {_yaml_str(canonical)}",
         f"slug: {slug_}",
         "type: correspondent",
-        f"canonical: {canonical}",
+        f"canonical: {_yaml_str(canonical)}",
         "---",
     ])
 
@@ -847,10 +898,10 @@ def _topic_preamble(slug: str, display: str, scope: str) -> str:
 
     return "\n".join([
         "---",
-        f"title: {display}",
+        f"title: {_yaml_str(display)}",
         f"slug: {slug}",
         "type: topic",
-        f"scope: {scope}",
+        f"scope: {_yaml_str(scope)}",
         "---",
     ])
 
@@ -1019,7 +1070,7 @@ async def _publish_capture_indexes(
         await _publish(
             content, target_path=target_path, shared_bucket=shared_bucket,
             commit_msg=f"{COMMIT_PREFIX} {page_dir} {kind} index",
-            default_preamble=f"---\ntitle: {_KIND_LABEL[kind]}: {display}\n---",
+            default_preamble=f"---\ntitle: {_yaml_str(f'{_KIND_LABEL[kind]}: {display}')}\n---",
         )
 
 
@@ -1110,6 +1161,125 @@ def _splice_generated(existing: str, generated: str, *,
 
 # ── Forgejo publish ─────────────────────────────────────────────────────────
 
+async def _admin_forgejo_client() -> "ForgejoClient | None":
+    """A Forgejo client authenticated as the Matrix admin user.
+
+    Issues a short-lived token from the admin creds in the env rather
+    than reusing the archivist-bot's persisted token -- the CLI is a
+    manual one-shot, so its auth stays independent of the bot's
+    lifecycle. Returns None (after logging) when the creds aren't set.
+    The caller wraps the call in its own try so a `ForgejoError` from
+    token issue surfaces with the caller's context.
+    """
+    code_url = os.environ.get("CODE_URL", "")
+    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+    if not (code_url and admin_user and admin_password):
+        _err("CODE_URL / MATRIX_ADMIN_USER / MATRIX_ADMIN_PASSWORD not set")
+        return None
+    # issue_token deletes and reissues on name collision, so repeated CLI
+    # runs are safe.
+    admin_client = await asyncio.to_thread(
+        ForgejoClient,
+        url=code_url, admin_user=admin_user, admin_password=admin_password,
+    )
+    token = await asyncio.to_thread(
+        admin_client.issue_token,
+        admin_user, admin_password, _TOKEN_NAME, _TOKEN_SCOPES,
+    )
+    return await asyncio.to_thread(ForgejoClient, url=code_url, token=token)
+
+
+def _is_generated_page(content: str) -> bool:
+    """True if `content` is a page the wiki produced.
+
+    Identified by the splice marker every published page carries. Source
+    captures (notes, bookmarks, documents, email threads) carry only
+    their own `<!-- mid:... -->` / section markers, never this one, so
+    the predicate is the safe delete filter for `clean`: it cannot match
+    a capture.
+    """
+    return _BEGIN in content
+
+
+def _is_affirmative(response: str) -> bool:
+    """A yes to a `[y/N]` prompt -- anything else (including empty) is no."""
+    return response.strip().lower() in ("y", "yes")
+
+
+async def _clean_generated(*, shared_bucket: str, dry_run: bool,
+                           assume_yes: bool = False) -> int:
+    """Delete every wiki-generated page, leaving a clean rebuild slate.
+
+    "Generated" means the page carries the splice marker (see
+    `_is_generated_page`); source captures never do, so this only ever
+    removes derived pages -- and each removal is its own commit, so git
+    history keeps the copy. `README.md` files are skipped: they pair
+    hand-written guidance with a generated region, so they are not a
+    pure projection to throw away. `--dry-run` lists what would go,
+    one path per line, without touching the repo.
+    """
+    repo_owner = shared_bucket
+    try:
+        client = await _admin_forgejo_client()
+        if client is None:
+            return 1
+
+        tree = await asyncio.to_thread(
+            client.list_tree, repo_owner, _REPO_NAME, _BRANCH,
+        )
+        candidates = [
+            e["path"] for e in tree
+            if e.get("type") == "blob"
+            and e.get("path", "").endswith(".md")
+            and Path(e["path"]).name != "README.md"
+        ]
+
+        targets: list[tuple[str, str]] = []
+        for path in candidates:
+            existing = await asyncio.to_thread(
+                client.get_file, repo_owner, _REPO_NAME, path, _BRANCH,
+            )
+            if existing and _is_generated_page(existing.get("content", "")):
+                targets.append((path, existing["sha"]))
+
+        if not targets:
+            _err("no generated wiki pages found -- nothing to clean")
+            return 0
+
+        # Destructive: confirm before deleting (skipped under --dry-run,
+        # which deletes nothing, and --yes, for scripted rebuilds). A
+        # non-interactive stdin reads as "no" so an automated caller
+        # without --yes aborts safely rather than wiping the wiki.
+        if not dry_run and not assume_yes:
+            for path, _ in targets:
+                _err(f"  {path}")
+            prompt = f"Delete {len(targets)} generated wiki page(s)? [y/N] "
+            try:
+                answer = await asyncio.to_thread(input, prompt)
+            except EOFError:
+                answer = ""
+            if not _is_affirmative(answer):
+                _err("aborted -- nothing deleted")
+                return 0
+
+        for path, sha in targets:
+            if dry_run:
+                print(path)
+                continue
+            await asyncio.to_thread(
+                client.delete_file, repo_owner, _REPO_NAME, path,
+                sha=sha, message=f"{COMMIT_PREFIX} clean {path}", branch=_BRANCH,
+            )
+            _err(f"deleted {path}")
+
+        _err(f"{'would delete' if dry_run else 'deleted'} {len(targets)} generated page(s)")
+        return 0
+    except ForgejoError as e:
+        _err(f"forgejo clean failed: {e}")
+        return 1
+
+
 async def _publish(page: str, *, target_path: str, shared_bucket: str,
                    commit_msg: str, default_preamble: str = "") -> int:
     """Splice the generated page into `target_path` on the memory repo.
@@ -1124,27 +1294,12 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
     wiki's working copy on disk) so the splice preserves whatever the
     family last committed outside the brackets.
     """
-    code_url = os.environ.get("CODE_URL", "")
-    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
-    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-    if not (code_url and admin_user and admin_password):
-        _err("CODE_URL / MATRIX_ADMIN_USER / MATRIX_ADMIN_PASSWORD not set")
-        return 1
-
     repo_owner = shared_bucket  # default-install convention; see run()
 
     try:
-        # Issue a token for the admin user. issue_token deletes and
-        # reissues on name collision, so repeated CLI runs are safe.
-        admin_client = await asyncio.to_thread(
-            ForgejoClient,
-            url=code_url, admin_user=admin_user, admin_password=admin_password,
-        )
-        token = await asyncio.to_thread(
-            admin_client.issue_token,
-            admin_user, admin_password, _TOKEN_NAME, _TOKEN_SCOPES,
-        )
-        client = await asyncio.to_thread(ForgejoClient, url=code_url, token=token)
+        client = await _admin_forgejo_client()
+        if client is None:
+            return 1
 
         existing = await asyncio.to_thread(
             client.get_file, repo_owner, _REPO_NAME, target_path, _BRANCH,
@@ -1152,6 +1307,14 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
         sha = existing.get("sha") if existing else None
         prior = existing.get("content", "") if existing else ""
         merged = _splice_generated(prior, page, default_preamble=default_preamble)
+
+        # Refuse to publish a page whose frontmatter won't parse -- one
+        # bad page takes the entire Quartz build down, so it never leaves
+        # this process. The previously published version stays live.
+        fm_error = _frontmatter_error(merged)
+        if fm_error:
+            _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
+            return 1
 
         await asyncio.to_thread(
             client.put_file,
