@@ -205,10 +205,10 @@ class TestShouldReact:
     mention) goes through `_room_mode_allows_react` which is the
     placeholder for future config."""
 
-    def test_mention_in_group_room_always_reacts(self, tmp_path):
+    async def test_mention_in_group_room_always_reacts(self, tmp_path):
         """An @-tag must never be ignored, regardless of room mode.
-        Even if a future config marks this room as off, the mention
-        bypasses the mode lookup entirely."""
+        Even if the room is configured react-only, the mention bypasses
+        the mode lookup entirely."""
         bot = _build_bot(tmp_path)
         room = _room(
             canonical_alias="#family-chat:server",
@@ -216,22 +216,25 @@ class TestShouldReact:
         )
         ctx = bot._room_context(room)
         # Pin the contract by forcing the mode gate to deny — mention
-        # must still win. The day modes ship, this test catches any
-        # regression that routes mentions through the mode lookup.
-        bot._room_mode_allows_react = lambda _ctx: False
-        assert bot._should_react(ctx, mentioned=True) is True
+        # must still win, never routing through the mode lookup.
+        async def _deny(_ctx):
+            return False
+        bot._room_mode_allows_react = _deny
+        assert await bot._should_react(ctx, mentioned=True) is True
 
-    def test_dm_always_reacts(self, tmp_path):
+    async def test_dm_always_reacts(self, tmp_path):
         """A 2-member room with the bot is a private chat. There's
         nobody else for the message to be aimed at, so the mode gate
         doesn't apply."""
         bot = _build_bot(tmp_path)
         room = _room(members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
-        bot._room_mode_allows_react = lambda _ctx: False
-        assert bot._should_react(ctx, mentioned=False) is True
+        async def _deny(_ctx):
+            return False
+        bot._room_mode_allows_react = _deny
+        assert await bot._should_react(ctx, mentioned=False) is True
 
-    def test_documents_room_with_mention_reacts(self, tmp_path):
+    async def test_documents_room_with_mention_reacts(self, tmp_path):
         # Mention beats every other consideration, including docs-room
         # routing — the upstream handlers still see ctx.is_documents_room
         # and dispatch accordingly.
@@ -241,12 +244,11 @@ class TestShouldReact:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._should_react(ctx, mentioned=True) is True
+        assert await bot._should_react(ctx, mentioned=True) is True
 
-    def test_group_room_no_mention_consults_mode(self, tmp_path):
-        """The only branch that talks to the future mode lookup. Today
-        the lookup defaults to True; this test pins that wiring so an
-        accidental rewrite that hard-codes True in `_should_react`
+    async def test_group_room_no_mention_consults_mode(self, tmp_path):
+        """The only branch that talks to the mode lookup. Pin the wiring
+        so an accidental rewrite that hard-codes True in `_should_react`
         bypasses the seam."""
         bot = _build_bot(tmp_path)
         room = _room(
@@ -254,24 +256,194 @@ class TestShouldReact:
             members=[BOT_ID, "@homer:server", "@marge:server", "@bart:server"],
         )
         ctx = bot._room_context(room)
-        # Today: gate returns True, so should_react returns True.
-        assert bot._should_react(ctx, mentioned=False) is True
-        # Tomorrow: gate returns False → should_react must respect it.
-        bot._room_mode_allows_react = lambda _ctx: False
-        assert bot._should_react(ctx, mentioned=False) is False
+        async def _allow(_ctx):
+            return True
+        bot._room_mode_allows_react = _allow
+        assert await bot._should_react(ctx, mentioned=False) is True
+        async def _deny(_ctx):
+            return False
+        bot._room_mode_allows_react = _deny
+        assert await bot._should_react(ctx, mentioned=False) is False
 
-    def test_default_room_mode_is_react(self, tmp_path):
-        """`_room_mode_allows_react` returns True today (no modes
-        configured). This test pins that default so the day a mode
-        config lands, the default-on behavior is explicit not
-        accidental."""
+    async def test_room_mode_reads_process_config(self, tmp_path):
+        """`_room_mode_allows_react` reflects the room's `process` config:
+        unset/auto → react to messages; `react` → ignore plain messages
+        (reactions become the only trigger)."""
         bot = _build_bot(tmp_path)
         room = _room(
             canonical_alias="#whatever:server",
             members=[BOT_ID, "@a:server", "@b:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._room_mode_allows_react(ctx) is True
+
+        async def _auto(_room_id):
+            return {}
+        bot.get_room_config = _auto
+        assert await bot._room_mode_allows_react(ctx) is True
+
+        async def _react(_room_id):
+            return {"process": "react"}
+        bot.get_room_config = _react
+        assert await bot._room_mode_allows_react(ctx) is False
+
+
+class TestReactionDispatch:
+    """`_on_reaction` routes a user's emoji to a registered handler. v1
+    binding: 🔖 / 📌 bookmark the reacted message (the same capture
+    auto-mode makes), attributed to the message author and keyed on the
+    target event id so a drain replay or a second reactor dedups."""
+
+    def _bot(self, tmp_path, *, target):
+        bot = _build_bot(tmp_path)
+        cap, txt = [], []
+
+        async def _cap(room_id, url, sender, reply_to, *,
+                       capture_id=None, user_hint=None):
+            cap.append({"url": url, "sender": sender, "reply_to": reply_to,
+                        "capture_id": capture_id, "hint": user_hint})
+
+        async def _txt(room_id, text, sender, reply_to, *, capture_id=None):
+            txt.append({"text": text, "sender": sender, "reply_to": reply_to,
+                        "capture_id": capture_id})
+
+        bot._handle_capture = _cap
+        bot._handle_text_capture = _txt
+
+        async def _get_event(room_id, event_id):
+            return SimpleNamespace(event=target)
+
+        bot._client = SimpleNamespace(room_get_event=_get_event)
+        return bot, cap, txt
+
+    @staticmethod
+    def _reaction(key="🔖", reacts_to="$tgt", sender="@homer:server"):
+        return SimpleNamespace(
+            key=key, reacts_to=reacts_to, sender=sender,
+            source={"content": {}},
+        )
+
+    @staticmethod
+    def _target(body, sender="@marge:server"):
+        return SimpleNamespace(
+            sender=sender, body=body, source={"content": {"body": body}},
+        )
+
+    async def test_bookmark_url_message_captures(self, tmp_path):
+        bot, cap, txt = self._bot(
+            tmp_path, target=self._target("https://example.com/gear"),
+        )
+        await bot._on_reaction(_room(room_id="!r:server"), self._reaction())
+        assert len(cap) == 1 and not txt
+        assert cap[0]["url"] == "https://example.com/gear"
+        assert cap[0]["sender"] == "@marge:server"   # message author, not reactor
+        assert cap[0]["capture_id"] == "$tgt"         # idempotent on target id
+
+    async def test_bookmark_text_message_captures_as_note(self, tmp_path):
+        bot, cap, txt = self._bot(
+            tmp_path, target=self._target("remember the boiler service in March"),
+        )
+        await bot._on_reaction(_room(), self._reaction())
+        assert len(txt) == 1 and not cap
+        assert txt[0]["text"].startswith("remember the boiler")
+        assert txt[0]["capture_id"] == "$tgt"
+
+    async def test_bookmark_embedded_url_passes_hint(self, tmp_path):
+        bot, cap, txt = self._bot(
+            tmp_path, target=self._target("camping gear list https://example.com/x"),
+        )
+        await bot._on_reaction(_room(), self._reaction())
+        assert len(cap) == 1
+        assert cap[0]["url"] == "https://example.com/x"
+        assert cap[0]["hint"] == "camping gear list"
+
+    async def test_variation_selector_emoji_still_dispatches(self, tmp_path):
+        bot, cap, _ = self._bot(tmp_path, target=self._target("https://example.com"))
+        await bot._on_reaction(_room(), self._reaction(key="🔖\uFE0F"))
+        assert len(cap) == 1
+
+    async def test_pushpin_emoji_dispatches(self, tmp_path):
+        bot, cap, _ = self._bot(tmp_path, target=self._target("https://example.com"))
+        await bot._on_reaction(_room(), self._reaction(key="📌"))
+        assert len(cap) == 1
+
+    async def test_unregistered_emoji_ignored(self, tmp_path):
+        bot, cap, txt = self._bot(tmp_path, target=self._target("https://example.com"))
+        await bot._on_reaction(_room(), self._reaction(key="👍"))
+        assert not cap and not txt
+
+    async def test_bot_reactor_ignored(self, tmp_path):
+        bot, cap, txt = self._bot(tmp_path, target=self._target("https://example.com"))
+        await bot._on_reaction(
+            _room(), self._reaction(sender="@archivist-bot:server"),
+        )
+        assert not cap and not txt
+
+    async def test_bot_authored_target_not_bookmarked(self, tmp_path):
+        # 🔖 on the bot's own filing must not re-capture the filing.
+        bot, cap, txt = self._bot(
+            tmp_path,
+            target=self._target("Filed: passport", sender="@archivist-bot:server"),
+        )
+        await bot._on_reaction(_room(), self._reaction())
+        assert not cap and not txt
+
+
+class TestOutcomeGlyph:
+    """After a capture/filing finishes, the bot marks the source message
+    with a terminal glyph alongside the 👀: ✅ when something was filed,
+    ❌ on a genuine failure, nothing for a silent drop. The detailed
+    reply lives in a thread, so this is the at-a-glance timeline signal."""
+
+    CHECK = "✅"
+    CROSS = "❌"
+
+    def _bot(self, tmp_path):
+        bot = _build_bot(tmp_path)
+        reacts = []
+
+        async def _react(room_id, eid, emoji):
+            reacts.append(emoji)
+
+        async def _noop(*a, **k):
+            return None
+
+        bot._react = _react
+        bot._answer = _noop
+        bot._send = _noop
+        return bot, reacts
+
+    async def test_capture_success_checks(self, tmp_path, monkeypatch):
+        bot, reacts = self._bot(tmp_path)
+        monkeypatch.setattr("archivist.render_capture_reply", lambda *a, **k: "x")
+        o = SimpleNamespace(
+            status="captured", source_title_hint="t", classification={},
+            display_link="http://x", transcript=None, envelope=None,
+        )
+        await bot._reply_for_capture("!r:server", o, "$tgt")
+        assert reacts == [self.CHECK]
+
+    async def test_capture_extract_failed_crosses(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        o = SimpleNamespace(status="extract_failed", failure_reason="url")
+        await bot._reply_for_capture("!r:server", o, "$tgt")
+        assert reacts == [self.CROSS]
+
+    async def test_capture_empty_gets_no_glyph(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        await bot._reply_for_capture("!r:server", SimpleNamespace(status="empty"), "$tgt")
+        assert reacts == []
+
+    async def test_filing_success_checks(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        o = SimpleNamespace(status="filed_no_details", display_name="x", link="y")
+        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        assert reacts == [self.CHECK]
+
+    async def test_filing_ocr_failed_crosses(self, tmp_path):
+        bot, reacts = self._bot(tmp_path)
+        o = SimpleNamespace(status="ocr_failed", display_name="x")
+        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        assert reacts == [self.CROSS]
 
 
 class TestPastePredicate:

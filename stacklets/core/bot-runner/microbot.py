@@ -54,6 +54,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import aiohttp
 import markdown
@@ -77,6 +78,12 @@ from room_context import RoomContext, context_for
 # capture — the same liveness role the typing indicator plays, but
 # attached to the specific message instead of a separate timeline event.
 EYES = "\U0001F440"
+
+# Terminal outcome glyphs added alongside the 👀 when work finishes: ✅
+# on success, ❌ on failure. They give an at-a-glance result in the main
+# timeline, since the detailed filing reply now lives in a thread.
+CHECK = "\U00002705"
+CROSS = "\U0000274C"
 
 
 class MicroBot:
@@ -1065,7 +1072,7 @@ class MicroBot:
         body = getattr(event, "body", "") or ""
         return self.user_id in body
 
-    def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
+    async def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
         """Decide whether the bot acts on the current event at all.
 
         Two cases are never gated — the bot always reacts:
@@ -1078,35 +1085,172 @@ class MicroBot:
             message to be aimed at.
 
         Everything else (group rooms with 3+ members, no mention) is
-        subject to ``_room_mode_allows_react`` — the single seam a
-        subclass overrides when it wants per-room mode config. The
-        framework default lets every event through.
+        subject to ``_room_mode_allows_react``, which reads the room's
+        config. Async because that read hits the room state.
         """
         if mentioned:
             return True
         if ctx.is_dm:
             return True
-        return self._room_mode_allows_react(ctx)
+        return await self._room_mode_allows_react(ctx)
 
-    def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
+    async def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
         """The configurable branch of ``_should_react``.
 
-        Group-room behavior is the only thing rooms might want to gate.
-        Anticipated shape — once a subclass / config lands:
+        Reads the room's ``process`` mode from its config state event:
 
-            [room_modes]
-            "#family:home.local"  = "mention"  # only when @-tagged
-            "#friends:home.local" = "off"      # ignore entirely
-            "#open-chat:home"     = "always"   # current default
+          * ``react`` — the bot ignores plain messages; the only trigger
+            is an explicit user reaction (e.g. 🔖 to save). Returns False.
+          * ``auto`` / unset — the bot processes messages as they arrive
+            (the default). Returns True.
 
-        With the two always-on cases handled upstream, "mention" mode
-        collapses to "ignore" here (mentions never reach this branch).
-        The framework default — react in every group room — is the
-        least-surprise baseline; bots that want to be quieter override
-        this method.
+        Set per room with ``!config process auto|react``.
         """
-        del ctx
+        cfg = await self.get_room_config(ctx.room_id)
+        return cfg.get("process") != "react"
+
+    # ── Per-room config (the bot's room account data) ────────────────────
+    #
+    # Per-room bot settings live in the bot's *room account data*, not a
+    # room state event. Writing room state needs power level 50 (a room
+    # moderator), which a bot invited to a family room does not have, so a
+    # state-event write is silently rejected. Account data is the bot's
+    # own: writable regardless of power level, server-stored (survives
+    # restarts), and read fresh — no local cache. nio has no high-level
+    # account-data setter, so we hit the REST endpoint directly with the
+    # bot's token. The friendly `!config` command is the write interface.
+
+    ROOM_CONFIG_TYPE = "dev.famstack.room"
+
+    # Declarative registry of room-config options. One entry drives
+    # validation, the `!config` status view, and the set acknowledgement,
+    # so they never drift. `default` is the value assumed when the option
+    # is unset; `describe` maps each allowed value to a one-line meaning.
+    # Subclasses extend this dict to add their own options.
+    CONFIG_OPTIONS: dict[str, dict] = {
+        "process": {
+            "default": "auto",
+            "describe": {
+                "auto": "file everything as it arrives",
+                "react": "act only when you react 🔖 to a message",
+            },
+        },
+    }
+
+    def _room_config_url(self, room_id: str) -> str:
+        return (
+            f"{self.homeserver}/_matrix/client/v3/user/"
+            f"{quote(self.user_id)}/rooms/{quote(room_id)}"
+            f"/account_data/{self.ROOM_CONFIG_TYPE}"
+        )
+
+    def _auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self._client.access_token}"}
+
+    async def get_room_config(self, room_id: str) -> dict:
+        """The bot's config for this room (its ``dev.famstack.room`` room
+        account data), or ``{}`` when unset. Read fresh; best-effort, so a
+        404 or a transient error reads as "no config" rather than crashing
+        routing."""
+        try:
+            async with self._ensure_http().get(
+                self._room_config_url(room_id), headers=self._auth_headers(),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data if isinstance(data, dict) else {}
+                return {}
+        except Exception as e:
+            logger.debug("[{}] room config read failed in {}: {}",
+                         self.name, room_id, e)
+            return {}
+
+    async def set_room_config(self, room_id: str, **updates) -> bool:
+        """Merge ``updates`` into the room's config. Returns True on a
+        confirmed write — the caller reports honestly rather than acking a
+        write that never landed."""
+        merged = {**await self.get_room_config(room_id), **updates}
+        try:
+            async with self._ensure_http().put(
+                self._room_config_url(room_id),
+                headers=self._auth_headers(), json=merged,
+            ) as resp:
+                if resp.status >= 400:
+                    logger.warning("[{}] room config write failed in {}: {} {}",
+                                   self.name, room_id, resp.status,
+                                   await resp.text())
+                    return False
+                return True
+        except Exception as e:
+            logger.warning("[{}] room config write error in {}: {}",
+                           self.name, room_id, e)
+            return False
+
+    async def _maybe_handle_config_command(self, room, event) -> bool:
+        """Handle a ``!config`` room-config command. Returns True when the
+        message was a config command (and is now handled), so the caller
+        stops routing it as anything else.
+
+        Grammar:
+          ``!config``                 show the current config + options
+          ``!config <option> <value>``  set an option (from CONFIG_OPTIONS)
+
+        Any room member may set it; families are high-trust. Dispatched
+        ahead of the room-mode gate so a room can always be switched back
+        out of react mode.
+        """
+        body = (getattr(event, "body", "") or "").strip()
+        if not body.startswith("!config"):
+            return False
+        reply_to = getattr(event, "event_id", None)
+        parts = body.split()
+
+        # `!config <option> <value>` — set, if the option/value are known.
+        if len(parts) >= 3:
+            key, value = parts[1], parts[2]
+            opt = self.CONFIG_OPTIONS.get(key)
+            if opt and value in opt["describe"]:
+                if await self.set_room_config(room.room_id, **{key: value}):
+                    ack = f"✅ **{key}** is now **{value}**: {opt['describe'][value]}."
+                else:
+                    ack = ("⚠️ Couldn't save that setting (homeserver error). "
+                           "The room config is unchanged.")
+                await self._send(room.room_id, ack, reply_to)
+                return True
+
+        # Bare `!config`, or an unrecognized option/value: show the status
+        # view, which doubles as the help (it lists every option + values).
+        await self._send(
+            room.room_id, await self._render_config(room.room_id), reply_to,
+        )
         return True
+
+    async def _render_config(self, room_id: str) -> str:
+        """The `!config` status view: current value of each option and the
+        values it can take, built from CONFIG_OPTIONS so it never drifts.
+        Greeting-flavored but compact."""
+        cfg = await self.get_room_config(room_id)
+        lines = ["⚙️ **Room config**", ""]
+        for key, opt in self.CONFIG_OPTIONS.items():
+            current = cfg.get(key, opt["default"])
+            lines.append(f"**{key}**: {current}")
+            for value, desc in opt["describe"].items():
+                mark = "▸" if value == current else "·"
+                lines.append(f"  {mark} {value}: {desc}")
+            lines.append("")
+        lines.append(
+            "Set one with `!config <option> <value>`, "
+            "for example `!config process react`."
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def normalize_emoji(key: str) -> str:
+        """Strip the emoji variation selector so a reaction key like
+        ``'👍️'`` (👍 + U+FE0F) compares equal to ``'👍'``. Reaction keys
+        frequently carry the selector; matching a binding without
+        normalizing silently misses those reactions."""
+        return (key or "").replace("\uFE0F", "").strip()
 
     @staticmethod
     def strip_mention(
