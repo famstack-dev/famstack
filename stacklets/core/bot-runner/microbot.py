@@ -1116,6 +1116,21 @@ class MicroBot:
 
     ROOM_CONFIG_TYPE = "dev.famstack.room"
 
+    # Declarative registry of room-config options. One entry drives
+    # validation, the `!config` status view, and the set acknowledgement,
+    # so they never drift. `default` is the value assumed when the option
+    # is unset; `describe` maps each allowed value to a one-line meaning.
+    # Subclasses extend this dict to add their own options.
+    CONFIG_OPTIONS: dict[str, dict] = {
+        "process": {
+            "default": "auto",
+            "describe": {
+                "auto": "file everything as it arrives",
+                "react": "act only when you react 🔖 to a message",
+            },
+        },
+    }
+
     def _room_config_url(self, room_id: str) -> str:
         return (
             f"{self.homeserver}/_matrix/client/v3/user/"
@@ -1170,35 +1185,58 @@ class MicroBot:
         message was a config command (and is now handled), so the caller
         stops routing it as anything else.
 
-        v1 grammar: ``!config process auto|react``. Any room member may
-        set it — families are high-trust; power-level gating is a later
-        refinement. Must be dispatched ahead of the room-mode gate so a
-        room can always be switched back out of react mode.
+        Grammar:
+          ``!config``                 show the current config + options
+          ``!config <option> <value>``  set an option (from CONFIG_OPTIONS)
+
+        Any room member may set it; families are high-trust. Dispatched
+        ahead of the room-mode gate so a room can always be switched back
+        out of react mode.
         """
         body = (getattr(event, "body", "") or "").strip()
         if not body.startswith("!config"):
             return False
         reply_to = getattr(event, "event_id", None)
         parts = body.split()
-        if len(parts) >= 3 and parts[1] == "process" and parts[2] in ("auto", "react"):
-            mode = parts[2]
-            if not await self.set_room_config(room.room_id, process=mode):
-                msg = ("⚠️ Couldn't save that setting (homeserver error). "
-                       "The room mode is unchanged.")
-            elif mode == "react":
-                msg = ("✅ This room is now in react mode. I'll only act on "
-                       "messages you react to (🔖 to save).")
-            else:
-                msg = ("✅ This room is now in auto mode. I'll process "
-                       "messages as they come in.")
-            await self._send(room.room_id, msg, reply_to)
-        else:
-            await self._send(
-                room.room_id,
-                "Usage: `!config process auto|react`",
-                reply_to,
-            )
+
+        # `!config <option> <value>` — set, if the option/value are known.
+        if len(parts) >= 3:
+            key, value = parts[1], parts[2]
+            opt = self.CONFIG_OPTIONS.get(key)
+            if opt and value in opt["describe"]:
+                if await self.set_room_config(room.room_id, **{key: value}):
+                    ack = f"✅ **{key}** is now **{value}**: {opt['describe'][value]}."
+                else:
+                    ack = ("⚠️ Couldn't save that setting (homeserver error). "
+                           "The room config is unchanged.")
+                await self._send(room.room_id, ack, reply_to)
+                return True
+
+        # Bare `!config`, or an unrecognized option/value: show the status
+        # view, which doubles as the help (it lists every option + values).
+        await self._send(
+            room.room_id, await self._render_config(room.room_id), reply_to,
+        )
         return True
+
+    async def _render_config(self, room_id: str) -> str:
+        """The `!config` status view: current value of each option and the
+        values it can take, built from CONFIG_OPTIONS so it never drifts.
+        Greeting-flavored but compact."""
+        cfg = await self.get_room_config(room_id)
+        lines = ["⚙️ **Room config**", ""]
+        for key, opt in self.CONFIG_OPTIONS.items():
+            current = cfg.get(key, opt["default"])
+            lines.append(f"**{key}**: {current}")
+            for value, desc in opt["describe"].items():
+                mark = "▸" if value == current else "·"
+                lines.append(f"  {mark} {value}: {desc}")
+            lines.append("")
+        lines.append(
+            "Set one with `!config <option> <value>`, "
+            "for example `!config process react`."
+        )
+        return "\n".join(lines)
 
     @staticmethod
     def normalize_emoji(key: str) -> str:

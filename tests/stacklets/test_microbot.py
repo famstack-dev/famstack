@@ -807,13 +807,40 @@ class TestConfigCommand:
 
     @pytest.mark.asyncio
     async def test_sets_react_mode(self, tmp_path):
-        bot, _ = self._bot(tmp_path)
+        bot, client = self._bot(tmp_path)
         room = SimpleNamespace(room_id="!r:server")
         handled = await bot._maybe_handle_config_command(
             room, self._evt("!config process react"),
         )
         assert handled is True
         assert await bot.get_room_config("!r:server") == {"process": "react"}
+        # Ack describes the value, sourced from the registry.
+        ack = client.sends[-1][2]["body"]
+        assert "react" in ack and "react 🔖" in ack
+
+    @pytest.mark.asyncio
+    async def test_bare_config_shows_status_and_options(self, tmp_path):
+        bot, client = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server")
+        handled = await bot._maybe_handle_config_command(
+            room, self._evt("!config"),
+        )
+        assert handled is True
+        body = client.sends[-1][2]["body"]
+        # Current value (default when unset) + every allowed value + how to set.
+        assert "process" in body
+        assert "auto" in body and "react" in body
+        assert "!config process react" in body
+
+    @pytest.mark.asyncio
+    async def test_bare_config_marks_current_value(self, tmp_path):
+        bot, client = self._bot(tmp_path)
+        await bot.set_room_config("!r:server", process="react")
+        room = SimpleNamespace(room_id="!r:server")
+        await bot._maybe_handle_config_command(room, self._evt("!config"))
+        body = client.sends[-1][2]["body"]
+        assert "▸ react" in body   # current value is marked
+        assert "· auto" in body    # the other value is not
 
     @pytest.mark.asyncio
     async def test_sets_auto_mode(self, tmp_path):
@@ -834,7 +861,7 @@ class TestConfigCommand:
         assert handled is False
 
     @pytest.mark.asyncio
-    async def test_unknown_subcommand_consumed_with_usage(self, tmp_path):
+    async def test_unknown_subcommand_shows_status(self, tmp_path):
         bot, client = self._bot(tmp_path)
         room = SimpleNamespace(room_id="!r:server")
         handled = await bot._maybe_handle_config_command(
@@ -842,7 +869,19 @@ class TestConfigCommand:
         )
         assert handled is True              # consumed, not routed onward
         assert await bot.get_room_config("!r:server") == {}  # nothing written
-        assert any("Usage" in c[2].get("body", "") for c in client.sends)
+        # Falls back to the status view (which lists the valid options).
+        assert "Room config" in client.sends[-1][2]["body"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_value_not_written(self, tmp_path):
+        bot, client = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server")
+        handled = await bot._maybe_handle_config_command(
+            room, self._evt("!config process loud"),
+        )
+        assert handled is True
+        assert await bot.get_room_config("!r:server") == {}  # bad value rejected
+        assert "Room config" in client.sends[-1][2]["body"]
 
     @pytest.mark.asyncio
     async def test_write_failure_reported_not_acked(self, tmp_path):
