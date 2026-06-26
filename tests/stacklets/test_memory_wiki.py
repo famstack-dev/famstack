@@ -33,6 +33,7 @@ from wiki import (  # noqa: E402
     _format_topic_evidence,
     _frontmatter_error,
     _index_vault,
+    _is_affirmative,
     _is_generated_page,
     _member_preamble,
     _member_slugs,
@@ -528,6 +529,18 @@ class TestIsGeneratedPage:
         # with the generated-region marker.
         email = "---\ntype: email\n---\n<!-- mid:<abc@host> -->\n## 2026-06-01 - Bart\n\nhi\n"
         assert _is_generated_page(email) is False
+
+
+class TestIsAffirmative:
+    """The clean confirmation defaults to no -- only an explicit yes deletes."""
+
+    def test_yes_variants(self):
+        for r in ("y", "Y", "yes", "YES", " yes "):
+            assert _is_affirmative(r) is True
+
+    def test_everything_else_is_no(self):
+        for r in ("", "n", "no", "\n", "yeah", "sure"):
+            assert _is_affirmative(r) is False
 
 
 # ── Anchored regen helpers ──────────────────────────────────────────────

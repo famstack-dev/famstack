@@ -9,8 +9,9 @@ and asks the LLM to compose the browsable pages a family lands on:
     stack memory wiki --topic camping   just one topic's page
     stack memory wiki --topics          every topic page, no home/members
     stack memory wiki --dry-run         preview to stdout, no writes
-    stack memory wiki clean             delete every generated page (rebuild slate)
+    stack memory wiki clean             delete every generated page (asks first)
     stack memory wiki clean --dry-run   list the pages clean would delete
+    stack memory wiki clean --yes       skip the confirmation (scripted rebuild)
 
 `--member` and `--topic` repeat and combine with `--home`: any
 selection flag switches from the full sweep to "generate exactly this
@@ -188,7 +189,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # local-vault checks below (it needs no vault mount).
     if argv and argv[0] == "clean":
         shared_bucket = os.environ.get("SHARED_BUCKET", "family")
-        return await _clean_generated(shared_bucket=shared_bucket, dry_run=dry_run)
+        assume_yes = "--yes" in argv or "-y" in argv
+        return await _clean_generated(
+            shared_bucket=shared_bucket, dry_run=dry_run, assume_yes=assume_yes,
+        )
 
     home_sel = "--home" in argv
     topics_only = "--topics" in argv
@@ -1198,7 +1202,13 @@ def _is_generated_page(content: str) -> bool:
     return _BEGIN in content
 
 
-async def _clean_generated(*, shared_bucket: str, dry_run: bool) -> int:
+def _is_affirmative(response: str) -> bool:
+    """A yes to a `[y/N]` prompt -- anything else (including empty) is no."""
+    return response.strip().lower() in ("y", "yes")
+
+
+async def _clean_generated(*, shared_bucket: str, dry_run: bool,
+                           assume_yes: bool = False) -> int:
     """Delete every wiki-generated page, leaving a clean rebuild slate.
 
     "Generated" means the page carries the splice marker (see
@@ -1236,6 +1246,22 @@ async def _clean_generated(*, shared_bucket: str, dry_run: bool) -> int:
         if not targets:
             _err("no generated wiki pages found -- nothing to clean")
             return 0
+
+        # Destructive: confirm before deleting (skipped under --dry-run,
+        # which deletes nothing, and --yes, for scripted rebuilds). A
+        # non-interactive stdin reads as "no" so an automated caller
+        # without --yes aborts safely rather than wiping the wiki.
+        if not dry_run and not assume_yes:
+            for path, _ in targets:
+                _err(f"  {path}")
+            prompt = f"Delete {len(targets)} generated wiki page(s)? [y/N] "
+            try:
+                answer = await asyncio.to_thread(input, prompt)
+            except EOFError:
+                answer = ""
+            if not _is_affirmative(answer):
+                _err("aborted -- nothing deleted")
+                return 0
 
         for path, sha in targets:
             if dry_run:
