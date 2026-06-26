@@ -22,9 +22,12 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from curator import (  # noqa: E402
     Debounce,
+    diff_to_fileops,
+    is_source_path,
     member_selection,
     nightly_due,
     only_own_commits,
+    reconcile_fileops,
 )
 from wiki import COMMIT_PREFIX  # noqa: E402
 
@@ -150,6 +153,139 @@ class TestMemberSelection:
         sel = member_selection(paths, reader, shared_bucket="family")
         assert sel.count("--member") == 2  # homer (bucket) + Homer Simpson (fm)
         assert sel[0] == "--home"
+
+
+# ── is_source_path ─────────────────────────────────────────────────────────
+
+
+class TestIsSourcePath:
+    """The mirror replays only source paths to brain. Generated page
+    names (about.md, folder index.md) and git internals are excluded so
+    generation's own output is never treated as source to copy."""
+
+    def test_captures_are_source(self):
+        assert is_source_path("family/documents/2026/06/p7.md") is True
+        assert is_source_path("homer/notes/2026/06/a-1.md") is True
+        assert is_source_path("ontology.toml") is True
+
+    def test_generated_names_excluded(self):
+        assert is_source_path("homer/about.md") is False
+        assert is_source_path("family/camping/notes/index.md") is False
+        assert is_source_path("index.md") is False
+
+    def test_git_internals_excluded(self):
+        assert is_source_path(".git/config") is False
+
+    def test_empty_path_excluded(self):
+        assert is_source_path("") is False
+
+
+# ── diff_to_fileops ────────────────────────────────────────────────────────
+
+
+class TestDiffToFileops:
+    """`git diff --name-status -M` maps to brain file operations: A/M/C/T
+    copy in, D removes, R is rm-old + copy-new."""
+
+    def test_add_and_modify_copy_in(self):
+        ops = diff_to_fileops([
+            "A\tfamily/documents/2026/06/new-p1.md",
+            "M\thomer/notes/2026/06/edited-a1.md",
+        ])
+        assert ops == [
+            ("copy", "family/documents/2026/06/new-p1.md",
+             "family/documents/2026/06/new-p1.md"),
+            ("copy", "homer/notes/2026/06/edited-a1.md",
+             "homer/notes/2026/06/edited-a1.md"),
+        ]
+
+    def test_delete_removes(self):
+        ops = diff_to_fileops(["D\tmarge/notes/2026/05/gone-b2.md"])
+        assert ops == [("rm", "marge/notes/2026/05/gone-b2.md", "")]
+
+    def test_rename_is_rm_old_then_copy_new(self):
+        ops = diff_to_fileops([
+            "R096\thomer/notes/2026/06/old-slug-a1.md\thomer/notes/2026/06/new-slug-a1.md",
+        ])
+        assert ops == [
+            ("rm", "homer/notes/2026/06/old-slug-a1.md", ""),
+            ("copy", "homer/notes/2026/06/new-slug-a1.md",
+             "homer/notes/2026/06/new-slug-a1.md"),
+        ]
+
+    def test_copy_status_treated_as_add(self):
+        ops = diff_to_fileops(["C075\tsrc/a.md\tfamily/documents/2026/06/c.md"])
+        assert ops == [
+            ("rm", "src/a.md", ""),
+            ("copy", "family/documents/2026/06/c.md",
+             "family/documents/2026/06/c.md"),
+        ]
+
+    def test_type_change_treated_as_modify(self):
+        ops = diff_to_fileops(["T\tfamily/documents/2026/06/d.md"])
+        assert ops == [
+            ("copy", "family/documents/2026/06/d.md",
+             "family/documents/2026/06/d.md"),
+        ]
+
+    def test_generated_page_in_diff_is_dropped(self):
+        # Memory should never carry a generated page, but if a diff names
+        # one it must not be mirrored as source.
+        ops = diff_to_fileops(["A\thomer/about.md"])
+        assert ops == []
+
+    def test_rename_out_of_source_degrades_to_delete(self):
+        # old is a real capture, new is a generated name -> only the rm
+        # survives (the copy half is filtered).
+        ops = diff_to_fileops([
+            "R100\thomer/notes/2026/06/a-1.md\thomer/about.md",
+        ])
+        assert ops == [("rm", "homer/notes/2026/06/a-1.md", "")]
+
+    def test_blank_and_malformed_lines_skipped(self):
+        ops = diff_to_fileops(["", "  ", "A", "R096\tonly-one-field"])
+        assert ops == []
+
+
+# ── reconcile_fileops ──────────────────────────────────────────────────────
+
+
+class TestReconcileFileops:
+    """The nightly self-heal: brain's source files exactly match
+    memory's. Every memory source file is copied; brain source files
+    memory no longer has are removed. Generated pages are never touched."""
+
+    def test_copies_all_memory_and_removes_orphans(self):
+        memory = [
+            "family/documents/2026/06/p1.md",
+            "homer/notes/2026/06/a-1.md",
+        ]
+        brain = [
+            "family/documents/2026/06/p1.md",   # in sync
+            "marge/notes/2026/05/stale-b2.md",  # memory dropped it
+        ]
+        ops = reconcile_fileops(memory, brain)
+        assert ("copy", "family/documents/2026/06/p1.md",
+                "family/documents/2026/06/p1.md") in ops
+        assert ("copy", "homer/notes/2026/06/a-1.md",
+                "homer/notes/2026/06/a-1.md") in ops
+        assert ("rm", "marge/notes/2026/05/stale-b2.md", "") in ops
+
+    def test_generated_pages_in_brain_are_left_alone(self):
+        # about.md / index.md live only in brain (generation owns them).
+        # Reconcile must not remove them as orphans.
+        memory = ["family/documents/2026/06/p1.md"]
+        brain = ["homer/about.md", "family/camping/notes/index.md"]
+        ops = reconcile_fileops(memory, brain)
+        rm_paths = [p for (a, p, _s) in ops if a == "rm"]
+        assert "homer/about.md" not in rm_paths
+        assert "family/camping/notes/index.md" not in rm_paths
+
+    def test_already_in_sync_only_recopies_source(self):
+        memory = ["ontology.toml"]
+        brain = ["ontology.toml"]
+        ops = reconcile_fileops(memory, brain)
+        assert ops == [("copy", "ontology.toml", "ontology.toml")]
 
 
 # ── nightly_due ──────────────────────────────────────────────────────────

@@ -68,6 +68,15 @@ NIGHTLY = os.environ.get("WIKI_NIGHTLY", "03:30").strip()
 
 ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
 
+# Identity stamped on the curator's brain commits. Brain is a machine-
+# owned projection, so its commit log names the curator, not a human.
+_BRAIN_AUTHOR_NAME = "memory-curator"
+_BRAIN_AUTHOR_EMAIL = "memory-curator@local"
+
+# Subject line for the curator's per-cycle brain commit. One commit
+# carries the whole cycle: mirrored source plus any regenerated pages.
+BRAIN_COMMIT_PREFIX = "brain: project"
+
 # Hard ceiling on one rebuild pass. A vault-wide sweep on a slow local
 # model stays well under this; anything longer means a wedged LLM call
 # and the retry path is cheaper than waiting forever.
@@ -166,6 +175,123 @@ def member_selection(
     return argv
 
 
+# ── Source mirror (memory -> brain projection) ───────────────────────────
+#
+# The curator polls memory (source) and writes brain (projection). The
+# mirror replays memory's git diff onto brain's working copy: a new or
+# edited capture is copied in, a deleted one removed, a rename moved.
+# Generation then writes its pages on top (slice 4), and the whole tree
+# is committed to brain as one commit per cycle.
+#
+# `is_source_path` is the guard that keeps generation's own output from
+# being treated as source to mirror: brain carries generated pages
+# (about.md, folder index.md) that memory never has, so a stray diff
+# entry naming one is ignored. `.git` internals are always skipped.
+
+# Git diff status letters the mirror acts on. `A`dded and `M`odified
+# copy the file in; `D`eleted removes it; `R`enamed moves it (old path
+# removed, new path copied). `C`opied is treated like an add of the new
+# path. `T` (type change) is treated as a modify.
+_COPY_STATUSES = {"A", "M", "C", "T"}
+
+
+def is_source_path(path: str) -> bool:
+    """True when a vault path is source the mirror should replay to brain.
+
+    Excludes git internals and the generated page filenames the
+    projection owns (about.md, folder index.md). Memory never contains
+    those, so this is a defensive belt-and-braces filter: even a
+    hand-edited memory file named `about.md` would not be mirrored as
+    source and then clobbered by generation.
+    """
+    parts = [p for p in path.split("/") if p]
+    if not parts or parts[0] == ".git":
+        return False
+    if parts[-1] in _GENERATED_NAMES:
+        return False
+    return True
+
+
+def diff_to_fileops(name_status_lines: list[str]) -> list[tuple[str, str, str]]:
+    """Map a `git diff --name-status -M` block to brain file operations.
+
+    Each output op is `(action, path, from_path)`:
+
+      - `("copy", new, src)`  — copy `src` from memory into brain at
+        `new` (an add, modify, or the destination half of a rename).
+        For a plain add/modify `src == new`.
+      - `("rm", old, "")`     — remove `old` from brain (a delete, or
+        the source half of a rename).
+
+    Renames (`R<score>\\told\\tnew`) become an `rm old` + `copy new`
+    pair, so a re-slugged capture lands at its new path with no stale
+    file left behind. Lines naming a non-source path (generated pages,
+    git internals) are dropped on whichever side fails `is_source_path`:
+    a rename out of source degrades to a delete, a rename into source to
+    an add. Blank and malformed lines are skipped.
+    """
+    ops: list[tuple[str, str, str]] = []
+    for raw in name_status_lines:
+        line = raw.rstrip("\n")
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        status = fields[0].strip()
+        code = status[:1]
+        if code == "R" or code == "C":
+            if len(fields) < 3:
+                continue
+            old, new = fields[1], fields[2]
+            if is_source_path(old):
+                ops.append(("rm", old, ""))
+            if is_source_path(new):
+                ops.append(("copy", new, new))
+        elif code == "D":
+            if len(fields) < 2:
+                continue
+            old = fields[1]
+            if is_source_path(old):
+                ops.append(("rm", old, ""))
+        elif code in _COPY_STATUSES:
+            if len(fields) < 2:
+                continue
+            new = fields[1]
+            if is_source_path(new):
+                ops.append(("copy", new, new))
+        # Unknown status (e.g. `U` unmerged) is skipped — the nightly
+        # reconcile is the catch-all for any state the incremental path
+        # can't classify.
+    return ops
+
+
+def reconcile_fileops(
+    memory_paths: list[str], brain_paths: list[str],
+) -> list[tuple[str, str, str]]:
+    """Full reconcile: make brain's source files exactly match memory's.
+
+    `memory_paths` is every tracked file in the memory clone;
+    `brain_paths` is every tracked file in the brain working copy. Both
+    are filtered to source paths, then:
+
+      - every memory source file is copied into brain (overwrites, so an
+        edit missed by the incremental path is healed), and
+      - every brain source file that memory no longer has is removed.
+
+    Generated pages in brain (about.md, folder index.md) are not source,
+    so they never appear on either side — the reconcile leaves them
+    untouched for generation to manage. This is the nightly self-heal,
+    rsync `--delete` semantics scoped to source.
+    """
+    mem = [p for p in memory_paths if is_source_path(p)]
+    brain_src = {p for p in brain_paths if is_source_path(p)}
+    ops: list[tuple[str, str, str]] = []
+    for path in sorted(mem):
+        ops.append(("copy", path, path))
+    for path in sorted(brain_src - set(mem)):
+        ops.append(("rm", path, ""))
+    return ops
+
+
 def nightly_due(nightly: str, last_run_date: str, now_local: time.struct_time) -> bool:
     """True when the nightly sweep should run: a valid HH:MM is
     configured, we're past it, and today's sweep hasn't happened."""
@@ -251,10 +377,104 @@ class Vault:
         )
         return [p for p in (out or "").splitlines() if p.strip()]
 
+    async def name_status(self, since: str, until: str) -> list[str]:
+        """`git diff --name-status -M` lines for the mirror.
+
+        Rename detection (`-M`) surfaces a re-slugged capture as one
+        `R<score>\\told\\tnew` line so the mirror moves it instead of
+        leaving a stale copy. A broken range returns [] — the nightly
+        reconcile heals whatever the incremental pass missed."""
+        out = await asyncio.to_thread(
+            self._run, "diff", "--name-status", "-M", f"{since}..{until}",
+        )
+        return [ln for ln in (out or "").splitlines() if ln.strip()]
+
+    async def tracked_files(self) -> list[str]:
+        """Every tracked file in the working copy (`git ls-files`)."""
+        out = await asyncio.to_thread(self._run, "ls-files")
+        return [p for p in (out or "").splitlines() if p.strip()]
+
     def frontmatter_at(self, rev: str, path: str) -> dict:
         """Frontmatter of `path` at `rev` ({} for deleted/binary files)."""
         out = self._run("show", f"{rev}:{path}")
         return _parse_frontmatter(out) if out else {}
+
+
+class Brain:
+    """The brain projection working copy — the curator owns its git.
+
+    Unlike the memory clone (read-only to the curator), brain is
+    written: the mirror applies file ops copied from memory, generation
+    writes pages on top (slice 4), and the curator commits everything as
+    one commit per cycle and pushes. Quartz mounts this directory.
+    """
+
+    def __init__(self, path: Path, source: Path):
+        self.path = path
+        self.source = source
+        self._env = {**os.environ, "GIT_CONFIG_GLOBAL": "/tmp/curator-gitconfig"}
+
+    def _run(self, *args: str) -> tuple[int, str]:
+        result = subprocess.run(
+            ["git", "-C", str(self.path), *args],
+            capture_output=True, text=True, env=self._env,
+        )
+        if result.returncode != 0:
+            logger.debug("[curator] brain git {} failed: {}", args[0], result.stderr.strip())
+        return result.returncode, result.stdout
+
+    async def tracked_files(self) -> list[str]:
+        _, out = await asyncio.to_thread(self._run, "ls-files")
+        return [p for p in out.splitlines() if p.strip()]
+
+    def _apply(self, ops: list[tuple[str, str, str]]) -> None:
+        """Replay file ops onto brain's working tree (no git, no commit).
+
+        A `copy` reads the file from the memory source clone and writes
+        it into brain at the same relative path; a `rm` deletes brain's
+        copy. Both are idempotent and tolerant of a missing source/target
+        — the nightly reconcile is the catch-all for any slip.
+        """
+        for action, path, src in ops:
+            target = self.path / path
+            if action == "copy":
+                source_file = self.source / (src or path)
+                try:
+                    data = source_file.read_bytes()
+                except OSError:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            elif action == "rm":
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+
+    async def apply(self, ops: list[tuple[str, str, str]]) -> None:
+        await asyncio.to_thread(self._apply, ops)
+
+    def _commit_push(self, message: str) -> bool:
+        """Stage everything, commit if there is a change, push. Returns
+        True when a commit was made and pushed (or there was nothing to
+        commit, which is still a success)."""
+        self._run("add", "-A")
+        # `diff --cached --quiet` exits 1 when staged changes exist.
+        code, _ = self._run("diff", "--cached", "--quiet")
+        if code == 0:
+            return True  # nothing to commit — already in sync
+        rc, _ = self._run(
+            "-c", f"user.name={_BRAIN_AUTHOR_NAME}",
+            "-c", f"user.email={_BRAIN_AUTHOR_EMAIL}",
+            "commit", "-m", message,
+        )
+        if rc != 0:
+            return False
+        rc, _ = self._run("push", "--quiet")
+        return rc == 0
+
+    async def commit_push(self, message: str) -> bool:
+        return await asyncio.to_thread(self._commit_push, message)
 
 
 # ── Rebuild ──────────────────────────────────────────────────────────────
@@ -298,17 +518,27 @@ async def main() -> None:
     rebuild_enabled = os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true"
 
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))
+    brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", "/data/memory/brain"))
     shared_bucket = os.environ.get("SHARED_BUCKET", "family")
     state_dir = Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator"))
     sha_file = state_dir / "last-rebuilt-sha"
+    mirror_file = state_dir / "last-mirrored-sha"
     nightly_file = state_dir / "last-nightly-date"
 
     while not (vault_dir / ".git").exists():
         logger.info("[curator] waiting for vault at {}", vault_dir)
         await asyncio.sleep(POLL_SECS)
+    while not (brain_dir / ".git").exists():
+        logger.info("[curator] waiting for brain projection at {}", brain_dir)
+        await asyncio.sleep(POLL_SECS)
 
     vault = Vault(vault_dir)
+    brain = Brain(brain_dir, vault_dir)
     debounce = Debounce(QUIET_SECS)
+
+    # GIT_CONFIG_GLOBAL with `safe.directory = *` is written by Vault's
+    # __init__; brain reuses the same file (both repos are bind-mounted
+    # and host-owned). Vault constructed above, so the file exists.
 
     def _write(path: Path, value: str) -> str:
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -334,6 +564,32 @@ async def main() -> None:
     if not _read(nightly_file):
         _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
 
+    async def mirror_incremental(since: str, until: str) -> bool:
+        """Replay memory's `since..until` source diff onto brain, then
+        commit + push. One commit. Returns True on success (incl. a
+        no-op range)."""
+        ops = diff_to_fileops(await vault.name_status(since, until))
+        await brain.apply(ops)
+        return await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} sync source")
+
+    async def mirror_reconcile() -> bool:
+        """Full source reconcile: make brain's source files exactly match
+        memory's, then commit + push. The first-boot populate and the
+        nightly self-heal both use this."""
+        ops = reconcile_fileops(
+            await vault.tracked_files(), await brain.tracked_files(),
+        )
+        await brain.apply(ops)
+        return await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} reconcile source")
+
+    # First boot: brain carries only its scaffold, so populate it from
+    # memory in full before the incremental loop takes over.
+    mirror_sha = _read(mirror_file)
+    if not mirror_sha:
+        head = await vault.head()
+        if head and await mirror_reconcile():
+            mirror_sha = _write(mirror_file, head)
+
     logger.info(
         "[curator] keeping {} in sync (poll {}s, quiet {}s, nightly {}, rebuild {}) from {}",
         vault_dir, POLL_SECS, QUIET_SECS, NIGHTLY or "off",
@@ -346,10 +602,23 @@ async def main() -> None:
         # files. Runs even with rebuilds disabled: the wiki must not
         # rot just because the automation is off.
         await vault.sync()
-        if not rebuild_enabled:
-            continue
         head = await vault.head()
         if not head:
+            continue
+
+        # ── Source mirror (memory -> brain) ───────────────────────────
+        # Data-plane like the pull: brain must always carry memory's
+        # current source so Quartz renders fresh captures, even with LLM
+        # rebuilds disabled. Cheap (file copies, one commit) so it runs
+        # every cycle the source moved, undebounced.
+        if mirror_sha and head != mirror_sha:
+            if await mirror_incremental(mirror_sha, head):
+                mirror_sha = _write(mirror_file, head)
+        elif not mirror_sha:
+            if await mirror_reconcile():
+                mirror_sha = _write(mirror_file, head)
+
+        if not rebuild_enabled:
             continue
         if not last:
             last = _write(sha_file, head)
@@ -359,9 +628,13 @@ async def main() -> None:
         # Runs regardless of pending changes — it covers everything an
         # incremental pass would, so it also clears the debounce. The
         # date is recorded even on failure: one attempt per night, the
-        # incremental path and the manual CLI cover the gap.
+        # incremental path and the manual CLI cover the gap. A full
+        # source reconcile precedes the regen so brain self-heals any
+        # drift the incremental mirror missed.
         if nightly_due(NIGHTLY, _read(nightly_file), time.localtime()):
             _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+            if await mirror_reconcile():
+                mirror_sha = _write(mirror_file, head)
             if await rebuild([]):
                 last = _write(sha_file, head)
                 debounce.reset()
