@@ -1436,6 +1436,14 @@ async def _publish(page: str = "", *, target_path: str, shared_bucket: str,
             _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
             return 1
 
+        # Refuse to publish a page whose frontmatter won't parse -- one
+        # bad page takes the entire Quartz build down, so it never leaves
+        # this process. The previously published version stays live.
+        fm_error = _frontmatter_error(merged)
+        if fm_error:
+            _err(f"refusing to publish {target_path}: invalid frontmatter ({fm_error})")
+            return 1
+
         await asyncio.to_thread(
             client.put_file,
             repo_owner, _REPO_NAME, target_path,
