@@ -33,6 +33,7 @@ from wiki import (  # noqa: E402
     _format_topic_evidence,
     _frontmatter_error,
     _index_vault,
+    _is_generated_page,
     _member_preamble,
     _member_slugs,
     _month_label,
@@ -504,6 +505,29 @@ class TestFrontmatterError:
 
     def test_unterminated_block_is_rejected(self):
         assert _frontmatter_error("---\ntitle: x\nno closing fence\n") is not None
+
+
+# ── _is_generated_page (clean's delete filter) ─────────────────────────
+
+
+class TestIsGeneratedPage:
+    """`clean` deletes a page only if this returns True. It must never
+    match a source capture, or clean would eat real content."""
+
+    def test_generated_page_matches(self):
+        page = '---\ntitle: "Camping"\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n'
+        assert _is_generated_page(page) is True
+
+    def test_note_capture_does_not_match(self):
+        # A note capture carries frontmatter + body, no splice marker.
+        note = "---\ntype: note\ntopics: [camping]\n---\n\n# Tent idea\n\nbuy a bigger tent\n"
+        assert _is_generated_page(note) is False
+
+    def test_email_capture_with_mid_marker_does_not_match(self):
+        # Email threads carry `mid:` markers, which must not be confused
+        # with the generated-region marker.
+        email = "---\ntype: email\n---\n<!-- mid:<abc@host> -->\n## 2026-06-01 - Bart\n\nhi\n"
+        assert _is_generated_page(email) is False
 
 
 # ── Anchored regen helpers ──────────────────────────────────────────────
