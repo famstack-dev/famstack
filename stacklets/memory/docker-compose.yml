@@ -28,10 +28,13 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
     networks:
       - stack
-    # Read-only: the wiki is a pure view. The curator below owns the
-    # pull; edits round-trip through Forgejo and land as commits.
+    # Read-only: the wiki is a pure view. Quartz renders the brain
+    # projection — the curator owns brain's git (mirror + generated
+    # pages, committed and pushed). Edits round-trip through the memory
+    # repo (see the "edit on Forgejo" link in quartz.layout.ts) and flow
+    # back into brain via the curator's mirror.
     volumes:
-      - ${MEMORY_VAULT_DIR}:/vault:ro
+      - ${BRAIN_REPO_DIR}:/vault:ro
     environment:
       # Used by quartz.config.ts to build "edit on Forgejo" links and
       # absolute URLs. Resolved by the runtime from stack.toml.
