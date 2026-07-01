@@ -42,7 +42,9 @@ services:
     # Metal is not yet supported in the Docker image. Still fast enough for
     # face recognition and CLIP search on M-series chips.
     networks:
-      - stack
+      stack:
+        aliases:
+          - immich-machine-learning
     volumes:
       - model-cache:/cache
     env_file:
