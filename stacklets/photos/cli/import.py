@@ -230,6 +230,25 @@ def _year_from_filename(name):
     return None
 
 
+def _parse_exiftool_output(stdout):
+    """Parse exiftool batch output into a list of values, one per file.
+
+    Exiftool outputs per file:
+        ======== /path/to/file.jpg
+        2018:12:31 20:59:06
+    With -f, missing tags show as '-'. A summary line at the end is ignored.
+    """
+    values = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith("========"):
+            continue
+        if line and line[0].isdigit() and "image file" in line:
+            continue
+        values.append(line)
+    return values
+
+
 def _extract_years(source_root, rel_paths):
     """Return a dict mapping rel_path -> year string.
 
@@ -244,9 +263,8 @@ def _extract_years(source_root, rel_paths):
             ["exiftool", "-DateTimeOriginal", "-s3", "-f"] + full_paths,
             capture_output=True, text=True, timeout=300,
         )
-        lines = result.stdout.strip().splitlines()
-        for rel, line in zip(rel_paths, lines):
-            val = line.strip()
+        values = _parse_exiftool_output(result.stdout)
+        for rel, val in zip(rel_paths, values):
             if val and val != "-" and len(val) >= 4:
                 y = val[:4]
                 if y.isdigit() and 1990 <= int(y) <= 2039:
