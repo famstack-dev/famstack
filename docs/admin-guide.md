@@ -306,6 +306,54 @@ Install the Immich app on every phone, point it at `http://<mac-lan-ip>:42010`, 
 | Port | `42010` |
 | Data | `~/famstack-data/photos/library/`, `~/famstack-data/photos/postgres/` |
 
+#### Bulk import
+
+Import media from a mounted drive, NAS share, or local folder. The importer tracks progress per source path, so imports can be paused, resumed, and interleaved across multiple sources.
+
+```bash
+./stack photos import --source /Volumes/files/Bilder/2020   # scan a folder
+./stack photos import --status                               # show all sources + progress
+./stack photos import --proceed 100                          # upload next 100 files
+./stack photos import --proceed 10 --dry-run                 # preview, no upload
+./stack photos import --proceed 10 --verify                  # spot-check EXIF first
+./stack photos import --proceed 500 --force                  # skip hash dedup (faster)
+./stack photos import --album "Vacation 2023"                # upload into a specific album
+```
+
+Deduplication is two-layered: a local SHA-256 hash ledger skips files already imported in previous runs, and Immich's server-side check catches files uploaded via the mobile app or web UI. The hash step can bottleneck large imports — use `--force` to skip it when you know there are no duplicates (Immich still deduplicates server-side). Switching `--source` starts a new cursor; going back to a previous source picks up where you left off.
+
+**WhatsApp images.** Phone backups often contain hundreds of WhatsApp forwarded images (`IMG-*-WA*`) that pollute the timeline. After importing, archive them in one pass:
+
+```bash
+./stack photos album archive --pattern whatsapp
+```
+
+This hides them from the timeline, detaches them from albums, and keeps the files in the library. Use `unarchive` to bring them back.
+
+#### Album management
+
+Bulk operations on albums and assets. Archive junk, move assets between albums, or clear an album — all from the command line.
+
+```bash
+./stack photos album archive --pattern whatsapp             # archive WhatsApp images
+./stack photos album archive --pattern '*.gif'              # archive all GIFs
+./stack photos album archive --from "Imported"              # archive an entire album
+./stack photos album archive --from "Imported" --pattern whatsapp  # combine both
+./stack photos album unarchive --pattern whatsapp           # undo — restore to timeline
+```
+
+Archive detaches assets from albums by default. Use `--keep-albums` to keep album memberships.
+
+```bash
+./stack photos album copy  --from "Imported" --to "Family"  # copy all assets
+./stack photos album clear --from "Imported"                 # remove all from album
+./stack photos album move  --from "Imported" --to "2024"     # copy + clear in one pass
+```
+
+Copy, clear, and move accept `--pattern` to filter by filename glob (e.g. `--pattern '*.jpg'`). The alias `whatsapp` expands to `IMG-*-WA*`. Album names are matched case-insensitively; `--to` creates the album if it doesn't exist.
+
+All commands support `--dry-run` to preview and `--api-key` to use a specific user's key (defaults to the import key from `secrets.toml`).
+
 ### Documents (`docs`)
 
 Paperless-ngx archive with OCR and structured classification. Receipts, letters, contracts, tax documents. Search across everything by content.
@@ -813,6 +861,40 @@ Run the diagnostic first. It logs in and lists the real folders:
 - **A whole inbox of old mail flooded in.** Set a `since` date floor and start narrow (last week), then widen it. With `since` unset, the first poll takes the whole folder.
 - **Wanted mail is missing.** `filter_noise` (default on) drops newsletters and automated mail; set `filter_noise = false` to keep everything.
 - **Threads render oddly on mobile.** Element X needs **beta features** enabled (Settings, then Labs) for threads.
+
+### TCP connections stuck in TIME_WAIT (macOS)
+
+After ~50 days of uptime, new TCP connections start failing or the server feels sluggish despite low CPU. `netstat` shows thousands of TIME_WAIT connections that never expire:
+
+```bash
+netstat -an | grep TIME_WAIT | wc -l
+```
+
+If this returns thousands (10k+), you've hit a [known XNU kernel bug](https://photon.codes/blog/we-found-a-ticking-time-bomb-in-macos-tcp-networking): a 32-bit unsigned integer overflow in `tcp_now` freezes the internal TCP timestamp clock after 49 days 17 hours 2 minutes 47 seconds of continuous uptime. Once frozen, TIME_WAIT connections never expire.
+
+**Diagnose:**
+
+```bash
+# Check uptime — the bug triggers after ~49.7 days
+uptime
+
+# Confirm TIME_WAIT pile-up
+netstat -an | grep TIME_WAIT | wc -l
+
+# Check boot time precisely
+sysctl kern.boottime
+```
+
+**Fix:** Reboot the Mac. No sysctl, no network restart, no OrbStack restart will clear it — only a full system reboot resets the kernel counter.
+
+**Prevent:** Reboot the server once a month. A simple cron job as a reminder:
+
+```bash
+# Weekly uptime check — warns at 40 days so you can plan a reboot
+(crontab -l 2>/dev/null; echo '0 9 * * 1 uptime_days=$(($(( $(date +\%s) - $(sysctl -n kern.boottime | grep -o "sec = [0-9]*" | grep -o "[0-9]*") )) / 86400)); [ $uptime_days -ge 40 ] && osascript -e "display notification \"Uptime: ${uptime_days} days — reboot soon (XNU TCP bug at 49d)\" with title \"famstack\""') | crontab -
+```
+
+After reboot, all containers come back automatically (OrbStack starts at login and restarts containers with `restart: unless-stopped`).
 
 ### Something else
 
