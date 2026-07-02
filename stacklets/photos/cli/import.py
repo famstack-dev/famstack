@@ -151,7 +151,7 @@ def _scan_media(root):
 def _load_manifest(manifest_path):
     if not manifest_path.exists():
         return []
-    return [l.strip() for l in manifest_path.read_text().splitlines() if l.strip()]
+    return [line.strip() for line in manifest_path.read_text().splitlines() if line.strip()]
 
 
 def _save_manifest(manifest_path, files):
@@ -332,7 +332,7 @@ def _cmd_source(source_path, iroot):
         if remaining > 0:
             print(f"  Source already scanned — {remaining} files remaining at cursor {cursor}.",
                   file=sys.stderr)
-            print(f"  Use --proceed N to continue uploading.\n", file=sys.stderr)
+            print("  Use --proceed N to continue uploading.\n", file=sys.stderr)
             existing_state["last_used"] = datetime.now(timezone.utc).isoformat()
             _save_state(sdir / "state.json", existing_state)
             return {"ok": True, "resumed": True, "remaining": remaining}
@@ -356,13 +356,13 @@ def _cmd_source(source_path, iroot):
     }
     _save_state(sdir / "state.json", state)
 
-    print(f"\n  Manifest built:", file=sys.stderr)
+    print("\n  Manifest built:", file=sys.stderr)
     print(f"    Source:            {source_path}", file=sys.stderr)
     print(f"    Media files found: {len(files)}", file=sys.stderr)
-    print(f"\n  Run 'stack photos import --proceed N' to start uploading.\n",
+    print("\n  Run 'stack photos import --proceed N' to start uploading.\n",
           file=sys.stderr)
 
-    return {"ok": True, "queued": len(files), "already_imported": already_known}
+    return {"ok": True, "queued": len(files)}
 
 
 def _cmd_status(iroot, specific_source=None):
@@ -407,7 +407,7 @@ def _print_source_status(state, manifest):
     cursor = state.get("cursor", 0)
     remaining = len(manifest) - cursor
 
-    print(f"\n  Import status:", file=sys.stderr)
+    print("\n  Import status:", file=sys.stderr)
     print(f"    Source:            {state.get('source', '?')}", file=sys.stderr)
     print(f"    Total scanned:     {state.get('total_scanned', '?')}", file=sys.stderr)
     print(f"    Already imported:  {state.get('already_imported', 0)}", file=sys.stderr)
@@ -419,13 +419,13 @@ def _print_source_status(state, manifest):
 
     if remaining > 0 and manifest:
         next_files = manifest[cursor:cursor + 3]
-        print(f"\n  Next up:", file=sys.stderr)
+        print("\n  Next up:", file=sys.stderr)
         for f in next_files:
             print(f"    {f}", file=sys.stderr)
         if remaining > 3:
             print(f"    ... and {remaining - 3} more", file=sys.stderr)
     elif remaining == 0:
-        print(f"\n  Import complete!", file=sys.stderr)
+        print("\n  Import complete!", file=sys.stderr)
 
     print(file=sys.stderr)
 

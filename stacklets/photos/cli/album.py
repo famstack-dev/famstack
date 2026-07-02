@@ -166,7 +166,7 @@ def _update_assets(client, assets, is_archived):
               file=sys.stderr)
         for name in failed:
             print(f"      {name}", file=sys.stderr)
-        print(f"  hint: use --api-key with that user's key or an admin key to archive these too",
+        print("  hint: use --api-key with that user's key or an admin key to archive these too",
               file=sys.stderr)
     return updated
 
@@ -346,7 +346,7 @@ def _parse_args(argv):
 
 def _print_sample(assets):
     sample = assets[:10]
-    print(f"\n  Sample:", file=sys.stderr)
+    print("\n  Sample:", file=sys.stderr)
     for a in sample:
         print(f"    {a.get('originalFileName', '?')}", file=sys.stderr)
     if len(assets) > 10:
@@ -411,26 +411,26 @@ def _run_archive(client, opts):
     detach = is_archived and not getattr(opts, "keep_albums", False)
     overlaps = []
     if detach:
-        print(f"\n  Scanning albums...", file=sys.stderr)
+        print("\n  Scanning albums...", file=sys.stderr)
         overlaps = _find_album_overlaps(client, ids)
         if overlaps:
             print(f"  Will detach from {len(overlaps)} album(s):", file=sys.stderr)
             for _, name, ids_in_album in overlaps:
                 print(f"    {name} ({len(ids_in_album)} assets)", file=sys.stderr)
         else:
-            print(f"  No album memberships found", file=sys.stderr)
+            print("  No album memberships found", file=sys.stderr)
 
     if opts.dry_run:
-        print(f"\n  Dry run — no changes made.\n", file=sys.stderr)
+        print("\n  Dry run — no changes made.\n", file=sys.stderr)
         return {"ok": True, "matched": len(matched), "would_update": len(matched)}
 
-    print(f"\n  Updating...", file=sys.stderr)
+    print("\n  Updating...", file=sys.stderr)
     updated = _update_assets(client, matched, is_archived)
     print(f"  {action.title()}d {updated} assets.", file=sys.stderr)
 
     detached = 0
     if overlaps and updated:
-        print(f"  Detaching from albums...", file=sys.stderr)
+        print("  Detaching from albums...", file=sys.stderr)
         detached = _detach_from_albums(client, overlaps)
 
     print(file=sys.stderr)
@@ -473,7 +473,7 @@ def _run_album(client, opts):
         print(f"  Target album: {dst_name}", file=sys.stderr)
 
     if opts.dry_run:
-        print(f"\n  Dry run — no changes made.\n", file=sys.stderr)
+        print("\n  Dry run — no changes made.\n", file=sys.stderr)
         result = {"ok": True, "matched": len(assets)}
         if action in ("copy", "move"):
             result["would_copy"] = len(assets)
