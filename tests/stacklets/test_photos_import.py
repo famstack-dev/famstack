@@ -5,10 +5,8 @@ exiftool tests create real JPEG files with embedded EXIF dates to catch
 regressions in exiftool output format parsing — no mocked output.
 """
 
-import os
 import struct
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -52,7 +50,6 @@ def _make_jpeg(path, exif_date=None):
         tiff += struct.pack('<I', 8)   # offset to IFD0
 
         # IFD0 with one entry pointing to ExifIFD
-        ifd0_offset = len(tiff)
         tiff += struct.pack('<H', 1)  # 1 entry
         # ExifIFD pointer (tag 0x8769)
         exif_ifd_offset_pos = len(tiff) + 8
