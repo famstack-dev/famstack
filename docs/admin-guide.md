@@ -318,9 +318,12 @@ Import media from a mounted drive, NAS share, or local folder. The importer trac
 ./stack photos import --proceed 10 --verify                  # spot-check EXIF first
 ./stack photos import --proceed 500 --force                  # skip hash dedup (faster)
 ./stack photos import --album "Vacation 2023"                # upload into a specific album
+./stack photos import --proceed 500 --album-per-year         # auto-bucket by EXIF year
 ```
 
 Deduplication is two-layered: a local SHA-256 hash ledger skips files already imported in previous runs, and Immich's server-side check catches files uploaded via the mobile app or web UI. The hash step can bottleneck large imports — use `--force` to skip it when you know there are no duplicates (Immich still deduplicates server-side). Switching `--source` starts a new cursor; going back to a previous source picks up where you left off.
+
+**Auto-sort by year.** For unsorted photo dumps, `--album-per-year` reads the EXIF date from each file, groups by year, and creates one album per year automatically. Falls back to filename patterns (`20180415_...`) when EXIF is missing. Files without a detectable year go into "Unknown Year".
 
 **WhatsApp images.** Phone backups often contain hundreds of WhatsApp forwarded images (`IMG-*-WA*`) that pollute the timeline. After importing, archive them in one pass:
 

@@ -27,6 +27,7 @@ Usage:
   stack photos import --proceed 100                          # upload next 100 files
   stack photos import --proceed 10 --dry-run                 # preview, no upload
   stack photos import --proceed 10 --verify                  # spot-check EXIF first
+  stack photos import --proceed 500 --album-per-year         # auto-bucket by year
 
   # later — switch to the full directory
   stack photos import --source /Volumes/files/Bilder         # new source, own cursor
@@ -214,6 +215,51 @@ def _verify_metadata(source_root, rel_paths, count=5):
     return ok
 
 
+# ── Year extraction ─────────────────────────────────────────────────────────
+
+_YEAR_FROM_NAME = re.compile(r'(?:^|[_\-])(\d{4})(?:\d{4}|[_\-])')
+
+
+def _year_from_filename(name):
+    """Try to extract a four-digit year (1990–2039) from a filename."""
+    m = _YEAR_FROM_NAME.search(name)
+    if m:
+        y = int(m.group(1))
+        if 1990 <= y <= 2039:
+            return str(y)
+    return None
+
+
+def _extract_years(source_root, rel_paths):
+    """Return a dict mapping rel_path -> year string.
+
+    Uses exiftool in batch mode for speed. Falls back to filename patterns
+    for files without EXIF dates.
+    """
+    years = {}
+
+    if shutil.which("exiftool"):
+        full_paths = [str(Path(source_root) / rel) for rel in rel_paths]
+        result = subprocess.run(
+            ["exiftool", "-DateTimeOriginal", "-s3", "-f"] + full_paths,
+            capture_output=True, text=True, timeout=300,
+        )
+        lines = result.stdout.strip().splitlines()
+        for rel, line in zip(rel_paths, lines):
+            val = line.strip()
+            if val and val != "-" and len(val) >= 4:
+                y = val[:4]
+                if y.isdigit() and 1990 <= int(y) <= 2039:
+                    years[rel] = y
+                    continue
+            years[rel] = _year_from_filename(Path(rel).name)
+    else:
+        for rel in rel_paths:
+            years[rel] = _year_from_filename(Path(rel).name)
+
+    return years
+
+
 # ── Upload ──────────────────────────────────────────────────────────────────
 
 def _get_api_key(config):
@@ -305,8 +351,11 @@ def _parse_args(argv):
                    help="Show what would be uploaded, don't actually upload")
     p.add_argument("--verify", action="store_true",
                    help="Spot-check EXIF metadata before uploading")
-    p.add_argument("--album", default="Imported",
-                   help="Immich album name for uploaded files (default: Imported)")
+    album_group = p.add_mutually_exclusive_group()
+    album_group.add_argument("--album", default=None,
+                             help="Immich album name for uploaded files (default: Imported)")
+    album_group.add_argument("--album-per-year", action="store_true",
+                             help="Auto-create albums by year from EXIF date (falls back to filename)")
     p.add_argument("--force", action="store_true",
                    help="Skip hash ledger check — upload even if previously imported")
     p.add_argument("--reset-cursor", action="store_true",
@@ -430,7 +479,8 @@ def _print_source_status(state, manifest):
     print(file=sys.stderr)
 
 
-def _cmd_proceed(n, iroot, config, source_path=None, dry_run=False, verify=False, album="Imported", force=False):
+def _cmd_proceed(n, iroot, config, source_path=None, dry_run=False, verify=False,
+                 album="Imported", force=False, album_per_year=False):
     """Process next N files from a source."""
     # Resolve which source to use
     if source_path:
@@ -492,14 +542,37 @@ def _cmd_proceed(n, iroot, config, source_path=None, dry_run=False, verify=False
     if verify and to_upload:
         _verify_metadata(source, to_upload)
 
+    # Group by year if requested
+    year_groups = None
+    if album_per_year and to_upload:
+        print("\n  Extracting years...", file=sys.stderr)
+        years = _extract_years(source, to_upload)
+        year_groups = {}
+        unknown = []
+        for rel in to_upload:
+            y = years.get(rel)
+            if y:
+                year_groups.setdefault(y, []).append(rel)
+            else:
+                unknown.append(rel)
+        if unknown:
+            year_groups["Unknown Year"] = unknown
+        for y in sorted(year_groups):
+            label = y if y != "Unknown Year" else "Unknown Year (no EXIF date or year in filename)"
+            print(f"    {label}: {len(year_groups[y])} files", file=sys.stderr)
+
     if dry_run:
-        print(f"\n  Dry run — next {min(10, len(to_upload))} files:\n", file=sys.stderr)
-        for rel in to_upload[:10]:
-            print(f"    {rel}", file=sys.stderr)
-        if len(to_upload) > 10:
-            print(f"    ... and {len(to_upload) - 10} more", file=sys.stderr)
-        print(f"\n  Would upload {len(to_upload)} files. No changes made.\n",
-              file=sys.stderr)
+        if year_groups:
+            print(f"\n  Would upload {len(to_upload)} files into {len(year_groups)} album(s). "
+                  "No changes made.\n", file=sys.stderr)
+        else:
+            print(f"\n  Dry run — next {min(10, len(to_upload))} files:\n", file=sys.stderr)
+            for rel in to_upload[:10]:
+                print(f"    {rel}", file=sys.stderr)
+            if len(to_upload) > 10:
+                print(f"    ... and {len(to_upload) - 10} more", file=sys.stderr)
+            print(f"\n  Would upload {len(to_upload)} files. No changes made.\n",
+                  file=sys.stderr)
         return {"ok": True, "would_upload": len(to_upload), "dupes": dupes}
 
     if not config["is_healthy"]():
@@ -523,7 +596,18 @@ def _cmd_proceed(n, iroot, config, source_path=None, dry_run=False, verify=False
         return {"ok": True, "uploaded": 0, "dupes": dupes}
 
     immich_version = _get_immich_version(config)
-    success = _upload_files(source, to_upload, immich_version, api_key, album)
+
+    if year_groups:
+        success = True
+        for y in sorted(year_groups):
+            album_name = y
+            files = year_groups[y]
+            print(f"\n  Album \"{album_name}\" ({len(files)} files):", file=sys.stderr)
+            if not _upload_files(source, files, immich_version, api_key, album_name):
+                success = False
+                break
+    else:
+        success = _upload_files(source, to_upload, immich_version, api_key, album)
 
     if success:
         _append_ledger(ledger_p, to_upload_hashes)
@@ -582,11 +666,14 @@ def run(args, stacklet, config):
     if opts.source and opts.status:
         return _cmd_status(iroot, specific_source=opts.source)
 
+    album = opts.album or ("Imported" if not opts.album_per_year else None)
+
     if opts.source and opts.proceed:
         _cmd_source(opts.source, iroot)
         return _cmd_proceed(opts.proceed, iroot, config, source_path=opts.source,
                             dry_run=opts.dry_run, verify=opts.verify,
-                            album=opts.album, force=opts.force)
+                            album=album, force=opts.force,
+                            album_per_year=opts.album_per_year)
 
     if opts.source:
         return _cmd_source(opts.source, iroot)
@@ -597,7 +684,8 @@ def run(args, stacklet, config):
     if opts.proceed:
         return _cmd_proceed(opts.proceed, iroot, config,
                             dry_run=opts.dry_run, verify=opts.verify,
-                            album=opts.album, force=opts.force)
+                            album=album, force=opts.force,
+                            album_per_year=opts.album_per_year)
 
     print("  Usage:", file=sys.stderr)
     print("    stack photos import --source /Volumes/NAS/photos   # scan source", file=sys.stderr)
