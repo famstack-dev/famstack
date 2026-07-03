@@ -438,6 +438,7 @@ def render_capture(
     shared_bucket: str,
     summary: str | None = None,
     facts: list | None = None,
+    action_items: list | None = None,
 ) -> str:
     """Assemble the mirror file for a capture entry (kind=note|bookmark).
 
@@ -445,8 +446,9 @@ def render_capture(
 
       1. The meta block uses Captured/Kind/Source instead of the
          document's From/About/Date/Type/Category.
-      2. No ``## Action items`` block. A bookmark to a Reddit thread
-         is not a todo.
+      2. Action items ride in the briefing callout only when the caller
+         extracted them — human-typed notes opt in, bookmarks never do
+         (a saved Reddit thread is not a todo).
       3. ``kind: note`` keeps the user's pasted text but tucks it inside
          an Obsidian collapsible callout. The summary is what the eye
          lands on; verifying the original is one click away.
@@ -464,6 +466,8 @@ def render_capture(
         shared_bucket: The institutional bucket slug (for correspondents).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
+        action_items: Tasks the note records (notes only); [] / None for
+            bookmarks. Rendered as `- [ ]` lines in the briefing callout.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -494,10 +498,10 @@ def render_capture(
     parts.extend(f"> {ln}" for ln in meta_lines)
     parts.append("")
 
-    # Briefing — summary + facts only. Action items intentionally
-    # omitted for captures.
+    # Briefing — summary + facts, plus action items when the note carried
+    # any (bookmarks pass None, so nothing changes for them).
     briefing = _briefing_block(
-        summary=summary, facts=facts, action_items=None,
+        summary=summary, facts=facts, action_items=action_items,
     )
     if briefing:
         parts.append(briefing)

@@ -41,7 +41,8 @@ class FakeClassifier:
 
     async def classify_capture(self, *, text, person_names, existing_tags,
                                images=None, user_hint=None,
-                               initial_classification=None):
+                               initial_classification=None,
+                               extract_action_items=False):
         if self._raises:
             raise self._raises
         return self._payload

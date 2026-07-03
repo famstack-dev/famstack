@@ -594,6 +594,39 @@ class TestRenderCapture:
         assert "> Discussed Q2 budget." in content
         assert "> Action: review expenses." in content
 
+    def test_note_renders_action_items(self):
+        """A note that opted into extraction surfaces its action items as
+        `- [ ]` task lines in the briefing callout — what the curator later
+        aggregates into todos.md."""
+        fm = capture_frontmatter(
+            title="Ausflug", captured_at="2026-06-26", kind="note",
+            source_uri=None, persons=["Marge"], tags=["ausflug"], model=None,
+        )
+        content = render_capture(
+            from_path="family/itchy/notes/2026/06/e.md", shared_bucket="family",
+            frontmatter=fm, body="Liste:\nTickets buchen", kind="note",
+            captured_at="2026-06-26", source_uri=None, persons=["Marge"],
+            summary="Ausflugscheckliste.", facts=[],
+            action_items=["Tickets buchen", "Snacks einpacken"],
+        )
+        assert "- [ ] Tickets buchen" in content
+        assert "- [ ] Snacks einpacken" in content
+
+    def test_note_without_action_items_has_no_task_lines(self):
+        """An idle note (or any bookmark) carries no action items → no
+        checkboxes manufactured."""
+        fm = capture_frontmatter(
+            title="Schöner Tag", captured_at="2026-06-26", kind="note",
+            source_uri=None, persons=[], tags=[], model=None,
+        )
+        content = render_capture(
+            from_path="family/itchy/notes/2026/06/e.md", shared_bucket="family",
+            frontmatter=fm, body="War ein schöner Tag.", kind="note",
+            captured_at="2026-06-26", source_uri=None, persons=[],
+            summary="Ein schöner Tag.", facts=[], action_items=[],
+        )
+        assert "- [ ]" not in content
+
     def test_note_without_body(self):
         fm = capture_frontmatter(
             title="Empty note",

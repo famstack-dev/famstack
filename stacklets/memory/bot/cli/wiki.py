@@ -53,6 +53,7 @@ import os
 import re
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -68,6 +69,13 @@ from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
+
+# `todo_list` is a sibling in this cli/ package. It runs both as a top-level
+# module (tests put cli/ on the path) and as `cli.todo_list` (the entrypoint
+# puts bot/ on the path), so we add our own directory before importing by
+# bare name — the form that works in both.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from todo_list import render_todo_doc, update_todo_doc  # noqa: E402
 
 
 HELP = "Regenerate the family wiki's home and member pages"
@@ -522,9 +530,16 @@ async def _generate_topic(
     # other buckets.
     page_dir = f"{bucket_prefix}/{topic_slug}"
     page = _with_references(page, entries + cross_refs, page_dir=page_dir)
-    # Surface the household's open action items for this topic. Appended
-    # after references so the citations are read off the LLM body alone.
-    page = _with_todos(page, entries + cross_refs, page_dir=page_dir)
+
+    # The topic's open action items live on their own persistent page
+    # (`<page_dir>/todos.md`), not inline on about.md: a checklist someone
+    # ticks off in Forgejo must survive the next about.md regeneration. Only
+    # this topic's own captures feed it -- a cross-referenced capture's todos
+    # belong to its home scope's list, not this one's.
+    await _generate_todos(
+        entries, page_dir=page_dir, display=display,
+        shared_bucket=shared_bucket, write=write,
+    )
 
     if not write:
         print(f"\n<!-- {page_dir}/about.md -->\n{page}")
@@ -547,6 +562,35 @@ async def _generate_topic(
         shared_bucket=shared_bucket, write=write,
     )
     return rc
+
+
+async def _generate_todos(
+    entries: list[dict], *,
+    page_dir: str, display: str, shared_bucket: str, write: bool,
+) -> int:
+    """Merge the scope's open action items into a persistent `todos.md`.
+
+    Unlike about.md (rebuilt whole each run), todos.md is a living
+    checklist: `update_todo_doc` folds in newly-extracted action items
+    while keeping the boxes the family already ticked off in Forgejo, and
+    never resurrects a done one. Skips entirely when the scope has no open
+    items -- an empty todos page helps no one, and a scope whose items are
+    all done keeps its existing list untouched rather than being wiped.
+    """
+    items = _collect_todo_items(entries)
+    if not items:
+        return 0
+    target_path = f"{page_dir}/todos.md"
+    title = f"{display} todos"
+    if not write:
+        print(f"\n<!-- {target_path} -->\n{render_todo_doc(title, items)}")
+        return 0
+    return await _publish(
+        target_path=target_path,
+        shared_bucket=shared_bucket,
+        commit_msg=f"{COMMIT_PREFIX} {page_dir} todos",
+        transform=lambda prior: update_todo_doc(prior or None, title, items),
+    )
 
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
@@ -981,9 +1025,10 @@ def _build_references_section(
 # The classifier already extracts action items, and the archivist already
 # writes them as Obsidian task lines (`- [ ] action — due`) inside each
 # capture's `> [!summary]` callout. `_index_vault` carries that callout text on
-# every entry as `summary`, so the only thing missing was a surface: nothing
-# collected the open boxes across a topic's captures. These two helpers do that
-# and nothing more — same Obsidian Tasks convention, so the lines stay
+# every entry as `summary`, so the todos are already in the vault, scattered
+# one-per-capture. `_generate_todos` gathers a scope's open boxes into a single
+# persistent `todos.md` (via `update_todo_doc`, which keeps whatever the family
+# ticked off in Forgejo) — same Obsidian Tasks convention, so the lines stay
 # interactive checkboxes in Obsidian and styled ones in Quartz.
 
 # An unchecked task line, after `extract_summary_callout` has stripped the
@@ -1015,35 +1060,23 @@ def _open_todos(entries: list[dict]) -> list[dict]:
     return todos
 
 
-def _build_todos_section(entries: list[dict], *, page_dir: str) -> str:
-    """Render the entries' open todos as an Obsidian-compatible checklist.
+def _collect_todo_items(entries: list[dict]) -> list[str]:
+    """The scope's open todos as a deduplicated, first-seen-ordered text list.
 
-    Each line stays a real `- [ ]` task and carries a link back to its
-    source capture, rendered absolute-from-root so it resolves at any
-    page depth in both Obsidian and Quartz. Returns "" when nothing is
-    open -- an empty heading helps no one.
+    `update_todo_doc` takes plain action-item strings, so this flattens
+    `_open_todos` down to its `text` and drops repeats: the same task can
+    surface in two captures (a reminder re-sent to the room), but it must
+    land once in the merged `todos.md`. Done boxes are already gone --
+    `_open_todos` keeps only `- [ ]`.
     """
-    todos = _open_todos(entries)
-    if not todos:
-        return ""
-    rows: list[str] = ["## Open todos", ""]
-    for todo in todos:
-        rel = todo.get("rel") or ""
-        if rel:
-            link = _relative_link(rel, page_dir)
-            title = todo.get("title") or "source"
-            rows.append(f"- [ ] {todo['text']} ([{title}]({link}))")
-        else:
-            rows.append(f"- [ ] {todo['text']}")
-    return "\n".join(rows)
-
-
-def _with_todos(page: str, entries: list[dict], *, page_dir: str) -> str:
-    """Append an `## Open todos` block for the page's open task lines."""
-    section = _build_todos_section(entries, page_dir=page_dir)
-    if section:
-        return page.rstrip() + "\n\n" + section
-    return page
+    seen: set[str] = set()
+    items: list[str] = []
+    for todo in _open_todos(entries):
+        text = todo["text"]
+        if text not in seen:
+            seen.add(text)
+            items.append(text)
+    return items
 
 
 def _relative_link(rel: str, page_dir: str) -> str:
@@ -1353,8 +1386,9 @@ async def _clean_generated(*, shared_bucket: str, dry_run: bool,
         return 1
 
 
-async def _publish(page: str, *, target_path: str, shared_bucket: str,
-                   commit_msg: str, default_preamble: str = "") -> int:
+async def _publish(page: str = "", *, target_path: str, shared_bucket: str,
+                   commit_msg: str, default_preamble: str = "",
+                   transform: "Callable[[str], str] | None" = None) -> int:
     """Splice the generated page into `target_path` on the memory repo.
 
     Uses admin credentials to issue a short-lived token rather than
@@ -1364,8 +1398,11 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
     elsewhere are already in our env.
 
     The existing page is read from Forgejo (the canonical source, not the
-    wiki's working copy on disk) so the splice preserves whatever the
-    family last committed outside the brackets.
+    wiki's working copy on disk) so the merge preserves whatever the family
+    last committed. By default that merge is the marker splice, which keeps
+    human edits outside the brackets; a caller can pass `transform` to fold
+    prior→new some other way (todos.md preserves the family's ticked boxes
+    with `update_todo_doc`), in which case `page` is unused.
     """
     repo_owner = shared_bucket  # default-install convention; see run()
 
@@ -1379,7 +1416,17 @@ async def _publish(page: str, *, target_path: str, shared_bucket: str,
         )
         sha = existing.get("sha") if existing else None
         prior = existing.get("content", "") if existing else ""
-        merged = _splice_generated(prior, page, default_preamble=default_preamble)
+        if transform is not None:
+            merged = transform(prior)
+        else:
+            merged = _splice_generated(prior, page, default_preamble=default_preamble)
+
+        # An identical regen is a no-op: skip the write so re-runs don't
+        # churn the repo with empty commits (a topic whose todos haven't
+        # changed, an about.md the model reproduced verbatim).
+        if merged == prior:
+            _err(f"unchanged {target_path}, skipped")
+            return 0
 
         # Refuse to publish a page whose frontmatter won't parse -- one
         # bad page takes the entire Quartz build down, so it never leaves

@@ -11,10 +11,13 @@ focused prompt that returns:
   - tags        (free-form, biased toward existing tags in use)
   - persons     (family members this is for/about)
 
-Deliberately absent: `correspondent`, `document_type`, `category`,
-`action_items`. No ontology section either. Action items in
-particular stay out: a pasted Reddit thread should not manufacture
-a todo for the household.
+Deliberately absent: `correspondent`, `document_type`, `category`. No
+ontology section either.
+
+`action_items` is off by default — a pasted Reddit thread (which arrives
+as a bookmark) must not manufacture a household todo. The caller opts a
+human-authored *note* in via `extract_action_items=True`, and even then
+the field is hard-defaulted to [] so an idle note stays empty.
 """
 
 from __future__ import annotations
@@ -56,10 +59,30 @@ class TestPromptStructure:
         prompt = _build_capture_prompt(**COMMON)
         assert "persons" in prompt
 
-    def test_does_not_advertise_action_items_field(self):
+    def test_no_action_items_by_default(self):
         """A bookmarked Reddit thread or saved article is not a todo.
-        Dropping `action_items` from the capture schema means the LLM
-        can't manufacture chores from passive reading material."""
+        With `action_items` off (the default, and what bookmarks get) the
+        LLM can't manufacture chores from passive reading material."""
+        prompt = _build_capture_prompt(**COMMON)
+        assert "action_items" not in prompt
+
+
+class TestActionItemsOptIn:
+    """A human-authored note opts into todo extraction. The field appears,
+    but the prompt hard-defaults it to [] so a note with nothing to do
+    doesn't get a manufactured task."""
+
+    def test_advertises_action_items_when_opted_in(self):
+        prompt = _build_capture_prompt(**COMMON, extract_action_items=True)
+        assert "action_items" in prompt
+
+    def test_carries_the_default_empty_guard(self):
+        prompt = _build_capture_prompt(**COMMON, extract_action_items=True)
+        # The anti-manufacture instruction must be present.
+        assert "[]" in prompt
+        assert "never manufacture a task" in prompt.lower()
+
+    def test_off_by_default(self):
         prompt = _build_capture_prompt(**COMMON)
         assert "action_items" not in prompt
 
