@@ -249,28 +249,45 @@ def _parse_exiftool_output(stdout):
     return values
 
 
+_EXIFTOOL_CHUNK = 200
+
+
 def _extract_years(source_root, rel_paths):
     """Return a dict mapping rel_path -> year string.
 
-    Uses exiftool in batch mode for speed. Falls back to filename patterns
-    for files without EXIF dates.
+    Uses exiftool in batch mode for speed, processing files in chunks to
+    avoid timeouts on large batches. File paths are passed via stdin (-@ -)
+    to avoid OS argument length limits. Falls back to filename patterns for
+    files without EXIF dates.
     """
     years = {}
 
     if shutil.which("exiftool"):
-        full_paths = [str(Path(source_root) / rel) for rel in rel_paths]
-        result = subprocess.run(
-            ["exiftool", "-DateTimeOriginal", "-s3", "-f"] + full_paths,
-            capture_output=True, text=True, timeout=300,
-        )
-        values = _parse_exiftool_output(result.stdout)
-        for rel, val in zip(rel_paths, values):
-            if val and val != "-" and len(val) >= 4:
-                y = val[:4]
-                if y.isdigit() and 1990 <= int(y) <= 2039:
-                    years[rel] = y
-                    continue
-            years[rel] = _year_from_filename(Path(rel).name)
+        for i in range(0, len(rel_paths), _EXIFTOOL_CHUNK):
+            chunk_rels = rel_paths[i:i + _EXIFTOOL_CHUNK]
+            full_paths = [str(Path(source_root) / rel) for rel in chunk_rels]
+            argfile = "\n".join(full_paths) + "\n"
+            try:
+                result = subprocess.run(
+                    ["exiftool", "-fast", "-DateTimeOriginal", "-s3", "-f",
+                     "-@", "-"],
+                    input=argfile, capture_output=True, text=True, timeout=120,
+                )
+                values = _parse_exiftool_output(result.stdout)
+            except subprocess.TimeoutExpired:
+                print(f"    ! exiftool timed out on chunk {i // _EXIFTOOL_CHUNK + 1},"
+                      " falling back to filenames", file=sys.stderr)
+                values = []
+            for rel, val in zip(chunk_rels, values):
+                if val and val != "-" and len(val) >= 4:
+                    y = val[:4]
+                    if y.isdigit() and 1990 <= int(y) <= 2039:
+                        years[rel] = y
+                        continue
+                years[rel] = _year_from_filename(Path(rel).name)
+            remaining = chunk_rels[len(values):]
+            for rel in remaining:
+                years[rel] = _year_from_filename(Path(rel).name)
     else:
         for rel in rel_paths:
             years[rel] = _year_from_filename(Path(rel).name)
