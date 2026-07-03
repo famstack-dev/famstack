@@ -672,6 +672,10 @@ class CapturePipeline:
             source, sender_name, images=images, user_hint=user_hint,
             initial_classification=initial_classification,
             default_person=default_person,
+            # Todo extraction is opt-in per source kind: human-typed notes
+            # only. Bookmarks (saved URLs/snippets) stay out — that's the
+            # guard against a pasted thread manufacturing a household todo.
+            extract_action_items=(kind == "note"),
         )
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
@@ -781,6 +785,7 @@ class CapturePipeline:
         user_hint: str | None = None,
         initial_classification: dict | None = None,
         default_person: bool = True,
+        extract_action_items: bool = False,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -812,6 +817,7 @@ class CapturePipeline:
                 images=images,
                 user_hint=user_hint,
                 initial_classification=initial_classification,
+                extract_action_items=extract_action_items,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

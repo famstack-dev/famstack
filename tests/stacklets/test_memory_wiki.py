@@ -23,8 +23,8 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
-    _build_todos_section,
     _build_topic_prompt,
+    _collect_todo_items,
     _capture_index_pages,
     _correspondent_body,
     _correspondent_entries,
@@ -784,7 +784,7 @@ class TestMemberSlugs:
         assert "homer" in slugs and "scribe-bot" not in slugs
 
 
-# ── _open_todos / _build_todos_section ──────────────────────────────────
+# ── _open_todos / _collect_todo_items ────────────────────────────────────
 
 
 class TestOpenTodos:
@@ -830,35 +830,35 @@ class TestOpenTodos:
         assert _open_todos([]) == []
 
 
-class TestBuildTodosSection:
-    """Render the open todos as a real Obsidian task list: each line
-    stays a `- [ ]` checkbox (interactive in Obsidian, styled in
-    Quartz) and links back to its source capture, absolute-from-root so
-    it resolves at any page depth in both readers."""
+class TestCollectTodoItems:
+    """Flatten a scope's open todos into the plain, deduplicated text
+    list `_generate_todos` hands to `update_todo_doc`. Done boxes are
+    already dropped by `_open_todos`; here we only pin the flatten and
+    the dedup (an action item re-sent across two captures must not
+    double up in the merged `todos.md`), with first-seen order kept."""
 
-    def test_renders_obsidian_checklist(self):
-        entries = [{"rel": "family/trip/notes/a.md", "title": "Trip",
-                    "summary": "- [ ] book tickets"}]
-        section = _build_todos_section(entries, page_dir="family/trip")
-        assert section.startswith("## Open todos")
-        assert "- [ ] book tickets" in section
-        # Absolute-from-root link — the form Quartz and Obsidian share.
-        assert "(/family/trip/notes/a.md)" in section
-
-    def test_done_never_rendered(self):
-        entries = [{"rel": "a.md", "title": "A", "summary": "- [x] done"}]
-        assert _build_todos_section(entries, page_dir="family/trip") == ""
-
-    def test_empty_when_no_todos(self):
-        assert _build_todos_section([], page_dir="family/trip") == ""
-
-    def test_links_back_to_each_source(self):
+    def test_flattens_texts_across_entries(self):
         entries = [
             {"rel": "family/trip/notes/a.md", "title": "Plan",
-             "summary": "- [ ] one"},
-            {"rel": "marge/notes/b.md", "title": "Idea",
-             "summary": "- [ ] two"},
+             "summary": "- [ ] book tickets\n- [ ] confirm hotel"},
+            {"rel": "family/trip/notes/b.md", "title": "Idea",
+             "summary": "- [ ] pack bags"},
         ]
-        section = _build_todos_section(entries, page_dir="family/trip")
-        assert "(/family/trip/notes/a.md)" in section
-        assert "(/marge/notes/b.md)" in section
+        assert _collect_todo_items(entries) == [
+            "book tickets", "confirm hotel", "pack bags",
+        ]
+
+    def test_dedups_repeated_item_keeping_first_seen_order(self):
+        entries = [
+            {"rel": "a.md", "title": "A", "summary": "- [ ] volltanken"},
+            {"rel": "b.md", "title": "B",
+             "summary": "- [ ] parkkarten\n- [ ] volltanken"},
+        ]
+        assert _collect_todo_items(entries) == ["volltanken", "parkkarten"]
+
+    def test_empty_when_no_open_todos(self):
+        entries = [{"rel": "a.md", "title": "A", "summary": "- [x] done"}]
+        assert _collect_todo_items(entries) == []
+
+    def test_empty_index(self):
+        assert _collect_todo_items([]) == []

@@ -423,13 +423,14 @@ class GitMirror:
         from_path: str,
         summary: str | None = None,
         facts: list | None = None,
+        action_items: list | None = None,
     ) -> str:
         """Capture mirror markdown. Delegates to ``vault_entry.render_capture``."""
         return render_capture(
             frontmatter=frontmatter, body=body, kind=kind,
             captured_at=captured_at, source_uri=source_uri, persons=persons,
             from_path=from_path, shared_bucket=self.shared_bucket,
-            summary=summary, facts=facts,
+            summary=summary, facts=facts, action_items=action_items,
         )
 
     def _commit_message(
@@ -803,6 +804,9 @@ class GitMirror:
 
         briefing_summary = classification.get("summary")
         briefing_facts = classification.get("facts") or []
+        # Action items only when the classifier extracted them — notes that
+        # opted in (kind == "note"); bookmarks never carry the field.
+        briefing_actions = classification.get("action_items") or []
 
         content = self._render_capture(
             frontmatter=fm,
@@ -814,6 +818,7 @@ class GitMirror:
             from_path=target_path,
             summary=briefing_summary,
             facts=briefing_facts,
+            action_items=briefing_actions,
         )
 
         verb = "update" if existing else "capture"
