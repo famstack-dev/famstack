@@ -261,14 +261,6 @@ class Stack:
         ]
         template_vars["admin_user_ids"] = ",".join(admin_ids)
 
-        # Comma-separated vault bucket slugs (Matrix localparts) of every
-        # family member. The link resolver uses these to tell a member home
-        # (`/wiki/homer`) from a shared topic (`/wiki/camping`) — a lone
-        # segment that names a member resolves to that member's bucket.
-        template_vars["family_members"] = ",".join(
-            user_id(u) for u in load_users(self.instance_dir)
-        )
-
         # Mail accounts — stack.toml [mail] rendered into one JSON env var
         # for the mail bot. IMAP passwords come from the secret store
         # (mail__<NAME>_IMAP_PASSWORD), embedded in the JSON the same way

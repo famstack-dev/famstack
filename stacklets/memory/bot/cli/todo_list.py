@@ -30,8 +30,9 @@ _LIST_MARKERS = (
     "aufgaben", "einkaufsliste", "einkauf", "checkliste", "checklist", "list",
 )
 
-# An Obsidian task line, open or done, capturing the task text.
-_TASK_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$")
+# An Obsidian task line, open or done: group 1 is the box char (" " open,
+# "x"/"X" done), group 2 the task text.
+_TASK_RE = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$")
 
 
 def detect_list(body: str) -> tuple[str, list[str]] | None:
@@ -71,7 +72,7 @@ def add_items(existing: str, action_items: list[str]) -> str:
     neither doubles up nor resurrects something already ticked off. Existing
     lines (including `- [x]` done items) are left untouched.
     """
-    seen = {m.group(1).strip()
+    seen = {m.group(2).strip()
             for ln in existing.splitlines()
             if (m := _TASK_RE.match(ln))}
     fresh = [ai for ai in action_items if ai.strip() and ai.strip() not in seen]
@@ -88,3 +89,21 @@ def update_todo_doc(existing: str | None, title: str,
     if not existing:
         return render_todo_doc(title, action_items)
     return add_items(existing, action_items)
+
+
+def read_todos(doc: str) -> tuple[list[str], list[str]]:
+    """Split a rendered `todos.md` into ``(open, done)`` task texts, file order.
+
+    The read side of the surface: `- [ ]` lines are open, `- [x]`/`- [X]` done;
+    the title and blank lines are ignored. Kept beside the writers so one module
+    owns what a todo line is -- the CLI list command reads through here.
+    """
+    open_items: list[str] = []
+    done_items: list[str] = []
+    for line in doc.splitlines():
+        m = _TASK_RE.match(line)
+        if not m:
+            continue
+        bucket = open_items if m.group(1) == " " else done_items
+        bucket.append(m.group(2).strip())
+    return open_items, done_items
