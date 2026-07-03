@@ -61,6 +61,7 @@ en:
   no_classification: "No classification applied"
   reformat_failed: "Note: text reformatting skipped (timed out) — document is still classified."
   new_in_paperless: "\U0001F195 New in Paperless: {items}"
+  added_to_todos: "\U0001F4DD Added to the todo list. Tick it off here:"
 
   # Scan
   scan_started: "\U0001F4F8 Batch started for {sender}. Send pages, photos, or voice memos, then ) or 'fertig' to combine."
@@ -267,6 +268,7 @@ de:
   no_classification: "Keine Klassifizierung angewendet"
   reformat_failed: "Hinweis: Textformatierung übersprungen (Zeitlimit) — Dokument wurde trotzdem klassifiziert."
   new_in_paperless: "\U0001F195 Neu in Paperless: {items}"
+  added_to_todos: "\U0001F4DD Zur Aufgabenliste hinzugefügt. Hier abhaken:"
 
   # Scan
   scan_started: "\U0001F4F8 Batch gestartet für {sender}. Sende Seiten, Fotos oder Sprachnachrichten, dann ) oder 'fertig' zum Zusammenfassen."

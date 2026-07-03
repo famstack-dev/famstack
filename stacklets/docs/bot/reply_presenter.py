@@ -129,6 +129,7 @@ def render_capture_reply(
     classification: dict,
     link: str,
     transcript: str | None = None,
+    todo_link: str = "",
 ) -> str:
     """Render the "capture saved" reply.
 
@@ -142,6 +143,12 @@ def render_capture_reply(
     renders as a block-quoted preamble above the title so the sender
     can verify whisper heard them correctly. None for every other
     capture shape.
+
+    ``todo_link`` is a `/go/topic/<scope>/todo` link the caller builds
+    when a topic capture produced action items; when set it renders as
+    an "added to the todo list" line above the source footer, so the
+    family can jump to the checkable list. Empty for captures that made
+    no todos or landed outside a topic scope.
     """
     lines: list[str] = []
     if transcript:
@@ -177,6 +184,9 @@ def render_capture_reply(
     lines.extend(_fact_lines(classification.get("facts", [])))
     lines.extend(_action_item_lines(classification.get("action_items", [])))
 
+    if todo_link:
+        lines.extend(["", f"  {t('added_to_todos')}", f"  {todo_link}"])
+
     lines.extend(["", f"  {link}"])
     return "\n".join(lines)
 
@@ -197,15 +207,21 @@ def _fact_lines(facts) -> list[str]:
 
 
 def _action_item_lines(action_items) -> list[str]:
-    """Up to three `  action (due DATE)` lines for valid dict items."""
+    """Up to three `  action (due DATE)` lines from the extracted items.
+
+    Documents extract dicts (`{action, due}`); notes extract plain strings.
+    Render both — a note's todos belong in its chat reply the same as a
+    document's, and the string branch is what keeps them from being dropped.
+    """
     if not isinstance(action_items, list):
         return []
-    valid = [a for a in action_items if isinstance(a, dict) and a.get("action")]
-    if not valid:
+    rendered: list[str] = []
+    for a in action_items:
+        if isinstance(a, dict) and a.get("action"):
+            due = a.get("due", "")
+            rendered.append(f"  {a['action']}{f' (due {due})' if due else ''}")
+        elif isinstance(a, str) and a.strip():
+            rendered.append(f"  {a.strip()}")
+    if not rendered:
         return []
-    out = [""]
-    for a in valid[:3]:
-        due = a.get("due", "")
-        due_str = f" (due {due})" if due else ""
-        out.append(f"  {a['action']}{due_str}")
-    return out
+    return [""] + rendered[:3]

@@ -254,6 +254,10 @@ class Stack:
         template_vars["admin_email"] = TECH_ADMIN_EMAIL
         template_vars["admin_password"] = get_admin_password(self.secrets) or ""
 
+        # Core's home base for persistent-link emitters (e.g. the archivist's
+        # "added to the todo list" reply). See _home_url.
+        template_vars["home_url"] = self._home_url()
+
         # Comma-separated user IDs of all admin-role users from users.toml
         admin_ids = [
             user_id(u) for u in load_users(self.instance_dir)
@@ -322,6 +326,24 @@ class Stack:
             scheme = "https" if self._cfg("core", "https") else "http"
             return f"{scheme}://{stacklet_id}.{domain}"
         return f"http://{self._lan_ip()}:{port}"
+
+    def _home_url(self) -> str:
+        """Browser-facing base of core's home — where `/go` links live.
+
+        Unlike `_public_url`, home has no per-stacklet subdomain: the `/go/*`
+        links (and the future dashboard) sit at the bare domain, and Caddy
+        routes `{domain}/go/*` to the tools server (see core/caddy.snippet).
+        In port mode there's no Caddy, so home is the tools server's own
+        published port — the `42000:8000` mapping in core/docker-compose.yml,
+        hit directly on the LAN. Emitters join `{home_url}/go/...` to build a
+        link that survives renames and a hosting-mode switch, since it
+        re-resolves at click time.
+        """
+        domain = self._cfg("core", "domain")
+        if domain:
+            scheme = "https" if self._cfg("core", "https") else "http"
+            return f"{scheme}://{domain}"
+        return f"http://{self._lan_ip()}:42000"
 
     def env(self, stacklet_id: str) -> dict:
         """Render the complete environment for a stacklet.

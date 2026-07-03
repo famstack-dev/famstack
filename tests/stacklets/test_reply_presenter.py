@@ -30,6 +30,7 @@ def _en(key, **kw):
         "new_in_paperless": "🆕 New in Paperless: {items}",
         "reformat_failed": "Note: reformatting skipped — raw OCR kept.",
         "captured": "✅ Captured: {title}",
+        "added_to_todos": "📝 Added to the todo list. Tick it off here:",
     }
     return templates.get(key, key).format(**kw)
 
@@ -212,6 +213,43 @@ class TestRenderCaptureReply:
         assert f"> {transcript}" in out
         # Transcript appears BEFORE the title line.
         assert out.index(transcript) < out.index("Captured")
+
+    def test_note_string_action_items_render(self):
+        """A note's action items are plain strings (documents give dicts);
+        both must show in the reply, not just the dict shape."""
+        out = render_capture_reply(
+            _en, source_title_hint=None,
+            classification={
+                "title": "Camping list",
+                "action_items": ["book the pitch", "pack the stove"],
+            },
+            link="(pasted text)",
+        )
+        assert "  book the pitch" in out
+        assert "  pack the stove" in out
+
+    def test_todo_link_renders_above_source_footer(self):
+        """When the caller passes a /go todo link, the reply invites the
+        family to tick it off — above the source-link footer."""
+        out = render_capture_reply(
+            _en, source_title_hint=None,
+            classification={"title": "Camping list",
+                            "action_items": ["book the pitch"]},
+            link="(pasted text)",
+            todo_link="http://home/go/topic/family/camping/todo",
+        )
+        assert "Added to the todo list" in out
+        assert "http://home/go/topic/family/camping/todo" in out
+        # Source footer stays last.
+        assert out.index("go/topic") < out.index("(pasted text)")
+
+    def test_no_todo_line_when_link_absent(self):
+        out = render_capture_reply(
+            _en, source_title_hint=None,
+            classification={"title": "x", "action_items": ["y"]},
+            link="(pasted text)",
+        )
+        assert "Added to the todo list" not in out
 
     def test_transcript_multiline_keeps_each_line_quoted(self):
         """Element renders consecutive '> ' lines as one quote block;
