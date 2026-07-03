@@ -15,7 +15,9 @@ import socket
 
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+
+from resolver import build_redirect
 
 
 # ── Config from environment ──────────────────────────────────────────────
@@ -31,6 +33,22 @@ PAPERLESS_TOKEN = os.environ.get("PAPERLESS_TOKEN", "")
 # Immich — container-to-container on stack network
 IMMICH_URL = os.environ.get("IMMICH_URL", "")
 IMMICH_API_KEY = os.environ.get("IMMICH_API_KEY", "")
+
+# ── Link resolver — public bases for the /<prefix>/ persistent links ──────
+# These are the URLs a *browser* uses, not the container-internal ones above.
+# `_public_url` already makes them mode-correct (domain → host.domain, port →
+# ip:port). The wiki is the one exception: it serves at the vanity `wiki.`
+# subdomain in domain mode while its stacklet id is `memory`, so we swap the
+# host. In port mode the URL is ip:port with no subdomain and the swap is a
+# no-op. (The mismatch between the memory stacklet id and its `wiki.` route is
+# pre-existing — noted, not fixed here.)
+DOCS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "")
+WIKI_PUBLIC_URL = os.environ.get("MEMORY_PUBLIC_URL", "").replace(
+    "://memory.", "://wiki.", 1)
+LINK_MEMBERS = {m for m in os.environ.get("MEMBERS", "").split(",") if m}
+LINK_SHARED_BUCKET = os.environ.get("SHARED_BUCKET", "family")
+# The one knob: the path namespace persistent links live under (home.tld/go/…).
+LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
 
 
 app = FastAPI(
@@ -103,6 +121,37 @@ DISCOVERY = {
 async def discover():
     """Return the API surface — commands, their signatures, and requirements."""
     return DISCOVERY
+
+
+# ── Persistent links ─────────────────────────────────────────────────────────
+#
+# Stable `/<prefix>/docs/<id>` and `/<prefix>/wiki/<scope>` links that a chat
+# message can carry forever. They re-resolve at click time, so a rename, a
+# hosting-mode switch, or a moved backend never breaks a link already frozen in
+# Matrix history. The mapping is the pure `resolver` module; these routes are
+# just the HTTP edge that turns a hit into a 302. In domain mode Caddy forwards
+# only this `/<prefix>/*` namespace to core, so the ops endpoints stay internal.
+
+def _go(kind: str, rest: list[str]):
+    url = build_redirect(
+        kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
+        members=LINK_MEMBERS, shared_bucket=LINK_SHARED_BUCKET,
+    )
+    if not url:
+        return _error("no such resource", status=404)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get(f"/{LINK_PREFIX}/docs/{{doc_id}}", summary="Resolve a document link")
+async def go_docs(doc_id: str):
+    """Redirect a stable doc link to the document in Paperless."""
+    return _go("docs", [doc_id])
+
+
+@app.get(f"/{LINK_PREFIX}/wiki/{{scope:path}}", summary="Resolve a wiki link")
+async def go_wiki(scope: str):
+    """Redirect a stable wiki link to the entity/topic's current page."""
+    return _go("wiki", [s for s in scope.split("/") if s])
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────
