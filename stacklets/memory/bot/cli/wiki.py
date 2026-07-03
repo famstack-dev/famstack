@@ -522,6 +522,9 @@ async def _generate_topic(
     # other buckets.
     page_dir = f"{bucket_prefix}/{topic_slug}"
     page = _with_references(page, entries + cross_refs, page_dir=page_dir)
+    # Surface the household's open action items for this topic. Appended
+    # after references so the citations are read off the LLM body alone.
+    page = _with_todos(page, entries + cross_refs, page_dir=page_dir)
 
     if not write:
         print(f"\n<!-- {page_dir}/about.md -->\n{page}")
@@ -971,6 +974,76 @@ def _build_references_section(
             head += f" - {date}"
         rows.append(head)
     return "\n".join(rows)
+
+
+# ── Open todos ──────────────────────────────────────────────────────────────
+#
+# The classifier already extracts action items, and the archivist already
+# writes them as Obsidian task lines (`- [ ] action — due`) inside each
+# capture's `> [!summary]` callout. `_index_vault` carries that callout text on
+# every entry as `summary`, so the only thing missing was a surface: nothing
+# collected the open boxes across a topic's captures. These two helpers do that
+# and nothing more — same Obsidian Tasks convention, so the lines stay
+# interactive checkboxes in Obsidian and styled ones in Quartz.
+
+# An unchecked task line, after `extract_summary_callout` has stripped the
+# blockquote `> ` prefix: `- [ ] text` or `* [ ] text`, any leading indent.
+# Checked boxes (`[x]`/`[X]`) are deliberately left out — done is done.
+_OPEN_TODO_RE = re.compile(r"^\s*[-*]\s+\[ \]\s+(.+\S)\s*$")
+
+
+def _open_todos(entries: list[dict]) -> list[dict]:
+    """Collect open `- [ ]` task lines from the entries' summaries.
+
+    Reads each entry's already-indexed `summary` (the capture's
+    `> [!summary]` callout body) for unchecked task lines and keeps the
+    source (`title`, `rel`) so the rendered line can link back to the
+    capture it came from. No second walk over the vault, no new capture
+    type — the todos are the action items that were already there.
+    """
+    todos: list[dict] = []
+    for entry in entries:
+        for line in (entry.get("summary") or "").splitlines():
+            match = _OPEN_TODO_RE.match(line)
+            if not match:
+                continue
+            todos.append({
+                "text": match.group(1).strip(),
+                "title": (entry.get("title") or "").strip(),
+                "rel": entry.get("rel") or "",
+            })
+    return todos
+
+
+def _build_todos_section(entries: list[dict], *, page_dir: str) -> str:
+    """Render the entries' open todos as an Obsidian-compatible checklist.
+
+    Each line stays a real `- [ ]` task and carries a link back to its
+    source capture, rendered absolute-from-root so it resolves at any
+    page depth in both Obsidian and Quartz. Returns "" when nothing is
+    open -- an empty heading helps no one.
+    """
+    todos = _open_todos(entries)
+    if not todos:
+        return ""
+    rows: list[str] = ["## Open todos", ""]
+    for todo in todos:
+        rel = todo.get("rel") or ""
+        if rel:
+            link = _relative_link(rel, page_dir)
+            title = todo.get("title") or "source"
+            rows.append(f"- [ ] {todo['text']} ([{title}]({link}))")
+        else:
+            rows.append(f"- [ ] {todo['text']}")
+    return "\n".join(rows)
+
+
+def _with_todos(page: str, entries: list[dict], *, page_dir: str) -> str:
+    """Append an `## Open todos` block for the page's open task lines."""
+    section = _build_todos_section(entries, page_dir=page_dir)
+    if section:
+        return page.rstrip() + "\n\n" + section
+    return page
 
 
 def _relative_link(rel: str, page_dir: str) -> str:
