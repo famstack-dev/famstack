@@ -45,7 +45,6 @@ IMMICH_API_KEY = os.environ.get("IMMICH_API_KEY", "")
 DOCS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "")
 WIKI_PUBLIC_URL = os.environ.get("MEMORY_PUBLIC_URL", "").replace(
     "://memory.", "://wiki.", 1)
-LINK_MEMBERS = {m for m in os.environ.get("MEMBERS", "").split(",") if m}
 LINK_SHARED_BUCKET = os.environ.get("SHARED_BUCKET", "family")
 # The one knob: the path namespace persistent links live under (home.tld/go/…).
 LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
@@ -125,17 +124,19 @@ async def discover():
 
 # ── Persistent links ─────────────────────────────────────────────────────────
 #
-# Stable `/<prefix>/docs/<id>` and `/<prefix>/wiki/<scope>` links that a chat
-# message can carry forever. They re-resolve at click time, so a rename, a
-# hosting-mode switch, or a moved backend never breaks a link already frozen in
-# Matrix history. The mapping is the pure `resolver` module; these routes are
-# just the HTTP edge that turns a hit into a 302. In domain mode Caddy forwards
-# only this `/<prefix>/*` namespace to core, so the ops endpoints stay internal.
+# Stable `/<prefix>/docs/<id>`, `/<prefix>/topic/<name>`, and
+# `/<prefix>/person/<name>` links that a chat message can carry forever. They
+# re-resolve at click time, so a rename, a hosting-mode switch, or a moved
+# backend never breaks a link already frozen in Matrix history. Entities are
+# explicit nouns — the noun says which kind, no roster guessing. The mapping is
+# the pure `resolver` module; these routes are just the HTTP edge that turns a
+# hit into a 302. In domain mode Caddy forwards only this `/<prefix>/*`
+# namespace to core, so the ops endpoints stay internal.
 
 def _go(kind: str, rest: list[str]):
     url = build_redirect(
         kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
-        members=LINK_MEMBERS, shared_bucket=LINK_SHARED_BUCKET,
+        shared_bucket=LINK_SHARED_BUCKET,
     )
     if not url:
         return _error("no such resource", status=404)
@@ -148,10 +149,16 @@ async def go_docs(doc_id: str):
     return _go("docs", [doc_id])
 
 
-@app.get(f"/{LINK_PREFIX}/wiki/{{scope:path}}", summary="Resolve a wiki link")
-async def go_wiki(scope: str):
-    """Redirect a stable wiki link to the entity/topic's current page."""
-    return _go("wiki", [s for s in scope.split("/") if s])
+@app.get(f"/{LINK_PREFIX}/topic/{{name:path}}", summary="Resolve a topic link")
+async def go_topic(name: str):
+    """Redirect a stable topic link to the topic's current wiki page."""
+    return _go("topic", [s for s in name.split("/") if s])
+
+
+@app.get(f"/{LINK_PREFIX}/person/{{name:path}}", summary="Resolve a person link")
+async def go_person(name: str):
+    """Redirect a stable person link to that member's current wiki page."""
+    return _go("person", [s for s in name.split("/") if s])
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────

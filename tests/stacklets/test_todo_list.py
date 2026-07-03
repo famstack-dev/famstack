@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
 from todo_list import (  # noqa: E402
     add_items,
     detect_list,
+    read_todos,
     render_todo_doc,
     update_todo_doc,
 )
@@ -115,3 +116,25 @@ class TestUpdateTodoDoc:
         out = update_todo_doc(existing, "Bus", ["Kochlöffel"])
         assert "- [ ] Fenster Tasche" in out
         assert "- [ ] Kochlöffel" in out
+
+
+class TestReadTodos:
+    """The read side the CLI list command goes through: a rendered
+    `todos.md` split into open and done task texts, ignoring the title
+    and blank lines."""
+
+    def test_splits_open_and_done(self):
+        doc = ("# Bus\n\n"
+               "- [ ] Fenster Tasche\n"
+               "- [x] Kochlöffel\n"
+               "- [X] Markise\n")
+        open_items, done_items = read_todos(doc)
+        assert open_items == ["Fenster Tasche"]
+        assert done_items == ["Kochlöffel", "Markise"]
+
+    def test_ignores_title_and_prose(self):
+        doc = "# Einkauf\n\nSome note.\n- [ ] Milch\n"
+        assert read_todos(doc) == (["Milch"], [])
+
+    def test_empty_doc(self):
+        assert read_todos("# Bus\n") == ([], [])
