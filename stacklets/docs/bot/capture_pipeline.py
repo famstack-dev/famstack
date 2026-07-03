@@ -108,6 +108,11 @@ class CaptureOutcome:
     envelope: dict | None = None
     transcript: str | None = None
     failure_reason: str | None = None
+    # The vault bucket the capture filed under (`entity_slug`): a topic path
+    # like `family/camping` or a bare personal bucket like `homer`. The reply
+    # renderer uses it to build a `/go/topic/<scope>/todo` link, but only for
+    # topic scopes (those carry a `/`) — a personal bucket has no todos page.
+    scope: str | None = None
 
 
 class CapturePipeline:
@@ -777,6 +782,7 @@ class CapturePipeline:
             vault_path=vault_path,
             envelope=envelope,
             transcript=transcript,
+            scope=entity_slug,
         )
 
     async def _classify(

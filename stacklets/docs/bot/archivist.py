@@ -259,6 +259,10 @@ class ArchivistBot(MicroBot):
         self.paperless_public_url = os.environ.get("PAPERLESS_PUBLIC_URL", "")
         self.code_url = os.environ.get("CODE_URL", "")
         self.code_public_url = os.environ.get("CODE_PUBLIC_URL", "")
+        # Base for persistent `/go` links the bot posts into chat (e.g.
+        # `{link_base_url}/topic/<scope>/todo`). Public/home base, mode-correct.
+        # Empty when core hasn't rendered it -> the todo link is simply omitted.
+        self.link_base_url = os.environ.get("LINK_BASE_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
         self.openai_key = os.environ.get("OPENAI_KEY", "")
         # Voice transcription endpoint. When unset (e.g. the AI stacklet
@@ -2190,11 +2194,30 @@ class ArchivistBot(MicroBot):
                 classification=o.classification,
                 link=o.display_link,
                 transcript=o.transcript,
+                todo_link=self._todo_link(o),
             )
         metadata = (
             {"dev.famstack.event": o.envelope} if o.envelope else None
         )
         await self._answer(room_id, reply, reply_to, metadata=metadata)
+
+    def _todo_link(self, o: CaptureOutcome) -> str:
+        """A `/go/topic/<scope>/todo` link when a topic capture produced todos.
+
+        The curator compiles a topic's action items into a checkable todos
+        page; this points the family at it. Gated three ways: we need the
+        home base (unset until core renders it), a *topic* scope (the bucket
+        path carries a `/` — a bare personal bucket has no todos page), and at
+        least one extracted action item. Any miss returns "" and the reply
+        simply omits the line. The scope goes in verbatim: the resolver takes
+        the explicit `family/camping` path form as readily as a bare slug.
+        """
+        scope = (o.scope or "").strip("/")
+        if not self.link_base_url or "/" not in scope:
+            return ""
+        if not (o.classification.get("action_items") or []):
+            return ""
+        return f"{self.link_base_url}/topic/{scope}/todo"
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 

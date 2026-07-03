@@ -417,7 +417,7 @@ class TestOutcomeGlyph:
         monkeypatch.setattr("archivist.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
-            display_link="http://x", transcript=None, envelope=None,
+            display_link="http://x", transcript=None, envelope=None, scope=None,
         )
         await bot._reply_for_capture("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]

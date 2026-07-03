@@ -1,12 +1,12 @@
 # stacklets/core/caddy.snippet
 #
-# core owns the apex — the bare {$FAMSTACK_DOMAIN} — and serves the
+# core owns its home — the bare {$FAMSTACK_DOMAIN} — and serves the
 # persistent-link resolver under /go/. A dashboard / welcome page can take
-# over `/` later; for now the apex just answers a friendly placeholder.
+# over `/` later; for now home just answers a friendly placeholder.
 #
 # Only /go/* is forwarded to the tools server. That server ALSO exposes ops
 # and AI-tool endpoints (/logs, /tools/*) that must never be reachable from
-# the public apex — they stay internal (container-to-container, plus localhost
+# the public home — they stay internal (container-to-container, plus localhost
 # in port mode). Scoping the route here is what keeps them off the front door.
 #
 # The /go prefix mirrors core's LINK_PREFIX env (default "go"); if you move

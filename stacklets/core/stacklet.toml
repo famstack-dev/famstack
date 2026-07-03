@@ -77,7 +77,7 @@ MEMORY_VAULT_DIR = "/data/memory/vault"
 SHARED_BUCKET = "{shared_bucket}"
 
 # Persistent links — the resolver in the tools server turns stable
-# `<apex>/go/docs/<id>`, `<apex>/go/topic/<name>`, and `<apex>/go/person/<name>`
+# `<home>/go/docs/<id>`, `<home>/go/topic/<name>`, and `<home>/go/person/<name>`
 # links into redirects to wherever the resource lives now, so links posted into
 # Matrix never rot. Entities are explicit nouns, so no roster is needed — it
 # just needs the *public* (browser-reachable) wiki base; the public Paperless
@@ -85,6 +85,11 @@ SHARED_BUCKET = "{shared_bucket}"
 # change it to move the whole link namespace.
 MEMORY_PUBLIC_URL = "{memory_url}"
 LINK_PREFIX       = "go"
+# The emitter side of the same namespace: the base a bot prepends to build a
+# link it posts into chat (the archivist's "added to the todo list" reply
+# points at `{LINK_BASE_URL}/topic/<scope>/todo`). `{home_url}` is core's bare
+# home base, mode-correct; the `/go` mirrors LINK_PREFIX above — move one, move both.
+LINK_BASE_URL     = "{home_url}/go"
 
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"
