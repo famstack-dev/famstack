@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Container-side `stack` shim.
+
+Stacky runs `stack <cmd>` through its exec tool; this forwards the command to the
+host-side runner over TCP (a container cannot run the host CLI directly, and a
+unix socket file does not bridge the macOS container<->host boundary, so we use
+host.docker.internal - the same path famstack uses for oMLX/whisper and its own
+stack API). The runner allowlists which commands are permitted and returns the
+CLI's plaintext output verbatim - no JSON, token-lean. See
+stacklets/agent/host/stack_runner.py.
+"""
+
+import os
+import socket
+import sys
+
+host, port = os.environ.get("STACK_RUNNER_ADDR", "host.docker.internal:42099").rsplit(":", 1)
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(35)
+try:
+    sock.connect((host, int(port)))
+    sock.sendall((" ".join(sys.argv[1:]) + "\n").encode())
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        sys.stdout.write(chunk.decode(errors="replace"))
+        sys.stdout.flush()
+except Exception as e:
+    sys.stderr.write(f"stack: cannot reach the host runner ({e})\n")
+    sys.exit(1)
