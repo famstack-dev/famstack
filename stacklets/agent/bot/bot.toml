@@ -1,0 +1,17 @@
+# Provision-only bot declaration.
+#
+# This exists so the core bot-runner mints the agent's Matrix account (@agent)
+# and its home room, exactly like every other bot. There is deliberately no
+# module here: the agent is not a MicroBot. It runs as its own stacklet
+# (nanobot) and connects to Matrix through nanobot's native channel using the
+# account this declaration provisions. The runner provisions the account, then
+# skips launch because there is no module to load.
+#
+# @agent is the stable handle; "Stacky" is the persona/display name (configurable
+# via AGENT_NAME). The login password lives in secrets.toml as
+# `agent__AGENT_PASSWORD`; nanobot logs in with the same secret.
+
+id         = "agent"
+name       = "Stacky"
+room       = "stacky"
+room_topic = "Ask Stacky about the family's notes, lists, and what's still open."
