@@ -75,9 +75,16 @@ def _recent(vault: Path, topic: str, n: int = 3) -> list[str]:
 
 
 def _slug_candidates(raw: str) -> list[str]:
-    """Map a Matrix room label to a vault topic slug, best-effort. Rooms created
-    by the bot-runner are titled '<Name> Room'; strip that and kebab-case."""
-    s = re.sub(r"\s+Room$", "", str(raw).strip().lstrip("#").strip(), flags=re.I)
+    """Map a Matrix room label to a vault topic slug, best-effort.
+
+    Topic rooms are named 'Topic: <Title>' with alias '#topic-<slug>'; bot-runner
+    rooms are '<Name> Room'. Strip those markers, then kebab-case. (Titles with
+    non-ASCII characters won't round-trip cleanly here - the canonical alias is
+    the robust source; using it is a follow-up.)
+    """
+    s = str(raw).strip().lstrip("#").strip()
+    s = re.sub(r"^topic[:\-\s]+", "", s, flags=re.I)  # "Topic: X" or "topic-x"
+    s = re.sub(r"\s+Room$", "", s, flags=re.I)
     base = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
     return [base] if base else []
 
