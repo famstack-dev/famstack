@@ -4,7 +4,7 @@ agent to the `stack` CLI on the host.
 
 The agent (nanobot, in its container) cannot run the host `stack` binary
 directly, and the CLI only works with the host's full config. So this small
-process listens on a unix socket, and for each request:
+process listens on a loopback TCP port, and for each request:
 
   1. reads one plaintext command line (a `stack` subcommand + args),
   2. checks it against an allowlist (the agent is bound to sanctioned commands,
@@ -12,11 +12,11 @@ process listens on a unix socket, and for each request:
   3. runs `./stack <args>` here on the host,
   4. returns stdout verbatim.
 
-Why a unix socket and plaintext (not HTTP or MCP): plaintext is token-lean for
-an LLM (the CLI already prints for humans, no JSON tax), a socket is faster and
-simpler than an HTTP service, and there is no protocol overhead. The socket is
-bind-mounted into the agent container; a thin `stack` wrapper there forwards to
-it (see the container-side client).
+Why a raw socket and plaintext (not HTTP or MCP): plaintext is token-lean for an
+LLM (the CLI already prints for humans, no JSON tax) and there is no protocol
+overhead. A thin `stack` wrapper in the container forwards to it over
+host.docker.internal (see the container-side client, and the transport note by
+the HOST/PORT binding below for why it is TCP, not a unix socket file).
 
 Read-only vault queries only, for now. Actions (e.g. striking a todo) get added
 to ALLOW deliberately, one reviewed command at a time.
