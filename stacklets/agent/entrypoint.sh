@@ -31,6 +31,29 @@ if [ -f "$SECRETS" ]; then
     export AGENT_MATRIX_PASSWORD
 fi
 
+# Validate any saved Matrix session before nanobot trusts it. nanobot reloads a
+# stale token and then goes deaf on M_UNKNOWN_TOKEN - it never re-auths. Our
+# MicroBots avoid this by validating the restored session with /whoami and
+# clearing it on failure (stacklets/core/bot-runner/microbot.py; the same stdlib
+# check is in stacklets/messages/cli/_matrix.py). nanobot exposes no seam to reuse
+# that code from in here, so we mirror the one HTTP call: if whoami rejects the
+# saved token, drop the session and let nanobot do a fresh password login. A valid
+# session is kept, so there is no device churn.
+SESS="$NB/matrix-store/session.json"
+if [ -f "$SESS" ] && ! python3 - "$SESS" "${AGENT_MATRIX_HOMESERVER:-}" <<'PY'
+import json, sys, urllib.request
+tok = json.load(open(sys.argv[1])).get("access_token") or ""
+req = urllib.request.Request(
+    sys.argv[2].rstrip("/") + "/_matrix/client/v3/account/whoami",
+    headers={"Authorization": "Bearer " + tok})
+with urllib.request.urlopen(req, timeout=10):  # raises on 401; closes the response
+    pass
+PY
+then
+    echo "stale Matrix session -> clearing for a fresh login"
+    rm -rf "$NB/matrix-store"
+fi
+
 # Verbose runtime logs (tool calls, agent decisions) when AGENT_VERBOSE=1.
 if [ "${AGENT_VERBOSE:-0}" = "1" ]; then
     exec nanobot gateway --verbose

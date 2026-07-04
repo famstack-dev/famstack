@@ -84,12 +84,18 @@ def serve() -> None:
     print(f"[stack-runner] listening on {HOST}:{PORT}", flush=True)
     while True:
         conn, _ = srv.accept()
-        with conn:
+        with conn:  # closes the connection on every path
             try:
                 data = conn.recv(MAX_REQUEST).decode(errors="replace")
                 conn.sendall(handle(data).encode())
+                conn.shutdown(socket.SHUT_WR)  # flush + signal EOF so the client's read loop ends
+            except OSError:
+                pass  # client hung up
             except Exception as e:
-                conn.sendall(f"error: {e}\n".encode())
+                try:
+                    conn.sendall(f"error: {e}\n".encode())
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

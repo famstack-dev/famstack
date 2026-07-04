@@ -15,17 +15,19 @@ import socket
 import sys
 
 host, port = os.environ.get("STACK_RUNNER_ADDR", "host.docker.internal:42099").rsplit(":", 1)
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(35)
 try:
-    sock.connect((host, int(port)))
-    sock.sendall((" ".join(sys.argv[1:]) + "\n").encode())
-    while True:
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        sys.stdout.write(chunk.decode(errors="replace"))
-        sys.stdout.flush()
+    # `with` closes the socket on every exit path, including errors.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(35)
+        sock.connect((host, int(port)))
+        sock.sendall((" ".join(sys.argv[1:]) + "\n").encode())
+        sock.shutdown(socket.SHUT_WR)  # done sending; half-close so the runner reads EOF
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            sys.stdout.write(chunk.decode(errors="replace"))
+            sys.stdout.flush()
 except Exception as e:
     sys.stderr.write(f"stack: cannot reach the host runner ({e})\n")
     sys.exit(1)
