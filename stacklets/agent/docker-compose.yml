@@ -1,7 +1,7 @@
 # stacklets/agent/docker-compose.yml — the family agent
 #
 # Runs the nanobot harness. nanobot connects to Matrix (Synapse on the stack
-# network) as @agent through its own channel, and to the local LLM via the
+# network) as @stacky-bot through its own channel, and to the local LLM via the
 # docker-side [ai] endpoint. config.json is refreshed from stack.toml-derived
 # env on start (see entrypoint.sh); nothing is hardcoded. The image is built
 # locally, so Watchtower ignores it.
@@ -39,7 +39,7 @@ services:
       # workspace-scoped file tools (grep, read_file) can reach it, which is
       # the retrieval path its own tool contract tells the model to prefer.
       - ${MEMORY_VAULT_DIR}:/home/nanobot/.nanobot/workspace/vault:ro
-      # Secrets store (read-only) — entrypoint reads @agent's login password,
+      # Secrets store (read-only) — entrypoint reads @stacky-bot's login password,
       # the same secret the bot-runner provisions the account with.
       - ../../.stack:/setup-state:ro
     restart: unless-stopped

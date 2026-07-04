@@ -2,7 +2,7 @@
 #
 # The agent lives in the family's Matrix rooms. It answers from the family's own
 # notes and wiki and can act through the stack CLI. It runs the nanobot harness
-# in a container, connects to Matrix through nanobot's own channel as the @agent
+# in a container, connects to Matrix through nanobot's own channel as the @stacky-bot
 # account that the core bot-runner provisions from bot/bot.toml, and talks to the
 # local LLM configured in stack.toml [ai].
 #
@@ -35,10 +35,10 @@ AGENT_VERBOSE = "1"
 AGENT_OPENAI_URL = "{ai_openai_url_docker}"
 AGENT_OPENAI_KEY = "{ai_openai_key}"
 AGENT_MODEL      = "{ai_default_model}"
-# Matrix — nanobot logs in as @agent against Synapse on the stack network.
+# Matrix — nanobot logs in as @stacky-bot against Synapse on the stack network.
 AGENT_MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
 AGENT_MATRIX_SERVER_NAME = "{messages_server_name}"
-# The @agent login password is read at runtime from the mounted secrets store
-# (secrets.toml `agent__AGENT_PASSWORD`), the same secret the bot-runner uses to
+# The @stacky-bot login password is read at runtime from the mounted secrets store
+# (secrets.toml `agent__STACKY_BOT_PASSWORD`), the same secret the bot-runner uses to
 # create the account. See entrypoint.sh.
 TZ = "{timezone}"

@@ -5,7 +5,7 @@
 #    as env) always take effect. nanobot resolves the ${VARS} against env on load.
 # 2. Seed the personality on first run only, substituting the configurable name;
 #    the family (and Dream) may edit it afterwards.
-# 3. Read @agent's Matrix password from the mounted secrets store, the same
+# 3. Read @stacky-bot's Matrix password from the mounted secrets store, the same
 #    secret the bot-runner provisions the account with.
 set -e
 
@@ -27,7 +27,7 @@ fi
 
 SECRETS="/setup-state/secrets.toml"
 if [ -f "$SECRETS" ]; then
-    AGENT_MATRIX_PASSWORD="$(python3 -c "import tomllib; print(tomllib.load(open('$SECRETS','rb')).get('agent__AGENT_PASSWORD',''))" 2>/dev/null || true)"
+    AGENT_MATRIX_PASSWORD="$(python3 -c "import tomllib; print(tomllib.load(open('$SECRETS','rb')).get('agent__STACKY_BOT_PASSWORD',''))" 2>/dev/null || true)"
     export AGENT_MATRIX_PASSWORD
 fi
 
