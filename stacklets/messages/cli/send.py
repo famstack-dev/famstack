@@ -1,10 +1,16 @@
 """
-stack messages send <room> "message" [--as <user>] — send a message to a room
+stack messages send <room> "message" [--as <user>] [--mention <user>] — send a message to a room
 
 Sends a plain text message to the specified room. By default it posts as
 stacker-bot (the system account); pass `--as <user>` to post as a family
 member, the text counterpart to `stack messages upload --as`. The room can
 be a bare alias (e.g. 'chat') or a full Matrix room ID.
+
+Pass `--mention <user>` (repeatable) to notify a user via the Matrix
+`m.mentions` payload. A bot in a group room answers when it is mentioned this
+way, so `--mention agent` is how you get the agent to reply — putting "@Stacky"
+in the text alone does not, because the bot keys on the mention payload, not
+the display name.
 
 This is the building block other stacklets use for notifications:
   - photos could notify #notifications when a backup completes
@@ -87,6 +93,7 @@ def run(args, stacklet, config):
     # Parse room, message, and optional `--as <user>` from the remaining argv.
     # sys.argv: ['stack', 'messages', 'send', '<room>', '<message>', ...]
     sender = None
+    mentions = []
     rest = []
     argv = sys.argv[3:]  # skip 'stack', 'messages', 'send'
     i = 0
@@ -97,10 +104,16 @@ def run(args, stacklet, config):
             sender = argv[i + 1]
             i += 2
             continue
+        if argv[i] == "--mention":
+            if i + 1 >= len(argv):
+                return {"error": "--mention needs a username"}
+            mentions.append(argv[i + 1])
+            i += 2
+            continue
         rest.append(argv[i])
         i += 1
     if len(rest) < 2:
-        return {"error": 'Usage: stack messages send <room> "message" [--as <user>]'}
+        return {"error": 'Usage: stack messages send <room> "message" [--as <user>] [--mention <user>]'}
 
     room = rest[0]
     message = " ".join(rest[1:])
@@ -129,7 +142,7 @@ def run(args, stacklet, config):
 
     html = _simple_markdown_to_html(message)
 
-    ok, detail = client.send(room, message, html=html)
+    ok, detail = client.send(room, message, html=html, mentions=mentions or None)
     if ok:
         return {"ok": True, "room": room, "event_id": detail}
     else:

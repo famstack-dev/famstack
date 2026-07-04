@@ -416,11 +416,15 @@ class MatrixClient:
 
     # ── Messaging ────────────────────────────────────────────────────────
 
-    def send(self, room, message, html=None):
+    def send(self, room, message, html=None, mentions=None):
         """Send a text message to a room (by alias or ID).
 
         Resolves aliases automatically. If html is provided, sends a
-        formatted message with plain text fallback. Returns (ok, detail).
+        formatted message with plain text fallback. `mentions` is a list of
+        usernames (bare or full mxid) to notify via the `m.mentions` payload.
+        That payload, not the display name in the text, is what a bot's
+        mention gate keys on, so it is how you get a bot (like the agent) to
+        answer in a group room. Returns (ok, detail).
         """
         if room.startswith("!"):
             room_id = room
@@ -434,6 +438,8 @@ class MatrixClient:
         if html:
             body["format"] = "org.matrix.custom.html"
             body["formatted_body"] = html
+        if mentions:
+            body["m.mentions"] = {"user_ids": [self._full_user(u) for u in mentions]}
         status, resp = _put(
             self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn}"),
             body,
