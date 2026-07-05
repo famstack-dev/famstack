@@ -122,7 +122,11 @@ def brief_lines(msg, workspace) -> list[str]:
             lines.append(f"Topic '{topic}': {summary}")
         opens = _open_todos(vault / "family" / topic / "todos.md")
         if opens:
-            lines.append(f"Open todos ({len(opens)}): " + "; ".join(opens[:8]))
+            # A pointer, not the list: handing over the items invites the model
+            # to recite them (and they go stale). The count primes it; the live
+            # list comes from the tool, fresh, when actually asked.
+            lines.append(f"{len(opens)} open todos here; run "
+                         f"`stack memory topic {topic} todo` for the current list.")
         recent = _recent(vault, topic)
         if recent:
             lines.append("Recently: " + "; ".join(recent))
