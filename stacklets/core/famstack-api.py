@@ -1,28 +1,26 @@
-"""famstack API — Unix socket server wrapping the stack CLI.
+"""famstack API — the host's single CLI bridge for containers.
 
-Runs on the host as a launchd service. Accepts JSON commands on a Unix
-socket, shells out to ./stack with --json, returns the result. This is
-the bridge between Docker containers (bots, dashboard) and the host.
+Runs on the host as a launchd service (core owns it). It is the one bridge
+between Docker containers and the host CLI, and its output mirrors the request,
+so every consumer gets back what it speaks:
 
-Protocol:
-  Client sends a JSON object followed by a newline.
-  Server responds with a JSON object followed by a newline.
+  * JSON object in  → runs `./stack <cmd> --json`  → JSON out.
+    A lifecycle surface (status/list/up/down/logs) for trusted core tools —
+    the stacker bot and the tools-server.
+  * plaintext line in → runs `./stack <args>` in text mode → plaintext out.
+    A curated read/domain surface (memory, docs) for the agent, which wants a
+    token-lean answer, not JSON, and must never reach lifecycle ops.
 
-Commands:
-  {"cmd": "status"}                     → stack status --json
-  {"cmd": "list"}                       → stack list --json
-  {"cmd": "up", "stacklet": "photos"}   → stack up photos --json
-  {"cmd": "down", "stacklet": "photos"} → stack down photos --json
-  {"cmd": "logs", "stacklet": "photos"}  → stack logs photos --json --tail 200
-  {"cmd": "logs", "stacklet": "photos", "grep": "ERROR"}
-                                        → stack logs photos --json --tail 200 --grep ERROR
+Format is auto-detected: a request that begins with `{` is JSON, anything else
+is a plaintext command line. One service, two allowlists scoped by trust.
 
-The socket path defaults to /tmp/famstack.sock. Bind-mount it into
-containers that need host access.
+Protocol (JSON):  client sends a JSON object + newline; server replies JSON + newline.
+Protocol (text):  client sends a command line; server replies plaintext, then closes.
 """
 
 import json
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -37,6 +35,17 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "discover"}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
+
+# The plaintext surface (the agent): a curated set of read/domain commands matched
+# by leading tokens. The agent is an LLM, so it must NOT reach the lifecycle
+# commands above -- those stay on the JSON path used only by trusted core tools.
+DOMAIN_ALLOW = [
+    ["memory", "search"],
+    ["memory", "topic"],
+    ["memory", "lookup"],
+    ["memory", "correspondents"],
+    ["docs", "show"],
+]
 
 
 def handle_request(data):
@@ -104,8 +113,36 @@ def handle_request(data):
         return {"error": str(e)}
 
 
+def handle_plaintext(line):
+    """Run one allowlisted `stack` command in the CLI's text mode.
+
+    The token-lean counterpart to `handle_request`: the agent sends a plaintext
+    command line and gets the CLI's normal text output back (no `--json`), so its
+    context stays small. Confined to `DOMAIN_ALLOW` -- never lifecycle ops.
+    """
+    try:
+        args = shlex.split(line)
+    except ValueError as e:
+        return f"error: could not parse command ({e})\n"
+    if not args:
+        return "error: empty command\n"
+    if not any(args[:len(p)] == p for p in DOMAIN_ALLOW):
+        allowed = ", ".join(" ".join(p) for p in DOMAIN_ALLOW)
+        return f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n"
+    try:
+        r = subprocess.run(
+            [str(STACK_BIN), *args], capture_output=True, text=True,
+            timeout=120, cwd=str(REPO_ROOT),
+        )
+        return r.stdout or r.stderr or "(no output)\n"
+    except subprocess.TimeoutExpired:
+        return "error: command timed out\n"
+    except Exception as e:
+        return f"error: {e}\n"
+
+
 def handle_client(conn):
-    """Handle a single client connection."""
+    """Handle a single client connection; the reply mirrors the request format."""
     try:
         chunks = []
         while True:
@@ -120,9 +157,12 @@ def handle_client(conn):
         if not data:
             return
 
-        result = handle_request(data)
-        response = json.dumps(result) + "\n"
-        conn.sendall(response.encode())
+        # Consumer-driven output: a JSON envelope gets a JSON reply (the ops
+        # tools); a plaintext command line gets plaintext (the agent).
+        if data.startswith("{"):
+            conn.sendall((json.dumps(handle_request(data)) + "\n").encode())
+        else:
+            conn.sendall(handle_plaintext(data).encode())
     except Exception as e:
         try:
             conn.sendall(json.dumps({"error": str(e)}).encode() + b"\n")

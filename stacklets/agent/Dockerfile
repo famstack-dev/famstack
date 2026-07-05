@@ -22,8 +22,9 @@ COPY workspace/ /app/workspace-seed/
 # Runtime-context shim: per-turn family briefing injected into nanobot's prompt.
 # See runtime/README.md for what it patches and why.
 COPY runtime/ /app/runtime/
-# Container-side `stack` shim: forwards allowlisted commands to the host runner
-# (host.docker.internal) and prints the CLI's plaintext output. See host/.
+# Container-side `stack` shim: forwards allowlisted commands to the host's
+# famstack API (host.docker.internal) and prints the CLI's plaintext output.
+# See client/stack and stacklets/core/famstack-api.py.
 COPY client/stack /usr/local/bin/stack
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/stack && chown -R nanobot:nanobot /app
@@ -33,7 +34,7 @@ ENV HOME=/home/nanobot
 # Put the runtime shim on the path so its sitecustomize.py auto-loads at
 # interpreter startup and patches nanobot's per-turn context assembly.
 ENV PYTHONPATH=/app/runtime
-# Where the container-side `stack` shim reaches the host runner.
-ENV STACK_RUNNER_ADDR=host.docker.internal:42099
+# Where the container-side `stack` shim reaches the host's famstack API (core).
+ENV STACK_API_ADDR=host.docker.internal:42001
 
 ENTRYPOINT ["entrypoint.sh"]
