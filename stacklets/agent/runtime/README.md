@@ -1,9 +1,13 @@
-# Agent runtime shim — per-turn family briefing
+# Agent runtime shims — per-turn briefing + lean state
 
 This directory is a **contained modification of nanobot**, loaded into the agent
-container. It exists because nanobot has no plugin seam for injecting per-turn
-context, and we did not want to fork nanobot for a single hook. Everything here
-lives in the stacklet; upstream `nanobot-ai` is installed unchanged.
+container. It exists because nanobot has no plugin seam for shaping per-turn
+context, and we did not want to fork nanobot for a couple of hooks. Everything
+here lives in the stacklet; upstream `nanobot-ai` is installed unchanged.
+
+Two independent shims live here, each a thin monkeypatch over a pure module:
+**brief** (what the agent knows going in) and **lean_state** (keeping what it
+carries forward small and fresh).
 
 ## What it does
 

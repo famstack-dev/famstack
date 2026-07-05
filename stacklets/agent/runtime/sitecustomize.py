@@ -1,42 +1,43 @@
-"""Runtime shim: inject a per-turn family briefing into nanobot's prompt.
+"""Runtime shims: keep nanobot's per-turn context correct and lean, no fork.
 
 Python auto-imports `sitecustomize` at interpreter startup for any module on
 `sys.path`, so placing this on `PYTHONPATH` (see the Dockerfile) patches every
 `nanobot` invocation in the container — the gateway and one-shot `nanobot agent`
 alike — with no fork.
 
-WHAT IT DOES
-    Wraps `nanobot.agent.context.runtime_lines` so that, on each turn, our
-    `brief.brief_lines(msg, workspace)` lines are prepended to nanobot's
-    own runtime lines. nanobot appends the whole runtime block AFTER the stable
-    system prompt and the user's text, so this stays KV-cache-friendly: the big
-    prompt prefix stays cached and only our ~150-token speaker/topic block is
-    recomputed when the speaker changes. (Measured on our endpoint: late
-    injection keeps 4096/4746 prompt tokens cached; injecting the same content
-    early, via USER.md, cached 0.)
+Two independent shims live here; each is a thin monkeypatch over a pure module:
 
-WHY A SHIM AND NOT A FORK
-    nanobot has no plugin seam for per-turn context injection — `runtime_lines`
-    is hardcoded to the cli-app and mcp sources, and hooks are not pluggable.
-    A shim keeps us on upstream `nanobot-ai` (updates included) with the change
-    contained in this stacklet. The tradeoff: it patches an internal function,
-    so a nanobot refactor of `context.runtime_lines` will break it — loudly,
-    since we log on failure. If our nanobot changes ever grow past this one hook,
-    fold them into a fork and upstream a real context-provider API instead.
+1. brief (brief.py) — prepends a per-turn family briefing (who is speaking, the
+   topic) to nanobot's runtime lines. Injected late (after the stable prompt and
+   the user's text) so it stays KV-cache-friendly: measured 4096/4746 prompt
+   tokens cached with late injection vs 0 injecting the same content early via
+   USER.md.
+
+2. lean_state (lean_state.py) — replaces previous-turn tool results with the
+   call that produced them (`name(args)`), so the agent re-fetches instead of
+   reciting stale data. The transcript (Matrix) keeps the full result; the state
+   we feed the model keeps only a cheap pointer.
+
+WHY SHIMS AND NOT A FORK
+    nanobot has no plugin seam for per-turn context injection or state shaping.
+    Shims keep us on upstream `nanobot-ai` (updates included) with the change
+    contained in this stacklet. Tradeoff: they patch internals, so a nanobot
+    refactor breaks them — loudly, since we log on failure. When these grow past
+    a couple of hooks, fold the pure modules into a fork (each is already a clean
+    function) and upstream real context-provider / state-shaping APIs.
 
 TO REMOVE
     Delete this stacklet's `runtime/` dir and drop `PYTHONPATH` from the
     Dockerfile. nanobot reverts to stock behaviour with no other change.
 
-PIN / RECHECK ON UPGRADE
-    Patched symbol: `nanobot.agent.context.runtime_lines`
-    Expected signature: `(state, msg, workspace, *, skip=False) -> list[str]`
-    Re-verify both after any `nanobot-ai` version bump.
+PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
+    brief:      `nanobot.agent.context.runtime_lines(state, msg, workspace, *, skip=False) -> list[str]`
+    lean_state: `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
 """
 
 import logging
 
-_log = logging.getLogger("brief.shim")
+_log = logging.getLogger("agent.runtime.shim")
 
 try:
     import nanobot.agent.context as _ctx
@@ -62,3 +63,31 @@ except Exception:
     # If the internal symbol moved (nanobot upgrade), fail loudly in the log but
     # do not stop the agent from starting.
     _log.exception("brief shim could not attach (nanobot internals changed?)")
+
+
+# ── lean_state: previous-turn tool results -> a pointer naming the call ──────
+# Also the single place to see the *state* (what the model receives) next to the
+# *transcript* (the Matrix room): every turn logs the leaned message list, one
+# line per message, greppable by "[llm-state]" in `docker logs stack-agent`.
+try:
+    import nanobot.agent.context as _ctx_ls
+    from lean_state import format_state_for_log as _format_state
+    from lean_state import lean_messages as _lean_messages
+
+    _orig_build_messages = _ctx_ls.ContextBuilder.build_messages
+
+    def _build_messages_lean(self, *args, **kwargs):
+        # Post-process the assembled message list: stale prior-turn tool results
+        # become a pointer naming the call, the current turn stays intact.
+        messages = _lean_messages(_orig_build_messages(self, *args, **kwargs))
+        try:  # a debug view, never worth breaking a turn over
+            print(f"[llm-state] {len(messages)} messages sent to the model:\n"
+                  + _format_state(messages), flush=True)
+        except Exception:
+            pass
+        return messages
+
+    _ctx_ls.ContextBuilder.build_messages = _build_messages_lean
+    _log.info("lean-state message shim active")
+except Exception:
+    _log.exception("lean-state shim could not attach (nanobot internals changed?)")
