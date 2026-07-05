@@ -23,6 +23,7 @@ to ALLOW deliberately, one reviewed command at a time.
 """
 
 import os
+import shlex
 import socket
 import subprocess
 from pathlib import Path
@@ -59,7 +60,12 @@ def is_allowed(args: list[str]) -> bool:
 
 def handle(line: str) -> str:
     """Validate one command line and run it, returning plaintext output."""
-    args = line.strip().split()
+    try:
+        # shlex, not str.split: an agent striking a todo passes a quoted
+        # multi-word item ("buy sunscreen for Bart") that must stay one arg.
+        args = shlex.split(line.strip())
+    except ValueError as e:
+        return f"error: could not parse command ({e})\n"
     if not args:
         return "error: empty command\n"
     if not is_allowed(args):
