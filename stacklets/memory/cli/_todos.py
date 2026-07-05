@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import update_memory, vault_path_for  # noqa: E402
+from lib import refresh_vault_if_stale, update_memory, vault_path_for  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bot" / "cli"))
 from todo_list import read_todos, set_todo_done  # noqa: E402
@@ -43,6 +43,12 @@ def list_todos(scope: str, *, show_all: bool, config) -> dict:
     vault = _vault(config)
     if vault is None or not vault.exists():
         return {"error": "no vault found — is the memory stacklet installed?"}
+
+    # Pull if the remote moved, so the list reflects edits made anywhere else
+    # (Forgejo web, another family member, the curator), not just this host's
+    # own writes. Same cheap ls-remote check `stack memory search` runs; a
+    # host-side, best-effort pull that never makes a read worse.
+    refresh_vault_if_stale(vault)
 
     scope = (scope or "").strip()
     if not scope:
