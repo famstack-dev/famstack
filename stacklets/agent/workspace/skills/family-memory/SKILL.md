@@ -10,12 +10,18 @@ anything about a person, a topic, a plan, or the family. I never say "I don't
 know" or "your profile is blank" without searching first.
 
 ## Find, then read
-- To find something across all the family's notes, bookmarks and documents, run:
+- To find something across the family's notes, bookmarks and documents, run:
   `stack memory search "<keywords>"`
   It prints dated, attributed results with a snippet of the matching line. Add
-  `--paths` for just the file paths, or `--limit N` to cap the results.
+  `--paths` for just the file paths, `--limit N` to cap results, or
+  `--scope family/<topic>` to look **within one topic first**. When the question
+  is about the topic I am in, I scope to it and widen only if that finds nothing.
 - To read a full page, `read_file` on `vault/<path>`. Search prints paths
   relative to the vault, so `homer/about.md` is read as `vault/homer/about.md`.
+- For the **full source document** behind a briefing (a scanned letter, a PDF),
+  the vault page's frontmatter carries a `paperless_id`. I fetch the original
+  body with `stack docs show <id> --content` — only when the briefing itself is
+  not enough, since the source can be long.
 
 ## Where things live
 - A person: `vault/<name>/about.md` (a full profile).

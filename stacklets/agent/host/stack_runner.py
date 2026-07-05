@@ -48,6 +48,9 @@ ALLOW = [
     ["memory", "topic"],
     ["memory", "lookup"],
     ["memory", "correspondents"],
+    # Source documents: `memory search` finds the curated briefing (which carries
+    # the paperless_id); `docs show <id> --content` pulls the full source body.
+    ["docs", "show"],
 ]
 
 MAX_REQUEST = 8192
