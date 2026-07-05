@@ -33,7 +33,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 # Vault-layout conventions live in the framework so both stacklets share
 # one source. Re-exported here for memory's own callers (and back-compat
@@ -47,7 +47,7 @@ from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
-from stack.forgejo import ForgejoClient
+from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
 
@@ -242,6 +242,75 @@ def refresh_vault_if_stale(
     if pull_vault(vault_path, timeout=timeout):
         return "pulled"
     return "pull_failed"
+
+
+# ─── Vault writers ───────────────────────────────────────────────────────
+
+def _code_url_from_config(config: dict | None) -> str:
+    """Host-reachable Forgejo URL, from the secret the install hook cached or
+    the code stacklet's published port. Mirrors `cli/pull.py`'s resolution."""
+    secrets = config.get("secrets", {}) if config else {}
+    if cached := secrets.get("__code_url", ""):
+        return cached
+    stck = config.get("stack") if config else None
+    port = stck.get("code", {}).get("port", 42040) if isinstance(stck, dict) else 42040
+    return f"http://localhost:{port}"
+
+
+def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
+    """Map a striker (a person slug like 'homer') to a git author name+email.
+
+    The name carries the attribution in the commit history; the email is
+    synthetic but stable, keyed to the server name so a person's commits group.
+    """
+    slug = (actor or "").strip() or "unknown"
+    stck = config.get("stack") if config else None
+    server = stck.get("server_name") if isinstance(stck, dict) else None
+    return slug, f"{slug}@{server or 'famstack'}"
+
+
+def update_memory(config: dict, repo_path: str,
+                  transform: Callable[[str], str], *,
+                  actor: str, message: str) -> dict:
+    """Commit a transform of one vault file to Forgejo, attributed to `actor`.
+
+    The single write seam for deterministic memory mutations. It runs
+    host-native -- the memory-bot token already has write access, so there is
+    no docker exec and no LLM in the path -- reading the canonical file from
+    Forgejo (not the possibly-stale local clone), applying `transform`,
+    committing with `actor` as the git author, then fast-forwarding the local
+    clone so a following read reflects the change.
+
+    Returns the framework envelope: `{"ok": True, "committed": bool}` on
+    success (committed=False when the transform was a no-op, so nothing was
+    written), or `{"error": ...}` when credentials are missing, the transform
+    rejects the input (e.g. no matching todo), or Forgejo is unreachable.
+    """
+    secrets = config.get("secrets", {}) if config else {}
+    token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
+    code_url = _code_url_from_config(config)
+    if not (token and code_url):
+        return {"error": "Forgejo credentials missing — run `stack up memory` first"}
+
+    client = ForgejoClient(url=code_url, token=token)
+    name, email = _actor_identity(actor, config)
+    try:
+        result = client.edit_file(
+            REPO_OWNER, REPO_NAME, repo_path, transform,
+            message=message, author_name=name, author_email=email,
+        )
+    except ValueError as e:            # transform rejected the input
+        return {"error": str(e)}
+    except ForgejoError as e:
+        return {"error": f"Forgejo write failed: {e}"}
+
+    if result is None:
+        return {"ok": True, "committed": False}
+
+    data_dir = config.get("data_dir") if config else None
+    if data_dir:
+        pull_vault(vault_path_for(Path(data_dir)))  # write-through so reads agree
+    return {"ok": True, "committed": True, "path": repo_path}
 
 
 # ─── Vault readers ───────────────────────────────────────────────────────
@@ -1026,4 +1095,10 @@ def install_memory_to_forgejo_admin(
         "created_repo": repo_state["created_repo"],
         "seeds": seeds,
         "cloned_vault": cloned_vault,
+        # The write-scoped token host-side writers need (`update_memory`,
+        # and the clone-recovery path in on_start_ready). The caller persists
+        # it as a secret; nothing else here keeps it. Author attribution is set
+        # per-commit, so a shared write token is fine -- it is transport auth,
+        # not identity.
+        "write_token": admin_token,
     }

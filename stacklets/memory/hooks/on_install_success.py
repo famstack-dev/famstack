@@ -56,6 +56,14 @@ def run(ctx):
         ctx.step(f"Memory install: skipped ({result['skipped_reason']})")
         return
 
+    # Persist the write token so host-side writers (`update_memory`, the
+    # `stack memory` mutation commands) can reach Forgejo through the secrets
+    # API. Without this the token was minted and thrown away, leaving
+    # `memory__MEMORY_BOT_TOKEN` unset for the very readers that expect it.
+    if token := result.get("write_token"):
+        ctx.secret("MEMORY_BOT_TOKEN", token)
+        ctx.step("Memory: stored the vault write token")
+
     if result.get("created_org"):
         ctx.step(f"Memory: created Forgejo org {REPO_OWNER!r}")
     if result.get("created_repo"):

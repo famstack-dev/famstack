@@ -107,3 +107,51 @@ def read_todos(doc: str) -> tuple[list[str], list[str]]:
         bucket = open_items if m.group(1) == " " else done_items
         bucket.append(m.group(2).strip())
     return open_items, done_items
+
+
+def _norm(text: str) -> str:
+    """Whitespace- and case-normalised task text for matching."""
+    return " ".join(text.split()).lower()
+
+
+def set_todo_done(doc: str, item: str, *, done: bool) -> tuple[str, str]:
+    """Flip the task matching `item` to done (`[x]`) or open (`[ ]`).
+
+    The write counterpart to `read_todos`, kept in the module that owns the
+    task-line grammar. `item` need not be verbatim -- an exact task text wins,
+    otherwise a substring match is accepted -- because the striker (a family
+    member in chat, or the agent on their behalf) rarely quotes the line
+    exactly. When several tasks match, the one whose state would actually change
+    is preferred, which resolves the common "one open, one already done" case on
+    its own. Returns `(new_doc, matched_text)` where `matched_text` is the exact
+    task struck, so the caller can echo precisely what happened.
+
+    Raises ValueError when nothing matches, or when the match stays ambiguous
+    after those preferences -- the caller turns that into a clear message rather
+    than guessing which todo the family meant.
+    """
+    needle = _norm(item)
+    lines = doc.splitlines(keepends=True)
+    tasks = [(i, m.group(2).strip(), m.group(1) != " ")
+             for i, line in enumerate(lines)
+             if (m := _TASK_RE.match(line))]
+
+    candidates = [t for t in tasks
+                  if _norm(t[1]) == needle or needle in _norm(t[1])]
+    if not candidates:
+        raise ValueError(f"no todo matching {item!r}")
+
+    # Prefer a task whose state would actually change, then an exact text
+    # match, so a substring that hits both an open and a done line still
+    # resolves to the single sensible target.
+    pool = [t for t in candidates if t[2] != done] or candidates
+    exact = [t for t in pool if _norm(t[1]) == needle]
+    pool = exact or pool
+    if len(pool) > 1:
+        opts = ", ".join(repr(t[1]) for t in pool)
+        raise ValueError(f"{item!r} matches several todos: {opts}")
+
+    idx, matched, _ = pool[0]
+    box = "x" if done else " "
+    lines[idx] = re.sub(r"\[[ xX]\]", f"[{box}]", lines[idx], count=1)
+    return "".join(lines), matched

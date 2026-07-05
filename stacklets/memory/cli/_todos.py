@@ -17,10 +17,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import vault_path_for  # noqa: E402
+from lib import update_memory, vault_path_for  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bot" / "cli"))
-from todo_list import read_todos  # noqa: E402
+from todo_list import read_todos, set_todo_done  # noqa: E402
 
 
 def _vault(config) -> Path | None:
@@ -77,3 +77,70 @@ def list_todos(scope: str, *, show_all: bool, config) -> dict:
         })
 
     return {"ok": True, "lists": lists}
+
+
+def strike_todo(scope: str, item: str, *, done: bool, actor: str, config) -> dict:
+    """Strike (`done=True`) or unstrike (`done=False`) a scope's todo.
+
+    Resolves the scope's `todos.md`, then hands the edit + commit to
+    `update_memory`, which writes canonically to Forgejo attributed to `actor`
+    and refreshes the local clone. The toggle itself lives in `set_todo_done`
+    (`todo_list.py`), so the read and write sides share one notion of a task
+    line. Prints a human line (what the agent relays) and returns the envelope.
+    """
+    vault = _vault(config)
+    if vault is None or not vault.exists():
+        return {"error": "no vault found — is the memory stacklet installed?"}
+
+    scope = (scope or "").strip()
+    item = (item or "").strip()
+    if not (scope and item):
+        return {"error": 'usage: stack memory topic <name> todo strike "<item>" --by <person>'}
+
+    matches = sorted(vault.glob(f"*/{scope}/todos.md"))
+    if not matches:
+        known = _known_scopes(vault)
+        hint = ("  topics with todos: " + ", ".join(known)) if known else ""
+        return {"error": f"no todo list for topic {scope!r}\n{hint}".rstrip()}
+
+    # A slug can live under several buckets (family/camping, bart/camping);
+    # narrow to the one that actually holds this item so we edit the right list.
+    if len(matches) > 1:
+        needle = item.lower()
+        narrowed = [p for p in matches
+                    if needle in p.read_text(encoding="utf-8").lower()]
+        if len(narrowed) > 1:
+            buckets = ", ".join(p.parent.parent.name for p in narrowed)
+            return {"error": f"{item!r} is in several lists ({buckets}); name the bucket"}
+        if not narrowed:
+            return {"error": f"no todo matching {item!r} in {scope!r}"}
+        matches = narrowed
+
+    path = matches[0]
+    bucket = path.parent.parent.name
+    repo_path = f"{bucket}/{scope}/todos.md"
+
+    # Capture the exact task the canonical edit matched, so we echo precisely
+    # what changed even when the caller passed only a substring.
+    captured: dict[str, str] = {}
+
+    def _tx(doc: str) -> str:
+        new_doc, matched = set_todo_done(doc, item, done=done)
+        captured["matched"] = matched
+        return new_doc
+
+    verb = "ticked off" if done else "reopened"
+    message = f'chore(todos): {actor} {verb} "{item}" in {scope}'
+    result = update_memory(config, repo_path, _tx, actor=actor, message=message)
+    if "error" in result:
+        return result
+
+    matched = captured.get("matched", item)
+    if not result.get("committed"):
+        state = "already done" if done else "already open"
+        print(f'"{matched}" was {state} in {bucket}/{scope} — nothing to do')
+        return {"ok": True, "committed": False, "matched": matched, "scope": scope}
+
+    print(f'{"Struck" if done else "Reopened"}: {matched}  ({bucket}/{scope}, by {actor})')
+    return {"ok": True, "committed": True, "matched": matched,
+            "scope": scope, "bucket": bucket, "by": actor}
