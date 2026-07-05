@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 
 class ForgejoError(RuntimeError):
@@ -323,6 +323,36 @@ class ForgejoClient:
             f"/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
             headers=self._token_header(),
             body=payload,
+        )
+
+    def edit_file(self, owner: str, repo: str, path: str,
+                  transform: Callable[[str], str], *,
+                  message: str, branch: str = "main",
+                  author_name: str | None = None,
+                  author_email: str | None = None) -> dict | None:
+        """Read a file, run `transform` over its text, and commit the result.
+
+        The read-modify-write companion to get_file/put_file: it fetches the
+        current body (empty string when the file is absent), passes it through
+        `transform`, and writes the result back on the same branch carrying the
+        prior sha, so callers never juggle the wire encoding or the sha dance.
+
+        Returns the put_file response, or None when `transform` is a no-op
+        (identical text) -- an unchanged edit makes no commit, so re-runs don't
+        churn the repo with empty commits. `author_name`/`author_email` set the
+        commit author, so the person who triggered the change owns it in the
+        history, not the token's identity.
+        """
+        existing = self.get_file(owner, repo, path, ref=branch)
+        prior = existing.get("content", "") if existing else ""
+        sha = existing.get("sha") if existing else None
+        merged = transform(prior)
+        if merged == prior:
+            return None
+        return self.put_file(
+            owner, repo, path,
+            content=merged, message=message, branch=branch, sha=sha,
+            author_name=author_name, author_email=author_email,
         )
 
     def delete_file(self, owner: str, repo: str, path: str, *,
