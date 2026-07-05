@@ -56,7 +56,7 @@ class TestLeanMessages:
         assert out[1]["content"] != "STALE"
         assert out[4]["content"] == "FRESH RESULT"
 
-    def test_non_tool_messages_and_pairing_untouched(self):
+    def test_pairing_preserved_and_nothing_dropped(self):
         msgs = [
             {"role": "user", "content": "q"},
             _asst_call("c1", "exec", '{"command": "x"}'),
@@ -65,9 +65,32 @@ class TestLeanMessages:
             {"role": "user", "content": "next"},
         ]
         out = lean_messages(msgs)
-        assert out[1]["tool_calls"]                        # assistant call kept
-        assert out[3]["content"] == "an answer"            # assistant text kept
+        assert out[1]["tool_calls"][0]["id"] == "c1"       # assistant call kept
         assert len(out) == len(msgs)                       # nothing dropped
+
+    def test_tool_turn_answer_is_decayed(self):
+        # a previous turn that called a tool: its synthesized answer decays too
+        msgs = [
+            {"role": "user", "content": "was ist offen?"},
+            _asst_call("c1", "exec", '{"command": "stack memory topic x todo"}'),
+            _tool_result("c1", "8 open ..."),
+            {"role": "assistant", "content": "Noch 8 offen: a, b, c"},
+            {"role": "user", "content": "und jetzt?"},     # current turn
+        ]
+        out = lean_messages(msgs)
+        assert "Noch 8 offen" not in out[3]["content"]
+        assert "earlier answer from" in out[3]["content"]
+        assert "exec(" in out[3]["content"]
+
+    def test_conversational_answer_is_kept(self):
+        # a previous turn with NO tool: its answer is conversation, kept verbatim
+        msgs = [
+            {"role": "user", "content": "danke!"},
+            {"role": "assistant", "content": "Gern geschehen."},
+            {"role": "user", "content": "was ist offen?"},  # current turn
+        ]
+        out = lean_messages(msgs)
+        assert out[1]["content"] == "Gern geschehen."
 
     def test_orphan_tool_result_falls_back(self):
         msgs = [_tool_result("orphan", "data"),

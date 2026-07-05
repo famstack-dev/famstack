@@ -62,23 +62,43 @@ def _call_labels(messages: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def lean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return ``messages`` with previous-turn tool results replaced by a pointer
-    that names the call which produced them.
+    """Collapse previous-turn *derived data* to pointers, keeping conversation.
 
-    Non-destructive: only ``role == "tool"`` entries before the current turn are
-    touched, and only their ``content``. The ``tool_call_id`` pairing with the
-    assistant's ``tool_calls`` is preserved, so the message list stays valid for
-    the provider.
+    Two kinds of stale projection are replaced by a pointer that names the call
+    that produced them, so the model re-fetches instead of reciting:
+      - a tool **result** from a previous turn, and
+      - the assistant's synthesized **answer** in a turn that used a tool (a list
+        it read out, a count it reported).
+    Assistant messages in turns that used no tool are pure conversation and are
+    left verbatim, as is everything from the current turn (anchored on the last
+    user message). Only ``content`` is rewritten; the ``tool_call_id`` pairing
+    with the assistant's ``tool_calls`` is preserved, so the list stays valid.
     """
     boundary = _last_user_index(messages)
     labels = _call_labels(messages)
     out: list[dict[str, Any]] = []
+    turn_calls: list[str] = []   # tool calls issued in the turn being scanned
+    since_tool = False           # have we passed a tool result in this turn?
     for i, m in enumerate(messages):
-        if i < boundary and m.get("role") == "tool":
-            call = labels.get(m.get("tool_call_id"), "the tool")
-            pointer = f"[prior result of {call}; re-run for the current value]"
-            if m.get("content") != pointer:
-                m = {**m, "content": pointer}
+        role = m.get("role")
+        if role == "user":
+            turn_calls, since_tool = [], False
+        for tc in m.get("tool_calls") or []:
+            if label := labels.get(tc.get("id")):
+                turn_calls.append(label)
+        prior = i < boundary
+        if role == "tool":
+            since_tool = True
+            if prior:
+                call = labels.get(m.get("tool_call_id"), "the tool")
+                m = {**m, "content": f"[prior result of {call}; re-run for the current value]"}
+        elif prior and role == "assistant" and since_tool and not m.get("tool_calls"):
+            # The synthesized answer of a tool-using turn is itself a stale
+            # projection -- decay it too, naming the call, so the model
+            # re-derives instead of reciting an old conclusion. Answers from
+            # turns that used no tool (pure conversation) are left untouched.
+            calls = "; ".join(dict.fromkeys(turn_calls)) or "a tool call"
+            m = {**m, "content": f"[earlier answer from {calls}; re-run for the current value]"}
         out.append(m)
     return out
 

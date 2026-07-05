@@ -70,19 +70,29 @@ except Exception:
 # *transcript* (the Matrix room): every turn logs the leaned message list, one
 # line per message, greppable by "[llm-state]" in `docker logs stack-agent`.
 try:
+    import datetime as _dt
+    import os as _os
+
     import nanobot.agent.context as _ctx_ls
     from lean_state import format_state_for_log as _format_state
     from lean_state import lean_messages as _lean_messages
 
     _orig_build_messages = _ctx_ls.ContextBuilder.build_messages
+    # Bind-mounted home (~/.nanobot -> famstack-data/agent), so this file is
+    # readable on the host for analysis, one appended block per turn.
+    _STATE_LOG = _os.path.expanduser("~/.nanobot/llm-state.log")
 
     def _build_messages_lean(self, *args, **kwargs):
-        # Post-process the assembled message list: stale prior-turn tool results
-        # become a pointer naming the call, the current turn stays intact.
+        # Post-process the assembled message list: stale prior-turn derived data
+        # (tool results and tool-synthesized answers) become pointers; the
+        # current turn stays intact.
         messages = _lean_messages(_orig_build_messages(self, *args, **kwargs))
-        try:  # a debug view, never worth breaking a turn over
-            print(f"[llm-state] {len(messages)} messages sent to the model:\n"
-                  + _format_state(messages), flush=True)
+        try:  # a debug view; never worth breaking a turn over
+            stamp = _dt.datetime.now().isoformat(timespec="seconds")
+            with open(_STATE_LOG, "a", encoding="utf-8") as fh:
+                fh.write(f"\n===== {stamp}  {len(messages)} messages =====\n"
+                         + _format_state(messages) + "\n")
+            print(f"[llm-state] {len(messages)} msgs -> llm-state.log", flush=True)
         except Exception:
             pass
         return messages
