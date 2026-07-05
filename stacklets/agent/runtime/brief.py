@@ -120,13 +120,12 @@ def brief_lines(msg, workspace) -> list[str]:
         summary = _lead(vault / "family" / topic / "about.md")
         if summary:
             lines.append(f"Topic '{topic}': {summary}")
-        opens = _open_todos(vault / "family" / topic / "todos.md")
-        if opens:
-            # A pointer, not the list: handing over the items invites the model
-            # to recite them (and they go stale). The count primes it; the live
-            # list comes from the tool, fresh, when actually asked.
-            lines.append(f"{len(opens)} open todos here; run "
-                         f"`stack memory topic {topic} todo` for the current list.")
+        if _open_todos(vault / "family" / topic / "todos.md"):
+            # Presence, not the data, and not even the count: a number is still
+            # recitable and still goes stale. Just that todos exist and how to
+            # fetch the live list when someone actually asks.
+            lines.append(f"This topic has open todos; run "
+                         f"`stack memory topic {topic} todo` to see them.")
         recent = _recent(vault, topic)
         if recent:
             lines.append("Recently: " + "; ".join(recent))
