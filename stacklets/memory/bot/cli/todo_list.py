@@ -118,17 +118,18 @@ def set_todo_done(doc: str, item: str, *, done: bool) -> tuple[str, str]:
     """Flip the task matching `item` to done (`[x]`) or open (`[ ]`).
 
     The write counterpart to `read_todos`, kept in the module that owns the
-    task-line grammar. `item` need not be verbatim -- an exact task text wins,
-    otherwise a substring match is accepted -- because the striker (a family
-    member in chat, or the agent on their behalf) rarely quotes the line
-    exactly. When several tasks match, the one whose state would actually change
-    is preferred, which resolves the common "one open, one already done" case on
-    its own. Returns `(new_doc, matched_text)` where `matched_text` is the exact
-    task struck, so the caller can echo precisely what happened.
+    task-line grammar. You identify the task by the **start** of its text, not
+    the whole line -- "buy sunscreen" finds "buy sunscreen for Bart" -- because
+    the striker (a family member in chat, or the agent on their behalf) rarely
+    quotes it exactly. An exact text wins over a longer sibling ("milk" over
+    "milk and eggs"). Returns `(new_doc, matched_text)` with the exact task
+    struck, so the caller can echo precisely what happened.
 
-    Raises ValueError when nothing matches, or when the match stays ambiguous
-    after those preferences -- the caller turns that into a clear message rather
-    than guessing which todo the family meant.
+    Raises ValueError when nothing starts with the string, or when it starts
+    more than one task -- the message then lists the matches so the caller can
+    ask for a string that identifies just one. The single "same text open and
+    already done" case is not ambiguous: it resolves to the copy whose state
+    would actually change.
     """
     needle = _norm(item)
     lines = doc.splitlines(keepends=True)
@@ -136,22 +137,24 @@ def set_todo_done(doc: str, item: str, *, done: bool) -> tuple[str, str]:
              for i, line in enumerate(lines)
              if (m := _TASK_RE.match(line))]
 
-    candidates = [t for t in tasks
-                  if _norm(t[1]) == needle or needle in _norm(t[1])]
-    if not candidates:
+    hits = [t for t in tasks if _norm(t[1]).startswith(needle)]
+    if not hits:
         raise ValueError(f"no todo matching {item!r}")
+    if exact := [t for t in hits if _norm(t[1]) == needle]:
+        hits = exact
 
-    # Prefer a task whose state would actually change, then an exact text
-    # match, so a substring that hits both an open and a done line still
-    # resolves to the single sensible target.
-    pool = [t for t in candidates if t[2] != done] or candidates
-    exact = [t for t in pool if _norm(t[1]) == needle]
-    pool = exact or pool
-    if len(pool) > 1:
-        opts = ", ".join(repr(t[1]) for t in pool)
-        raise ValueError(f"{item!r} matches several todos: {opts}")
+    if len(hits) > 1:
+        # A string that also lands on an already-done copy resolves to the one
+        # whose state would flip; otherwise it is genuinely ambiguous.
+        changeable = [t for t in hits if t[2] != done]
+        if len(changeable) == 1:
+            hits = changeable
+        else:
+            opts = "\n  ".join(dict.fromkeys(t[1] for t in hits))
+            raise ValueError(
+                "more than one match; the string must match only one item:\n  " + opts)
 
-    idx, matched, _ = pool[0]
+    idx, matched, _ = hits[0]
     box = "x" if done else " "
     lines[idx] = re.sub(r"\[[ xX]\]", f"[{box}]", lines[idx], count=1)
     return "".join(lines), matched

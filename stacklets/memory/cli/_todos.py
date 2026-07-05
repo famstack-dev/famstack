@@ -94,6 +94,9 @@ def strike_todo(scope: str, item: str, *, done: bool, actor: str, config) -> dic
 
     scope = (scope or "").strip()
     item = (item or "").strip()
+    # The agent may pass a full mxid (@homer:simpson); the commit and the message
+    # should read as the person's handle.
+    actor = (actor or "someone").strip().split(":")[0].lstrip("@") or "someone"
     if not (scope and item):
         return {"error": 'usage: stack memory topic <name> todo strike "<item>" --by <person>'}
 

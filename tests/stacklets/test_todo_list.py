@@ -164,10 +164,21 @@ class TestSetTodoDone:
         assert matched == "charge the camera"
         assert "- [ ] charge the camera\n" in new
 
-    def test_substring_match(self):
-        new, matched = set_todo_done(self.DOC, "sunscreen", done=True)
+    def test_prefix_match(self):
+        new, matched = set_todo_done(self.DOC, "buy sunscreen", done=True)
         assert matched == "buy sunscreen for Bart"
         assert "- [x] buy sunscreen for Bart\n" in new
+
+    def test_mid_word_string_is_not_a_prefix(self):
+        # "sunscreen" is inside a task but does not start it -> no match
+        with pytest.raises(ValueError, match="no todo matching"):
+            set_todo_done(self.DOC, "sunscreen", done=True)
+
+    def test_exact_wins_over_longer_sibling(self):
+        doc = "# L\n- [ ] milk\n- [ ] milk and eggs\n"
+        new, matched = set_todo_done(doc, "milk", done=True)
+        assert matched == "milk"
+        assert new == "# L\n- [x] milk\n- [ ] milk and eggs\n"
 
     def test_prefers_the_state_changing_task(self):
         # same text open and done: striking targets the open one, not the done
@@ -180,10 +191,13 @@ class TestSetTodoDone:
         with pytest.raises(ValueError, match="no todo matching"):
             set_todo_done(self.DOC, "walk the dog", done=True)
 
-    def test_ambiguous_match_raises(self):
+    def test_ambiguous_prefix_lists_the_matches(self):
         doc = "# L\n- [ ] call the dentist\n- [ ] call the vet\n"
-        with pytest.raises(ValueError, match="matches several"):
+        with pytest.raises(ValueError) as ei:
             set_todo_done(doc, "call", done=True)
+        msg = str(ei.value)
+        assert "more than one match" in msg
+        assert "call the dentist" in msg and "call the vet" in msg
 
     def test_striking_a_done_item_is_a_noop(self):
         # already `[x]`: the doc comes back unchanged, so edit_file makes no commit

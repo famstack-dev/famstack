@@ -263,7 +263,9 @@ def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
     The name carries the attribution in the commit history; the email is
     synthetic but stable, keyed to the server name so a person's commits group.
     """
-    slug = (actor or "").strip() or "unknown"
+    # Accept a bare handle or a full mxid (@homer:simpson) -- reduce to the
+    # localpart so the author reads "homer", not "@homer:simpson".
+    slug = (actor or "").strip().split(":")[0].lstrip("@") or "unknown"
     stck = config.get("stack") if config else None
     server = stck.get("server_name") if isinstance(stck, dict) else None
     return slug, f"{slug}@{server or 'famstack'}"
