@@ -19,13 +19,15 @@ Examples:
 
 Todos are also mutable, attributed to the person who acted:
 
-    stack memory topic itchy-scratchy-land todo strike   "charge the camera" --by homer
-    stack memory topic itchy-scratchy-land todo unstrike "charge the camera" --by homer
+    stack memory topic itchy-scratchy-land todo add      "book the campsite"  --by homer
+    stack memory topic itchy-scratchy-land todo strike   "charge the camera"  --by homer
+    stack memory topic itchy-scratchy-land todo unstrike "charge the camera"  --by homer
 
-`strike`/`unstrike` toggle a task's box and commit to Forgejo (the vault's
-store) as that person; the write goes through `update_memory`, the read stays
-host-native. `todo` is the only resource today; the noun leaves room for more
-(notes, about) without reshaping the command.
+`add` appends a new item (starting the list if the topic has none), `strike`/
+`unstrike` toggle a task's box; each commits to Forgejo (the vault's store) as
+that person via `update_memory`, while the read stays host-native. `todo` is the
+only resource today; the noun leaves room for more (notes, about) without
+reshaping the command.
 """
 
 from __future__ import annotations
@@ -63,7 +65,9 @@ def run(args, stacklet, config):
     if verb in ("strike", "unstrike"):
         return _todos.strike_todo(scope, item, done=(verb == "strike"),
                                   actor=by or "someone", config=config)
-    return {"error": f"unknown todo verb {verb!r}; use strike or unstrike"}
+    if verb == "add":
+        return _todos.add_todo(scope, item, actor=by or "someone", config=config)
+    return {"error": f"unknown todo verb {verb!r}; use add, strike or unstrike"}
 
 
 def _extract_opt(argv, flag):

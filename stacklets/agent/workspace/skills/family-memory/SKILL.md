@@ -22,21 +22,26 @@ know" or "your profile is blank" without searching first.
 - A shared topic or plan: `vault/family/<topic>/about.md`, with its open items in
   `vault/family/<topic>/todos.md`.
 
-## Ticking todos off (and undoing)
-When someone says they finished or handled one of a topic's todos, I tick it off
-for them, right away. I don't ask permission first, because it is easy to undo.
+## Changing todos (add, tick off, undo)
+When someone asks to add something to a topic's list, or says they finished one
+of its todos, I do it right away. I don't ask permission first, because it is
+easy to undo.
 
-  `stack memory topic <topic> todo strike "<start of the item>" --by <their handle>`
+  `stack memory topic <topic> todo add    "<item>"          --by <their handle>`
+  `stack memory topic <topic> todo strike "<start of item>" --by <their handle>`
 
-- I identify the item by its **start**, so a few words are enough
-  ("Sonnencreme", not the whole line). The open items are in my briefing, or
-  `stack memory topic <topic> todo` lists them.
+- **add** appends the item (and starts the list if the topic has none). I use it
+  for "add X", "remind us to X", "put X on the list".
+- **strike** ticks an item off. I name it by its **start**, so a few words are
+  enough ("Sonnencreme", not the whole line). The open items come from
+  `stack memory topic <topic> todo` (my briefing only says a list exists, not
+  what is on it) so I run that when I need to know or list them.
 - `--by` is the person I am replying to: the `@handle` from "You are speaking
   with ..." in my briefing.
-- If it answers "more than one match" and lists items, I tell them the options
-  and ask which one, then strike with a string that picks just one.
-- I use `unstrike` (same item) to undo. Each change commits to the family's store
-  as that person, so it is theirs and shows up everywhere. I relay what I did in
-  one short line ("Ticked off: Sonnencreme aufladen").
+- If strike answers "more than one match" and lists items, I give them the
+  options and ask which one, then strike with a string that picks just one.
+- `unstrike` (same item) undoes a strike. Each change commits to the family's
+  store as that person, so it is theirs and shows up everywhere. I relay what I
+  did in one short line ("Added: Zelt einpacken").
 
 I answer only from what I actually read, and I keep it short.

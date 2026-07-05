@@ -17,10 +17,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import refresh_vault_if_stale, update_memory, vault_path_for  # noqa: E402
+from lib import (  # noqa: E402
+    DEFAULT_SHARED_BUCKET,
+    refresh_vault_if_stale,
+    update_memory,
+    vault_path_for,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bot" / "cli"))
-from todo_list import read_todos, set_todo_done  # noqa: E402
+from todo_list import read_todos, set_todo_done, update_todo_doc  # noqa: E402
 
 
 def _vault(config) -> Path | None:
@@ -152,4 +157,49 @@ def strike_todo(scope: str, item: str, *, done: bool, actor: str, config) -> dic
 
     print(f'{"Struck" if done else "Reopened"}: {matched}  ({bucket}/{scope}, by {actor})')
     return {"ok": True, "committed": True, "matched": matched,
+            "scope": scope, "bucket": bucket, "by": actor}
+
+
+def add_todo(scope: str, item: str, *, actor: str, config) -> dict:
+    """Add a new todo to a scope's list, creating the list if it is missing.
+
+    The write counterpart to the archivist's action-item extraction: the agent
+    can put an item straight onto a topic's `todos.md` when asked, reusing the
+    same `update_todo_doc` merge the curator uses (a duplicate is a no-op; a
+    done item is never resurrected). Commits to Forgejo as `actor`.
+    """
+    vault = _vault(config)
+    if vault is None or not vault.exists():
+        return {"error": "no vault found — is the memory stacklet installed?"}
+
+    scope = (scope or "").strip()
+    item = (item or "").strip()
+    actor = (actor or "someone").strip().split(":")[0].lstrip("@") or "someone"
+    if not (scope and item):
+        return {"error": 'usage: stack memory topic <name> todo add "<item>" --by <person>'}
+
+    # Add to the scope's existing list; if it has none, start one in the shared
+    # bucket (auto-extend: no new-topic ceremony just to jot something down).
+    matches = sorted(vault.glob(f"*/{scope}/todos.md"))
+    if len(matches) > 1:
+        buckets = ", ".join(p.parent.parent.name for p in matches)
+        return {"error": f"{scope!r} has lists in several buckets ({buckets}); name the bucket"}
+    bucket = matches[0].parent.parent.name if matches else DEFAULT_SHARED_BUCKET
+    repo_path = f"{bucket}/{scope}/todos.md"
+    title = scope.replace("-", " ").title()
+
+    result = update_memory(
+        config, repo_path,
+        lambda doc: update_todo_doc(doc or None, title, [item]),
+        actor=actor,
+        message=f'chore(todos): {actor} added "{item}" to {scope}',
+    )
+    if "error" in result:
+        return result
+    if not result.get("committed"):
+        print(f'"{item}" is already on the {bucket}/{scope} list; nothing added')
+        return {"ok": True, "committed": False, "scope": scope}
+
+    print(f'Added: {item}  ({bucket}/{scope}, by {actor})')
+    return {"ok": True, "committed": True, "item": item,
             "scope": scope, "bucket": bucket, "by": actor}
