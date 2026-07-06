@@ -117,9 +117,11 @@ def brief_lines(msg, workspace) -> list[str]:
     # WHAT — the topic, when the room maps to one. Best-effort.
     topic = _topic_slug(msg, vault)
     if topic:
-        summary = _lead(vault / "family" / topic / "about.md")
-        if summary:
-            lines.append(f"Topic '{topic}': {summary}")
+        # Pointers, not data: name the topic and how to fetch its overview, so the
+        # model reads the real page instead of reciting a stale snippet (the trap
+        # the todo list was). Consistent with the todos pointer just below.
+        lines.append(f"This room's topic is '{topic}'; run "
+                     f"`stack memory topic {topic}` for its overview.")
         if _open_todos(vault / "family" / topic / "todos.md"):
             # Presence, not the data, and not even the count: a number is still
             # recitable and still goes stale. Just that todos exist and how to

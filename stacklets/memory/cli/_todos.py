@@ -13,6 +13,7 @@ just reports no list until they land.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -203,3 +204,40 @@ def add_todo(scope: str, item: str, *, actor: str, config) -> dict:
     print(f'Added: {item}  ({bucket}/{scope}, by {actor})')
     return {"ok": True, "committed": True, "item": item,
             "scope": scope, "bucket": bucket, "by": actor}
+
+
+# Strip the machine bits so the about reads as prose: the frontmatter block, the
+# generated-section markers the wiki writes, and citation markers like [8].
+_FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
+_GEN_MARKER = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->\n?")
+_CITE = re.compile(r"\[\d+(?:,\s*\d+)*\]")
+
+
+def show_topic(scope: str, *, config) -> dict:
+    """Print a topic's about page -- its curated overview -- refreshed first.
+
+    Bare `stack memory topic <slug>` (no `todo`) gives the topic's summary, so
+    the agent can answer "what is this / summarise it" without guessing the vault
+    path. Strips frontmatter, the generated-section markers, and citation markers
+    for a clean read; the raw page is still `vault/<bucket>/<slug>/about.md`.
+    """
+    vault = _vault(config)
+    if vault is None or not vault.exists():
+        return {"error": "no vault found — is the memory stacklet installed?"}
+    scope = (scope or "").strip()
+    if not scope:
+        return {"error": "usage: stack memory topic <name>"}
+
+    refresh_vault_if_stale(vault)
+    matches = sorted(vault.glob(f"*/{scope}/about.md"))
+    if not matches:
+        known = _known_scopes(vault)
+        hint = ("  topics: " + ", ".join(known)) if known else ""
+        return {"error": f"no page for topic {scope!r}\n{hint}".rstrip()}
+
+    text = matches[0].read_text(encoding="utf-8")
+    text = _FRONTMATTER.sub("", text)
+    text = _GEN_MARKER.sub("", text)
+    text = _CITE.sub("", text)
+    print(text.strip())
+    return {"ok": True, "scope": scope, "bucket": matches[0].parent.parent.name}

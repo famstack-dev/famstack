@@ -53,7 +53,8 @@ def run(args, stacklet, config):
     if "todo" not in positionals:
         if not positionals:
             return _todos.list_todos("", show_all=show_all, config=config)
-        return {"error": 'usage: stack memory topic <name> todo [--all | strike|unstrike "<item>" --by <person>]'}
+        # `topic <slug>` (no verb) shows the topic's about page, its overview.
+        return _todos.show_topic(" ".join(positionals).strip(), config=config)
 
     ti = positionals.index("todo")
     scope = " ".join(positionals[:ti]).strip()
