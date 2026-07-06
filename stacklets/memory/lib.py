@@ -100,6 +100,7 @@ BRAIN_SEED_README = (
     "mirror.\n"
 )
 BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
+BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
 INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
 
@@ -745,6 +746,51 @@ def seed_brain(
         )
         created.append(repo_path)
     return {"created": created, "skipped": skipped}
+
+
+def ensure_brain_projection_admin(
+    *,
+    code_url: str,
+    admin_user: str,
+    admin_password: str,
+    brain_path: Optional[Path] = None,
+) -> dict:
+    """Ensure upgraded instances have the brain repo and local checkout.
+
+    `on_install_success` only runs once. Instances installed before the
+    brain projection existed already have `memory.setup-done`, so normal
+    `stack up memory` skips the install hook forever. This helper is the
+    idempotent migration path used from `on_start_ready`: create
+    `family/brain` if missing, seed its scaffold if missing, and clone it
+    locally when the working copy is absent.
+    """
+    admin = ForgejoClient(
+        url=code_url,
+        admin_user=admin_user, admin_password=admin_password,
+    )
+    if not admin.ping():
+        return {"skipped_reason": "forgejo unreachable"}
+
+    brain_state = ensure_brain_repo(admin)
+    admin_token = admin.issue_token(
+        admin_user, admin_password, BRAIN_MIGRATION_TOKEN_NAME, TOKEN_SCOPES,
+    )
+    admin_token_client = ForgejoClient(url=code_url, token=admin_token)
+    brain_seeds = seed_brain(admin_token_client)
+
+    cloned_brain = False
+    if brain_path is not None:
+        brain_remote = authenticated_remote(
+            brain_remote_url(code_url),
+            admin_user, admin_token,
+        )
+        cloned_brain = ensure_vault_cloned(brain_path, brain_remote)
+
+    return {
+        "created_brain_repo": brain_state["created_repo"],
+        "brain_seeds": brain_seeds,
+        "cloned_brain": cloned_brain,
+    }
 
 
 def install_seeds(

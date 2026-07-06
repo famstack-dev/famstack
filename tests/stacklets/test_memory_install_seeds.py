@@ -30,10 +30,12 @@ from lib import (  # noqa: E402
     REPO_OWNER,
     brain_remote_url,
     ensure_brain_repo,
+    ensure_brain_projection_admin,
     ensure_memory_repo,
     install_seeds,
     seed_brain,
 )
+import lib as memory_lib  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 
 
@@ -295,3 +297,57 @@ class TestSeedBrain:
 
         assert result["created"] == []
         assert sorted(result["skipped"]) == [".gitignore", "README.md"]
+
+
+class TestEnsureBrainProjectionAdmin:
+    """Upgrade path for instances whose install hook already ran before
+    the brain projection existed."""
+
+    def test_creates_seeds_and_clones_missing_brain(self, httpserver, tmp_path, monkeypatch):
+        httpserver.expect_request("/api/v1/version").respond_with_json({"version": "11"})
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}", method="GET",
+        ).respond_with_data("not found", status=404)
+        httpserver.expect_request(
+            f"/api/v1/orgs/{REPO_OWNER}/repos", method="POST",
+        ).respond_with_json({"id": 3, "name": BRAIN_REPO_NAME}, status=201)
+
+        httpserver.expect_request(
+            "/api/v1/users/stackadmin/tokens", method="GET",
+        ).respond_with_json([])
+        httpserver.expect_request(
+            "/api/v1/users/stackadmin/tokens", method="POST",
+        ).respond_with_json({"sha1": "migration-token"}, status=201)
+
+        for repo_path in (".gitignore", "README.md"):
+            httpserver.expect_request(
+                f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}/contents/{repo_path}",
+                method="GET",
+            ).respond_with_data("not found", status=404)
+            httpserver.expect_request(
+                f"/api/v1/repos/{REPO_OWNER}/{BRAIN_REPO_NAME}/contents/{repo_path}",
+                method="POST",
+            ).respond_with_json({}, status=201)
+
+        cloned = {}
+
+        def fake_clone(path, remote):
+            cloned["path"] = path
+            cloned["remote"] = remote
+            return True
+
+        monkeypatch.setattr(memory_lib, "ensure_vault_cloned", fake_clone)
+
+        brain = tmp_path / "brain"
+        result = ensure_brain_projection_admin(
+            code_url=httpserver.url_for(""),
+            admin_user="stackadmin",
+            admin_password="secret",
+            brain_path=brain,
+        )
+
+        assert result["created_brain_repo"] is True
+        assert sorted(result["brain_seeds"]["created"]) == [".gitignore", "README.md"]
+        assert result["cloned_brain"] is True
+        assert cloned["path"] == brain
+        assert "stackadmin:migration-token@" in cloned["remote"]
