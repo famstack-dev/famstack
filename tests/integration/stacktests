@@ -15,6 +15,7 @@
 #                                                  instance state + test data
 #   tests/integration/stacktests e2e [args]      — run every e2e test
 #   tests/integration/stacktests smoke [args]    — run smoke e2e tests
+#   tests/integration/stacktests demo-rig [args] — run live Simpson demo tests
 #   tests/integration/stacktests eval [args]     — pipeline quality eval
 #                                                  (real model, report-only)
 #   tests/integration/stacktests pytest [args]   — pytest with env + deps
@@ -136,6 +137,16 @@ case "${1:-}" in
       python3 -m stack up "$sid" > /dev/null
     done
     exec uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
+    ;;
+
+  demo-rig)
+    # Run tests against the already-running Simpson demo instance in
+    # this checkout. This deliberately does not seed config or start
+    # stacklets; it should be safe to run repeatedly against live demo
+    # data because tests create uniquely-named rooms/files and clean up
+    # their own Paperless/Forgejo artifacts where the services allow it.
+    shift || true
+    exec uv run --extra test pytest tests/integration/ -m demo_rig "$@"
     ;;
 
   eval)
