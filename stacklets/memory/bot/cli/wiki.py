@@ -182,12 +182,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # put memory's source there, so `_index_vault` reads it and `_publish`
     # writes generated pages beside it on disk. The curator commits and
     # pushes brain — generation never touches git or Forgejo, and memory
-    # (source) is never written. `BRAIN_REPO_DIR` is the write+read tree;
-    # `MEMORY_VAULT_DIR` is the read-only fallback for a dry-run preview
-    # before the brain working copy exists.
-    brain_dir = os.environ.get("BRAIN_REPO_DIR", "") or os.environ.get(
-        "MEMORY_VAULT_DIR", "",
-    )
+    # (source) is never written. `BRAIN_REPO_DIR` is the required
+    # write+read tree; without it, failing closed is safer than ever
+    # risking a write into the memory source vault.
+    brain_dir = os.environ.get("BRAIN_REPO_DIR", "")
 
     # `clean` is a slate-wiper, not a generator: it removes every
     # generated page from the brain working copy so a following bare
@@ -1325,15 +1323,14 @@ def _clean_generated(*, brain: Path, dry_run: bool,
 def _brain_dir() -> Path:
     """The brain working copy generation writes into.
 
-    `BRAIN_REPO_DIR` is the projection tree; `MEMORY_VAULT_DIR` is the
-    read-only fallback only relevant to a dry-run preview (which never
-    calls `_publish`). Resolved here so the write path has one source of
-    truth, the same way the old code resolved Forgejo creds internally.
+    `BRAIN_REPO_DIR` is the projection tree. Missing env is a hard
+    configuration error: generation must never fall back to the memory
+    source vault.
     """
-    return Path(
-        os.environ.get("BRAIN_REPO_DIR", "")
-        or os.environ.get("MEMORY_VAULT_DIR", ""),
-    )
+    value = os.environ.get("BRAIN_REPO_DIR", "")
+    if not value:
+        raise RuntimeError("BRAIN_REPO_DIR not set")
+    return Path(value)
 
 
 def _publish(page: str, *, target_path: str,
@@ -1349,7 +1346,11 @@ def _publish(page: str, *, target_path: str,
     curator's commit+push carries it to Forgejo and on to Quartz, so
     memory (source) is never touched.
     """
-    page_path = _brain_dir() / target_path
+    try:
+        page_path = _brain_dir() / target_path
+    except RuntimeError as e:
+        _err(f"{e} — refusing to write generated wiki pages")
+        return 1
     try:
         prior = page_path.read_text(encoding="utf-8")
     except OSError:

@@ -892,6 +892,21 @@ class TestPublishOnDisk:
         assert "<!-- begin: generated -->" in written
         assert "A profile." in written
 
+    def test_missing_brain_dir_refuses_memory_fallback(self, tmp_path, monkeypatch):
+        memory = tmp_path / "memory"
+        memory.mkdir()
+        monkeypatch.delenv("BRAIN_REPO_DIR", raising=False)
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory))
+
+        rc = _publish(
+            "body",
+            target_path="homer/about.md",
+            default_preamble="---\ntitle: Homer\n---",
+        )
+
+        assert rc == 1
+        assert list(memory.rglob("*.md")) == []
+
     def test_splice_preserves_content_outside_markers(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
         page = tmp_path / "homer" / "about.md"
