@@ -192,6 +192,72 @@ async def fetch_room_events(client, room_id: str, *, duration: float = 10.0) -> 
     return events
 
 
+async def wait_for_room_event(
+    client,
+    room_id: str,
+    predicate,
+    *,
+    timeout: float = 45.0,
+):
+    """Return the first room event matching `predicate`.
+
+    Matrix `/sync` is already a long-poll API: the server holds the
+    request until something changes or the request timeout expires. This
+    gives tests webhook-like behavior without adding a Synapse plugin or
+    sidecar. Positive waits return as soon as the event arrives instead
+    of collecting for a fixed wall-clock window.
+    """
+    deadline = time.monotonic() + timeout
+    next_batch = client.next_batch
+    while time.monotonic() < deadline:
+        remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+        sync_timeout = min(30_000, remaining_ms)
+        sync = await client.sync(timeout=sync_timeout, since=next_batch)
+        next_batch = getattr(sync, "next_batch", next_batch)
+        rooms = getattr(sync, "rooms", None)
+        joined = getattr(rooms, "join", {}) if rooms else {}
+        room_info = joined.get(room_id)
+        if room_info is None:
+            continue
+        for event in getattr(room_info.timeline, "events", []):
+            if predicate(event):
+                return event
+    return None
+
+
+async def wait_for_room_events_until(
+    client,
+    room_id: str,
+    predicate,
+    *,
+    timeout: float = 45.0,
+) -> list:
+    """Collect room events until `predicate(events)` is true.
+
+    Use this when the assertion depends on a sequence, for example a
+    progress reaction followed by a completion reaction. Returning the
+    whole collected batch avoids losing events that arrive together in
+    the same `/sync` response.
+    """
+    events: list = []
+    deadline = time.monotonic() + timeout
+    next_batch = client.next_batch
+    while time.monotonic() < deadline:
+        remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+        sync_timeout = min(30_000, remaining_ms)
+        sync = await client.sync(timeout=sync_timeout, since=next_batch)
+        next_batch = getattr(sync, "next_batch", next_batch)
+        rooms = getattr(sync, "rooms", None)
+        joined = getattr(rooms, "join", {}) if rooms else {}
+        room_info = joined.get(room_id)
+        if room_info is None:
+            continue
+        events.extend(getattr(room_info.timeline, "events", []))
+        if predicate(events):
+            return events
+    return events
+
+
 def event_type(event) -> str:
     """Raw Matrix event type, even for custom types nio doesn't classify."""
     return getattr(event, "source", {}).get("type", "")

@@ -35,7 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 
 from microbot import MicroBot  # noqa: E402
-from tests.integration.matrix import fetch_room_events  # noqa: E402
+from tests.integration.matrix import wait_for_room_event  # noqa: E402
 
 
 def _bot_over(client) -> MicroBot:
@@ -74,10 +74,11 @@ async def _new_room(client) -> str:
 
 async def _find_sent(client, room_id: str, body: str):
     """Sync the room and return the event whose plaintext body matches."""
-    events = await fetch_room_events(client, room_id, duration=8.0)
-    return next(
-        (e for e in events if e.source.get("content", {}).get("body") == body),
-        None,
+    return await wait_for_room_event(
+        client,
+        room_id,
+        lambda e: e.source.get("content", {}).get("body") == body,
+        timeout=8.0,
     )
 
 

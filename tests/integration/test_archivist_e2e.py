@@ -24,6 +24,7 @@ from tests.integration.matrix import (
     fetch_room_events,
     resolve_room,
     upload_and_send_file,
+    wait_for_room_event,
 )
 from tests.integration.openai_stub import stub_classify, stub_reformat
 
@@ -56,12 +57,9 @@ async def _wait_for_bot_membership(client, room_id: str, timeout: int = 30) -> N
 
 async def _wait_for_reply(client, room_id: str, *, predicate, timeout: int = 45):
     """Sync the room until an event satisfies `predicate`, or time out."""
-    for _ in range(timeout // 5 + 1):
-        events = await fetch_room_events(client, room_id, duration=5.0)
-        hit = next((e for e in events if predicate(e)), None)
-        if hit is not None:
-            return hit
-    return None
+    return await wait_for_room_event(
+        client, room_id, predicate, timeout=timeout,
+    )
 
 
 def _envelope(event) -> dict | None:
@@ -192,20 +190,18 @@ async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     bdd.ok(f"summary note present ({len(body)} chars)")
 
     # ── Then: room receives classification summary + structured event ──
-    # Gather everything Homer saw in the room for a bounded window, then
-    # filter. Single sync sweep covers both events even though they were
-    # posted back-to-back.
     bdd.then("the #documents room receives a classification summary")
     bdd.and_("the m.room.message carries a dev.famstack.event envelope")
-    events = await fetch_room_events(homer, room_id, duration=10)
-
-    summary = next(
-        (e for e in events
-         if event_type(e) == "m.room.message"
-         and expected_title in getattr(e, "body", "")),
-        None,
+    summary = await wait_for_room_event(
+        homer,
+        room_id,
+        lambda e: (
+            event_type(e) == "m.room.message"
+            and expected_title in getattr(e, "body", "")
+        ),
+        timeout=30,
     )
-    assert summary, f"no classification summary among {[event_type(e) for e in events]}"
+    assert summary, "no classification summary arrived"
     bdd.ok(f"summary event {summary.event_id}")
 
     # Single event per filing: the visible m.room.message is also the
