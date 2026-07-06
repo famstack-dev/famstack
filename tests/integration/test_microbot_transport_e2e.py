@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 
@@ -82,6 +84,7 @@ async def _find_sent(client, room_id: str, body: str):
 # ── _send: the formatted-reply path ──────────────────────────────────────
 
 
+@pytest.mark.smoke
 async def test_send_round_trips_markdown_reply_and_envelope(homer):
     """`_send` → Synapse → the stored event keeps the rendered HTML, the
     reply relation, and the custom `dev.famstack.event` envelope.

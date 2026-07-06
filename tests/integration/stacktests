@@ -14,6 +14,7 @@
 #   tests/integration/stacktests cleanup         — nuke every test stacklet +
 #                                                  instance state + test data
 #   tests/integration/stacktests e2e [args]      — run every e2e test
+#   tests/integration/stacktests smoke [args]    — run smoke e2e tests
 #   tests/integration/stacktests eval [args]     — pipeline quality eval
 #                                                  (real model, report-only)
 #   tests/integration/stacktests pytest [args]   — pytest with env + deps
@@ -123,7 +124,18 @@ case "${1:-}" in
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       python3 -m stack up "$sid" > /dev/null
     done
-    exec uv run --extra test pytest tests/integration/ -k "_e2e" "$@"
+    exec uv run --extra test pytest tests/integration/ -k "_e2e" --durations=20 "$@"
+    ;;
+
+  smoke)
+    # Run the smoke subset of end-to-end tests. Like e2e, this seeds
+    # secrets and ensures required stacklets are up before pytest starts.
+    shift || true
+    seed_secrets
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      python3 -m stack up "$sid" > /dev/null
+    done
+    exec uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
     ;;
 
   eval)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from nio import AsyncClient
 from nio.api import RoomVisibility
 from nio.responses import JoinedMembersResponse, RoomInviteResponse
@@ -67,6 +68,7 @@ def _envelope(event) -> dict | None:
     return event.source.get("content", {}).get("dev.famstack.event")
 
 
+@pytest.mark.smoke
 async def test_homer_uploads_invoice_archivist_classifies_and_files_it(
     bdd,
     openai,

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 
 from tests.integration.forgejo import ForgejoError
 from tests.integration.openai_stub import stub_classify
@@ -91,6 +92,7 @@ async def _wait_for_capture_by_title(code, title: str,
     return None
 
 
+@pytest.mark.smoke
 async def test_archivist_captures_pasted_text_to_memory(
     bdd,
     openai,

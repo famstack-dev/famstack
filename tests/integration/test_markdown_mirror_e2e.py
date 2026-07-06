@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from tests.integration.matrix import (
     ensure_joined,
     upload_and_send_file,
@@ -57,6 +58,7 @@ async def _wait_for_mirror_file(code, paperless_id: int, timeout: int = 60) -> s
     return None
 
 
+@pytest.mark.smoke
 async def test_archivist_files_and_mirrors_a_markdown_document(
     bdd,
     openai,
