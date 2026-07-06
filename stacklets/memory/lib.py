@@ -101,6 +101,7 @@ BRAIN_SEED_README = (
 )
 BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
 BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
+GENERATED_PAGE_MARKER = "<!-- begin: generated -->"
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
 INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
 
@@ -748,6 +749,71 @@ def seed_brain(
     return {"created": created, "skipped": skipped}
 
 
+def purge_generated_memory_pages(
+    client: ForgejoClient,
+    *,
+    message: str = "chore(memory): purge generated wiki pages from source",
+) -> dict:
+    """Delete legacy generated projection pages from `family/memory`.
+
+    B1 moves generation to `family/brain`, but upgraded instances can
+    already have generated wiki pages in the source repo from pre-B1
+    runs. The migration is marker-based so it does not depend on stale
+    path conventions: any markdown file with the generated splice marker
+    is a projection artifact and is removed from memory.
+    """
+    deleted: list[str] = []
+    tree = client.list_tree(REPO_OWNER, REPO_NAME)
+    for entry in tree:
+        path = entry.get("path", "")
+        if entry.get("type") != "blob" or not path.endswith(".md"):
+            continue
+        if Path(path).name == "README.md":
+            continue
+        existing = client.get_file(REPO_OWNER, REPO_NAME, path)
+        if not existing:
+            continue
+        content = existing.get("content", "")
+        if GENERATED_PAGE_MARKER not in content:
+            continue
+        client.delete_file(
+            REPO_OWNER, REPO_NAME, path,
+            sha=existing["sha"], message=message,
+        )
+        deleted.append(path)
+    return {"deleted": deleted}
+
+
+def purge_local_generated_memory_pages(vault_path: Path) -> dict:
+    """Remove generated page files from the local memory clone.
+
+    This is the local companion to `purge_generated_memory_pages`. It is
+    needed when a pre-fix wiki run wrote generated pages into the source
+    working copy without committing them; those local modifications block
+    a normal fast-forward after the remote purge.
+    """
+    deleted: list[str] = []
+    vault_path = Path(vault_path)
+    if not vault_path.exists():
+        return {"deleted": deleted}
+    for md in sorted(vault_path.rglob("*.md")):
+        if ".git" in md.parts or md.name == "README.md":
+            continue
+        try:
+            content = md.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if GENERATED_PAGE_MARKER not in content:
+            continue
+        try:
+            rel = str(md.relative_to(vault_path))
+            md.unlink()
+        except OSError:
+            continue
+        deleted.append(rel)
+    return {"deleted": deleted}
+
+
 def ensure_brain_projection_admin(
     *,
     code_url: str,
@@ -777,18 +843,21 @@ def ensure_brain_projection_admin(
     )
     admin_token_client = ForgejoClient(url=code_url, token=admin_token)
     brain_seeds = seed_brain(admin_token_client)
+    memory_purge = purge_generated_memory_pages(admin_token_client)
 
     cloned_brain = False
     if brain_path is not None:
+        had_brain = (brain_path / ".git").exists()
         brain_remote = authenticated_remote(
             brain_remote_url(code_url),
             admin_user, admin_token,
         )
-        cloned_brain = ensure_vault_cloned(brain_path, brain_remote)
+        cloned_brain = ensure_vault_cloned(brain_path, brain_remote) and not had_brain
 
     return {
         "created_brain_repo": brain_state["created_repo"],
         "brain_seeds": brain_seeds,
+        "memory_purge": memory_purge,
         "cloned_brain": cloned_brain,
     }
 

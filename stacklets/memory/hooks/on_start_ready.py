@@ -18,6 +18,7 @@ from lib import (  # noqa: E402
     ensure_brain_projection_admin,
     ensure_vault_cloned,
     pull_vault,
+    purge_local_generated_memory_pages,
     vault_path_for,
     vault_remote_url,
 )
@@ -48,11 +49,8 @@ def run(ctx):
         ctx.step("Memory vault pull skipped (Forgejo unreachable or non-FF)")
 
     # Seamless B1 migration for existing installs. Those instances will
-    # not rerun on_install_success, so create/clone brain here the first
-    # time an upgraded memory stacklet starts.
-    if (brain / ".git").exists():
-        return
-
+    # not rerun on_install_success, so create/clone brain here when
+    # missing and purge legacy generated pages from the source repo.
     code_url = ctx.env.get("CODE_URL", "")
     admin_user = ctx.env.get("ADMIN_USER", "")
     admin_password = ctx.env.get("ADMIN_PASSWORD", "")
@@ -74,7 +72,15 @@ def run(ctx):
     brain_seeds = result.get("brain_seeds", {})
     if brain_seeds.get("created"):
         ctx.step(f"Memory: pushed {len(brain_seeds['created'])} brain scaffold file(s)")
+    memory_purge = result.get("memory_purge", {})
+    if memory_purge.get("deleted"):
+        ctx.step(f"Memory: purged {len(memory_purge['deleted'])} generated source page(s)")
+    local_purge = purge_local_generated_memory_pages(vault)
+    if local_purge.get("deleted"):
+        ctx.step(f"Memory: removed {len(local_purge['deleted'])} local generated page(s)")
+    if memory_purge.get("deleted") or local_purge.get("deleted"):
+        pull_vault(vault)
     if result.get("cloned_brain"):
         ctx.step(f"Memory: cloned brain projection to {brain}")
-    else:
+    elif not (brain / ".git").exists():
         ctx.step(f"Memory brain projection clone failed at {brain}")

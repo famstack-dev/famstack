@@ -33,6 +33,8 @@ from lib import (  # noqa: E402
     ensure_brain_projection_admin,
     ensure_memory_repo,
     install_seeds,
+    purge_generated_memory_pages,
+    purge_local_generated_memory_pages,
     seed_brain,
 )
 import lib as memory_lib  # noqa: E402
@@ -329,6 +331,11 @@ class TestEnsureBrainProjectionAdmin:
                 method="POST",
             ).respond_with_json({}, status=201)
 
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/git/trees/main",
+            method="GET",
+        ).respond_with_json({"tree": []})
+
         cloned = {}
 
         def fake_clone(path, remote):
@@ -348,6 +355,83 @@ class TestEnsureBrainProjectionAdmin:
 
         assert result["created_brain_repo"] is True
         assert sorted(result["brain_seeds"]["created"]) == [".gitignore", "README.md"]
+        assert result["memory_purge"] == {"deleted": []}
         assert result["cloned_brain"] is True
         assert cloned["path"] == brain
         assert "stackadmin:migration-token@" in cloned["remote"]
+
+
+class TestPurgeGeneratedMemoryPages:
+    """Source cleanup deletes only marker-bearing generated markdown."""
+
+    def test_deletes_generated_markdown_from_memory(self, httpserver):
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/git/trees/main",
+            method="GET",
+        ).respond_with_json({
+            "tree": [
+                {"type": "blob", "path": "index.md"},
+                {"type": "blob", "path": "homer/about.md"},
+                {"type": "blob", "path": "homer/notes/source.md"},
+                {"type": "blob", "path": "family/correspondents/README.md"},
+                {"type": "blob", "path": "facts.toml"},
+            ],
+        })
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/index.md",
+            method="GET",
+        ).respond_with_json(_file_response(
+            "index.md",
+            "---\ntitle: Home\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
+        ))
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/index.md",
+            method="DELETE",
+        ).respond_with_json({}, status=200)
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/homer/about.md",
+            method="GET",
+        ).respond_with_json(_file_response(
+            "homer/about.md",
+            "---\ntitle: Homer\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
+        ))
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/homer/about.md",
+            method="DELETE",
+        ).respond_with_json({}, status=200)
+        httpserver.expect_request(
+            f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/homer/notes/source.md",
+            method="GET",
+        ).respond_with_json(_file_response(
+            "homer/notes/source.md",
+            "---\ntype: note\n---\n\nsource body\n",
+        ))
+
+        result = purge_generated_memory_pages(_admin_client(httpserver))
+
+        assert result == {"deleted": ["index.md", "homer/about.md"]}
+
+
+class TestPurgeLocalGeneratedMemoryPages:
+    """Local cleanup removes generated pages that would block pull."""
+
+    def test_deletes_generated_markdown_but_keeps_readme_and_sources(self, tmp_path):
+        generated = tmp_path / "homer" / "about.md"
+        generated.parent.mkdir(parents=True)
+        generated.write_text(
+            "---\ntitle: Homer\n---\n<!-- begin: generated -->\nbody\n",
+            encoding="utf-8",
+        )
+        readme = tmp_path / "family" / "correspondents" / "README.md"
+        readme.parent.mkdir(parents=True)
+        readme.write_text("Example <!-- begin: generated --> marker\n", encoding="utf-8")
+        source = tmp_path / "homer" / "notes" / "source.md"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("---\ntype: note\n---\n\nsource\n", encoding="utf-8")
+
+        result = purge_local_generated_memory_pages(tmp_path)
+
+        assert result == {"deleted": ["homer/about.md"]}
+        assert not generated.exists()
+        assert readme.exists()
+        assert source.exists()
