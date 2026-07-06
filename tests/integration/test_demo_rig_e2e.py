@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 
 import pytest
 from nio.api import RoomVisibility
@@ -106,6 +107,16 @@ def _cleanup_paperless_documents_containing(paperless, token: str) -> None:
             paperless.delete_document(doc["id"])
         except Exception:
             pass
+
+
+def _run_stack(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["./stack", *args],
+        cwd=".",
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
 
 
 @pytest.mark.demo_rig
@@ -215,3 +226,61 @@ async def test_demo_rig_documents_markdown_reaches_paperless_and_memory_with_liv
     finally:
         _cleanup_paperless_documents_containing(demo_paperless, token)
         _cleanup_memory_files_containing(demo_code, token)
+
+
+@pytest.mark.demo_rig
+def test_demo_rig_memory_todos_stay_mutable_in_memory(
+    bdd,
+    demo_code,
+    scope,
+):
+    """Topic todos still add/list/strike in family/memory during B1."""
+    topic = f"demo-rig-todo-{scope.uid}"
+    item = f"verify B1 todo memory write {scope.uid}"
+    path = f"{MEMORY_OWNER}/{topic}/todos.md"
+
+    try:
+        bdd.given("A unique demo-rig topic with no todo list")
+        assert demo_code.get_file(MEMORY_OWNER, MEMORY_REPO, path) is None
+
+        bdd.when("Homer adds a todo through the live stack CLI")
+        add = _run_stack(
+            "memory", "topic", topic, "todo", "add", item, "--by", "homer",
+        )
+        assert add.returncode == 0, add.stderr or add.stdout
+        assert "Added:" in add.stdout
+
+        bdd.then("family/memory contains the todo document")
+        f = demo_code.get_file(MEMORY_OWNER, MEMORY_REPO, path)
+        assert f, f"missing {path} after todo add"
+        assert f"- [ ] {item}" in f["content"]
+
+        bdd.and_("The host-native todo reader lists the open item")
+        listed = _run_stack("memory", "topic", topic, "todo")
+        assert listed.returncode == 0, listed.stderr or listed.stdout
+        assert f"- [ ] {item}" in listed.stdout
+
+        bdd.when("Homer strikes the todo through the live stack CLI")
+        struck = _run_stack(
+            "memory", "topic", topic, "todo", "strike", item, "--by", "homer",
+        )
+        assert struck.returncode == 0, struck.stderr or struck.stdout
+        assert "Struck:" in struck.stdout
+
+        bdd.then("The canonical memory todo is checked off")
+        f = demo_code.get_file(MEMORY_OWNER, MEMORY_REPO, path)
+        assert f, f"missing {path} after todo strike"
+        assert f"- [x] {item}" in f["content"]
+
+        bdd.and_("The reader can include done items")
+        listed_all = _run_stack("memory", "topic", topic, "todo", "--all")
+        assert listed_all.returncode == 0, listed_all.stderr or listed_all.stdout
+        assert f"- [x] {item}" in listed_all.stdout
+    finally:
+        try:
+            demo_code.delete_file(
+                MEMORY_OWNER, MEMORY_REPO, path,
+                f"chore: demo rig cleanup {topic}",
+            )
+        except Exception:
+            pass
