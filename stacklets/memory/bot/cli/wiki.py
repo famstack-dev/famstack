@@ -544,15 +544,6 @@ async def _generate_topic(
     )
     return rc
 
-
-async def _generate_todos(
-    entries: list[dict], *,
-    page_dir: str, display: str, shared_bucket: str, write: bool,
-) -> int:
-    """Disabled between B1 and B2; todos stay memory-owned meanwhile."""
-    return 0
-
-
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
     """Frontmatter for a freshly-created member page.
 
@@ -977,65 +968,6 @@ def _build_references_section(
             head += f" - {date}"
         rows.append(head)
     return "\n".join(rows)
-
-
-# ── Open todos ──────────────────────────────────────────────────────────────
-#
-# The classifier already extracts action items, and the archivist already
-# writes them as Obsidian task lines (`- [ ] action — due`) inside each
-# capture's `> [!summary]` callout. `_index_vault` carries that callout text on
-# every entry as `summary`, so the todos are already in the vault, scattered
-# one-per-capture. `_generate_todos` gathers a scope's open boxes into a single
-# persistent `todos.md` (via `update_todo_doc`, which keeps whatever the family
-# ticked off in Forgejo) — same Obsidian Tasks convention, so the lines stay
-# interactive checkboxes in Obsidian and styled ones in Quartz.
-
-# An unchecked task line, after `extract_summary_callout` has stripped the
-# blockquote `> ` prefix: `- [ ] text` or `* [ ] text`, any leading indent.
-# Checked boxes (`[x]`/`[X]`) are deliberately left out — done is done.
-_OPEN_TODO_RE = re.compile(r"^\s*[-*]\s+\[ \]\s+(.+\S)\s*$")
-
-
-def _open_todos(entries: list[dict]) -> list[dict]:
-    """Collect open `- [ ]` task lines from the entries' summaries.
-
-    Reads each entry's already-indexed `summary` (the capture's
-    `> [!summary]` callout body) for unchecked task lines and keeps the
-    source (`title`, `rel`) so the rendered line can link back to the
-    capture it came from. No second walk over the vault, no new capture
-    type — the todos are the action items that were already there.
-    """
-    todos: list[dict] = []
-    for entry in entries:
-        for line in (entry.get("summary") or "").splitlines():
-            match = _OPEN_TODO_RE.match(line)
-            if not match:
-                continue
-            todos.append({
-                "text": match.group(1).strip(),
-                "title": (entry.get("title") or "").strip(),
-                "rel": entry.get("rel") or "",
-            })
-    return todos
-
-
-def _collect_todo_items(entries: list[dict]) -> list[str]:
-    """The scope's open todos as a deduplicated, first-seen-ordered text list.
-
-    `update_todo_doc` takes plain action-item strings, so this flattens
-    `_open_todos` down to its `text` and drops repeats: the same task can
-    surface in two captures (a reminder re-sent to the room), but it must
-    land once in the merged `todos.md`. Done boxes are already gone --
-    `_open_todos` keeps only `- [ ]`.
-    """
-    seen: set[str] = set()
-    items: list[str] = []
-    for todo in _open_todos(entries):
-        text = todo["text"]
-        if text not in seen:
-            seen.add(text)
-            items.append(text)
-    return items
 
 
 def _relative_link(rel: str, page_dir: str) -> str:

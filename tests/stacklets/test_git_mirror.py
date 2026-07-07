@@ -412,6 +412,91 @@ class TestBriefingBlock:
         assert "Show Document" not in out
 
 
+class _FakeTodoClient:
+    """Minimal Forgejo file API for todo-fold unit tests."""
+
+    def __init__(self, files: dict[str, dict] | None = None):
+        self.files = dict(files or {})
+        self.puts: list[dict] = []
+
+    def get_file(self, owner, repo, path):
+        return self.files.get(path)
+
+    def put_file(
+        self, owner, repo, path, *,
+        content, message, sha=None, author_name=None, author_email=None,
+    ):
+        self.files[path] = {"content": content, "sha": f"sha-{len(self.puts) + 1}"}
+        self.puts.append({
+            "path": path,
+            "content": content,
+            "message": message,
+            "sha": sha,
+            "author_name": author_name,
+            "author_email": author_email,
+        })
+
+
+class TestTodoStateDocumentFold:
+    """Action items are folded into source `todos.md` by the filing writer."""
+
+    @pytest.mark.asyncio
+    async def test_document_topics_receive_action_items(self, mirror):
+        client = _FakeTodoClient()
+        await mirror._fold_document_todos(
+            client,
+            classification={
+                "topics": ["Camping"],
+                "action_items": [
+                    {"action": "book pitch", "due": "2026-04-01"},
+                    "pack stove",
+                ],
+            },
+        )
+
+        written = client.files["family/camping/todos.md"]["content"]
+        assert "# Camping" in written
+        assert "- [ ] book pitch" in written
+        assert "- [ ] pack stove" in written
+        assert client.puts[0]["author_name"] == BOT_USERNAME
+
+    @pytest.mark.asyncio
+    async def test_capture_in_shared_topic_updates_that_topic_todos(self, mirror):
+        client = _FakeTodoClient({
+            "family/camping/todos.md": {
+                "content": "# Camping\n\n- [x] book pitch\n",
+                "sha": "old-sha",
+            },
+        })
+        await mirror._fold_capture_todos(
+            client,
+            target_path="family/camping/notes/2026/07/packing-a1b2c3.md",
+            classification={"action_items": ["pack stove", "book pitch"]},
+            author_name="homer",
+            author_email="homer@simpson",
+        )
+
+        written = client.files["family/camping/todos.md"]["content"]
+        assert "- [x] book pitch" in written
+        assert "- [ ] pack stove" in written
+        assert written.count("book pitch") == 1
+        assert client.puts[0]["sha"] == "old-sha"
+        assert client.puts[0]["author_name"] == "homer"
+
+    @pytest.mark.asyncio
+    async def test_personal_capture_bucket_does_not_create_personal_todos(self, mirror):
+        client = _FakeTodoClient()
+        await mirror._fold_capture_todos(
+            client,
+            target_path="homer/gravel/notes/2026/07/training-a1b2c3.md",
+            classification={"action_items": ["pump tires"]},
+            author_name="homer",
+            author_email="homer@simpson",
+        )
+
+        assert client.puts == []
+
+
 # ── Captures ─────────────────────────────────────────────────────────────
 #
 # A capture is a non-Paperless source (today: a pasted URL processed by

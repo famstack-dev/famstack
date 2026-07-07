@@ -16,7 +16,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -25,7 +24,6 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
     _build_topic_prompt,
-    _collect_todo_items,
     _capture_index_pages,
     _clean_generated,
     _correspondent_body,
@@ -42,7 +40,6 @@ from wiki import (  # noqa: E402
     _member_preamble,
     _member_slugs,
     _month_label,
-    _open_todos,
     _publish,
     _render_capture_index,
     _topic_cross_refs,
@@ -786,88 +783,6 @@ class TestMemberSlugs:
         index = [{"persons": ["homer", "scribe-bot"]}]
         slugs = _member_slugs(tmp_path, index, shared_bucket="family")
         assert "homer" in slugs and "scribe-bot" not in slugs
-
-
-# ── _open_todos / _collect_todo_items ────────────────────────────────────
-
-
-@pytest.mark.skip(reason="moved in B2")
-class TestOpenTodos:
-    """Collect open `- [ ]` task lines out of the captures' summary
-    callouts. The archivist already writes the classifier's action
-    items as Obsidian task lines inside `> [!summary]`; `_index_vault`
-    carries that callout text on each entry as `summary`. We read the
-    unchecked boxes from it — no second walk, no new capture type."""
-
-    def test_extracts_open_checkboxes(self):
-        entries = [
-            {"rel": "family/trip/notes/a.md", "title": "Trip plan",
-             "summary": "Planning notes\n\n**Action items**\n"
-                        "- [ ] book tickets — 2026-04-01\n- [ ] confirm hotel"},
-        ]
-        texts = [t["text"] for t in _open_todos(entries)]
-        assert "book tickets — 2026-04-01" in texts
-        assert "confirm hotel" in texts
-
-    def test_excludes_done(self):
-        entries = [{"rel": "x.md", "title": "X",
-                    "summary": "- [x] already done\n- [X] also done\n"
-                               "- [ ] still open"}]
-        assert [t["text"] for t in _open_todos(entries)] == ["still open"]
-
-    def test_preserves_source(self):
-        entries = [{"rel": "family/trip/notes/a.md", "title": "Trip",
-                    "summary": "- [ ] pack bags"}]
-        todo = _open_todos(entries)[0]
-        assert todo["rel"] == "family/trip/notes/a.md"
-        assert todo["title"] == "Trip"
-
-    def test_ignores_plain_bullets(self):
-        # Facts in the same callout are plain bullets, not task lines.
-        entries = [{"rel": "a.md", "title": "A",
-                    "summary": "- a fact\n- another fact\n- [ ] real todo"}]
-        assert [t["text"] for t in _open_todos(entries)] == ["real todo"]
-
-    def test_entries_without_summary(self):
-        assert _open_todos([{"rel": "a.md", "title": "A"}]) == []
-
-    def test_empty_index(self):
-        assert _open_todos([]) == []
-
-
-@pytest.mark.skip(reason="moved in B2")
-class TestCollectTodoItems:
-    """Flatten a scope's open todos into the plain, deduplicated text
-    list `_generate_todos` hands to `update_todo_doc`. Done boxes are
-    already dropped by `_open_todos`; here we only pin the flatten and
-    the dedup (an action item re-sent across two captures must not
-    double up in the merged `todos.md`), with first-seen order kept."""
-
-    def test_flattens_texts_across_entries(self):
-        entries = [
-            {"rel": "family/trip/notes/a.md", "title": "Plan",
-             "summary": "- [ ] book tickets\n- [ ] confirm hotel"},
-            {"rel": "family/trip/notes/b.md", "title": "Idea",
-             "summary": "- [ ] pack bags"},
-        ]
-        assert _collect_todo_items(entries) == [
-            "book tickets", "confirm hotel", "pack bags",
-        ]
-
-    def test_dedups_repeated_item_keeping_first_seen_order(self):
-        entries = [
-            {"rel": "a.md", "title": "A", "summary": "- [ ] volltanken"},
-            {"rel": "b.md", "title": "B",
-             "summary": "- [ ] parkkarten\n- [ ] volltanken"},
-        ]
-        assert _collect_todo_items(entries) == ["volltanken", "parkkarten"]
-
-    def test_empty_when_no_open_todos(self):
-        entries = [{"rel": "a.md", "title": "A", "summary": "- [x] done"}]
-        assert _collect_todo_items(entries) == []
-
-    def test_empty_index(self):
-        assert _collect_todo_items([]) == []
 
 
 # ── On-disk projection write (slice 4: materialize into the brain copy) ─────

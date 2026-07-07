@@ -46,12 +46,16 @@ import asyncio
 import json
 import os
 import secrets
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "memory" / "bot" / "cli"))
+from todo_list import update_todo_doc  # noqa: E402
 
 from vault_entry import (
     slug,
@@ -65,6 +69,7 @@ from vault_entry import (
     render_capture,
     render_email_message_section,
     fold_email_message,
+    _format_action_item,
 )
 
 
@@ -458,6 +463,117 @@ class GitMirror:
             lines.append(f"Model: {model}")
         return "\n".join(lines)
 
+    def _action_item_texts(self, action_items: list | None) -> list[str]:
+        """Action items in the same text form rendered into capture callouts."""
+        texts: list[str] = []
+        for item in action_items or []:
+            line = _format_action_item(item)
+            if not line:
+                continue
+            texts.append(line.removeprefix("- [ ] ").strip())
+        return texts
+
+    def _todo_doc_path_for_topic(self, topic: str) -> tuple[str, str] | None:
+        topic = (topic or "").strip()
+        if not topic:
+            return None
+        topic_slug = self._slug(topic)
+        title = topic.replace("-", " ").title()
+        return f"{self.shared_bucket}/{topic_slug}/todos.md", title
+
+    def _todo_doc_path_for_capture(self, target_path: str) -> tuple[str, str] | None:
+        parts = target_path.split("/")
+        if len(parts) < 3 or parts[0] != self.shared_bucket:
+            return None
+        topic_slug = parts[1]
+        if topic_slug in {"documents", "notes", "bookmarks", "emails", "_unfiled"}:
+            return None
+        return f"{self.shared_bucket}/{topic_slug}/todos.md", topic_slug.replace("-", " ").title()
+
+    async def _fold_action_items_into_todos(
+        self,
+        client: ForgejoClient,
+        *,
+        target_path: str,
+        title: str,
+        action_items: list | None,
+        message: str,
+        author_name: str,
+        author_email: str,
+    ) -> bool:
+        """Merge extracted action items into a source `todos.md` document."""
+        items = self._action_item_texts(action_items)
+        if not items:
+            return False
+        try:
+            existing = await asyncio.to_thread(
+                client.get_file, self.repo_owner, REPO_NAME, target_path,
+            )
+            prior = (existing.get("content") if existing else None) or None
+            content = update_todo_doc(prior, title, items)
+            if content == prior:
+                return False
+            await asyncio.to_thread(
+                client.put_file,
+                self.repo_owner, REPO_NAME, target_path,
+                content=content, message=message,
+                sha=existing["sha"] if existing else None,
+                author_name=author_name, author_email=author_email,
+            )
+            return True
+        except ForgejoError as e:
+            logger.warning("[git-mirror] Todo fold failed for {}: {}", target_path, e)
+            return False
+
+    async def _fold_document_todos(
+        self,
+        client: ForgejoClient,
+        *,
+        classification: dict,
+    ) -> None:
+        topics = classification.get("topics") or classification.get("topic") or []
+        if isinstance(topics, str):
+            topics = [topics]
+        for topic in topics:
+            if not isinstance(topic, str):
+                continue
+            target = self._todo_doc_path_for_topic(topic)
+            if target is None:
+                continue
+            path, title = target
+            await self._fold_action_items_into_todos(
+                client,
+                target_path=path,
+                title=title,
+                action_items=classification.get("action_items") or [],
+                message=f"chore(todos): archivist added action items to {self._slug(topic)}",
+                author_name=BOT_USERNAME,
+                author_email=BOT_EMAIL,
+            )
+
+    async def _fold_capture_todos(
+        self,
+        client: ForgejoClient,
+        *,
+        target_path: str,
+        classification: dict,
+        author_name: str,
+        author_email: str,
+    ) -> None:
+        target = self._todo_doc_path_for_capture(target_path)
+        if target is None:
+            return
+        path, title = target
+        await self._fold_action_items_into_todos(
+            client,
+            target_path=path,
+            title=title,
+            action_items=classification.get("action_items") or [],
+            message=f"chore(todos): {author_name} added action items to {title.lower()}",
+            author_name=author_name,
+            author_email=author_email,
+        )
+
     # ── Publish ──────────────────────────────────────────────────────────
 
     async def publish(
@@ -597,6 +713,7 @@ class GitMirror:
 
         self._cache[paperless_id] = target_path
         self._save_cache()
+        await self._fold_document_todos(client, classification=classification)
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
         return True
 
@@ -859,6 +976,13 @@ class GitMirror:
             return None
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
+        await self._fold_capture_todos(
+            client,
+            target_path=target_path,
+            classification=classification,
+            author_name=author_name,
+            author_email=author_email,
+        )
         return target_path
 
     # ── Email threads ─────────────────────────────────────────────────────
@@ -1026,4 +1150,11 @@ class GitMirror:
             return None
 
         logger.info("[git-mirror] {} email → {}", verb, target_path)
+        await self._fold_capture_todos(
+            client,
+            target_path=target_path,
+            classification=classification,
+            author_name=BOT_USERNAME,
+            author_email=BOT_EMAIL,
+        )
         return target_path
