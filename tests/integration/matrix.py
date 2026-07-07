@@ -91,11 +91,25 @@ class MatrixLoginError(RuntimeError):
 # resolve the room alias, upload the bytes, send an m.image or m.file
 # event. Then poll the room for the bot's reply.
 
+async def matrix_call(label: str, awaitable, *, timeout: float = 15.0):
+    """Run one nio request with a hard client-side timeout.
+
+    aiohttp/nio calls can otherwise hang below a helper's own polling
+    deadline, making live integration tests look like they are still
+    waiting normally. Fail at the Matrix operation instead.
+    """
+    import asyncio
+
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout)
+    except asyncio.TimeoutError as e:
+        raise RuntimeError(f"Matrix call timed out after {timeout:g}s: {label}") from e
+
 
 async def resolve_room(client, alias: str) -> str:
     """Turn '#documents:test.local' into a room_id. Raises on failure."""
     from nio import RoomResolveAliasResponse
-    resp = await client.room_resolve_alias(alias)
+    resp = await matrix_call(f"resolve room {alias}", client.room_resolve_alias(alias))
     if not isinstance(resp, RoomResolveAliasResponse):
         raise RuntimeError(f"Could not resolve {alias}: {resp}")
     return resp.room_id
@@ -114,7 +128,9 @@ async def wait_for_room(client, alias: str, timeout: float = 60.0) -> str:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
-        resp = await client.room_resolve_alias(alias)
+        resp = await matrix_call(
+            f"resolve room {alias}", client.room_resolve_alias(alias),
+        )
         if isinstance(resp, RoomResolveAliasResponse):
             return resp.room_id
         last = resp
@@ -127,10 +143,13 @@ async def ensure_joined(client, room_id: str) -> None:
     # client.rooms populates via /sync — a cheap initial sync guarantees
     # the membership list is current before we decide whether to join.
     if not client.rooms:
-        await client.sync(timeout=3000, full_state=True)
+        await matrix_call(
+            "initial sync before join",
+            client.sync(timeout=3000, full_state=True),
+        )
     if room_id not in client.rooms:
         from nio import JoinResponse
-        resp = await client.join(room_id)
+        resp = await matrix_call(f"join {room_id}", client.join(room_id))
         if not isinstance(resp, JoinResponse):
             raise RuntimeError(f"Could not join {room_id}: {resp}")
 
@@ -147,24 +166,31 @@ async def upload_and_send_file(
     Returns the event_id of the posted message."""
     from nio import UploadResponse
 
-    upload, _ = await client.upload(
-        data_provider=lambda *_: io.BytesIO(data),
-        content_type=mime_type,
-        filename=filename,
-        filesize=len(data),
+    upload, _ = await matrix_call(
+        f"upload {filename}",
+        client.upload(
+            data_provider=lambda *_: io.BytesIO(data),
+            content_type=mime_type,
+            filename=filename,
+            filesize=len(data),
+        ),
+        timeout=60,
     )
     if not isinstance(upload, UploadResponse):
         raise RuntimeError(f"Upload failed: {upload}")
 
-    send = await client.room_send(
-        room_id=room_id,
-        message_type="m.room.message",
-        content={
-            "msgtype": msgtype,
-            "body": filename,
-            "url": upload.content_uri,
-            "info": {"mimetype": mime_type, "size": len(data)},
-        },
+    send = await matrix_call(
+        f"send file message to {room_id}",
+        client.room_send(
+            room_id=room_id,
+            message_type="m.room.message",
+            content={
+                "msgtype": msgtype,
+                "body": filename,
+                "url": upload.content_uri,
+                "info": {"mimetype": mime_type, "size": len(data)},
+            },
+        ),
     )
     return send.event_id
 
@@ -182,7 +208,11 @@ async def fetch_room_events(client, room_id: str, *, duration: float = 10.0) -> 
     deadline = time.monotonic() + duration
     next_batch = client.next_batch
     while time.monotonic() < deadline:
-        sync = await client.sync(timeout=1000, since=next_batch)
+        sync = await matrix_call(
+            f"sync events for {room_id}",
+            client.sync(timeout=1000, since=next_batch),
+            timeout=3,
+        )
         next_batch = getattr(sync, "next_batch", next_batch)
         rooms = getattr(sync, "rooms", None)
         joined = getattr(rooms, "join", {}) if rooms else {}
@@ -212,7 +242,11 @@ async def wait_for_room_event(
     while time.monotonic() < deadline:
         remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
         sync_timeout = min(30_000, remaining_ms)
-        sync = await client.sync(timeout=sync_timeout, since=next_batch)
+        sync = await matrix_call(
+            f"sync waiting for event in {room_id}",
+            client.sync(timeout=sync_timeout, since=next_batch),
+            timeout=(sync_timeout / 1000) + 5,
+        )
         next_batch = getattr(sync, "next_batch", next_batch)
         rooms = getattr(sync, "rooms", None)
         joined = getattr(rooms, "join", {}) if rooms else {}
@@ -245,7 +279,11 @@ async def wait_for_room_events_until(
     while time.monotonic() < deadline:
         remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
         sync_timeout = min(30_000, remaining_ms)
-        sync = await client.sync(timeout=sync_timeout, since=next_batch)
+        sync = await matrix_call(
+            f"sync waiting for event batch in {room_id}",
+            client.sync(timeout=sync_timeout, since=next_batch),
+            timeout=(sync_timeout / 1000) + 5,
+        )
         next_batch = getattr(sync, "next_batch", next_batch)
         rooms = getattr(sync, "rooms", None)
         joined = getattr(rooms, "join", {}) if rooms else {}

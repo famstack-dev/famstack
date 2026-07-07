@@ -26,6 +26,7 @@ from nio.responses import JoinedMembersResponse, RoomInviteResponse
 from tests.integration.forgejo import ForgejoError
 from tests.integration.matrix import (
     ensure_joined,
+    matrix_call,
     upload_and_send_file,
     wait_for_room,
 )
@@ -43,7 +44,10 @@ def _frontmatter_text(fm: dict) -> str:
 async def _wait_for_bot_membership(client, room_id: str, bot_mxid: str,
                                    timeout: int = 60) -> None:
     for _ in range(timeout):
-        resp = await client.joined_members(room_id)
+        resp = await matrix_call(
+            f"joined members for {room_id}",
+            client.joined_members(room_id),
+        )
         if isinstance(resp, JoinedMembersResponse):
             if any(m.user_id == bot_mxid for m in resp.members):
                 return
@@ -168,14 +172,20 @@ async def test_demo_rig_private_capture_reaches_memory_with_live_ai(
 
     try:
         bdd.given("Homer creates a private demo-rig notes room")
-        create = await demo_homer.room_create(
-            name=f"Demo Rig Notes {token}",
-            visibility=RoomVisibility.private,
+        create = await matrix_call(
+            f"create private notes room {token}",
+            demo_homer.room_create(
+                name=f"Demo Rig Notes {token}",
+                visibility=RoomVisibility.private,
+            ),
         )
         room_id = getattr(create, "room_id", None)
         assert room_id, f"room_create returned no room_id: {create}"
 
-        invite = await demo_homer.room_invite(room_id, bot_mxid)
+        invite = await matrix_call(
+            f"invite archivist to {room_id}",
+            demo_homer.room_invite(room_id, bot_mxid),
+        )
         assert isinstance(invite, RoomInviteResponse), f"invite failed: {invite}"
         await _wait_for_bot_membership(demo_homer, room_id, bot_mxid)
 
@@ -189,10 +199,13 @@ async def test_demo_rig_private_capture_reaches_memory_with_live_ai(
         )
 
         bdd.when("Homer sends the demo-rig paste")
-        await demo_homer.room_send(
-            room_id=room_id,
-            message_type="m.room.message",
-            content={"msgtype": "m.text", "body": pasted_text},
+        await matrix_call(
+            f"send private capture text to {room_id}",
+            demo_homer.room_send(
+                room_id=room_id,
+                message_type="m.room.message",
+                content={"msgtype": "m.text", "body": pasted_text},
+            ),
         )
 
         bdd.then("family/memory contains the captured token")
@@ -326,36 +339,48 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
         assert f"- [x] {item}" in listed_all.stdout
 
         bdd.when("Homer files a note with action items in a shared topic room")
-        create = await demo_homer.room_create(
-            name=f"Topic: {topic}",
-            visibility=RoomVisibility.private,
+        create = await matrix_call(
+            f"create topic room {topic}",
+            demo_homer.room_create(
+                name=f"Topic: {topic}",
+                visibility=RoomVisibility.private,
+            ),
         )
         room_id = getattr(create, "room_id", None)
         assert room_id, f"room_create returned no room_id: {create}"
         assert isinstance(
-            await demo_homer.room_invite(room_id, marge.user_id),
+            await matrix_call(
+                f"invite marge to {room_id}",
+                demo_homer.room_invite(room_id, marge.user_id),
+            ),
             RoomInviteResponse,
         )
-        await marge.join(room_id)
+        await matrix_call(f"marge join {room_id}", marge.join(room_id))
         assert isinstance(
-            await demo_homer.room_invite(room_id, bot_mxid),
+            await matrix_call(
+                f"invite archivist to {room_id}",
+                demo_homer.room_invite(room_id, bot_mxid),
+            ),
             RoomInviteResponse,
         )
         await _wait_for_bot_membership(demo_homer, room_id, bot_mxid)
 
-        await demo_homer.room_send(
-            room_id=room_id,
-            message_type="m.room.message",
-            content={
-                "msgtype": "m.text",
-                "body": (
-                    "Todo:\n"
-                    f"{captured_item}\n\n"
-                    f"{token}\n"
-                    "This is a deliberate household action list for the "
-                    "demo-rig todo projection check."
-                ),
-            },
+        await matrix_call(
+            f"send topic todo capture to {room_id}",
+            demo_homer.room_send(
+                room_id=room_id,
+                message_type="m.room.message",
+                content={
+                    "msgtype": "m.text",
+                    "body": (
+                        "Todo:\n"
+                        f"{captured_item}\n\n"
+                        f"{token}\n"
+                        "This is a deliberate household action list for the "
+                        "demo-rig todo projection check."
+                    ),
+                },
+            ),
         )
 
         bdd.then("The capture action item is folded into memory todos.md")
