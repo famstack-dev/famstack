@@ -385,11 +385,15 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
 
         bdd.then("The capture action item is folded into memory todos.md")
         memory_todos = await _wait_for_repo_file_containing(
-            demo_code, MEMORY_REPO, path, captured_item, timeout=300,
+            demo_code, MEMORY_REPO, path, captured_item, timeout=120,
         )
         assert memory_todos, f"{captured_item!r} did not appear in {path}"
 
-        bdd.and_("An explicit source sync mirrors the todo document into brain")
+        # `stack memory sync` triggers the curator to mirror source AND
+        # rebuild the wiki now, bypassing its 180s batching debounce.
+        # One call makes both the source (todos.md) and the generated
+        # page (about.md) current in LLM-time — the rig's fast path.
+        bdd.and_("An explicit sync makes source and wiki current now")
         synced = _run_stack("memory", "sync")
         assert synced.returncode == 0, synced.stderr or synced.stdout
 
@@ -400,7 +404,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
 
         bdd.and_("The curator publishes the topic about page into brain")
         brain_about = await _wait_for_repo_file(
-            demo_code, BRAIN_REPO, about_path, timeout=420,
+            demo_code, BRAIN_REPO, about_path, timeout=90,
         )
         assert brain_about, f"{about_path} did not appear in family/brain"
         assert "generated: true" in brain_about["content"]

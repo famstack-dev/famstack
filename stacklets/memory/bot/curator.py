@@ -758,7 +758,13 @@ async def main() -> None:
     )
 
     while True:
-        if await sleep_until_tick(POLL_SECS, state_dir):
+        # A mirror-now trigger (from `stack memory sync`) forces this
+        # cycle to rebuild the wiki immediately, bypassing the debounce.
+        # The debounce exists to batch a burst of filings into one
+        # rebuild; an explicit trigger means "I want it current now",
+        # which is what the test rig needs for a fast feedback loop.
+        forced = await sleep_until_tick(POLL_SECS, state_dir)
+        if forced:
             logger.info("[curator] mirror-now trigger received")
         # The curator owns the pull — the wiki container only watches
         # files. Runs even with rebuilds disabled: the wiki must not
@@ -815,7 +821,7 @@ async def main() -> None:
             debounce.reset()
             continue
 
-        if not debounce.observe(head, time.monotonic()):
+        if not forced and not debounce.observe(head, time.monotonic()):
             continue
 
         paths = await vault.changed_paths(last, head)
