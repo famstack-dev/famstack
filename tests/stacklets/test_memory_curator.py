@@ -4,8 +4,8 @@ The sidecar's job is mostly plumbing (git reads, one subprocess call);
 what's worth pinning is the logic that keeps it from misfiring: the
 own-commit filter that stops a rebuild from triggering itself, the
 debounce that turns a 25-document ingest into one rebuild instead of
-25, the persons-only selection that keeps the incremental pass at 2-3
-LLM calls, and the nightly once-per-day gate. All pure and tested
+25, the member/topic selection that keeps the incremental pass bounded,
+and the nightly once-per-day gate. All pure and tested
 here; the end-to-end path rides the integration rig like the rest of
 the wiki.
 """
@@ -126,6 +126,18 @@ class TestMemberSelection:
         paths = ["homer/notes/2026/06/duff-recipe-ab12.md"]
         assert member_selection(paths, _fm({}), shared_bucket="family") == [
             "--home", "--member", "homer",
+        ]
+
+    def test_shared_topic_capture_selects_topic_page(self):
+        paths = ["family/camping/notes/2026/06/checklist-a1.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == [
+            "--home", "--topic", "camping",
+        ]
+
+    def test_personal_topic_capture_selects_owner_and_topic_page(self):
+        paths = ["homer/gravel/notes/2026/06/training-a1.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == [
+            "--home", "--member", "homer", "--topic", "gravel",
         ]
 
     def test_generated_pages_never_trigger(self):

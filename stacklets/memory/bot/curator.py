@@ -13,11 +13,11 @@ container is a pure view that just watches the files). Jobs:
    costs 2-3 LLM calls, so freshness where it's felt — "I filed
    Homer's letter, Homer's page knows" — is nearly free.
 2. **Nightly full sweep.** Home, every member, every topic, at
-   WIKI_NIGHTLY local time. This is the self-healing catch-all: topic
-   pages and cross-references go stale invisibly during the day and
-   are corrected while the GPU is idle. It also means the incremental
-   person mapping only has to be *helpful*, never load-bearing —
-   worst case for a missed page is "stale until tonight".
+   WIKI_NIGHTLY local time. This is the self-healing catch-all:
+   cross-references go stale invisibly during the day and are corrected
+   while the GPU is idle. It also means the incremental person/topic
+   mapping only has to be *helpful*, never load-bearing. Worst case
+   for a missed page is "stale until tonight".
 
 Rebuilds run the CLI entrypoint as a subprocess (same code path as
 `stack memory wiki`), so a wedged LLM call dies with the child, not
@@ -170,16 +170,18 @@ def member_selection(
 ) -> list[str]:
     """Map changed vault paths to an incremental `wiki` selection argv.
 
-    Persons-only by design: member pages are where freshness is felt,
-    everything else (topics, cross-refs) heals on the nightly sweep.
+    Member and topic pages are where freshness is felt. Cross-refs
+    heal on the nightly sweep.
     Collects the bucket owner for personal captures plus every name in
     `persons:` frontmatter (`fm_reader(path) -> dict`, fed by
-    `git show` so the mapping matches the commit). Returns e.g.
-    `["--home", "--member", "Homer Simpson"]`, or `[]` when nothing
-    relevant changed (only generated pages or skipped dirs) — home is
+    `git show` so the mapping matches the commit), and adds topic
+    folders touched by captures. Returns e.g. `["--home", "--member",
+    "Homer Simpson", "--topic", "camping"]`, or `[]` when nothing
+    relevant changed (only generated pages or skipped dirs). Home is
     included whenever anything relevant changed at all.
     """
     members: list[str] = []
+    topics: list[str] = []
     relevant = False
 
     for path in paths:
@@ -192,6 +194,9 @@ def member_selection(
         relevant = True
         if parts[0] != shared_bucket and len(parts) > 1 and parts[0] not in members:
             members.append(parts[0])
+        topic = _topic_slug_from_capture_path(parts, shared_bucket=shared_bucket)
+        if topic and topic not in topics:
+            topics.append(topic)
         if path.endswith(".md"):
             persons = fm.get("persons") or fm.get("person") or []
             if isinstance(persons, str):
@@ -205,7 +210,19 @@ def member_selection(
     argv = ["--home"]
     for member in members:
         argv += ["--member", member]
+    for topic in topics:
+        argv += ["--topic", topic]
     return argv
+
+
+def _topic_slug_from_capture_path(parts: list[str], *, shared_bucket: str) -> str:
+    """Return the topic slug for a capture path, or "" for non-topic paths."""
+    capture_dirs = {"notes", "bookmarks", "documents"}
+    if len(parts) >= 3 and parts[0] == shared_bucket and parts[2] in capture_dirs:
+        return parts[1]
+    if len(parts) >= 4 and parts[0] != shared_bucket and parts[2] in capture_dirs:
+        return parts[1]
+    return ""
 
 
 # ── Source mirror (memory -> brain projection) ───────────────────────────

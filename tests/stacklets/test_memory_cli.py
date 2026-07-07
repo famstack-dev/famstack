@@ -16,6 +16,14 @@ same binary, both reading the same seed file and taxonomy.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
+                       / "stacklets" / "memory" / "cli"))
+
+import _todos  # noqa: E402
+
 
 class TestCheck:
     """`stack memory check` is the no-drift gate between the docs
@@ -95,3 +103,47 @@ class TestPrompt:
         assert code == 0
         # `coverage` is a synonym of Insurance; the LLM must see it.
         assert "coverage" in out
+
+
+class TestTopicReaderRouting:
+    """Bare topic reads brain; todo reads stay on source memory."""
+
+    def test_bare_topic_reads_about_page_from_brain(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(_todos, "refresh_vault_if_stale", lambda path: "up_to_date")
+        vault = tmp_path / "memory" / "vault" / "family" / "camping"
+        brain = tmp_path / "memory" / "brain" / "family" / "camping"
+        vault.mkdir(parents=True)
+        brain.mkdir(parents=True)
+        (vault / "about.md").write_text(
+            "---\ntitle: stale\n---\n\nsource memory should not be read\n",
+            encoding="utf-8",
+        )
+        (brain / "about.md").write_text(
+            "---\ntitle: Camping\ngenerated: true\n---\n\n"
+            "<!-- begin: generated -->\n"
+            "# Camping\n\nBrain projection overview [1]\n"
+            "<!-- end: generated -->\n",
+            encoding="utf-8",
+        )
+
+        result = _todos.show_topic("camping", config={"data_dir": str(tmp_path)})
+
+        assert result == {"ok": True, "scope": "camping", "bucket": "family"}
+        out = capsys.readouterr().out
+        assert "Brain projection overview" in out
+        assert "[1]" not in out
+        assert "source memory should not be read" not in out
+
+    def test_todo_reader_still_reads_memory_source(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(_todos, "refresh_vault_if_stale", lambda path: "up_to_date")
+        todos = tmp_path / "memory" / "vault" / "family" / "camping" / "todos.md"
+        todos.parent.mkdir(parents=True)
+        todos.write_text("# Camping\n\n- [ ] Pack the stove\n", encoding="utf-8")
+
+        result = _todos.list_todos(
+            "camping", show_all=False, config={"data_dir": str(tmp_path)},
+        )
+
+        assert result["ok"] is True
+        assert result["lists"][0]["open"] == ["Pack the stove"]
+        assert "- [ ] Pack the stove" in capsys.readouterr().out

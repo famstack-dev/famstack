@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
     DEFAULT_SHARED_BUCKET,
+    brain_path_for,
     refresh_vault_if_stale,
     update_memory,
     vault_path_for,
@@ -34,9 +35,22 @@ def _vault(config) -> Path | None:
     return vault_path_for(Path(data_dir)) if data_dir else None
 
 
+def _brain(config) -> Path | None:
+    data_dir = config.get("data_dir") if config else None
+    return brain_path_for(Path(data_dir)) if data_dir else None
+
+
 def _known_scopes(vault: Path) -> list[str]:
     """Every scope slug that currently has a todos.md, deduped and sorted."""
     return sorted({p.parent.name for p in vault.glob("*/*/todos.md")})
+
+
+def _known_topics(brain: Path) -> list[str]:
+    """Every topic slug that currently has an about.md in brain."""
+    return sorted({
+        p.parent.name for p in brain.glob("*/*/about.md")
+        if p.parent.parent != brain
+    })
 
 
 def list_todos(scope: str, *, show_all: bool, config) -> dict:
@@ -214,24 +228,25 @@ _CITE = re.compile(r"\[\d+(?:,\s*\d+)*\]")
 
 
 def show_topic(scope: str, *, config) -> dict:
-    """Print a topic's about page -- its curated overview -- refreshed first.
+    """Print a topic's brain about page -- its curated overview.
 
     Bare `stack memory topic <slug>` (no `todo`) gives the topic's summary, so
     the agent can answer "what is this / summarise it" without guessing the vault
     path. Strips frontmatter, the generated-section markers, and citation markers
-    for a clean read; the raw page is still `vault/<bucket>/<slug>/about.md`.
+    for a clean read; the raw page is `brain/<bucket>/<slug>/about.md`, while
+    `topic <slug> todo` continues to read source state from memory.
     """
-    vault = _vault(config)
-    if vault is None or not vault.exists():
-        return {"error": "no vault found — is the memory stacklet installed?"}
+    brain = _brain(config)
+    if brain is None or not brain.exists():
+        return {"error": "no brain projection found — is the memory stacklet installed?"}
     scope = (scope or "").strip()
     if not scope:
         return {"error": "usage: stack memory topic <name>"}
 
-    refresh_vault_if_stale(vault)
-    matches = sorted(vault.glob(f"*/{scope}/about.md"))
+    refresh_vault_if_stale(brain)
+    matches = sorted(brain.glob(f"*/{scope}/about.md"))
     if not matches:
-        known = _known_scopes(vault)
+        known = _known_topics(brain)
         hint = ("  topics: " + ", ".join(known)) if known else ""
         return {"error": f"no page for topic {scope!r}\n{hint}".rstrip()}
 

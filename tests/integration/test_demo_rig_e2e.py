@@ -89,6 +89,18 @@ async def _wait_for_repo_file_containing(
     return None
 
 
+async def _wait_for_repo_file(code, repo: str, path: str, timeout: int = 300) -> dict | None:
+    for _ in range(timeout):
+        try:
+            f = code.get_file(MEMORY_OWNER, repo, path)
+        except ForgejoError:
+            f = None
+        if f:
+            return f
+        await asyncio.sleep(1)
+    return None
+
+
 def _cleanup_memory_files_containing(code, token: str) -> None:
     try:
         tree = code.list_tree(MEMORY_OWNER, MEMORY_REPO)
@@ -263,9 +275,11 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     """Topic todos read/write from memory and capture action items project."""
     topic = f"demo-rig-todo-{scope.uid}"
     item = f"verify B2 todo memory write {scope.uid}"
+    fresh_item = f"verify B4 read-your-writes todo {scope.uid}"
     captured_item = f"verify B2 capture todo fold {scope.uid}"
     token = f"demo-rig-capture-todo-{scope.uid}"
     path = f"{MEMORY_OWNER}/{topic}/todos.md"
+    about_path = f"{MEMORY_OWNER}/{topic}/about.md"
     bot_mxid = f"@archivist-bot:{demo_server_name}"
     marge_creds = demo_matrix["marge"]
     marge = AsyncClient(marge_creds.homeserver, marge_creds.user_id)
@@ -358,6 +372,29 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
             demo_code, BRAIN_REPO, path, captured_item, timeout=60,
         )
         assert brain_todos, f"{captured_item!r} did not appear in brain:{path}"
+
+        bdd.and_("The curator publishes the topic about page into brain")
+        brain_about = await _wait_for_repo_file(
+            demo_code, BRAIN_REPO, about_path, timeout=420,
+        )
+        assert brain_about, f"{about_path} did not appear in family/brain"
+        assert "generated: true" in brain_about["content"]
+
+        bdd.and_("Bare stack memory topic reads that brain-rendered page")
+        shown = _run_stack("memory", "topic", topic)
+        assert shown.returncode == 0, shown.stderr or shown.stdout
+        assert shown.stdout.strip()
+        assert "begin: generated" not in shown.stdout
+        assert "generated: true" not in shown.stdout
+
+        bdd.and_("Topic todo still reflects an immediate memory write")
+        add_fresh = _run_stack(
+            "memory", "topic", topic, "todo", "add", fresh_item, "--by", "homer",
+        )
+        assert add_fresh.returncode == 0, add_fresh.stderr or add_fresh.stdout
+        listed_fresh = _run_stack("memory", "topic", topic, "todo")
+        assert listed_fresh.returncode == 0, listed_fresh.stderr or listed_fresh.stdout
+        assert f"- [ ] {fresh_item}" in listed_fresh.stdout
     finally:
         await marge.close()
         # Memory cleanup only: brain is the curator's, and memory's
