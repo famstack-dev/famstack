@@ -19,6 +19,7 @@ import json
 import subprocess
 
 import pytest
+from nio import AsyncClient
 from nio.api import RoomVisibility
 from nio.responses import JoinedMembersResponse, RoomInviteResponse
 
@@ -32,6 +33,7 @@ from tests.integration.matrix import (
 
 MEMORY_OWNER = "family"
 MEMORY_REPO = "memory"
+BRAIN_REPO = "brain"
 
 
 def _frontmatter_text(fm: dict) -> str:
@@ -73,6 +75,20 @@ async def _wait_for_memory_file_containing(code, token: str,
     return None
 
 
+async def _wait_for_repo_file_containing(
+    code, repo: str, path: str, token: str, timeout: int = 300,
+) -> dict | None:
+    for _ in range(timeout):
+        try:
+            f = code.get_file(MEMORY_OWNER, repo, path)
+        except ForgejoError:
+            f = None
+        if f and token in (f.get("content") or ""):
+            return f
+        await asyncio.sleep(1)
+    return None
+
+
 def _cleanup_memory_files_containing(code, token: str) -> None:
     try:
         tree = code.list_tree(MEMORY_OWNER, MEMORY_REPO)
@@ -95,6 +111,13 @@ def _cleanup_memory_files_containing(code, token: str) -> None:
             )
         except Exception:
             pass
+
+
+def _cleanup_repo_file(code, repo: str, path: str, message: str) -> None:
+    try:
+        code.delete_file(MEMORY_OWNER, repo, path, message)
+    except Exception:
+        pass
 
 
 def _cleanup_paperless_documents_containing(paperless, token: str) -> None:
@@ -229,15 +252,26 @@ async def test_demo_rig_documents_markdown_reaches_paperless_and_memory_with_liv
 
 
 @pytest.mark.demo_rig
-def test_demo_rig_memory_todos_stay_mutable_in_memory(
+async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     bdd,
     demo_code,
+    demo_homer,
+    demo_matrix,
+    demo_server_name,
     scope,
 ):
-    """Topic todos still add/list/strike in family/memory during B1."""
+    """Topic todos read/write from memory and capture action items project."""
     topic = f"demo-rig-todo-{scope.uid}"
-    item = f"verify B1 todo memory write {scope.uid}"
+    item = f"verify B2 todo memory write {scope.uid}"
+    captured_item = f"verify B2 capture todo fold {scope.uid}"
+    token = f"demo-rig-capture-todo-{scope.uid}"
     path = f"{MEMORY_OWNER}/{topic}/todos.md"
+    bot_mxid = f"@archivist-bot:{demo_server_name}"
+    marge_creds = demo_matrix["marge"]
+    marge = AsyncClient(marge_creds.homeserver, marge_creds.user_id)
+    marge.access_token = marge_creds.access_token
+    marge.device_id = marge_creds.device_id
+    marge.user_id = marge_creds.user_id
 
     try:
         bdd.given("A unique demo-rig topic with no todo list")
@@ -276,11 +310,60 @@ def test_demo_rig_memory_todos_stay_mutable_in_memory(
         listed_all = _run_stack("memory", "topic", topic, "todo", "--all")
         assert listed_all.returncode == 0, listed_all.stderr or listed_all.stdout
         assert f"- [x] {item}" in listed_all.stdout
+
+        bdd.when("Homer files a note with action items in a shared topic room")
+        create = await demo_homer.room_create(
+            name=f"Topic: {topic}",
+            visibility=RoomVisibility.private,
+        )
+        room_id = getattr(create, "room_id", None)
+        assert room_id, f"room_create returned no room_id: {create}"
+        assert isinstance(
+            await demo_homer.room_invite(room_id, marge.user_id),
+            RoomInviteResponse,
+        )
+        await marge.join(room_id)
+        assert isinstance(
+            await demo_homer.room_invite(room_id, bot_mxid),
+            RoomInviteResponse,
+        )
+        await _wait_for_bot_membership(demo_homer, room_id, bot_mxid)
+
+        await demo_homer.room_send(
+            room_id=room_id,
+            message_type="m.room.message",
+            content={
+                "msgtype": "m.text",
+                "body": (
+                    "Todo:\n"
+                    f"{captured_item}\n\n"
+                    f"{token}\n"
+                    "This is a deliberate household action list for the "
+                    "demo-rig todo projection check."
+                ),
+            },
+        )
+
+        bdd.then("The capture action item is folded into memory todos.md")
+        memory_todos = await _wait_for_repo_file_containing(
+            demo_code, MEMORY_REPO, path, captured_item, timeout=300,
+        )
+        assert memory_todos, f"{captured_item!r} did not appear in {path}"
+
+        bdd.and_("An explicit source sync mirrors the todo document into brain")
+        synced = _run_stack("memory", "sync")
+        assert synced.returncode == 0, synced.stderr or synced.stdout
+
+        brain_todos = await _wait_for_repo_file_containing(
+            demo_code, BRAIN_REPO, path, captured_item, timeout=60,
+        )
+        assert brain_todos, f"{captured_item!r} did not appear in brain:{path}"
     finally:
-        try:
-            demo_code.delete_file(
-                MEMORY_OWNER, MEMORY_REPO, path,
-                f"chore: demo rig cleanup {topic}",
-            )
-        except Exception:
-            pass
+        await marge.close()
+        _cleanup_repo_file(
+            demo_code, MEMORY_REPO, path, f"chore: demo rig cleanup {topic}",
+        )
+        _cleanup_repo_file(
+            demo_code, BRAIN_REPO, path, f"chore: demo rig cleanup {topic}",
+        )
+        _cleanup_memory_files_containing(demo_code, token)
