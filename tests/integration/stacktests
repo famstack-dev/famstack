@@ -148,7 +148,7 @@ case "${1:-}" in
     # data because tests create uniquely-named rooms/files and clean up
     # their own Paperless/Forgejo artifacts where the services allow it.
     shift || true
-    exec uv run --extra test pytest tests/integration/ -m demo_rig "$@"
+    exec uv run --extra test pytest tests/integration/ -m demo_rig --durations=10 "$@"
     ;;
 
   eval)
