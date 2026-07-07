@@ -132,7 +132,8 @@ class TestMemberSelection:
         # The wiki's own output (or a hand edit around the splice
         # markers) must not feed back into a rebuild.
         paths = ["index.md", "homer/about.md", "family/camping/about.md"]
-        assert member_selection(paths, _fm({}), shared_bucket="family") == []
+        reader = _fm({p: {"generated": "true"} for p in paths})
+        assert member_selection(paths, reader, shared_bucket="family") == []
 
     def test_skipped_dirs_never_trigger(self):
         paths = ["wiki/config.json", ".obsidian/workspace.json", "private/x.md"]
@@ -160,18 +161,22 @@ class TestMemberSelection:
 
 class TestIsSourcePath:
     """The mirror replays only source paths to brain. Generated page
-    names (about.md, folder index.md) and git internals are excluded so
-    generation's own output is never treated as source to copy."""
+    markers and git internals are excluded so generation's own output
+    is never treated as source to copy."""
 
     def test_captures_are_source(self):
         assert is_source_path("family/documents/2026/06/p7.md") is True
         assert is_source_path("homer/notes/2026/06/a-1.md") is True
         assert is_source_path("ontology.toml") is True
 
-    def test_generated_names_excluded(self):
-        assert is_source_path("homer/about.md") is False
-        assert is_source_path("family/camping/notes/index.md") is False
-        assert is_source_path("index.md") is False
+    def test_generated_marker_excluded(self):
+        assert is_source_path("homer/about.md", {"generated": "true"}) is False
+        assert is_source_path("family/camping/notes/index.md", {"generated": True}) is False
+        assert is_source_path("index.md", {"generated": "true"}) is False
+
+    def test_unmarked_about_page_is_source(self):
+        assert is_source_path("homer/about.md", {}) is True
+        assert is_source_path("family/camping/about.md", {}) is True
 
     def test_git_internals_excluded(self):
         assert is_source_path(".git/config") is False
@@ -228,19 +233,43 @@ class TestDiffToFileops:
              "family/documents/2026/06/d.md"),
         ]
 
-    def test_generated_page_in_diff_is_dropped(self):
-        # Memory should never carry a generated page, but if a diff names
-        # one it must not be mirrored as source.
-        ops = diff_to_fileops(["A\thomer/about.md"])
+    def test_generated_page_delete_in_diff_uses_filename_backstop(self):
+        # Delete and rename paths cannot read frontmatter from a gone
+        # file, so the legacy generated-name backstop stays authoritative
+        # for removal operations.
+        ops = diff_to_fileops(["D\thomer/about.md"])
         assert ops == []
 
-    def test_rename_out_of_source_degrades_to_delete(self):
-        # old is a real capture, new is a generated name -> only the rm
-        # survives (the copy half is filtered).
+    def test_unmarked_about_page_add_is_mirrored(self):
+        # A hand-written about.md in memory is source. Generation sees it
+        # in brain and must leave it alone.
+        ops = diff_to_fileops(["A\thomer/about.md"])
+        assert ops == [("copy", "homer/about.md", "homer/about.md")]
+
+    def test_rename_to_unmarked_about_page_copies_source(self):
+        # Filename alone is not generated for a live file. A hand-written
+        # about.md is source, so the rename copies the new path.
         ops = diff_to_fileops([
             "R100\thomer/notes/2026/06/a-1.md\thomer/about.md",
         ])
+        assert ops == [
+            ("rm", "homer/notes/2026/06/a-1.md", ""),
+            ("copy", "homer/about.md", "homer/about.md"),
+        ]
+
+    def test_rename_to_marked_generated_page_degrades_to_delete(self):
+        ops = diff_to_fileops(
+            ["R100\thomer/notes/2026/06/a-1.md\thomer/about.md"],
+            _fm({"homer/about.md": {"generated": "true"}}),
+        )
         assert ops == [("rm", "homer/notes/2026/06/a-1.md", "")]
+
+    def test_rename_of_generated_page_is_still_dropped(self):
+        ops = diff_to_fileops(
+            ["R100\thomer/about.md\tmarge/about.md"],
+            _fm({"marge/about.md": {"generated": "true"}}),
+        )
+        assert ops == []
 
     def test_blank_and_malformed_lines_skipped(self):
         ops = diff_to_fileops(["", "  ", "A", "R096\tonly-one-field"])
@@ -276,7 +305,10 @@ class TestReconcileFileops:
         # Reconcile must not remove them as orphans.
         memory = ["family/documents/2026/06/p1.md"]
         brain = ["homer/about.md", "family/camping/notes/index.md"]
-        ops = reconcile_fileops(memory, brain)
+        ops = reconcile_fileops(
+            memory, brain, None,
+            _fm({p: {"generated": "true"} for p in brain}),
+        )
         rm_paths = [p for (a, p, _s) in ops if a == "rm"]
         assert "homer/about.md" not in rm_paths
         assert "family/camping/notes/index.md" not in rm_paths

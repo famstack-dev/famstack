@@ -153,6 +153,34 @@ def _frontmatter_error(page: str) -> str | None:
     return None
 
 
+def _has_generated_marker(content: str) -> bool:
+    value = _parse_frontmatter(content).get("generated")
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def _with_generated_marker(content: str) -> str:
+    """Ensure the page frontmatter declares this file as generated."""
+    if not content.startswith("---\n"):
+        return f"---\ngenerated: true\n---\n\n{content.lstrip()}"
+    end = content.find("\n---\n", 4)
+    if end < 0:
+        return content
+
+    frontmatter = content[4:end]
+    lines = frontmatter.splitlines()
+    for i, line in enumerate(lines):
+        key, sep, _value = line.partition(":")
+        if sep and key.strip() == "generated" and not line.startswith((" ", "\t")):
+            lines[i] = "generated: true"
+            break
+    else:
+        lines.append("generated: true")
+
+    return "---\n" + "\n".join(lines) + content[end:]
+
+
 # Citation extractor — single use here, inlined to keep the command
 # stacklet-local. Matches `[N]`, `[N, M]`, and back-to-back `[N][M]`
 # patterns. Returns unique numbers in first-seen order so the caller
@@ -1168,13 +1196,14 @@ def _splice_generated(existing: str, generated: str, *,
 def _is_generated_page(content: str) -> bool:
     """True if `content` is a page the wiki produced.
 
-    Identified by the splice marker every published page carries. Source
-    captures (notes, bookmarks, documents, email threads) carry only
-    their own `<!-- mid:... -->` / section markers, never this one, so
-    the predicate is the safe delete filter for `clean`: it cannot match
-    a capture.
+    The durable signal is `generated: true` frontmatter. The splice
+    marker remains a legacy backstop so `clean` can remove pages written
+    before the marker existed. Source captures (notes, bookmarks,
+    documents, email threads) carry only their own `<!-- mid:... -->` /
+    section markers, never this one, so the predicate is the safe delete
+    filter for `clean`: it cannot match a capture.
     """
-    return _BEGIN in content
+    return _has_generated_marker(content) or _BEGIN in content
 
 
 def _is_affirmative(response: str) -> bool:
@@ -1287,10 +1316,14 @@ def _publish(page: str, *, target_path: str,
         prior = page_path.read_text(encoding="utf-8")
     except OSError:
         prior = ""
+    if prior and not _is_generated_page(prior):
+        _err(f"source page {target_path} has no generated marker, skipped")
+        return 0
     if transform is not None:
         merged = transform(prior)
     else:
         merged = _splice_generated(prior, page, default_preamble=default_preamble)
+    merged = _with_generated_marker(merged)
 
     if merged == prior:
         _err(f"unchanged {target_path}, skipped")

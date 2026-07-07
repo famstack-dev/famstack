@@ -62,6 +62,13 @@ def _frontmatter(preamble: str) -> dict:
     return yaml.safe_load(body.strip("-\n")) or {}
 
 
+def _page_frontmatter(content: str) -> dict:
+    assert content.startswith("---\n")
+    end = content.find("\n---\n", 4)
+    assert end > 0
+    return yaml.safe_load(content[4:end]) or {}
+
+
 # ── Fixture helpers ─────────────────────────────────────────────────────
 
 
@@ -804,6 +811,7 @@ class TestPublishOnDisk:
         assert rc == 0
         written = (tmp_path / "homer" / "about.md").read_text()
         assert written.startswith("---\ntitle: Homer")
+        assert _page_frontmatter(written)["generated"] is True
         assert "<!-- begin: generated -->" in written
         assert "A profile." in written
 
@@ -836,6 +844,25 @@ class TestPublishOnDisk:
         assert "Hand-written welcome." in written   # outside-markers survives
         assert "new body" in written
         assert "old body" not in written
+        assert _page_frontmatter(written)["generated"] is True
+
+    def test_hand_written_about_page_wins_over_generation(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        page = tmp_path / "homer" / "about.md"
+        page.parent.mkdir(parents=True)
+        page.write_text(
+            "---\ntitle: Homer\ntype: person\n---\n\n"
+            "# Homer\n\nHand-written source page.\n",
+            encoding="utf-8",
+        )
+
+        rc = _publish("generated body", target_path="homer/about.md")
+
+        assert rc == 0
+        assert page.read_text(encoding="utf-8") == (
+            "---\ntitle: Homer\ntype: person\n---\n\n"
+            "# Homer\n\nHand-written source page.\n"
+        )
 
     def test_invalid_frontmatter_refused_and_not_written(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
