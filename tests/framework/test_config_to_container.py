@@ -27,7 +27,10 @@ try:
 except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
     HAS_DOCKER = False
 
-pytestmark = pytest.mark.skipif(not HAS_DOCKER, reason="Docker not available")
+pytestmark = [
+    pytest.mark.container_lifecycle,
+    pytest.mark.skipif(not HAS_DOCKER, reason="Docker not available"),
+]
 
 
 class IsolatedStack:

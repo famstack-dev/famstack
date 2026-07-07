@@ -14,8 +14,10 @@
 #   tests/integration/stacktests cleanup         — nuke every test stacklet +
 #                                                  instance state + test data
 #   tests/integration/stacktests e2e [args]      — run every e2e test
+#   tests/integration/stacktests container-e2e   — alias for e2e
 #   tests/integration/stacktests smoke [args]    — run smoke e2e tests
 #   tests/integration/stacktests demo-rig [args] — run live Simpson demo tests
+#   tests/integration/stacktests demo [args]     — alias for demo-rig
 #   tests/integration/stacktests eval [args]     — pipeline quality eval
 #                                                  (real model, report-only)
 #   tests/integration/stacktests pytest [args]   — pytest with env + deps
@@ -113,7 +115,7 @@ case "${1:-}" in
     exec uv run --extra test pytest "$@"
     ;;
 
-  e2e)
+  e2e|container-e2e)
     # Run every end-to-end test under tests/integration/. Convention:
     # any file named test_*_e2e.py is picked up. Extra args forward to
     # pytest (e.g. `stacktests e2e -s -k homer`).
@@ -139,7 +141,7 @@ case "${1:-}" in
     exec uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
     ;;
 
-  demo-rig)
+  demo-rig|demo)
     # Run tests against the already-running Simpson demo instance in
     # this checkout. This deliberately does not seed config or start
     # stacklets; it should be safe to run repeatedly against live demo
