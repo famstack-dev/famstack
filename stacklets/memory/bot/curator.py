@@ -58,7 +58,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # memory.lib
 sys.path.insert(0, "/app")  # stack.* framework
 
 from loguru import logger  # noqa: E402
-from memory.lib import _parse_frontmatter  # noqa: E402
+from memory.lib import (  # noqa: E402
+    _parse_frontmatter,
+    authenticated_remote,
+    brain_remote_url,
+    vault_remote_url,
+)
 
 from wiki import COMMIT_PREFIX  # noqa: E402
 
@@ -90,6 +95,18 @@ _SKIP_TOP = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
 # (or a human editing around the splice markers) — never a rebuild
 # trigger, or the curator would chase its own tail.
 _GENERATED_NAMES = {"about.md", "index.md"}
+
+# Trigger file `stack memory sync` drops into the state dir to request
+# an immediate tick. The curator stays brain's only writer; the CLI
+# only asks and waits (one-writer invariant, ADR-011).
+TRIGGER_NAME = "mirror-now"
+
+# The curator's own git remote. `origin` belongs to the host plane
+# (hooks and the host CLI reach Forgejo on a localhost/LAN port); this
+# container reaches it on the stack network. One working copy serves
+# two network planes, so each plane gets its own remote instead of
+# fighting over origin's URL.
+CURATOR_REMOTE = "curator"
 
 
 # ── Pure decision logic (tested in tests/stacklets) ──────────────────────
@@ -292,6 +309,35 @@ def reconcile_fileops(
     return ops
 
 
+def consume_trigger(state_dir: Path) -> bool:
+    """Consume a pending mirror-now trigger. True when one was there.
+
+    Deletion is the consumption: a concurrent second consumer loses the
+    unlink race and correctly reports no trigger.
+    """
+    try:
+        (state_dir / TRIGGER_NAME).unlink()
+        return True
+    except OSError:
+        return False
+
+
+async def sleep_until_tick(secs: float, state_dir: Path,
+                           slice_secs: float = 1.0) -> bool:
+    """Sleep up to `secs`, waking early when a mirror-now trigger lands.
+
+    Returns True when the wake-up was triggered rather than timed. The
+    sleep is sliced so `stack memory sync` sees a tick within about a
+    second instead of a full poll interval.
+    """
+    deadline = time.monotonic() + secs
+    while time.monotonic() < deadline:
+        if consume_trigger(state_dir):
+            return True
+        await asyncio.sleep(min(slice_secs, max(deadline - time.monotonic(), 0.0)))
+    return consume_trigger(state_dir)
+
+
 def nightly_due(nightly: str, last_run_date: str, now_local: time.struct_time) -> bool:
     """True when the nightly sweep should run: a valid HH:MM is
     configured, we're past it, and today's sweep hasn't happened."""
@@ -354,13 +400,18 @@ class Vault:
             local = self._run("rev-parse", "HEAD")
             if not local:
                 return
-            remote = self._run("ls-remote", "origin", "HEAD")
+            remote = self._run("ls-remote", CURATOR_REMOTE, "HEAD")
             remote_head = remote.split()[0] if remote and remote.split() else ""
             if not remote_head or local.strip() == remote_head:
                 return
-            self._run("pull", "--quiet", "--ff-only")
+            self._run("pull", "--quiet", "--ff-only", CURATOR_REMOTE, "main")
 
         await asyncio.to_thread(_sync)
+
+    def ensure_remote(self, name: str, url: str) -> None:
+        """Idempotently point the named remote at `url` (add on first boot)."""
+        if self._run("remote", "set-url", name, url) is None:
+            self._run("remote", "add", name, url)
 
     async def subjects(self, since: str, until: str) -> list[str]:
         """Commit subjects in `since..until`. A broken range (history
@@ -461,17 +512,32 @@ class Brain:
         self._run("add", "-A")
         # `diff --cached --quiet` exits 1 when staged changes exist.
         code, _ = self._run("diff", "--cached", "--quiet")
-        if code == 0:
-            return True  # nothing to commit — already in sync
-        rc, _ = self._run(
-            "-c", f"user.name={_BRAIN_AUTHOR_NAME}",
-            "-c", f"user.email={_BRAIN_AUTHOR_EMAIL}",
-            "commit", "-m", message,
-        )
+        if code != 0:
+            rc, _ = self._run(
+                "-c", f"user.name={_BRAIN_AUTHOR_NAME}",
+                "-c", f"user.email={_BRAIN_AUTHOR_EMAIL}",
+                "commit", "-m", message,
+            )
+            if rc != 0:
+                return False
+        # Push even with nothing newly committed: a prior cycle may have
+        # committed locally and lost the push (Forgejo briefly down), and
+        # "nothing to commit" must not report that state as in-sync.
+        rc, _ = self._run("push", "--quiet", CURATOR_REMOTE, "main")
         if rc != 0:
-            return False
-        rc, _ = self._run("push", "--quiet")
+            # Brain is a disposable, single-writer projection (ADR-011).
+            # A diverged remote is residue of a retired second writer or
+            # a wiped clone — the working copy is the truth, overwrite.
+            rc, _ = self._run("push", "--quiet", "--force", CURATOR_REMOTE, "main")
+            if rc == 0:
+                logger.warning("[curator] brain remote diverged — overwrote (projection is disposable)")
         return rc == 0
+
+    def ensure_remote(self, name: str, url: str) -> None:
+        """Idempotently point the named remote at `url` (add on first boot)."""
+        code, _ = self._run("remote", "set-url", name, url)
+        if code != 0:
+            self._run("remote", "add", name, url)
 
     async def commit_push(self, message: str) -> bool:
         return await asyncio.to_thread(self._commit_push, message)
@@ -536,6 +602,21 @@ async def main() -> None:
     brain = Brain(brain_dir, vault_dir)
     debounce = Debounce(QUIET_SECS)
 
+    # The working copies' `origin` carries a host-plane URL (hooks and
+    # the host CLI set and use it); it is unreachable from inside this
+    # container. Give the curator its own remote on the stack network.
+    # Auth: the unified stack admin is also Forgejo's admin.
+    code_url = os.environ.get("CODE_URL", "")
+    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+    if code_url and admin_user and admin_password:
+        vault.ensure_remote(CURATOR_REMOTE, authenticated_remote(
+            vault_remote_url(code_url), admin_user, admin_password))
+        brain.ensure_remote(CURATOR_REMOTE, authenticated_remote(
+            brain_remote_url(code_url), admin_user, admin_password))
+    else:
+        logger.warning("[curator] no CODE_URL/admin creds — remote sync disabled, serving local state")
+
     # GIT_CONFIG_GLOBAL with `safe.directory = *` is written by Vault's
     # __init__; brain reuses the same file (both repos are bind-mounted
     # and host-owned). Vault constructed above, so the file exists.
@@ -597,7 +678,8 @@ async def main() -> None:
     )
 
     while True:
-        await asyncio.sleep(POLL_SECS)
+        if await sleep_until_tick(POLL_SECS, state_dir):
+            logger.info("[curator] mirror-now trigger received")
         # The curator owns the pull — the wiki container only watches
         # files. Runs even with rebuilds disabled: the wiki must not
         # rot just because the automation is off.

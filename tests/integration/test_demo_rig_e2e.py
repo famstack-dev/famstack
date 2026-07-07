@@ -360,10 +360,11 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
         assert brain_todos, f"{captured_item!r} did not appear in brain:{path}"
     finally:
         await marge.close()
+        # Memory cleanup only: brain is the curator's, and memory's
+        # deletion propagates there through the mirror on the next
+        # cycle. Deleting brain via the API would make the test a
+        # second writer on the projection and force a divergence heal.
         _cleanup_repo_file(
             demo_code, MEMORY_REPO, path, f"chore: demo rig cleanup {topic}",
-        )
-        _cleanup_repo_file(
-            demo_code, BRAIN_REPO, path, f"chore: demo rig cleanup {topic}",
         )
         _cleanup_memory_files_containing(demo_code, token)

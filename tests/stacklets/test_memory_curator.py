@@ -306,3 +306,44 @@ class TestNightlyDue:
         assert nightly_due("", "", _local("12:00")) is False
         assert nightly_due("never", "", _local("12:00")) is False
         assert nightly_due("3x:99y", "", _local("12:00")) is False
+
+
+# ── Mirror-now trigger ────────────────────────────────────────────────
+
+from curator import TRIGGER_NAME, consume_trigger, sleep_until_tick  # noqa: E402
+
+
+class TestConsumeTrigger:
+    def test_consumes_and_reports_pending_trigger(self, tmp_path):
+        (tmp_path / TRIGGER_NAME).write_text("now", encoding="utf-8")
+        assert consume_trigger(tmp_path) is True
+        assert not (tmp_path / TRIGGER_NAME).exists()
+
+    def test_no_trigger_is_false(self, tmp_path):
+        assert consume_trigger(tmp_path) is False
+
+
+class TestSleepUntilTick:
+    async def test_pending_trigger_wakes_immediately(self, tmp_path):
+        (tmp_path / TRIGGER_NAME).write_text("now", encoding="utf-8")
+        start = time.monotonic()
+        assert await sleep_until_tick(5.0, tmp_path, slice_secs=0.02) is True
+        assert time.monotonic() - start < 1.0
+        assert not (tmp_path / TRIGGER_NAME).exists()
+
+    async def test_times_out_quietly_without_trigger(self, tmp_path):
+        assert await sleep_until_tick(0.05, tmp_path, slice_secs=0.01) is False
+
+    async def test_trigger_landing_mid_sleep_wakes_early(self, tmp_path):
+        import asyncio
+
+        async def drop():
+            await asyncio.sleep(0.05)
+            (tmp_path / TRIGGER_NAME).write_text("now", encoding="utf-8")
+
+        start = time.monotonic()
+        drop_task = asyncio.get_event_loop().create_task(drop())
+        woke = await sleep_until_tick(5.0, tmp_path, slice_secs=0.02)
+        await drop_task
+        assert woke is True
+        assert time.monotonic() - start < 1.0
