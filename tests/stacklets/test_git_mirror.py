@@ -718,7 +718,8 @@ class TestCaptureRender:
             action_items=[],
         )
         assert "type: bookmark" in out
-        assert "resource: https://example.com/llms" in out
+        # Resource URL is quoted because it contains ':'
+        assert 'resource: "https://example.com/llms"' in out
         assert "# Why local LLMs matter" in out
         assert "**About:** [Homer](" in out
         assert "homer/about.md)" in out
