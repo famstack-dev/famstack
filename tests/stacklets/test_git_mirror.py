@@ -151,6 +151,20 @@ class TestFrontmatter:
         assert list(fm.keys())[0] == "type"
         assert list(fm.keys())[-1] == "timestamp"
 
+    def test_builder_output_is_schema_valid(self, mirror):
+        """The builder is the enforcement point: its output must satisfy the
+        vault-format schema so a live filing never logs a violation. This is
+        why the write path only warns — the bug is caught here, deterministically."""
+        from stack.frontmatter import validate as fm_validate
+        fm = mirror._frontmatter(
+            title="Duff Insurance Rechnung", date="2026-03-15",
+            correspondent="Duff Insurance", document_type="Invoice",
+            category="Insurance", persons=["Homer"], tags=["Insurance"],
+            paperless_id=247, paperless_url="http://docs.home.local",
+            processing="ai_formatted", model="qwen2.5:14b",
+        )
+        assert fm_validate(fm) == []
+
     def test_ocr_omits_model(self, mirror):
         fm = mirror._frontmatter(
             title="Untitled", date=None,
@@ -638,6 +652,15 @@ class TestCaptureFrontmatter:
         assert "paperless_id" not in fm
         assert "paperless_url" not in fm
         assert fm["timestamp"].endswith("Z")
+
+    def test_capture_builder_output_is_schema_valid(self, mirror):
+        from stack.frontmatter import validate as fm_validate
+        for kind in ("note", "bookmark"):
+            fm = mirror._capture_frontmatter(
+                title="X", captured_at="2026-05-17", kind=kind,
+                source_uri="https://example.com", persons=[], tags=[], model=None,
+            )
+            assert fm_validate(fm) == [], (kind, fm_validate(fm))
 
     def test_note_with_source_uri(self, mirror):
         # Pasted Reddit thread with the URL in the body — kind=note,

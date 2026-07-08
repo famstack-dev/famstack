@@ -84,6 +84,26 @@ BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
 
 
+def _validate_on_write(frontmatter: dict) -> None:
+    """Log (never block) if a filing's frontmatter violates the vault format.
+
+    Never raises: losing a family's document to a schema violation is
+    worse than the violation. If a builder produces invalid frontmatter
+    (against docs/design/brain/vault-format.md) we log it and file the
+    document anyway — the log is the breadcrumb, a reconcile heals the
+    metadata. Builder bugs are caught deterministically by the builder
+    tests, not by blocking a live filing.
+    """
+    from stack.frontmatter import validate as frontmatter_validate
+
+    errors = frontmatter_validate(frontmatter)
+    if errors:
+        logger.warning(
+            "[git-mirror] frontmatter violates vault-format schema, filing "
+            "anyway: {}", "; ".join(errors),
+        )
+
+
 def _commit_author(submitter: str | None) -> tuple[str, str]:
     """`(author_name, author_email)` for a capture commit.
 
@@ -386,7 +406,7 @@ class GitMirror:
     ) -> dict:
         """Document frontmatter. Delegates to ``vault_entry.document_frontmatter``,
         injecting this mirror's known Paperless server version."""
-        return document_frontmatter(
+        fm = document_frontmatter(
             title=title, date=date,
             correspondent=correspondent, document_type=document_type,
             category=category, persons=persons, tags=tags,
@@ -394,6 +414,8 @@ class GitMirror:
             processing=processing, model=model,
             paperless_version=self.paperless_version,
         )
+        _validate_on_write(fm)
+        return fm
 
     def _render(
         self,
@@ -784,11 +806,13 @@ class GitMirror:
         filed_by: str | None = None,
     ) -> dict:
         """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``."""
-        return capture_frontmatter(
+        fm = capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
             model=model, capture_id=capture_id, filed_by=filed_by,
         )
+        _validate_on_write(fm)
+        return fm
 
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.

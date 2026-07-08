@@ -41,6 +41,8 @@ import re
 import yaml
 
 # Frontmatter writer uses the shared stdlib module so reader/writer agree.
+# render_* stay pure formatters; schema validation lives at the write
+# boundary (GitMirror), so unit tests can render partial frontmatter.
 from stack.frontmatter import dump as frontmatter_dump
 
 # Slug and entity-path conventions live in the framework (`stack.vault`)
