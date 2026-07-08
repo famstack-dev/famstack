@@ -1,17 +1,18 @@
 # Provision-only bot declaration.
 #
-# This exists so the core bot-runner mints the agent's Matrix account (@stacky-bot)
-# and its home room, exactly like every other bot. There is deliberately no
-# module here: the agent is not a MicroBot. It runs as its own stacklet
-# (nanobot) and connects to Matrix through nanobot's native channel using the
-# account this declaration provisions. The runner provisions the account, then
-# skips launch because there is no module to load.
+# This exists so the core bot-runner mints the agent's Matrix account and its
+# home room, exactly like every other bot. There is deliberately no module
+# here: the agent is not a MicroBot. It runs as its own stacklet (nanobot) and
+# connects to Matrix through nanobot's native channel using the account this
+# declaration provisions. The runner provisions the account, then skips launch
+# because there is no module to load.
 #
-# @stacky-bot is the stable handle; "Stacky" is the persona/display name (configurable
-# via AGENT_NAME). The login password lives in secrets.toml as
-# `agent__STACKY_BOT_PASSWORD`; nanobot logs in with the same secret.
-
-id         = "stacky-bot"
-name       = "Stacky"
-room       = "stacky"
-room_topic = "Ask Stacky about the family's notes, lists, and what's still open."
+# Identity is config-driven: `stack.toml [agent] name` (default "Stacky")
+# flows through core's env as AGENT_NAME / AGENT_BOT_ID / AGENT_ROOM, and the
+# bot-runner expands the ${...} refs below. The credential key is fixed
+# (AGENT_BOT_PASSWORD) so renaming the agent never touches its password.
+id           = "${AGENT_BOT_ID}"
+name         = "${AGENT_NAME}"
+password_key = "AGENT_BOT_PASSWORD"
+room         = "${AGENT_ROOM}"
+room_topic   = "Ask about the family's notes, lists, and what's still open."

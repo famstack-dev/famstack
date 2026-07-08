@@ -27,7 +27,7 @@ fi
 
 SECRETS="/setup-state/secrets.toml"
 if [ -f "$SECRETS" ]; then
-    AGENT_MATRIX_PASSWORD="$(python3 -c "import tomllib; print(tomllib.load(open('$SECRETS','rb')).get('agent__STACKY_BOT_PASSWORD',''))" 2>/dev/null || true)"
+    AGENT_MATRIX_PASSWORD="$(python3 -c "import tomllib; print(tomllib.load(open('$SECRETS','rb')).get('agent__AGENT_BOT_PASSWORD',''))" 2>/dev/null || true)"
     export AGENT_MATRIX_PASSWORD
 fi
 

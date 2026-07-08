@@ -30,6 +30,7 @@ services:
       AGENT_MODEL: ${AGENT_MODEL}
       AGENT_MATRIX_HOMESERVER: ${AGENT_MATRIX_HOMESERVER}
       AGENT_MATRIX_SERVER_NAME: ${AGENT_MATRIX_SERVER_NAME}
+      AGENT_BOT_ID: ${AGENT_BOT_ID}
       TZ: ${TZ:-UTC}
     volumes:
       # nanobot home: config.json (rendered), workspace, matrix-store, sessions.

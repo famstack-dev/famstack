@@ -28,7 +28,7 @@
     "matrix": {
       "enabled": true,
       "homeserver": "${AGENT_MATRIX_HOMESERVER}",
-      "userId": "@stacky-bot:${AGENT_MATRIX_SERVER_NAME}",
+      "userId": "@${AGENT_BOT_ID}:${AGENT_MATRIX_SERVER_NAME}",
       "password": "${AGENT_MATRIX_PASSWORD}",
       "e2eeEnabled": true,
       "allowFrom": ["*"],
