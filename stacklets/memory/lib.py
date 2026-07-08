@@ -40,6 +40,10 @@ from typing import Callable, List, Optional
 # with `from lib import correspondents_dir`).
 from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
 
+# Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
+# so both host CLI and containers can parse identically.
+from stack.frontmatter import parse as _parse_frontmatter_new
+
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
 # install hook would crash at import time if we pulled in a third-
@@ -998,44 +1002,19 @@ def install_memory_to_forgejo(
 
 
 def _parse_frontmatter(text: str) -> dict:
-    """Stdlib-only YAML subset for archivist-emitted frontmatter.
+    """Parse vault entry frontmatter using the shared stdlib-only module.
 
-    Supports the two shapes the classifier actually writes: top-level
-    scalars (`key: value`) and one-deep lists of scalars (`key:`
-    followed by `  - item` lines). Anything fancier is silently
-    skipped so malformed files still surface in body grep, just
-    without enriched metadata.
+    Delegates to stack.frontmatter.parse, which handles the strict
+    §2 subset per the vault format spec. On parse errors, this still
+    silently returns the dict-so-far (graceful degradation for older
+    files or edge cases).
     """
-    if not text.startswith("---\n"):
+    try:
+        return _parse_frontmatter_new(text)
+    except Exception:
+        # Graceful degradation: if parse fails, return empty dict
+        # so the file still surfaces in search, just without metadata
         return {}
-    end = text.find("\n---\n", 4)
-    if end < 0:
-        return {}
-
-    data: dict = {}
-    current_list: Optional[List[str]] = None
-    for raw in text[4:end].splitlines():
-        line = raw.rstrip()
-        if not line:
-            continue
-        if line.startswith("  - ") or line.startswith("- "):
-            if current_list is not None:
-                token = line.split("- ", 1)[1].strip().strip("'\"")
-                current_list.append(token)
-            continue
-        if line.startswith(" ") or line.startswith("\t"):
-            continue
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key, value = key.strip(), value.strip()
-        if value == "":
-            current_list = []
-            data[key] = current_list
-        else:
-            data[key] = value.strip("'\"")
-            current_list = None
-    return data
 
 
 def _fm_list(fm: dict, key: str) -> List[str]:
