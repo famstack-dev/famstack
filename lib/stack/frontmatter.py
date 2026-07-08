@@ -214,9 +214,9 @@ def _parse_scalar(s: str) -> str | bool | int:
         return _unquote(s)
 
     # Unquoted boolean literals
-    if s.lower() in ("true", "yes", "on"):
+    if s.lower() == "true":
         return True
-    if s.lower() in ("false", "no", "off"):
+    if s.lower() == "false":
         return False
 
     # Unquoted integer (only if purely digits, optionally with leading -)
