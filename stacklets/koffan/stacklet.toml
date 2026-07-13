@@ -6,7 +6,7 @@
 # file on a bind mount.
 
 id          = "koffan"
-name        = "Koffan"
+name        = "ShoppingList"
 description = "Shared family shopping list (Koffan)"
 version     = "0.1.0"
 category    = "productivity"
