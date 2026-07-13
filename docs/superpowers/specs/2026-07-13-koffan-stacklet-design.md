@@ -40,7 +40,7 @@ Single service, no database sidecar (SQLite is embedded).
 stacklets/koffan/
   stacklet.toml        # manifest
   docker-compose.yml   # one service: stack-koffan
-  caddy.snippet        # koffan.{domain} -> koffan:8080
+  caddy.snippet        # koffan.{domain} -> stack-koffan:8080
 ```
 
 ### Service
@@ -49,14 +49,15 @@ stacklets/koffan/
 - Image: `ghcr.io/pansalut/koffan` (compose tag `:latest`; Watchtower manages
   updates)
 - Network: `stack` (external)
-- Port: host `42080` -> container `8080`, bound as
-  `${PORT_BIND_IP:-127.0.0.1}:42080:8080`
+- Port: host `42090` -> container `8080`, bound as
+  `${PORT_BIND_IP:-127.0.0.1}:42090:8080`
 - Volume: `${KOFFAN_DATA_DIR}:/data` (SQLite lives at `/data/shopping.db`)
 - `restart: unless-stopped`
 - Watchtower label: `com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}`
 
-Port `42080` is the next free slot in the 42xxx convention (42010-42070 are in
-use).
+Port `42090` is the next free slot in the 42xxx convention. Note that 42080 is
+already taken by the infra stacklet's AdGuard admin panel (declared in its
+`[ports]` table as `dns_admin`, not a top-level `port =`), so koffan skips it.
 
 ## Manifest (`stacklet.toml`)
 
@@ -66,7 +67,7 @@ name        = "Koffan"
 description = "Shared family shopping list (Koffan)"
 version     = "0.1.0"
 category    = "productivity"
-port        = 42080
+port        = 42090
 
 hints = [
     "Open {url}",
@@ -93,7 +94,7 @@ APP_ENV         = "development"
 DISABLE_AUTH    = "false"
 
 [health]
-url    = "http://localhost:42080"
+url    = "http://localhost:42090"
 expect = "200"
 ```
 
@@ -112,7 +113,7 @@ Notes:
    `APP_PASSWORD` on first run.
 2. Docker Compose starts `stack-koffan`, mounting `{data_dir}/koffan` at `/data`.
 3. Koffan serves the PWA on `:8080`; the family reaches it at
-   `http://<ip>:42080` (port mode) or `https://koffan.<domain>` (domain mode).
+   `http://<ip>:42090` (port mode) or `https://koffan.<domain>` (domain mode).
 4. Family members log in once per device with the shared password; the cookie
    keeps them signed in.
 
@@ -139,7 +140,7 @@ services:
       DEFAULT_LANG: ${DEFAULT_LANG:-en}
       TZ: ${TZ}
     ports:
-      - "${PORT_BIND_IP:-127.0.0.1}:42080:8080"
+      - "${PORT_BIND_IP:-127.0.0.1}:42090:8080"
     restart: unless-stopped
 
 networks:
@@ -151,7 +152,7 @@ networks:
 
 ```
 koffan.{$FAMSTACK_DOMAIN} {
-    reverse_proxy koffan:8080
+    reverse_proxy stack-koffan:8080
 }
 ```
 
@@ -160,7 +161,7 @@ WebSocket connections automatically, so no extra directive is required.
 
 ## Error handling
 
-- Health check hits `http://localhost:42080` and expects `200`; a container that
+- Health check hits `http://localhost:42090` and expects `200`; a container that
   fails to start shows as `failing`/`degraded` in `stack list` with the standard
   framework hints.
 - No custom hooks means no custom failure paths; the framework's up/down/destroy
@@ -169,7 +170,7 @@ WebSocket connections automatically, so no extra directive is required.
 ## Testing
 
 - Add a per-stacklet unit test under `tests/stacklets/` that asserts the manifest
-  parses, declares port 42080, generates `APP_PASSWORD`, and renders the expected
+  parses, declares port 42090, generates `APP_PASSWORD`, and renders the expected
   env (mirroring existing per-stacklet tests). No Docker required.
 - Follow existing patterns in `tests/stacklets/`; do not invent a new test shape.
 - A Docker integration test is not warranted for v1: the stacklet crosses no
