@@ -6,7 +6,7 @@ Captures used to be URL-only and text-only. Recent work added:
     as notes with the extracted text preserved (reformat + classify,
     two LLM calls). Either way the binary stays on the homeserver
     (`source_uri: mxc://...`) instead of duplicating into Paperless.
-  - `.md` / `.txt` uploads land as `kind: note` with the bytes
+  - `.md` / `.txt` uploads land as `type: note` with the bytes
     preserved verbatim in the mirror.
   - Replying (without `@`-mention) to a `capture.filed` confirmation
     re-runs the classifier and rewrites the entry in place, emitting
@@ -224,7 +224,7 @@ async def test_pdf_in_capture_room_becomes_a_note(
     And    the OpenAI mock will reformat the body, then classify it
     When   Homer uploads a small PDF
     Then   family/memory has the entry under `homer/notes/`
-    And    the frontmatter carries `kind: note`, the mxc source_uri,
+    And    the frontmatter carries `type: note`, the mxc source_uri,
            and the capture_id matching the upload event_id
     """
     scope = mirror_scope
@@ -284,17 +284,17 @@ async def test_pdf_in_capture_room_becomes_a_note(
     assert path.startswith("homer/notes/"), \
         f"expected homer/notes/ prefix, got {path}"
 
-    bdd.then("frontmatter carries kind=note, mxc source_uri, capture_id")
+    bdd.then("frontmatter carries type=note, mxc source_uri, capture_id")
     fm, _body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)
-    assert fm.get("kind") == "note", f"expected kind=note, got {fm.get('kind')!r}"
+    assert fm.get("type") == "note", f"expected type=note, got {fm.get('type')!r}"
     assert fm.get("title") == expected_title
-    assert fm.get("source_uri") == mxc, \
-        f"expected source_uri={mxc}, got {fm.get('source_uri')!r}"
+    assert fm.get("resource") == mxc, \
+        f"expected resource={mxc}, got {fm.get('resource')!r}"
     assert fm.get("capture_id") == upload_event_id, (
         f"expected capture_id={upload_event_id!r}, got {fm.get('capture_id')!r} "
         "-- Matrix event_id MUST persist as the stable correlation key"
     )
-    bdd.ok(f"kind={fm['kind']} capture_id={fm['capture_id'][:24]}...")
+    bdd.ok(f"type={fm['type']} capture_id={fm['capture_id'][:24]}...")
 
     bdd.and_("a capture.filed envelope was emitted on the bot's reply")
     reply = await _wait_for_bot_reply(
@@ -323,7 +323,7 @@ async def test_markdown_upload_in_capture_room_becomes_a_note(
     Given  a notes room with the archivist invited
     And    the OpenAI mock classifies the upload as a note
     When   Homer uploads a Markdown file
-    Then   the mirror entry is `kind: note`, lives under `homer/notes/`,
+    Then   the mirror entry is `type: note`, lives under `homer/notes/`,
            and the original bytes are preserved verbatim in the body
     """
     scope = mirror_scope
@@ -376,8 +376,8 @@ async def test_markdown_upload_in_capture_room_becomes_a_note(
 
     bdd.then("kind=note and the original bytes are preserved in the body")
     fm, body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)
-    assert fm.get("kind") == "note", f"expected kind=note, got {fm.get('kind')!r}"
-    assert fm.get("source_uri") == mxc
+    assert fm.get("type") == "note", f"expected type=note, got {fm.get('type')!r}"
+    assert fm.get("resource") == mxc
     # The mirror renders the original under a collapsible callout; each
     # line is `> `-prefixed. Check the marker landed there verbatim.
     assert f"> - Marker: {scope.uid}" in body, (

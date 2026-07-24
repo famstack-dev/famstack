@@ -109,7 +109,7 @@ async def test_archivist_captures_pasted_text_to_memory(
     When   Homer creates a private notes room and invites the archivist
     And    Homer pastes a wall of text into the room
     Then   `family/memory` contains a capture entry under `homer/notes/`
-    And    the frontmatter marks it `kind: note`
+    And    the frontmatter marks it `type: note`
     And    the body preserves the pasted text verbatim
     """
     scope = mirror_scope
@@ -183,11 +183,11 @@ async def test_archivist_captures_pasted_text_to_memory(
     assert path.startswith("homer/notes/"), \
         f"expected homer/notes/ prefix, got {path}"
 
-    bdd.then("the frontmatter marks it kind: note")
+    bdd.then("the frontmatter marks it type: note")
     fm, body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)
-    assert fm.get("kind") == "note", f"expected kind=note, got {fm.get('kind')!r}"
+    assert fm.get("type") == "note", f"expected type=note, got {fm.get('type')!r}"
     assert fm.get("title") == expected_title
-    bdd.ok(f"kind={fm['kind']} title={fm['title']}")
+    bdd.ok(f"type={fm['type']} title={fm['title']}")
 
     bdd.and_("tags carry the classified tag and Person: Homer")
     tags = fm.get("tags") or []
