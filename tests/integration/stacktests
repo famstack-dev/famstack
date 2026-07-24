@@ -120,6 +120,11 @@ case "${1:-}" in
     # any file named test_*_e2e.py is picked up. Extra args forward to
     # pytest (e.g. `stacktests e2e -s -k homer`).
     #
+    # `demo_rig`-marked tests are excluded: they target an already-live
+    # Simpson demo instance (an ad-hoc feature-testing tool), not this
+    # managed rig, so they'd fail here for want of a running demo. Run
+    # them with `stacktests demo-rig` instead.
+    #
     # Seeds secrets + brings up required stacklets first. Both steps
     # are idempotent, so repeat runs pay near-zero cost.
     shift || true
@@ -127,7 +132,7 @@ case "${1:-}" in
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       python3 -m stack up "$sid" > /dev/null
     done
-    exec uv run --extra test pytest tests/integration/ -k "_e2e" --durations=20 "$@"
+    exec uv run --extra test pytest tests/integration/ -k "_e2e" -m "not demo_rig" --durations=20 "$@"
     ;;
 
   smoke)
