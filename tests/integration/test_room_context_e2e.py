@@ -33,7 +33,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 
 from microbot import MicroBot  # noqa: E402
-from tests.integration.matrix import fetch_room_events  # noqa: E402
+from tests.integration.matrix import wait_for_room_event  # noqa: E402
 
 
 class _Bot(MicroBot):
@@ -103,10 +103,11 @@ async def _await_room(client, room_id: str, *, members: int, tries: int = 12):
 
 
 async def _find_event(client, room_id: str, body: str):
-    events = await fetch_room_events(client, room_id, duration=8.0)
-    return next(
-        (e for e in events if getattr(e, "body", None) == body),
-        None,
+    return await wait_for_room_event(
+        client,
+        room_id,
+        lambda e: getattr(e, "body", None) == body,
+        timeout=8.0,
     )
 
 

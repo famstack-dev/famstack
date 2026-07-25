@@ -15,7 +15,11 @@ name: stack-docs
 services:
   stack-docs-paperless:
     container_name: stack-docs-paperless
-    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    # Pinned to the last 2.x release. `:latest` silently rolled to 3.0 (a
+    # major with a redesigned tasks API) and broke document filing; the 3.x
+    # upgrade is a deliberate, separately-branched migration, not a surprise
+    # watchtower pull. Bump within 2.20.x for patches; jump majors on purpose.
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:

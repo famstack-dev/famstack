@@ -16,6 +16,7 @@ Module convention: strip -bot suffix -> archivist.py -> ArchivistBot.
 import asyncio
 import importlib.util
 import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -64,6 +65,20 @@ def _enabled_stacklets():
     return enabled
 
 
+def _subst_env(value: str) -> str:
+    """Expand ${VAR} references in a bot.toml value from the environment.
+
+    Lets a declaration be config-driven instead of hardcoded — the agent's
+    id/name/room come from core's rendered env (AGENT_BOT_ID, AGENT_NAME),
+    which trace back to `stack.toml [agent] name`. Unknown vars are left as-is.
+    """
+    return re.sub(
+        r"\$\{(\w+)\}",
+        lambda m: os.environ.get(m.group(1), m.group(0)),
+        value,
+    )
+
+
 def discover_bots():
     """Scan enabled stacklets for bot/bot.toml declarations.
 
@@ -89,6 +104,9 @@ def discover_bots():
                 logger.warning("Failed to parse {}: {}", bot_toml, e)
                 continue
 
+            decl = {k: _subst_env(v) if isinstance(v, str) else v
+                    for k, v in decl.items()}
+
             bot_id = decl.get("id", "")
             if not bot_id:
                 logger.warning("Bot in {} has no 'id' field, skipping", bot_toml)
@@ -98,8 +116,11 @@ def discover_bots():
                 logger.error("MATRIX_SERVER_NAME not set — run 'stack up messages' first")
                 continue
 
-            # Password resolution: {stacklet}__{BOT_ID}_PASSWORD
-            secret_key = f"{stacklet_id}__{bot_id.upper().replace('-', '_')}_PASSWORD"
+            # Password resolution. A bot may declare a fixed `password_key`
+            # (e.g. the agent's "AGENT_BOT_PASSWORD") so its credential is
+            # decoupled from its handle; otherwise derive {BOT_ID}_PASSWORD.
+            key_name = decl.get("password_key") or f"{bot_id.upper().replace('-', '_')}_PASSWORD"
+            secret_key = f"{stacklet_id}__{key_name}"
             password = secrets.get(secret_key, "")
 
             if not password:

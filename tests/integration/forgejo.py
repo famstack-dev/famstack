@@ -141,6 +141,28 @@ class ForgejoAPI:
         fm = yaml.safe_load(fm_yaml) or {}
         return fm, body
 
+    def delete_file(self, owner: str, repo: str, path: str, message: str) -> None:
+        """Delete a file from a repo using the contents API."""
+        f = self.get_file(owner, repo, path)
+        if not f:
+            return
+        body = {
+            "sha": f["sha"],
+            "message": message,
+            "branch": "main",
+        }
+        req = urllib.request.Request(
+            f"{self.url.rstrip('/')}/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": self._auth_header(),
+                "Content-Type": "application/json",
+            },
+            method="DELETE",
+        )
+        with urllib.request.urlopen(req, timeout=15):
+            pass
+
 
 class ForgejoError(RuntimeError):
     """HTTP error from Forgejo. Message contains status + body snippet."""
@@ -171,24 +193,6 @@ def cleanup_mirror_files(api: ForgejoAPI, owner: str, repo: str,
         if not isinstance(title, str) or not title.startswith(title_prefix):
             continue
         try:
-            f = api.get_file(owner, repo, path)
-            if not f:
-                continue
-            body = {
-                "sha": f["sha"],
-                "message": f"chore: test cleanup {title_prefix}",
-                "branch": "main",
-            }
-            req = urllib.request.Request(
-                f"{api.url.rstrip('/')}/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
-                data=json.dumps(body).encode(),
-                headers={
-                    "Authorization": api._auth_header(),
-                    "Content-Type": "application/json",
-                },
-                method="DELETE",
-            )
-            with urllib.request.urlopen(req, timeout=15):
-                pass
+            api.delete_file(owner, repo, path, f"chore: test cleanup {title_prefix}")
         except Exception:
             continue

@@ -168,13 +168,14 @@ Most-used: `{data_dir}`, `{domain}`, `{ip}`, `{language}`, `{timezone}`, `{share
 Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
 
 ```bash
-uv run --extra test pytest tests/                # everything fast
-uv run --extra test pytest tests/framework/      # ~3s, no Docker
-uv run --extra test pytest tests/stacklets/      # per-stacklet
-uv run --extra test pytest tests/integration/    # real Docker, opt-in
+make test-unit       # fast offline framework + stacklet tests
+make test-demo       # live Simpsons demo instance tests
+make test-lifecycle  # Docker lifecycle/container environment tests
+make test-smoke      # quick managed-rig e2e subset
+make test-e2e        # full managed-rig e2e suite
 ```
 
-Or via Makefile: `make test` (fast), `make test-all`, `make test-integration`.
+Profile details live in [../../tests/README.md](../../tests/README.md).
 
 Testing rules:
 

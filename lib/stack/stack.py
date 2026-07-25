@@ -275,6 +275,16 @@ class Stack:
             lambda name: self.secrets.get("mail", f"{name.upper()}_IMAP_PASSWORD"),
         )
         template_vars["mail_poll_interval"] = str(mail_cfg.get("poll_interval", 120))
+
+        # The family agent's identity, one knob: `[agent] name` (default
+        # "Stacky") drives its persona, Matrix display name, handle, and home
+        # room. A family renames it (e.g. "Merlin" -> @merlin-bot, #merlin)
+        # with one stack.toml line and no code edits.
+        agent_name = self._cfg("agent", "name", "Stacky")
+        agent_slug = agent_name.strip().lower().replace(" ", "-")
+        template_vars["agent_name"] = agent_name
+        template_vars["agent_handle"] = f"{agent_slug}-bot"
+        template_vars["agent_room"] = agent_slug
         # Drop automated/marketing mail before it reaches the brain (default on).
         template_vars["mail_filter_noise"] = str(
             mail_cfg.get("filter_noise", True)

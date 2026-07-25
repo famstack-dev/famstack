@@ -25,9 +25,11 @@ from pathlib import Path
 # lib.py is one level up from hooks/
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
+    BRAIN_REPO_NAME,
     DEFAULT_SHARED_BUCKET,
     REPO_NAME,
     REPO_OWNER,
+    brain_path_for,
     install_memory_to_forgejo_admin,
     vault_path_for,
 )
@@ -42,6 +44,7 @@ def run(ctx):
         return
 
     vault = vault_path_for(ctx.stack.data)
+    brain = brain_path_for(ctx.stack.data)
     shared_bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
 
     result = install_memory_to_forgejo_admin(
@@ -49,6 +52,7 @@ def run(ctx):
         admin_user=admin_user,
         admin_password=admin_password,
         vault_path=vault,
+        brain_path=brain,
         shared_bucket=shared_bucket,
     )
 
@@ -56,14 +60,29 @@ def run(ctx):
         ctx.step(f"Memory install: skipped ({result['skipped_reason']})")
         return
 
+    # Persist the write token so host-side writers (`update_memory`, the
+    # `stack memory` mutation commands) can reach Forgejo through the secrets
+    # API. Without this the token was minted and thrown away, leaving
+    # `memory__MEMORY_BOT_TOKEN` unset for the very readers that expect it.
+    if token := result.get("write_token"):
+        ctx.secret("MEMORY_BOT_TOKEN", token)
+        ctx.step("Memory: stored the vault write token")
+
     if result.get("created_org"):
         ctx.step(f"Memory: created Forgejo org {REPO_OWNER!r}")
     if result.get("created_repo"):
         ctx.step(f"Memory: created Forgejo repo {REPO_OWNER}/{REPO_NAME}")
+    if result.get("created_brain_repo"):
+        ctx.step(f"Memory: created Forgejo repo {REPO_OWNER}/{BRAIN_REPO_NAME}")
 
     seeds = result.get("seeds", {})
     if seeds.get("created"):
         ctx.step(f"Memory: pushed {len(seeds['created'])} seed file(s)")
+    brain_seeds = result.get("brain_seeds", {})
+    if brain_seeds.get("created"):
+        ctx.step(f"Memory: pushed {len(brain_seeds['created'])} brain scaffold file(s)")
 
     if result.get("cloned_vault"):
         ctx.step(f"Memory: cloned vault to {vault}")
+    if result.get("cloned_brain"):
+        ctx.step(f"Memory: cloned brain projection to {brain}")

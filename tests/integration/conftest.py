@@ -27,6 +27,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -303,6 +304,90 @@ async def homer(matrix):
 # the repo owner is the org so admins see it in their dashboards.
 FORGEJO_DOCS_OWNER = "family"
 FORGEJO_DOCS_REPO = "memory"
+
+
+def _instance_config() -> dict:
+    with open(INSTANCE_DIR / "stack.toml", "rb") as fh:
+        return tomllib.load(fh)
+
+
+@pytest.fixture(scope="session")
+def demo_server_name() -> str:
+    name = _instance_config().get("messages", {}).get("server_name")
+    if not name:
+        pytest.fail("No [messages].server_name in stack.toml for demo rig login.")
+    return name
+
+
+@pytest.fixture(scope="session")
+def demo_matrix(demo_server_name) -> dict:
+    """Log in to the running Simpson demo instance without seeding or up."""
+    from stack.secrets import TomlSecretStore
+
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    creds = {}
+    for username in ("homer", "marge", "bart", "lisa"):
+        password = store.get("_", f"USER_{username.upper()}_PASSWORD")
+        if not password:
+            pytest.fail(
+                f"No USER_{username.upper()}_PASSWORD in .stack/secrets.toml "
+                "for demo rig login."
+            )
+        creds[username] = login(
+            server_name=demo_server_name,
+            username=username,
+            password=password,
+        )
+    return creds
+
+
+@pytest.fixture
+async def demo_homer(demo_matrix):
+    """Homer client for tests that target the already-running demo rig."""
+    from nio import AsyncClient
+    c = demo_matrix["homer"]
+    client = AsyncClient(c.homeserver, c.user_id)
+    client.access_token = c.access_token
+    client.device_id = c.device_id
+    client.user_id = c.user_id
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+@pytest.fixture(scope="session")
+def demo_paperless() -> PaperlessAPI:
+    from stack.secrets import TomlSecretStore
+
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    token = store.get("docs", "API_TOKEN")
+    if not token:
+        pytest.fail("No docs API_TOKEN in .stack/secrets.toml for demo rig.")
+    api = PaperlessAPI(url="http://localhost:42020", token=token)
+    try:
+        api.list_documents()
+    except Exception as e:
+        pytest.fail(f"Paperless is not reachable for demo rig: {e}")
+    return api
+
+
+@pytest.fixture(scope="session")
+def demo_code() -> ForgejoAPI:
+    from stack.secrets import TomlSecretStore
+
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    admin_password = store.get("_", "ADMIN_PASSWORD") or store.get("global", "ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.fail("No ADMIN_PASSWORD in .stack/secrets.toml for demo rig Forgejo.")
+    api = ForgejoAPI(
+        url="http://localhost:42040",
+        admin_user="stackadmin",
+        admin_password=admin_password,
+    )
+    if not api.ping():
+        pytest.fail("Forgejo is not reachable for demo rig at http://localhost:42040.")
+    return api
 
 
 @pytest.fixture(scope="session")

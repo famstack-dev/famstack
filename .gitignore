@@ -20,7 +20,7 @@ users.toml
 **/.DS_Store
 
 # Design docs (work in progress)
-design/
+/design/
 
 # Python
 __pycache__/

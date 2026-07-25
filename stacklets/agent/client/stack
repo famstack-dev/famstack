@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Container-side `stack` shim.
+
+Stacky runs `stack <cmd>` through its exec tool; this forwards the command as a
+plaintext line to the host's famstack API over TCP (a container cannot run the
+host CLI directly, and a unix socket file does not bridge the macOS
+container<->host boundary, so we use host.docker.internal - the same path
+famstack uses for oMLX/whisper). The API is core-owned and dual-mode: a plaintext
+line gets the CLI's plaintext output back (token-lean, no JSON), confined to an
+allowlist of read/domain commands. See stacklets/core/famstack-api.py.
+"""
+
+import os
+import socket
+import sys
+
+host, port = os.environ.get("STACK_API_ADDR", "host.docker.internal:42001").rsplit(":", 1)
+try:
+    # `with` closes the socket on every exit path, including errors.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(125)
+        sock.connect((host, int(port)))
+        sock.sendall((" ".join(sys.argv[1:]) + "\n").encode())
+        sock.shutdown(socket.SHUT_WR)  # done sending; half-close so the server reads EOF
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            sys.stdout.write(chunk.decode(errors="replace"))
+            sys.stdout.flush()
+except Exception as e:
+    sys.stderr.write(f"stack: cannot reach the famstack API ({e})\n")
+    sys.exit(1)

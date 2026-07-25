@@ -1,0 +1,47 @@
+# stacklet.toml — the agent stacklet (the famstack family agent)
+#
+# The agent lives in the family's Matrix rooms. It answers from the family's own
+# notes and wiki and can act through the stack CLI. It runs the nanobot harness
+# in a container, connects to Matrix through nanobot's own channel as the agent
+# account that the core bot-runner provisions from bot/bot.toml, and talks to the
+# local LLM configured in stack.toml [ai].
+#
+# The stacklet is "agent"; the persona (name + voice) is configurable. It ships
+# as "Stacky" via AGENT_NAME and a family can rename it (see the note below).
+
+id          = "agent"
+name        = "Agent"
+description = "The family agent — ask it in chat, it answers from your own notes"
+version     = "0.1.0"
+category    = "ai"
+requires    = ["ai", "messages"]
+
+# Image is built locally from the Dockerfile here (nanobot from PyPI). There is
+# no upstream image to pull, so build on every `stack up`.
+build = true
+
+[env.defaults]
+AGENT_DATA_DIR = "{data_dir}/agent"
+# The family memory vault (read-only) — Stacky's knowledge source, the same
+# working copy the memory stacklet maintains and the wiki renders.
+MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
+# Persona — the family-facing name and voice, from stack.toml [agent] name
+# (default "Stacky"). One knob: the same value drives the Matrix display name,
+# the @<name>-bot handle, the #<name> room, and the SOUL.md self-reference.
+AGENT_NAME = "{agent_name}"
+# Verbose runtime logs (tool calls, agent decisions). On while we build/debug.
+AGENT_VERBOSE = "1"
+# LLM — endpoint (docker-side URL), key, and model, all from stack.toml [ai].
+AGENT_OPENAI_URL = "{ai_openai_url_docker}"
+AGENT_OPENAI_KEY = "{ai_openai_key}"
+AGENT_MODEL      = "{ai_default_model}"
+# Matrix — nanobot logs in as @<agent_handle> against Synapse on the stack network.
+AGENT_MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
+AGENT_MATRIX_SERVER_NAME = "{messages_server_name}"
+# The agent's own Matrix handle, from [agent] name — nanobot logs in as
+# @{agent_handle}. Same value the bot-runner provisions the account under.
+AGENT_BOT_ID = "{agent_handle}"
+# The agent's login password is read at runtime from the mounted secrets store
+# (secrets.toml `agent__AGENT_BOT_PASSWORD`), the same secret the bot-runner uses to
+# create the account. See entrypoint.sh.
+TZ = "{timezone}"

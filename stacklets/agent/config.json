@@ -1,0 +1,38 @@
+{
+  "providers": {
+    "custom": {
+      "api_base": "${AGENT_OPENAI_URL}",
+      "api_key": "${AGENT_OPENAI_KEY}"
+    }
+  },
+  "model_presets": {
+    "primary": {
+      "provider": "custom",
+      "model": "${AGENT_MODEL}"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model_preset": "primary"
+    }
+  },
+  "tools": {
+    "exec": {"enable": true},
+    "web": {"enable": false},
+    "file": {"enable": true},
+    "cli_apps": {"enable": false},
+    "my": {"enable": false},
+    "image_generation": {"enable": false}
+  },
+  "channels": {
+    "matrix": {
+      "enabled": true,
+      "homeserver": "${AGENT_MATRIX_HOMESERVER}",
+      "userId": "@${AGENT_BOT_ID}:${AGENT_MATRIX_SERVER_NAME}",
+      "password": "${AGENT_MATRIX_PASSWORD}",
+      "e2eeEnabled": true,
+      "allowFrom": ["*"],
+      "groupPolicy": "mention"
+    }
+  }
+}

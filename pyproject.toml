@@ -54,6 +54,9 @@ asyncio_mode = "auto"
 # `tests/integration/stacktests eval` — never collected by `pytest tests/`.
 norecursedirs = ["tests/integration/eval"]
 markers = [
+    "container_lifecycle: Docker lifecycle tests for stack up/down/destroy and rendered container environments",
+    "demo_rig: live demo-instance tests using Simpson accounts and the configured AI endpoint",
+    "smoke: fast e2e coverage for the integration rig inner loop",
     "v2_only: tests for the lifecycle v2 refactor (will fail until migration is complete)",
     "unverified: e2e intent specs not yet reconciled against the rig; non-blocking (xfail) until verified before the next beta tag",
 ]

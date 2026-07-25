@@ -22,6 +22,8 @@ from pipeline import (  # noqa: E402
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
+    PaperlessAPI,
+    PaperlessDuplicateError,
     _build_synthesize_prompt,
     _format_evidence_block,
     _to_whoosh_query,
@@ -1520,3 +1522,91 @@ class TestParseRewriteResponse:
         assert self._parse('{"foo": "bar"}') == []
         assert self._parse('"just a string"') == []
         assert self._parse('42') == []
+
+
+# ── PaperlessAPI.wait_task — task-status polling ──────────────────────
+#
+# Paperless-ngx changed the /api/tasks/ response shape (paginated
+# envelope, lowercase status, related_document_ids). wait_task must read
+# the doc id out of the current shape AND stay tolerant of the older one,
+# since the image tag isn't guaranteed across upgrades.
+
+
+class _FakeTasksResp:
+    """One aiohttp response, usable as an async context manager."""
+
+    def __init__(self, status: int, payload):
+        self.status = status
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def json(self):
+        return self._payload
+
+
+class _FakeTasksSession:
+    """Minimal aiohttp stand-in: every GET returns the same task payload."""
+
+    def __init__(self, payload, status: int = 200):
+        self._payload = payload
+        self._status = status
+        self.calls = 0
+
+    def get(self, _url, headers=None):
+        self.calls += 1
+        return _FakeTasksResp(self._status, self._payload)
+
+
+def _api(session) -> PaperlessAPI:
+    return PaperlessAPI(session, "http://paperless", "tok")
+
+
+class TestWaitTask:
+    """wait_task resolves a finished task to its document id."""
+
+    async def test_current_shape_paginated_lowercase(self):
+        # The shape a live Paperless-ngx returns today: a paginated
+        # envelope, status "success", doc id under related_document_ids.
+        payload = {
+            "count": 1,
+            "results": [{
+                "task_id": "abc",
+                "status": "success",
+                "result_data": {"document_id": 6},
+                "related_document_ids": [6],
+            }],
+        }
+        api = _api(_FakeTasksSession(payload))
+        assert await api.wait_task("abc", timeout=5) == 6
+
+    async def test_legacy_shape_bare_list_uppercase(self):
+        # Older Paperless: a bare list, uppercase SUCCESS, doc id under
+        # related_document. Still supported so an upgrade can't strand us.
+        payload = [{
+            "task_id": "abc",
+            "status": "SUCCESS",
+            "related_document": 42,
+        }]
+        api = _api(_FakeTasksSession(payload))
+        assert await api.wait_task("abc", timeout=5) == 42
+
+    async def test_duplicate_failure_raises(self):
+        # A duplicate rejection is a FAILURE whose result names the twin;
+        # wait_task turns it into PaperlessDuplicateError for the caller.
+        payload = {
+            "count": 1,
+            "results": [{
+                "task_id": "abc",
+                "status": "failure",
+                "result": "Not consuming dupe.pdf: It is a duplicate of Prior (#7)",
+            }],
+        }
+        api = _api(_FakeTasksSession(payload))
+        with pytest.raises(PaperlessDuplicateError) as exc:
+            await api.wait_task("abc", timeout=5)
+        assert exc.value.doc_id == 7

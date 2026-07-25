@@ -4,8 +4,8 @@ The sidecar's job is mostly plumbing (git reads, one subprocess call);
 what's worth pinning is the logic that keeps it from misfiring: the
 own-commit filter that stops a rebuild from triggering itself, the
 debounce that turns a 25-document ingest into one rebuild instead of
-25, the persons-only selection that keeps the incremental pass at 2-3
-LLM calls, and the nightly once-per-day gate. All pure and tested
+25, the member/topic selection that keeps the incremental pass bounded,
+and the nightly once-per-day gate. All pure and tested
 here; the end-to-end path rides the integration rig like the rest of
 the wiki.
 """
@@ -22,9 +22,12 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from curator import (  # noqa: E402
     Debounce,
+    diff_to_fileops,
+    is_source_path,
     member_selection,
     nightly_due,
     only_own_commits,
+    reconcile_fileops,
 )
 from wiki import COMMIT_PREFIX  # noqa: E402
 
@@ -125,11 +128,24 @@ class TestMemberSelection:
             "--home", "--member", "homer",
         ]
 
+    def test_shared_topic_capture_selects_topic_page(self):
+        paths = ["family/camping/notes/2026/06/checklist-a1.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == [
+            "--home", "--topic", "camping",
+        ]
+
+    def test_personal_topic_capture_selects_owner_and_topic_page(self):
+        paths = ["homer/gravel/notes/2026/06/training-a1.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == [
+            "--home", "--member", "homer", "--topic", "gravel",
+        ]
+
     def test_generated_pages_never_trigger(self):
         # The wiki's own output (or a hand edit around the splice
         # markers) must not feed back into a rebuild.
         paths = ["index.md", "homer/about.md", "family/camping/about.md"]
-        assert member_selection(paths, _fm({}), shared_bucket="family") == []
+        reader = _fm({p: {"generated": "true"} for p in paths})
+        assert member_selection(paths, reader, shared_bucket="family") == []
 
     def test_skipped_dirs_never_trigger(self):
         paths = ["wiki/config.json", ".obsidian/workspace.json", "private/x.md"]
@@ -152,6 +168,170 @@ class TestMemberSelection:
         assert sel[0] == "--home"
 
 
+# ── is_source_path ─────────────────────────────────────────────────────────
+
+
+class TestIsSourcePath:
+    """The mirror replays only source paths to brain. Generated page
+    markers and git internals are excluded so generation's own output
+    is never treated as source to copy."""
+
+    def test_captures_are_source(self):
+        assert is_source_path("family/documents/2026/06/p7.md") is True
+        assert is_source_path("homer/notes/2026/06/a-1.md") is True
+        assert is_source_path("ontology.toml") is True
+
+    def test_generated_marker_excluded(self):
+        assert is_source_path("homer/about.md", {"generated": "true"}) is False
+        assert is_source_path("family/camping/notes/index.md", {"generated": True}) is False
+        assert is_source_path("index.md", {"generated": "true"}) is False
+
+    def test_unmarked_about_page_is_source(self):
+        assert is_source_path("homer/about.md", {}) is True
+        assert is_source_path("family/camping/about.md", {}) is True
+
+    def test_git_internals_excluded(self):
+        assert is_source_path(".git/config") is False
+
+    def test_empty_path_excluded(self):
+        assert is_source_path("") is False
+
+
+# ── diff_to_fileops ────────────────────────────────────────────────────────
+
+
+class TestDiffToFileops:
+    """`git diff --name-status -M` maps to brain file operations: A/M/C/T
+    copy in, D removes, R is rm-old + copy-new."""
+
+    def test_add_and_modify_copy_in(self):
+        ops = diff_to_fileops([
+            "A\tfamily/documents/2026/06/new-p1.md",
+            "M\thomer/notes/2026/06/edited-a1.md",
+        ])
+        assert ops == [
+            ("copy", "family/documents/2026/06/new-p1.md",
+             "family/documents/2026/06/new-p1.md"),
+            ("copy", "homer/notes/2026/06/edited-a1.md",
+             "homer/notes/2026/06/edited-a1.md"),
+        ]
+
+    def test_delete_removes(self):
+        ops = diff_to_fileops(["D\tmarge/notes/2026/05/gone-b2.md"])
+        assert ops == [("rm", "marge/notes/2026/05/gone-b2.md", "")]
+
+    def test_rename_is_rm_old_then_copy_new(self):
+        ops = diff_to_fileops([
+            "R096\thomer/notes/2026/06/old-slug-a1.md\thomer/notes/2026/06/new-slug-a1.md",
+        ])
+        assert ops == [
+            ("rm", "homer/notes/2026/06/old-slug-a1.md", ""),
+            ("copy", "homer/notes/2026/06/new-slug-a1.md",
+             "homer/notes/2026/06/new-slug-a1.md"),
+        ]
+
+    def test_copy_status_treated_as_add(self):
+        ops = diff_to_fileops(["C075\tsrc/a.md\tfamily/documents/2026/06/c.md"])
+        assert ops == [
+            ("rm", "src/a.md", ""),
+            ("copy", "family/documents/2026/06/c.md",
+             "family/documents/2026/06/c.md"),
+        ]
+
+    def test_type_change_treated_as_modify(self):
+        ops = diff_to_fileops(["T\tfamily/documents/2026/06/d.md"])
+        assert ops == [
+            ("copy", "family/documents/2026/06/d.md",
+             "family/documents/2026/06/d.md"),
+        ]
+
+    def test_generated_page_delete_in_diff_uses_filename_backstop(self):
+        # Delete and rename paths cannot read frontmatter from a gone
+        # file, so the legacy generated-name backstop stays authoritative
+        # for removal operations.
+        ops = diff_to_fileops(["D\thomer/about.md"])
+        assert ops == []
+
+    def test_unmarked_about_page_add_is_mirrored(self):
+        # A hand-written about.md in memory is source. Generation sees it
+        # in brain and must leave it alone.
+        ops = diff_to_fileops(["A\thomer/about.md"])
+        assert ops == [("copy", "homer/about.md", "homer/about.md")]
+
+    def test_rename_to_unmarked_about_page_copies_source(self):
+        # Filename alone is not generated for a live file. A hand-written
+        # about.md is source, so the rename copies the new path.
+        ops = diff_to_fileops([
+            "R100\thomer/notes/2026/06/a-1.md\thomer/about.md",
+        ])
+        assert ops == [
+            ("rm", "homer/notes/2026/06/a-1.md", ""),
+            ("copy", "homer/about.md", "homer/about.md"),
+        ]
+
+    def test_rename_to_marked_generated_page_degrades_to_delete(self):
+        ops = diff_to_fileops(
+            ["R100\thomer/notes/2026/06/a-1.md\thomer/about.md"],
+            _fm({"homer/about.md": {"generated": "true"}}),
+        )
+        assert ops == [("rm", "homer/notes/2026/06/a-1.md", "")]
+
+    def test_rename_of_generated_page_is_still_dropped(self):
+        ops = diff_to_fileops(
+            ["R100\thomer/about.md\tmarge/about.md"],
+            _fm({"marge/about.md": {"generated": "true"}}),
+        )
+        assert ops == []
+
+    def test_blank_and_malformed_lines_skipped(self):
+        ops = diff_to_fileops(["", "  ", "A", "R096\tonly-one-field"])
+        assert ops == []
+
+
+# ── reconcile_fileops ──────────────────────────────────────────────────────
+
+
+class TestReconcileFileops:
+    """The nightly self-heal: brain's source files exactly match
+    memory's. Every memory source file is copied; brain source files
+    memory no longer has are removed. Generated pages are never touched."""
+
+    def test_copies_all_memory_and_removes_orphans(self):
+        memory = [
+            "family/documents/2026/06/p1.md",
+            "homer/notes/2026/06/a-1.md",
+        ]
+        brain = [
+            "family/documents/2026/06/p1.md",   # in sync
+            "marge/notes/2026/05/stale-b2.md",  # memory dropped it
+        ]
+        ops = reconcile_fileops(memory, brain)
+        assert ("copy", "family/documents/2026/06/p1.md",
+                "family/documents/2026/06/p1.md") in ops
+        assert ("copy", "homer/notes/2026/06/a-1.md",
+                "homer/notes/2026/06/a-1.md") in ops
+        assert ("rm", "marge/notes/2026/05/stale-b2.md", "") in ops
+
+    def test_generated_pages_in_brain_are_left_alone(self):
+        # about.md / index.md live only in brain (generation owns them).
+        # Reconcile must not remove them as orphans.
+        memory = ["family/documents/2026/06/p1.md"]
+        brain = ["homer/about.md", "family/camping/notes/index.md"]
+        ops = reconcile_fileops(
+            memory, brain, None,
+            _fm({p: {"generated": "true"} for p in brain}),
+        )
+        rm_paths = [p for (a, p, _s) in ops if a == "rm"]
+        assert "homer/about.md" not in rm_paths
+        assert "family/camping/notes/index.md" not in rm_paths
+
+    def test_already_in_sync_only_recopies_source(self):
+        memory = ["ontology.toml"]
+        brain = ["ontology.toml"]
+        ops = reconcile_fileops(memory, brain)
+        assert ops == [("copy", "ontology.toml", "ontology.toml")]
+
+
 # ── nightly_due ──────────────────────────────────────────────────────────
 
 
@@ -170,3 +350,44 @@ class TestNightlyDue:
         assert nightly_due("", "", _local("12:00")) is False
         assert nightly_due("never", "", _local("12:00")) is False
         assert nightly_due("3x:99y", "", _local("12:00")) is False
+
+
+# ── Mirror-now trigger ────────────────────────────────────────────────
+
+from curator import TRIGGER_NAME, consume_trigger, sleep_until_tick  # noqa: E402
+
+
+class TestConsumeTrigger:
+    def test_consumes_and_reports_pending_trigger(self, tmp_path):
+        (tmp_path / TRIGGER_NAME).write_text("now", encoding="utf-8")
+        assert consume_trigger(tmp_path) is True
+        assert not (tmp_path / TRIGGER_NAME).exists()
+
+    def test_no_trigger_is_false(self, tmp_path):
+        assert consume_trigger(tmp_path) is False
+
+
+class TestSleepUntilTick:
+    async def test_pending_trigger_wakes_immediately(self, tmp_path):
+        (tmp_path / TRIGGER_NAME).write_text("now", encoding="utf-8")
+        start = time.monotonic()
+        assert await sleep_until_tick(5.0, tmp_path, slice_secs=0.02) is True
+        assert time.monotonic() - start < 1.0
+        assert not (tmp_path / TRIGGER_NAME).exists()
+
+    async def test_times_out_quietly_without_trigger(self, tmp_path):
+        assert await sleep_until_tick(0.05, tmp_path, slice_secs=0.01) is False
+
+    async def test_trigger_landing_mid_sleep_wakes_early(self, tmp_path):
+        import asyncio
+
+        async def drop():
+            await asyncio.sleep(0.05)
+            (tmp_path / TRIGGER_NAME).write_text("now", encoding="utf-8")
+
+        start = time.monotonic()
+        drop_task = asyncio.get_event_loop().create_task(drop())
+        woke = await sleep_until_tick(5.0, tmp_path, slice_secs=0.02)
+        await drop_task
+        assert woke is True
+        assert time.monotonic() - start < 1.0

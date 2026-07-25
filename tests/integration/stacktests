@@ -14,6 +14,10 @@
 #   tests/integration/stacktests cleanup         — nuke every test stacklet +
 #                                                  instance state + test data
 #   tests/integration/stacktests e2e [args]      — run every e2e test
+#   tests/integration/stacktests container-e2e   — alias for e2e
+#   tests/integration/stacktests smoke [args]    — run smoke e2e tests
+#   tests/integration/stacktests demo-rig [args] — run live Simpson demo tests
+#   tests/integration/stacktests demo [args]     — alias for demo-rig
 #   tests/integration/stacktests eval [args]     — pipeline quality eval
 #                                                  (real model, report-only)
 #   tests/integration/stacktests pytest [args]   — pytest with env + deps
@@ -111,10 +115,15 @@ case "${1:-}" in
     exec uv run --extra test pytest "$@"
     ;;
 
-  e2e)
+  e2e|container-e2e)
     # Run every end-to-end test under tests/integration/. Convention:
     # any file named test_*_e2e.py is picked up. Extra args forward to
     # pytest (e.g. `stacktests e2e -s -k homer`).
+    #
+    # `demo_rig`-marked tests are excluded: they target an already-live
+    # Simpson demo instance (an ad-hoc feature-testing tool), not this
+    # managed rig, so they'd fail here for want of a running demo. Run
+    # them with `stacktests demo-rig` instead.
     #
     # Seeds secrets + brings up required stacklets first. Both steps
     # are idempotent, so repeat runs pay near-zero cost.
@@ -123,7 +132,28 @@ case "${1:-}" in
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       python3 -m stack up "$sid" > /dev/null
     done
-    exec uv run --extra test pytest tests/integration/ -k "_e2e" "$@"
+    exec uv run --extra test pytest tests/integration/ -k "_e2e" -m "not demo_rig" --durations=20 "$@"
+    ;;
+
+  smoke)
+    # Run the smoke subset of end-to-end tests. Like e2e, this seeds
+    # secrets and ensures required stacklets are up before pytest starts.
+    shift || true
+    seed_secrets
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      python3 -m stack up "$sid" > /dev/null
+    done
+    exec uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
+    ;;
+
+  demo-rig|demo)
+    # Run tests against the already-running Simpson demo instance in
+    # this checkout. This deliberately does not seed config or start
+    # stacklets; it should be safe to run repeatedly against live demo
+    # data because tests create uniquely-named rooms/files and clean up
+    # their own Paperless/Forgejo artifacts where the services allow it.
+    shift || true
+    exec uv run --extra test pytest tests/integration/ -m demo_rig --durations=10 "$@"
     ;;
 
   eval)

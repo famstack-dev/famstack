@@ -53,14 +53,21 @@ ADMIN_PASSWORD = "{admin_password}"
 # [core] shared_bucket, defaults to "family".
 SHARED_BUCKET  = "{shared_bucket}"
 
-# Bind-mount source for the wiki container. Resolves to the same
-# working copy that the hooks clone into — `memory.lib.vault_path_for`
-# also returns this path, so there is exactly one vault on disk.
+# The memory source clone (`memory.lib.vault_path_for`): the curator
+# pulls it and reads source, the wiki CLI reads source from it. Never
+# written by generation — memory is source-only.
 MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
 
+# The brain projection working copy (`memory.lib.brain_path_for`): the
+# curator mirrors memory's source plus generated pages into it and
+# pushes; Quartz mounts and renders it. Disposable — rebuilt from
+# memory at any time.
+BRAIN_REPO_DIR = "{data_dir}/memory/brain"
+
 # Bind-mount source for the curator sidecar: the memory data dir as a
-# whole, so one mount covers the vault (read) and the curator's state
-# files (write) at the same /data/memory paths the containers expect.
+# whole, so one mount covers the source clone, the brain working copy,
+# and the curator's state files at the same /data/memory paths the
+# containers expect.
 MEMORY_DATA_DIR = "{data_dir}/memory"
 
 # Curator runtime — the slim sidecar runs the same wiki generation the

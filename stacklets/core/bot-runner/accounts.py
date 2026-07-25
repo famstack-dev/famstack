@@ -76,11 +76,17 @@ def setup_bot_accounts(bots, homeserver, server_name, admin_user, admin_password
             continue
 
         full_user = f"@{bot_id}:{server_name}"
-        status, resp = _api("PUT", f"{base}/_synapse/admin/v2/users/{full_user}", {
-            "password": bot_pass,
-            "displayname": bot_name,
-            "admin": False,
-        }, token=token)
+        # Only set the password when *creating* the account. Re-sending it to an
+        # existing account resets the password, which soft-logs-out that bot's
+        # live session (e.g. the agent's nanobot, which holds its own token) and
+        # makes it go deaf on M_UNKNOWN_TOKEN. Provision-only bots have no session
+        # file to skip them here, so this ran every startup. Create with a
+        # password; leave an existing account's password (and tokens) untouched.
+        existing, _ = _api("GET", f"{base}/_synapse/admin/v2/users/{full_user}", token=token)
+        body = {"displayname": bot_name, "admin": False}
+        if existing != 200:
+            body["password"] = bot_pass
+        status, resp = _api("PUT", f"{base}/_synapse/admin/v2/users/{full_user}", body, token=token)
 
         if status in (200, 201):
             logger.info("Account ready: {}", full_user)

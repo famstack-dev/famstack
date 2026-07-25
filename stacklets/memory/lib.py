@@ -33,12 +33,16 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 # Vault-layout conventions live in the framework so both stacklets share
 # one source. Re-exported here for memory's own callers (and back-compat
 # with `from lib import correspondents_dir`).
 from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
+
+# Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
+# so both host CLI and containers can parse identically.
+from stack.frontmatter import parse as _parse_frontmatter_new
 
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
@@ -47,7 +51,7 @@ from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
-from stack.forgejo import ForgejoClient
+from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
 
@@ -67,6 +71,41 @@ REPO_DESCRIPTION = (
 ORG_DESCRIPTION = (
     "Your family's Forgejo — documents, knowledge, and shared repos."
 )
+
+# The projection repo. `family/brain` is the derived mirror of memory's
+# source plus every generated wiki page; Quartz renders it. It is fully
+# disposable — the curator rebuilds it from memory at any time — so it
+# carries only a minimal seed (.gitignore + a README); the rest of its
+# content arrives through the mirror. Memory stays source-only and is
+# never written by generation.
+BRAIN_REPO_NAME = "brain"
+BRAIN_REPO_DESCRIPTION = (
+    "The family wiki, projected from memory. Generated and disposable — "
+    "Quartz renders this; edit the source in the memory repo instead."
+)
+
+# Brain's seed. Kept inline rather than in a seeds dir because it is two
+# files and the projection fills in everything else. The .gitignore
+# matches memory's so an Obsidian clone of either repo behaves the same.
+BRAIN_SEED_GITIGNORE = (
+    "# Projection repo — rendered by Quartz, rebuilt from memory.\n"
+    "# Obsidian per-user state must not hit git (see memory's .gitignore).\n"
+    ".obsidian/\n"
+    ".trash/\n"
+    ".DS_Store\n"
+)
+BRAIN_SEED_README = (
+    "# Family brain (projection)\n\n"
+    "This repo is **generated**. It mirrors the source vault in "
+    "`family/memory` and adds the wiki pages the curator composes. "
+    "Quartz renders it.\n\n"
+    "Do not hand-edit here — edits are overwritten on the next rebuild. "
+    "Edit the source in `family/memory`; changes flow back through the "
+    "mirror.\n"
+)
+BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
+BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
+GENERATED_PAGE_MARKER = "<!-- begin: generated -->"
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
 INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
 
@@ -95,8 +134,17 @@ def load_seed_ontology() -> Ontology:
 # ─── Vault path + auth ───────────────────────────────────────────────────
 
 def vault_path_for(data_dir: Path) -> Path:
-    """Resolve the vault path under a stack's data dir."""
+    """Resolve the vault (memory source) path under a stack's data dir."""
     return Path(data_dir) / "memory" / "vault"
+
+
+def brain_path_for(data_dir: Path) -> Path:
+    """Resolve the brain projection working-copy path under a data dir.
+
+    The curator pushes generated pages here and Quartz renders it; it
+    sits beside the memory vault clone under the same data dir.
+    """
+    return Path(data_dir) / "memory" / "brain"
 
 
 def authenticated_remote(remote_url: str, username: str, token: str) -> str:
@@ -115,6 +163,11 @@ def authenticated_remote(remote_url: str, username: str, token: str) -> str:
 def vault_remote_url(code_url: str) -> str:
     """The git remote URL for the memory repo on a given code stacklet."""
     return f"{code_url.rstrip('/')}/{REPO_OWNER}/{REPO_NAME}.git"
+
+
+def brain_remote_url(code_url: str) -> str:
+    """The git remote URL for the brain projection repo."""
+    return f"{code_url.rstrip('/')}/{REPO_OWNER}/{BRAIN_REPO_NAME}.git"
 
 
 # ─── Vault sync ──────────────────────────────────────────────────────────
@@ -242,6 +295,77 @@ def refresh_vault_if_stale(
     if pull_vault(vault_path, timeout=timeout):
         return "pulled"
     return "pull_failed"
+
+
+# ─── Vault writers ───────────────────────────────────────────────────────
+
+def _code_url_from_config(config: dict | None) -> str:
+    """Host-reachable Forgejo URL, from the secret the install hook cached or
+    the code stacklet's published port. Mirrors `cli/pull.py`'s resolution."""
+    secrets = config.get("secrets", {}) if config else {}
+    if cached := secrets.get("__code_url", ""):
+        return cached
+    stck = config.get("stack") if config else None
+    port = stck.get("code", {}).get("port", 42040) if isinstance(stck, dict) else 42040
+    return f"http://localhost:{port}"
+
+
+def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
+    """Map a striker (a person slug like 'homer') to a git author name+email.
+
+    The name carries the attribution in the commit history; the email is
+    synthetic but stable, keyed to the server name so a person's commits group.
+    """
+    # Accept a bare handle or a full mxid (@homer:simpson) -- reduce to the
+    # localpart so the author reads "homer", not "@homer:simpson".
+    slug = (actor or "").strip().split(":")[0].lstrip("@") or "unknown"
+    stck = config.get("stack") if config else None
+    server = stck.get("server_name") if isinstance(stck, dict) else None
+    return slug, f"{slug}@{server or 'famstack'}"
+
+
+def update_memory(config: dict, repo_path: str,
+                  transform: Callable[[str], str], *,
+                  actor: str, message: str) -> dict:
+    """Commit a transform of one vault file to Forgejo, attributed to `actor`.
+
+    The single write seam for deterministic memory mutations. It runs
+    host-native -- the memory-bot token already has write access, so there is
+    no docker exec and no LLM in the path -- reading the canonical file from
+    Forgejo (not the possibly-stale local clone), applying `transform`,
+    committing with `actor` as the git author, then fast-forwarding the local
+    clone so a following read reflects the change.
+
+    Returns the framework envelope: `{"ok": True, "committed": bool}` on
+    success (committed=False when the transform was a no-op, so nothing was
+    written), or `{"error": ...}` when credentials are missing, the transform
+    rejects the input (e.g. no matching todo), or Forgejo is unreachable.
+    """
+    secrets = config.get("secrets", {}) if config else {}
+    token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
+    code_url = _code_url_from_config(config)
+    if not (token and code_url):
+        return {"error": "Forgejo credentials missing — run `stack up memory` first"}
+
+    client = ForgejoClient(url=code_url, token=token)
+    name, email = _actor_identity(actor, config)
+    try:
+        result = client.edit_file(
+            REPO_OWNER, REPO_NAME, repo_path, transform,
+            message=message, author_name=name, author_email=email,
+        )
+    except ValueError as e:            # transform rejected the input
+        return {"error": str(e)}
+    except ForgejoError as e:
+        return {"error": f"Forgejo write failed: {e}"}
+
+    if result is None:
+        return {"ok": True, "committed": False}
+
+    data_dir = config.get("data_dir") if config else None
+    if data_dir:
+        pull_vault(vault_path_for(Path(data_dir)))  # write-through so reads agree
+    return {"ok": True, "committed": True, "path": repo_path}
 
 
 # ─── Vault readers ───────────────────────────────────────────────────────
@@ -578,6 +702,170 @@ def ensure_memory_repo(client: ForgejoClient) -> dict:
     }
 
 
+def ensure_brain_repo(client: ForgejoClient) -> dict:
+    """Create the `family/brain` projection repo if it doesn't exist.
+
+    The `family` org is created by `ensure_memory_repo` (memory installs
+    first), so this only ever has to make the repo. `create_repo` is
+    idempotent on a 409/already-exists, so re-running the hook is safe.
+    """
+    repo_existed = client.get_repo(REPO_OWNER, BRAIN_REPO_NAME) is not None
+    if not repo_existed:
+        client.create_repo(
+            REPO_OWNER, BRAIN_REPO_NAME,
+            description=BRAIN_REPO_DESCRIPTION,
+            private=True, owner_is_org=True,
+        )
+    return {"created_repo": not repo_existed}
+
+
+def seed_brain(
+    client: ForgejoClient,
+    *,
+    author_name: Optional[str] = None,
+    author_email: Optional[str] = None,
+) -> dict:
+    """Push brain's minimal seed (.gitignore + README) if missing.
+
+    Only the two scaffold files — everything else in brain arrives
+    through the curator's mirror. Files already present are left alone,
+    so this is idempotent and never clobbers a projection in progress.
+    """
+    created: list[str] = []
+    skipped: list[str] = []
+    seed = {
+        ".gitignore": BRAIN_SEED_GITIGNORE,
+        "README.md": BRAIN_SEED_README,
+    }
+    for repo_path, content in seed.items():
+        existing = client.get_file(REPO_OWNER, BRAIN_REPO_NAME, repo_path)
+        if existing is not None:
+            skipped.append(repo_path)
+            continue
+        client.put_file(
+            REPO_OWNER, BRAIN_REPO_NAME, repo_path,
+            content=content,
+            message=BRAIN_SEED_COMMIT_MESSAGE,
+            author_name=author_name,
+            author_email=author_email,
+        )
+        created.append(repo_path)
+    return {"created": created, "skipped": skipped}
+
+
+def purge_generated_memory_pages(
+    client: ForgejoClient,
+    *,
+    message: str = "chore(memory): purge generated wiki pages from source",
+) -> dict:
+    """Delete legacy generated projection pages from `family/memory`.
+
+    B1 moves generation to `family/brain`, but upgraded instances can
+    already have generated wiki pages in the source repo from pre-B1
+    runs. The migration is marker-based so it does not depend on stale
+    path conventions: any markdown file with the generated splice marker
+    is a projection artifact and is removed from memory.
+    """
+    deleted: list[str] = []
+    tree = client.list_tree(REPO_OWNER, REPO_NAME)
+    for entry in tree:
+        path = entry.get("path", "")
+        if entry.get("type") != "blob" or not path.endswith(".md"):
+            continue
+        if Path(path).name == "README.md":
+            continue
+        existing = client.get_file(REPO_OWNER, REPO_NAME, path)
+        if not existing:
+            continue
+        content = existing.get("content", "")
+        if GENERATED_PAGE_MARKER not in content:
+            continue
+        client.delete_file(
+            REPO_OWNER, REPO_NAME, path,
+            sha=existing["sha"], message=message,
+        )
+        deleted.append(path)
+    return {"deleted": deleted}
+
+
+def purge_local_generated_memory_pages(vault_path: Path) -> dict:
+    """Remove generated page files from the local memory clone.
+
+    This is the local companion to `purge_generated_memory_pages`. It is
+    needed when a pre-fix wiki run wrote generated pages into the source
+    working copy without committing them; those local modifications block
+    a normal fast-forward after the remote purge.
+    """
+    deleted: list[str] = []
+    vault_path = Path(vault_path)
+    if not vault_path.exists():
+        return {"deleted": deleted}
+    for md in sorted(vault_path.rglob("*.md")):
+        if ".git" in md.parts or md.name == "README.md":
+            continue
+        try:
+            content = md.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if GENERATED_PAGE_MARKER not in content:
+            continue
+        try:
+            rel = str(md.relative_to(vault_path))
+            md.unlink()
+        except OSError:
+            continue
+        deleted.append(rel)
+    return {"deleted": deleted}
+
+
+def ensure_brain_projection_admin(
+    *,
+    code_url: str,
+    admin_user: str,
+    admin_password: str,
+    brain_path: Optional[Path] = None,
+) -> dict:
+    """Ensure upgraded instances have the brain repo and local checkout.
+
+    `on_install_success` only runs once. Instances installed before the
+    brain projection existed already have `memory.setup-done`, so normal
+    `stack up memory` skips the install hook forever. This helper is the
+    idempotent migration path used from `on_start_ready`: create
+    `family/brain` if missing, seed its scaffold if missing, and clone it
+    locally when the working copy is absent.
+    """
+    admin = ForgejoClient(
+        url=code_url,
+        admin_user=admin_user, admin_password=admin_password,
+    )
+    if not admin.ping():
+        return {"skipped_reason": "forgejo unreachable"}
+
+    brain_state = ensure_brain_repo(admin)
+    admin_token = admin.issue_token(
+        admin_user, admin_password, BRAIN_MIGRATION_TOKEN_NAME, TOKEN_SCOPES,
+    )
+    admin_token_client = ForgejoClient(url=code_url, token=admin_token)
+    brain_seeds = seed_brain(admin_token_client)
+    memory_purge = purge_generated_memory_pages(admin_token_client)
+
+    cloned_brain = False
+    if brain_path is not None:
+        had_brain = (brain_path / ".git").exists()
+        brain_remote = authenticated_remote(
+            brain_remote_url(code_url),
+            admin_user, admin_token,
+        )
+        cloned_brain = ensure_vault_cloned(brain_path, brain_remote) and not had_brain
+
+    return {
+        "created_brain_repo": brain_state["created_repo"],
+        "brain_seeds": brain_seeds,
+        "memory_purge": memory_purge,
+        "cloned_brain": cloned_brain,
+    }
+
+
 def install_seeds(
     client: ForgejoClient,
     seed_dir: Optional[Path] = None,
@@ -714,44 +1002,19 @@ def install_memory_to_forgejo(
 
 
 def _parse_frontmatter(text: str) -> dict:
-    """Stdlib-only YAML subset for archivist-emitted frontmatter.
+    """Parse vault entry frontmatter using the shared stdlib-only module.
 
-    Supports the two shapes the classifier actually writes: top-level
-    scalars (`key: value`) and one-deep lists of scalars (`key:`
-    followed by `  - item` lines). Anything fancier is silently
-    skipped so malformed files still surface in body grep, just
-    without enriched metadata.
+    Delegates to stack.frontmatter.parse, which handles the strict
+    §2 subset per the vault format spec. On parse errors, this still
+    silently returns the dict-so-far (graceful degradation for older
+    files or edge cases).
     """
-    if not text.startswith("---\n"):
+    try:
+        return _parse_frontmatter_new(text)
+    except Exception:
+        # Graceful degradation: if parse fails, return empty dict
+        # so the file still surfaces in search, just without metadata
         return {}
-    end = text.find("\n---\n", 4)
-    if end < 0:
-        return {}
-
-    data: dict = {}
-    current_list: Optional[List[str]] = None
-    for raw in text[4:end].splitlines():
-        line = raw.rstrip()
-        if not line:
-            continue
-        if line.startswith("  - ") or line.startswith("- "):
-            if current_list is not None:
-                token = line.split("- ", 1)[1].strip().strip("'\"")
-                current_list.append(token)
-            continue
-        if line.startswith(" ") or line.startswith("\t"):
-            continue
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key, value = key.strip(), value.strip()
-        if value == "":
-            current_list = []
-            data[key] = current_list
-        else:
-            data[key] = value.strip("'\"")
-            current_list = None
-    return data
 
 
 def _fm_list(fm: dict, key: str) -> List[str]:
@@ -977,6 +1240,7 @@ def install_memory_to_forgejo_admin(
     admin_password: str,
     seed_dir: Optional[Path] = None,
     vault_path: Optional[Path] = None,
+    brain_path: Optional[Path] = None,
     shared_bucket: str = DEFAULT_SHARED_BUCKET,
 ) -> dict:
     """Run the install pipeline using admin credentials directly.
@@ -986,9 +1250,14 @@ def install_memory_to_forgejo_admin(
     archivist-bot (created by the docs stacklet) is the sole bot
     account for day-to-day writes.
 
-    Idempotent across every step. When `vault_path` is supplied, the
-    pipeline also clones the freshly-seeded repo locally so readers
-    can use the working copy.
+    Two repos are stood up: `family/memory` (the source vault) and
+    `family/brain` (the projection Quartz renders). Memory carries the
+    full seed; brain carries only a .gitignore + README scaffold and
+    fills in from the mirror.
+
+    Idempotent across every step. When `vault_path` / `brain_path` are
+    supplied, the pipeline also clones the freshly-seeded repos locally
+    so the curator and readers can use the working copies.
 
     Returns a dict describing what changed. On `forgejo unreachable`,
     returns `{\"skipped_reason\": \"...\"}` and makes no further calls.
@@ -1001,6 +1270,7 @@ def install_memory_to_forgejo_admin(
         return {"skipped_reason": "forgejo unreachable"}
 
     repo_state = ensure_memory_repo(admin)
+    brain_state = ensure_brain_repo(admin)
 
     # Use admin token for file writes (admin has write:repository scope).
     admin_token = admin.issue_token(
@@ -1012,6 +1282,7 @@ def install_memory_to_forgejo_admin(
         commit_message=SEED_COMMIT_MESSAGE,
         shared_bucket=shared_bucket,
     )
+    brain_seeds = seed_brain(admin_token_client)
 
     cloned_vault = False
     if vault_path is not None:
@@ -1021,9 +1292,26 @@ def install_memory_to_forgejo_admin(
         )
         cloned_vault = ensure_vault_cloned(vault_path, remote)
 
+    cloned_brain = False
+    if brain_path is not None:
+        brain_remote = authenticated_remote(
+            brain_remote_url(code_url),
+            admin_user, admin_token,
+        )
+        cloned_brain = ensure_vault_cloned(brain_path, brain_remote)
+
     return {
         "created_org": repo_state["created_org"],
         "created_repo": repo_state["created_repo"],
+        "created_brain_repo": brain_state["created_repo"],
         "seeds": seeds,
+        "brain_seeds": brain_seeds,
         "cloned_vault": cloned_vault,
+        # The write-scoped token host-side writers need (`update_memory`,
+        # and the clone-recovery path in on_start_ready). The caller persists
+        # it as a secret; nothing else here keeps it. Author attribution is set
+        # per-commit, so a shared write token is fine -- it is transport auth,
+        # not identity.
+        "write_token": admin_token,
+        "cloned_brain": cloned_brain,
     }

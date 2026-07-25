@@ -43,7 +43,12 @@ import time
 import pytest
 from nio import AsyncClient
 
-from tests.integration.matrix import event_type, fetch_room_events
+from tests.integration.matrix import (
+    event_type,
+    fetch_room_events,
+    wait_for_room_event,
+    wait_for_room_events_until,
+)
 
 ARCHIVIST = "@archivist-bot:test.local"
 MARGE = "@marge:test.local"
@@ -116,23 +121,36 @@ async def test_room_modes_and_bookmark_reactions(homer, matrix):
 
         # The bot auto-accepts the invite and posts a welcome on join;
         # wait for any sign of it (cold start can take ~40s).
-        seen: list = []
-        for _ in range(13):
-            seen += await fetch_room_events(homer, room, duration=10)
-            if any(getattr(e, "sender", None) == ARCHIVIST for e in seen):
-                break
-        assert any(getattr(e, "sender", None) == ARCHIVIST for e in seen), \
+        joined = await wait_for_room_event(
+            homer,
+            room,
+            lambda e: getattr(e, "sender", None) == ARCHIVIST,
+            timeout=130,
+        )
+        assert joined, \
             "archivist never joined or responded in the room"
 
         # 1. Switch the room to react mode.
         await _send(homer, room, "!config process react")
-        ack = await fetch_room_events(homer, room, duration=30)
+        ack_event = await wait_for_room_event(
+            homer,
+            room,
+            lambda e: _bot_said([e], "is now") and _bot_said([e], "react"),
+            timeout=30,
+        )
+        ack = [ack_event] if ack_event else []
         assert _bot_said(ack, "is now") and _bot_said(ack, "react"), \
             "expected an acknowledgement that the room is now in react mode"
 
         # `!config` (bare) shows the current config + options.
         await _send(homer, room, "!config")
-        status = await fetch_room_events(homer, room, duration=30)
+        status_event = await wait_for_room_event(
+            homer,
+            room,
+            lambda e: _bot_said([e], "room config") and _bot_said([e], "process"),
+            timeout=30,
+        )
+        status = [status_event] if status_event else []
         assert _bot_said(status, "room config") and _bot_said(status, "process"), \
             "bare !config should print the current config and its options"
 
@@ -146,11 +164,12 @@ async def test_room_modes_and_bookmark_reactions(homer, matrix):
 
         # 3. 🔖 triggers the capture: 👀 then ✅ on the bookmarked message.
         await _react(homer, room, e1, "🔖")
-        done: list = []
-        for _ in range(12):
-            done += await fetch_room_events(homer, room, duration=10)
-            if _bot_reacted(done, key=CHECK, target=e1):
-                break
+        done = await wait_for_room_events_until(
+            homer,
+            room,
+            lambda events: _bot_reacted(events, key=CHECK, target=e1),
+            timeout=120,
+        )
         assert _bot_reacted(done, key=EYES, target=e1), \
             "🔖 should make the bot pick up the message (👀)"
         assert _bot_reacted(done, key=CHECK, target=e1), \
@@ -158,17 +177,24 @@ async def test_room_modes_and_bookmark_reactions(homer, matrix):
 
         # 4. Switch back to auto mode.
         await _send(homer, room, "!config process auto")
-        ack2 = await fetch_room_events(homer, room, duration=30)
+        ack2_event = await wait_for_room_event(
+            homer,
+            room,
+            lambda e: _bot_said([e], "is now") and _bot_said([e], "auto"),
+            timeout=30,
+        )
+        ack2 = [ack2_event] if ack2_event else []
         assert _bot_said(ack2, "is now") and _bot_said(ack2, "auto"), \
             "expected an acknowledgement that the room is now in auto mode"
 
         # 5. Auto mode processes a bare URL with no reaction needed.
         e2 = await _send(homer, room, "https://en.wikipedia.org/wiki/Hiking")
-        auto: list = []
-        for _ in range(12):
-            auto += await fetch_room_events(homer, room, duration=10)
-            if _bot_reacted(auto, key=CHECK, target=e2):
-                break
+        auto = await wait_for_room_events_until(
+            homer,
+            room,
+            lambda events: _bot_reacted(events, key=CHECK, target=e2),
+            timeout=120,
+        )
         assert _bot_reacted(auto, key=EYES, target=e2), \
             "auto mode should pick up a plain message (👀)"
         assert _bot_reacted(auto, key=CHECK, target=e2), \

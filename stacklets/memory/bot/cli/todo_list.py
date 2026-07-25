@@ -107,3 +107,54 @@ def read_todos(doc: str) -> tuple[list[str], list[str]]:
         bucket = open_items if m.group(1) == " " else done_items
         bucket.append(m.group(2).strip())
     return open_items, done_items
+
+
+def _norm(text: str) -> str:
+    """Whitespace- and case-normalised task text for matching."""
+    return " ".join(text.split()).lower()
+
+
+def set_todo_done(doc: str, item: str, *, done: bool) -> tuple[str, str]:
+    """Flip the task matching `item` to done (`[x]`) or open (`[ ]`).
+
+    The write counterpart to `read_todos`, kept in the module that owns the
+    task-line grammar. You identify the task by the **start** of its text, not
+    the whole line -- "buy sunscreen" finds "buy sunscreen for Bart" -- because
+    the striker (a family member in chat, or the agent on their behalf) rarely
+    quotes it exactly. An exact text wins over a longer sibling ("milk" over
+    "milk and eggs"). Returns `(new_doc, matched_text)` with the exact task
+    struck, so the caller can echo precisely what happened.
+
+    Raises ValueError when nothing starts with the string, or when it starts
+    more than one task -- the message then lists the matches so the caller can
+    ask for a string that identifies just one. The single "same text open and
+    already done" case is not ambiguous: it resolves to the copy whose state
+    would actually change.
+    """
+    needle = _norm(item)
+    lines = doc.splitlines(keepends=True)
+    tasks = [(i, m.group(2).strip(), m.group(1) != " ")
+             for i, line in enumerate(lines)
+             if (m := _TASK_RE.match(line))]
+
+    hits = [t for t in tasks if _norm(t[1]).startswith(needle)]
+    if not hits:
+        raise ValueError(f"no todo matching {item!r}")
+    if exact := [t for t in hits if _norm(t[1]) == needle]:
+        hits = exact
+
+    if len(hits) > 1:
+        # A string that also lands on an already-done copy resolves to the one
+        # whose state would flip; otherwise it is genuinely ambiguous.
+        changeable = [t for t in hits if t[2] != done]
+        if len(changeable) == 1:
+            hits = changeable
+        else:
+            opts = "\n  ".join(dict.fromkeys(t[1] for t in hits))
+            raise ValueError(
+                "more than one match; the string must match only one item:\n  " + opts)
+
+    idx, matched, _ = hits[0]
+    box = "x" if done else " "
+    lines[idx] = re.sub(r"\[[ xX]\]", f"[{box}]", lines[idx], count=1)
+    return "".join(lines), matched

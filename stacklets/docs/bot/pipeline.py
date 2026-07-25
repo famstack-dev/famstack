@@ -165,6 +165,23 @@ def _to_whoosh_query(q: str) -> str:
 
 # ── Paperless HTTP wrapper ───────────────────────────────────────────────
 
+def _task_document_id(task: dict) -> int | None:
+    """The filed document's id out of a completed task, across API shapes.
+
+    Newer Paperless carries it in ``related_document_ids`` (a list) or
+    ``result_data.document_id``; older builds used a scalar
+    ``related_document``. Try each, tolerate a missing/empty value.
+    """
+    ids = task.get("related_document_ids")
+    if isinstance(ids, list) and ids:
+        return int(ids[0])
+    result_data = task.get("result_data")
+    if isinstance(result_data, dict) and result_data.get("document_id"):
+        return int(result_data["document_id"])
+    doc_id = task.get("related_document")
+    return int(doc_id) if doc_id else None
+
+
 class PaperlessAPI:
     """Async client for every Paperless endpoint the docs stacklet touches.
 
@@ -311,12 +328,18 @@ class PaperlessAPI:
                 ) as resp:
                     if resp.status == 200:
                         tasks = await resp.json()
+                        # Paperless-ngx changed this response across versions:
+                        # a bare list became a paginated {"results": [...]}
+                        # envelope, "SUCCESS" became lowercase "success", and
+                        # "related_document" became "related_document_ids".
+                        # Read whichever shape the running image returns.
+                        if isinstance(tasks, dict):
+                            tasks = tasks.get("results", [])
                         if tasks:
                             task = tasks[0] if isinstance(tasks, list) else tasks
-                            status = task.get("status", "")
+                            status = str(task.get("status", "")).upper()
                             if status == "SUCCESS":
-                                doc_id = task.get("related_document")
-                                return int(doc_id) if doc_id else None
+                                return _task_document_id(task)
                             if status == "FAILURE":
                                 result = task.get("result") or ""
                                 logger.error("[pipeline] Task failed: {}", result)

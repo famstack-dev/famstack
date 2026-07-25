@@ -1,0 +1,50 @@
+# stacklets/agent/docker-compose.yml — the family agent
+#
+# Runs the nanobot harness. nanobot connects to Matrix (Synapse on the stack
+# network) as @stacky-bot through its own channel, and to the local LLM via the
+# docker-side [ai] endpoint. config.json is refreshed from stack.toml-derived
+# env on start (see entrypoint.sh); nothing is hardcoded. The image is built
+# locally, so Watchtower ignores it.
+
+name: stack-agent
+
+services:
+  stack-agent:
+    container_name: stack-agent
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stack-agent:local
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - stack
+    extra_hosts:
+      # The LLM endpoint may be host-native (Metal GPU); reach it via the host.
+      - "host.docker.internal:host-gateway"
+    environment:
+      AGENT_NAME: ${AGENT_NAME:-Stacky}
+      AGENT_VERBOSE: ${AGENT_VERBOSE:-0}
+      AGENT_OPENAI_URL: ${AGENT_OPENAI_URL}
+      AGENT_OPENAI_KEY: ${AGENT_OPENAI_KEY}
+      AGENT_MODEL: ${AGENT_MODEL}
+      AGENT_MATRIX_HOMESERVER: ${AGENT_MATRIX_HOMESERVER}
+      AGENT_MATRIX_SERVER_NAME: ${AGENT_MATRIX_SERVER_NAME}
+      AGENT_BOT_ID: ${AGENT_BOT_ID}
+      TZ: ${TZ:-UTC}
+    volumes:
+      # nanobot home: config.json (rendered), workspace, matrix-store, sessions.
+      - ${AGENT_DATA_DIR}:/home/nanobot/.nanobot
+      # The family memory vault (read-only) — Stacky's knowledge: person and
+      # topic pages, notes, todos. Mounted INSIDE the workspace so nanobot's
+      # workspace-scoped file tools (grep, read_file) can reach it, which is
+      # the retrieval path its own tool contract tells the model to prefer.
+      - ${MEMORY_VAULT_DIR}:/home/nanobot/.nanobot/workspace/vault:ro
+      # Secrets store (read-only) — entrypoint reads @stacky-bot's login password,
+      # the same secret the bot-runner provisions the account with.
+      - ../../.stack:/setup-state:ro
+    restart: unless-stopped
+
+networks:
+  stack:
+    external: true

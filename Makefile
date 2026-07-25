@@ -1,15 +1,29 @@
 # famstack development tasks
 
-# Fast tests: no Docker, ~3 seconds. Run before every commit.
-test:
-	uv run --extra test pytest tests/framework/ -v --ignore=tests/framework/test_config_to_container.py
+PYTEST = uv run --extra test pytest
 
-# All tests including Docker-based pipeline tests (~2 min).
-test-all:
-	uv run --extra test pytest tests/framework/ -v
+# Fast unit tests: no Docker. Run before every commit.
+test-unit unit fast test:
+	$(PYTEST) tests/framework tests/stacklets -v --ignore=tests/framework/test_config_to_container.py
 
-# Integration tests: real stacklets with Docker, opt-in.
-test-integration:
-	uv run --extra test pytest tests/integration/ -v
+# Live demo-rig tests: uses the already-running Simpsons demo instance.
+test-demo demo-rig demo:
+	tests/integration/stacktests demo-rig
 
-.PHONY: test test-all test-integration
+# Docker lifecycle tests: validates stack up/down/destroy and container env.
+test-lifecycle container-lifecycle lifecycle:
+	$(PYTEST) tests/framework/test_config_to_container.py -v
+
+# Managed container e2e tests: starts the test rig and runs every e2e test.
+test-e2e container-e2e e2e:
+	tests/integration/stacktests e2e
+
+# Quick managed-rig e2e subset.
+test-smoke smoke:
+	tests/integration/stacktests smoke
+
+# Backwards-compatible names.
+test-all: test-lifecycle
+test-integration: test-e2e
+
+.PHONY: test-unit unit fast test test-demo demo-rig demo test-lifecycle container-lifecycle lifecycle test-e2e container-e2e e2e test-smoke smoke test-all test-integration

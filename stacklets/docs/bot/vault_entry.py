@@ -40,6 +40,11 @@ import re
 
 import yaml
 
+# Frontmatter writer uses the shared stdlib module so reader/writer agree.
+# render_* stay pure formatters; schema validation lives at the write
+# boundary (GitMirror), so unit tests can render partial frontmatter.
+from stack.frontmatter import dump as frontmatter_dump
+
 # Slug and entity-path conventions live in the framework (`stack.vault`)
 # so the memory wiki and this docs archivist share one source.
 from stack.vault import slug, entity_relpath  # noqa: F401  (slug re-exported for callers/tests)
@@ -390,9 +395,7 @@ def render_document(
     Returns:
         Complete markdown string for the mirror file.
     """
-    fm_yaml = yaml.safe_dump(
-        frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
-    ).strip()
+    fm_yaml = frontmatter_dump(frontmatter)
     parts = ["---", fm_yaml, "---", ""]
 
     parts.append(f"# {frontmatter.get('title', 'Untitled')}")
@@ -472,9 +475,7 @@ def render_capture(
     Returns:
         Complete markdown string for the mirror file.
     """
-    fm_yaml = yaml.safe_dump(
-        frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
-    ).strip()
+    fm_yaml = frontmatter_dump(frontmatter)
     parts = ["---", fm_yaml, "---", ""]
 
     parts.append(f"# {frontmatter.get('title', 'Untitled')}")
@@ -603,9 +604,7 @@ def render_email_thread(
     sections: list[str],
 ) -> str:
     """Assemble a fresh thread file: frontmatter + H1 + meta + sections."""
-    fm_yaml = yaml.safe_dump(
-        frontmatter, sort_keys=False, allow_unicode=True, default_flow_style=False,
-    ).strip()
+    fm_yaml = frontmatter_dump(frontmatter)
     parts = ["---", fm_yaml, "---", "", f"# {title}", ""]
 
     meta_lines: list[str] = []
@@ -709,9 +708,7 @@ def fold_email_message(
         return None
     fm_old, body_old = split_frontmatter(existing_content)
     fm_merged = merge_email_frontmatter(fm_old, persons=persons, tags=tags)
-    fm_yaml = yaml.safe_dump(
-        fm_merged, sort_keys=False, allow_unicode=True, default_flow_style=False,
-    ).strip()
+    fm_yaml = frontmatter_dump(fm_merged)
     return (
         f"---\n{fm_yaml}\n---\n"
         + body_old.rstrip()

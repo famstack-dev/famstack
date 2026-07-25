@@ -15,11 +15,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                        / "stacklets" / "memory" / "bot" / "cli"))
 
+import pytest  # noqa: E402
+
 from todo_list import (  # noqa: E402
     add_items,
     detect_list,
     read_todos,
     render_todo_doc,
+    set_todo_done,
     update_todo_doc,
 )
 
@@ -138,3 +141,66 @@ class TestReadTodos:
 
     def test_empty_doc(self):
         assert read_todos("# Bus\n") == ([], [])
+
+
+class TestSetTodoDone:
+    DOC = (
+        "# Itchy & Scratchy Land\n\n"
+        "- [ ] pick up the wristbands\n"
+        "- [ ] buy sunscreen for Bart\n"
+        "- [x] charge the camera\n"
+    )
+
+    def test_strike_open_item(self):
+        new, matched = set_todo_done(self.DOC, "buy sunscreen for Bart", done=True)
+        assert matched == "buy sunscreen for Bart"
+        assert "- [x] buy sunscreen for Bart\n" in new
+        # every other line is left exactly as it was
+        assert "- [ ] pick up the wristbands\n" in new
+        assert "- [x] charge the camera\n" in new
+
+    def test_unstrike_done_item(self):
+        new, matched = set_todo_done(self.DOC, "charge the camera", done=False)
+        assert matched == "charge the camera"
+        assert "- [ ] charge the camera\n" in new
+
+    def test_prefix_match(self):
+        new, matched = set_todo_done(self.DOC, "buy sunscreen", done=True)
+        assert matched == "buy sunscreen for Bart"
+        assert "- [x] buy sunscreen for Bart\n" in new
+
+    def test_mid_word_string_is_not_a_prefix(self):
+        # "sunscreen" is inside a task but does not start it -> no match
+        with pytest.raises(ValueError, match="no todo matching"):
+            set_todo_done(self.DOC, "sunscreen", done=True)
+
+    def test_exact_wins_over_longer_sibling(self):
+        doc = "# L\n- [ ] milk\n- [ ] milk and eggs\n"
+        new, matched = set_todo_done(doc, "milk", done=True)
+        assert matched == "milk"
+        assert new == "# L\n- [x] milk\n- [ ] milk and eggs\n"
+
+    def test_prefers_the_state_changing_task(self):
+        # same text open and done: striking targets the open one, not the done
+        doc = "# L\n- [ ] milk\n- [x] milk\n"
+        new, matched = set_todo_done(doc, "milk", done=True)
+        assert matched == "milk"
+        assert new == "# L\n- [x] milk\n- [x] milk\n"
+
+    def test_no_match_raises(self):
+        with pytest.raises(ValueError, match="no todo matching"):
+            set_todo_done(self.DOC, "walk the dog", done=True)
+
+    def test_ambiguous_prefix_lists_the_matches(self):
+        doc = "# L\n- [ ] call the dentist\n- [ ] call the vet\n"
+        with pytest.raises(ValueError) as ei:
+            set_todo_done(doc, "call", done=True)
+        msg = str(ei.value)
+        assert "more than one match" in msg
+        assert "call the dentist" in msg and "call the vet" in msg
+
+    def test_striking_a_done_item_is_a_noop(self):
+        # already `[x]`: the doc comes back unchanged, so edit_file makes no commit
+        new, matched = set_todo_done(self.DOC, "charge the camera", done=True)
+        assert new == self.DOC
+        assert matched == "charge the camera"

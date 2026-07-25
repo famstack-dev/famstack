@@ -69,6 +69,13 @@ CODE_PUBLIC_URL = "{code_url}"
 # design before memory is installed.
 MEMORY_VAULT_DIR = "/data/memory/vault"
 
+# Brain projection working copy — where `stack memory wiki` (run from
+# the bot-runner) writes generated pages. The memory stacklet maintains
+# it under <data_dir>/memory/brain/ and the curator commits + pushes it;
+# the bot-runner mounts <data_dir> at /data, so the in-container path is
+# /data/memory/brain.
+BRAIN_REPO_DIR = "/data/memory/brain"
+
 # Shared-bucket slug — the entity that owns institutional artifacts
 # (documents, correspondents) inside the memory vault. Personal
 # entities (homer, marge, …) live at <vault>/<slug>/. Defaults to
@@ -105,6 +112,13 @@ TOOLS_PORT = "42000"
 LANGUAGE         = "{language}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"
+
+# Family agent identity (from stack.toml [agent] name). The bot-runner
+# expands these into the agent's provision-only bot.toml (${AGENT_BOT_ID},
+# ${AGENT_NAME}, ${AGENT_ROOM}) when it mints the account.
+AGENT_NAME   = "{agent_name}"
+AGENT_BOT_ID = "{agent_handle}"
+AGENT_ROOM   = "{agent_room}"
 
 # Mail — the mail bot's accounts, rendered from stack.toml [mail] into one
 # JSON env var (host/user/folder/room per account). IMAP passwords are
