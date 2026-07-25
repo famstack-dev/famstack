@@ -75,6 +75,40 @@ What we learned, for whoever does the 3.x branch:
 - **Adjacent:** `apache/tika:latest` (same compose file, line ~109) is
   also unpinned — same silent-drift risk. Pin it when you touch this.
 
+## Agent bot-runner: stacker-bot rig-auth storm + room-modes intent-spec (2026-07-25)
+
+Surfaced while reconciling the `test_room_modes_e2e.py` xfail before merging
+`feat/family-agent`. Two coupled issues, both agent-stacklet territory (fold
+into the agent follow-up branch that also carries the runtime tools +
+`stack memory person`):
+
+- **stacker-bot fails to authenticate in the e2e rig and floods the log.**
+  The managed rig brings up core/messages/docs/code, but this repo-root is also
+  the live Simpson demo, so the `agent` stacklet is enabled and the bot-runner
+  discovers + launches `stacker-bot` (`/stacklets/core/bot/stacker.py`). Its
+  account reports "ready" yet login fails 30 times
+  (`Login not ready` -> `Cannot authenticate - giving up`), because the rig
+  never provisions Stacky's credentials the way a real install does. Each failed
+  attempt logs `Error validating response: 'user_id' is a required property`
+  (nio validating a failed-login response against a schema that requires
+  `user_id`). The ~5-minute storm contends on the shared bot-runner and starves
+  the archivist, which is what flakes tight-timeout e2e tests. Real installs and
+  the live demo authenticate fine, so this is rig-specific.
+  - Fix directions (pick when the agent branch lands): bound + quiet the
+    failed-login retry so it can never starve the runner (helps every
+    environment); provision stacker-bot's credentials in the rig seed; and/or
+    skip launching a bot whose stacklet isn't actually provisioned here.
+  - Silence the `user_id` validation noise regardless: a failed login should
+    not emit a schema-validation error per attempt.
+
+- **`test_room_modes_e2e.py` still needs reconciliation.** The `!config process`
+  react-mode + bookmark feature is correctly implemented (verified:
+  `_maybe_handle_config_command`, `CONFIG_OPTIONS`, ack wording). The test is an
+  `xfail(strict=False)` intent-spec, hand-verified live on 2026-06-26 but never
+  run green through `stacktests`. Once the stacker-bot storm above is gone,
+  re-run it: it should pass, at which point drop the xfail. Do not delete it to
+  green CI (its own docstring says so).
+
 ## CI release gate (post-0.3)
 
 ## CI release gate (post-0.3)
