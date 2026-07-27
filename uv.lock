@@ -344,7 +344,7 @@ wheels = [
 
 [[package]]
 name = "famstack"
-version = "0.3.0b1"
+version = "0.3.0b2"
 source = { virtual = "." }
 
 [package.optional-dependencies]

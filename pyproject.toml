@@ -1,6 +1,6 @@
 [project]
 name = "famstack"
-version = "0.3.0b1"
+version = "0.3.0b2"
 description = "Self-hosted family server stack for Apple Silicon"
 requires-python = ">=3.11"
 
