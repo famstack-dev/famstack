@@ -24,7 +24,7 @@ If you might do both, load both. They are short on purpose.
 
 ## Approach (universal)
 
-Four principles, distilled from [Andrej Karpathy's observations on LLM coding pitfalls](https://github.com/multica-ai/andrej-karpathy-skills). Apply to every change, every role. **Tradeoff:** these bias toward caution over speed. For trivial tasks (typos, obvious one-liners), use judgment.
+Five principles. The first four are distilled from [Andrej Karpathy's observations on LLM coding pitfalls](https://github.com/multica-ai/andrej-karpathy-skills); the fifth is classic separation of concerns. Apply to every change, every role. **Tradeoff:** these bias toward caution over speed. For trivial tasks (typos, obvious one-liners), use judgment.
 
 ### 1. Think before acting
 Don't assume. Don't hide confusion. Surface tradeoffs.
@@ -54,6 +54,13 @@ Define success criteria. Loop until verified.
 - "Fix the bug" → "Write a test that reproduces it, then make it pass."
 - "Refactor X" → "Ensure tests pass before and after."
 - For multi-step tasks, state a brief plan with a verify check per step.
+
+### 5. Separate concerns where they belong
+Put each responsibility with the component that owns the resource or contract, and keep one producer's domain knowledge out of a generic consumer.
+- **Own the resource, own the concern.** Only the thing wired to a resource should act on it (only the archivist talks to Paperless, so filing lives there; don't duplicate it or route around it).
+- **Consume framework contracts generically.** A generic seam (`dev.famstack.source`, `dev.famstack.attachment`, hooks, the manifest) is handled by reading the contract, not by hardcoding one producer's schema. The archivist files *any* source card; it does not know email's fields. Email's shape stays in the mail bot.
+- **Split by kind of work.** Pure transformation → its own module, no I/O (unit-testable). I/O and orchestration → the bot/CLI. Domain schema → the producer of that domain.
+- **Before adding a handler, ask "is this this component's concern, or just convenient here?"** If the logic is specific to another producer, keep the generic seam and push the specifics back to where they belong. Convenience is not a reason to couple.
 
 ## Universal non-negotiables
 
