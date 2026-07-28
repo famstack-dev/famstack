@@ -200,10 +200,10 @@ class TestBotMentionDetection:
 
 
 class TestShouldReact:
-    """The single seam for per-room mode gating. Two cases are
-    contractually always-on (mention + DM); the third (group room, no
-    mention) goes through `_room_mode_allows_react` which is the
-    placeholder for future config."""
+    """The single seam for per-room mode gating. One case is
+    contractually always-on (an @-mention); everything else, DMs
+    included, goes through `_room_mode_allows_react` so a deliberate
+    `!config process react` is honoured wherever it is set."""
 
     async def test_mention_in_group_room_always_reacts(self, tmp_path):
         """An @-tag must never be ignored, regardless of room mode.
@@ -222,16 +222,22 @@ class TestShouldReact:
         bot._room_mode_allows_react = _deny
         assert await bot._should_react(ctx, mentioned=True) is True
 
-    async def test_dm_always_reacts(self, tmp_path):
-        """A 2-member room with the bot is a private chat. There's
-        nobody else for the message to be aimed at, so the mode gate
-        doesn't apply."""
+    async def test_dm_consults_mode(self, tmp_path):
+        """A 2-member room with the bot is a private chat, but a deliberate
+        react mode still gates it: whether a message is *for* the bot (never
+        ambiguous in a DM) and *when* the bot should act (auto vs react) are
+        separate questions, and only the latter is what the mode controls.
+        A DM defaults to auto (unset → react) but honours react when set."""
         bot = _build_bot(tmp_path)
         room = _room(members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
         async def _deny(_ctx):
             return False
         bot._room_mode_allows_react = _deny
+        assert await bot._should_react(ctx, mentioned=False) is False
+        async def _allow(_ctx):
+            return True
+        bot._room_mode_allows_react = _allow
         assert await bot._should_react(ctx, mentioned=False) is True
 
     async def test_documents_room_with_mention_reacts(self, tmp_path):
