@@ -73,6 +73,12 @@ services:
       - .env
     ports:
       - "${PORT_BIND_IP:-127.0.0.1}:42000:8000"
+    volumes:
+      # Live like the bot-runner: the Dockerfile COPYs these so the image
+      # runs standalone, but a bind mount means an edit + restart takes
+      # effect without a rebuild. Keep in sync with tools-server/Dockerfile.
+      - ./tools-server/server.py:/app/server.py:ro
+      - ./tools-server/resolver.py:/app/resolver.py:ro
     restart: unless-stopped
 
 networks:

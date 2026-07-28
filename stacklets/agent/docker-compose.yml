@@ -43,6 +43,10 @@ services:
       # Secrets store (read-only) — entrypoint reads @stacky-bot's login password,
       # the same secret the bot-runner provisions the account with.
       - ../../.stack:/setup-state:ro
+      # Runtime-context shim (on PYTHONPATH). The Dockerfile COPYs it so the
+      # image runs standalone, but a bind mount means an edit + restart takes
+      # effect without a rebuild. Keep in sync with the Dockerfile COPY.
+      - ./runtime:/app/runtime:ro
     restart: unless-stopped
 
 networks:
