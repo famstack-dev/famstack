@@ -242,10 +242,13 @@ class MailBot(MicroBot):
         if body:
             await self._send(room_id, body, thread_root_event_id=thread_parent,
                              line_breaks=True)
-        await self._post_attachments(parsed, room_id, thread_parent)
+        await self._post_attachments(parsed, room_id, thread_parent,
+                                     source_event=event_id)
         return True
 
-    async def _post_attachments(self, parsed, room_id: str, thread_parent: str) -> None:
+    async def _post_attachments(
+        self, parsed, room_id: str, thread_parent: str, *, source_event: str,
+    ) -> None:
         """Post the email's attachments as Matrix files under its thread.
 
         Each lands as an `m.file`/`m.image` the archivist files through its
@@ -256,9 +259,13 @@ class MailBot(MicroBot):
         """
         # Mark each file as a bot-posted email attachment so the archivist
         # files it on behalf of the source (no bot-as-person) with email
-        # provenance, instead of attributing it to the mail bot.
+        # provenance, instead of attributing it to the mail bot. `source_event`
+        # is the generic back-reference to this email's source card, so a
+        # consumer can regroup an email's attachments without parsing our
+        # email-specific fields (message_id et al.).
         marker = {self.ATTACHMENT_KEY: {
             "source": "email",
+            "source_event": source_event,
             "from": parsed.from_addr or "",
             "subject": parsed.subject or "",
             "message_id": parsed.message_id or "",

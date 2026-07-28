@@ -394,6 +394,26 @@ class PaperlessAPI:
             "matching_algorithm": 0, "is_insensitive": True,
         })
 
+    async def ensure_doc_tag(self, doc_id: int, tag_name: str) -> bool:
+        """Add `tag_name` to a document, keeping its other tags.
+
+        Creates the tag if it doesn't exist yet, then PATCHes the doc with
+        the union of its current tags and this one. Used to stamp a flat
+        provenance tag (e.g. ``email``) onto a doc after the classifier has
+        run, without disturbing what classification assigned. Best-effort:
+        a failure logs and returns False rather than derailing a filing
+        that otherwise succeeded.
+        """
+        tags = await self.get_tags()
+        tag_id = tags.get(tag_name) or await self.create_tag(tag_name)
+        if not tag_id:
+            return False
+        doc = await self.get_doc(doc_id)
+        current = list((doc or {}).get("tags", []) or [])
+        if tag_id in current:
+            return True
+        return await self.update_doc(doc_id, {"tags": [*current, tag_id]})
+
     async def create_doc_type(self, name: str) -> int | None:
         return await self._create_entity("document_types", {
             "name": name, "matching_algorithm": 0, "is_insensitive": True,

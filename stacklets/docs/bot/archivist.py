@@ -99,6 +99,7 @@ from document_pipeline import (  # noqa: E402
     utc_now_isoformat,
 )
 from search_service import SearchService  # noqa: E402
+from source_archive import SourceAttachment, build_source_pdf  # noqa: E402
 from capture_pipeline import CapturePipeline, CaptureOutcome  # noqa: E402
 from notifier import MatrixNotifier  # noqa: E402
 from topic_rooms import (  # noqa: E402
@@ -1242,6 +1243,8 @@ class ArchivistBot(MicroBot):
         date_filed: str | None = None,
         submitter_mxid: str | None = None,
         user_hint: str | None = None,
+        extra_tags: list[str] | None = None,
+        note_prefix: str | None = None,
     ):
         """File a document via the pipeline, then render the reply.
 
@@ -1249,12 +1252,22 @@ class ArchivistBot(MicroBot):
         and URL archiving. The DocumentPipeline does the work (upload →
         OCR → classify → reformat → mirror → emit) and hands back a
         FilingOutcome; this maps the outcome to a chat reply and logs.
+
+        `extra_tags` and `note_prefix` let a caller stamp flat provenance
+        onto the filed doc *after* classification (source-archive filings
+        pass the source type and header). Applied best-effort: an enrichment
+        failure never fails a filing that otherwise succeeded.
         """
         outcome = await self._pipeline.process(
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
             user_hint=user_hint,
         )
+        if outcome.doc_id and self._paperless is not None:
+            for tag in extra_tags or []:
+                await self._paperless.ensure_doc_tag(outcome.doc_id, tag)
+            if note_prefix:
+                await self._paperless.add_note(outcome.doc_id, note_prefix)
         await self._reply_for_outcome(room_id, outcome, reply_to)
         if outcome.status == "enriched":
             processed_parts = [*outcome.resolved_topics, *outcome.resolved_persons]
@@ -1702,6 +1715,8 @@ class ArchivistBot(MicroBot):
         return {
             "🔖": self._react_bookmark,
             "📌": self._react_bookmark,
+            "📎": self._react_archive_source,
+            "📄": self._react_archive_source,
         }
 
     async def _on_reaction(self, room, event) -> None:
@@ -1763,6 +1778,101 @@ class ArchivistBot(MicroBot):
             await self._handle_text_capture(
                 room.room_id, body, author, target_id, capture_id=target_id,
             )
+
+    async def _react_archive_source(self, room, event, target, target_id) -> None:
+        """📎 / 📄 — archive a whole ingest source card as one Paperless doc.
+
+        Generic over `dev.famstack.source` cards (email today, another ingest
+        channel tomorrow): page one is the header the producing bot rendered
+        (the card body) plus the card's verbatim content, then every
+        attachment the producer threaded under this card follows as pages.
+        The card's `source` value becomes a flat provenance tag and the header
+        rides along as a Paperless note, so the sender/subject are found by
+        full-text search. This reads only the generic source contract — it
+        does not parse the producer's domain fields (email's From/Subject
+        live in the header the mail bot already rendered). 📎 on a non-source
+        message is a no-op. Reactions replay at-least-once, so Paperless's own
+        duplicate detection makes a repeat 📎 a no-op rather than a copy.
+        """
+        content = (getattr(target, "source", {}) or {}).get("content", {}) or {}
+        source = content.get(self.SOURCE_KEY)
+        if not isinstance(source, dict):
+            return
+        header = (content.get("body") or "").strip()
+        body = (source.get("raw_content") or "").strip()
+        source_type = (source.get("source") or "").strip() or "source"
+        if not header and not body:
+            return
+
+        await self._react(room.room_id, target_id, EYES)
+        await self._set_typing(room.room_id, on=True)
+        attachments = await self._collect_source_attachments(room.room_id, target_id)
+        pdf = build_source_pdf(header, body, attachments)
+
+        title_hint = next(
+            (ln.strip("# *_>-\t ") for ln in header.splitlines()
+             if ln.strip("# *_>-\t ")),
+            source_type,
+        )
+        safe = "".join(
+            ch if ch.isalnum() or ch in " .-_" else "_" for ch in title_hint
+        ).strip()
+        filename = f"{(safe[:80] or source_type)}.pdf"
+        await self._process_document(
+            room.room_id, filename, title_hint[:120] or source_type, pdf,
+            reply_to=target_id, date_filed=source.get("captured_at") or None,
+            submitter_mxid=event.sender, user_hint=title_hint or None,
+            extra_tags=[source_type], note_prefix=header or None,
+        )
+
+    async def _collect_source_attachments(
+        self, room_id: str, card_id: str, max_pages: int = 5,
+    ) -> list[SourceAttachment]:
+        """Gather the attachments a producer threaded under a source card.
+
+        Attachments are ordinary `m.file`/`m.image` events whose
+        `dev.famstack.attachment` marker back-references this card via
+        `source_event`. We page the timeline backwards (attachments are posted
+        just after the card, so they are newer) collecting matches until we
+        reach the card itself. Bounded by `max_pages` so a busy room can't
+        make the walk run forever; if the card scrolled out of reach we file
+        whatever we found, since the body page always survives.
+        """
+        if self._client is None:
+            return []
+        out: list[SourceAttachment] = []
+        start = ""
+        for _ in range(max_pages):
+            try:
+                resp = await self._client.room_messages(
+                    room_id, start=start, limit=50,
+                    message_filter={"types": ["m.room.message"]},
+                )
+            except Exception as e:
+                logger.debug("[archivist] source attachment scan failed: {}", e)
+                break
+            chunk = getattr(resp, "chunk", None) or []
+            if not chunk:
+                break
+            for ev in chunk:
+                c = (getattr(ev, "source", {}) or {}).get("content", {}) or {}
+                marker = c.get(self.ATTACHMENT_KEY)
+                if isinstance(marker, dict) and marker.get("source_event") == card_id:
+                    url = c.get("url", "")
+                    if isinstance(url, str) and url.startswith("mxc://"):
+                        data = await self._download_media(url)
+                        if data:
+                            out.append(SourceAttachment(
+                                filename=c.get("filename") or c.get("body") or "attachment",
+                                mimetype=(c.get("info") or {}).get("mimetype") or "",
+                                data=data,
+                            ))
+                if getattr(ev, "event_id", None) == card_id:
+                    return out
+            start = getattr(resp, "end", None) or ""
+            if not start:
+                break
+        return out
 
     # ── Inbound source events (mail bot, future ingest channels) ──────────
 
