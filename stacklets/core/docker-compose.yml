@@ -43,6 +43,15 @@ services:
       - ../../.stack:/setup-state:ro
       # Shared library — resolve_model, compat shims
       - ../../lib/stack:/app/stack:ro
+      # Framework code, live like the library above. The Dockerfile also
+      # COPYs these so the image runs standalone, but a bind mount means an
+      # edit + restart takes effect without a rebuild — and there is one
+      # source of truth instead of a baked /app copy shadowing the mounted
+      # tree under /stacklets. Keep this list in sync with the Dockerfile.
+      - ../../stacklets/core/bot-runner/main.py:/app/main.py:ro
+      - ../../stacklets/core/bot-runner/microbot.py:/app/microbot.py:ro
+      - ../../stacklets/core/bot-runner/room_context.py:/app/room_context.py:ro
+      - ../../stacklets/core/bot-runner/accounts.py:/app/accounts.py:ro
       # Per-stacklet bot data (sessions, crypto stores)
       - ${DATA_DIR}:/data
       # API is TCP on host.docker.internal:42001 — no socket mount needed
