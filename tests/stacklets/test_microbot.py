@@ -896,3 +896,51 @@ class TestConfigCommand:
         assert handled is True
         body = client.sends[-1][2].get("body", "")
         assert "Couldn't save" in body and "react mode" not in body
+
+
+class TestShouldReact:
+    """`_should_react` is the gate that decides whether the bot acts on a
+    plain (non-reaction) event. Room mode is the source of truth — a
+    deliberate `!config process react` is honoured even in a DM, where a
+    lone human might reasonably want the bot to wait for an explicit
+    reaction. Only an @-mention overrides the mode."""
+
+    @staticmethod
+    def _bot(tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        return bot
+
+    @staticmethod
+    def _ctx(*, is_dm):
+        return SimpleNamespace(room_id="!r:server", is_dm=is_dm)
+
+    @pytest.mark.asyncio
+    async def test_dm_defaults_to_auto(self, tmp_path):
+        bot = self._bot(tmp_path)
+        assert await bot._should_react(self._ctx(is_dm=True), mentioned=False)
+
+    @pytest.mark.asyncio
+    async def test_dm_react_mode_is_honoured(self, tmp_path):
+        # The bug fix: a deliberate react mode gates even a DM.
+        bot = self._bot(tmp_path)
+        await bot.set_room_config("!r:server", process="react")
+        assert not await bot._should_react(self._ctx(is_dm=True), mentioned=False)
+
+    @pytest.mark.asyncio
+    async def test_mention_overrides_react_mode(self, tmp_path):
+        bot = self._bot(tmp_path)
+        await bot.set_room_config("!r:server", process="react")
+        assert await bot._should_react(self._ctx(is_dm=True), mentioned=True)
+
+    @pytest.mark.asyncio
+    async def test_group_react_mode_gates(self, tmp_path):
+        bot = self._bot(tmp_path)
+        await bot.set_room_config("!r:server", process="react")
+        assert not await bot._should_react(self._ctx(is_dm=False), mentioned=False)
+
+    @pytest.mark.asyncio
+    async def test_group_auto_reacts(self, tmp_path):
+        bot = self._bot(tmp_path)
+        assert await bot._should_react(self._ctx(is_dm=False), mentioned=False)

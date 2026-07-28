@@ -1075,22 +1075,19 @@ class MicroBot:
     async def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
         """Decide whether the bot acts on the current event at all.
 
-        Two cases are never gated — the bot always reacts:
+        An explicit ``mentioned`` @-tag is never gated — addressing the bot
+        by name is an unambiguous request that overrides any room mode.
 
-          * ``mentioned`` is True. An explicit @-tag is an unambiguous
-            address; ignoring it would be confusing regardless of any
-            room-mode config.
-          * ``ctx.is_dm`` is True. A private chat with one human is
-            unambiguous by construction — there's nobody else for the
-            message to be aimed at.
-
-        Everything else (group rooms with 3+ members, no mention) is
-        subject to ``_room_mode_allows_react``, which reads the room's
-        config. Async because that read hits the room state.
+        Everything else is subject to ``_room_mode_allows_react``, which
+        reads the room's ``process`` config. This includes DMs: a one-human
+        room defaults to ``auto`` (unset → react to everything), but if the
+        human deliberately sets ``!config process react`` the bot honours it
+        there too. "Who is this for" (a DM has one obvious answer) and "when
+        should I act" (auto vs react) are separate questions; only the
+        latter is what the mode configures. Async because the read hits the
+        room's account data.
         """
         if mentioned:
-            return True
-        if ctx.is_dm:
             return True
         return await self._room_mode_allows_react(ctx)
 

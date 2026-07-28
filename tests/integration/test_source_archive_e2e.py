@@ -109,6 +109,39 @@ async def test_paperclip_react_archives_source_card_to_paperless(
     await _wait_for_bot_membership(homer, room_id)
     bdd.ok(f"{ARCHIVIST_MXID} joined {room_id}")
 
+    # Put the room in react mode so ONLY the 📎 reaction files. In auto mode
+    # the archivist would also classify the attachment on arrival (as a
+    # capture), making an LLM call the single-shot stub can't serve. This
+    # also mirrors the real UX: mail rooms run in react mode.
+    from tests.integration.matrix import wait_for_room_event
+
+    # Wait for the bot's join welcome first. The drain anchors its per-room
+    # cursor at "now" on first sight and skips everything older, so a config
+    # command sent before the bot has settled would land in that skip window
+    # and never be processed. The welcome is the bot's first post here, so
+    # once we see it, later messages are guaranteed to be picked up.
+    welcome = await wait_for_room_event(
+        homer, room_id,
+        lambda e: getattr(e, "sender", None) == ARCHIVIST_MXID,
+        timeout=60,
+    )
+    assert welcome, "archivist never posted its join welcome"
+
+    await homer.room_send(
+        room_id, "m.room.message",
+        content={"msgtype": "m.text", "body": "!config process react"},
+    )
+    ack = await wait_for_room_event(
+        homer, room_id,
+        lambda e: all(
+            w in (getattr(e, "body", "") or "").lower()
+            for w in ("process", "is now", "react")
+        ),
+        timeout=30,
+    )
+    assert ack, "archivist did not acknowledge react mode"
+    bdd.ok("room switched to react mode")
+
     # Filing classifies; stub both LLM calls so the pipeline reaches the
     # tag/note PATCH deterministically.
     stub_classify(openai, {
