@@ -205,14 +205,14 @@ def _setup(client, users, config, secrets=None):
     BOT_NAME = "stacker-bot"
     BOT_DISPLAY = "Stacker"
     BOT_SECRET_KEY = "STACKER_BOT_PASSWORD"
-    bot_pass = secrets.get(f"messages__{BOT_SECRET_KEY}")
+    bot_pass = secrets.get(f"core__{BOT_SECRET_KEY}")
     if not bot_pass:
         import secrets as sec_mod
         bot_pass = sec_mod.token_urlsafe(16)
         # Persist so the password survives re-runs
         from stack.secrets import TomlSecretStore
         store = TomlSecretStore(Path(config.get("instance_dir", config.get("repo_root", "."))) / ".stack" / "secrets.toml")
-        store.set("messages", BOT_SECRET_KEY, bot_pass)
+        store.set("core", BOT_SECRET_KEY, bot_pass)
 
     bot_created = client.create_user(BOT_NAME, bot_pass, displayname=BOT_DISPLAY)
     if bot_created:
