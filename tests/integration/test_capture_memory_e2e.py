@@ -17,6 +17,8 @@ Run with `-s` to stream the BDD narration live:
 
 from __future__ import annotations
 
+from tests.integration.matrix import mxid
+
 import asyncio
 
 import pytest
@@ -33,7 +35,7 @@ MEMORY_REPO = "memory"
 
 # Matrix ID the bot-runner registers the archivist under in the test
 # instance (server name comes from `tests/integration/instance/stack.toml`).
-ARCHIVIST_MXID = "@archivist-bot:test.local"
+ARCHIVIST_MXID = mxid("archivist-bot")
 
 # _PASTE_MIN_CHARS = 100 inside the bot — gates `_looks_like_paste`.
 # Anything shorter is treated as chat and ignored in capture rooms.

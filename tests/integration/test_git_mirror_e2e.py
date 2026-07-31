@@ -22,6 +22,7 @@ import asyncio
 
 from tests.integration.forgejo import ForgejoError
 from tests.integration.matrix import (
+    room_alias,
     ensure_joined,
     upload_and_send_file,
     wait_for_room,
@@ -29,7 +30,7 @@ from tests.integration.matrix import (
 from tests.integration.openai_stub import stub_classify, stub_reformat
 
 
-DOCS_ROOM_ALIAS = "#documents:test.local"
+DOCS_ROOM_ALIAS = room_alias("documents")
 # Repo owner = the Forgejo org `mirror_org` in the archivist's bot.toml.
 # Default is "family"; stays in sync with `FORGEJO_DOCS_OWNER` in conftest.
 DOCS_OWNER = "family"

@@ -267,10 +267,13 @@ def matrix(test_stack) -> dict:
     # The messages stacklet's setup CLI creates family accounts using
     # the seeded USER_<NAME>_PASSWORD values. Log them in once to capture
     # access tokens for use by tests.
+    # Read the realm only now: seeding above is what puts stack.toml in
+    # place, so this cannot be a fixture parameter.
+    realm = _server_name()
     creds = {}
     for username in ("homer", "marge", "bart", "lisa"):
         creds[username] = login(
-            server_name="test.local",
+            server_name=realm,
             username=username,
             password=username,  # seeded in _seed_test_instance_secrets
         )
@@ -311,16 +314,35 @@ def _instance_config() -> dict:
         return tomllib.load(fh)
 
 
-@pytest.fixture(scope="session")
-def demo_server_name() -> str:
+def _server_name() -> str:
+    """The instance's Matrix realm, read from the live stack.toml.
+
+    One base setup serves both lanes — the managed rig and the demo rig are
+    the same Simpsons instance, so neither may hardcode this. Synapse bakes
+    server_name into every user ID permanently at first start, so a literal
+    that drifts from the running homeserver produces 403s on every login
+    with no hint as to why. That exact drift took the dev instance's bots
+    down: a container carrying a stale realm, logging in against accounts
+    that only existed in another one.
+
+    A plain function, not a fixture, because the managed rig seeds
+    stack.toml on the way up — callers must read it after seeding, and a
+    fixture parameter would resolve too early.
+    """
     name = _instance_config().get("messages", {}).get("server_name")
     if not name:
-        pytest.fail("No [messages].server_name in stack.toml for demo rig login.")
+        pytest.fail("No [messages].server_name in stack.toml — cannot log in.")
     return name
 
 
 @pytest.fixture(scope="session")
-def demo_matrix(demo_server_name) -> dict:
+def server_name() -> str:
+    """Session-wide Matrix realm for tests that only read it."""
+    return _server_name()
+
+
+@pytest.fixture(scope="session")
+def demo_matrix(server_name) -> dict:
     """Log in to the running Simpson demo instance without seeding or up."""
     from stack.secrets import TomlSecretStore
 
@@ -334,7 +356,7 @@ def demo_matrix(demo_server_name) -> dict:
                 "for demo rig login."
             )
         creds[username] = login(
-            server_name=demo_server_name,
+            server_name=server_name,
             username=username,
             password=password,
         )

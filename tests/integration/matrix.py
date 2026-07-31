@@ -11,12 +11,48 @@ from __future__ import annotations
 import io
 import json
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 
 SYNAPSE_URL = "http://localhost:42031"
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def realm() -> str:
+    """The instance's Matrix server name, read from the live stack.toml.
+
+    Both lanes run against one Simpsons instance, so no test may hardcode
+    this. Synapse bakes server_name into every user ID permanently at first
+    start; a literal that drifts from the running homeserver turns every
+    login into a 403 that names neither the realm nor the cause. That is
+    precisely how the dev instance lost all four of its bots.
+    """
+    stack_toml = _REPO_ROOT / "stack.toml"
+    if not stack_toml.exists():
+        raise RuntimeError(
+            f"{stack_toml} is missing — bring the instance up first "
+            "(tests/integration/stacktests up), which seeds it."
+        )
+    with stack_toml.open("rb") as fh:
+        name = tomllib.load(fh).get("messages", {}).get("server_name")
+    if not name:
+        raise RuntimeError(f"No [messages].server_name in {stack_toml}.")
+    return name
+
+
+def mxid(localpart: str) -> str:
+    """`@homer` -> `@homer:<realm>`."""
+    return f"@{localpart}:{realm()}"
+
+
+def room_alias(name: str) -> str:
+    """`documents` -> `#documents:<realm>`."""
+    return f"#{name}:{realm()}"
 
 
 @dataclass
