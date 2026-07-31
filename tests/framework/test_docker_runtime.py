@@ -130,3 +130,50 @@ class TestComposeUpForceRecreate:
             cmd = run.call_args[0][0]
         assert "--force-recreate" in cmd
         assert cmd.index("up") < cmd.index("--force-recreate")
+
+
+class TestComposeUpWithNoActiveServices:
+    """A stacklet whose every service is profile-gated off starts cleanly.
+
+    When COMPOSE_PROFILES excludes all of a compose file's services,
+    `docker compose up` exits 1 with "no service selected" on stderr.
+    That is compose reporting an empty selection, not a failure to
+    start anything, but the CLI reads any non-zero as "Failed to start
+    services" and refuses to write the setup marker.
+
+    The ai stacklet is the live example: STACK_AI_NO_VOICE=1 clears the
+    profile, and its only service (Piper TTS) sits behind `voice`. The
+    documented local-dev opt-out could therefore never finish setup,
+    which in turn blocked every stacklet that `requires = ["ai"]`.
+
+    The exit code and message below were taken from a real
+    `docker compose up -d --force-recreate` run, not from reading the
+    source, so this pins compose's actual contract.
+    """
+
+    def _run(self, returncode, stderr):
+        from stack import docker
+        docker._context = None
+
+        mock = MagicMock()
+        mock.returncode = returncode
+        mock.stderr = stderr
+        with patch("subprocess.run", return_value=mock):
+            return docker.compose_up("/tmp/compose.yml")
+
+    def test_empty_selection_is_success(self):
+        assert self._run(1, "no service selected") == (0, "")
+
+    def test_message_is_matched_regardless_of_padding(self):
+        """Compose has moved this text between streams and added
+        whitespace across versions; match on content, not layout."""
+        assert self._run(1, "  no service selected\n") == (0, "")
+
+    def test_real_failures_still_propagate(self):
+        """The narrow allowance must not swallow a genuine error."""
+        code, err = self._run(1, "network stack declared as external, but could not be found")
+        assert code == 1
+        assert "could not be found" in err
+
+    def test_success_is_untouched(self):
+        assert self._run(0, "") == (0, "")

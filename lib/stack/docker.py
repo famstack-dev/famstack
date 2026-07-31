@@ -59,12 +59,22 @@ def compose_up(compose_file: str | Path, env: dict = None) -> tuple[int, str]:
     `up -d`, leaving running containers stuck on stale env. `stack up`
     is a deliberate user action, so bouncing healthy containers is an
     acceptable cost for a reliable config-propagation contract.
+
+    Selecting no services at all is success, not failure. When
+    COMPOSE_PROFILES excludes every service in the file, compose exits
+    1 with "no service selected" — an empty selection, not a service
+    that refused to start. Treating it as an error meant a stacklet
+    whose containers are all optional could never finish setup, and
+    anything depending on it stayed blocked. The ai stacklet under
+    STACK_AI_NO_VOICE=1 is exactly that shape.
     """
     full_env = {**__import__("os").environ, **(env or {})}
     result = _docker(
         "compose", "-f", str(compose_file), "up", "-d", "--force-recreate",
         capture_output=True, text=True, timeout=300, env=full_env,
     )
+    if result.returncode != 0 and (result.stderr or "").strip() == "no service selected":
+        return 0, ""
     return result.returncode, result.stderr
 
 
