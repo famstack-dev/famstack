@@ -235,7 +235,7 @@ Pre-tag gate, in order. A published tag is never moved; anything missed here shi
 ## Pre-1.0 conventions
 
 - Invariant changes (marker semantics, field renames, contract shifts) get coherent commits - each stands alone for revert.
-- Cleanup backlog lives at `docs/cleanup-backlog.md`. Items there have a reason; surface them when adjacent code is touched.
+- Actionable work lives on the tracker board, one card each, every card carrying a verification gate. Design notes - decisions, rejected dead ends, known-but-unresolved tensions - live at `docs/design-notes.md`; surface them when adjacent code is touched. If a note grows a "do this next", move it to a card and leave the reasoning behind.
 - Don't add backwards-compatibility shims, feature flags for one-shot migrations, or renamed `_unused` vars.
 
 ## What NOT to do
