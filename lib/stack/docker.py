@@ -327,6 +327,16 @@ def containers_for(stacklet_id: str) -> list[dict]:
         return []
 
 
+def _parse_env(text: str) -> dict:
+    """Turn `docker inspect`'s KEY=VALUE lines into a dict."""
+    env = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            env[key] = value
+    return env
+
+
 def container_env(name: str) -> dict:
     """The environment a container is actually running with.
 
@@ -341,12 +351,35 @@ def container_env(name: str) -> dict:
         )
         if r.returncode != 0:
             return {}
-        env = {}
-        for line in r.stdout.splitlines():
-            key, sep, value = line.partition("=")
-            if sep:
-                env[key] = value
-        return env
+        return _parse_env(r.stdout)
+    except Exception:
+        return {}
+
+
+def image_env(name: str) -> dict:
+    """The environment baked into the image a container was started from.
+
+    `container_env` returns the image's defaults *plus* whatever compose
+    passed in, and the two are indistinguishable once the container exists.
+    Reading the image separately is what lets a caller tell them apart, so
+    an image author's own setting is never mistaken for our config drifting.
+    """
+    try:
+        r = _docker(
+            "inspect", name, "--format", "{{.Config.Image}}",
+            capture_output=True, text=True, timeout=10,
+        )
+        image = r.stdout.strip() if r.returncode == 0 else ""
+        if not image:
+            return {}
+        r = _docker(
+            "inspect", image, "--format",
+            "{{range .Config.Env}}{{println .}}{{end}}",
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return {}
+        return _parse_env(r.stdout)
     except Exception:
         return {}
 

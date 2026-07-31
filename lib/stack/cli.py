@@ -844,6 +844,7 @@ def handle_doctor(stck, args):
         stck.env,
         docker.containers_for,
         docker.container_env,
+        docker.image_env,
     )
 
     print()

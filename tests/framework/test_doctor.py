@@ -12,6 +12,7 @@ from stack.doctor import (
     check_endpoint,
     check_env_drift,
     check_exited,
+    compose_supplied,
     diagnose,
     env_drift,
     summarise,
@@ -37,6 +38,7 @@ def _fixture_instance():
         lambda s: {"MATRIX_SERVER_NAME": "simpson"},
         lambda s: containers.get(s, []),
         lambda n: envs.get(n, {}),
+        lambda n: {},
     )
 
 
@@ -94,6 +96,56 @@ def test_drift_never_leaks_values():
     for secret in ("hunter2", "sk-secret", "old-one", "sk-old"):
         assert secret not in rendered_text
     assert "ADMIN_PASSWORD" in rendered_text  # the name is the useful part
+
+
+# ── compose_supplied ─────────────────────────────────────────────────────
+
+def test_image_baked_value_is_not_ours_to_fix():
+    # The gotenberg case, with its real values. `gotenberg/gotenberg:8` bakes
+    # TZ=UTC; stack.toml says Europe/Berlin; the compose file never passes TZ
+    # to that service. Doctor reported drift on every run and told the reader
+    # to run `stack up docs`, which recreated the container and changed
+    # nothing, because there was nothing to change.
+    actual = {"TZ": "UTC", "PAPERLESS_URL": "http://localhost:42020"}
+    baked = {"TZ": "UTC"}
+    assert compose_supplied(actual, baked) == {"PAPERLESS_URL": "http://localhost:42020"}
+
+
+def test_compose_overriding_an_image_default_is_still_ours():
+    # Same key, different value: compose won, so we own it and it can drift.
+    assert compose_supplied({"TZ": "Europe/Berlin"}, {"TZ": "UTC"}) == {"TZ": "Europe/Berlin"}
+
+
+def test_gotenberg_style_container_produces_no_finding():
+    # End to end through the caller's entry point, which is where the bug was
+    # visible. This is the regression guard: it fails if the walk ever goes
+    # back to comparing a container's whole environment.
+    containers = [{"name": "stack-docs-gotenberg", "state": "running",
+                   "exit_code": 0, "since": "Up 4 minutes"}]
+    findings = diagnose(
+        ["docs"],
+        lambda s: {"TZ": "Europe/Berlin"},      # what stack.toml renders
+        lambda s: containers,
+        lambda n: {"TZ": "UTC"},                # container, from the image
+        lambda n: {"TZ": "UTC"},                # image's own default
+    )
+    assert findings == []
+
+
+def test_real_drift_still_reported_when_the_image_is_silent():
+    # The guard must not swallow the incident it was built for: the image
+    # says nothing about the realm, so a stale value is genuinely ours.
+    containers = [{"name": "stack-core-bot-runner", "state": "running",
+                   "exit_code": 0, "since": "Up 4 minutes"}]
+    findings = diagnose(
+        ["core"],
+        lambda s: {"MATRIX_SERVER_NAME": "simpson"},
+        lambda s: containers,
+        lambda n: {"MATRIX_SERVER_NAME": "test.local"},
+        lambda n: {},
+    )
+    assert len(findings) == 1
+    assert "superseded config" in findings[0].title
 
 
 # ── findings ─────────────────────────────────────────────────────────────
@@ -155,6 +207,7 @@ def test_diagnose_skips_env_check_for_stopped_containers():
                    "exit_code": 1, "since": "1 hour ago"}]
     findings = diagnose(
         ["x"], lambda s: {"A": "new"}, lambda s: containers, lambda n: {"A": "old"},
+        lambda n: {},
     )
     assert len(findings) == 1
     assert "exited" in findings[0].title
@@ -167,11 +220,13 @@ def test_diagnose_survives_a_stacklet_that_cannot_render():
 
     containers = [{"name": "stack-x-1", "state": "running",
                    "exit_code": 0, "since": "Up 1 minute"}]
-    assert diagnose(["x"], exploding_env, lambda s: containers, lambda n: {}) == []
+    assert diagnose(["x"], exploding_env, lambda s: containers,
+                    lambda n: {}, lambda n: {}) == []
 
 
 def test_diagnose_ignores_stacklets_with_no_containers():
-    assert diagnose(["absent"], lambda s: {"A": "1"}, lambda s: [], lambda n: {}) == []
+    assert diagnose(["absent"], lambda s: {"A": "1"}, lambda s: [],
+                    lambda n: {}, lambda n: {}) == []
 
 
 def test_healthy_instance_yields_nothing():
@@ -179,6 +234,7 @@ def test_healthy_instance_yields_nothing():
                    "exit_code": 0, "since": "Up 1 minute"}]
     findings = diagnose(
         ["x"], lambda s: {"A": "1"}, lambda s: containers, lambda n: {"A": "1"},
+        lambda n: {},
     )
     assert findings == []
     assert summarise(findings) == "No problems found."
