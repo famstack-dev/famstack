@@ -24,6 +24,14 @@ _LIB_DIR = REPO_ROOT / "lib"
 if str(_LIB_DIR) not in sys.path:
     sys.path.insert(0, str(_LIB_DIR))
 
+# Stacklet runtime modules (e.g. the agent's nanobot shims) live on the
+# container's PYTHONPATH, not on any package path a test can reach. Register
+# them here once, by convention, so a test importing one is a plain import
+# instead of a per-file sys.path hack with a `noqa: E402` chaser.
+for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
+    if str(_runtime_dir) not in sys.path:
+        sys.path.insert(0, str(_runtime_dir))
+
 
 @pytest.fixture
 def stack_cli():

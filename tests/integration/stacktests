@@ -8,6 +8,10 @@
 # overwriting it.
 #
 # Usage (callable from anywhere — paths resolve off the script location):
+#   tests/integration/stacktests help            — this text, plus autonomy
+#   tests/integration/stacktests preflight       — offline gate: versions,
+#                                                  lock, ruff, unit tests
+#   tests/integration/stacktests unverified      — list parked intent-specs
 #   tests/integration/stacktests up              — bring up what tests need
 #   tests/integration/stacktests down            — stop every test stacklet
 #   tests/integration/stacktests reset [slet]    — destroy + up (clean slate)
@@ -33,6 +37,26 @@ unset STACK_DIR
 export PYTHONPATH="$REPO_ROOT/lib"
 cd "$REPO_ROOT"
 
+# Interpreter: same rule as the ./stack wrapper — Apple's Command Line
+# Tools ship python3 as 3.9, which lacks tomllib and often outranks
+# Homebrew on PATH. Both `-m stack` and _seed_secrets.py import tomllib,
+# so resolve once here rather than inheriting whatever `python3` means.
+PYTHON=
+for cand in python3.13 python3.12 python3.11 python3; do
+  if command -v "$cand" >/dev/null 2>&1; then
+    ver=$("$cand" -c 'import sys; print(sys.version_info[0]*100 + sys.version_info[1])' 2>/dev/null || echo 0)
+    if [ "$ver" -ge 311 ]; then PYTHON="$cand"; break; fi
+  fi
+done
+if [[ -z "$PYTHON" ]]; then
+  echo "stacktests: needs Python 3.11+. Run ./stack for the install hint." >&2
+  exit 1
+fi
+
+# Every rig operation goes through the real CLI, which is the sanctioned
+# agent interface — so what a test drives is what an operator types.
+stack_cli() { "$PYTHON" -m stack "$@"; }
+
 # Stacklets the e2e tests need, in dependency order.
 # - core: always_on, provides the bot-runner container that actually
 #   executes the archivist bot (which then auto-creates #documents).
@@ -54,7 +78,7 @@ PRESERVED_STACKLETS=(ai)
 # see _seed_secrets.py's TestInstanceConflict message for the cleanup
 # hint the user gets.
 seed_secrets() {
-  python3 "$SCRIPT_DIR/_seed_secrets.py"
+  "$PYTHON" "$SCRIPT_DIR/_seed_secrets.py"
 }
 
 case "${1:-}" in
@@ -65,11 +89,11 @@ case "${1:-}" in
     if [[ -z "${2:-}" ]]; then
       for sid in "${REQUIRED_STACKLETS[@]}"; do
         echo "==> stack up $sid"
-        python3 -m stack up "$sid"
+        stack_cli up "$sid"
       done
     else
       shift
-      exec python3 -m stack up "$@"
+      exec stack_cli up "$@"
     fi
     ;;
 
@@ -82,10 +106,10 @@ case "${1:-}" in
     if [[ -z "${1:-}" ]]; then
       for sid in "${REQUIRED_STACKLETS[@]}"; do
         echo "==> stack down $sid"
-        python3 -m stack down "$sid" || true
+        stack_cli down "$sid" || true
       done
     else
-      exec python3 -m stack down "$@"
+      exec stack_cli down "$@"
     fi
     ;;
 
@@ -101,11 +125,11 @@ case "${1:-}" in
     fi
     for sid in "${targets[@]}"; do
       echo "==> stack destroy $sid --yes"
-      python3 -m stack destroy "$sid" --yes || true
+      stack_cli destroy "$sid" --yes || true
     done
     for sid in "${targets[@]}"; do
       echo "==> stack up $sid"
-      python3 -m stack up "$sid"
+      stack_cli up "$sid"
     done
     ;;
 
@@ -130,7 +154,7 @@ case "${1:-}" in
     shift || true
     seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
-      python3 -m stack up "$sid" > /dev/null
+      stack_cli up "$sid" > /dev/null
     done
     exec uv run --extra test pytest tests/integration/ -k "_e2e" -m "not demo_rig" --durations=20 "$@"
     ;;
@@ -141,7 +165,7 @@ case "${1:-}" in
     shift || true
     seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
-      python3 -m stack up "$sid" > /dev/null
+      stack_cli up "$sid" > /dev/null
     done
     exec uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
     ;;
@@ -186,7 +210,7 @@ case "${1:-}" in
     shift || true
     seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
-      python3 -m stack up "$sid" > /dev/null
+      stack_cli up "$sid" > /dev/null
     done
     exec uv run --extra test pytest -s -v tests/integration/eval/ "$@"
     ;;
@@ -211,7 +235,7 @@ case "${1:-}" in
 
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       echo "==> stack destroy $sid --yes"
-      python3 -m stack destroy "$sid" --yes || true
+      stack_cli destroy "$sid" --yes || true
     done
 
     # Belt and suspenders: force-remove any stack-<id>-* containers that
@@ -265,12 +289,70 @@ case "${1:-}" in
     echo "   (preserved across cleanup: ${PRESERVED_STACKLETS[*]})"
     ;;
 
+  preflight)
+    # The autonomous gate. Everything here is offline and side-effect
+    # free, so an agent may run it unattended, on any branch, at any
+    # time — and must, before claiming a change is done.
+    #
+    # Deliberately the same checks the tag-triggered CI gate runs, in
+    # the same order, so "green locally" and "green in CI" cannot drift.
+    shift || true
+    echo "==> version consistency"
+    "$PYTHON" "$SCRIPT_DIR/_check_versions.py"
+    echo "==> uv lock --check"
+    uv lock --check
+    echo "==> ruff"
+    uvx ruff check .
+    echo "==> unit tests"
+    uv run --extra test pytest tests/framework tests/stacklets -q "$@"
+    echo ""
+    echo "✓ preflight green — safe to commit."
+    ;;
+
+  unverified)
+    # List every parked intent-spec. These are xfail-marked tests that
+    # describe behaviour we believe works but have never run green on
+    # the rig. Without this command they decay silently: the marker is
+    # write-only, so nobody notices a spec parked for months.
+    # Collection-only, so it needs no rig and no Docker.
+    shift || true
+    echo "Parked intent-specs (marker: unverified)"
+    echo "Each one is a claim that nothing currently proves."
+    echo ""
+    uv run --extra test pytest tests/ -m unverified --collect-only -q "$@" || true
+    ;;
+
+  help|--help|-h)
+    # An agent's first instinct is --help. Before this existed, that
+    # fell through to the forward-to-stack case and died on whatever
+    # `python3` happened to mean. A mystery interface is a bug.
+    # Read the header block itself rather than restating it — line 2 to
+    # the first blank line, so editing the usage above updates --help.
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+    cat <<'EOF'
+Autonomy — what an agent may run unattended:
+
+  autonomous   Offline, no Docker, no shared state. Run freely.
+               preflight, unverified, help,
+               pytest on tests/framework + tests/stacklets
+
+  ask-first    Touches the shared rig or the operator's live instance.
+               Ports are fixed, so only one rig runs at a time.
+               up, down, e2e, smoke, demo-rig, eval
+
+  destructive  Wipes state that re-running cannot recover.
+               reset, cleanup, down ai
+
+Start with `preflight`. It is the whole offline gate in one command.
+EOF
+    ;;
+
   "")
-    python3 -m stack
+    stack_cli
     ;;
 
   *)
     # Anything else — forward untouched to stack.
-    exec python3 -m stack "$@"
+    exec stack_cli "$@"
     ;;
 esac
