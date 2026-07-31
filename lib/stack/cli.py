@@ -22,6 +22,7 @@ import tomllib
 from pathlib import Path
 
 from . import docker
+from . import doctor
 from .commands import COMMANDS
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack
@@ -827,6 +828,41 @@ def handle_status(stck, args):
     print_status(result)
 
 
+def handle_doctor(stck, args):
+    """Diagnose the instance: what is wrong, and what to type to fix it.
+
+    `status` answers "is it up?". When it isn't, this answers "why?" —
+    the checks live in doctor.py as pure rules; everything here is the
+    I/O they need.
+    """
+    preferred = stck._cfg("core", "runtime", "orbstack")
+    docker.init_runtime(preferred)
+
+    stacklets = sorted(s["id"] for s in stck.discover())
+    findings = doctor.diagnose(
+        stacklets,
+        stck.env,
+        docker.containers_for,
+        docker.container_env,
+    )
+
+    print()
+    if not findings:
+        print(f"  {GREEN}✓{RESET}  {doctor.summarise(findings)}\n")
+        return
+
+    for finding in findings:
+        mark = f"{RED}✗{RESET}" if finding.is_error else f"{ORANGE}⚠{RESET}"
+        print(f"  {mark}  {BOLD}{finding.title}{RESET}")
+        print(f"     {DIM}{finding.detail}{RESET}")
+        print(f"     {TEAL}{finding.fix}{RESET}\n")
+
+    print(f"  {doctor.summarise(findings)}\n")
+    # Exit non-zero on errors so an agent or script can gate on it.
+    if any(f.is_error for f in findings):
+        sys.exit(1)
+
+
 def handle_list(stck, args):
     print_list(stck.list(), stck)
 
@@ -1225,6 +1261,7 @@ DISPATCH = {
     "down": handle_down,
     "destroy": handle_destroy,
     "status": handle_status,
+    "doctor": handle_doctor,
     "list": handle_list,
     "config": handle_config,
     "env": handle_env,
@@ -1246,6 +1283,7 @@ _HELP_COMMANDS = [
     ]),
     ("Info", [
         ("list",               "Show all stacklets and their status"),
+        ("doctor",             "Diagnose problems and print how to fix them"),
         ("config",             "Print stack.toml configuration"),
         ("config admin",       "Print tech admin credentials"),
         ("env <stacklet>",     "Print rendered environment variables"),
@@ -1331,6 +1369,7 @@ def main():
     )
     sub.add_parser("init")
     sub.add_parser("status")
+    sub.add_parser("doctor")
     sub.add_parser("list")
     p = sub.add_parser("config")
     config_sub = p.add_subparsers(dest="config_action")

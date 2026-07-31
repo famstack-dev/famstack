@@ -291,6 +291,66 @@ def project_states() -> dict[str, str]:
         return {}
 
 
+def containers_for(stacklet_id: str) -> list[dict]:
+    """Every container of a stacklet, running or not.
+
+    Returns dicts with name, state, exit_code and a human "since" string.
+    `stack status` only reports the stacklet as a whole, so a single dead
+    sidecar shows up as "failing" with no clue which one died.
+    """
+    try:
+        r = _docker(
+            "ps", "-a", "--filter", f"name=^stack-{stacklet_id}-",
+            "--format", "{{.Names}}\t{{.State}}\t{{.Status}}",
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return []
+        out = []
+        for line in r.stdout.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            name, state, status = parts
+            # "Exited (128) 3 weeks ago" -> code 128, "3 weeks ago"
+            code, since = 0, status
+            if status.startswith("Exited ("):
+                head, _, tail = status.partition(")")
+                try:
+                    code = int(head[len("Exited ("):])
+                except ValueError:
+                    code = 1
+                since = tail.strip()
+            out.append({"name": name, "state": state, "exit_code": code, "since": since})
+        return out
+    except Exception:
+        return []
+
+
+def container_env(name: str) -> dict:
+    """The environment a container is actually running with.
+
+    Read from the container rather than the compose file: a container keeps
+    the environment it was created with, so this is the only way to see that
+    it has drifted from current config.
+    """
+    try:
+        r = _docker(
+            "inspect", name, "--format", "{{range .Config.Env}}{{println .}}{{end}}",
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return {}
+        env = {}
+        for line in r.stdout.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                env[key] = value
+        return env
+    except Exception:
+        return {}
+
+
 def running_project_ids() -> set[str]:
     """Convenience wrapper — stacklet IDs with running containers."""
     states = project_states()

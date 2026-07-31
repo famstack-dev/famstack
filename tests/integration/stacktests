@@ -306,7 +306,11 @@ case "${1:-}" in
     echo "==> ruff"
     uvx ruff check .
     echo "==> unit tests"
-    uv run --extra test pytest tests/framework tests/stacklets -q "$@"
+    # Delegate to `make test-unit` rather than re-spelling the pytest
+    # invocation. It carries an --ignore for the Docker lifecycle tests;
+    # a second copy of that argument list drifted from this one within a
+    # day, quietly pulling Docker into what is meant to be the offline gate.
+    make test-unit
     echo ""
     echo "✓ preflight green — safe to commit."
     ;;
