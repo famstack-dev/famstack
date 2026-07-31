@@ -4,12 +4,6 @@
 Finding out *why* meant reading container logs, running `docker inspect`,
 querying a service's database, and diffing that against stack.toml by eye.
 
-The case this was written for: a container had been running for three weeks
-with `MATRIX_SERVER_NAME=simpson` baked into its environment while
-stack.toml had since been re-seeded to a different realm. Every bot logged
-in against accounts in a realm that no longer existed, got a 403, and
-retried until it gave up. `stack status` said "Core failing".
-
 WHY THE CHECKS ARE GENERIC
     Nothing here knows what Matrix is. The drift above is caught by
     comparing a container's actual environment against what stack.toml
