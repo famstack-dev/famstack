@@ -163,12 +163,12 @@ async def test_demo_rig_private_capture_reaches_memory_with_live_ai(
     bdd,
     demo_code,
     demo_homer,
-    demo_server_name,
+    server_name,
     scope,
 ):
     """Homer pastes a note in an isolated room; archivist files it."""
     token = f"demo-rig-capture-{scope.uid}"
-    bot_mxid = f"@archivist-bot:{demo_server_name}"
+    bot_mxid = f"@archivist-bot:{server_name}"
 
     try:
         bdd.given("Homer creates a private demo-rig notes room")
@@ -224,12 +224,12 @@ async def test_demo_rig_documents_markdown_reaches_paperless_and_memory_with_liv
     demo_code,
     demo_homer,
     demo_paperless,
-    demo_server_name,
+    server_name,
     scope,
 ):
     """Homer uploads markdown to #documents; Paperless and memory see it."""
     token = f"demo-rig-doc-{scope.uid}"
-    docs_alias = f"#documents:{demo_server_name}"
+    docs_alias = f"#documents:{server_name}"
 
     try:
         bdd.given("Homer joins the live #documents room")
@@ -282,7 +282,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     demo_code,
     demo_homer,
     demo_matrix,
-    demo_server_name,
+    server_name,
     scope,
 ):
     """Topic todos read/write from memory and capture action items project."""
@@ -293,7 +293,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     token = f"demo-rig-capture-todo-{scope.uid}"
     path = f"{MEMORY_OWNER}/{topic}/todos.md"
     about_path = f"{MEMORY_OWNER}/{topic}/about.md"
-    bot_mxid = f"@archivist-bot:{demo_server_name}"
+    bot_mxid = f"@archivist-bot:{server_name}"
     marge_creds = demo_matrix["marge"]
     marge = AsyncClient(marge_creds.homeserver, marge_creds.user_id)
     marge.access_token = marge_creds.access_token

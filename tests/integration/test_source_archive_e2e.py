@@ -21,6 +21,8 @@ Run with `-s` to stream the BDD narration:
 
 from __future__ import annotations
 
+from tests.integration.matrix import mxid
+
 import asyncio
 import io
 import urllib.request
@@ -36,7 +38,7 @@ from tests.integration.openai_stub import stub_classify, stub_reformat
 # here (not imported) so this test pins the wire shape the mail bot emits.
 SOURCE_KEY = "dev.famstack.source"
 ATTACHMENT_KEY = "dev.famstack.attachment"
-ARCHIVIST_MXID = "@archivist-bot:test.local"
+ARCHIVIST_MXID = mxid("archivist-bot")
 PAPERCLIP = "📎"
 
 

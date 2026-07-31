@@ -26,6 +26,8 @@ Run with `-s` to stream the BDD narration:
 
 from __future__ import annotations
 
+from tests.integration.matrix import mxid
+
 import asyncio
 import io
 
@@ -38,7 +40,7 @@ from tests.integration.openai_stub import stub_classify, stub_reformat
 
 MEMORY_OWNER = "family"
 MEMORY_REPO = "memory"
-ARCHIVIST_MXID = "@archivist-bot:test.local"
+ARCHIVIST_MXID = mxid("archivist-bot")
 FAMSTACK_EVENT_KEY = "dev.famstack.event"
 
 

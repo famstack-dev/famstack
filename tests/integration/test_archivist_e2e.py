@@ -19,6 +19,8 @@ from nio.api import RoomVisibility
 from nio.responses import JoinedMembersResponse, RoomInviteResponse
 
 from tests.integration.matrix import (
+    mxid,
+    room_alias,
     ensure_joined,
     event_type,
     fetch_room_events,
@@ -29,8 +31,8 @@ from tests.integration.matrix import (
 from tests.integration.openai_stub import stub_classify, stub_reformat
 
 
-DOCS_ROOM_ALIAS = "#documents:test.local"
-ARCHIVIST_MXID = "@archivist-bot:test.local"
+DOCS_ROOM_ALIAS = room_alias("documents")
+ARCHIVIST_MXID = mxid("archivist-bot")
 
 
 # ── Helpers for reply / DM / mention scenarios ────────────────────────────

@@ -27,6 +27,6 @@ default    = "test-model"
 language   = "en"
 
 [messages]
-# Server name is permanent in every Matrix user ID (@homer:test.local).
+# Server name is permanent in every Matrix user ID (@homer:simpson).
 # Pre-set here so `stack up messages` skips the interactive prompt.
-server_name = "test.local"
+server_name = "simpson"

@@ -44,14 +44,15 @@ import pytest
 from nio import AsyncClient
 
 from tests.integration.matrix import (
+    mxid,
     event_type,
     fetch_room_events,
     wait_for_room_event,
     wait_for_room_events_until,
 )
 
-ARCHIVIST = "@archivist-bot:test.local"
-MARGE = "@marge:test.local"
+ARCHIVIST = mxid("archivist-bot")
+MARGE = mxid("marge")
 EYES, CHECK = "👀", "✅"
 
 pytestmark = [pytest.mark.unverified]
