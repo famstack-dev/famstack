@@ -20,7 +20,9 @@ shared_bucket = "family"
 schedule = "0 0 3 * * *"
 
 [ai]
-# pytest-httpserver instance — started by the `openai` conftest fixture.
+# AI backend. Flip with `tests/integration/stacktests ai [mock|local|external]`.
+# mock points at the pytest-httpserver stub the `openai` fixture starts;
+# local/external endpoints come from the environment, never committed.
 openai_url = "http://localhost:42199/v1"
 openai_key = "test"
 default    = "test-model"
