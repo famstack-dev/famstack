@@ -5,7 +5,9 @@ Python auto-imports `sitecustomize` at interpreter startup for any module on
 `nanobot` invocation in the container — the gateway and one-shot `nanobot agent`
 alike — with no fork.
 
-Two independent shims live here; each is a thin monkeypatch over a pure module:
+Two kinds of patch live here, each a thin monkeypatch over a pure module.
+
+First, two context shims that reshape what the model sees per turn:
 
 1. brief (brief.py) — prepends a per-turn family briefing (who is speaking, the
    topic) to nanobot's runtime lines. Injected late (after the stable prompt and
@@ -17,6 +19,14 @@ Two independent shims live here; each is a thin monkeypatch over a pure module:
    call that produced them (`name(args)`), so the agent re-fetches instead of
    reciting stale data. The transcript (Matrix) keeps the full result; the state
    we feed the model keeps only a cheap pointer.
+
+Second, three vault tools, which add capability rather than reshaping context:
+
+3. memory_tool (memory_tool.py) — a `memory_search` tool over `stack memory search`.
+4. person_tool (person_tool.py) — a `memory_person` tool for exact profile reads.
+5. grep_tool (grep_tool.py) — routes greps under `vault/` into memory_search, so
+   the agent gets semantic hits instead of literal matches on a corpus where the
+   words it greps for are rarely the words on disk.
 
 WHY SHIMS AND NOT A FORK
     nanobot has no plugin seam for per-turn context injection or state shaping.
@@ -31,10 +41,21 @@ TO REMOVE
     Dockerfile. nanobot reverts to stock behaviour with no other change.
 
 PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
-    brief:      `nanobot.agent.context.runtime_lines(state, msg, workspace, *, skip=False) -> list[str]`
-    lean_state: `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
+    brief:       `nanobot.agent.context.runtime_lines(state, msg, workspace, *, skip=False) -> list[str]`
+    lean_state:  `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
+    memory_tool: `nanobot.agent.tools.loader.ToolLoader.discover(self) -> list[type[Tool]]`
+                 `nanobot.agent.tools.base.Tool`, `nanobot.agent.tools.base.tool_parameters`
+                 `nanobot.agent.tools.schema.{StringSchema, IntegerSchema, tool_parameters_schema}`
+    person_tool: same symbols as memory_tool
+    grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
+
+    `tests/stacklets/test_agent_runtime_shims.py` asserts every one of these is
+    attached against a stub nanobot, so this list is executable rather than
+    aspirational: a moved symbol fails the unit lane instead of silently
+    reaching production as a logged warning nobody reads.
 """
 
+import importlib
 import logging
 
 _log = logging.getLogger("agent.runtime.shim")
@@ -101,3 +122,20 @@ try:
     _log.info("lean-state message shim active")
 except Exception:
     _log.exception("lean-state shim could not attach (nanobot internals changed?)")
+
+
+# ── vault tools: memory_search, memory_person, and grep routed through them ──
+# These add capability rather than reshaping context, but attach the same way.
+# Each is installed in its own try so one tool failing costs only itself; a
+# single shared block would let a moved GrepTool symbol take memory_search down
+# with it. memory_tool goes first because grep_tool routes into it.
+for _module_name, _what in (
+    ("memory_tool", "memory_search tool"),
+    ("person_tool", "memory_person tool"),
+    ("grep_tool", "vault grep -> memory_search routing"),
+):
+    try:
+        importlib.import_module(_module_name).install()
+        _log.info("%s active", _what)
+    except Exception:
+        _log.exception("%s could not attach (nanobot internals changed?)", _what)
