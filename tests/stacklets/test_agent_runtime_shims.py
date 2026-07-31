@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib
 import sys
-import types
 
 import pytest
 
@@ -28,67 +27,11 @@ SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
                    "memory_tool", "person_tool", "grep_tool")
 
 
-# ── A stub nanobot ───────────────────────────────────────────────────────
-#
-# Only the surface `sitecustomize` reaches for. Deliberately hand-built
-# rather than mocked: every name here is a symbol we have pinned, so the
-# stub doubles as a written record of what we depend on. A Mock would
-# happily satisfy any attribute and prove nothing.
-
-def _build_nanobot() -> dict[str, types.ModuleType]:
-    def runtime_lines(state, msg, workspace, *, skip=False):
-        return ["stock line"]
-
-    class ContextBuilder:
-        def build_messages(self, *args, **kwargs):
-            return [{"role": "user", "content": "hi"}]
-
-    class Tool:
-        pass
-
-    def tool_parameters(schema):
-        return lambda cls: cls
-
-    def tool_parameters_schema(**kwargs):
-        return dict(kwargs)
-
-    class _Schema:
-        def __init__(self, *args, **kwargs):
-            self.args, self.kwargs = args, kwargs
-
-    class ToolLoader:
-        def discover(self):
-            return []
-
-    class GrepTool:
-        async def execute(self, *args, **kwargs):
-            return "stock grep"
-
-    mods = {}
-
-    def mod(name, **attrs):
-        m = types.ModuleType(name)
-        for k, v in attrs.items():
-            setattr(m, k, v)
-        mods[name] = m
-        return m
-
-    mod("nanobot")
-    mod("nanobot.agent")
-    mod("nanobot.agent.context",
-        runtime_lines=runtime_lines, ContextBuilder=ContextBuilder)
-    mod("nanobot.agent.tools")
-    mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
-    mod("nanobot.agent.tools.schema",
-        StringSchema=_Schema, IntegerSchema=_Schema,
-        tool_parameters_schema=tool_parameters_schema)
-    mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
-    mod("nanobot.agent.tools.search", GrepTool=GrepTool)
-    return mods
-
+# The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
+# the vault-tool tests that drive the tools these shims register.
 
 @pytest.fixture
-def nanobot(monkeypatch):
+def nanobot(monkeypatch, nanobot_stub):
     """Install a stub nanobot and import `sitecustomize` against it.
 
     Returns a callable so a test can drop a symbol first and watch what
@@ -96,7 +39,7 @@ def nanobot(monkeypatch):
     rather than returning a cached, already-patched module.
     """
     def _load(drop: str | None = None):
-        mods = _build_nanobot()
+        mods = nanobot_stub()
         if drop:
             module_name, _, attr = drop.rpartition(".")
             delattr(mods[module_name], attr)

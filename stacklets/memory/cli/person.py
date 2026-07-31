@@ -14,7 +14,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import load_persons_from_vault, refresh_vault_if_stale, vault_path_for  # noqa: E402
+from lib import (  # noqa: E402
+    brain_path_for,
+    load_persons_from_vault,
+    refresh_vault_if_stale,
+    vault_path_for,
+)
 
 
 HELP = "Read a household member profile"
@@ -41,11 +46,27 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
-def _vault(config, override: str | None) -> Path | None:
+def _roots(config, override: str | None) -> list[Path]:
+    """Where a person page can live, most authoritative first.
+
+    Two trees hold `<slug>/about.md` and they mean different things.
+    memory is source: what the household actually wrote. The brain is a
+    projection the wiki pass generates and the installer purges out of
+    source again ("purged 1 generated source page(s)"), so a generated
+    profile exists *only* there.
+
+    Reading source alone therefore answered "no profile" for every
+    member who had one, which is the state this command shipped in.
+    Source is still checked first: a hand-curated page beats rebuildable
+    output. `_todos.py` consults both roots for the same reason.
+    """
     if override:
-        return Path(override)
+        return [Path(override)]
     data_dir = config.get("data_dir") if config else None
-    return vault_path_for(Path(data_dir)) if data_dir else None
+    if not data_dir:
+        return []
+    base = Path(data_dir)
+    return [vault_path_for(base), brain_path_for(base)]
 
 
 def _clean_profile(text: str) -> str:
@@ -78,17 +99,24 @@ def run(args, stacklet, config):
     if not name:
         return {"error": "usage: stack memory person <name>"}
 
-    vault = _vault(config, ns.vault)
-    if vault is None or not vault.exists():
+    roots = [r for r in _roots(config, ns.vault) if r.exists()]
+    if not roots:
         return {"error": "no vault found - is the memory stacklet installed?"}
     if not ns.no_refresh:
-        refresh_vault_if_stale(vault)
+        refresh_vault_if_stale(roots[0])
 
-    person = _resolve_person(vault, name)
-    slug = person.slug if person else re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    path = vault / slug / "about.md"
-    if not path.exists():
-        known = _known_people(vault)
+    fallback = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    path = None
+    for root in roots:
+        person = _resolve_person(root, name)
+        candidate = root / (person.slug if person else fallback) / "about.md"
+        if candidate.exists():
+            path = candidate
+            break
+    if path is None:
+        # Names from every root, so the hint lists everyone the household
+        # could have asked for, not just those in the first tree checked.
+        known = sorted({slug for root in roots for slug in _known_people(root)})
         hint = ("  people: " + ", ".join(known)) if known else ""
         return {"error": f"no profile for person {name!r}\n{hint}".rstrip()}
 
