@@ -73,7 +73,9 @@ canonical: Duff Insurance
 aliases:
   - "Duff Insurance Ortsverband Springfield"
   - "Duff Insurance Versicherung AG"
-topics: [insurance, vehicle]
+topics:
+  - insurance
+  - vehicle
 address: "Hansastraße 19, 80686 München"
 phone: "089 7676 0"
 website: "https://www.duff-insurance.de"

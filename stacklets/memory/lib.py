@@ -462,19 +462,13 @@ def load_correspondents_from_vault(
     if not folder.exists():
         return []
 
-    # Lazy import: keeps the CLI install path stdlib-only. Callers of
-    # this function (archivist, `stack memory correspondents`) bring
-    # `python-frontmatter` on their PYTHONPATH.
-    import frontmatter
-
     result: List[Correspondent] = []
     for md_path in sorted(folder.glob("*.md")):
         try:
-            with open(md_path, "r", encoding="utf-8") as f:
-                post = frontmatter.load(f)
-        except (OSError, ValueError):
+            text = md_path.read_text(encoding="utf-8")
+        except OSError:
             continue
-        meta = post.metadata or {}
+        meta = _parse_frontmatter(text)
         if not meta:
             # No frontmatter at all — likely a README or stray note, skip.
             continue
@@ -485,8 +479,12 @@ def load_correspondents_from_vault(
             continue
         result.append(Correspondent(
             canonical=str(canonical),
-            aliases=[str(a) for a in (meta.get("aliases") or [])],
-            topics=[str(t) for t in (meta.get("topics") or [])],
+            # _fm_list, not a comprehension: a bare string iterates into
+            # one entry per character, so a hand edit that writes a
+            # single value where a list belongs turns "insurance" into
+            # eleven topics instead of one.
+            aliases=_fm_list(meta, "aliases"),
+            topics=_fm_list(meta, "topics"),
             address=meta.get("address"),
             phone=meta.get("phone"),
             email=meta.get("email"),
@@ -602,10 +600,6 @@ def load_persons_from_vault(
     if not vault_path.exists():
         return []
 
-    # Lazy import: keeps the CLI install path stdlib-only (see the
-    # module-level note above `load_correspondents_from_vault`).
-    import frontmatter
-
     skip = _NON_MEMBER_DIRS | {shared_bucket}
     result: List[Person] = []
     for about in sorted(vault_path.glob("*/about.md")):
@@ -613,11 +607,10 @@ def load_persons_from_vault(
         if slug in skip or slug.startswith("."):
             continue
         try:
-            with open(about, "r", encoding="utf-8") as f:
-                post = frontmatter.load(f)
-        except (OSError, ValueError):
+            text = about.read_text(encoding="utf-8")
+        except OSError:
             continue
-        meta = post.metadata or {}
+        meta = _parse_frontmatter(text)
         if meta.get("kind") and meta.get("kind") != "person":
             continue
         canonical = meta.get("canonical") or meta.get("title") or slug
@@ -626,7 +619,7 @@ def load_persons_from_vault(
         result.append(Person(
             canonical=str(canonical),
             slug=str(meta.get("slug") or slug),
-            synonyms=[str(s) for s in (meta.get("synonyms") or [])],
+            synonyms=_fm_list(meta, "synonyms"),
             source_path=about,
         ))
     return result
