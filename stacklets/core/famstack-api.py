@@ -41,6 +41,7 @@ NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 # commands above -- those stay on the JSON path used only by trusted core tools.
 DOMAIN_ALLOW = [
     ["memory", "search"],
+    ["memory", "person"],
     ["memory", "topic"],
     ["memory", "lookup"],
     ["memory", "correspondents"],

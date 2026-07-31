@@ -23,8 +23,16 @@ build = true
 [env.defaults]
 AGENT_DATA_DIR = "{data_dir}/agent"
 # The family memory vault (read-only) — Stacky's knowledge source, the same
-# working copy the memory stacklet maintains and the wiki renders.
-MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
+# working copy the wiki renders.
+#
+# The brain projection, not the memory source clone. Person and topic pages
+# are generated, and generation writes them here; the installer purges them
+# back out of source ("purged 1 generated source page(s)"). Pointing this at
+# source gave the agent a tree that structurally could not hold a profile, so
+# it answered "there is no vault/homer/about.md" for a household member who
+# had one. The brain mirrors source *plus* generated pages, so it is the only
+# tree that matches what this mount's contract promises.
+MEMORY_VAULT_DIR = "{data_dir}/memory/brain"
 # Persona — the family-facing name and voice, from stack.toml [agent] name
 # (default "Stacky"). One knob: the same value drives the Matrix display name,
 # the @<name>-bot handle, the #<name> room, and the SOUL.md self-reference.

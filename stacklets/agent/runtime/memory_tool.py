@@ -47,7 +47,7 @@ class MemorySearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search family memory with mem0. Results include rank, score, vault path, "
+            "Search the family memory vault. Results include rank, score, vault path, "
             "snippet, and source links when available. Use before answering factual "
             "questions about family people, plans, documents, notes, bookmarks, or topics."
         )
@@ -69,8 +69,6 @@ class MemorySearchTool(Tool):
             "memory",
             "search",
             query,
-            "--backend",
-            "mem0",
             "--limit",
             str(limit or 5),
         ]

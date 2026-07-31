@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,74 @@ if str(_LIB_DIR) not in sys.path:
 for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
     if str(_runtime_dir) not in sys.path:
         sys.path.insert(0, str(_runtime_dir))
+
+
+@pytest.fixture
+def nanobot_stub():
+    """Build a stub `nanobot` module tree covering the surface we patch.
+
+    Lives here rather than in one test file because two suites need it:
+    the shim tests assert the patches attach, and the vault-tool tests
+    drive the tools those patches register. Deliberately hand-built
+    rather than mocked -- every name is a symbol `sitecustomize.py`
+    pins, so the stub doubles as a written record of what we depend on,
+    and a Mock would satisfy any attribute and prove nothing.
+
+    Returns a callable so a test can build a fresh tree per case.
+    """
+
+    def _build() -> dict[str, types.ModuleType]:
+        def runtime_lines(state, msg, workspace, *, skip=False):
+            return ["stock line"]
+
+        class ContextBuilder:
+            def build_messages(self, *args, **kwargs):
+                return [{"role": "user", "content": "hi"}]
+
+        class Tool:
+            pass
+
+        def tool_parameters(schema):
+            return lambda cls: cls
+
+        def tool_parameters_schema(**kwargs):
+            return dict(kwargs)
+
+        class _Schema:
+            def __init__(self, *args, **kwargs):
+                self.args, self.kwargs = args, kwargs
+
+        class ToolLoader:
+            def discover(self):
+                return []
+
+        class GrepTool:
+            async def execute(self, *args, **kwargs):
+                return "stock grep"
+
+        mods: dict[str, types.ModuleType] = {}
+
+        def mod(name, **attrs):
+            m = types.ModuleType(name)
+            for k, v in attrs.items():
+                setattr(m, k, v)
+            mods[name] = m
+            return m
+
+        mod("nanobot")
+        mod("nanobot.agent")
+        mod("nanobot.agent.context",
+            runtime_lines=runtime_lines, ContextBuilder=ContextBuilder)
+        mod("nanobot.agent.tools")
+        mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
+        mod("nanobot.agent.tools.schema",
+            StringSchema=_Schema, IntegerSchema=_Schema,
+            tool_parameters_schema=tool_parameters_schema)
+        mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
+        mod("nanobot.agent.tools.search", GrepTool=GrepTool)
+        return mods
+
+    return _build
 
 
 @pytest.fixture
