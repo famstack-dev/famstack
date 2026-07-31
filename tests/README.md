@@ -1,5 +1,29 @@
 # Test Profiles
 
+## What we are trying to write
+
+Module tests, first and foremost. A module test drives one coherent piece of
+functionality from the outside, the way a client would, and its purpose is to
+state the intent and pin the expected behaviour at the time of writing. That is
+what survives refactors; the implementation underneath is disposable. Write them
+to read like API documentation: name the behaviour, say why the case matters.
+
+Two failure modes to avoid, both of which cost tokens and buy nothing:
+
+- **Tests that mirror the implementation.** Written next to the code they cover,
+  they prove the two agree, not that either is right. Assert against something
+  external instead: a spec, a real service's response, an invariant we promise.
+- **Stubs standing in for things we can run.** A green run against a stub proves
+  the wiring, not the behaviour. `stacktests ai local` gives real model answers
+  at no cost per call; reach for `mock` when you need determinism, not when you
+  need a pass.
+
+The demo-rig and e2e lanes sit on top: they prove the wiring holds between real
+containers. They do not replace module tests, and module tests do not replace
+them.
+
+## Choosing a lane
+
 Use the shortest command that proves the behavior you changed. The profiles
 below are ordered from cheapest to most disruptive.
 

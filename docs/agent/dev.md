@@ -179,8 +179,11 @@ Profile details live in [../../tests/README.md](../../tests/README.md).
 
 Testing rules:
 
+- **Module tests first, and they are the point.** See [AGENTS.md § 6](../../AGENTS.md). Test one coherent piece of functionality from the outside, as a client of it would, so the test states the intent and pins the expected behaviour for every later refactor. Write it to read like API documentation: name the behaviour, say why the case matters. demo-rig and e2e sit on top and prove the wiring; they do not replace this.
+- **Do not write tests that mirror the implementation.** A test written next to the code it covers proves the two agree, not that either is right. Assert against something external: a spec, a real service's response, an invariant we promise. If a test could only fail when someone changes their mind, delete it.
 - **Behavioural TDD: RED then GREEN.** Write the failing test that captures the behaviour you want; make it pass with the smallest change; then refactor.
 - **Blackbox at the module boundary.** Test what a module promises through its public surface. Mock only external interfaces (network endpoints, the LLM), and only when truly required.
+- **Prefer a real model over a stubbed one.** `tests/integration/stacktests ai local` points the rig at a self-hosted endpoint: real answers, no cost per call, only slower. A green run against a stub proves the wiring, not the behaviour.
 - **Docker integration tests when warranted.** If a change crosses a container boundary or depends on a real service's behaviour, add a test under `tests/integration/`.
 - **Tests run against real stacklets and real hooks.** No parallel test-only compose files.
 - **Use real Synapse via the `messages` stacklet.** No handwritten Matrix mocks.
@@ -189,7 +192,7 @@ Testing rules:
 - **Test helpers do one thing.** Add a parameter only when a second test needs it - not preemptively.
 - **`tests/integration/eval/` is opt-in** (slow, real model). Excluded from `pytest tests/` by `norecursedirs`.
 - **Write tests before fixing.** No duct tape.
-- **Before running integration / e2e tests, ASK.** They collide with the user's running instance.
+- **The rig is shared, not off-limits.** This repo root is the Simpsons dev instance, not anyone's real famstack, so agents may run the rig lanes. Ports are fixed, so exactly one run at a time: check nothing else is mid-run before starting. `tests/integration/stacktests help` lists which subcommands are autonomous, shared, or destructive.
 
 ## Code style
 
