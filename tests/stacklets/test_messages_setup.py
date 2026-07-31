@@ -66,18 +66,22 @@ class FakeMatrixClient:
         pass
 
 
-def test_stacker_bot_canonical_password():
+def test_stacker_bot_canonical_password(tmp_path):
     """Messages setup uses core__STACKER_BOT_PASSWORD without overwriting it.
 
     The core stacklet owns the stacker bot. If a credential for it already
     exists in the core namespace, the messages setup (which runs first)
     must use it to provision the bot in Synapse, rather than minting
     a competing password in its own namespace.
+
+    instance_dir points at tmp_path so that a regression, which would take
+    the mint-and-persist branch, writes its secret there instead of into
+    the developer's live .stack/secrets.toml.
     """
     client = FakeMatrixClient()
     users = [{"id": "homer", "display_name": "Homer"}]
-    config = {"instance_dir": str(_REPO_ROOT)}
-    
+    config = {"instance_dir": str(tmp_path)}
+
     # Given a secrets store holding the core-owned password...
     class FakeSecrets:
         def __init__(self):
@@ -90,18 +94,9 @@ def test_stacker_bot_canonical_password():
             return self.store.get(key, default)
             
     secrets = FakeSecrets()
-    
-    # We monkeypatch the TomlSecretStore so we can assert it isn't written to
-    # because setup.py uses it to persist newly generated passwords.
-    writes = []
-    class DummyTomlStore:
-        def __init__(self, path):
-            pass
-        def set(self, namespace, key, value):
-            writes.append((namespace, key, value))
-            
+
     import setup
-    
+
     # We need to mock MatrixClient inside setup.py because it instantiates a new one
     # for the bot login.
     original_matrix_client = setup.MatrixClient
@@ -119,12 +114,11 @@ def test_stacker_bot_canonical_password():
     assert len(stacker_creates) == 1
     assert stacker_creates[0][1] == "canonical-core-pass"
     
-    # The setup process did not write a new password to the store
-    # (The `if not bot_pass:` block should have been skipped entirely)
-    # We know this because if it ran, it would have either failed to import our
-    # fake or it would have written to it. But we can't easily assert writes=[]
-    # since it's an inline import. If it uses the correct pass, it means it skipped it.
-    
+    # No competing credential was minted. The mint-and-persist branch writes
+    # through TomlSecretStore to <instance_dir>/.stack/secrets.toml, so the
+    # absence of that file is proof the branch never ran.
+    assert not (tmp_path / ".stack" / "secrets.toml").exists()
+
     # The bot logged in with the canonical password
     stacker_logins = [login_info for login_info in client.logins if login_info[0] == "stacker-bot"]
     assert len(stacker_logins) == 1
