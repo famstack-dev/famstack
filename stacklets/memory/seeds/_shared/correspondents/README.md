@@ -28,7 +28,9 @@ canonical: Duff Insurance
 aliases:
   - "Duff Insurance Ortsverband Springfield"
   - "Duff Insurance Versicherung AG"
-topics: [insurance, vehicle]
+topics:
+  - insurance
+  - vehicle
 address: "Hansastraße 19, 80686 München"
 website: "https://www.duff-insurance.example"
 ---
