@@ -17,16 +17,22 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import sys
 
 import pytest
 from nio import AsyncClient
 from nio.api import RoomVisibility
 from nio.responses import JoinedMembersResponse, RoomInviteResponse
 
+from tests.integration.conftest import REPO_ROOT
 from tests.integration.forgejo import ForgejoError
 from tests.integration.matrix import (
+    SYNAPSE_URL,
+    deactivate_user,
     ensure_joined,
+    login,
     matrix_call,
+    token_alive,
     upload_and_send_file,
     wait_for_room,
 )
@@ -155,6 +161,69 @@ def _run_stack(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=timeout,
+    )
+
+
+@pytest.mark.demo_rig
+def test_demo_rig_admin_put_with_password_ends_the_account_session(
+    bdd,
+    server_name,
+    scope,
+):
+    """Synapse logs an account out whenever the admin PUT carries a password.
+
+    `MatrixClient.create_user` is an upsert, so callers reach for it to make
+    an account exist. The cost is invisible from our side: Synapse treats any
+    `password` in that body as a credential change and invalidates the
+    account's devices, even when the value is identical to the current one.
+
+    A bot has nothing watching to log it back in, which is how the stack
+    ended up with a stacker-bot that could not authenticate (FAM-2). The
+    `reset_password=False` guard exists for exactly this.
+
+    This lives in the rig lane on purpose. The unit tests for the guard
+    assert what we put on the wire, which can only ever confirm our own
+    reading of the admin API. Only Synapse can answer what it does with it.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "stacklets" / "messages" / "cli"))
+    from _matrix import MatrixClient  # noqa: PLC0415
+
+    from stack.secrets import TomlSecretStore  # noqa: PLC0415
+
+    store = TomlSecretStore(REPO_ROOT / ".stack" / "secrets.toml")
+    admin_password = store.get("_", "ADMIN_PASSWORD") or store.get("global", "ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.fail("No ADMIN_PASSWORD in .stack/secrets.toml for the demo rig.")
+
+    probe = scope.uid.replace("-", "")
+    probe_password = f"{scope.uid}-probe-secret"
+
+    admin = MatrixClient(SYNAPSE_URL, server_name, str(REPO_ROOT))
+    assert admin.login("stackadmin", admin_password), "admin login failed"
+    scope.on_cleanup.append(
+        lambda _uid: deactivate_user(admin.token, f"@{probe}:{server_name}")
+    )
+
+    bdd.given(f"a throwaway account @{probe}:{server_name} with a live session")
+    assert admin.create_user(probe, probe_password, displayname="FAM-2 probe")
+    creds = login(server_name, probe, probe_password)
+    assert token_alive(creds.access_token), "the probe's session should start valid"
+
+    bdd.when("the account is re-upserted with reset_password=False")
+    assert admin.create_user(probe, probe_password, displayname="FAM-2 probe",
+                             reset_password=False)
+    bdd.then("its session survives")
+    assert token_alive(creds.access_token), (
+        "reset_password=False must not invalidate an existing account's devices"
+    )
+
+    bdd.when("the same account is re-upserted with the default, same password")
+    assert admin.create_user(probe, probe_password, displayname="FAM-2 probe")
+    bdd.then("Synapse has ended the session anyway")
+    assert not token_alive(creds.access_token), (
+        "if this still passes, Synapse no longer logs devices out on a "
+        "password PUT and the reset_password guard is solving a problem "
+        "that no longer exists"
     )
 
 

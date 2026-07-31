@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import time
 import tomllib
 import urllib.error
@@ -119,6 +120,48 @@ def login(server_name: str, username: str, password: str,
 
 class MatrixLoginError(RuntimeError):
     pass
+
+
+def token_alive(access_token: str, homeserver: str = SYNAPSE_URL) -> bool:
+    """Whether Synapse still honours this access token.
+
+    `/whoami` is the cheapest way to ask. Synapse invalidates an account's
+    devices on a password change, so this is how a test observes a session
+    being ended out from under it.
+    """
+    req = urllib.request.Request(
+        f"{homeserver}/_matrix/client/v3/account/whoami",
+        headers={"Authorization": f"Bearer {access_token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError:
+        return False
+
+
+def deactivate_user(admin_token: str, mxid: str,
+                    homeserver: str = SYNAPSE_URL) -> None:
+    """Deactivate and erase an account. Best effort, for test cleanup.
+
+    Synapse never truly deletes users, so a test that creates one has to
+    at least leave it deactivated rather than leaking a live account into
+    the demo instance.
+    """
+    req = urllib.request.Request(
+        f"{homeserver}/_synapse/admin/v1/deactivate/{mxid}",
+        data=json.dumps({"erase": True}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {admin_token}",
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15)
+    except urllib.error.HTTPError as e:
+        print(f"[cleanup] could not deactivate {mxid}: {e.code}", file=sys.stderr)
 
 
 # ── Room + file helpers on top of nio AsyncClient ────────────────────────
