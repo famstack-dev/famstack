@@ -12,6 +12,8 @@
 #   tests/integration/stacktests preflight       — offline gate: versions,
 #                                                  lock, ruff, unit tests
 #   tests/integration/stacktests unverified      — list parked intent-specs
+#   tests/integration/stacktests ai [mode]       — show/flip the AI backend:
+#                                                  mock | local | external
 #   tests/integration/stacktests up              — bring up what tests need
 #   tests/integration/stacktests down            — stop every test stacklet
 #   tests/integration/stacktests reset [slet]    — destroy + up (clean slate)
@@ -309,6 +311,16 @@ case "${1:-}" in
     echo "✓ preflight green — safe to commit."
     ;;
 
+  ai)
+    # Flip the AI backend: mock (httpserver fixture, offline, deterministic),
+    # local (self-hosted endpoint - real quality without waiting on the ai
+    # stacklet to load weights), or external (hosted, costs money per call).
+    # No argument prints the current mode. See _ai_mode.py for the env vars
+    # local/external read, and why endpoints are not committed.
+    shift || true
+    exec "$PYTHON" "$SCRIPT_DIR/_ai_mode.py" "$@"
+    ;;
+
   unverified)
     # List every parked intent-spec. These are xfail-marked tests that
     # describe behaviour we believe works but have never run green on
@@ -333,11 +345,15 @@ case "${1:-}" in
 Autonomy — what an agent may run unattended:
 
   autonomous   Offline, no Docker, no shared state. Run freely.
-               preflight, unverified, help,
-               pytest on tests/framework + tests/stacklets
+               preflight, unverified, help, ai (show/flip)
 
-  ask-first    Touches the shared rig or the operator's live instance.
-               Ports are fixed, so only one rig runs at a time.
+               `ai local` is self-hosted: free, unmetered, just slower
+               than a stub. Prefer it. `ai external` bills per call.
+
+  shared       Uses the one dev instance. Agents may run these — this
+               repo root is the Simpsons dev rig, not anyone's real
+               famstack. Ports are fixed, so exactly one run at a time:
+               check nothing else is mid-run before starting.
                up, down, e2e, smoke, demo-rig, eval
 
   destructive  Wipes state that re-running cannot recover.
