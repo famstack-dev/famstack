@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Classify local branches as already-in-main or genuinely diverged.
+
+`git branch --merged` is unreliable here. famstack squash-merges, so a
+branch whose every line is already in main still points at commits main
+never saw, and git calls it unmerged. Thirty-odd branches looked alive
+that way when almost none were.
+
+The reliable question is about content, not ancestry: take the files a
+branch touched since it forked, and ask whether main's version of those
+same paths already says the same thing. If it does, the branch is a
+duplicate of history and deleting it loses nothing.
+
+Usage:
+    tools/branch-status              # classify every local branch
+    tools/branch-status --merged     # print only the safe-to-delete names
+    tools/branch-status --diverged   # print only the ones carrying content
+
+Exit code is 0 when the classification completes. This is a read-only
+report; it never deletes anything.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+
+MAIN = "main"
+MERGED = "merged-or-empty"
+DIVERGED = "diverged"
+
+# git's hash of the empty tree — the "before anything existed" baseline.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def git(*args: str) -> str:
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def local_branches() -> list[str]:
+    out = git("for-each-ref", "--format=%(refname:short)", "refs/heads/")
+    return [b for b in out.split() if b != MAIN]
+
+
+def blob_id(ref: str, path: str) -> str | None:
+    """The object id of a file at a ref, or None when it is absent there."""
+    r = subprocess.run(["git", "rev-parse", f"{ref}:{path}"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def main_blobs() -> set[str]:
+    """Every object id reachable from main, across its whole history.
+
+    This is what makes the comparison honest. Checking a branch against
+    main's *current* files answers the wrong question: main edits those
+    files again after a merge, so a branch whose work landed months ago
+    still looks different. Asking whether main's history ever contained
+    this exact content answers the question we actually care about.
+    """
+    out = git("rev-list", "--objects", MAIN)
+    return {line.split()[0] for line in out.splitlines() if line}
+
+
+def merge_base(branch: str) -> str:
+    """Where the branch forked from main.
+
+    Falls back to the empty tree for branches with no common ancestor
+    (this repo has one such root left over from before it moved to
+    GitHub). Comparing such a branch from nothing means every file it
+    contains gets checked against main, which is the honest question.
+    """
+    r = subprocess.run(["git", "merge-base", MAIN, branch],
+                       capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip()
+    return EMPTY_TREE
+
+
+def touched_paths(branch: str) -> list[str]:
+    """Paths the branch changed since it forked from main.
+
+    Measured from the merge base rather than main's tip, so work main has
+    done in the meantime is not mistaken for the branch's own.
+    """
+    out = git("diff", "--name-only", f"{merge_base(branch)}..{branch}")
+    return [p for p in out.splitlines() if p]
+
+
+def classify(branch: str, known: set[str]) -> tuple[str, list[str]]:
+    """Return (verdict, paths carrying content main has never held).
+
+    A path is accounted for when main's history contains the exact blob
+    the branch ends with. A path the branch deleted is accounted for when
+    main has no such file either.
+    """
+    unique = []
+    for path in touched_paths(branch):
+        tip = blob_id(branch, path)
+        accounted = (tip in known) if tip else (blob_id(MAIN, path) is None)
+        if not accounted:
+            unique.append(path)
+    return (DIVERGED if unique else MERGED), unique
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument("--merged", action="store_true",
+                       help="print only branch names that are safe to delete")
+    group.add_argument("--diverged", action="store_true",
+                       help="print only branch names that still carry content")
+    args = ap.parse_args()
+
+    current = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    known = main_blobs()
+    results = [(b, *classify(b, known)) for b in local_branches()]
+
+    if args.merged or args.diverged:
+        want = MERGED if args.merged else DIVERGED
+        for branch, verdict, _ in results:
+            # Never offer the checked-out branch for deletion.
+            if verdict == want and not (args.merged and branch == current):
+                print(branch)
+        return 0
+
+    merged = [r for r in results if r[1] == MERGED]
+    diverged = [r for r in results if r[1] == DIVERGED]
+
+    print(f"\n  {len(results)} local branches, compared against {MAIN} "
+          f"at {git('rev-parse', '--short', MAIN).strip()}\n")
+
+    if diverged:
+        print(f"  Diverged ({len(diverged)}) - carry content {MAIN} does not have:\n")
+        for branch, _, unique in sorted(diverged):
+            shown = ", ".join(unique[:3]) + (" ..." if len(unique) > 3 else "")
+            print(f"    {branch}")
+            print(f"      {len(unique)} file(s): {shown}")
+        print()
+
+    if merged:
+        print(f"  Merged or empty ({len(merged)}) - safe to delete:\n")
+        for branch, _, _ in sorted(merged):
+            marker = "  (checked out)" if branch == current else ""
+            print(f"    {branch}{marker}")
+        print()
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
