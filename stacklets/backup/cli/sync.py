@@ -89,8 +89,7 @@ def _post_notification(plain: str, html: str, config: dict) -> Optional[str]:
     secrets = config.get("secrets", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
 
-    bot_pass = (secrets.get("core__STACKER_BOT_PASSWORD")
-                or secrets.get("messages__STACKER_BOT_PASSWORD", ""))
+    bot_pass = secrets.get("core__STACKER_BOT_PASSWORD", "")
     if not bot_pass:
         return "stacker-bot password not in secrets — is core set up?"
 

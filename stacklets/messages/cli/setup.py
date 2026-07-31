@@ -214,7 +214,11 @@ def _setup(client, users, config, secrets=None):
         store = TomlSecretStore(Path(config.get("instance_dir", config.get("repo_root", "."))) / ".stack" / "secrets.toml")
         store.set("core", BOT_SECRET_KEY, bot_pass)
 
-    bot_created = client.create_user(BOT_NAME, bot_pass, displayname=BOT_DISPLAY)
+    # The bot-runner owns this account's session. Re-running setup must not
+    # reset its password, or the running bot is logged out with nothing to
+    # notice and log it back in.
+    bot_created = client.create_user(BOT_NAME, bot_pass, displayname=BOT_DISPLAY,
+                                     reset_password=False)
     if bot_created:
         results.append({"item": f"@{BOT_NAME}:{server_name}", "action": "ready"})
 

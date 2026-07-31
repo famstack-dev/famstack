@@ -37,7 +37,8 @@ class FakeMatrixClient:
     def resolve_alias(self, alias):
         return f"!{alias}:simpson"
         
-    def create_user(self, username, password, displayname=None):
+    def create_user(self, username, password, displayname=None, admin=False,
+                    reset_password=True):
         self.created_users.append((username, password))
         return True
         

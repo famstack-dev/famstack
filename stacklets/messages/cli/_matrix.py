@@ -44,8 +44,7 @@ def resolve_login(sender, secrets):
         if not password:
             return None, None, f"No password for '{sender}' in secrets ({key})"
         return sender, password, None
-    bot_pass = (secrets.get("core__STACKER_BOT_PASSWORD")
-                or secrets.get("messages__STACKER_BOT_PASSWORD", ""))
+    bot_pass = secrets.get("core__STACKER_BOT_PASSWORD", "")
     if not bot_pass:
         return None, None, "stacker-bot not set up. Run 'stack up core' first."
     return "stacker-bot", bot_pass, None
@@ -386,12 +385,20 @@ class MatrixClient:
 
     # ── Users ────────────────────────────────────────────────────────────
 
-    def create_user(self, username, password, displayname=None, admin=False):
+    def create_user(self, username, password, displayname=None, admin=False,
+                    reset_password=True):
         """Create a user via the Synapse admin API.
 
         Returns True if the user was created or already exists. The admin
-        API uses PUT and is idempotent — calling it on an existing user
-        updates their profile rather than failing.
+        API uses PUT as an upsert, so calling it on an existing user
+        updates them rather than failing.
+
+        That upsert is sharper than it looks: sending `password` re-sets
+        the credential and logs the account's devices out. A caller that
+        only needs the account to *exist* should pass
+        `reset_password=False`, or every re-run of setup kicks a live
+        session off the server. Bots feel this hardest, since nothing is
+        watching to log them back in.
         """
         full = self._full_user(username)
         body = {
@@ -399,6 +406,11 @@ class MatrixClient:
             "displayname": displayname or username,
             "admin": admin,
         }
+        if not reset_password:
+            existing, _ = _get(self._url(f"/_synapse/admin/v2/users/{full}"),
+                               token=self.token)
+            if existing == 200:
+                del body["password"]
         status, resp = _put(
             self._url(f"/_synapse/admin/v2/users/{full}"), body, token=self.token,
         )
