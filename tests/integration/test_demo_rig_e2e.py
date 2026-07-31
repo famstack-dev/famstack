@@ -165,6 +165,33 @@ def _run_stack(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
 
 
 @pytest.mark.demo_rig
+def test_demo_rig_doctor_is_clean_on_a_healthy_instance(bdd):
+    """`stack doctor` must find nothing wrong with a working instance.
+
+    Doctor's rules are pure functions with injected I/O, which makes them
+    easy to unit test and easy to get confidently wrong: the fixture and the
+    rule get written together from one mental model, so both agree and the
+    real world is never consulted. That has already happened twice, once
+    reporting 36 phantom drifts on watchtower and once reporting a gotenberg
+    TZ error whose suggested fix could not possibly work.
+
+    This is the check neither of those could fail. A container's environment
+    is full of values no famstack command controls, and only a real one has
+    them all.
+    """
+    bdd.given("an instance whose stacklets are up and healthy")
+    bdd.when("stack doctor inspects every container")
+    result = _run_stack("doctor")
+
+    bdd.then("it reports nothing to fix")
+    assert "No problems found." in result.stdout, (
+        "doctor flagged something on a healthy instance. Either the instance "
+        f"really is broken, or a rule is producing false positives:\n{result.stdout}"
+    )
+    assert result.returncode == 0, f"doctor exited {result.returncode}"
+
+
+@pytest.mark.demo_rig
 def test_demo_rig_admin_put_with_password_ends_the_account_session(
     bdd,
     server_name,

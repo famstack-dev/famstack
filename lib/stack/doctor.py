@@ -71,6 +71,25 @@ def env_drift(rendered: dict, actual: dict, ignore: frozenset = _RUNTIME_KEYS) -
     return sorted(drifted)
 
 
+def compose_supplied(actual: dict, baked: dict) -> dict:
+    """The part of a container's environment that compose actually set.
+
+    A container's environment is the image's own defaults plus whatever
+    compose passed in. Only the second half can drift from stack.toml; the
+    first half belongs to the image author and no famstack command can
+    change it. Comparing it produces a finding that is permanently true and
+    whose suggested fix provably does nothing, which is how gotenberg came
+    to report a TZ error that survived every `stack up docs`.
+
+    A value equal to the image's default is treated as not-ours. That is
+    deliberately conservative: if compose sets a key to exactly what the
+    image already baked, real drift on that key goes unreported. Missing a
+    finding costs one debugging session; a permanent false positive teaches
+    the reader to skim past every finding, including the true ones.
+    """
+    return {k: v for k, v in actual.items() if baked.get(k) != v}
+
+
 def check_env_drift(stacklet: str, container: str, drifted: list[str]) -> Finding | None:
     """A running container carrying superseded config."""
     if not drifted:
@@ -122,10 +141,11 @@ def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     )
 
 
-def diagnose(stacklets, rendered_env, containers_for, container_env) -> list[Finding]:
+def diagnose(stacklets, rendered_env, containers_for, container_env,
+             image_env) -> list[Finding]:
     """Run every check across the given stacklets.
 
-    The four collaborators are injected rather than imported so the whole
+    The five collaborators are injected rather than imported so the whole
     walk is testable with plain dicts - no Docker, no instance. Each is a
     callable taking a stacklet id (or container name) and returning facts.
 
@@ -153,7 +173,8 @@ def diagnose(stacklets, rendered_env, containers_for, container_env) -> list[Fin
                 # A stopped container's environment says nothing useful.
                 continue
             if rendered:
-                drifted = env_drift(rendered, container_env(name))
+                ours = compose_supplied(container_env(name), image_env(name))
+                drifted = env_drift(rendered, ours)
                 found = check_env_drift(stacklet, name, drifted)
                 if found:
                     findings.append(found)
