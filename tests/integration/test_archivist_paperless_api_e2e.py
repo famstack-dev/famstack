@@ -149,18 +149,30 @@ class TestDuplicateRejection:
         )
 
     async def test_the_duplicate_is_not_filed_a_second_time(
-        self, bot_api, sample_invoice_pdf, paperless_scope, bdd,
+        self, bot_api, paperless, sample_invoice_pdf, paperless_scope, bdd,
     ):
         """Guards the guard. The rejection above is only meaningful if
         Paperless also declined to store the copy. Were
         ``PAPERLESS_CONSUMER_DELETE_DUPLICATES`` unset, 3.0 would consume
         the duplicate anyway - and a test that only checked for the
         raised error would still pass while the archive quietly grew a
-        twin."""
+        twin.
+
+        Counts come from the document list, not from search. The
+        full-text index updates asynchronously, so counting hits made
+        this pass alone and fail inside the full suite, where indexing
+        runs behind a busier queue. What is being asserted is what the
+        archive *holds*, which the list answers directly.
+        """
+        def filed() -> list[dict]:
+            return [d for d in paperless.list_documents()
+                    if str(d.get("title", "")).startswith(paperless_scope.uid)]
+
         bdd.given("a document filed once")
         await _file(bot_api, sample_invoice_pdf,
                     f"{paperless_scope.uid}-twin.pdf")
-        before = await bot_api.search(paperless_scope.uid, limit=100)
+        before = filed()
+        assert len(before) == 1, f"expected exactly one filing, got {before!r}"
 
         bdd.when("the same bytes are uploaded again and rejected")
         task_id = await bot_api.upload(
@@ -171,8 +183,8 @@ class TestDuplicateRejection:
             await bot_api.wait_task(task_id, timeout=180)
 
         bdd.then("the archive still holds exactly one copy")
-        after = await bot_api.search(paperless_scope.uid, limit=100)
-        assert len(after) == len(before)
+        after = filed()
+        assert [d["id"] for d in after] == [d["id"] for d in before]
 
 
 # ── Owner scoping ────────────────────────────────────────────────────────
@@ -187,21 +199,23 @@ class TestOwnerScoping:
     """
 
     async def test_a_document_the_bot_uploaded_is_visible_to_the_bot(
-        self, bot_api, sample_invoice_pdf, paperless_scope, bdd,
+        self, bot_api, paperless, sample_invoice_pdf, paperless_scope, bdd,
     ):
+        """Both reads go through permission filtering, neither through the
+        search index: this is a question about *visibility*, and mixing in
+        full-text indexing would make an async lag look like a permission
+        problem."""
         bdd.given("a document uploaded with the bot's token")
         doc_id = await _file(bot_api, sample_invoice_pdf,
                              f"{paperless_scope.uid}-owned.pdf")
 
-        bdd.when("the same token fetches it directly and by search")
+        bdd.when("the same token fetches it directly and in a list")
         direct = await bot_api.get_doc(doc_id)
-        found = await bot_api.search(paperless_scope.uid, limit=100)
+        listed = [d["id"] for d in paperless.list_documents()]
 
         bdd.then("both see it")
         assert direct is not None, "owner-scoped read hid the bot's own upload"
-        assert doc_id in [d["id"] for d in found], (
-            "owner-scoped list hid the bot's own upload"
-        )
+        assert doc_id in listed, "owner-scoped list hid the bot's own upload"
 
 
 # ── The contract the unit fixtures pin ───────────────────────────────────
