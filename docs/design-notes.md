@@ -48,3 +48,33 @@ working while the new one is evaluated.
 The corollary is the reason it was needed: **an unpinned image is a
 scheduled outage.** `:latest` plus watchtower rolled Paperless from 2.x to
 3.0.2 unattended and broke filing across the whole e2e suite.
+
+## Two rot vectors in one URL, and a hook that stopped halfway (2026-08-01)
+
+The Mac took a new DHCP lease. The vault clone's `origin` was
+`http://<token>@<old-LAN-IP>:42040/family/memory.git`, so every host-side
+git call hung until its timeout. `on_start_ready` was mid-run when the
+`TimeoutExpired` escaped, which is why `family/brain` was never created,
+which is why the curator's brain push returned 403 on every cycle from
+then on. The embedded token had separately expired. The container plane
+never noticed any of it: its remote is `stack-code:3000`, a service name.
+
+What the fix encodes: host-side remotes use loopback and the published
+port, remote URLs are re-derived on every start (both halves rot, and
+nothing else refreshes them), git never raises a timeout at a caller,
+and a wedged sync recovers by policy - source preserves local commits,
+the projection may realign freely.
+
+**Not built, worth deciding: hook steps that create durable resources
+should be independently re-runnable rather than sequential-and-abort.**
+`on_start_ready` is one function where step 3 creating `family/brain`
+depends on step 1 finishing, so an unrelated failure upstream silently
+skips it and the only symptom is a line in `stack up` output. Hooks are
+already required to be idempotent, which is most of the way there; what
+is missing is that a hook is one all-or-nothing block. A shape worth
+weighing: let a hook declare independent steps, run each, report per
+step, and fail the hook without skipping the ones that would have
+succeeded. The cost is a framework concept where today there is a plain
+function, so it needs to earn its place - but "a resource nobody created
+and nobody noticed" is the second time this pattern has cost a debugging
+session.

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -170,11 +171,77 @@ def brain_remote_url(code_url: str) -> str:
     return f"{code_url.rstrip('/')}/{REPO_OWNER}/{BRAIN_REPO_NAME}.git"
 
 
+# The host's own address for its own published ports. `127.0.0.1` and
+# not `localhost`, so the URL cannot be re-pointed by /etc/hosts or
+# answered with an IPv6 address the port is not bound to.
+LOOPBACK_HOST = "127.0.0.1"
+
+_IPV4_LITERAL = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def host_code_url(code_url: str) -> str:
+    """Rewrite a Forgejo URL so the *host* reaches it over loopback.
+
+    In port mode `{code_url}` renders the LAN address
+    (`http://192.168.188.42:42040`), because it is also the URL a phone
+    on the couch clicks. Baked into a git remote or an API base on the
+    machine itself, that address is a time bomb: the next DHCP lease
+    moves it, and every host-side git call then hangs until its timeout
+    and fails. The host is local to itself, so it talks to the
+    published port on loopback, which no lease can move.
+
+    Only a literal IPv4 address is rewritten. A hostname is left as it
+    is: in domain mode it is stable DNS, an operator-configured
+    `[core].host` name follows the machine, and on the container plane
+    `stack-code` is the service name that must survive this call
+    untouched.
+    """
+    scheme, sep, rest = code_url.partition("://")
+    if not sep:
+        return code_url
+    authority, slash, path = rest.partition("/")
+    host, colon, port = authority.rpartition(":")
+    if not colon:                       # authority is a bare host
+        host, port = authority, ""
+    if not _IPV4_LITERAL.match(host):
+        return code_url
+    rebuilt = f"{LOOPBACK_HOST}:{port}" if port else LOOPBACK_HOST
+    return f"{scheme}://{rebuilt}{slash}{path}"
+
+
 # ─── Vault sync ──────────────────────────────────────────────────────────
 #
 # Clone-if-missing and best-effort pulls. Both shell out to `git` —
 # every Mac and Linux has it, and the framework already uses subprocess
 # liberally for Docker. No GitPython dep, no libgit2.
+
+def _git(argv: List[str], *, timeout: int, env: Optional[dict] = None) -> tuple[int, str, str]:
+    """Run one git command and never raise. Returns (rc, stdout, stderr).
+
+    A remote that stopped answering is the failure mode this whole
+    module exists to survive, and it arrives as a hang, not as an error
+    code: git sits on the socket until the timeout expires. Letting
+    `TimeoutExpired` escape is how a single unreachable remote took a
+    lifecycle hook down mid-run and left the resources after it
+    uncreated. So a timeout (and a missing git binary) comes back as a
+    failing command like any other.
+    """
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", f"git timed out after {timeout}s: {' '.join(argv[1:3])}"
+    except (FileNotFoundError, OSError) as e:
+        return 127, "", f"git unavailable: {e}"
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def run_git(repo_path: Path, *args: str, timeout: int = 60,
+            env: Optional[dict] = None) -> tuple[int, str, str]:
+    """Run a git command inside `repo_path`. Never raises — see `_git`."""
+    return _git(["git", "-C", str(repo_path), *args], timeout=timeout, env=env)
+
 
 def ensure_vault_cloned(
     vault_path: Path,
@@ -193,11 +260,30 @@ def ensure_vault_cloned(
         return True
 
     vault_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        ["git", "clone", remote_url, str(vault_path)],
-        capture_output=True, text=True, timeout=timeout,
+    rc, _, _ = _git(
+        ["git", "clone", remote_url, str(vault_path)], timeout=timeout,
     )
-    return result.returncode == 0
+    return rc == 0
+
+
+def point_remote_at(repo_path: Path, remote_url: str, *,
+                    name: str = "origin", timeout: int = 10) -> bool:
+    """Re-derive a working copy's remote URL, adding the remote if absent.
+
+    A remote URL rots in two independent ways: the host part (a LAN IP
+    baked in at clone time, moved by the next DHCP lease) and the
+    embedded credential (a Forgejo token that expired). Both are held
+    in git's config, where nothing ever refreshes them. So every start
+    re-points the remote at the URL the current config says it should
+    be, and neither kind of rot survives a `stack up`.
+    """
+    repo_path = Path(repo_path)
+    if not (repo_path / ".git").exists():
+        return False
+    rc, _, _ = run_git(repo_path, "remote", "set-url", name, remote_url, timeout=timeout)
+    if rc != 0:
+        rc, _, _ = run_git(repo_path, "remote", "add", name, remote_url, timeout=timeout)
+    return rc == 0
 
 
 def pull_vault(vault_path: Path, *, timeout: int = 30) -> bool:
@@ -210,11 +296,8 @@ def pull_vault(vault_path: Path, *, timeout: int = 30) -> bool:
     vault_path = Path(vault_path)
     if not (vault_path / ".git").exists():
         return False
-    result = subprocess.run(
-        ["git", "-C", str(vault_path), "pull", "--ff-only"],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    return result.returncode == 0
+    rc, _, _ = run_git(vault_path, "pull", "--ff-only", timeout=timeout)
+    return rc == 0
 
 
 def vault_remote_head(vault_path: Path, *, timeout: int = 5) -> Optional[str]:
@@ -295,6 +378,214 @@ def refresh_vault_if_stale(
     if pull_vault(vault_path, timeout=timeout):
         return "pulled"
     return "pull_failed"
+
+
+# ─── Divergence recovery ─────────────────────────────────────────────────
+#
+# `git pull --ff-only` has exactly one outcome when a working copy and
+# its remote disagree: it fails, and it keeps failing, every cycle,
+# forever. That is not a sync loop, it is a wedge with a retry timer on
+# it. This section is the way out.
+#
+# Which way out depends on who owns the truth, and the two repos answer
+# differently. `family/memory` is the database (ADR-011): records and
+# state documents, and a local-only commit may be a todo tick, which is
+# information that exists nowhere else. Its local commits are never
+# discarded, only replayed or set aside on a branch. `family/brain` is
+# a projection: machine-owned, regenerable from memory at any time, so
+# it may take the remote as given and re-project on top.
+#
+# Both policies run through one function, because the difference
+# between them is the interesting part and it should be readable in one
+# place.
+
+PRESERVE_LOCAL = "preserve"
+"""Recovery policy for source repos: local commits are irreplaceable."""
+
+RESET_LOCAL = "reset"
+"""Recovery policy for projections: the remote may be taken as given."""
+
+# Prefix of the branch that holds a history we had to step away from.
+# The name is the one the operator wrote by hand the night this broke:
+# `git branch wedged-orphan-<date> main` before resetting to the remote.
+PRESERVED_BRANCH_PREFIX = "wedged-orphan"
+
+# Text git and Forgejo use when the credentials, not the network, are
+# the problem. An expired token reads differently from an unreachable
+# host, and the two need different responses: refresh and retry versus
+# wait and retry.
+_AUTH_FAILURE_MARKERS = (
+    "authentication failed",
+    "invalid username or password",
+    "credentials are incorrect",     # Forgejo's wording for an expired token
+    "could not read username",
+    "returned error: 401",
+    "returned error: 403",
+)
+
+
+def is_auth_failure(stderr: str) -> bool:
+    """True when git's error text says the credentials were rejected."""
+    text = (stderr or "").lower()
+    return any(marker in text for marker in _AUTH_FAILURE_MARKERS)
+
+
+def preserved_branch_name(head_sha: str, *, today: Optional[str] = None) -> str:
+    """Name of the branch that keeps a history we are about to leave.
+
+    Dated so an operator can see when it happened, and suffixed with
+    the short SHA so preserving the same history twice reuses the same
+    branch instead of littering one per attempt.
+    """
+    day = today or time.strftime("%Y%m%d", time.localtime())
+    return f"{PRESERVED_BRANCH_PREFIX}-{day}-{head_sha[:7]}"
+
+
+@dataclass
+class SyncResult:
+    """Outcome of one reconcile, terse enough to log verbatim.
+
+    `status` is one of:
+
+        "up_to_date"          — nothing to do.
+        "fast_forwarded"      — the everyday pull.
+        "ahead"               — local has commits the remote lacks and
+                                the caller pushes them itself.
+        "pushed"              — local commits delivered to the remote.
+        "rebased"             — local commits replayed onto the remote
+                                head and pushed.
+        "rebased_unpushed"    — replayed, but the push did not land.
+                                Nothing lost; the next cycle retries.
+        "preserved_and_reset" — histories could not be reconciled, so
+                                the local one is kept on `detail`'s
+                                branch and the working copy now matches
+                                the remote.
+        "reset_to_remote"     — projection realigned to the remote.
+        "unreachable"         — the remote did not answer.
+        "auth_failed"         — the remote rejected the credentials.
+        "failed"              — git refused an operation; `detail`
+                                carries its complaint.
+
+    `detail` carries the preserved branch name or git's stderr,
+    whichever the status makes useful.
+    """
+
+    status: str
+    detail: str = ""
+
+
+# Outcomes that mean the data plane made progress, or had nothing to
+# do. Everything else is worth an operator's attention.
+HEALTHY_SYNC_STATUSES = frozenset(
+    {"up_to_date", "fast_forwarded", "ahead", "pushed"}
+)
+
+
+def reconcile_with_remote(
+    repo_path: Path,
+    remote: str,
+    *,
+    recovery: str,
+    branch: str = "main",
+    env: Optional[dict] = None,
+    timeout: int = 60,
+) -> SyncResult:
+    """Bring a working copy back into agreement with `remote`.
+
+    The fast paths first: heads equal, or local is an ancestor of the
+    remote and a fast-forward does it. Local being *ahead* is not a
+    problem either, just commits that have not travelled yet.
+
+    The two hard cases are the ones that wedge a `--ff-only` loop:
+
+      - **Diverged with a shared merge base.** Both sides committed.
+        Under `PRESERVE_LOCAL` the local commits are replayed onto the
+        remote head and pushed, so the remote stays canonical and the
+        local work still exists and finally travels. Under
+        `RESET_LOCAL` the local side is dropped, because it can be
+        regenerated.
+      - **No merge base at all.** The remote repo was re-created, so
+        the two histories share nothing and no rebase can bridge them.
+        Under `PRESERVE_LOCAL` the local history is kept on a
+        `wedged-orphan-*` branch *before* the working copy is reset, and
+        the reset is skipped entirely if that branch cannot be created.
+        Under `RESET_LOCAL` the working copy simply resets.
+
+    Never raises, and never resets a source repo without first putting
+    the history it is leaving somewhere a person can find it.
+    """
+    def git(*args: str) -> tuple[int, str, str]:
+        return run_git(repo_path, *args, timeout=timeout, env=env)
+
+    rc, _, err = git("fetch", "--quiet", remote, branch)
+    if rc != 0:
+        return SyncResult("auth_failed" if is_auth_failure(err) else "unreachable", err)
+
+    rc, remote_head, err = git("rev-parse", "FETCH_HEAD")
+    if rc != 0 or not remote_head:
+        return SyncResult("unreachable", err)
+    rc, local_head, err = git("rev-parse", "HEAD")
+    if rc != 0 or not local_head:
+        return SyncResult("failed", err)
+
+    if local_head == remote_head:
+        return SyncResult("up_to_date")
+
+    if git("merge-base", "--is-ancestor", local_head, remote_head)[0] == 0:
+        rc, _, err = git("merge", "--ff-only", remote_head)
+        return SyncResult("fast_forwarded" if rc == 0 else "failed", err)
+
+    if git("merge-base", "--is-ancestor", remote_head, local_head)[0] == 0:
+        if recovery == RESET_LOCAL:
+            return SyncResult("ahead")     # the caller's own push delivers it
+        return _push_local(git, remote, branch)
+
+    if recovery == RESET_LOCAL:
+        rc, _, err = git("reset", "--hard", remote_head)
+        return SyncResult("reset_to_remote" if rc == 0 else "failed", err)
+
+    if git("merge-base", local_head, remote_head)[0] == 0:
+        rc, _, err = git(
+            "-c", f"user.name={BOT_USERNAME}", "-c", f"user.email={BOT_EMAIL}",
+            "rebase", remote_head,
+        )
+        if rc == 0:
+            replayed = _push_local(git, remote, branch)
+            return SyncResult(
+                "rebased" if replayed.status == "pushed" else "rebased_unpushed",
+                replayed.detail,
+            )
+        git("rebase", "--abort")           # conflict: fall through to preserve
+
+    return _preserve_and_reset(git, local_head, remote_head)
+
+
+def _push_local(git, remote: str, branch: str) -> SyncResult:
+    """Deliver local commits to the remote.
+
+    Local work that stays local diverges again on the next cycle, so
+    reconciling means pushing, not just re-ordering. A refused push
+    loses nothing: the commits are still here and the next cycle tries
+    again, loudly.
+    """
+    rc, _, err = git("push", "--quiet", remote, f"HEAD:{branch}")
+    return SyncResult("pushed" if rc == 0 else "push_failed", err)
+
+
+def _preserve_and_reset(git, local_head: str, remote_head: str) -> SyncResult:
+    """Keep the local history on a branch, then reset to the remote.
+
+    The order matters and is the whole safety property: if the branch
+    cannot be created, nothing is reset. A wedged repo that stays
+    wedged is recoverable; a reset one is not.
+    """
+    name = preserved_branch_name(local_head)
+    if git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}")[0] != 0:
+        rc, _, err = git("branch", name, local_head)
+        if rc != 0:
+            return SyncResult("failed", f"could not preserve local history: {err}")
+    rc, _, err = git("reset", "--hard", remote_head)
+    return SyncResult("preserved_and_reset" if rc == 0 else "failed", name if rc == 0 else err)
 
 
 # ─── Vault writers ───────────────────────────────────────────────────────
@@ -827,6 +1118,9 @@ def ensure_brain_projection_admin(
     `family/brain` if missing, seed its scaffold if missing, and clone it
     locally when the working copy is absent.
     """
+    # Host plane: talk to Forgejo on loopback so neither the API calls
+    # nor the clone URL carry a LAN IP that the next lease invalidates.
+    code_url = host_code_url(code_url)
     admin = ForgejoClient(
         url=code_url,
         admin_user=admin_user, admin_password=admin_password,
@@ -850,6 +1144,10 @@ def ensure_brain_projection_admin(
             admin_user, admin_token,
         )
         cloned_brain = ensure_vault_cloned(brain_path, brain_remote) and not had_brain
+        if had_brain:
+            # Freshly issued token, current host URL — the clone made on
+            # an older lease with an older token gets both refreshed.
+            point_remote_at(brain_path, brain_remote)
 
     return {
         "created_brain_repo": brain_state["created_repo"],
@@ -934,6 +1232,9 @@ def install_memory_to_forgejo(
     Returns a dict describing what changed. On `forgejo unreachable`,
     returns `{"skipped_reason": "..."}` and makes no further calls.
     """
+    # Host plane: see `host_code_url`. The clone URL written here is
+    # the one the vault keeps as `origin` for the rest of its life.
+    code_url = host_code_url(code_url)
     admin = ForgejoClient(
         url=code_url,
         admin_user=admin_user, admin_password=admin_password,
