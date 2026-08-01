@@ -740,6 +740,25 @@ If `git pull` shows changes to `lib/stack/` or to a stacklet you are running, re
 
 Pre-1.0 caveat: occasionally a release changes a config schema or env var. Release notes will say so. Read them before pulling.
 
+### Paperless-ngx 3.x (docs stacklet)
+
+This release moves the `docs` stacklet from Paperless-ngx 2.20.15 to 3.0.4.
+
+**Back up `~/famstack-data/docs/` before you restart the stacklet.** Paperless migrates its database the first time 3.x starts, and 2.x refuses to boot on a migrated database. There is no downgrade. If the upgrade goes wrong, restoring that backup is the only way back.
+
+```bash
+./stack down docs
+tar -czf ~/docs-pre-3x-backup.tar.gz -C ~/famstack-data docs
+git pull
+./stack up docs
+```
+
+The backup stacklet does not cover this. It archives files, not the Postgres database, so a `stack backup sync` alone will not get you back to 2.x.
+
+**If Watchtower already moved you to 3.x.** Older famstack releases tracked the `:latest` Paperless tag, and Watchtower's nightly pull rolled some instances from 2.x straight to 3.0 without asking. If that happened to you, your database is already migrated and pinning the image back to 2.20.15 will not start. You need a backup taken before the 3.x boot. Without one, staying on 3.x is the only option, which this release makes the supported path. Paperless is now pinned to an exact tag, so Watchtower can still deliver 3.0.x patches but can no longer jump a major version on its own.
+
+**One behaviour change worth knowing.** 3.0 stopped rejecting a re-uploaded identical file by default and would have filed a second copy instead. famstack sets `PAPERLESS_CONSUMER_DELETE_DUPLICATES` to keep the old behaviour: send the same receipt twice and the archivist replies "already filed", with a link to the document you sent the first time.
+
 ---
 
 ## Uninstall
