@@ -95,7 +95,7 @@ case "${1:-}" in
       done
     else
       shift
-      exec stack_cli up "$@"
+      stack_cli up "$@"
     fi
     ;;
 
@@ -111,7 +111,7 @@ case "${1:-}" in
         stack_cli down "$sid" || true
       done
     else
-      exec stack_cli down "$@"
+      stack_cli down "$@"
     fi
     ;;
 
@@ -373,6 +373,6 @@ EOF
 
   *)
     # Anything else — forward untouched to stack.
-    exec stack_cli "$@"
+    stack_cli "$@"
     ;;
 esac
