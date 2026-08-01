@@ -29,7 +29,7 @@ from pipeline import (  # noqa: E402
     _format_evidence_block,
     _task_document_id,
     _task_duplicate_id,
-    _to_whoosh_query,
+    _to_search_query,
     enrich_document,
     extract_bot_summary,
     reformat_document,
@@ -198,38 +198,45 @@ class TestToWhooshQuery:
     def test_appends_wildcard_to_bare_token(self):
         # The whole point: "pangasius" alone won't hit the index, but
         # "pangasius*" will prefix-match "pangasiusfilet".
-        assert _to_whoosh_query("pangasius") == "pangasius*"
+        assert _to_search_query("pangasius") == "pangasius*"
 
-    def test_each_token_gets_its_own_wildcard(self):
-        # Two-word queries narrow the set (Whoosh AND under Paperless's
-        # default operator), with both terms allowed to prefix-match.
-        assert _to_whoosh_query("radlager auto") == "radlager* auto*"
+    def test_a_bag_of_words_requires_every_word(self):
+        # The parser ORs bare terms, so an unjoined query answers "any of
+        # these" when the user meant "all of these". Measured on a real
+        # 3.0.4 archive of 24 documents, `homer* car* insurance*` matched
+        # 18 of them; the AND form is what makes a second word narrow.
+        assert _to_search_query("radlager auto") == "radlager* AND auto*"
 
     def test_passes_through_existing_wildcard(self):
-        # If the caller already wrote Whoosh syntax we trust them and
+        # If the caller already wrote query syntax we trust them and
         # don't double-wildcard.
-        assert _to_whoosh_query("pangasius*") == "pangasius*"
+        assert _to_search_query("pangasius*") == "pangasius*"
 
-    def test_passes_through_operators(self):
-        # AND/OR/NOT are Whoosh operators -- not search terms -- so they
-        # must not get a `*` suffix.
-        assert _to_whoosh_query("fisch OR pangasius") == "fisch* OR pangasius*"
-        assert _to_whoosh_query("fisch AND NOT pangasius") == "fisch* AND NOT pangasius*"
+    def test_an_explicit_operator_is_left_to_the_caller(self):
+        # Injecting AND around a caller's own operator produces
+        # `fisch* AND OR AND pangasius*`, which the parser rejects with
+        # an error rather than a bad result. Keep their structure.
+        assert _to_search_query("fisch OR pangasius") == "fisch* OR pangasius*"
+        assert _to_search_query("fisch AND NOT pangasius") == "fisch* AND NOT pangasius*"
 
     def test_passes_through_field_query(self):
-        # `field:value` is intentional Whoosh syntax for restricting a
-        # search to one indexed field -- leave it alone.
-        assert _to_whoosh_query("title:rezept") == "title:rezept"
+        # `field:value` is intentional syntax for restricting a search to
+        # one indexed field -- leave it alone.
+        assert _to_search_query("title:rezept") == "title:rezept"
 
-    def test_passes_through_quoted_phrase(self):
-        # Quotes signal an explicit phrase query; wildcarding breaks it.
-        assert _to_whoosh_query('"fisch rezept"') == '"fisch rezept"'
+    def test_a_quoted_phrase_stays_one_phrase(self):
+        # A phrase splits on whitespace like anything else, so joining
+        # with AND would emit `"fisch AND rezept"` -- a phrase query for
+        # words in that literal order, which matched nothing on a real
+        # 3.0.4 archive. Spaces keep the phrase intact.
+        assert _to_search_query('"fisch rezept"') == '"fisch rezept"'
+        assert _to_search_query('"fisch rezept" pangasius') == '"fisch rezept" pangasius*'
 
     def test_empty_input_unchanged(self):
         # Defensive: a stray "" must NOT become "*" -- a wildcard alone
         # matches every doc, which is the opposite of a no-op.
-        assert _to_whoosh_query("") == ""
-        assert _to_whoosh_query("   ") == "   "
+        assert _to_search_query("") == ""
+        assert _to_search_query("   ") == "   "
 
 
 # ── Stub collaborators ────────────────────────────────────────────────────

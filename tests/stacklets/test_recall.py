@@ -80,7 +80,7 @@ class TestQuestionTrigger:
         # Memory walker reads Python regex; alternation uses `|`.
         assert memory == "Impfung|MMR|Auffrischung"
         # Paperless reads Whoosh; alternation uses ` OR `. The bare
-        # tokens get wildcarded by PaperlessAPI._to_whoosh_query.
+        # tokens get wildcarded by PaperlessAPI._to_search_query.
         assert paperless == "Impfung OR MMR OR Auffrischung"
         assert len(c.calls) == 1
 
