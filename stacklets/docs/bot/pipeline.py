@@ -185,16 +185,22 @@ def _task_document_id(task: dict) -> int | None:
 def _task_duplicate_id(task: dict) -> int | None:
     """The already-filed twin's id when the upload was rejected as a duplicate.
 
-    Paperless 3.0 stopped *failing* duplicate tasks. The consumer now
-    returns a structured result and the task completes as ``success``
-    with ``result_data == {"duplicate_of": <id>, "duplicate_in_trash":
-    <bool>}`` (`documents/tasks.py` returning ``ConsumeFileDuplicateResult``
-    at v3.0.4). 2.x instead failed the task and named the twin in a
+    Paperless 3.0 replaced the free-text rejection with a structured one.
+    A duplicate task is still reported as ``failure``, but the message is
+    gone: what identifies the twin is ``result_data == {"duplicate_of":
+    <id>, "duplicate_in_trash": <bool>}``. 2.x instead named it in a
     free-text ``result``, which ``_DUPLICATE_RE`` scrapes.
 
-    This reads the structured 3.x field only; the caller keeps the 2.x
-    regex path for the older shape. Returning None means "this task is
-    not a duplicate rejection", not "no id available".
+    Worth knowing when changing the caller: 3.x also sets
+    ``related_document_ids`` to the *twin* on a rejected upload. Nothing
+    but ``result_data`` distinguishes that payload from a successful
+    filing, so a doc-id read on a failed task would hand back a real,
+    existing document as though this upload had produced it. Upstream
+    forces such a task to ``failure`` (``signals/handlers.py``), which is
+    what keeps the success path clear of it.
+
+    Returning None means "this task is not a duplicate rejection", not
+    "no id available".
     """
     result_data = task.get("result_data")
     if isinstance(result_data, dict) and result_data.get("duplicate_of"):
@@ -371,17 +377,17 @@ class PaperlessAPI:
                             task = tasks[0] if isinstance(tasks, list) else tasks
                             status = str(task.get("status", "")).upper()
                             if status == "SUCCESS":
-                                # 3.x reports a duplicate rejection as a
-                                # *successful* task carrying result_data;
-                                # check that before reading a doc id, which
-                                # such a task does not have.
+                                return _task_document_id(task)
+                            if status == "FAILURE":
+                                # A duplicate is a failed task in both
+                                # generations, but only 2.x explains itself
+                                # in words. Ask the structured field first;
+                                # 3.x leaves `result` empty.
                                 dup_id = _task_duplicate_id(task)
                                 if dup_id is not None:
                                     raise PaperlessDuplicateError(
                                         dup_id, await self._doc_title(dup_id),
                                     )
-                                return _task_document_id(task)
-                            if status == "FAILURE":
                                 result = task.get("result") or ""
                                 logger.error("[pipeline] Task failed: {}", result)
                                 match = _DUPLICATE_RE.search(result)

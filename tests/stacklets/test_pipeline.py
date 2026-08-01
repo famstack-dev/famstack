@@ -27,6 +27,7 @@ from pipeline import (  # noqa: E402
     _DUPLICATE_RE,
     _build_synthesize_prompt,
     _format_evidence_block,
+    _task_document_id,
     _task_duplicate_id,
     _to_whoosh_query,
     enrich_document,
@@ -1616,31 +1617,41 @@ class TestWaitTask:
 
 # ── Duplicate rejection across the 3.0 redesign ──────────────────────────
 #
-# Paperless 3.0 stopped failing duplicate tasks. `consume_file` now
-# returns `ConsumeFileDuplicateResult(duplicate_of=..., duplicate_in_trash
-# =...)` (documents/tasks.py at v3.0.4), so the task completes as
-# "success" and the twin's id lives in `result_data`. There is no
-# `result` string on the default API version at all - the v10 task
-# serialiser does not define the field.
+# Paperless 3.0 replaced the free-text duplicate rejection with a
+# structured one. The default API version (v10) serves a paginated
+# envelope and defines no `result` field at all, so the twin is named
+# only by `result_data.duplicate_of`.
 #
-# That makes this the exact spot where a fixture written from belief
-# would agree with a parser written from the same belief and prove
-# nothing. So these tests run over real aiohttp against a real HTTP
-# server, and the payload is checked against a live 3.x container by
-# tests/integration/test_archivist_paperless_api_e2e.py::TestTaskApiShape.
-
-# The shape a real Paperless 3.0.4 returns for a rejected duplicate.
+# The sharp edge is `related_document_ids`: on a *rejected* upload it
+# holds the id of the document already on file. Read a document id
+# before checking for a duplicate and the caller silently files the
+# user's upload under a document they never uploaded.
+#
+# The payload below is not written from the upstream source. It was
+# captured from a real Paperless-ngx 3.0.4 by uploading the same file
+# twice and dumping `/api/tasks/?task_id=...` verbatim. That distinction
+# is not academic: reading the source suggested a duplicate task ends as
+# `status: "success"` with no related documents, and the live server
+# reports `failure` with the twin's id present. The e2e in
+# tests/integration/test_archivist_paperless_api_e2e.py::TestTaskApiShape
+# is what keeps this honest when upstream moves again.
 _V3_DUPLICATE_TASK = {
     "count": 1,
     "next": None,
     "previous": None,
     "results": [{
-        "id": 12,
+        "id": 19,
         "task_id": "abc",
         "task_type": "consume_file",
-        "status": "success",
+        "task_type_display": "Consume File",
+        "trigger_source": "api_upload",
+        "status": "failure",
+        "status_display": "Failure",
+        "input_data": {"filename": "probe.txt", "mime_type": "text/plain"},
         "result_data": {"duplicate_of": 7, "duplicate_in_trash": False},
-        "related_document_ids": [],
+        "related_document_ids": [7],
+        "acknowledged": False,
+        "owner": 2,
     }],
 }
 
@@ -1693,16 +1704,30 @@ class TestPaperlessDuplicateAcross3xShapes:
     async def test_the_3x_duplicate_is_invisible_to_the_2x_text_match(self):
         """Guards the guard.
 
-        The sibling test above would also pass if the old failure-text
-        path were somehow catching the 3.x payload - and then we would
-        believe the migration was a no-op. It is not: there is no result
-        string to match, so the structured `result_data` read is doing
-        the work, and deleting it breaks duplicate detection outright.
+        The sibling tests would also pass if the old failure-text path
+        were quietly catching the 3.x payload, and we would believe the
+        migration was a no-op. It is not: the task is still a failure,
+        but there is no message left to scrape, so the structured
+        `result_data` read is doing all the work.
         """
         task = _V3_DUPLICATE_TASK["results"][0]
-        assert task["status"] == "success", "not a FAILURE, so the 2.x branch never runs"
         assert "result" not in task, "v10 tasks carry no free-text result to scrape"
         assert not _DUPLICATE_RE.search(str(task.get("result") or ""))
+        assert _task_duplicate_id(task) == 7
+
+    async def test_a_rejected_duplicate_never_reads_back_as_a_filed_document(self):
+        """The reason the duplicate check runs before any doc-id read.
+
+        3.x sets `related_document_ids` to the twin on a *rejected*
+        upload. Nothing in the payload distinguishes that from a
+        successful filing except `result_data`, so a caller that reads
+        the id first would report the user's upload as filed under a
+        document that was already there.
+        """
+        task = _V3_DUPLICATE_TASK["results"][0]
+        assert _task_document_id(task) == 7, (
+            "the twin's id really is sitting where a filed doc id would be"
+        )
         assert _task_duplicate_id(task) == 7
 
     async def test_a_normal_filing_is_not_mistaken_for_a_duplicate(
