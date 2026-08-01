@@ -24,9 +24,12 @@ from pipeline import (  # noqa: E402
     LLMUnavailableError,
     PaperlessAPI,
     PaperlessDuplicateError,
+    _DUPLICATE_RE,
     _build_synthesize_prompt,
     _format_evidence_block,
-    _to_whoosh_query,
+    _task_document_id,
+    _task_duplicate_id,
+    _to_search_query,
     enrich_document,
     extract_bot_summary,
     reformat_document,
@@ -195,38 +198,45 @@ class TestToWhooshQuery:
     def test_appends_wildcard_to_bare_token(self):
         # The whole point: "pangasius" alone won't hit the index, but
         # "pangasius*" will prefix-match "pangasiusfilet".
-        assert _to_whoosh_query("pangasius") == "pangasius*"
+        assert _to_search_query("pangasius") == "pangasius*"
 
-    def test_each_token_gets_its_own_wildcard(self):
-        # Two-word queries narrow the set (Whoosh AND under Paperless's
-        # default operator), with both terms allowed to prefix-match.
-        assert _to_whoosh_query("radlager auto") == "radlager* auto*"
+    def test_a_bag_of_words_requires_every_word(self):
+        # The parser ORs bare terms, so an unjoined query answers "any of
+        # these" when the user meant "all of these". Measured on a real
+        # 3.0.4 archive of 24 documents, `homer* car* insurance*` matched
+        # 18 of them; the AND form is what makes a second word narrow.
+        assert _to_search_query("radlager auto") == "radlager* AND auto*"
 
     def test_passes_through_existing_wildcard(self):
-        # If the caller already wrote Whoosh syntax we trust them and
+        # If the caller already wrote query syntax we trust them and
         # don't double-wildcard.
-        assert _to_whoosh_query("pangasius*") == "pangasius*"
+        assert _to_search_query("pangasius*") == "pangasius*"
 
-    def test_passes_through_operators(self):
-        # AND/OR/NOT are Whoosh operators -- not search terms -- so they
-        # must not get a `*` suffix.
-        assert _to_whoosh_query("fisch OR pangasius") == "fisch* OR pangasius*"
-        assert _to_whoosh_query("fisch AND NOT pangasius") == "fisch* AND NOT pangasius*"
+    def test_an_explicit_operator_is_left_to_the_caller(self):
+        # Injecting AND around a caller's own operator produces
+        # `fisch* AND OR AND pangasius*`, which the parser rejects with
+        # an error rather than a bad result. Keep their structure.
+        assert _to_search_query("fisch OR pangasius") == "fisch* OR pangasius*"
+        assert _to_search_query("fisch AND NOT pangasius") == "fisch* AND NOT pangasius*"
 
     def test_passes_through_field_query(self):
-        # `field:value` is intentional Whoosh syntax for restricting a
-        # search to one indexed field -- leave it alone.
-        assert _to_whoosh_query("title:rezept") == "title:rezept"
+        # `field:value` is intentional syntax for restricting a search to
+        # one indexed field -- leave it alone.
+        assert _to_search_query("title:rezept") == "title:rezept"
 
-    def test_passes_through_quoted_phrase(self):
-        # Quotes signal an explicit phrase query; wildcarding breaks it.
-        assert _to_whoosh_query('"fisch rezept"') == '"fisch rezept"'
+    def test_a_quoted_phrase_stays_one_phrase(self):
+        # A phrase splits on whitespace like anything else, so joining
+        # with AND would emit `"fisch AND rezept"` -- a phrase query for
+        # words in that literal order, which matched nothing on a real
+        # 3.0.4 archive. Spaces keep the phrase intact.
+        assert _to_search_query('"fisch rezept"') == '"fisch rezept"'
+        assert _to_search_query('"fisch rezept" pangasius') == '"fisch rezept" pangasius*'
 
     def test_empty_input_unchanged(self):
         # Defensive: a stray "" must NOT become "*" -- a wildcard alone
         # matches every doc, which is the opposite of a no-op.
-        assert _to_whoosh_query("") == ""
-        assert _to_whoosh_query("   ") == "   "
+        assert _to_search_query("") == ""
+        assert _to_search_query("   ") == "   "
 
 
 # ── Stub collaborators ────────────────────────────────────────────────────
@@ -1595,18 +1605,150 @@ class TestWaitTask:
         api = _api(_FakeTasksSession(payload))
         assert await api.wait_task("abc", timeout=5) == 42
 
-    async def test_duplicate_failure_raises(self):
-        # A duplicate rejection is a FAILURE whose result names the twin;
-        # wait_task turns it into PaperlessDuplicateError for the caller.
-        payload = {
-            "count": 1,
-            "results": [{
-                "task_id": "abc",
-                "status": "failure",
-                "result": "Not consuming dupe.pdf: It is a duplicate of Prior (#7)",
-            }],
-        }
+    async def test_a_2x_duplicate_is_a_failed_task_naming_the_twin(self):
+        # Paperless 2.20.15 (documents/consumer.py, pre_check_duplicate)
+        # fails the task with the literal text
+        #   "Not consuming {filename}: It is a duplicate of {title} (#{pk})."
+        # and the 2.x tasks endpoint returned a bare, unpaginated list.
+        payload = [{
+            "task_id": "abc",
+            "status": "FAILURE",
+            "result": "Not consuming dupe.pdf: It is a duplicate of Prior (#7).",
+        }]
         api = _api(_FakeTasksSession(payload))
         with pytest.raises(PaperlessDuplicateError) as exc:
             await api.wait_task("abc", timeout=5)
         assert exc.value.doc_id == 7
+        assert exc.value.title == "Prior"
+
+
+# ── Duplicate rejection across the 3.0 redesign ──────────────────────────
+#
+# Paperless 3.0 replaced the free-text duplicate rejection with a
+# structured one. The default API version (v10) serves a paginated
+# envelope and defines no `result` field at all, so the twin is named
+# only by `result_data.duplicate_of`.
+#
+# The sharp edge is `related_document_ids`: on a *rejected* upload it
+# holds the id of the document already on file. Read a document id
+# before checking for a duplicate and the caller silently files the
+# user's upload under a document they never uploaded.
+#
+# The payload below is not written from the upstream source. It was
+# captured from a real Paperless-ngx 3.0.4 by uploading the same file
+# twice and dumping `/api/tasks/?task_id=...` verbatim. That distinction
+# is not academic: reading the source suggested a duplicate task ends as
+# `status: "success"` with no related documents, and the live server
+# reports `failure` with the twin's id present. The e2e in
+# tests/integration/test_archivist_paperless_api_e2e.py::TestTaskApiShape
+# is what keeps this honest when upstream moves again.
+_V3_DUPLICATE_TASK = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [{
+        "id": 19,
+        "task_id": "abc",
+        "task_type": "consume_file",
+        "task_type_display": "Consume File",
+        "trigger_source": "api_upload",
+        "status": "failure",
+        "status_display": "Failure",
+        "input_data": {"filename": "probe.txt", "mime_type": "text/plain"},
+        "result_data": {"duplicate_of": 7, "duplicate_in_trash": False},
+        "related_document_ids": [7],
+        "acknowledged": False,
+        "owner": 2,
+    }],
+}
+
+
+@pytest.fixture
+async def paperless_over_http(httpserver):
+    """A PaperlessAPI talking to a real HTTP server over real aiohttp.
+
+    The duplicate path makes a second call (it looks the twin's title up
+    to name it in chat), so a stub that only answers /api/tasks/ would
+    quietly mask a broken lookup.
+    """
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        yield PaperlessAPI(session, httpserver.url_for("").rstrip("/"), "tok")
+
+
+class TestPaperlessDuplicateAcross3xShapes:
+    """wait_task recognises a duplicate however the running image reports it."""
+
+    async def test_a_3x_duplicate_is_a_successful_task_carrying_result_data(
+        self, httpserver, paperless_over_http,
+    ):
+        httpserver.expect_request("/api/tasks/").respond_with_json(
+            _V3_DUPLICATE_TASK)
+        httpserver.expect_request("/api/documents/7/").respond_with_json(
+            {"id": 7, "title": "Duff Insurance 2026"})
+
+        with pytest.raises(PaperlessDuplicateError) as exc:
+            await paperless_over_http.wait_task("abc", timeout=5)
+        assert exc.value.doc_id == 7
+        assert exc.value.title == "Duff Insurance 2026"
+
+    async def test_a_duplicate_still_reports_when_the_title_cannot_be_read(
+        self, httpserver, paperless_over_http,
+    ):
+        """The title is decoration; the id is the answer. A document the
+        bot cannot read back must still produce "already filed" rather
+        than degrade into a generic upload failure."""
+        httpserver.expect_request("/api/tasks/").respond_with_json(
+            _V3_DUPLICATE_TASK)
+        httpserver.expect_request("/api/documents/7/").respond_with_data(
+            "", status=404)
+
+        with pytest.raises(PaperlessDuplicateError) as exc:
+            await paperless_over_http.wait_task("abc", timeout=5)
+        assert exc.value.doc_id == 7
+        assert exc.value.title is None
+
+    async def test_the_3x_duplicate_is_invisible_to_the_2x_text_match(self):
+        """Guards the guard.
+
+        The sibling tests would also pass if the old failure-text path
+        were quietly catching the 3.x payload, and we would believe the
+        migration was a no-op. It is not: the task is still a failure,
+        but there is no message left to scrape, so the structured
+        `result_data` read is doing all the work.
+        """
+        task = _V3_DUPLICATE_TASK["results"][0]
+        assert "result" not in task, "v10 tasks carry no free-text result to scrape"
+        assert not _DUPLICATE_RE.search(str(task.get("result") or ""))
+        assert _task_duplicate_id(task) == 7
+
+    async def test_a_rejected_duplicate_never_reads_back_as_a_filed_document(self):
+        """The reason the duplicate check runs before any doc-id read.
+
+        3.x sets `related_document_ids` to the twin on a *rejected*
+        upload. Nothing in the payload distinguishes that from a
+        successful filing except `result_data`, so a caller that reads
+        the id first would report the user's upload as filed under a
+        document that was already there.
+        """
+        task = _V3_DUPLICATE_TASK["results"][0]
+        assert _task_document_id(task) == 7, (
+            "the twin's id really is sitting where a filed doc id would be"
+        )
+        assert _task_duplicate_id(task) == 7
+
+    async def test_a_normal_filing_is_not_mistaken_for_a_duplicate(
+        self, httpserver, paperless_over_http,
+    ):
+        """A successful consume carries result_data too. Reading
+        `duplicate_of` off it must not fire on `document_id`."""
+        httpserver.expect_request("/api/tasks/").respond_with_json({
+            "count": 1,
+            "results": [{
+                "task_id": "abc",
+                "status": "success",
+                "result_data": {"document_id": 6},
+                "related_document_ids": [6],
+            }],
+        })
+        assert await paperless_over_http.wait_task("abc", timeout=5) == 6

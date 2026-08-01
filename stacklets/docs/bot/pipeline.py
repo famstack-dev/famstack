@@ -117,34 +117,43 @@ class EnrichResult:
     llm_error: tuple[str, str] | None = None
 
 
-# ── Whoosh query translation ─────────────────────────────────────────────
+# ── Search query translation ─────────────────────────────────────────────
 
-# Whoosh special-character set (https://whoosh.readthedocs.io/). When any
-# of these appears in a token we assume the caller is writing Whoosh
-# syntax on purpose (wildcards, fielded search, fuzzy match, grouping,
-# quoted phrases) and leave the token alone.
-_WHOOSH_SPECIAL = set("*?:()\"~")
+# Characters that mean the caller is driving the query parser on purpose
+# (wildcards, fielded search, fuzzy match, grouping, quoted phrases).
+# A token containing any of them is passed through untouched.
+_QUERY_SPECIAL = set("*?:()\"~")
+
+_QUERY_OPERATORS = {"AND", "OR", "NOT"}
 
 
-def _to_whoosh_query(q: str) -> str:
-    """Translate a chat search input into a Whoosh query string.
+def _to_search_query(q: str) -> str:
+    """Translate a chat search input into a Paperless search query.
 
-    The visible problem this solves: a user types `pangasius` expecting
-    to find the doc titled "Pangasiusfilet". Whoosh tokenises titles
-    on whitespace and lowercases them, so the index has the token
-    `pangasiusfilet` -- a bare-term query for `pangasius` is not a
-    full token and German compound-splitting only kicks in for words
-    in the analyzer's dictionary (it splits "fisch" out of
-    "fischrezept" but not "pangasius" out of "pangasiusfilet"). The
-    fix is to wildcard each user-supplied token so prefix matching
-    catches "pangasius*" against "pangasiusfilet".
+    Two jobs, and they pull in opposite directions.
 
-    Each whitespace-separated token gets a `*` appended unless it
-    already contains a Whoosh special character (the caller is using
-    intentional syntax) or is itself a Whoosh operator (AND/OR/NOT).
-    Tokens are joined back with spaces, which Whoosh treats as AND
-    under Paperless's default operator -- so multi-word queries narrow
-    the set rather than blowing it up.
+    **Reach.** A user types `pangasius` expecting the doc titled
+    "Pangasiusfilet". The index holds the whole token, so a bare term
+    does not match; appending `*` makes it a prefix query that does.
+
+    **Precision.** Paperless 3.0 replaced Whoosh with tantivy, whose
+    parser joins bare terms with OR, not AND. That inverts what this
+    function used to claim. Measured against the 25-document demo
+    archive on 3.0.4, `homer* car* insurance*` returned 18 of 24
+    documents, because a document needed only one of the three words.
+    Joining with an explicit AND returns the documents that carry all
+    of them: `marge* AND recipe*` gives 1 (the recipe card) where the
+    OR form gave 11.
+
+    So: wildcard every bare token, then join with AND.
+
+    The AND is only injected when the query is plainly a bag of words.
+    If the caller already wrote an operator or a quoted phrase, their
+    structure is preserved and tokens are rejoined with spaces, because
+    injecting AND into either one breaks it: `"birth certificate"` would
+    become `"birth AND certificate"` and match nothing, and
+    `insurance OR recipe` would become `insurance* AND OR AND recipe*`,
+    which the parser rejects outright.
 
     Empty input passes through unchanged so a defensive caller doesn't
     accidentally search for `*` (which would match every doc).
@@ -153,14 +162,14 @@ def _to_whoosh_query(q: str) -> str:
         return q
     tokens: list[str] = []
     for tok in q.split():
-        if tok.upper() in {"AND", "OR", "NOT"}:
-            tokens.append(tok)
-            continue
-        if any(c in _WHOOSH_SPECIAL for c in tok):
+        if tok.upper() in _QUERY_OPERATORS or any(c in _QUERY_SPECIAL for c in tok):
             tokens.append(tok)
             continue
         tokens.append(f"{tok}*")
-    return " ".join(tokens)
+    caller_wrote_structure = (
+        '"' in q or any(t.upper() in _QUERY_OPERATORS for t in tokens)
+    )
+    return (" " if caller_wrote_structure else " AND ").join(tokens)
 
 
 # ── Paperless HTTP wrapper ───────────────────────────────────────────────
@@ -180,6 +189,32 @@ def _task_document_id(task: dict) -> int | None:
         return int(result_data["document_id"])
     doc_id = task.get("related_document")
     return int(doc_id) if doc_id else None
+
+
+def _task_duplicate_id(task: dict) -> int | None:
+    """The already-filed twin's id when the upload was rejected as a duplicate.
+
+    Paperless 3.0 replaced the free-text rejection with a structured one.
+    A duplicate task is still reported as ``failure``, but the message is
+    gone: what identifies the twin is ``result_data == {"duplicate_of":
+    <id>, "duplicate_in_trash": <bool>}``. 2.x instead named it in a
+    free-text ``result``, which ``_DUPLICATE_RE`` scrapes.
+
+    Worth knowing when changing the caller: 3.x also sets
+    ``related_document_ids`` to the *twin* on a rejected upload. Nothing
+    but ``result_data`` distinguishes that payload from a successful
+    filing, so a doc-id read on a failed task would hand back a real,
+    existing document as though this upload had produced it. Upstream
+    forces such a task to ``failure`` (``signals/handlers.py``), which is
+    what keeps the success path clear of it.
+
+    Returning None means "this task is not a duplicate rejection", not
+    "no id available".
+    """
+    result_data = task.get("result_data")
+    if isinstance(result_data, dict) and result_data.get("duplicate_of"):
+        return int(result_data["duplicate_of"])
+    return None
 
 
 class PaperlessAPI:
@@ -242,11 +277,23 @@ class PaperlessAPI:
         body, _ = await self._req("GET", f"/api/documents/{doc_id}/")
         return body if isinstance(body, dict) else None
 
+    async def _doc_title(self, doc_id: int) -> str | None:
+        """A document's title, or None if it can't be read.
+
+        Only used to name the twin in a duplicate rejection: 3.x reports
+        the duplicate as an id alone, where 2.x embedded the title in the
+        failure text. The chat reply degrades to "(no title)" without it,
+        so an unreachable lookup must not turn a duplicate into an error.
+        """
+        doc = await self.get_doc(doc_id)
+        title = doc.get("title") if doc else None
+        return title if isinstance(title, str) and title else None
+
     async def search(self, query: str, limit: int = 5) -> list[dict]:
         body, _ = await self._req(
             "GET", "/api/documents/",
             params={
-                "query": _to_whoosh_query(query),
+                "query": _to_search_query(query),
                 "page_size": limit,
                 "ordering": "-created",
             },
@@ -341,6 +388,15 @@ class PaperlessAPI:
                             if status == "SUCCESS":
                                 return _task_document_id(task)
                             if status == "FAILURE":
+                                # A duplicate is a failed task in both
+                                # generations, but only 2.x explains itself
+                                # in words. Ask the structured field first;
+                                # 3.x leaves `result` empty.
+                                dup_id = _task_duplicate_id(task)
+                                if dup_id is not None:
+                                    raise PaperlessDuplicateError(
+                                        dup_id, await self._doc_title(dup_id),
+                                    )
                                 result = task.get("result") or ""
                                 logger.error("[pipeline] Task failed: {}", result)
                                 match = _DUPLICATE_RE.search(result)

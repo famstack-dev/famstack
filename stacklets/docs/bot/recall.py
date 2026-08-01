@@ -50,7 +50,7 @@ async def resolve_search_query(
         to `re.search`. Always non-empty.
       * `paperless_query` is the Whoosh-compatible string the bot
         passes to `PaperlessAPI.search`. The API client wildcards
-        bare tokens itself (`_to_whoosh_query`), so we only have to
+        bare tokens itself (`_to_search_query`), so we only have to
         get the *operators* right here — bare tokens joined with ` OR `
         for question mode, the raw input for literal mode.
       * `keywords_used` is the list the LLM produced (empty when
@@ -107,7 +107,7 @@ async def resolve_search_query(
     # compile step.
     memory_regex = "|".join(re.escape(k) for k in keywords)
     # Paperless side: Whoosh OR alternation, bare tokens. The
-    # PaperlessAPI wraps this in `_to_whoosh_query` which adds the
+    # PaperlessAPI wraps this in `_to_search_query` which adds the
     # prefix wildcard on each bare term -- so "fish OR price" becomes
     # "fish* OR price*" downstream.
     paperless_query = " OR ".join(keywords)
