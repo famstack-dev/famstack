@@ -15,11 +15,12 @@ name: stack-docs
 services:
   stack-docs-paperless:
     container_name: stack-docs-paperless
-    # Pinned to the last 2.x release. `:latest` silently rolled to 3.0 (a
-    # major with a redesigned tasks API) and broke document filing; the 3.x
-    # upgrade is a deliberate, separately-branched migration, not a surprise
-    # watchtower pull. Bump within 2.20.x for patches; jump majors on purpose.
-    image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
+    # Pinned to an exact release, never `:latest`. A watchtower pull of
+    # `:latest` once rolled 2.x straight to 3.0 and broke document filing.
+    # Paperless migrates its database on the first 3.x start and 2.x will
+    # not boot afterwards, so a major bump is one-way: do it deliberately,
+    # with a backup taken first. Bump within 3.0.x for patches.
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.0.4
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
@@ -55,6 +56,11 @@ services:
       PAPERLESS_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       PAPERLESS_URL: ${PAPERLESS_URL}
       PAPERLESS_OCR_MODE: skip
+      # 2.x always rejected a re-uploaded identical file. 3.0 made that
+      # conditional on this flag: with it unset the duplicate is consumed
+      # anyway and the family ends up with two copies of the same letter.
+      # Set it to keep "already filed" the answer, not a silent second copy.
+      PAPERLESS_CONSUMER_DELETE_DUPLICATES: 1
       PAPERLESS_OCR_OUTPUT_TYPE: pdfa
       PAPERLESS_FILENAME_FORMAT: "{created_year}/{created_month}/{created_year}-{created_month}-{created_day} {correspondent} - {title}"
     ports:

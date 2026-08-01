@@ -182,6 +182,26 @@ def _task_document_id(task: dict) -> int | None:
     return int(doc_id) if doc_id else None
 
 
+def _task_duplicate_id(task: dict) -> int | None:
+    """The already-filed twin's id when the upload was rejected as a duplicate.
+
+    Paperless 3.0 stopped *failing* duplicate tasks. The consumer now
+    returns a structured result and the task completes as ``success``
+    with ``result_data == {"duplicate_of": <id>, "duplicate_in_trash":
+    <bool>}`` (`documents/tasks.py` returning ``ConsumeFileDuplicateResult``
+    at v3.0.4). 2.x instead failed the task and named the twin in a
+    free-text ``result``, which ``_DUPLICATE_RE`` scrapes.
+
+    This reads the structured 3.x field only; the caller keeps the 2.x
+    regex path for the older shape. Returning None means "this task is
+    not a duplicate rejection", not "no id available".
+    """
+    result_data = task.get("result_data")
+    if isinstance(result_data, dict) and result_data.get("duplicate_of"):
+        return int(result_data["duplicate_of"])
+    return None
+
+
 class PaperlessAPI:
     """Async client for every Paperless endpoint the docs stacklet touches.
 
@@ -241,6 +261,18 @@ class PaperlessAPI:
     async def get_doc(self, doc_id: int) -> dict | None:
         body, _ = await self._req("GET", f"/api/documents/{doc_id}/")
         return body if isinstance(body, dict) else None
+
+    async def _doc_title(self, doc_id: int) -> str | None:
+        """A document's title, or None if it can't be read.
+
+        Only used to name the twin in a duplicate rejection: 3.x reports
+        the duplicate as an id alone, where 2.x embedded the title in the
+        failure text. The chat reply degrades to "(no title)" without it,
+        so an unreachable lookup must not turn a duplicate into an error.
+        """
+        doc = await self.get_doc(doc_id)
+        title = doc.get("title") if doc else None
+        return title if isinstance(title, str) and title else None
 
     async def search(self, query: str, limit: int = 5) -> list[dict]:
         body, _ = await self._req(
@@ -339,6 +371,15 @@ class PaperlessAPI:
                             task = tasks[0] if isinstance(tasks, list) else tasks
                             status = str(task.get("status", "")).upper()
                             if status == "SUCCESS":
+                                # 3.x reports a duplicate rejection as a
+                                # *successful* task carrying result_data;
+                                # check that before reading a doc id, which
+                                # such a task does not have.
+                                dup_id = _task_duplicate_id(task)
+                                if dup_id is not None:
+                                    raise PaperlessDuplicateError(
+                                        dup_id, await self._doc_title(dup_id),
+                                    )
                                 return _task_document_id(task)
                             if status == "FAILURE":
                                 result = task.get("result") or ""

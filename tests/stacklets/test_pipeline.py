@@ -24,8 +24,10 @@ from pipeline import (  # noqa: E402
     LLMUnavailableError,
     PaperlessAPI,
     PaperlessDuplicateError,
+    _DUPLICATE_RE,
     _build_synthesize_prompt,
     _format_evidence_block,
+    _task_duplicate_id,
     _to_whoosh_query,
     enrich_document,
     extract_bot_summary,
@@ -1595,18 +1597,126 @@ class TestWaitTask:
         api = _api(_FakeTasksSession(payload))
         assert await api.wait_task("abc", timeout=5) == 42
 
-    async def test_duplicate_failure_raises(self):
-        # A duplicate rejection is a FAILURE whose result names the twin;
-        # wait_task turns it into PaperlessDuplicateError for the caller.
-        payload = {
-            "count": 1,
-            "results": [{
-                "task_id": "abc",
-                "status": "failure",
-                "result": "Not consuming dupe.pdf: It is a duplicate of Prior (#7)",
-            }],
-        }
+    async def test_a_2x_duplicate_is_a_failed_task_naming_the_twin(self):
+        # Paperless 2.20.15 (documents/consumer.py, pre_check_duplicate)
+        # fails the task with the literal text
+        #   "Not consuming {filename}: It is a duplicate of {title} (#{pk})."
+        # and the 2.x tasks endpoint returned a bare, unpaginated list.
+        payload = [{
+            "task_id": "abc",
+            "status": "FAILURE",
+            "result": "Not consuming dupe.pdf: It is a duplicate of Prior (#7).",
+        }]
         api = _api(_FakeTasksSession(payload))
         with pytest.raises(PaperlessDuplicateError) as exc:
             await api.wait_task("abc", timeout=5)
         assert exc.value.doc_id == 7
+        assert exc.value.title == "Prior"
+
+
+# ── Duplicate rejection across the 3.0 redesign ──────────────────────────
+#
+# Paperless 3.0 stopped failing duplicate tasks. `consume_file` now
+# returns `ConsumeFileDuplicateResult(duplicate_of=..., duplicate_in_trash
+# =...)` (documents/tasks.py at v3.0.4), so the task completes as
+# "success" and the twin's id lives in `result_data`. There is no
+# `result` string on the default API version at all - the v10 task
+# serialiser does not define the field.
+#
+# That makes this the exact spot where a fixture written from belief
+# would agree with a parser written from the same belief and prove
+# nothing. So these tests run over real aiohttp against a real HTTP
+# server, and the payload is checked against a live 3.x container by
+# tests/integration/test_archivist_paperless_api_e2e.py::TestTaskApiShape.
+
+# The shape a real Paperless 3.0.4 returns for a rejected duplicate.
+_V3_DUPLICATE_TASK = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [{
+        "id": 12,
+        "task_id": "abc",
+        "task_type": "consume_file",
+        "status": "success",
+        "result_data": {"duplicate_of": 7, "duplicate_in_trash": False},
+        "related_document_ids": [],
+    }],
+}
+
+
+@pytest.fixture
+async def paperless_over_http(httpserver):
+    """A PaperlessAPI talking to a real HTTP server over real aiohttp.
+
+    The duplicate path makes a second call (it looks the twin's title up
+    to name it in chat), so a stub that only answers /api/tasks/ would
+    quietly mask a broken lookup.
+    """
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        yield PaperlessAPI(session, httpserver.url_for("").rstrip("/"), "tok")
+
+
+class TestPaperlessDuplicateAcross3xShapes:
+    """wait_task recognises a duplicate however the running image reports it."""
+
+    async def test_a_3x_duplicate_is_a_successful_task_carrying_result_data(
+        self, httpserver, paperless_over_http,
+    ):
+        httpserver.expect_request("/api/tasks/").respond_with_json(
+            _V3_DUPLICATE_TASK)
+        httpserver.expect_request("/api/documents/7/").respond_with_json(
+            {"id": 7, "title": "Duff Insurance 2026"})
+
+        with pytest.raises(PaperlessDuplicateError) as exc:
+            await paperless_over_http.wait_task("abc", timeout=5)
+        assert exc.value.doc_id == 7
+        assert exc.value.title == "Duff Insurance 2026"
+
+    async def test_a_duplicate_still_reports_when_the_title_cannot_be_read(
+        self, httpserver, paperless_over_http,
+    ):
+        """The title is decoration; the id is the answer. A document the
+        bot cannot read back must still produce "already filed" rather
+        than degrade into a generic upload failure."""
+        httpserver.expect_request("/api/tasks/").respond_with_json(
+            _V3_DUPLICATE_TASK)
+        httpserver.expect_request("/api/documents/7/").respond_with_data(
+            "", status=404)
+
+        with pytest.raises(PaperlessDuplicateError) as exc:
+            await paperless_over_http.wait_task("abc", timeout=5)
+        assert exc.value.doc_id == 7
+        assert exc.value.title is None
+
+    async def test_the_3x_duplicate_is_invisible_to_the_2x_text_match(self):
+        """Guards the guard.
+
+        The sibling test above would also pass if the old failure-text
+        path were somehow catching the 3.x payload - and then we would
+        believe the migration was a no-op. It is not: there is no result
+        string to match, so the structured `result_data` read is doing
+        the work, and deleting it breaks duplicate detection outright.
+        """
+        task = _V3_DUPLICATE_TASK["results"][0]
+        assert task["status"] == "success", "not a FAILURE, so the 2.x branch never runs"
+        assert "result" not in task, "v10 tasks carry no free-text result to scrape"
+        assert not _DUPLICATE_RE.search(str(task.get("result") or ""))
+        assert _task_duplicate_id(task) == 7
+
+    async def test_a_normal_filing_is_not_mistaken_for_a_duplicate(
+        self, httpserver, paperless_over_http,
+    ):
+        """A successful consume carries result_data too. Reading
+        `duplicate_of` off it must not fire on `document_id`."""
+        httpserver.expect_request("/api/tasks/").respond_with_json({
+            "count": 1,
+            "results": [{
+                "task_id": "abc",
+                "status": "success",
+                "result_data": {"document_id": 6},
+                "related_document_ids": [6],
+            }],
+        })
+        assert await paperless_over_http.wait_task("abc", timeout=5) == 6
