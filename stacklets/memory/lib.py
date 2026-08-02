@@ -113,6 +113,10 @@ INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
 BOT_USERNAME = "memory-bot"
 BOT_EMAIL = "memory-bot@local"
 TOKEN_NAME = "memory-bot"
+# Name of the admin-owned write token host-side writers use. Reissuing
+# under the same name replaces the old one in place, so a repair reuses
+# the slot instead of leaving a trail of dead tokens behind it.
+WRITE_TOKEN_NAME = "memory-install"
 TOKEN_SCOPES = [
     "write:repository", "read:repository",
     "read:user", "write:organization",
@@ -275,7 +279,13 @@ def point_remote_at(repo_path: Path, remote_url: str, *,
     embedded credential (a Forgejo token that expired). Both are held
     in git's config, where nothing ever refreshes them. So every start
     re-points the remote at the URL the current config says it should
-    be, and neither kind of rot survives a `stack up`.
+    be, and a moved host no longer survives a `stack up`.
+
+    Note what this does *not* fix. The credential written here is
+    whatever the secret store holds, so re-pointing a remote whose
+    token Forgejo has since rejected writes the same dead token back,
+    faithfully, forever. Curing that needs a new token, not a new URL:
+    see `reissue_write_token`.
     """
     repo_path = Path(repo_path)
     if not (repo_path / ".git").exists():
@@ -284,6 +294,50 @@ def point_remote_at(repo_path: Path, remote_url: str, *,
     if rc != 0:
         rc, _, _ = run_git(repo_path, "remote", "add", name, remote_url, timeout=timeout)
     return rc == 0
+
+
+def remote_rejects_credentials(remote: str, *, timeout: int = 15) -> bool:
+    """True when the remote answers but refuses the credentials we hold.
+
+    Deliberately narrow. An unreachable Forgejo is not a credential
+    problem and must not trigger a reissue: the token on file may be
+    perfectly good and the code stacklet merely still starting. Only
+    git's own "authentication failed" wording counts.
+    """
+    rc, _, err = _git(["git", "ls-remote", remote, "HEAD"], timeout=timeout)
+    return rc != 0 and is_auth_failure(err)
+
+
+def reissue_write_token(code_url: str, admin_user: str, admin_password: str,
+                        *, name: str = WRITE_TOKEN_NAME) -> str:
+    """Mint a fresh Forgejo write token to replace one that stopped working.
+
+    The token is the third thing in a remote URL that rots, and the only
+    one nothing re-derives: it is minted once during install and read
+    forever after. When Forgejo expires it — or the code stacklet is
+    rebuilt and the account it belonged to goes with it — every
+    host-side write starts failing 401, and no restart helps, because
+    re-pointing the remote writes the same dead token back.
+
+    Forgejo issues tokens only to the owning account (admin rights are
+    not enough), so this needs the admin's own password, which is what
+    the start hook already holds for the brain migration.
+
+    Returns "" when Forgejo is unreachable or refuses. A repair that
+    cannot happen is not a startup failure: readers keep serving what
+    is already on disk.
+    """
+    if not (code_url and admin_user and admin_password):
+        return ""
+    admin = ForgejoClient(
+        url=code_url, admin_user=admin_user, admin_password=admin_password,
+    )
+    try:
+        if not admin.ping():
+            return ""
+        return admin.issue_token(admin_user, admin_password, name, TOKEN_SCOPES)
+    except (ForgejoError, OSError):
+        return ""
 
 
 def pull_vault(vault_path: Path, *, timeout: int = 30) -> bool:
@@ -634,7 +688,10 @@ def update_memory(config: dict, repo_path: str,
     """
     secrets = config.get("secrets", {}) if config else {}
     token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
-    code_url = _code_url_from_config(config)
+    # Host plane: `{code_url}` renders the LAN address a phone would
+    # click, and this runs on the machine Forgejo is published from.
+    # Every write went to that address until it moved. See `host_code_url`.
+    code_url = host_code_url(_code_url_from_config(config))
     if not (token and code_url):
         return {"error": "Forgejo credentials missing — run `stack up memory` first"}
 
@@ -1568,7 +1625,7 @@ def install_memory_to_forgejo_admin(
 
     # Use admin token for file writes (admin has write:repository scope).
     admin_token = admin.issue_token(
-        admin_user, admin_password, "memory-install", TOKEN_SCOPES,
+        admin_user, admin_password, WRITE_TOKEN_NAME, TOKEN_SCOPES,
     )
     admin_token_client = ForgejoClient(url=code_url, token=admin_token)
     seeds = install_seeds(

@@ -4,12 +4,13 @@ The install hook clones the vault once; this hook keeps it fresh on
 every restart. Best-effort — a failed pull never blocks startup.
 Readers fall back to whatever is already on disk, or to the seed.
 
-It also re-derives the vault's `origin` URL on every run. Both halves
-of that URL rot on their own schedule: the host part when the Mac takes
-a new DHCP lease, the embedded token when Forgejo expires it. Neither
-is refreshed by anything else, so a clone made months ago quietly stops
-working. Re-pointing it here costs one git config write and makes a
-restart the fix.
+It also repairs the vault's `origin` URL on every run. Both halves of
+that URL rot on their own schedule, and they need different cures. The
+host part (a LAN IP baked in at clone time) is re-derived from the
+current config, because the answer is knowable. The embedded token is
+not: nothing anywhere holds a newer one, so a token Forgejo rejects is
+replaced with a freshly issued one rather than rewritten. Between them,
+a clone made months ago starts working again after a restart.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from lib import (  # noqa: E402
     point_remote_at,
     pull_vault,
     purge_local_generated_memory_pages,
+    reissue_write_token,
+    remote_rejects_credentials,
     vault_path_for,
     vault_remote_url,
 )
@@ -40,11 +43,31 @@ def run(ctx):
     # Loopback, not the LAN address: this hook runs on the machine
     # Forgejo is published from. See `host_code_url`.
     code_url = host_code_url(ctx.env.get("CODE_URL", ""))
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    remote = (
-        authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-        if code_url and token else ""
-    )
+    admin_user = ctx.env.get("ADMIN_USER", "")
+    admin_password = ctx.env.get("ADMIN_PASSWORD", "")
+
+    def remote_for(tok: str) -> str:
+        if not (code_url and tok):
+            return ""
+        return authenticated_remote(
+            vault_remote_url(code_url), BOT_USERNAME, tok,
+        )
+
+    remote = remote_for(ctx.secret("MEMORY_BOT_TOKEN"))
+
+    # The token is minted once at install and read forever after, so a
+    # token Forgejo has since rejected cannot be re-derived from
+    # anything — only replaced. Until it is, every host-side write
+    # (a todo tick, an ontology edit) fails 401 and a restart changes
+    # nothing, because re-pointing the remote writes the dead token
+    # back. Checked before the pull so the pull gets the good one.
+    if remote and remote_rejects_credentials(remote):
+        if fresh := reissue_write_token(code_url, admin_user, admin_password):
+            ctx.secret("MEMORY_BOT_TOKEN", fresh)
+            remote = remote_for(fresh)
+            ctx.step("Memory: Forgejo rejected the stored token; issued a new one")
+        else:
+            ctx.step("Memory: Forgejo rejected the stored token and it could not be replaced")
 
     # If the vault never got cloned (install hook ran before code
     # stacklet was reachable, for example), try once more here. This
@@ -69,8 +92,6 @@ def run(ctx):
     # Seamless B1 migration for existing installs. Those instances will
     # not rerun on_install_success, so create/clone brain here when
     # missing and purge legacy generated pages from the source repo.
-    admin_user = ctx.env.get("ADMIN_USER", "")
-    admin_password = ctx.env.get("ADMIN_PASSWORD", "")
     if not (code_url and admin_user and admin_password):
         ctx.step("Memory brain not cloned and admin credentials missing; skipping")
         return
