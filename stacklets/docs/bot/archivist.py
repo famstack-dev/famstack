@@ -1234,18 +1234,25 @@ class ArchivistBot(MicroBot):
         maps it to a chat reply. The reclassified confirmation carries a
         fresh `document.reclassified` envelope so the user can chain
         another correction by replying to it.
+
+        Answers go back through `_answer`, so they land in the same
+        thread the correction came from. That placement is load-bearing
+        rather than tidiness: the next correction resolves its anchor by
+        asking the thread for the newest classification, so a
+        confirmation posted outside the thread would leave every later
+        correction anchored to the original filing.
         """
         o = await self._pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
         )
         if o.status == "doc_missing":
-            await self._send(
+            await self._answer(
                 room_id, self.t("reprocess_doc_missing", doc_id=doc_id), reply_to,
             )
         elif o.status == "llm_error":
             kind, detail = o.llm_error
-            await self._send(
+            await self._answer(
                 room_id,
                 self.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
                 reply_to,
@@ -1260,7 +1267,7 @@ class ArchivistBot(MicroBot):
                 resolved_type=o.resolved_type,
                 resolved_correspondent=o.resolved_correspondent,
             )
-            await self._send(
+            await self._answer(
                 room_id, reply, reply_to,
                 metadata={"dev.famstack.event": o.envelope},
             )

@@ -447,3 +447,97 @@ class TestChainedCorrections:
         assert "this is Marge's" in hint
         assert hint.index("and it is a contract") < hint.index("this is Marge's")
         assert initial == {"paperless_id": DOC_ID, "persons": ["Marge"]}
+
+
+# ── The other half of the relation: where the answer lands ───────────────
+
+
+class TestTheAnswerStaysInTheThread:
+    """A correction is answered inside the thread it came from.
+
+    The reader tests above are handed a thread that already contains a
+    `document.reclassified` message. This class checks the bot actually
+    produces one there. Without it those tests would agree with a bot
+    that answers outside the thread: the fixture would supply the
+    placement the implementation never creates, and chained corrections
+    would silently anchor to the original filing forever.
+    """
+
+    @pytest.fixture
+    def bot(self, tmp_path):
+        """An archivist with the REAL reprocess handler and a stub
+        pipeline, recording every send with its relation."""
+        bot = ArchivistBot(
+            homeserver="http://homeserver", user_id=BOT_ID, password="x",
+            session_dir=tmp_path,
+        )
+        bot._client = FakeMatrix()
+        bot.sent: list[dict] = []
+
+        async def _room_send(room_id, message_type, content, **kw):
+            bot.sent.append(content)
+            return SimpleNamespace(event_id="$answer")
+
+        bot._client.room_send = _room_send
+        bot._pipeline = SimpleNamespace()
+        return bot
+
+    def _outcome(self, status="reclassified"):
+        return SimpleNamespace(
+            status=status, doc_id=DOC_ID, llm_error=("timeout", "took too long"),
+            title="Auto Insurance Policy 2026", resolved_topics=["insurance"],
+            resolved_persons=["Marge"], resolved_type="contract",
+            resolved_correspondent="Duff Insurance",
+            envelope=_reclassified(persons=["Marge"]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_reclassified_confirmation_joins_the_correction_thread(self, bot):
+        """The confirmation carries an `m.thread` relation rooted where
+        the correction was, so the next correction can find it."""
+        bot._client.add(_message("$upload", HOMER, "policy.pdf"))
+        bot._client.add(
+            _message("$correction", HOMER, "this is Marge's",
+                     content=_thread_relation("$upload", falls_back_to="$filed")),
+            thread_root="$upload",
+        )
+
+        async def _reprocess(**kw):
+            return self._outcome()
+
+        bot._pipeline.reprocess = _reprocess
+        await bot._handle_reply_reprocess(
+            "!docs:server", DOC_ID, "this is Marge's", "$correction",
+        )
+
+        assert bot.sent, "the reprocess produced no message at all"
+        relation = bot.sent[-1].get("m.relates_to", {})
+        assert relation.get("rel_type") == "m.thread", (
+            "the confirmation was posted outside the thread, so the next "
+            "correction would anchor to the original filing"
+        )
+        assert relation.get("event_id") == "$upload"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_reprocess_answers_in_the_thread_too(self, bot):
+        """An error is a reply to what the user just typed, so it belongs
+        where they typed it. Otherwise a correction that failed looks
+        like nothing happened."""
+        bot._client.add(_message("$upload", HOMER, "policy.pdf"))
+        bot._client.add(
+            _message("$correction", HOMER, "this is Marge's",
+                     content=_thread_relation("$upload", falls_back_to="$filed")),
+            thread_root="$upload",
+        )
+
+        async def _reprocess(**kw):
+            return self._outcome(status="llm_error")
+
+        bot._pipeline.reprocess = _reprocess
+        await bot._handle_reply_reprocess(
+            "!docs:server", DOC_ID, "this is Marge's", "$correction",
+        )
+
+        relation = bot.sent[-1].get("m.relates_to", {})
+        assert relation.get("rel_type") == "m.thread"
+        assert relation.get("event_id") == "$upload"
