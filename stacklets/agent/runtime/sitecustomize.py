@@ -62,9 +62,16 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
     `tests/stacklets/test_agent_runtime_shims.py` asserts every one of these is
-    attached against a stub nanobot, so this list is executable rather than
-    aspirational: a moved symbol fails the unit lane instead of silently
-    reaching production as a logged warning nobody reads.
+    attached — but against a *stub* nanobot this repo hand-writes, so read what
+    that does and does not buy. It catches our own mistakes: a shim that stops
+    attaching, or one whose failure takes another down with it. It cannot catch
+    upstream moving a symbol, because the stub still has the old one and the
+    lane stays green while production is broken. The version pin in the
+    Dockerfile is what actually holds this line; the tests guard the shims, the
+    pin guards the assumption underneath them.
+
+    So when bumping `nanobot-ai`, re-verify this list against the installed
+    package, not against a passing unit lane.
 """
 
 import importlib

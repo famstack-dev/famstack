@@ -11,7 +11,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git libolm-dev tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-RUN uv pip install --system --no-cache "nanobot-ai[matrix]"
+# Pinned, and it has to stay pinned. `runtime/sitecustomize.py` patches
+# nanobot's internals (there is no plugin seam), so a release that moves one
+# of those symbols detaches a shim. The shims fail soft on purpose — a broken
+# one must never stop the agent answering — so the container still starts,
+# still reports healthy, and the Matrix channel is simply gone. Unpinned, that
+# arrives on whatever unrelated `stack restart agent` happens to rebuild the
+# image, which is how 0.2.x moving `nanobot.channels.matrix` from a module to
+# a package took a live instance silently off Matrix.
+#
+# Bump this deliberately, in its own change, and re-verify every symbol in
+# sitecustomize.py's PIN / RECHECK list against the new release.
+RUN uv pip install --system --no-cache "nanobot-ai[matrix]==0.2.2"
 
 # Non-root, matching nanobot's own image (uid 1000, HOME=/home/nanobot).
 RUN useradd -m -u 1000 -s /bin/bash nanobot
