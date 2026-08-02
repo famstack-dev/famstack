@@ -273,6 +273,53 @@ class TestDrain:
         assert seen == []                       # history is not replayed
         assert bot._cursors[room.room_id] > 0   # cursor anchored at ~now
 
+    @pytest.mark.asyncio
+    async def test_a_room_joined_by_invite_delivers_the_first_message(self, tmp_path):
+        """Anchoring at the join, not at the first drain, is what makes the
+        very first thing a member types get answered.
+
+        The bot welcomes the room from its join handler, so a member
+        replying to that welcome writes into the gap between joining and
+        the next drain. Anchoring only at drain time swallows exactly
+        that message: the bot says it is listening and then ignores the
+        first thing it is told."""
+        seen = []
+
+        async def handler(room, event):
+            seen.append(event.server_timestamp)
+
+        bot, client = _build_bot(tmp_path, handler=handler)
+        room = _room()
+        client.rooms = {room.room_id: room}
+
+        bot._anchor_cursor_on_join(room.room_id)
+        joined_at = bot._cursors[room.room_id]
+
+        # What a member types right after the welcome, plus a piece of
+        # the room's history from before the bot was ever invited.
+        client.timeline = [
+            _event(ts=joined_at + 1, eid="$first"),
+            _event(ts=joined_at - 5_000, eid="$older"),
+        ]
+
+        await bot._drain()
+
+        assert seen == [joined_at + 1], \
+            "the first message after joining was swallowed"
+
+    @pytest.mark.asyncio
+    async def test_rejoining_does_not_rewind_a_room_already_followed(self, tmp_path):
+        """A re-invite must not move the cursor. Otherwise leaving and
+        being re-added would replay or skip, depending on which way it
+        moved."""
+        bot, _client = _build_bot(tmp_path, handler=lambda r, e: None)
+        room = _room()
+        bot._cursors[room.room_id] = 4_242
+
+        bot._anchor_cursor_on_join(room.room_id)
+
+        assert bot._cursors[room.room_id] == 4_242
+
 
 # ── Timeout ──────────────────────────────────────────────────────────────
 

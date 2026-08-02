@@ -4,13 +4,15 @@ This file is an executable specification of how the archivist should
 behave around per-room config and user-driven reactions. It is the
 contract; the implementation is expected to satisfy it.
 
-> STATUS: UNVERIFIED against the integration rig. The behavior below was
-> verified by hand against a running instance on 2026-06-26, but this
-> test has not yet been run green through `stacktests` (server
-> test.local). It is marked `unverified` + `xfail(strict=False)` so it
-> neither blocks the suite nor is trusted until reconciled. Run it at the
-> end of the iteration and fix the test (or the implementation) before
-> tagging the next beta. Do not silently delete it to make CI green.
+> STATUS: verified green through `stacktests` on 2026-08-02. It ran red
+> first, and reconciling it took one fix on each side. The test was
+> treating the bot's join as readiness, but a join is an
+> `m.room.member` state event, so a sender-only wait clears the instant
+> the invite is accepted rather than when the bot starts listening. The
+> implementation anchored a room's message cursor at the first drain
+> that noticed the room, which silently swallowed anything sent between
+> joining and that drain — including the first thing a member types in
+> reply to the welcome. Both are fixed; see `_anchor_cursor_on_join`.
 
 The intent, in one place:
 
@@ -40,7 +42,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
 from nio import AsyncClient
 
 from tests.integration.matrix import (
@@ -54,9 +55,6 @@ from tests.integration.matrix import (
 ARCHIVIST = mxid("archivist-bot")
 MARGE = mxid("marge")
 EYES, CHECK = "👀", "✅"
-
-pytestmark = [pytest.mark.unverified]
-
 
 def _norm(key: str) -> str:
     return (key or "").replace("\uFE0F", "").strip()
@@ -94,11 +92,6 @@ async def _react(client, room_id: str, target: str, key: str) -> None:
         "rel_type": "m.annotation", "event_id": target, "key": key}})
 
 
-@pytest.mark.xfail(
-    reason="UNVERIFIED intent spec: not yet run green against the rig. "
-           "Reconcile before the next beta tag.",
-    strict=False,
-)
 async def test_room_modes_and_bookmark_reactions(homer, matrix):
     """The full contract, driven as Homer in a 3-member group room.
 
@@ -120,16 +113,26 @@ async def test_room_modes_and_bookmark_reactions(homer, matrix):
         room = created.room_id
         await marge.join(room)
 
-        # The bot auto-accepts the invite and posts a welcome on join;
-        # wait for any sign of it (cold start can take ~40s).
+        # The bot auto-accepts the invite and posts a welcome on join.
+        # Wait for the welcome *message*, not merely for the archivist to
+        # appear in the timeline: a join is an `m.room.member` state event
+        # with the bot as sender, so a sender-only predicate is satisfied
+        # the instant it accepts the invite, before it is processing
+        # anything. A command sent in that window is swallowed as sync
+        # history and answered by nothing. Posting the welcome is the
+        # bot's own "I am listening" signal, so that is the gate.
+        # (Cold start can take ~40s.)
         joined = await wait_for_room_event(
             homer,
             room,
-            lambda e: getattr(e, "sender", None) == ARCHIVIST,
+            lambda e: (
+                getattr(e, "sender", None) == ARCHIVIST
+                and (getattr(e, "body", "") or "").strip() != ""
+            ),
             timeout=130,
         )
         assert joined, \
-            "archivist never joined or responded in the room"
+            "archivist never posted its welcome, so it is not listening yet"
 
         # 1. Switch the room to react mode.
         await _send(homer, room, "!config process react")

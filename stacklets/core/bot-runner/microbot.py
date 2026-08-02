@@ -189,6 +189,7 @@ class MicroBot:
                 logger.info("[{}] Join result: {}", self.name, resp)
                 if isinstance(resp, JoinResponse):
                     self._pending_room_joins.add(room.room_id)
+                    self._anchor_cursor_on_join(room.room_id)
 
         self._client.add_event_callback(on_invite, InviteMemberEvent)
 
@@ -1441,3 +1442,18 @@ class MicroBot:
     def _advance_cursor(self, room_id, server_timestamp):
         self._cursors[room_id] = server_timestamp
         self._cursor_file.write_text(json.dumps(self._cursors))
+
+    def _anchor_cursor_on_join(self, room_id) -> None:
+        """Start a freshly joined room's cursor at the join itself.
+
+        Without this the anchor is set by whichever drain first notices
+        the room, which also discards everything sent in between. That
+        window is not theoretical: the bot posts a welcome from the join
+        handler, so the first thing a member types in reply to it lands
+        squarely inside it and was dropped in silence.
+
+        A room already carrying a cursor keeps it, so a re-invite cannot
+        rewind or skip a room the bot was already following.
+        """
+        if room_id not in self._cursors:
+            self._advance_cursor(room_id, int(time.time() * 1000))

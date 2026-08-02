@@ -59,3 +59,5 @@ impl/
 **AGENT.md
 # …except the repo's canonical agent guide at the root.
 !/AGENT.md
+# Local planning workspace (Nimbalyst) — not product source
+nimbalyst-local/
