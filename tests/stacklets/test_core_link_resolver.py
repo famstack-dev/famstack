@@ -128,3 +128,63 @@ class TestBuildRedirect:
             "topic", ["camping", "todo"], docs_base="http://10.0.0.5:42000",
             wiki_base="http://10.0.0.5:42070", shared_bucket=_SHARED,
         ) == "http://10.0.0.5:42070/family/camping/todos"
+
+
+# ── Round trip: what emitters build lands where it used to ──────────────
+#
+# The bots used to paste `{PAPERLESS_PUBLIC_URL}/documents/<id>/details`
+# straight into chat; they now post a logical `/go` link built by
+# `stack.links`. Nothing about the destination was supposed to move, so
+# these pin the old URLs as literals and walk a freshly built logical
+# path through the same two hops a click takes: the HTTP route splits it,
+# the resolver maps it. A drift here is a family clicking a link in an
+# old message and landing somewhere else.
+
+from stack.links import go_docs, go_person, go_topic, public  # noqa: E402
+
+_DOCS_BASE = "http://localhost:42020"
+_WIKI_BASE = "http://localhost:42070"
+
+# Verbatim from the pre-change emitters (archivist.py, document_pipeline.py,
+# search_format.py, matching.py) — the contract this refactor must not break.
+_LEGACY_DOC_URL = f"{_DOCS_BASE}/documents/247/details"
+
+
+def _click(logical: str) -> str | None:
+    """Resolve a logical path the way a browser hitting `/go/…` does.
+
+    Mirrors the split in `server.py`'s three routes: the first segment
+    is the entity kind, the rest is the entity path.
+    """
+    kind, *rest = [s for s in logical.split("/") if s]
+    return build_redirect(
+        kind, rest, docs_base=_DOCS_BASE, wiki_base=_WIKI_BASE,
+        shared_bucket=_SHARED,
+    )
+
+
+class TestEmittedLinksResolveWhereTheyUsedTo:
+
+    def test_document_link_lands_on_the_paperless_detail_page(self):
+        assert _click(go_docs(247)) == _LEGACY_DOC_URL
+
+    def test_document_link_survives_a_string_doc_id(self):
+        # Paperless ids arrive as ints from the API and as strings from
+        # chat commands; both must build the same link.
+        assert _click(go_docs("247")) == _LEGACY_DOC_URL
+
+    def test_topic_todo_link_is_unchanged(self):
+        # The archivist already emitted this one by hand as
+        # f"{base}/topic/{scope}/todo" — same path, same destination.
+        assert go_topic("family/camping", "todo") == "/topic/family/camping/todo"
+        assert _click(go_topic("family/camping", "todo")) == \
+            f"{_WIKI_BASE}/family/camping/todos"
+
+    def test_person_link_resolves_to_the_member_page(self):
+        assert _click(go_person("homer")) == f"{_WIKI_BASE}/homer/about"
+
+    def test_public_form_is_what_goes_into_the_message(self):
+        # The base carries the `/go` prefix (core's LINK_BASE_URL), so
+        # the emitted link is base + logical path, no separator surprises.
+        assert public(go_docs(247), "https://home.example.org/go") == \
+            "https://home.example.org/go/docs/247"

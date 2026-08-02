@@ -68,7 +68,7 @@ def build_evidence(
     *,
     code_public_url: str = "",
     mirror_org: str = "family",
-    paperless_public_url: str = "",
+    link_base_url: str = "",
     limit: int = EVIDENCE_LIMIT,
 ) -> list[dict]:
     """Merge memory + Paperless hits into the LLM's evidence list.
@@ -127,7 +127,7 @@ def build_evidence(
             "persons": [],
             "summary": extract_bot_summary(doc),
             "url": paperless_doc_url(
-                doc_id, public_url=paperless_public_url,
+                doc_id, link_base_url=link_base_url,
             ),
             "doc_id": doc_id,
         })

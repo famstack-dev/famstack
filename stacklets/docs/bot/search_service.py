@@ -54,7 +54,7 @@ class SearchService:
         language: str,
         code_public_url: str,
         mirror_org: str,
-        paperless_public_url: str,
+        link_base_url: str,
         shared_bucket: str,
         vault,
     ):
@@ -64,7 +64,7 @@ class SearchService:
         self.language = language
         self.code_public_url = code_public_url
         self.mirror_org = mirror_org
-        self.paperless_public_url = paperless_public_url
+        self.link_base_url = link_base_url
         self.shared_bucket = shared_bucket
         self._vault = vault
 
@@ -152,7 +152,7 @@ class SearchService:
             blocks.append(self._t("search_paperless_results", query=query))
             for n, doc in enumerate(paperless_results, start=1):
                 blocks.append(_format_paperless_hit(
-                    doc, n, public_url=self.paperless_public_url,
+                    doc, n, link_base_url=self.link_base_url,
                 ))
         return "\n\n".join(blocks)
 
@@ -190,7 +190,7 @@ class SearchService:
             memory_results, paperless_results,
             code_public_url=self.code_public_url,
             mirror_org=self.mirror_org,
-            paperless_public_url=self.paperless_public_url,
+            link_base_url=self.link_base_url,
         )
         answer = await self._classifier.synthesize_answer(query, evidence, lang=self.language)
         logger.info(

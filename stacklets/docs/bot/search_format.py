@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from stack.links import go_docs, public
+
 
 def memory_doc_url(
     rel: str, *,
@@ -47,12 +49,18 @@ def memory_doc_url(
 
 def paperless_doc_url(
     doc_id: Optional[int], *,
-    public_url: str = "",
+    link_base_url: str = "",
 ) -> str:
-    """Build a Paperless detail-page URL for a doc id."""
-    if not (public_url and doc_id):
+    """Build a persistent `/go/docs/<id>` link for a doc id.
+
+    Search results live in Matrix history as long as the room does, so
+    the link is logical rather than a Paperless URL: it resolves to the
+    document wherever it lives at click time. Returns "" without a link
+    base, and the formatter falls back to a bold title.
+    """
+    if not (link_base_url and doc_id):
         return ""
-    return f"{public_url.rstrip('/')}/documents/{doc_id}/details"
+    return public(go_docs(doc_id), link_base_url)
 
 
 def format_memory_hit(
@@ -100,7 +108,7 @@ def format_memory_hit(
 
 def format_paperless_hit(
     doc: dict, n: int, *,
-    public_url: str = "",
+    link_base_url: str = "",
 ) -> str:
     """Render one Paperless hit as a single Matrix-markdown line.
 
@@ -114,7 +122,7 @@ def format_paperless_hit(
     created = (doc.get("created") or "")[:10]
     meta = " · ".join(p for p in [created, f"#{doc_id}" if doc_id else ""] if p)
 
-    url = paperless_doc_url(doc_id, public_url=public_url)
+    url = paperless_doc_url(doc_id, link_base_url=link_base_url)
     if url:
         head = f"{n}\\. [{title}]({url})"
     else:

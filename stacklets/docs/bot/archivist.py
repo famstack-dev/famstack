@@ -63,6 +63,7 @@ from pipeline import (
 )
 from stack import resolve_model
 from stack.email_message import defang_links
+from stack.links import go_docs, go_topic, public
 from stack.ai.client import (
     LLMError,
     LLMUnavailableError,
@@ -255,14 +256,20 @@ class ArchivistBot(MicroBot):
         # chat link is worse than no link at all, since the helper
         # formatters already render a path-only / bold-title view when
         # the public URL is empty.
+        # Links to a *document* are the exception and go one better:
+        # they are built from `link_base_url` below, so what lands in
+        # chat is a logical `/go/docs/<id>` that re-resolves at click
+        # time instead of a Paperless URL that ages badly.
         self.paperless_url = os.environ.get("PAPERLESS_URL", "")
         self.paperless_token = os.environ.get("PAPERLESS_TOKEN", "")
         self.paperless_public_url = os.environ.get("PAPERLESS_PUBLIC_URL", "")
         self.code_url = os.environ.get("CODE_URL", "")
         self.code_public_url = os.environ.get("CODE_PUBLIC_URL", "")
-        # Base for persistent `/go` links the bot posts into chat (e.g.
-        # `{link_base_url}/topic/<scope>/todo`). Public/home base, mode-correct.
-        # Empty when core hasn't rendered it -> the todo link is simply omitted.
+        # Base for every persistent `/go` link the bot posts into chat or
+        # into an event envelope -- filing replies, search hits, todo
+        # pages. Public/home base, mode-correct; `stack.links` joins the
+        # logical path onto it. Empty when core hasn't rendered it yet ->
+        # the link is simply omitted and the unlinked view is used.
         self.link_base_url = os.environ.get("LINK_BASE_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
         self.openai_key = os.environ.get("OPENAI_KEY", "")
@@ -424,6 +431,7 @@ class ArchivistBot(MicroBot):
             vision_max_pdf_pages=self.vision_max_pdf_pages,
             reformat_max_pdf_pages=self.reformat_max_pdf_pages,
             paperless_public_url=self.paperless_public_url,
+            link_base_url=self.link_base_url,
             actor=self.user_id,
             vault=self._vault,
         )
@@ -434,7 +442,7 @@ class ArchivistBot(MicroBot):
             language=self.language,
             code_public_url=self.code_public_url,
             mirror_org=self.mirror_org,
-            paperless_public_url=self.paperless_public_url,
+            link_base_url=self.link_base_url,
             shared_bucket=self.shared_bucket,
             vault=self._vault,
         )
@@ -544,8 +552,7 @@ class ArchivistBot(MicroBot):
         Points the user at the original doc's Paperless page so they can
         verify the match instead of wondering why the upload 'failed'.
         """
-        link = (f"{self.paperless_public_url}/documents/{e.doc_id}/details"
-                if e.doc_id and self.paperless_public_url else "")
+        link = public(go_docs(e.doc_id), self.link_base_url) if e.doc_id else ""
         return self.t("already_filed",
                       name=name,
                       doc_id=e.doc_id if e.doc_id is not None else "?",
@@ -2358,11 +2365,11 @@ class ArchivistBot(MicroBot):
         the explicit `family/camping` path form as readily as a bare slug.
         """
         scope = (o.scope or "").strip("/")
-        if not self.link_base_url or "/" not in scope:
+        if "/" not in scope:
             return ""
         if not (o.classification.get("action_items") or []):
             return ""
-        return f"{self.link_base_url}/topic/{scope}/todo"
+        return public(go_topic(scope, "todo"), self.link_base_url)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
@@ -2466,7 +2473,7 @@ class ArchivistBot(MicroBot):
 
         title = doc.get("title", "Untitled")
         content = doc.get("content", "").strip()
-        link = f"{self.paperless_public_url}/documents/{doc_id}/details" if self.paperless_public_url else ""
+        link = public(go_docs(doc_id), self.link_base_url)
 
         if not content:
             await self._send(room_id, f"**{title}** — no text content available.\n\n  {link}", reply_to)

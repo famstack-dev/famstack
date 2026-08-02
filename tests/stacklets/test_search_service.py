@@ -58,7 +58,7 @@ def _service(paperless, *, shared_bucket="family"):
         language="en",
         code_public_url="http://code",
         mirror_org="family",
-        paperless_public_url="http://paperless",
+        link_base_url="http://home.test/go",
         shared_bucket=shared_bucket,
         vault=_FakeVault(),
     )

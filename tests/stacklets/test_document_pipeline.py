@@ -80,6 +80,7 @@ def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled
         vision_max_pdf_pages=5,
         reformat_max_pdf_pages=5,
         paperless_public_url="http://paperless",
+        link_base_url="http://home.test/go",
         actor="@archivist-bot:test.local",
         vault=_FakeVault(),
     )
@@ -118,7 +119,7 @@ class TestEarlyExits:
         out = await _process(_pipeline(FakePaperless(doc_id=7, doc=None), mirror=mirror))
         assert out.status == "filed_no_details"
         assert out.doc_id == 7
-        assert out.link == "http://paperless/documents/7/details"
+        assert out.link == "http://home.test/go/docs/7"
         # Mirror still reached so Paperless ⇄ mirror stay 1:1.
         assert len(mirror.published) == 1
         assert mirror.published[0]["fallback_title"] == "note.txt"

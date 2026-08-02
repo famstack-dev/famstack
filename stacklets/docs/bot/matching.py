@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from stack.links import go_docs, public
+
 if TYPE_CHECKING:
     from stack.ontology import Ontology
 
@@ -316,7 +318,7 @@ def build_document_event(
     resolved_persons: list[str] | None = None,
     resolved_correspondent: str | None = None,
     resolved_type: str | None = None,
-    paperless_url: str = "",
+    link_base_url: str = "",
     actor: str | None = None,
     ts: str | None = None,
 ) -> dict:
@@ -362,8 +364,10 @@ def build_document_event(
         "facts": classification.get("facts", []),
         "action_items": classification.get("action_items", []),
     }
-    if paperless_url:
-        data["url"] = f"{paperless_url}/documents/{doc_id}/details"
+    # The envelope rides on a Matrix message, so its link outlives every
+    # hosting change the stack goes through: logical, not a Paperless URL.
+    if url := public(go_docs(doc_id), link_base_url):
+        data["url"] = url
 
     summary = f"{title} filed (#{doc_id})" if title else f"Document #{doc_id} filed"
 
