@@ -24,7 +24,7 @@ import sys
 import pytest
 
 SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
-                   "memory_tool", "person_tool", "grep_tool")
+                   "memory_tool", "person_tool", "grep_tool", "name_trigger")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -90,6 +90,41 @@ def test_context_shims_are_attached(nanobot):
     ctx = mods["nanobot.agent.context"]
     assert ctx.runtime_lines.__name__ == "_runtime_lines"
     assert ctx.ContextBuilder.build_messages.__name__ == "_build_messages_lean"
+
+
+def test_being_named_counts_as_a_mention(nanobot, monkeypatch):
+    """Without this shim the agent ignores everyone who does not use a pill.
+
+    Driven through nanobot's own gate rather than the matcher directly:
+    the matcher is specified in `test_agent_name_trigger.py`, and what
+    is at stake here is that nanobot actually asks it.
+    """
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+
+    class _Event:
+        pill_mention = False
+        body = "Stacky, what's on our list?"
+
+    assert channel._is_bot_mentioned(_Event())
+
+
+def test_a_pill_mention_still_wins_on_the_original_path(nanobot, monkeypatch):
+    """The shim widens the gate; it must never narrow it.
+
+    A pill from someone who never says the name has to keep working
+    even when the name matcher would say no.
+    """
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+
+    class _Event:
+        pill_mention = True
+        body = "what's on our list?"
+
+    assert channel._is_bot_mentioned(_Event())
 
 
 # ── failure is contained, and visible ────────────────────────────────────
