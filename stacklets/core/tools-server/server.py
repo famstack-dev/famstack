@@ -12,11 +12,13 @@ just translation between what the LLM needs and what the services provide.
 import json
 import os
 import socket
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from capture_index import find_capture
 from resolver import build_redirect
 
 
@@ -48,6 +50,13 @@ WIKI_PUBLIC_URL = os.environ.get("MEMORY_PUBLIC_URL", "").replace(
 LINK_SHARED_BUCKET = os.environ.get("SHARED_BUCKET", "family")
 # The one knob: the path namespace persistent links live under (home.tld/go/…).
 LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
+# The brain projection, read-only — the same tree the wiki serves. Only
+# `/go/capture/<id>` needs it, to find where a capture sits now. This is the
+# mount point, not `BRAIN_REPO_DIR`: that variable is the path the *bot-runner*
+# sees, and pointing this at it would name a directory that does not exist in
+# this container. Unmounted (memory not installed) simply means capture
+# links 404.
+BRAIN_DIR = Path("/brain")
 
 
 app = FastAPI(
@@ -137,6 +146,7 @@ def _go(kind: str, rest: list[str]):
     url = build_redirect(
         kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
         shared_bucket=LINK_SHARED_BUCKET,
+        find_capture=lambda cid: find_capture(cid, brain_dir=BRAIN_DIR),
     )
     if not url:
         return _error("no such resource", status=404)
@@ -159,6 +169,19 @@ async def go_topic(name: str):
 async def go_person(name: str):
     """Redirect a stable person link to that member's current wiki page."""
     return _go("person", [s for s in name.split("/") if s])
+
+
+@app.get(f"/{LINK_PREFIX}/capture/{{capture_id:path}}",
+         summary="Resolve a capture link")
+async def go_capture(capture_id: str):
+    """Redirect a captured note or bookmark to wherever it is filed now.
+
+    Keyed by the capture's id rather than its path, so re-scoping it,
+    renaming its topic, or correcting its title all leave the link
+    working. 404 when no file carries that id — better than showing
+    someone a different note.
+    """
+    return _go("capture", [capture_id])
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────

@@ -29,12 +29,28 @@ containers build links from one implementation.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 
 # ── Logical paths ─────────────────────────────────────────────────────
 #
-# Entity kinds are explicit nouns — the path says whether "camping" is a
-# topic or a person, so the resolver never has to guess. A trailing leaf
-# (`todo`) selects a sub-page of the entity instead of its overview.
+# Kinds are explicit nouns — the path says whether "camping" is a topic
+# or a person, so the resolver never has to guess. They come in two
+# families, and which one a new kind belongs to is the whole design:
+#
+#   entities, addressed by NAME  — `topic`, `person`
+#       A name a person could type, for something that has an identity
+#       beyond any one file. A trailing leaf (`todo`) selects a
+#       sub-page instead of the overview.
+#
+#   records, addressed by ID     — `docs`, `capture`
+#       One artefact, keyed by something assigned once and never
+#       re-derived. Never by path: a path encodes where a thing sat on
+#       the day the link was written, and these things move.
+#
+# A link posted into chat is permanent, so the cost of putting a kind in
+# the wrong family is paid forever. When in doubt, ask what changes when
+# a family renames a topic or corrects a title.
 
 def go_docs(doc_id: int | str) -> str:
     """`/docs/<id>` — a document, wherever it is filed right now.
@@ -58,6 +74,27 @@ def go_topic(scope: str, leaf: str | None = None) -> str:
     '/topic/camping'
     """
     return _entity_path("topic", scope, leaf)
+
+
+def go_capture(capture_id: str) -> str:
+    """`/capture/<id>` — one captured note, bookmark or memo.
+
+    A record, so it is addressed by id and never by where it sits. Its
+    vault path carries the bucket, the topic slug and the title slug,
+    and each of those changes on its own under ordinary use: a capture
+    re-scopes when a second person joins the room, a topic gets
+    renamed, a title is rewritten by a correction. A path-keyed link
+    would break for three reasons the resolver cannot repair, and break
+    silently, which is worse than the service URLs it replaced.
+
+    The id is the Matrix event id, assigned once and never rewritten.
+    It starts with `$` and can carry `/` in older room versions, so it
+    is percent-encoded into a single path segment.
+
+    >>> go_capture("$abc123")
+    '/capture/%24abc123'
+    """
+    return f"/capture/{quote(str(capture_id), safe='')}"
 
 
 def go_person(slug: str, leaf: str | None = None) -> str:

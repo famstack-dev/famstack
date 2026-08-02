@@ -79,6 +79,12 @@ services:
       # effect without a rebuild. Keep in sync with tools-server/Dockerfile.
       - ./tools-server/server.py:/app/server.py:ro
       - ./tools-server/resolver.py:/app/resolver.py:ro
+      - ./tools-server/capture_index.py:/app/capture_index.py:ro
+      # The brain projection, read-only: `/go/capture/<id>` finds where a
+      # capture is filed now by reading the same tree the wiki serves.
+      # `${DATA_DIR}` is the host path (BRAIN_REPO_DIR is the *container*
+      # path the bot-runner sees, so it cannot be a bind source here).
+      - ${DATA_DIR}/memory/brain:/brain:ro
     restart: unless-stopped
 
 networks:

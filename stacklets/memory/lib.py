@@ -1575,6 +1575,14 @@ def search_memory(
             # when the file isn't a Paperless mirror (e.g. capture
             # notes, hand-written wiki entries).
             "paperless_id": fm.get("paperless_id") or "",
+            # The Matrix event this file was captured from. Assigned
+            # once and never rewritten, which is what makes it the only
+            # safe key for a link that outlives the file: `rel` carries
+            # the bucket, the topic slug and the title slug, and all
+            # three change under ordinary use (a re-scope, a topic
+            # rename, a corrected title). Empty for anything not
+            # captured from chat.
+            "capture_id": fm.get("capture_id") or "",
         })
 
     results.sort(

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from stack.links import go_docs, public
+from stack.links import go_capture, go_docs, public
 
 
 def memory_doc_url(
@@ -63,10 +63,38 @@ def paperless_doc_url(
     return public(go_docs(doc_id), link_base_url)
 
 
+def memory_hit_url(
+    r: dict, *,
+    link_base_url: str = "",
+    code_public_url: str = "",
+    mirror_org: str = "family",
+) -> str:
+    """The best durable link for one memory hit, or "" for none.
+
+    A capture is a record, so when the hit carries the id it was
+    captured with, the link is `/go/capture/<id>` and survives the file
+    being re-scoped, its topic renamed, or its title corrected.
+
+    Everything else falls back to the Forgejo blob URL. That link
+    freezes today's address and today's path, which is exactly what the
+    `/go` namespace exists to avoid — but a hand-written wiki page has
+    no id to key on, and a worse link still beats none while that is
+    true. Anything that grows a stable id should move to a record kind
+    rather than widening this fallback.
+    """
+    if capture_id := (r.get("capture_id") or "").strip():
+        if url := public(go_capture(capture_id), link_base_url):
+            return url
+    return memory_doc_url(
+        r.get("rel", ""), code_public_url=code_public_url, mirror_org=mirror_org,
+    )
+
+
 def format_memory_hit(
     r: dict, n: int, *,
     code_public_url: str = "",
     mirror_org: str = "family",
+    link_base_url: str = "",
 ) -> str:
     """Render one memory hit as a Matrix-markdown block.
 
@@ -87,7 +115,10 @@ def format_memory_hit(
     # paragraph separation, and a loose `<ol>` ends up rendering each
     # marker on its own line in Element; plain "1. Foo" text avoids
     # the list machinery entirely.
-    url = memory_doc_url(rel, code_public_url=code_public_url, mirror_org=mirror_org)
+    url = memory_hit_url(
+        r, link_base_url=link_base_url,
+        code_public_url=code_public_url, mirror_org=mirror_org,
+    )
     if url:
         head = f"{n}\\. [{title}]({url})"
     else:

@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from search_format import memory_doc_url, paperless_doc_url
+from search_format import memory_hit_url, paperless_doc_url
 from pipeline import extract_bot_summary
 
 # Memory lib is a sibling stacklet. The archivist already wires the
@@ -106,8 +106,9 @@ def build_evidence(
             # Prefer the structured summary; fall back to the excerpt
             # for vault files that predate the classifier.
             "summary": (r.get("summary") or r.get("excerpt") or "").strip(),
-            "url": memory_doc_url(
-                r.get("rel") or "",
+            "url": memory_hit_url(
+                r,
+                link_base_url=link_base_url,
                 code_public_url=code_public_url,
                 mirror_org=mirror_org,
             ),

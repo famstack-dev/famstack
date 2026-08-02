@@ -146,7 +146,8 @@ class SearchService:
             blocks.append(self._t("search_memory_results", query=query))
             for n, r in enumerate(memory_results, start=1):
                 blocks.append(_format_memory_hit(
-                    r, n, code_public_url=self.code_public_url, mirror_org=self.mirror_org,
+                    r, n, code_public_url=self.code_public_url,
+                    mirror_org=self.mirror_org, link_base_url=self.link_base_url,
                 ))
         if paperless_results:
             blocks.append(self._t("search_paperless_results", query=query))
