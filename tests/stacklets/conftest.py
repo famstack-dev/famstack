@@ -77,6 +77,11 @@ def nanobot_stub():
             async def execute(self, *args, **kwargs):
                 return "stock grep"
 
+        class MatrixChannel:
+            def _is_bot_mentioned(self, event):
+                # Stock nanobot: only an autocompleted pill counts.
+                return getattr(event, "pill_mention", False)
+
         mods: dict[str, types.ModuleType] = {}
 
         def mod(name, **attrs):
@@ -97,6 +102,8 @@ def nanobot_stub():
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
         mod("nanobot.agent.tools.search", GrepTool=GrepTool)
+        mod("nanobot.channels")
+        mod("nanobot.channels.matrix", MatrixChannel=MatrixChannel)
         return mods
 
     return _build

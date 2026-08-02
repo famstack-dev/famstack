@@ -28,6 +28,12 @@ Second, three vault tools, which add capability rather than reshaping context:
    the agent gets semantic hits instead of literal matches on a corpus where the
    words it greps for are rarely the words on disk.
 
+Third, one shim that widens when the agent is allowed to answer at all:
+
+6. name_trigger (name_trigger.py) — a group-room message that addresses the
+   agent by its configured name counts as a mention, not just an autocompleted
+   pill. Families type "Stacky, what's on our list?".
+
 WHY SHIMS AND NOT A FORK
     nanobot has no plugin seam for per-turn context injection or state shaping.
     Shims keep us on upstream `nanobot-ai` (updates included) with the change
@@ -48,6 +54,7 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `nanobot.agent.tools.schema.{StringSchema, IntegerSchema, tool_parameters_schema}`
     person_tool: same symbols as memory_tool
     grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
+    name_trigger: `nanobot.channels.matrix.MatrixChannel._is_bot_mentioned(self, event) -> bool`
 
     `tests/stacklets/test_agent_runtime_shims.py` asserts every one of these is
     attached against a stub nanobot, so this list is executable rather than
@@ -139,3 +146,35 @@ for _module_name, _what in (
         _log.info("%s active", _what)
     except Exception:
         _log.exception("%s could not attach (nanobot internals changed?)", _what)
+
+
+# ── name_trigger: being spoken to by name counts as a mention ────────────────
+# Widens nanobot's group-room gate rather than replacing it: a real pill mention
+# still wins on the original code path, and this only gets a say when that said
+# no. `AGENT_NAME` is read per call, so renaming the agent takes effect on the
+# next restart with no rebuild.
+try:
+    import os as _os
+
+    import nanobot.channels.matrix as _matrix
+    from name_trigger import addressed_by_name as _addressed_by_name
+
+    _orig_is_bot_mentioned = _matrix.MatrixChannel._is_bot_mentioned
+
+    def _is_bot_mentioned(self, event):
+        if _orig_is_bot_mentioned(self, event):
+            return True
+        try:
+            return _addressed_by_name(
+                getattr(event, "body", "") or "", _os.environ.get("AGENT_NAME", ""),
+            )
+        except Exception:
+            # Never let a matching bug make the agent unreachable: fall back
+            # to stock behaviour, which is pill mentions only.
+            _log.exception("name trigger failed; pill mentions still work")
+            return False
+
+    _matrix.MatrixChannel._is_bot_mentioned = _is_bot_mentioned
+    _log.info("name-trigger mention shim active")
+except Exception:
+    _log.exception("name-trigger shim could not attach (nanobot internals changed?)")
