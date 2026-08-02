@@ -89,12 +89,24 @@ def _slug_candidates(raw: str) -> list[str]:
     return [base] if base else []
 
 
-def _topic_slug(msg, vault: Path) -> str:
-    raw = (getattr(msg, "metadata", {}) or {}).get("room", "")
+def topic_for_room_label(raw: str, vault: Path) -> str:
+    """The vault topic a room label maps to, or "" when it maps to none.
+
+    Exposed (rather than folded into `_topic_slug`) because joining a
+    room needs the same answer before there is any message to derive it
+    from: a room with a topic gets a different greeting from a DM, and
+    guessing wrong produces a bot that promises to describe a topic
+    that does not exist.
+    """
     for cand in _slug_candidates(raw):
         if (vault / "family" / cand / "about.md").exists():
             return cand
     return ""
+
+
+def _topic_slug(msg, vault: Path) -> str:
+    raw = (getattr(msg, "metadata", {}) or {}).get("room", "")
+    return topic_for_room_label(raw, vault)
 
 
 def brief_lines(msg, workspace) -> list[str]:

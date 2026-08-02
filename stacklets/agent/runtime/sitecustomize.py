@@ -34,6 +34,9 @@ Third, one shim that widens when the agent is allowed to answer at all:
    agent by its configured name counts as a mention, not just an autocompleted
    pill. Families type "Stacky, what's on our list?".
 
+7. join_greeting (join_greeting.py) — on being invited, take one turn and
+   introduce the room's topic instead of joining in silence.
+
 WHY SHIMS AND NOT A FORK
     nanobot has no plugin seam for per-turn context injection or state shaping.
     Shims keep us on upstream `nanobot-ai` (updates included) with the change
@@ -55,6 +58,8 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
     person_tool: same symbols as memory_tool
     grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
     name_trigger: `nanobot.channels.matrix.MatrixChannel._is_bot_mentioned(self, event) -> bool`
+    join_greeting: `nanobot.channels.matrix.MatrixChannel._on_room_invite(self, room, event)`
+                 `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
     `tests/stacklets/test_agent_runtime_shims.py` asserts every one of these is
     attached against a stub nanobot, so this list is executable rather than
@@ -178,3 +183,56 @@ try:
     _log.info("name-trigger mention shim active")
 except Exception:
     _log.exception("name-trigger shim could not attach (nanobot internals changed?)")
+
+
+# ── join_greeting: say something useful the moment you are invited ───────────
+# Stock nanobot joins an invite silently. In a topic room that silence is the
+# family's first impression of the agent, so it takes one ordinary turn instead
+# (see join_greeting.py for why generated rather than canned).
+try:
+    import asyncio as _asyncio
+    import os.path as _ospath
+    from pathlib import Path as _Path
+
+    import nanobot.channels.matrix as _matrix_join
+    from brief import topic_for_room_label as _topic_for_room_label
+    from join_greeting import greeting_prompt as _greeting_prompt
+
+    # Same workspace nanobot mounts the projection into; `lean_state`
+    # above resolves its log the same way.
+    _WORKSPACE = _Path(_ospath.expanduser("~/.nanobot/workspace"))
+
+    _orig_on_room_invite = _matrix_join.MatrixChannel._on_room_invite
+
+    async def _on_room_invite(self, room, event):
+        await _orig_on_room_invite(self, room, event)
+        try:
+            # The room's name arrives with the state sync that follows the
+            # join, not with the invite. Greeting before it lands would cost
+            # the briefing its topic line — the whole point of greeting at
+            # all — so wait briefly for a display name to appear.
+            label = ""
+            for _ in range(10):
+                joined = (getattr(self.client, "rooms", {}) or {}).get(room.room_id)
+                label = getattr(joined, "display_name", "") or ""
+                if label and label != room.room_id:
+                    break
+                await _asyncio.sleep(1)
+
+            topic = _topic_for_room_label(label, _WORKSPACE / "vault")
+            await self._handle_message(
+                sender_id=event.sender,
+                chat_id=room.room_id,
+                content=_greeting_prompt(topic),
+                metadata={"room": label or getattr(room, "room_id", "")},
+                is_dm=False,
+            )
+        except Exception:
+            # A missing greeting is a disappointment; a raised exception in
+            # the invite callback would leave the bot joined and deaf.
+            _log.exception("join greeting failed; the room is still joined")
+
+    _matrix_join.MatrixChannel._on_room_invite = _on_room_invite
+    _log.info("join-greeting shim active")
+except Exception:
+    _log.exception("join-greeting shim could not attach (nanobot internals changed?)")

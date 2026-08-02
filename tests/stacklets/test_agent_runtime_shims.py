@@ -24,7 +24,8 @@ import sys
 import pytest
 
 SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
-                   "memory_tool", "person_tool", "grep_tool", "name_trigger")
+                   "memory_tool", "person_tool", "grep_tool", "name_trigger",
+                   "join_greeting")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -125,6 +126,33 @@ def test_a_pill_mention_still_wins_on_the_original_path(nanobot, monkeypatch):
         body = "what's on our list?"
 
     assert channel._is_bot_mentioned(_Event())
+
+
+def test_an_invite_produces_a_greeting_turn(nanobot):
+    """Joining in silence is the behaviour this replaces.
+
+    Asserts the agent is actually driven — the room is joined *and* a
+    turn is taken for it — because a shim that joined and then dropped
+    the turn would look identical from the room's side to stock nanobot.
+    """
+    import asyncio
+    import types as _types
+
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    room = _types.SimpleNamespace(room_id="!r:simpson", display_name="Topic: Camping")
+    channel.client.rooms = {"!r:simpson": room}
+    event = _types.SimpleNamespace(sender="@homer:simpson")
+
+    asyncio.run(channel._on_room_invite(room, event))
+
+    assert channel.joined == ["!r:simpson"], "the original join must still happen"
+    assert len(channel.handled) == 1, "the invite should drive exactly one turn"
+    turn = channel.handled[0]
+    assert turn["chat_id"] == "!r:simpson"
+    # The briefing resolves the topic from this label, so a greeting that
+    # loses it cannot mention what the room is about — the whole point.
+    assert turn["metadata"]["room"] == "Topic: Camping"
 
 
 # ── failure is contained, and visible ────────────────────────────────────

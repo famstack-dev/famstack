@@ -78,9 +78,21 @@ def nanobot_stub():
                 return "stock grep"
 
         class MatrixChannel:
+            def __init__(self):
+                self.client = types.SimpleNamespace(rooms={})
+                self.handled = []
+                self.joined = []
+
             def _is_bot_mentioned(self, event):
                 # Stock nanobot: only an autocompleted pill counts.
                 return getattr(event, "pill_mention", False)
+
+            async def _on_room_invite(self, room, event):
+                # Stock nanobot: join, say nothing.
+                self.joined.append(room.room_id)
+
+            async def _handle_message(self, **kwargs):
+                self.handled.append(kwargs)
 
         mods: dict[str, types.ModuleType] = {}
 
