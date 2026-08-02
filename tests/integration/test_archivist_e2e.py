@@ -308,6 +308,115 @@ async def test_homer_replies_to_filing_and_archivist_reprocesses(
     bdd.ok(f"reclassified #{paperless_id} with hint {hint!r}")
 
 
+async def test_homer_corrects_a_filing_by_writing_in_its_thread(
+    bdd, openai, paperless, paperless_scope, homer, sample_invoice_pdf,
+):
+    """Homer writes his correction in the filing's thread instead of
+    quoting the filing message, and the archivist still reprocesses.
+
+    Scenario
+    --------
+    Given  the archivist filed Homer's invoice, answering in a thread
+           hung off his upload
+    When   Homer types a correction in that thread, his client pointing
+           the reply fallback at his own upload (what Element sends: the
+           deliberate relation is the thread, the `m.in_reply_to` is a
+           rendering aid aimed at another event in it)
+    Then   the archivist reprocesses the document rather than reading the
+           message as a search
+
+    Why this needs the rig: the failure was a disagreement between the
+    bot's thread-aware sender and its reply-only reader, and only a real
+    homeserver both stores the relations and answers the relations query
+    the reader now makes.
+    """
+    scope = paperless_scope
+    bdd.scenario("Homer corrects a filing from inside its thread")
+
+    title = scope.tag("Duff Insurance - Kfz-Versicherung thread")
+    expected_correspondent = scope.tag("Duff Insurance")
+    bdd.given("the OpenAI mock will classify, reformat, then reclassify")
+    stub_classify(openai, {
+        "title": title, "topics": [scope.tag("Insurance")], "persons": ["Homer"],
+        "correspondent": expected_correspondent, "document_type": "Invoice",
+        "date": "2026-03-15", "summary": "Car insurance renewal.",
+        "facts": ["EUR 340.00/year"], "action_items": [],
+    })
+    stub_reformat(openai, "# Kfz-Versicherung\n\nDuff Insurance.")
+    stub_classify(openai, {
+        "title": title, "topics": [scope.tag("Insurance")], "persons": ["Marge"],
+        "correspondent": expected_correspondent, "document_type": "Invoice",
+        "date": "2026-03-15", "summary": "Reclassified: this one is Marge's.",
+        "facts": ["EUR 340.00/year"], "action_items": [],
+    })
+
+    bdd.given("the #documents room exists and Homer has access")
+    room_id = await resolve_room(homer, DOCS_ROOM_ALIAS)
+    await ensure_joined(homer, room_id)
+
+    # Front door: the document arrives as a family member sends it, so
+    # what gets corrected is a real filing with tags, correspondent, type
+    # and title. A document POSTed straight into Paperless has none of
+    # that, and a reclassification assertion against it means nothing.
+    bdd.when("Homer uploads the invoice and the archivist files it")
+    upload_event_id = await upload_and_send_file(
+        homer, room_id, sample_invoice_pdf, filename="invoice.pdf",
+        mime_type="application/pdf", msgtype="m.file",
+    )
+    filing = await _wait_for_reply(
+        homer, room_id,
+        predicate=lambda e: (
+            event_type(e) == "m.room.message"
+            and (_envelope(e) or {}).get("type") == "document.filed"
+            and (_envelope(e) or {}).get("data", {}).get("title") == title
+        ),
+    )
+    assert filing, "archivist never posted a document.filed envelope"
+    paperless_id = _envelope(filing)["data"]["paperless_id"]
+    bdd.ok(f"filed doc #{paperless_id}, event {filing.event_id}")
+
+    bdd.and_("the filing answered in a thread rooted at Homer's upload")
+    relation = filing.source.get("content", {}).get("m.relates_to", {})
+    assert relation.get("rel_type") == "m.thread", \
+        f"filing is not threaded, so this scenario cannot arise: {relation!r}"
+    assert relation.get("event_id") == upload_event_id, relation
+    bdd.detail(f"thread root = {upload_event_id}")
+
+    bdd.when("Homer types a correction inside that thread")
+    hint = "this one is Marge's, not mine"
+    await homer.room_send(
+        room_id, "m.room.message",
+        {
+            "msgtype": "m.text", "body": hint,
+            # The shape a client sends for a message typed in a thread:
+            # the thread relation is what the user chose, and the reply
+            # fallback points at another event in the thread (here the
+            # upload) purely so thread-blind clients show context.
+            "m.relates_to": {
+                "rel_type": "m.thread",
+                "event_id": upload_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": upload_event_id},
+            },
+        },
+    )
+
+    bdd.then("the archivist posts a document.reclassified confirmation")
+    reclassified = await _wait_for_reply(
+        homer, room_id,
+        predicate=lambda e: (
+            (_envelope(e) or {}).get("type") == "document.reclassified"
+            and (_envelope(e) or {}).get("data", {}).get("paperless_id")
+            == paperless_id
+        ),
+    )
+    assert reclassified, \
+        "archivist never reclassified — an in-thread correction was read as a search"
+    env = _envelope(reclassified)
+    assert env["data"].get("user_hint") == hint, env
+    bdd.ok(f"reclassified #{paperless_id} with hint {hint!r}")
+
+
 # ── DM: reacts without a mention ──────────────────────────────────────────
 
 

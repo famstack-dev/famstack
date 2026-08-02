@@ -597,9 +597,9 @@ class TestMentionRoutesToSearch:
         bot._handle_text_capture = _record_text_capture
         bot._handle_url = _record_url
         bot._send = _record_send
-        # Reply-to lookup needs the client; short-circuit it.
-        bot._reply_target_doc_id = lambda *_a, **_kw: _none_coro()
-        bot._reply_target_capture_path = lambda *_a, **_kw: _none_coro()
+        # Correction lookup needs the client; short-circuit it. What it
+        # resolves is pinned in test_archivist_corrections.py.
+        bot._correction_anchor = lambda *_a, **_kw: _none_coro()
         # The per-room welcome path runs ahead of routing decisions in
         # `_on_text` / `_on_file`. These tests focus on the routing
         # dispatch, not the welcome -- stub it out so the recorded

@@ -70,6 +70,7 @@ from nio import (
     RoomMessagesResponse,
     SyncResponse,
 )
+from nio.api import RelationshipType
 
 from room_context import RoomContext, context_for
 
@@ -785,6 +786,51 @@ class MicroBot:
             return None
         envelope = parent.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
         return envelope if isinstance(envelope, dict) else None
+
+    async def _thread_envelopes(
+        self, room_id: str, root_event_id: str, *, limit: int = 10,
+    ) -> list[tuple[str, dict]]:
+        """Our own famstack envelopes in the thread rooted at
+        ``root_event_id``, newest first.
+
+        The threaded sibling of ``_reply_parent_envelope``. Someone
+        writing inside a thread is answering what the thread holds, and
+        their client's ``m.in_reply_to`` does not say which message that
+        is: for a threaded message the relation is a *falling back*
+        pointer at the newest event in the thread (Matrix v1.4), there
+        so thread-blind clients still render some context. Following it
+        lands on whatever we happened to post last. So we ask the
+        homeserver for the thread's children instead — Matrix is the
+        ledger, the bot keeps no thread bookkeeping — and hand back
+        every envelope we ourselves posted there.
+
+        Newest first, because a bot's later message in a thread
+        supersedes its earlier one. Bounded to ``limit`` events
+        examined so one chat message can never turn into unbounded API
+        calls. Returns ``(event_id, envelope)`` pairs; as with the
+        single-hop sibling, the caller decides what an envelope
+        *means*. An id that roots no thread simply has none.
+        """
+        envelopes: list[tuple[str, dict]] = []
+        try:
+            examined = 0
+            async for related in self._client.room_get_event_relations(
+                room_id, root_event_id, RelationshipType.thread,
+            ):
+                examined += 1
+                if examined > limit:
+                    break
+                if getattr(related, "sender", None) != self.user_id:
+                    continue
+                content = (getattr(related, "source", None) or {}).get("content", {})
+                envelope = content.get(self.FAMSTACK_EVENT_KEY)
+                event_id = getattr(related, "event_id", None)
+                if isinstance(envelope, dict) and event_id:
+                    envelopes.append((event_id, envelope))
+        except Exception as e:
+            logger.debug("[{}] thread relations fetch failed for {}: {}",
+                         self.name, root_event_id, e)
+        return envelopes
 
     def _ensure_http(self) -> aiohttp.ClientSession:
         """The shared aiohttp session, created on first use.

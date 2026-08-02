@@ -44,6 +44,11 @@ class FakeClient:
         # key yields a response whose `.event` is None (parent not found).
         self.parent_events: dict[str, object] = {}
         self.get_event_raises: BaseException | None = None
+        # Thread children keyed by root event id, in timeline order. The
+        # relations endpoint hands them back newest-first (the default
+        # backwards direction), so the stub reverses on the way out.
+        self.thread_children: dict[str, list] = {}
+        self.relations_raise: BaseException | None = None
         # Drain surface: the timeline (newest-first), the rooms map, and a
         # sync token. room_messages returns the whole timeline in one page.
         self.next_batch = "END"
@@ -79,6 +84,13 @@ class FakeClient:
         if self.get_event_raises is not None:
             raise self.get_event_raises
         return SimpleNamespace(event=self.parent_events.get(event_id))
+
+    async def room_get_event_relations(self, room_id, event_id, rel_type=None,
+                                       **kwargs):
+        if self.relations_raise is not None:
+            raise self.relations_raise
+        for event in reversed(self.thread_children.get(event_id, [])):
+            yield event
 
 
 def _build_bot(tmp_path, *, handler) -> tuple[MicroBot, FakeClient]:
@@ -678,6 +690,91 @@ class TestReplyParentEnvelope:
         bot, client = _bare_bot(tmp_path)
         client.get_event_raises = ConnectionError("synapse down")
         assert await bot._reply_parent_envelope("!r:server", self._reply_to("$x")) is None
+
+
+# ── Thread envelopes ───────────────────────────────────────────────────────
+
+
+class TestThreadEnvelopes:
+    """`_thread_envelopes` is the threaded half of the same job: given a
+    thread root, hand back every `dev.famstack.event` the bot itself
+    posted in that thread, newest first.
+
+    It exists because a message typed inside a thread does not say which
+    event it answers -- the `m.in_reply_to` a client folds in alongside
+    the thread relation is a fallback pointer at the newest event there.
+    Reading the thread from the homeserver is what makes the bot's own
+    filing findable regardless of what followed it."""
+
+    @staticmethod
+    def _bot_message(event_id, envelope=None, sender="@test-bot:server"):
+        content = {"msgtype": "m.text", "body": "…"}
+        if envelope is not None:
+            content["dev.famstack.event"] = envelope
+        return SimpleNamespace(
+            event_id=event_id, sender=sender, source={"content": content},
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_our_envelopes_newest_first(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        client.thread_children["$root"] = [
+            self._bot_message("$a", {"type": "document.filed"}),
+            self._bot_message("$b", {"type": "document.reclassified"}),
+        ]
+        got = await bot._thread_envelopes("!r:server", "$root")
+        assert got == [
+            ("$b", {"type": "document.reclassified"}),
+            ("$a", {"type": "document.filed"}),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_skips_messages_we_did_not_send(self, tmp_path):
+        # Same ownership rule as the single-hop sibling: another user's
+        # message carrying a look-alike envelope is not ours to act on.
+        bot, client = _bare_bot(tmp_path)
+        client.thread_children["$root"] = [
+            self._bot_message("$a", {"type": "document.filed"}, sender="@homer:server"),
+        ]
+        assert await bot._thread_envelopes("!r:server", "$root") == []
+
+    @pytest.mark.asyncio
+    async def test_skips_our_messages_without_an_envelope(self, tmp_path):
+        # The reason the single reply hop was not enough: plain bot
+        # messages (a todo line, a status update) share the thread.
+        bot, client = _bare_bot(tmp_path)
+        client.thread_children["$root"] = [
+            self._bot_message("$a", {"type": "document.filed"}),
+            self._bot_message("$b"),
+        ]
+        assert await bot._thread_envelopes("!r:server", "$root") == [
+            ("$a", {"type": "document.filed"}),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_empty_when_the_event_roots_no_thread(self, tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        assert await bot._thread_envelopes("!r:server", "$loner") == []
+
+    @pytest.mark.asyncio
+    async def test_bounded_by_events_examined(self, tmp_path):
+        """A long thread must not turn one chat message into unbounded
+        paging, so the scan stops after `limit` events even if the
+        envelope it wants sits further back."""
+        bot, client = _bare_bot(tmp_path)
+        client.thread_children["$root"] = [
+            self._bot_message("$old", {"type": "document.filed"}),
+            *[self._bot_message(f"$chat{i}") for i in range(5)],
+        ]
+        assert await bot._thread_envelopes("!r:server", "$root", limit=3) == []
+
+    @pytest.mark.asyncio
+    async def test_empty_when_the_fetch_fails(self, tmp_path):
+        # Transport trouble reads as "no envelopes", never an exception
+        # out of the routing path.
+        bot, client = _bare_bot(tmp_path)
+        client.relations_raise = ConnectionError("synapse down")
+        assert await bot._thread_envelopes("!r:server", "$root") == []
 
 
 # ── Per-room config + emoji + !config command ────────────────────────────

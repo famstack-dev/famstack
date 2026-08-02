@@ -1016,47 +1016,113 @@ class ArchivistBot(MicroBot):
             ts_ms / 1000, tz=_dt.timezone.utc,
         ).date().isoformat()
 
-    async def _reply_target_doc_id(self, room_id: str, event) -> int | None:
-        """Return the paperless_id when `event` replies to one of OUR filings.
+    @staticmethod
+    def _is_filing_envelope(envelope: dict) -> bool:
+        """Whether an envelope announces a filed item the user can correct.
 
-        The framework's `_reply_parent_envelope` does the transport work
-        — fetch the replied-to parent, confirm it's ours, read off its
-        `dev.famstack.event` envelope. Here we keep only the archivist's
-        domain reading: any envelope that carries a `paperless_id` is a
-        valid correction target. That covers the initial `document.filed`
-        message AND a later `document.reclassified` -- the user can chain
-        corrections by replying to the most recent classification reply,
-        not just to the original filing.
+        Any `*.filed` (the original) or `*.reclassified` (the result of
+        an earlier correction round), generic over filing kind so
+        documents and captures share one reading. Accepting the
+        reclassified form is what lets a user chain corrections: the
+        target of the next one is the most recent classification, not
+        just the original filing.
         """
+        return envelope.get("type", "").endswith((".filed", ".reclassified"))
+
+    async def _correction_anchor(
+        self, room_id: str, event,
+    ) -> tuple[str, dict] | None:
+        """The filing `event` is a correction to, as `(event_id, envelope)`.
+
+        A correction is aimed at an *item*, not at a Matrix event, and
+        the family member's client decides how to express "about this
+        one". Three shapes reach the same filing, tried in the order
+        that respects the user's most explicit gesture first:
+
+        1. They quoted one of our classification messages: the reply
+           parent carries the envelope, so take it. Deliberate, and the
+           only shape available in a room without threads.
+        2. They typed inside the filing's thread. The thread relation
+           is the deliberate part; the `m.in_reply_to` a client folds
+           in alongside it points at the newest event in the thread
+           (see `_thread_envelopes`), which may well be a todo line or
+           a status update with no envelope on it.
+        3. They replied to the message that started it all -- their own
+           upload -- from the main timeline. That event carries no
+           envelope of ours, but it roots the thread our filing answered
+           in, so the thread hanging off it identifies the item.
+
+        Returns None when nothing in reach is a filing of ours, which is
+        the common case: most messages are searches.
+        """
+        parent_id = self._in_reply_to_id(event)
         envelope = await self._reply_parent_envelope(room_id, event)
-        if not envelope or envelope.get("type") not in (
-            "document.filed", "document.reclassified",
-        ):
+        if envelope is not None and self._is_filing_envelope(envelope):
+            return (parent_id, envelope)
+
+        roots = [r for r in (self.get_thread_root(event), parent_id) if r]
+        for root in dict.fromkeys(roots):
+            for event_id, candidate in await self._thread_envelopes(room_id, root):
+                if self._is_filing_envelope(candidate):
+                    return (event_id, candidate)
+        return None
+
+    @staticmethod
+    def _correction_target_doc_id(envelope: dict) -> int | None:
+        """The paperless_id a document filing envelope points at."""
+        if envelope.get("type") not in ("document.filed", "document.reclassified"):
             return None
         paperless_id = envelope.get("data", {}).get("paperless_id")
         return paperless_id if isinstance(paperless_id, int) else None
 
-    async def _reply_target_capture_path(
-        self, room_id: str, event,
-    ) -> str | None:
-        """Return the capture's vault path when `event` replies to one
-        of OUR captures.
-
-        Mirrors `_reply_target_doc_id` exactly -- accepts both the
-        initial `capture.filed` envelope and any later
-        `capture.reclassified` so chained corrections work the same
-        way they do for documents.
-        """
-        envelope = await self._reply_parent_envelope(room_id, event)
-        if not envelope or envelope.get("type") not in (
-            "capture.filed", "capture.reclassified",
-        ):
+    @staticmethod
+    def _correction_target_capture_path(envelope: dict) -> str | None:
+        """The vault path a capture filing envelope points at."""
+        if envelope.get("type") not in ("capture.filed", "capture.reclassified"):
             return None
         vault_path = envelope.get("data", {}).get("vault_path")
         return vault_path if isinstance(vault_path, str) and vault_path else None
 
+    async def _handle_correction(
+        self, room_id: str, event, anchor: tuple[str, dict], reply_to: str,
+    ) -> bool:
+        """Re-run classification for the item `anchor` names, using the
+        user's message as an authoritative hint. Returns whether the
+        message was consumed as a correction.
+
+        One entry point for both filing kinds: the envelope says whether
+        the item is a Paperless document or a vault capture, and the
+        correction chain is collected the same way for either. A message
+        that turns out to carry no correction (a bare quote with no words
+        of its own) is handed back to normal routing.
+        """
+        anchor_id, envelope = anchor
+        hint, initial = await self._collect_correction_chain(
+            room_id, event, anchor_id, envelope,
+        )
+        if not hint:
+            return False
+
+        doc_id = self._correction_target_doc_id(envelope)
+        if doc_id is not None:
+            await self._handle_reply_reprocess(
+                room_id, doc_id, hint, reply_to,
+                date_filed=self._event_date(event),
+                initial_classification=initial,
+            )
+            return True
+
+        capture_path = self._correction_target_capture_path(envelope)
+        if capture_path is not None:
+            await self._handle_reply_capture_reprocess(
+                room_id, capture_path, hint, event.sender, reply_to,
+                initial_classification=initial,
+            )
+            return True
+        return False
+
     async def _collect_correction_chain(
-        self, room_id: str, event,
+        self, room_id: str, event, anchor_id: str, anchor_envelope: dict,
     ) -> tuple[str, dict | None]:
         """Walk the reply chain back to the original filing; return both
         the joined human-correction hint AND the latest classification
@@ -1069,15 +1135,16 @@ class ArchivistBot(MicroBot):
         that boundary the human's words belong to the upload's
         caption, not to a correction.
 
-        The latest envelope (the IMMEDIATE parent the user just
-        replied to) carries the post-correction-N classification under
-        ``data``. That's the state the human saw on screen when they
-        typed their note, so it's the right anchor for "apply this
-        correction as a delta": the LLM works against the same picture
-        the user saw, not against the LLM's untouched first pass.
-        Each step (state_N + correction_(N+1) → state_(N+1)) is
-        deterministic; chaining them gives a deterministic transform
-        from the initial filing to the current correction.
+        The anchor envelope (`_correction_anchor`'s answer: the latest
+        classification of this item the user could see) carries the
+        post-correction-N state under ``data``. That's the picture the
+        human had on screen when they typed their note, so it's the
+        right anchor for "apply this correction as a delta": the LLM
+        works against what the user saw, not against the LLM's
+        untouched first pass. Each step (state_N + correction_(N+1) →
+        state_(N+1)) is deterministic; chaining them gives a
+        deterministic transform from the initial filing to the current
+        correction.
 
         Returned hint: numbered list when more than one correction is
         present, plain string for a single correction.
@@ -1087,21 +1154,9 @@ class ArchivistBot(MicroBot):
         if current_body:
             bodies.append(current_body)
 
-        # The IMMEDIATE parent is the latest classification the user
-        # replied to. Grab its envelope BEFORE walking back so we can
-        # hand it to the prompt as the delta-anchor; the walker itself
-        # only needs the chain of human turns.
-        latest_state: dict | None = None
-        parent_id = self._in_reply_to_id(event)
-        immediate = (
-            await self._fetch_event(room_id, parent_id) if parent_id else None
-        )
-        if immediate is not None and getattr(immediate, "sender", None) == self.user_id:
-            envelope = immediate.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
-            if isinstance(envelope, dict):
-                data = envelope.get("data")
-                if isinstance(data, dict):
-                    latest_state = data
+        data = anchor_envelope.get("data")
+        latest_state: dict | None = data if isinstance(data, dict) else None
+        parent_id = anchor_id
 
         # Each loop iteration consumes one (bot, prior-user) pair from
         # the chain. Bounded by the framework's in_reply_to depth and a
@@ -1145,12 +1200,6 @@ class ArchivistBot(MicroBot):
             "the same field; merge non-conflicting fields:\n" + numbered
         )
         return (hint, latest_state)
-
-    async def _collect_correction_hint(self, room_id: str, event) -> str:
-        """Back-compat wrapper -- some callers (and older tests) just
-        want the hint string. Internally delegates to the chain walker."""
-        hint, _initial = await self._collect_correction_chain(room_id, event)
-        return hint
 
     @staticmethod
     def _in_reply_to_id(event) -> str | None:
@@ -1552,48 +1601,27 @@ class ArchivistBot(MicroBot):
                 query = "help"
             query_lower = query.lower()
 
-        # ── Reply-to-classification: user is correcting a prior filing ──
-        # When the user replies to a bot's filing message WITHOUT
-        # @-mentioning the bot, that's a correction: trace back the
-        # target from the parent event's envelope, re-run the
-        # classifier with the user's message as an authoritative
-        # hint. An @-mention is a different intent -- the user is
-        # addressing the bot conversationally (search, help), so we
-        # skip the reprocess path and let the dispatcher route on
-        # query content instead. Some clients (Element X) attach
-        # `m.in_reply_to` to mentioned messages; without this guard
-        # those searches would be eaten by the reprocess path.
+        # ── Correcting a prior filing ────────────────────────────────
+        # A message that lands on one of our filings -- quoting it, or
+        # written in the thread it lives in -- WITHOUT @-mentioning the
+        # bot is a correction: `_correction_anchor` finds which item,
+        # and the classifier re-runs with the user's words as an
+        # authoritative hint.
+        #
+        # An @-mention is a different intent: the user is addressing
+        # the bot conversationally (search, help), and that stays true
+        # inside a filing thread, where "@archivist what else is from
+        # Duff?" is a question about the archive rather than a note on
+        # the document. Deliberate address beats ambient context, and
+        # it keeps the guard some clients need -- Element X attaches an
+        # `m.in_reply_to` to mentioned messages the user never aimed,
+        # and without this those searches would be eaten by reprocess.
         if not mentioned:
-            doc_id = await self._reply_target_doc_id(room.room_id, event)
-            if doc_id is not None:
-                hint, initial = await self._collect_correction_chain(
-                    room.room_id, event,
-                )
-                if hint:
-                    await self._handle_reply_reprocess(
-                        room.room_id, doc_id, hint, reply_to,
-                        date_filed=self._event_date(event),
-                        initial_classification=initial,
-                    )
-                    return
-
-            # Same shape for captures: a reply to a `capture.filed` or
-            # `capture.reclassified` confirmation reaches the capture
-            # pipeline's reprocess. The chain walker is generic over
-            # filing kind, so it Just Works for either side.
-            capture_path = await self._reply_target_capture_path(
-                room.room_id, event,
-            )
-            if capture_path is not None:
-                hint, initial = await self._collect_correction_chain(
-                    room.room_id, event,
-                )
-                if hint:
-                    await self._handle_reply_capture_reprocess(
-                        room.room_id, capture_path, hint, event.sender, reply_to,
-                        initial_classification=initial,
-                    )
-                    return
+            anchor = await self._correction_anchor(room.room_id, event)
+            if anchor is not None and await self._handle_correction(
+                room.room_id, event, anchor, reply_to,
+            ):
+                return
 
         if query_lower in HELP_COMMANDS:
             # Same per-room welcome the bot posted on first encounter

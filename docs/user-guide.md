@@ -153,6 +153,8 @@ Reply to the bot's filing confirmation with what's off:
 
 The archivist re-reads the document with your correction, re-files it, and confirms again. Corrections chain: if the second attempt is still off, reply to the new confirmation. Each reply carries the whole conversation back to the original document, so you never start over.
 
+Anything you write in the filing's thread counts as a correction, so you can also just type in the thread the bot answered in, or reply to your own original message. You do not have to quote the confirmation.
+
 This works for captures too: reply to a bookmark or note confirmation and it gets re-filed with your hint.
 
 ---
