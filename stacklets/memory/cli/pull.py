@@ -19,6 +19,7 @@ from lib import (  # noqa: E402
     BOT_USERNAME,
     authenticated_remote,
     ensure_vault_cloned,
+    host_code_url,
     pull_vault,
     vault_path_for,
     vault_remote_url,
@@ -39,7 +40,9 @@ def run(args, stacklet, config):
     # ever ran.
     if not (vault / ".git").exists():
         token = config.get("secrets", {}).get("memory__MEMORY_BOT_TOKEN", "")
-        code_url = config.get("secrets", {}).get("__code_url", "") or _code_url(config)
+        code_url = host_code_url(
+            config.get("secrets", {}).get("__code_url", "") or _code_url(config)
+        )
         if not (token and code_url):
             return {"error": "Vault not cloned and Forgejo credentials missing — run `stack up memory` first"}
         remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)

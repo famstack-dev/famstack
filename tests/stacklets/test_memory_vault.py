@@ -21,8 +21,10 @@ from lib import (  # noqa: E402
     authenticated_remote,
     ensure_vault_cloned,
     get_ontology,
+    host_code_url,
     load_ontology_from_vault,
     load_seed_ontology,
+    point_remote_at,
     pull_vault,
     refresh_vault_if_stale,
     vault_local_head,
@@ -110,6 +112,71 @@ class TestPathHelpers:
     def test_authenticated_remote_leaves_pathless_string_alone(self):
         # Not a real URL — no clobber.
         assert authenticated_remote("not a url", "u", "t") == "not a url"
+
+
+class TestHostSideRemoteUrl:
+    """A remote URL the host keeps has to survive the host changing address.
+
+    In port mode `{code_url}` renders the LAN IP, because it is also
+    the URL a phone on the couch clicks. Written into a git remote on
+    the machine itself, it lasts exactly as long as the DHCP lease.
+    """
+
+    def test_port_mode_remote_carries_no_lan_address(self):
+        remote = vault_remote_url(host_code_url("http://192.168.188.42:42040"))
+
+        assert "192.168.188.42" not in remote
+        assert remote == "http://127.0.0.1:42040/family/memory.git"
+
+    def test_the_published_port_is_kept(self):
+        # Loopback only reaches Forgejo on the port the stack publishes.
+        assert host_code_url("http://10.0.0.7:42040").endswith(":42040")
+
+    def test_domain_mode_hostname_is_left_alone(self):
+        # A DNS name does not move with the lease; rewriting it would
+        # break the one hosting mode that was never at risk.
+        assert host_code_url("https://code.simpsons.family") == \
+            "https://code.simpsons.family"
+
+    def test_container_service_name_is_left_alone(self):
+        # The curator's plane. `stack-code` is what makes it immune to
+        # the failure this function exists to fix.
+        assert host_code_url("http://stack-code:3000") == "http://stack-code:3000"
+
+    def test_operator_configured_hostname_is_left_alone(self):
+        # `[core].host = my-mac.local` is a deliberate, machine-following
+        # name, not an address handed out by a router.
+        assert host_code_url("http://my-mac.local:42040") == \
+            "http://my-mac.local:42040"
+
+
+class TestPointRemoteAt:
+    """Both halves of a remote URL rot: the host part with the next DHCP
+    lease, the embedded token when Forgejo expires it. Re-deriving the
+    whole URL on every start is what makes a restart the fix."""
+
+    def test_repoints_an_existing_remote(self, tmp_path, seeded_upstream):
+        vault = tmp_path / "vault"
+        ensure_vault_cloned(vault, str(seeded_upstream))
+
+        assert point_remote_at(vault, "http://memory-bot:fresh@127.0.0.1:42040/family/memory.git")
+
+        url = _run("git", "-C", str(vault), "remote", "get-url", "origin").stdout.strip()
+        assert url == "http://memory-bot:fresh@127.0.0.1:42040/family/memory.git"
+
+    def test_adds_the_remote_when_the_clone_has_none(self, tmp_path):
+        vault = tmp_path / "no-remote-vault"
+        _run("git", "init", "--initial-branch=main", str(vault))
+
+        assert point_remote_at(vault, "http://127.0.0.1:42040/family/memory.git")
+
+        url = _run("git", "-C", str(vault), "remote", "get-url", "origin").stdout.strip()
+        assert url == "http://127.0.0.1:42040/family/memory.git"
+
+    def test_a_directory_that_is_not_a_clone_is_not_touched(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        assert point_remote_at(plain, "http://127.0.0.1:42040/x.git") is False
 
 
 # ─── ensure_vault_cloned ─────────────────────────────────────────────────

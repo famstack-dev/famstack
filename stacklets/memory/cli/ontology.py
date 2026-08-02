@@ -30,6 +30,7 @@ from lib import (  # noqa: E402
     REPO_NAME,
     REPO_OWNER,
     SEED_ONTOLOGY_PATH,
+    host_code_url,
     pull_vault,
     vault_path_for,
 )
@@ -48,7 +49,7 @@ def run(args, stacklet, config):
     seed_text = SEED_ONTOLOGY_PATH.read_text(encoding="utf-8")
 
     secrets = config.get("secrets", {}) if config else {}
-    code_url = secrets.get("__code_url", "") or _code_url(config)
+    code_url = host_code_url(secrets.get("__code_url", "") or _code_url(config))
     vault = vault_path_for(Path(data_dir))
     # Two install paths leave creds in different places: the bot-token
     # install ships a `memory__MEMORY_BOT_TOKEN` secret; the admin-only

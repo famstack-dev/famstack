@@ -59,9 +59,15 @@ sys.path.insert(0, "/app")  # stack.* framework
 
 from loguru import logger  # noqa: E402
 from memory.lib import (  # noqa: E402
+    PRESERVE_LOCAL,
+    RESET_LOCAL,
+    SyncResult,
     _parse_frontmatter,
     authenticated_remote,
     brain_remote_url,
+    is_auth_failure,
+    reconcile_with_remote,
+    run_git,
     vault_remote_url,
 )
 
@@ -420,15 +426,71 @@ def nightly_due(nightly: str, last_run_date: str, now_local: time.struct_time) -
     return (now_local.tm_hour, now_local.tm_min) >= (hour, minute)
 
 
+# ── Remotes and sync reporting ───────────────────────────────────────────
+
+
+def curator_remote(build_url) -> str | None:
+    """Build a container-plane remote URL from the environment, or None.
+
+    Read fresh on every call rather than captured at boot: this is also
+    the recovery path for a credential Forgejo has since rejected, and
+    a value cached at startup can only ever hand back the rejected one.
+    The service name in `CODE_URL` is what makes the container plane
+    immune to the DHCP lease that broke the host plane.
+    """
+    code_url = os.environ.get("CODE_URL", "")
+    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+    if not (code_url and admin_user and admin_password):
+        return None
+    return authenticated_remote(build_url(code_url), admin_user, admin_password)
+
+
+# What a reconcile outcome means for whoever is reading the logs. The
+# healthy statuses say nothing at all; everything else is the data
+# plane failing to make progress, and this incident is what happens
+# when that is filed under DEBUG: a sync that had not worked in weeks,
+# retrying quietly every 30 seconds, with no line anywhere to show it.
+_SYNC_REPORT = {
+    "up_to_date":          (None, ""),
+    "fast_forwarded":      (None, ""),
+    "ahead":               (None, ""),
+    "pushed":              ("info", "{label}: pushed local commits to Forgejo"),
+    "rebased":             ("warning", "{label}: local commits replayed onto the remote and pushed"),
+    "rebased_unpushed":    ("warning", "{label}: local commits replayed onto the remote but the push failed ({detail})"),
+    "push_failed":         ("warning", "{label}: local commits could not be pushed ({detail})"),
+    "reset_to_remote":     ("warning", "{label}: realigned to the remote (projection, rebuilt from source)"),
+    "preserved_and_reset": ("warning", "{label}: unrelated history, local history kept on branch {detail} and the working copy reset to the remote"),
+    "unreachable":         ("warning", "{label}: Forgejo unreachable, sync is not making progress ({detail})"),
+    "auth_failed":         ("error", "{label}: Forgejo rejected the credentials, sync is stuck until they are refreshed ({detail})"),
+    "failed":              ("error", "{label}: git refused the recovery ({detail})"),
+}
+
+
+def report_sync(label: str, result: SyncResult) -> SyncResult:
+    """Log a reconcile outcome at a level that matches its severity."""
+    level, template = _SYNC_REPORT.get(
+        result.status, ("warning", "{label}: unexpected sync status {detail}"),
+    )
+    if level is not None:
+        getattr(logger, level)(
+            "[curator] "
+            + template.format(label=label, detail=result.detail or result.status),
+        )
+    return result
+
+
 # ── Git plumbing ─────────────────────────────────────────────────────────
 
 class Vault:
-    """Read-only git view of the vault working copy.
+    """The curator's git view of the vault working copy.
 
-    The wiki container owns the `git pull`; we only ever read. The
-    bind-mounted repo belongs to the host user, so git's dubious-
-    ownership check is satisfied via a private GIT_CONFIG_GLOBAL
-    rather than touching any shared config.
+    Reads only, with one exception: `sync` may replay local commits
+    onto the remote to get out of a divergence. It never authors vault
+    content — memory's writers stay the archivist, the CLI, and humans
+    (ADR-011). The bind-mounted repo belongs to the host user, so git's
+    dubious-ownership check is satisfied via a private
+    GIT_CONFIG_GLOBAL rather than touching any shared config.
     """
 
     def __init__(self, path: Path):
@@ -452,28 +514,48 @@ class Vault:
         out = await asyncio.to_thread(self._run, "rev-parse", "HEAD")
         return out.strip() if out else None
 
-    async def sync(self) -> None:
-        """Fast-forward the working copy from Forgejo.
+    async def sync(self) -> SyncResult:
+        """Reconcile the working copy with Forgejo, recovering if wedged.
 
-        Same cheap shape the wiki entrypoint used before the curator
-        took ownership: an idle tick is one `ls-remote` ref query, the
-        fetch + ff happens only when the remote actually moved. Never
-        fatal — Forgejo briefly unreachable means the tick is skipped
-        and everything keeps serving what is on disk.
+        The vault is the database (ADR-011), so its policy is
+        `PRESERVE_LOCAL`: a local-only commit may be a todo tick, which
+        exists nowhere else, and is replayed onto the remote rather
+        than dropped. Only a history with no merge base at all — the
+        remote repo re-created underneath us — makes the working copy
+        step aside, and then onto a branch that keeps every commit.
+
+        One fetch per tick replaces the old `ls-remote` probe. It costs
+        the same ref exchange when there is nothing new, and having the
+        remote's objects already in hand is what lets a recovery decide
+        and act without a second round trip.
+
+        Never fatal. Forgejo briefly unreachable means the tick is
+        skipped and everything keeps serving what is on disk. It is no
+        longer *silent*, though: anything short of progress is logged
+        where an operator sees it.
         """
-        def _sync() -> None:
-            # Same tick shape as the old wiki entrypoint loop: skip on
-            # any read failure, compare refs, pull only on real change.
-            local = self._run("rev-parse", "HEAD")
-            if not local:
-                return
-            remote = self._run("ls-remote", CURATOR_REMOTE, "HEAD")
-            remote_head = remote.split()[0] if remote and remote.split() else ""
-            if not remote_head or local.strip() == remote_head:
-                return
-            self._run("pull", "--quiet", "--ff-only", CURATOR_REMOTE, "main")
+        return await asyncio.to_thread(self._sync)
 
-        await asyncio.to_thread(_sync)
+    def _sync(self) -> SyncResult:
+        result = self._reconcile()
+        if result.status == "auth_failed" and self._refresh_remote():
+            # The rejected credential may simply be the one we cached at
+            # boot. Re-derive from the current environment and try once
+            # more, then stop: a second failure is a real one.
+            result = self._reconcile()
+        return report_sync("vault", result)
+
+    def _reconcile(self) -> SyncResult:
+        return reconcile_with_remote(
+            self.path, CURATOR_REMOTE, recovery=PRESERVE_LOCAL, env=self._env,
+        )
+
+    def _refresh_remote(self) -> bool:
+        url = curator_remote(vault_remote_url)
+        if not url:
+            return False
+        self.ensure_remote(CURATOR_REMOTE, url)
+        return True
 
     def ensure_remote(self, name: str, url: str) -> None:
         """Idempotently point the named remote at `url` (add on first boot)."""
@@ -532,17 +614,14 @@ class Brain:
         self.source = source
         self._env = {**os.environ, "GIT_CONFIG_GLOBAL": "/tmp/curator-gitconfig"}
 
-    def _run(self, *args: str) -> tuple[int, str]:
-        result = subprocess.run(
-            ["git", "-C", str(self.path), *args],
-            capture_output=True, text=True, env=self._env,
-        )
-        if result.returncode != 0:
-            logger.debug("[curator] brain git {} failed: {}", args[0], result.stderr.strip())
-        return result.returncode, result.stdout
+    def _run(self, *args: str) -> tuple[int, str, str]:
+        rc, out, err = run_git(self.path, *args, env=self._env)
+        if rc != 0:
+            logger.debug("[curator] brain git {} failed: {}", args[0], err)
+        return rc, out, err
 
     async def tracked_files(self) -> list[str]:
-        _, out = await asyncio.to_thread(self._run, "ls-files")
+        _, out, _ = await asyncio.to_thread(self._run, "ls-files")
         return [p for p in out.splitlines() if p.strip()]
 
     def frontmatter_at(self, path: str) -> dict:
@@ -586,9 +665,9 @@ class Brain:
         commit, which is still a success)."""
         self._run("add", "-A")
         # `diff --cached --quiet` exits 1 when staged changes exist.
-        code, _ = self._run("diff", "--cached", "--quiet")
+        code, _, _ = self._run("diff", "--cached", "--quiet")
         if code != 0:
-            rc, _ = self._run(
+            rc, _, _ = self._run(
                 "-c", f"user.name={_BRAIN_AUTHOR_NAME}",
                 "-c", f"user.email={_BRAIN_AUTHOR_EMAIL}",
                 "commit", "-m", message,
@@ -598,24 +677,64 @@ class Brain:
         # Push even with nothing newly committed: a prior cycle may have
         # committed locally and lost the push (Forgejo briefly down), and
         # "nothing to commit" must not report that state as in-sync.
-        rc, _ = self._run("push", "--quiet", CURATOR_REMOTE, "main")
-        if rc != 0:
-            # Brain is a disposable, single-writer projection (ADR-011).
-            # A diverged remote is residue of a retired second writer or
-            # a wiped clone — the working copy is the truth, overwrite.
-            rc, _ = self._run("push", "--quiet", "--force", CURATOR_REMOTE, "main")
+        rc, _, err = self._run("push", "--quiet", CURATOR_REMOTE, "main")
+        if rc == 0:
+            return True
+        if is_auth_failure(err) and self._refresh_remote():
+            rc, _, err = self._run("push", "--quiet", CURATOR_REMOTE, "main")
             if rc == 0:
-                logger.warning("[curator] brain remote diverged — overwrote (projection is disposable)")
-        return rc == 0
+                return True
+        # No force-push here any more. Forcing was indiscriminate: it
+        # fired on every failure, including the 403 from a `family/brain`
+        # that had never been created, where it could not help and its
+        # "remote diverged" line actively hid the real cause. A refused
+        # push now says why, and a genuinely diverged remote is handled
+        # by `sync` at the top of the next cycle, which realigns and
+        # re-projects instead of overwriting history.
+        logger.error("[curator] brain push failed, projection is not reaching Forgejo: {}", err)
+        return False
 
     def ensure_remote(self, name: str, url: str) -> None:
         """Idempotently point the named remote at `url` (add on first boot)."""
-        code, _ = self._run("remote", "set-url", name, url)
+        code, _, _ = self._run("remote", "set-url", name, url)
         if code != 0:
             self._run("remote", "add", name, url)
 
+    def _refresh_remote(self) -> bool:
+        url = curator_remote(brain_remote_url)
+        if not url:
+            return False
+        self.ensure_remote(CURATOR_REMOTE, url)
+        return True
+
     async def commit_push(self, message: str) -> bool:
         return await asyncio.to_thread(self._commit_push, message)
+
+    async def sync(self) -> SyncResult:
+        """Reconcile the projection with its remote before rebuilding it.
+
+        Brain is machine-owned and regenerable (ADR-011), so its policy
+        is `RESET_LOCAL`: if the remote holds commits this copy does not,
+        or the repo was re-created and shares no history at all, the
+        remote is simply taken as the new base. Nothing is preserved
+        because nothing here is irreplaceable; the caller re-projects
+        from memory on top.
+
+        Local commits that are merely ahead are left alone — those are
+        last cycle's projection waiting on a push, not a divergence.
+        """
+        return await asyncio.to_thread(self._sync)
+
+    def _sync(self) -> SyncResult:
+        result = self._reconcile()
+        if result.status == "auth_failed" and self._refresh_remote():
+            result = self._reconcile()
+        return report_sync("brain", result)
+
+    def _reconcile(self) -> SyncResult:
+        return reconcile_with_remote(
+            self.path, CURATOR_REMOTE, recovery=RESET_LOCAL, env=self._env,
+        )
 
 
 # ── Rebuild ──────────────────────────────────────────────────────────────
@@ -681,14 +800,11 @@ async def main() -> None:
     # the host CLI set and use it); it is unreachable from inside this
     # container. Give the curator its own remote on the stack network.
     # Auth: the unified stack admin is also Forgejo's admin.
-    code_url = os.environ.get("CODE_URL", "")
-    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
-    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-    if code_url and admin_user and admin_password:
-        vault.ensure_remote(CURATOR_REMOTE, authenticated_remote(
-            vault_remote_url(code_url), admin_user, admin_password))
-        brain.ensure_remote(CURATOR_REMOTE, authenticated_remote(
-            brain_remote_url(code_url), admin_user, admin_password))
+    vault_url = curator_remote(vault_remote_url)
+    brain_url = curator_remote(brain_remote_url)
+    if vault_url and brain_url:
+        vault.ensure_remote(CURATOR_REMOTE, vault_url)
+        brain.ensure_remote(CURATOR_REMOTE, brain_url)
     else:
         logger.warning("[curator] no CODE_URL/admin creds — remote sync disabled, serving local state")
 
@@ -773,6 +889,17 @@ async def main() -> None:
         head = await vault.head()
         if not head:
             continue
+
+        # Brain has to start the cycle on top of the remote it is about
+        # to push to. Skip this and a remote that moved — or was
+        # re-created, which is how this failure actually arrives — turns
+        # every push from here on into a rejection. A realignment throws
+        # away the local projection, which is regenerable, so the mirror
+        # state is cleared with it and the block below rebuilds brain
+        # from memory in full.
+        if (await brain.sync()).status == "reset_to_remote":
+            mirror_sha = ""
+            mirror_file.unlink(missing_ok=True)
 
         # ── Source mirror (memory -> brain) ───────────────────────────
         # Data-plane like the pull: brain must always carry memory's
