@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
 COPY resolver.py .
+COPY capture_index.py .
 
 # --gecos "" suppresses the interactive Full Name/Room/Phone prompts
 RUN adduser --disabled-password --gecos "" --uid 1000 tools

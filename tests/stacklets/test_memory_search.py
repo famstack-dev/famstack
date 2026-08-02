@@ -347,7 +347,7 @@ class TestSearchMemoryLib:
         assert set(r.keys()) == {
             "path", "rel", "title", "date",
             "persons", "tags", "excerpt", "summary",
-            "paperless_id",
+            "paperless_id", "capture_id",
         }
         assert r["rel"].endswith("radlager.md")
         assert r["persons"] == ["Homer"]

@@ -56,17 +56,20 @@ class TestMemoryDocUrl:
 
 class TestPaperlessDocUrl:
 
-    def test_returns_empty_without_public_url(self):
+    def test_returns_empty_without_link_base(self):
         assert paperless_doc_url(42) == ""
 
     def test_returns_empty_without_doc_id(self):
         # A doc without an id is malformed; surface that as "no link"
         # so the formatter falls back to a bold title.
-        assert paperless_doc_url(None, public_url="https://p") == ""
+        assert paperless_doc_url(None, link_base_url="https://home.example/go") == ""
 
-    def test_builds_detail_page_url(self):
-        url = paperless_doc_url(42, public_url="https://paperless.example")
-        assert url == "https://paperless.example/documents/42/details"
+    def test_builds_persistent_go_link(self):
+        # A search result sits in Matrix history forever, so the link
+        # is logical: the resolver points it at the document wherever
+        # it lives when someone finally clicks it.
+        url = paperless_doc_url(42, link_base_url="https://home.example/go")
+        assert url == "https://home.example/go/docs/42"
 
 
 # ── Memory hit formatting ────────────────────────────────────────────────
@@ -165,15 +168,15 @@ class TestFormatPaperlessHit:
             "created": "2026-01-15T08:00:00Z",
         } | overrides
 
-    def test_includes_linked_title_with_public_url(self):
+    def test_includes_linked_title_with_link_base(self):
         out = format_paperless_hit(
-            self._doc(), 1, public_url="https://paperless.example",
+            self._doc(), 1, link_base_url="https://home.example/go",
         )
-        assert "[Globex KFZ Versicherung 2026](https://paperless.example/documents/42/details)" in out
+        assert "[Globex KFZ Versicherung 2026](https://home.example/go/docs/42)" in out
 
     def test_meta_carries_date_and_doc_id(self):
         out = format_paperless_hit(
-            self._doc(), 1, public_url="https://p",
+            self._doc(), 1, link_base_url="https://home.example/go",
         )
         # The created stamp is truncated to YYYY-MM-DD; #id is the
         # second metadata segment.

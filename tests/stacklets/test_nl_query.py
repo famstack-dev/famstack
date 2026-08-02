@@ -79,13 +79,13 @@ class TestBuildEvidence:
         assert ev[0]["url"].startswith("https://code.example/")
         assert "family/memory/src/branch/main/family/notes/x.md" in ev[0]["url"]
 
-    def test_paperless_url_built_when_public_url_set(self):
+    def test_paperless_url_built_when_link_base_set(self):
         ev = build_evidence(
             memory_results=[],
             paperless_results=[{"id": 42, "title": "T", "created": "2026-01-01T00:00:00Z"}],
-            paperless_public_url="https://paperless.example",
+            link_base_url="https://home.example/go",
         )
-        assert ev[0]["url"] == "https://paperless.example/documents/42/details"
+        assert ev[0]["url"] == "https://home.example/go/docs/42"
 
     def test_summary_falls_back_to_excerpt(self):
         # A vault file older than the classifier has no `> [!summary]`

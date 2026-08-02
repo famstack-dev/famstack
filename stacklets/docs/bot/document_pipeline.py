@@ -38,6 +38,7 @@ from pipeline import (
     reformat_document,
 )
 from stack import resolve_model
+from stack.links import go_docs, public
 
 # Text-like extensions skip reformat (the content is already clean) but
 # still classify + mirror. Paperless only parses text/plain and text/csv,
@@ -140,6 +141,7 @@ class DocumentPipeline:
         vision_max_pdf_pages: int,
         reformat_max_pdf_pages: int,
         paperless_public_url: str,
+        link_base_url: str,
         actor: str,
         vault,
     ):
@@ -154,6 +156,7 @@ class DocumentPipeline:
         self.vision_max_pdf_pages = vision_max_pdf_pages
         self.reformat_max_pdf_pages = reformat_max_pdf_pages
         self.paperless_public_url = paperless_public_url
+        self.link_base_url = link_base_url
         self.actor = actor
         self._vault = vault
 
@@ -211,10 +214,7 @@ class DocumentPipeline:
         if not doc_id:
             return FilingOutcome(status="ocr_failed", display_name=display_name)
 
-        link = (
-            f"{self.paperless_public_url}/documents/{doc_id}/details"
-            if self.paperless_public_url else ""
-        )
+        link = public(go_docs(doc_id), self.link_base_url)
         doc = await self._paperless.get_doc(doc_id)
         if not doc:
             # Filed but unreadable — still mirror a minimal entry so
@@ -286,7 +286,7 @@ class DocumentPipeline:
                 resolved_persons=result.resolved_persons,
                 resolved_correspondent=result.resolved_correspondent,
                 resolved_type=result.resolved_type,
-                paperless_url=self.paperless_public_url,
+                link_base_url=self.link_base_url,
                 actor=self.actor,
                 ts=utc_now_isoformat(),
             )
@@ -451,7 +451,7 @@ class DocumentPipeline:
             resolved_persons=result.resolved_persons,
             resolved_correspondent=result.resolved_correspondent,
             resolved_type=result.resolved_type,
-            paperless_url=self.paperless_public_url,
+            link_base_url=self.link_base_url,
             actor=self.actor,
             ts=utc_now_isoformat(),
         )

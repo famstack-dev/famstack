@@ -561,12 +561,14 @@ class TestBuildDocumentEvent:
         assert evt["data"]["correspondent"] == "Duff Insurance"
         assert evt["data"]["document_type"] == "Invoice"
 
-    def test_includes_paperless_url(self):
+    def test_includes_persistent_document_link(self):
+        # The envelope lives in Matrix history, so its link is the
+        # logical one -- it still resolves after a domain change.
         evt = build_document_event(
             42, {},
-            paperless_url="http://localhost:42020",
+            link_base_url="http://localhost:42000/go",
         )
-        assert evt["data"]["url"] == "http://localhost:42020/documents/42/details"
+        assert evt["data"]["url"] == "http://localhost:42000/go/docs/42"
 
     def test_no_url_when_empty(self):
         evt = build_document_event(42, {})
