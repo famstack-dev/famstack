@@ -33,6 +33,26 @@ third tier (chat-triggered rebuild) is a card.
   bot-runner service concept (one consumer), bot-runner image reuse
   (the curator uses 2 of its 10 deps; slim image won).
 
+## Both halves of a Matrix relation (thread corrections, 2026-08-02)
+
+The archivist learned to *answer* in a thread (`_answer`, `REPLY_IN_THREAD`)
+but kept *reading* one `m.in_reply_to` hop, so a correction typed in a
+filing's thread was routed to search. A client's reply pointer inside a
+thread is a falling-back rendering aid at the newest event there, not the
+message the human aimed at, so the pointer stopped naming our filing the
+moment anything followed it (a todo link, a status line).
+
+The general shape, worth checking whenever a bot gains a new relation
+type: **whoever teaches the sender a relation owns teaching the reader
+the same one.** Half a relation is worse than none, because the send
+side looks right in the client while routing silently degrades.
+
+Also why it survived a release: the intent spec that would have caught it
+(`tests/integration/test_room_modes_e2e.py`) is marked
+`xfail(strict=False)`, which is green when broken and green when fixed.
+A non-strict xfail is not coverage. Making it `strict=True`, skipping it
+with a reason, or deleting it are all better; the action is FAM-6.
+
 ## Surviving upstream drift: the `wait_task` pattern
 
 When Paperless-ngx 3.0 redesigned its task API, the fix that held up was

@@ -1,4 +1,6 @@
-matrix-nio[e2e]>=0.24,<1.0
+# 0.25 is the floor: reading a thread's events (`room_get_event_relations`,
+# how the bot finds the filing a correction belongs to) arrived there.
+matrix-nio[e2e]>=0.25,<1.0
 aiohttp>=3.9,<4.0
 loguru>=0.7,<1.0
 Pillow>=10.0,<12.0
