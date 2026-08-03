@@ -45,6 +45,10 @@ DOMAIN_ALLOW = [
     ["memory", "topic"],
     ["memory", "lookup"],
     ["memory", "correspondents"],
+    # The agent's only way to put something *into* the vault. It runs the
+    # archivist's own pipeline, so what the agent files is classified,
+    # attributed and mirrored exactly like a note pasted into a room.
+    ["memory", "capture"],
     ["docs", "show"],
 ]
 
