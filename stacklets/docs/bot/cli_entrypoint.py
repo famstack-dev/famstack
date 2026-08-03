@@ -29,6 +29,12 @@ Commands:
                                     family/memory vault (no LLM). Useful
                                     for backfilling existing docs into
                                     a freshly-installed memory vault.
+    capture "<text>" --by <person> [--bucket <scope>]
+                                    file a note into the memory vault
+                                    through the archivist's own pipeline.
+                                    Reached as `stack memory capture`;
+                                    it lives here only while the capture
+                                    pipeline does. See cli/capture.py.
     tags [--types] [--used|--unused] [--owner=N]
                                     list tags or document_types
     tags merge <from> <to> [--type] [--dry]    retag docs, drop source
@@ -60,7 +66,7 @@ import aiohttp
 
 from pipeline import Classifier, PaperlessAPI
 
-from cli import classify, mirror, reformat, reprocess, show, tags
+from cli import capture, classify, mirror, reformat, reprocess, show, tags
 from cli._shared import err
 
 
@@ -71,6 +77,7 @@ _HANDLERS = {
     "reprocess": reprocess.run,
     "mirror": mirror.run,
     "tags": tags.run,
+    "capture": capture.run,
 }
 
 
