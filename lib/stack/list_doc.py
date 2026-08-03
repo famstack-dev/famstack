@@ -176,6 +176,7 @@ def diff(before: str, after: str) -> Change:
 
 # ── internals ───────────────────────────────────────────────────────────────
 
+
 def _norm(text: str) -> str:
     """Whitespace- and case-insensitive identity of a task."""
     return " ".join(text.split()).lower()

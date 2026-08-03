@@ -40,13 +40,19 @@ WHAT COMES BACK
     reports what the edit actually did: ticked off, added, moved, reworded,
     and -- named in full, always -- removed. A caller that rewrote a page and
     silently dropped six items learns so immediately, which is the whole
-    reason a primitive write is safe to hand to a model at all. The same
-    sentence becomes the commit message, so history says what happened rather
-    than "updated todos.md".
+    reason a primitive write is safe to hand to a model at all. Any other
+    page gets the honest general answer, how many lines went each way.
+
+    That same sentence is the commit subject. The vault's history is read --
+    by a person scrolling Forgejo, and by anyone asking the agent what
+    changed this week -- and a log of two hundred identical "updated
+    todos.md" lines answers none of it. What the edit did is already known
+    at the moment of writing, so it costs nothing to say it where it lasts.
 """
 
 HELP = "Replace a page in the family memory vault"
 
+import difflib
 import json
 import sys
 from pathlib import Path
@@ -127,7 +133,8 @@ def run(args, stacklet, config):
     # the sentence already says which line and what to do.
     result = update_memory(
         config, repo_path, _replace, actor=actor,
-        message=f"chore(memory): {actor} updated {repo_path}",
+        message=lambda before, after: _commit_message(
+            actor, repo_path, describe(before, after, repo_path)),
     )
     if "error" in result:
         if as_patch and isinstance(result.get("error"), str):
@@ -136,9 +143,9 @@ def run(args, stacklet, config):
 
     before, after = seen.get("before", ""), seen.get("after", "")
     change = diff(before, after) if repo_path.endswith("todos.md") else None
+    told = describe(before, after, repo_path)
 
     if preview:
-        told = change.summary() if change else "page replaced"
         print(f"Would write {repo_path} (by {actor}); nothing committed\n  {told}")
         return {
             "ok": True, "committed": False, "preview": True, "path": repo_path,
@@ -151,7 +158,6 @@ def run(args, stacklet, config):
         print(f"{repo_path} was already exactly this; nothing to commit")
         return {"ok": True, "committed": False, "path": repo_path}
 
-    told = change.summary() if change else "page replaced"
     print(f"Wrote {repo_path} (by {actor})\n  {told}")
     return {
         "ok": True, "committed": True, "path": repo_path, "by": actor,
@@ -159,6 +165,62 @@ def run(args, stacklet, config):
         "destructive": bool(change and change.destructive()),
         "removed": list(change.removed) if change else [],
     }
+
+
+def describe(before: str, after: str, repo_path: str) -> str:
+    """One line saying what this edit did to this page.
+
+    A list can be described in the family's own terms -- ticked off, added,
+    removed -- because we know what a list is. Any other page gets the honest
+    general answer rather than a fabricated one: how much text went each way.
+    Vague beats wrong in a commit subject somebody will read back later.
+    """
+    if repo_path.endswith("todos.md"):
+        return diff(before, after).summary()
+    plus, minus = _line_delta(before, after)
+    if not (plus or minus):
+        return "no change"
+    return f"changed +{plus}/-{minus} lines"
+
+
+def _line_delta(before: str, after: str) -> tuple[int, int]:
+    lines = difflib.unified_diff((before or "").splitlines(),
+                                 (after or "").splitlines(), n=0, lineterm="")
+    plus = sum(1 for ln in lines if ln.startswith("+") and not ln.startswith("+++"))
+    # `unified_diff` is a generator, so it is spent; re-run it for the other side.
+    lines = difflib.unified_diff((before or "").splitlines(),
+                                 (after or "").splitlines(), n=0, lineterm="")
+    minus = sum(1 for ln in lines if ln.startswith("-") and not ln.startswith("---"))
+    return plus, minus
+
+
+# Git's own convention, and Forgejo truncates past roughly this in a list view.
+_SUBJECT_MAX = 72
+
+
+def _where(repo_path: str) -> str:
+    """The place a subject line names: a topic, or whose page it is.
+
+    Not the full path. Git already records which file changed, so spelling
+    `family/camping/todos.md` in the subject spends the line's whole budget
+    on something the commit says twice -- and pushes an ordinary tick-off
+    over the limit. The curator has always said "in camping"; match it.
+    """
+    parts = repo_path.rsplit("/", 2)
+    return parts[-2] if len(parts) > 1 else parts[-1].removesuffix(".md")
+
+
+def _commit_message(actor: str, repo_path: str, told: str) -> str:
+    """The commit subject, with the detail moved below it when it is long.
+
+    A removal names every item it lost, deliberately, so this is exactly the
+    case that overflows a subject line. Nothing is dropped: the long form
+    moves into the body, where git and Forgejo both still show it.
+    """
+    line = f"chore(memory): {actor} {told} in {_where(repo_path)}"
+    if len(line) <= _SUBJECT_MAX:
+        return line
+    return f"chore(memory): {actor} updated {repo_path}\n\n{told}"
 
 
 def _opt(argv, flag):

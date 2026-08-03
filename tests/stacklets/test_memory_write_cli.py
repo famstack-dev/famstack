@@ -79,9 +79,16 @@ def store(monkeypatch, tmp_path):
                 return {"error": str(e)}
             if after == self.page:
                 return {"ok": True, "committed": False}
+            # A caller may describe its own edit only once the transform has
+            # met the current text, so the subject may be a function of both.
+            subject = message(self.page, after) if callable(message) else message
             self.page = after
-            self.commits.append((actor, message))
+            self.commits.append((actor, subject))
             return {"ok": True, "committed": True, "path": repo_path}
+
+        @property
+        def last_subject(self):
+            return self.commits[-1][1]
 
     fake = _Store()
     monkeypatch.setattr(write_cli, "update_memory", fake.update_memory)
@@ -209,6 +216,71 @@ def test_a_preview_still_refuses_a_patch_that_does_not_fit(store, tmp_path):
 
 
 # ── the ordinary refusals ────────────────────────────────────────────────
+
+# ── what the history ends up saying ──────────────────────────────────────
+
+def test_the_commit_says_what_the_edit_did(store, tmp_path):
+    """History is read, by a person in Forgejo and by the agent.
+
+    Two hundred commits all reading "updated todos.md" answer no question
+    anyone actually asks. What changed is already known at the moment of
+    writing, so it costs nothing to record it where it lasts.
+    """
+    _run(store, _edits(("- [ ] Wetter checken", "- [x] Wetter checken")),
+         "--patch", tmp=tmp_path)
+
+    assert store.last_subject == (
+        "chore(memory): marge ticked off 1: Wetter checken in camping"
+    )
+
+
+def test_the_subject_names_the_topic_not_the_path(store, tmp_path):
+    """Git already records the file, so the subject must not spend its
+    budget saying it twice. Spelling the full path pushed an ordinary
+    tick-off past the line limit, which demoted almost every real edit to
+    the generic fallback -- the exact outcome this is meant to avoid."""
+    store.page = "# Homer\n\nWorks at the plant.\n"
+    _run(store, "# Homer\n\nWorks at the plant.\nLikes donuts.\n",
+         path="homer/about.md", tmp=tmp_path)
+
+    assert store.last_subject.endswith("in homer")
+
+
+def test_a_page_that_is_not_a_list_still_says_something_true(store, tmp_path):
+    """Lists are one kind of page; the vault is mostly other kinds.
+
+    We cannot describe a profile edit in the family's terms without
+    inventing meaning, so it gets the honest general answer instead of a
+    confident wrong one.
+    """
+    store.page = "# Homer\n\nWorks at the plant.\n"
+    result = _run(store, "# Homer\n\nWorks at the plant.\nLikes donuts.\n",
+                  path="homer/about.md", tmp=tmp_path)
+
+    assert result["summary"] == "changed +1/-0 lines"
+    assert store.last_subject == (
+        "chore(memory): marge changed +1/-0 lines in homer"
+    )
+
+
+def test_a_long_description_moves_below_the_subject_intact(store, tmp_path):
+    """A removal names every item, so it is the case that overflows.
+
+    Truncating would drop exactly the detail worth keeping, so the long
+    form moves into the commit body, which git and Forgejo both show.
+    """
+    store.page = ("# Camping\n\n"
+                  + "".join(f"- [ ] Ausruestungsgegenstand Nummer {n}\n"
+                            for n in range(1, 6)))
+    result = _run(store, "# Camping\n\n- [ ] Ausruestungsgegenstand Nummer 1\n",
+                  tmp=tmp_path)
+
+    subject, _, body = store.last_subject.partition("\n\n")
+    assert len(subject) <= 72, "the subject line stays readable"
+    assert "family/camping/todos.md" in subject
+    for gone in result["removed"]:
+        assert gone in body, "every lost item survives in the body"
+
 
 def test_a_path_that_is_not_a_page_is_refused(store, tmp_path):
     result = _run(store, "x", path="family/camping/photo.jpg", tmp=tmp_path)

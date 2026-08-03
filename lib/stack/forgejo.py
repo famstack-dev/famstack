@@ -327,7 +327,7 @@ class ForgejoClient:
 
     def edit_file(self, owner: str, repo: str, path: str,
                   transform: Callable[[str], str], *,
-                  message: str, branch: str = "main",
+                  message: str | Callable[[str, str], str], branch: str = "main",
                   author_name: str | None = None,
                   author_email: str | None = None) -> dict | None:
         """Read a file, run `transform` over its text, and commit the result.
@@ -342,6 +342,14 @@ class ForgejoClient:
         churn the repo with empty commits. `author_name`/`author_email` set the
         commit author, so the person who triggered the change owns it in the
         history, not the token's identity.
+
+        `message` may be a callable taking the text before and after. Only the
+        caller of a read-modify-write knows what its own transform did, and it
+        cannot know before the transform has run against the current file --
+        which is after the point a plain string would have had to be decided.
+        Passing the function instead is what lets a commit subject say "ticked
+        off Kühlbox" rather than "updated todos.md", and a history worth
+        reading is the difference.
         """
         existing = self.get_file(owner, repo, path, ref=branch)
         prior = existing.get("content", "") if existing else ""
@@ -349,9 +357,10 @@ class ForgejoClient:
         merged = transform(prior)
         if merged == prior:
             return None
+        subject = message(prior, merged) if callable(message) else message
         return self.put_file(
             owner, repo, path,
-            content=merged, message=message, branch=branch, sha=sha,
+            content=merged, message=subject, branch=branch, sha=sha,
             author_name=author_name, author_email=author_email,
         )
 

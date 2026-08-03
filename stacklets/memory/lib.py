@@ -671,7 +671,8 @@ def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
 
 def update_memory(config: dict, repo_path: str,
                   transform: Callable[[str], str], *,
-                  actor: str, message: str) -> dict:
+                  actor: str,
+                  message: str | Callable[[str, str], str]) -> dict:
     """Commit a transform of one vault file to Forgejo, attributed to `actor`.
 
     The single write seam for deterministic memory mutations. It runs
@@ -680,6 +681,11 @@ def update_memory(config: dict, repo_path: str,
     Forgejo (not the possibly-stale local clone), applying `transform`,
     committing with `actor` as the git author, then fast-forwarding the local
     clone so a following read reflects the change.
+
+    `message` may be a function of the text before and after, for a caller
+    that can only describe its own edit once the transform has met the
+    current file. The vault's history is read by people and by the agent, so
+    a subject that names what changed is worth the indirection.
 
     Returns the framework envelope: `{"ok": True, "committed": bool}` on
     success (committed=False when the transform was a no-op, so nothing was
