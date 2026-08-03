@@ -55,6 +55,32 @@ DOMAIN_ALLOW = [
     ["docs", "show"],
 ]
 
+# Reads under an allowed prefix that are actually writes. `memory topic <slug>
+# todo` is a read the agent needs, but `todo add|strike` under the same prefix
+# is a second way to change a list, and given both the model picks the per-item
+# verb even for a structural edit -- asked to split a list in two it ticked off
+# two unrelated items and described a split that never happened. People and
+# scripts keep these verbs on the host CLI, where a deterministic non-LLM path
+# is worth having; the agent gets one way, and the refusal says which.
+DOMAIN_DENY = [
+    (("memory", "topic"), ("add", "strike", "unstrike")),
+]
+DENY_HINT = (
+    "error: the agent does not change lists item by item. Read the page with "
+    "read_file on vault/family/<topic>/todos.md, then write_file the complete "
+    "new contents to the same path. Ticking off is '- [x]'; a second list is a "
+    "'## ' heading.\n"
+)
+
+
+def _is_denied_write(args):
+    """True when an allowed prefix is being used for a write the agent owns
+    through the page-rewrite path instead."""
+    return any(
+        tuple(args[:len(prefix)]) == prefix and any(v in args for v in verbs)
+        for prefix, verbs in DOMAIN_DENY
+    )
+
 
 def handle_request(data):
     """Process a single JSON command by calling the stack CLI."""
@@ -137,6 +163,8 @@ def handle_plaintext(line):
     if not any(args[:len(p)] == p for p in DOMAIN_ALLOW):
         allowed = ", ".join(" ".join(p) for p in DOMAIN_ALLOW)
         return f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n"
+    if _is_denied_write(args):
+        return DENY_HINT
     try:
         r = subprocess.run(
             [str(STACK_BIN), *args], capture_output=True, text=True,
