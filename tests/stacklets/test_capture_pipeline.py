@@ -42,7 +42,12 @@ class FakeClassifier:
     async def classify_capture(self, *, text, person_names, existing_tags,
                                images=None, user_hint=None,
                                initial_classification=None,
-                               extract_action_items=False):
+                               extract_action_items=False,
+                               current_list=""):
+        # Recorded so a test can assert the classifier was shown the list it
+        # is about to add to; extracting blind is what grew one list from
+        # thirteen items to twenty-seven.
+        self.saw_current_list = current_list
         if self._raises:
             raise self._raises
         return self._payload
