@@ -105,6 +105,7 @@ def run(args, stacklet, config):
 
     actor = actor.strip().split(":")[0].lstrip("@") or "someone"
 
+    edits = None
     if as_patch:
         try:
             edits = json.loads(content)
