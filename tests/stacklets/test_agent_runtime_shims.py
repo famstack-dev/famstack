@@ -186,3 +186,114 @@ def test_the_stub_can_actually_express_a_detached_shim(nanobot):
     assert grep.execute.__name__ == "execute_with_memory", (
         "grep routing is independent of the loader and should still attach"
     )
+
+
+# ── writing to a vault page ──────────────────────────────────────────────
+
+def _write_tools(mods):
+    fs = mods["nanobot.agent.tools.filesystem"]
+    return (fs.WriteFileTool, fs.EditFileTool,
+            mods["nanobot.agent.tools.apply_patch"].ApplyPatchTool)
+
+
+def test_every_way_to_change_a_file_is_routed(nanobot):
+    """All three write tools, or the model finds the unguarded one.
+
+    nanobot offers three: `write_file`, `edit_file`, and `apply_patch` —
+    which it advertises as the *default* editor for edits. Shimming only
+    the first leaves the default aimed straight at a read-only mount, and
+    the model has no reason to prefer the one door that works.
+    """
+    for tool in _write_tools(nanobot()):
+        assert tool.execute.__qualname__.startswith("install."), (
+            f"{tool.__name__} is unshimmed; a page edit through it bypasses "
+            f"the memory store"
+        )
+
+
+def test_the_shims_are_awaitable_like_the_tools_they_replace(nanobot):
+    """nanobot awaits `execute`, so a sync replacement is a broken tool.
+
+    Pinned as its own case because the failure is invisible from the
+    attachment check above: the shim is installed, the log is clean, and
+    every vault write dies in the tool loop on `await` receiving a `str`.
+    """
+    import inspect
+
+    for tool in _write_tools(nanobot()):
+        assert inspect.iscoroutinefunction(tool.execute), (
+            f"{tool.__name__}.execute must stay `async def`"
+        )
+
+
+def test_a_vault_page_goes_to_the_memory_store_not_the_mount(nanobot, monkeypatch):
+    """The point of the shim: the write leaves via `stack memory write`.
+
+    The vault is mounted read-only, so a write that reaches the filesystem
+    is a write that did not happen. Asserted through the tool's own
+    `execute`, which is the only surface the model can reach.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    seen = {}
+
+    def _fake_write(page, content):
+        seen["page"], seen["content"] = page, content
+        return "ticked off 1: Kühlbox"
+
+    monkeypatch.setattr(vault_write, "write_page", _fake_write)
+
+    write_file = mods["nanobot.agent.tools.filesystem"].WriteFileTool()
+    answer = asyncio.run(write_file.execute(
+        path="vault/family/camping/todos.md", content="- [x] Kühlbox\n"))
+
+    assert seen["page"] == "family/camping/todos.md"
+    assert seen["content"] == "- [x] Kühlbox\n"
+    # Verbatim, because what the store says it did is what the model reports
+    # to the family. Flattening it to "ok" is how a silent loss gets told
+    # as a success.
+    assert answer == "ticked off 1: Kühlbox"
+
+
+def test_a_partial_edit_is_refused_with_the_way_that_works(nanobot):
+    """A page is rewritten whole, and the refusal has to say so.
+
+    `edit_file` and `apply_patch` cannot express "split this list in two"
+    against a read-only mount, so they decline — but a bare refusal just
+    makes the model try the next tool. It names `write_file` instead.
+    """
+    import asyncio
+
+    mods = nanobot()
+    _, edit_file, apply_patch = _write_tools(mods)
+
+    answers = [
+        asyncio.run(edit_file().execute(path="vault/family/camping/todos.md")),
+        asyncio.run(apply_patch().execute(
+            edits=[{"path": "vault/family/camping/todos.md", "action": "replace"}])),
+    ]
+    for answer in answers:
+        assert "write_file" in answer
+        assert "family/camping/todos.md" in answer
+
+
+def test_files_outside_the_vault_keep_stock_behaviour(nanobot):
+    """The agent's own workspace notes are not the family's memory.
+
+    A shim that swallowed every write would break scratch files and cron
+    scripts, so the routing has to be narrow and this pins that it is.
+    """
+    import asyncio
+
+    mods = nanobot()
+    write_file, edit_file, apply_patch = _write_tools(mods)
+
+    assert asyncio.run(write_file().execute(
+        path="memory/notes.md", content="x")) == "stock write memory/notes.md"
+    assert asyncio.run(edit_file().execute(
+        path="memory/notes.md")) == "stock edit memory/notes.md"
+    assert "stock patch" in asyncio.run(apply_patch().execute(
+        edits=[{"path": "memory/notes.md", "action": "replace"}]))

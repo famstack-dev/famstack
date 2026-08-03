@@ -85,17 +85,31 @@ def write_page(page: str, content: str) -> str:
     return (result.stdout or result.stderr or "").strip() or "(no answer from memory)"
 
 
+def _patched_away(page: str) -> str:
+    """What a partial-edit tool answers when aimed at a vault page."""
+    return (f"{page} is a family memory page and is edited whole, not patched. "
+            f"Read it with read_file, then call write_file on the same path "
+            f"with the complete new contents.")
+
+
 def install() -> None:
-    """Point the native write tools at the vault's own write path."""
+    """Point the native write tools at the vault's own write path.
+
+    Every `execute` here is `async def` because nanobot's are: the tool loop
+    awaits the result, so a sync shim returns a `str` into an `await` and the
+    call dies with a TypeError the model reports as a broken tool.
+    """
+    from nanobot.agent.tools.apply_patch import ApplyPatchTool
     from nanobot.agent.tools.filesystem import EditFileTool, WriteFileTool
 
     original_write = WriteFileTool.execute
     original_edit = EditFileTool.execute
+    original_patch = ApplyPatchTool.execute
 
-    def execute_write(self, path=None, content=None, **kwargs):
+    async def execute_write(self, path=None, content=None, **kwargs):
         page = vault_page(path)
         if not page:
-            return original_write(self, path=path, content=content, **kwargs)
+            return await original_write(self, path=path, content=content, **kwargs)
         try:
             return write_page(page, content or "")
         except Exception:
@@ -105,13 +119,22 @@ def install() -> None:
             return (f"Could not write {page}: the memory store did not accept it. "
                     "Nothing was changed.")
 
-    def execute_edit(self, path=None, **kwargs):
+    async def execute_edit(self, path=None, **kwargs):
         page = vault_page(path)
         if not page:
-            return original_edit(self, path=path, **kwargs)
-        return (f"{page} is a family memory page and is edited whole, not "
-                f"patched. Read it, then call write_file on the same path with "
-                f"the complete new contents.")
+            return await original_edit(self, path=path, **kwargs)
+        return _patched_away(page)
+
+    async def execute_patch(self, edits=None, **kwargs):
+        # apply_patch is advertised to the model as the *default* editor, so it
+        # is the tool a page edit lands on first. Unshimmed it patches a
+        # read-only mount and fails in a way that says nothing useful.
+        for page in (vault_page((e or {}).get("path")) for e in (edits or [])
+                     if isinstance(e, dict)):
+            if page:
+                return _patched_away(page)
+        return await original_patch(self, edits=edits, **kwargs)
 
     WriteFileTool.execute = execute_write
     EditFileTool.execute = execute_edit
+    ApplyPatchTool.execute = execute_patch

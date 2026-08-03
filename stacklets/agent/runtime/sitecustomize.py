@@ -59,6 +59,9 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
     grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
                  `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
+                 `nanobot.agent.tools.apply_patch.ApplyPatchTool.execute(self, edits, ...) -> str`
+                 (all three are `async def`; a sync replacement returns a str
+                 into the loop's `await` and the tool call dies with TypeError)
     name_trigger: `nanobot.channels.matrix.MatrixChannel._is_bot_mentioned(self, event) -> bool`
     join_greeting: `nanobot.channels.matrix.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`

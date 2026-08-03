@@ -77,6 +77,23 @@ def nanobot_stub():
             async def execute(self, *args, **kwargs):
                 return "stock grep"
 
+        # The three write tools, `async def` exactly as upstream declares them.
+        # That detail is the contract, not decoration: nanobot's tool loop
+        # awaits the result, so a shim that replaces one with a sync function
+        # returns a str into an `await` and the call dies. Keeping the stub
+        # async is what makes the test able to notice.
+        class WriteFileTool:
+            async def execute(self, path=None, content=None, **kwargs):
+                return f"stock write {path}"
+
+        class EditFileTool:
+            async def execute(self, path=None, **kwargs):
+                return f"stock edit {path}"
+
+        class ApplyPatchTool:
+            async def execute(self, edits=None, **kwargs):
+                return f"stock patch {edits}"
+
         class MatrixChannel:
             def __init__(self):
                 self.client = types.SimpleNamespace(rooms={})
@@ -114,6 +131,9 @@ def nanobot_stub():
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
         mod("nanobot.agent.tools.search", GrepTool=GrepTool)
+        mod("nanobot.agent.tools.filesystem",
+            WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)
+        mod("nanobot.agent.tools.apply_patch", ApplyPatchTool=ApplyPatchTool)
         mod("nanobot.channels")
         mod("nanobot.channels.matrix", MatrixChannel=MatrixChannel)
         return mods
