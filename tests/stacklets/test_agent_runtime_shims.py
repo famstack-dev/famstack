@@ -24,8 +24,8 @@ import sys
 import pytest
 
 SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
-                   "memory_tool", "person_tool", "grep_tool", "name_trigger",
-                   "join_greeting")
+                   "memory_tool", "person_tool", "history_tool", "grep_tool",
+                   "name_trigger", "join_greeting", "vault_write")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -71,7 +71,22 @@ def test_vault_tools_are_registered(nanobot):
     freshly built loader hands back, which is what nanobot itself asks for.
     """
     mods = nanobot()
-    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool"}
+    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
+                                 "MemoryHistoryTool"}
+
+
+def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
+    """Not a line in a skill, which is what it was and why it did nothing.
+
+    Asked what Homer had been up to lately, the agent called
+    `memory_search` four times with progressively vaguer queries and never
+    ran the command the skill told it to. A model picks from the tools it
+    can see; prose about a shell command is something it has to remember
+    to remember. So the registration itself is the behaviour under test.
+    """
+    mods = nanobot()
+
+    assert "MemoryHistoryTool" in _discovered(mods)
 
 
 def test_vault_greps_are_routed_through_memory_search(nanobot):
@@ -166,7 +181,8 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     """
     mods = nanobot(drop="nanobot.agent.tools.search.GrepTool")
 
-    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool"}
+    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
+                                 "MemoryHistoryTool"}
 
 
 def test_the_stub_can_actually_express_a_detached_shim(nanobot):

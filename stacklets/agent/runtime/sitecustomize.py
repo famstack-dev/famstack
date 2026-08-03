@@ -20,21 +20,28 @@ First, two context shims that reshape what the model sees per turn:
    reciting stale data. The transcript (Matrix) keeps the full result; the state
    we feed the model keeps only a cheap pointer.
 
-Second, three vault tools, which add capability rather than reshaping context:
+Second, four vault tools, which add capability rather than reshaping context.
+They are *tools* and not lines in a skill because that is the difference
+between a capability the model chooses and one it has to remember: told in
+prose to run `stack memory history`, it called `memory_search` four times
+instead and never ran it once.
 
 3. memory_tool (memory_tool.py) — a `memory_search` tool over `stack memory search`.
 4. person_tool (person_tool.py) — a `memory_person` tool for exact profile reads.
-5. grep_tool (grep_tool.py) — routes greps under `vault/` into memory_search, so
+5. history_tool (history_tool.py) — a `memory_history` tool for questions with
+   time in them. Search ranks pages by what they say now, so "lately", "since
+   when" and "who changed this" are unanswerable by it, silently.
+6. grep_tool (grep_tool.py) — routes greps under `vault/` into memory_search, so
    the agent gets semantic hits instead of literal matches on a corpus where the
    words it greps for are rarely the words on disk.
 
 Third, one shim that widens when the agent is allowed to answer at all:
 
-6. name_trigger (name_trigger.py) — a group-room message that addresses the
+7. name_trigger (name_trigger.py) — a group-room message that addresses the
    agent by its configured name counts as a mention, not just an autocompleted
    pill. Families type "Stacky, what's on our list?".
 
-7. join_greeting (join_greeting.py) — on being invited, take one turn and
+8. join_greeting (join_greeting.py) — on being invited, take one turn and
    introduce the room's topic instead of joining in silence.
 
 WHY SHIMS AND NOT A FORK
@@ -56,6 +63,7 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `nanobot.agent.tools.base.Tool`, `nanobot.agent.tools.base.tool_parameters`
                  `nanobot.agent.tools.schema.{StringSchema, IntegerSchema, tool_parameters_schema}`
     person_tool: same symbols as memory_tool
+    history_tool: same symbols as memory_tool
     grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
                  `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
@@ -156,6 +164,7 @@ except Exception:
 for _module_name, _what in (
     ("memory_tool", "memory_search tool"),
     ("person_tool", "memory_person tool"),
+    ("history_tool", "memory_history tool"),
     ("grep_tool", "vault grep -> memory_search routing"),
     ("vault_write", "write_file on a vault page -> stack memory write"),
 ):

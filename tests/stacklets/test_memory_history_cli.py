@@ -86,6 +86,17 @@ def vault(tmp_path):
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.name", "seed")
     _git(repo, "config", "user.email", "seed@simpson")
+
+    # Profile pages first: they are what tells the command who the family is,
+    # and this commit is the machinery's own, which is what the default view
+    # exists to keep out.
+    for person in ("homer", "marge", "lisa"):
+        (repo / person).mkdir()
+        (repo / person / "about.md").write_text(f"# {person}\n", encoding="utf-8")
+    _commit(repo, "README.md", "# Family memory\n",
+            who="stackadmin", subject="chore: seed the vault",
+            when="2026-05-01T09:00:00")
+
     for path, body, who, subject, when in SEEDED:
         _commit(repo, path, body, who=who, subject=subject, when=when)
     return tmp_path
@@ -185,6 +196,86 @@ def test_a_time_window_is_git_s_own(vault):
     result = _run(vault, "--since", "2026-07-01")
 
     assert len(result["changes"]) == 2, "only the July and August commits"
+
+
+# ── whose changes count ──────────────────────────────────────────────────
+
+def test_the_machinery_is_left_out_by_default(vault):
+    """A vault's log is mostly not people.
+
+    The curator regenerating pages, the archivist renaming a note it just
+    filed, cleanup after a test run. Asked what Homer had been up to, the
+    unfiltered log answered "chore: test cleanup t-bfdaba49" and a rename
+    by archivist-bot: true, and useless.
+    """
+    result = _run(vault)
+
+    assert "stackadmin" not in {c["by"] for c in result["changes"]}
+    assert len(result["changes"]) == len(SEEDED)
+
+
+def test_the_machinery_is_there_when_asked_for(vault):
+    """Filtered out is not hidden. Debugging the vault needs the rest."""
+    result = _run(vault, "--all")
+
+    assert "stackadmin" in {c["by"] for c in result["changes"]}
+
+
+def test_a_person_with_no_profile_page_is_still_a_person(vault):
+    """The reason the machinery is named rather than the family.
+
+    A roster of known people reads better, but a member whose profile has
+    not been generated yet would vanish from the history with nothing to
+    show why. Bart has captured something and has no page; he is in the
+    history all the same.
+    """
+    _commit(vault / "memory" / "vault", "family/camping/todos.md",
+            "# Camping\n\n- [ ] Skateboard\n",
+            who="bart", subject="bart was here", when="2026-08-02T09:00:00")
+
+    assert "bart" in {c["by"] for c in _run(vault)["changes"]}
+
+
+def test_every_kind_of_bot_account_is_machinery(vault):
+    """The framework names them all `<slug>-bot`, so the rule is one rule."""
+    for bot in ("archivist-bot", "mail-bot", "curator-bot"):
+        _commit(vault / "memory" / "vault", f"family/camping/{bot}.md",
+                f"# {bot}\n", who=bot, subject=f"rename: {bot} tidied up",
+                when="2026-08-02T10:00:00")
+
+    assert not {c["by"] for c in _run(vault)["changes"]} & {
+        "archivist-bot", "mail-bot", "curator-bot"}
+
+
+def test_a_run_of_bot_commits_does_not_crowd_out_the_answer(vault):
+    """Filtering happens after reading, so the window has to be generous.
+
+    Twenty consecutive housekeeping commits would otherwise fill a
+    ten-row read and leave the family's changes invisible behind them.
+    """
+    for n in range(20):
+        _commit(vault / "memory" / "vault", f"family/camping/noise{n}.md",
+                f"# {n}\n", who="archivist-bot", subject=f"chore: housekeeping {n}",
+                when="2026-08-02T11:00:00")
+
+    result = _run(vault, "--limit", "5")
+
+    # Every one of the family's changes is still here, sitting behind
+    # twenty housekeeping commits that a naive `-n 5` would have returned
+    # instead.
+    assert len(result["changes"]) == len(SEEDED)
+    assert not any(_is_bot(c["by"]) for c in result["changes"])
+
+
+def _is_bot(name):
+    return name.endswith("-bot") or name == "stackadmin"
+
+
+def test_naming_a_person_overrides_the_roster(vault):
+    """`--by` is already an answer to "whose", so it is not second-guessed."""
+    result = _run(vault, "--by", "stackadmin")
+
+    assert [c["by"] for c in result["changes"]] == ["stackadmin"]
 
 
 def test_an_empty_answer_says_which_filter_emptied_it(vault, capsys):

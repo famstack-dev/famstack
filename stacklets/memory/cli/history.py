@@ -14,6 +14,26 @@ or the vault as a whole.
     stack memory history --by marge           ...by one person
     stack memory history --since "last week"  ...in a time window
     stack memory history --item Kuehlbox      when this first appeared, and who
+    stack memory history --all                ...including the machinery
+
+WHOSE CHANGES COUNT
+    The family's, by default. A vault's log is mostly not people: the curator
+    regenerating pages, the archivist renaming a note it just filed, cleanup
+    after a test run. Asked what Homer had been up to, an unfiltered log
+    answered with `chore: test cleanup t-bfdaba49` and a rename by
+    archivist-bot, which is true and useless.
+
+    Filtered by *author*, never by what the commit says. Who wrote a commit
+    is a field git records; the wording of a subject is a convention that has
+    already changed twice in this repo and will change again.
+
+    And filtered by naming the machinery, not by naming the family. A roster
+    of known people reads better but fails the wrong way: a member whose
+    profile page has not been generated yet would vanish from the history
+    with nothing to show anyone why. Excluding bot accounts (`<name>-bot`,
+    the framework's own convention for them, plus the admin account) can at
+    worst leave one extra line in. Wrong-and-visible beats wrong-and-silent.
+    `--all` turns it off.
 
 WHY A COMMAND AND NOT JUST GIT
     The agent can run shell, so raw `git log` was the obvious alternative. Two
@@ -49,7 +69,7 @@ from lib import vault_path_for  # noqa: E402
 HELP = "Show what changed in the family's memory, and when"
 
 _USAGE = ("usage: stack memory history [<topic-or-person>] [--item <text>] "
-          "[--by <person>] [--since <when>] [--limit N]\n"
+          "[--by <person>] [--since <when>] [--limit N] [--all]\n"
           "  e.g. stack memory history camping --since \"last week\"\n"
           "       stack memory history --item Kuehlbox")
 
@@ -59,6 +79,21 @@ _FORMAT = "--format=%ad%x09%an%x09%s"
 _SEP = "\t"
 
 _DEFAULT_LIMIT = 10
+
+# How far back to look when the machinery has to be filtered out afterwards.
+# Bounded so a huge vault is never read whole, generous so a long run of bot
+# commits cannot crowd the people out of the answer.
+_MAX_SCAN = 2000
+
+# The framework names every bot account `<slug>-bot` (see `agent_handle` in
+# lib/stack/stack.py); `stackadmin` is the install's own account.
+_ADMIN = "stackadmin"
+
+
+def _is_machinery(author: str) -> bool:
+    """True for a bot or admin account, rather than a member of the family."""
+    name = (author or "").strip().lower()
+    return name.endswith("-bot") or name == _ADMIN
 
 
 def run(args, stacklet, config):
@@ -82,15 +117,21 @@ def run(args, stacklet, config):
 
     if item:
         return _when_added(vault, item, paths)
+    # `--by` already names whose changes are wanted, so it is not second-guessed.
     return _recent(vault, paths, actor=actor, since=since,
+                   skip_bots=not (actor or "--all" in argv),
                    limit=_int(limit, _DEFAULT_LIMIT), scope=scope)
 
 
 # ── the two questions ────────────────────────────────────────────────────
 
-def _recent(vault, paths, *, actor, since, limit, scope):
+def _recent(vault, paths, *, actor, since, skip_bots, limit, scope):
     """What changed lately, most recent first."""
-    argv = ["log", _FORMAT, "--date=short", f"-n{limit}"]
+    # Git can select an author but not reject one, so the machinery is
+    # dropped here. Reading a bounded window rather than `-n limit` keeps a
+    # run of bot commits from eating the whole answer.
+    argv = ["log", _FORMAT, "--date=short",
+            f"-n{_MAX_SCAN if skip_bots else limit}"]
     if actor:
         argv += [f"--author={actor}"]
     if since:
@@ -98,6 +139,9 @@ def _recent(vault, paths, *, actor, since, limit, scope):
     argv += _pathspec(paths)
 
     rows = _rows(_git(vault, *argv))
+    if skip_bots:
+        rows = [row for row in rows if not _is_machinery(row[1])]
+    rows = rows[:limit]
     if not rows:
         return _nothing(scope, actor, since)
 
