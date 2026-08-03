@@ -24,8 +24,8 @@ import sys
 import pytest
 
 SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
-                   "memory_tool", "person_tool", "grep_tool", "name_trigger",
-                   "join_greeting")
+                   "memory_tool", "person_tool", "history_tool", "grep_tool",
+                   "name_trigger", "join_greeting", "vault_write")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -71,7 +71,22 @@ def test_vault_tools_are_registered(nanobot):
     freshly built loader hands back, which is what nanobot itself asks for.
     """
     mods = nanobot()
-    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool"}
+    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
+                                 "MemoryHistoryTool"}
+
+
+def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
+    """Not a line in a skill, which is what it was and why it did nothing.
+
+    Asked what Homer had been up to lately, the agent called
+    `memory_search` four times with progressively vaguer queries and never
+    ran the command the skill told it to. A model picks from the tools it
+    can see; prose about a shell command is something it has to remember
+    to remember. So the registration itself is the behaviour under test.
+    """
+    mods = nanobot()
+
+    assert "MemoryHistoryTool" in _discovered(mods)
 
 
 def test_vault_greps_are_routed_through_memory_search(nanobot):
@@ -166,7 +181,8 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     """
     mods = nanobot(drop="nanobot.agent.tools.search.GrepTool")
 
-    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool"}
+    assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
+                                 "MemoryHistoryTool"}
 
 
 def test_the_stub_can_actually_express_a_detached_shim(nanobot):
@@ -186,3 +202,194 @@ def test_the_stub_can_actually_express_a_detached_shim(nanobot):
     assert grep.execute.__name__ == "execute_with_memory", (
         "grep routing is independent of the loader and should still attach"
     )
+
+
+# ── writing to a vault page ──────────────────────────────────────────────
+
+def _write_tools(mods):
+    fs = mods["nanobot.agent.tools.filesystem"]
+    return (fs.WriteFileTool, fs.EditFileTool,
+            mods["nanobot.agent.tools.apply_patch"].ApplyPatchTool)
+
+
+def test_every_way_to_change_a_file_is_routed(nanobot):
+    """All three write tools, or the model finds the unguarded one.
+
+    nanobot offers three: `write_file`, `edit_file`, and `apply_patch` —
+    which it advertises as the *default* editor for edits. Shimming only
+    the first leaves the default aimed straight at a read-only mount, and
+    the model has no reason to prefer the one door that works.
+    """
+    for tool in _write_tools(nanobot()):
+        assert tool.execute.__qualname__.startswith("install."), (
+            f"{tool.__name__} is unshimmed; a page edit through it bypasses "
+            f"the memory store"
+        )
+
+
+def test_the_shims_are_awaitable_like_the_tools_they_replace(nanobot):
+    """nanobot awaits `execute`, so a sync replacement is a broken tool.
+
+    Pinned as its own case because the failure is invisible from the
+    attachment check above: the shim is installed, the log is clean, and
+    every vault write dies in the tool loop on `await` receiving a `str`.
+    """
+    import inspect
+
+    for tool in _write_tools(nanobot()):
+        assert inspect.iscoroutinefunction(tool.execute), (
+            f"{tool.__name__}.execute must stay `async def`"
+        )
+
+
+def test_a_vault_page_goes_to_the_memory_store_not_the_mount(nanobot, monkeypatch):
+    """The point of the shim: the write leaves via `stack memory write`.
+
+    The vault is mounted read-only, so a write that reaches the filesystem
+    is a write that did not happen. Asserted through the tool's own
+    `execute`, which is the only surface the model can reach.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    seen = {}
+
+    def _fake_write(page, content):
+        seen["page"], seen["content"] = page, content
+        return "ticked off 1: Kühlbox"
+
+    monkeypatch.setattr(vault_write, "write_page", _fake_write)
+
+    write_file = mods["nanobot.agent.tools.filesystem"].WriteFileTool()
+    answer = asyncio.run(write_file.execute(
+        path="vault/family/camping/todos.md", content="- [x] Kühlbox\n"))
+
+    assert seen["page"] == "family/camping/todos.md"
+    assert seen["content"] == "- [x] Kühlbox\n"
+    # Verbatim, because what the store says it did is what the model reports
+    # to the family. Flattening it to "ok" is how a silent loss gets told
+    # as a success.
+    assert answer == "ticked off 1: Kühlbox"
+
+
+def test_a_patch_reaches_the_store_with_its_edits_intact(nanobot, monkeypatch):
+    """The edits go to the store, not to the read-only mount.
+
+    Sending them on rather than applying them here is the point: the store
+    matches `old_text` against the page as it currently stands, so an edit
+    written against a copy somebody else has since changed is refused by
+    name instead of quietly reverting them.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    seen = {}
+
+    def _fake_patch(page, edits, *, dry_run=False):
+        seen["page"], seen["edits"], seen["dry_run"] = page, edits, dry_run
+        return "ticked off 1: Wetter checken"
+
+    monkeypatch.setattr(vault_write, "patch_page", _fake_patch)
+
+    _, _, apply_patch = _write_tools(mods)
+    edit = {"path": "vault/family/camping/todos.md", "action": "replace",
+            "old_text": "- [ ] Wetter checken", "new_text": "- [x] Wetter checken"}
+    answer = asyncio.run(apply_patch().execute(edits=[edit]))
+
+    assert seen["page"] == "family/camping/todos.md"
+    assert seen["edits"] == [edit], "the edits must arrive unaltered"
+    assert seen["dry_run"] is False
+    assert answer == "ticked off 1: Wetter checken"
+
+
+def test_a_preview_stays_a_preview(nanobot, monkeypatch):
+    """`dry_run` has to survive the trip, or a preview silently commits.
+
+    The model is told it can validate without writing. Dropping the flag
+    on the way to the store turns "show me what this would do" into a
+    change to the family's list.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    seen = {}
+    monkeypatch.setattr(vault_write, "patch_page",
+                        lambda page, edits, *, dry_run=False:
+                        seen.update(dry_run=dry_run) or "would tick off 1")
+
+    _, _, apply_patch = _write_tools(mods)
+    asyncio.run(apply_patch().execute(dry_run=True, edits=[
+        {"path": "vault/family/camping/todos.md", "action": "replace",
+         "old_text": "a", "new_text": "b"}]))
+
+    assert seen["dry_run"] is True
+
+
+def test_one_patch_may_touch_a_page_and_an_ordinary_file(nanobot, monkeypatch):
+    """Mixed edits are normal, and neither half may be dropped.
+
+    A patch that silently ignored its non-vault edits (or its vault ones)
+    would report success for work it never did.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    monkeypatch.setattr(vault_write, "patch_page",
+                        lambda page, edits, *, dry_run=False: f"stored {page}")
+
+    _, _, apply_patch = _write_tools(mods)
+    answer = asyncio.run(apply_patch().execute(edits=[
+        {"path": "vault/family/camping/todos.md", "action": "add", "new_text": "x"},
+        {"path": "memory/notes.md", "action": "add", "new_text": "y"},
+    ]))
+
+    assert "stored family/camping/todos.md" in answer, "the page must reach the store"
+
+    # The stub echoes the edits it was handed, so its line says what the
+    # filesystem was asked to do — which must be the ordinary file and
+    # nothing else. Writing a page through both paths would double-apply it.
+    stock = next(line for line in answer.splitlines() if line.startswith("stock patch"))
+    assert "memory/notes.md" in stock
+    assert "camping" not in stock
+
+
+def test_an_edit_file_is_pointed_at_the_two_that_work(nanobot):
+    """`edit_file` is the redundant third spelling, so it declines.
+
+    A bare refusal would just make the model try the next tool, so it
+    names what to use instead.
+    """
+    import asyncio
+
+    _, edit_file, _ = _write_tools(nanobot())
+    answer = asyncio.run(edit_file().execute(path="vault/family/camping/todos.md"))
+
+    assert "write_file" in answer
+    assert "family/camping/todos.md" in answer
+
+
+def test_files_outside_the_vault_keep_stock_behaviour(nanobot):
+    """The agent's own workspace notes are not the family's memory.
+
+    A shim that swallowed every write would break scratch files and cron
+    scripts, so the routing has to be narrow and this pins that it is.
+    """
+    import asyncio
+
+    mods = nanobot()
+    write_file, edit_file, apply_patch = _write_tools(mods)
+
+    assert asyncio.run(write_file().execute(
+        path="memory/notes.md", content="x")) == "stock write memory/notes.md"
+    assert asyncio.run(edit_file().execute(
+        path="memory/notes.md")) == "stock edit memory/notes.md"
+    assert "stock patch" in asyncio.run(apply_patch().execute(
+        edits=[{"path": "memory/notes.md", "action": "replace"}]))

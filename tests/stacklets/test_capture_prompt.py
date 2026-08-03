@@ -255,3 +255,58 @@ class TestClassifyDeterminism:
         rec = _RecordingLLM()
         await Classifier(rec).classify_capture(text="hi", person_names=["Homer"])
         assert rec.kwargs.get("temperature") == 0.0
+
+
+# ── The list the family already keeps ────────────────────────────────────
+
+class TestShowingTheClassifierTheCurrentList:
+    """Extraction used to run blind, and that is what grew the list.
+
+    A family re-posted one thirteen-item list six times. Each pass read the
+    note with no idea what was already recorded, re-worded the items
+    ("Alternative Dachbox" came back as suchen, recherchieren, pruefen,
+    besorgen), and every variant landed as a new entry because the merge
+    matches on exact text. Twenty-seven items, none ever ticked off.
+
+    Showing the model the list is the fix, and it is a prompt-and-context
+    fix rather than a schema: recognising "this is the same thing I already
+    have, phrased differently" is language understanding, which is the one
+    part of this the model is reliably good at.
+    """
+
+    LIST = "# Road-Trip\n\n- [ ] Alternative Dachbox\n- [x] Fenstertasche\n"
+
+    def test_the_current_list_is_in_the_prompt(self):
+        prompt = _build_capture_prompt(
+            **COMMON, extract_action_items=True, current_list=self.LIST)
+
+        assert "Alternative Dachbox" in prompt
+
+    def test_it_says_those_items_are_already_recorded(self):
+        """Without the framing the list reads as more material to extract
+        from, which would double every entry instead of deduping it."""
+        prompt = _build_capture_prompt(
+            **COMMON, extract_action_items=True, current_list=self.LIST)
+
+        assert "ALREADY RECORDED" in prompt
+
+    def test_rewording_does_not_make_an_item_new(self):
+        """The specific failure, stated to the model in its own terms."""
+        prompt = _build_capture_prompt(
+            **COMMON, extract_action_items=True, current_list=self.LIST)
+
+        assert "phrased differently" in prompt
+
+    def test_no_list_means_no_block(self):
+        """A topic with no list yet, and every personal-bucket capture."""
+        prompt = _build_capture_prompt(**COMMON, extract_action_items=True)
+
+        assert "ALREADY RECORDED" not in prompt
+
+    def test_a_bookmark_is_never_shown_the_list(self):
+        """action_items are opt-in for human-typed notes only. A saved URL
+        must not be handed the family's todo list to reason about."""
+        prompt = _build_capture_prompt(**COMMON, current_list=self.LIST)
+
+        assert "ALREADY RECORDED" not in prompt
+        assert "Alternative Dachbox" not in prompt

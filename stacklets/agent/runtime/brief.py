@@ -109,6 +109,12 @@ def _topic_slug(msg, vault: Path) -> str:
     return topic_for_room_label(raw, vault)
 
 
+# Who the agent is currently talking to, refreshed each turn by
+# `brief_lines`. A tool call has no access to the Matrix message, so this
+# is how a vault write learns whose name goes on the commit.
+speaking_with = ""
+
+
 def brief_lines(msg, workspace) -> list[str]:
     """Return the briefing as a list of short runtime-context lines (may be empty)."""
     vault = Path(workspace) / "vault"
@@ -121,6 +127,12 @@ def brief_lines(msg, workspace) -> list[str]:
     # multi-user rooms where "me/my" must resolve to whoever actually spoke.
     localpart = str(getattr(msg, "sender_id", "")).split(":")[0].lstrip("@")
     if localpart:
+        # Remember who is speaking so a vault write made later in this turn is
+        # committed as them. The briefing is rebuilt every turn and always
+        # before any tool runs, so this is current by construction; a tool has
+        # no other route to the sender. See vault_write.py.
+        global speaking_with
+        speaking_with = localpart
         essence = _lead(vault / localpart / "about.md")
         head = f"You are speaking with {localpart} (@{localpart})."
         lines.append(f"{head} {essence}" if essence else head)

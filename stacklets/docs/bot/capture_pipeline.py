@@ -673,10 +673,20 @@ class CapturePipeline:
         localpart = sender_mxid.split(":")[0].lstrip("@")
         sender_name = localpart.capitalize()
         entity_slug = bucket or localpart.lower()
+        # A topic room's capture merges into that topic's list, so show the
+        # classifier the list it is about to add to. Extraction in isolation
+        # cannot tell a repeat from a new item, which is how re-posting one
+        # list six times grew it instead of leaving it alone.
+        current_list = ""
+        if kind == "note" and "/" in entity_slug:
+            current_list = await self._mirror.read_capture(
+                f"{entity_slug}/todos.md") or ""
+
         classification = await self._classify(
             source, sender_name, images=images, user_hint=user_hint,
             initial_classification=initial_classification,
             default_person=default_person,
+            current_list=current_list,
             # Todo extraction is opt-in per source kind: human-typed notes
             # only. Bookmarks (saved URLs/snippets) stay out — that's the
             # guard against a pasted thread manufacturing a household todo.
@@ -792,6 +802,7 @@ class CapturePipeline:
         initial_classification: dict | None = None,
         default_person: bool = True,
         extract_action_items: bool = False,
+        current_list: str = "",
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -824,6 +835,7 @@ class CapturePipeline:
                 user_hint=user_hint,
                 initial_classification=initial_classification,
                 extract_action_items=extract_action_items,
+                current_list=current_list,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)
