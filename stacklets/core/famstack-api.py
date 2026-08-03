@@ -52,6 +52,9 @@ DOMAIN_ALLOW = [
     # ... and the way it changes one. A page is handed over whole and the
     # reply names what the edit did, so a rewrite that drops items says so.
     ["memory", "write"],
+    # What changed, when, and who did it. The vault is a git repo and has
+    # always known this; nothing read it back until now.
+    ["memory", "history"],
     ["docs", "show"],
 ]
 
