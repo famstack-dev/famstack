@@ -745,12 +745,20 @@ async def rebuild(selection: list[str]) -> bool:
     call dies with the child instead of inside this loop."""
     label = " ".join(selection) if selection else "(full sweep)"
     logger.info("[curator] rebuilding wiki: {}", label)
+    # Starting the child and waiting on it are separate failure modes, and
+    # only the second one has a child to kill. Keeping them in one block
+    # left `proc.kill()` reachable on a path where `proc` was never bound.
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, ENTRYPOINT, "wiki", *selection,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+    except Exception as e:
+        logger.warning("[curator] rebuild failed to start: {}", e)
+        return False
+
+    try:
         out_bytes, _ = await asyncio.wait_for(
             proc.communicate(), timeout=REBUILD_TIMEOUT_SECS,
         )
@@ -759,7 +767,7 @@ async def rebuild(selection: list[str]) -> bool:
         logger.warning("[curator] rebuild timed out after {}s", REBUILD_TIMEOUT_SECS)
         return False
     except Exception as e:
-        logger.warning("[curator] rebuild failed to start: {}", e)
+        logger.warning("[curator] rebuild failed: {}", e)
         return False
 
     output = out_bytes.decode(errors="replace").strip()

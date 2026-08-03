@@ -8,10 +8,16 @@ debounce that turns a 25-document ingest into one rebuild instead of
 and the nightly once-per-day gate. All pure and tested
 here; the end-to-end path rides the integration rig like the rest of
 the wiki.
+
+The one exception is `rebuild`, the single subprocess call. It is not
+pure, but the loop that calls it has no exception handling of its own,
+so what it does when the child misbehaves is the sidecar's survival and
+is pinned here too.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -20,6 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
+import curator  # noqa: E402
 from curator import (  # noqa: E402
     Debounce,
     diff_to_fileops,
@@ -391,3 +398,44 @@ class TestSleepUntilTick:
         await drop_task
         assert woke is True
         assert time.monotonic() - start < 1.0
+
+
+# ── rebuild: the one subprocess call ─────────────────────────────────────
+#
+# `main()` calls this straight from its `while True` with nothing wrapped
+# around it, so `rebuild` owes the loop a bool no matter how the child
+# behaves. Two ways it can fail on the way in: the generation wedges (an
+# LLM call that never returns), or the child never starts at all. Both
+# have to come back False with the sidecar still running, and a wedged
+# child has to actually die rather than be left behind holding the vault.
+
+
+class TestRebuild:
+    async def test_a_wedged_generation_is_killed_not_abandoned(
+        self, tmp_path, monkeypatch,
+    ):
+        marker = tmp_path / "child-ran-to-completion"
+        script = tmp_path / "hang.py"
+        script.write_text(
+            "import time\n"
+            "time.sleep(1.0)\n"
+            f"open({str(marker)!r}, 'w').close()\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(curator, "ENTRYPOINT", str(script))
+        monkeypatch.setattr(curator, "REBUILD_TIMEOUT_SECS", 0.3)
+
+        start = time.monotonic()
+        assert await curator.rebuild([]) is False
+        # Back on the timeout, not on the child's own schedule.
+        assert time.monotonic() - start < 1.0
+
+        # Past when the child would have finished had it survived the kill.
+        await asyncio.sleep(1.2)
+        assert not marker.exists()
+
+    async def test_a_child_that_cannot_start_is_false_not_a_crash(
+        self, monkeypatch,
+    ):
+        monkeypatch.setattr(curator.sys, "executable", "/nonexistent/python")
+        assert await curator.rebuild([]) is False
