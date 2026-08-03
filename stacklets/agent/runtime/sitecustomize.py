@@ -57,6 +57,8 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `nanobot.agent.tools.schema.{StringSchema, IntegerSchema, tool_parameters_schema}`
     person_tool: same symbols as memory_tool
     grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
+    vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
+                 `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
     name_trigger: `nanobot.channels.matrix.MatrixChannel._is_bot_mentioned(self, event) -> bool`
     join_greeting: `nanobot.channels.matrix.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
@@ -152,6 +154,7 @@ for _module_name, _what in (
     ("memory_tool", "memory_search tool"),
     ("person_tool", "memory_person tool"),
     ("grep_tool", "vault grep -> memory_search routing"),
+    ("vault_write", "write_file on a vault page -> stack memory write"),
 ):
     try:
         importlib.import_module(_module_name).install()

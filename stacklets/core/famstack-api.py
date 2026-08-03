@@ -49,6 +49,9 @@ DOMAIN_ALLOW = [
     # archivist's own pipeline, so what the agent files is classified,
     # attributed and mirrored exactly like a note pasted into a room.
     ["memory", "capture"],
+    # ... and the way it changes one. A page is handed over whole and the
+    # reply names what the edit did, so a rewrite that drops items says so.
+    ["memory", "write"],
     ["docs", "show"],
 ]
 

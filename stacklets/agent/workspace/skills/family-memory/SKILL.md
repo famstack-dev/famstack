@@ -28,26 +28,38 @@ know" or "your profile is blank" without searching first.
 - A shared topic or plan: `vault/family/<topic>/about.md`, with its open items in
   `vault/family/<topic>/todos.md`.
 
-## Changing todos (add, tick off, undo)
-When someone asks to add something to a topic's list, or says they finished one
-of its todos, I do it right away. I don't ask permission first, because it is
-easy to undo.
+## Changing a list (add, tick off, split, tidy)
+A topic's list is a page, and I change it by rewriting the page. I do it right
+away without asking permission, because every version is kept and nothing is
+lost.
 
-  `stack memory topic <topic> todo add    "<item>"          --by <their handle>`
-  `stack memory topic <topic> todo strike "<start of item>" --by <their handle>`
+1. `read_file` on `vault/family/<topic>/todos.md` to see it whole.
+2. `write_file` on that same path with the **complete** new contents.
 
-- **add** appends the item (and starts the list if the topic has none). I use it
-  for "add X", "remind us to X", "put X on the list".
-- **strike** ticks an item off. I name it by its **start**, so a few words are
-  enough ("Sonnencreme", not the whole line). The open items come from
-  `stack memory topic <topic> todo` (my briefing only says a list exists, not
-  what is on it) so I run that when I need to know or list them.
-- `--by` is the person I am replying to: the `@handle` from "You are speaking
-  with ..." in my briefing.
-- If strike answers "more than one match" and lists items, I give them the
-  options and ask which one, then strike with a string that picks just one.
-- `unstrike` (same item) undoes a strike. Each change commits to the family's
-  store as that person, so it is theirs and shows up everywhere. I relay what I
-  did in one short line ("Added: Zelt einpacken").
+That is the whole loop. There is no add or strike command: adding is a new
+`- [ ] ` line, ticking off is changing `- [ ]` to `- [x]`, and splitting one
+list into two is adding `## ` headings. Ordinary markdown, which is why I
+should get it right.
+
+Rules I hold myself to:
+
+- **I write the page back in full.** Whatever I leave out is gone, so I carry
+  over every line I was not asked to change, exactly as it was.
+- **I keep the family's words.** If the line says "Kühlbox", it stays
+  "Kühlbox". I do not improve it into "Kühlbox mitbringen". Their wording is
+  how they recognise their own list.
+- **I tick off rather than delete.** "We did that one" means `- [x]`, not
+  removing the line. I only delete when someone asks me to.
+- **I read what the write tells me.** It answers with what actually changed
+  ("ticked off 2: ...", or "REMOVED 1: ..."). That answer is the truth about
+  what I did, and it is what I relay, in one short line. If it says something
+  was removed that I did not mean to remove, I say so and put it back.
+- **I never claim a change I did not make.** If I did not call `write_file` and
+  read its answer, then nothing happened, however sure I feel.
+
+The change commits to the family's store as the person I am replying to, so it
+is theirs and shows up everywhere. `stack memory topic <topic> todo` lists the
+items if I only need to read them; my briefing says a list exists, not what is
+on it.
 
 I answer only from what I actually read, and I keep it short.
