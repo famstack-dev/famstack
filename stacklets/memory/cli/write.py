@@ -19,6 +19,22 @@ WHERE THE CONTENT COMES FROM
     side of the same mount. `--from` takes an ordinary host path for a person
     at a terminal.
 
+TWO WAYS TO SAY WHAT THE PAGE SHOULD BECOME
+    By default the buffer holds the finished page. With `--patch` it holds a
+    JSON list of the edits `apply_patch` produces, and they are applied here,
+    to the document Forgejo hands back at this instant -- not to the copy the
+    caller read some seconds ago.
+
+    That difference is the reason `--patch` exists. A whole-page write asserts
+    "the page is now this" and cannot tell that somebody changed it in the
+    meantime: on the rig the archivist filed three items at 16:14:24 and the
+    agent replaced the same page at 16:14:26 from an older read, and the
+    archivist's work vanished with nothing reported. A patch applied against
+    the current text either fits or says which line it could not find, and a
+    caller that is told which line is a caller that can read the page again
+    and retry. Whole-page writes stay for the cases that really are a rewrite
+    (splitting one list into two), where there is no smaller thing to say.
+
 WHAT COMES BACK
     Not "ok". For a list page, `stack.list_doc` compares before and after and
     reports what the edit actually did: ticked off, added, moved, reworded,
@@ -31,6 +47,7 @@ WHAT COMES BACK
 
 HELP = "Replace a page in the family memory vault"
 
+import json
 import sys
 from pathlib import Path
 
@@ -38,13 +55,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_memory  # noqa: E402
 
 from stack.list_doc import diff  # noqa: E402
+from stack.page_patch import apply_edits  # noqa: E402
 
 # Where the agent leaves a page it wants written. Its data dir is bind-mounted
 # read-write into the container at ~/.nanobot, so the container writes here and
 # the host reads the same bytes with no transport in between.
 _AGENT_BUFFER = "agent/.write-buffer"
 
-_USAGE = ("usage: stack memory write <vault-path> --by <person> [--from <file>]\n"
+_USAGE = ("usage: stack memory write <vault-path> --by <person> "
+          "[--from <file>] [--patch] [--dry-run]\n"
           "  e.g. stack memory write family/camping/todos.md --by marge")
 
 
@@ -52,6 +71,8 @@ def run(args, stacklet, config):
     argv = list(args or [])
     actor, argv = _opt(argv, "--by")
     source, argv = _opt(argv, "--from")
+    as_patch = "--patch" in argv
+    preview = "--dry-run" in argv
     paths = [a for a in argv if not a.startswith("-")]
 
     if len(paths) != 1 or not actor:
@@ -78,25 +99,53 @@ def run(args, stacklet, config):
 
     actor = actor.strip().split(":")[0].lstrip("@") or "someone"
 
+    if as_patch:
+        try:
+            edits = json.loads(content)
+        except json.JSONDecodeError as e:
+            return {"error": f"--patch expects a JSON list of edits ({e})"}
+
     # Captured from inside the transform so the comparison is against the
-    # canonical file Forgejo hands back, not a local clone that may lag.
+    # canonical file Forgejo hands back, not a local clone that may lag. For
+    # a patch that is not merely bookkeeping: `prior` is the text the edits
+    # are matched against, which is what makes a concurrent write visible
+    # instead of silently overwritten.
     seen: dict[str, str] = {}
 
     def _replace(prior: str) -> str:
         seen["before"] = prior or ""
-        return content if content.endswith("\n") else content + "\n"
+        after = apply_edits(prior or "", edits) if as_patch else content
+        seen["after"] = after if after.endswith("\n") else after + "\n"
+        # A preview still wants the *current* page to compare against, so it
+        # takes the same trip and then hands back what was already there:
+        # an unchanged file is a no-op, and a no-op does not commit.
+        return seen["before"] if preview else seen["after"]
 
-    change = None
+    # `update_memory` turns a transform's ValueError into an error envelope,
+    # and PatchError is one -- so a patch that no longer fits arrives here as
+    # a message, not an exception. Name the page it was meant for; the rest of
+    # the sentence already says which line and what to do.
     result = update_memory(
         config, repo_path, _replace, actor=actor,
         message=f"chore(memory): {actor} updated {repo_path}",
     )
     if "error" in result:
+        if as_patch and isinstance(result.get("error"), str):
+            result = {"error": f"could not patch {repo_path}: {result['error']}"}
         return result
 
-    before = seen.get("before", "")
-    if repo_path.endswith("todos.md"):
-        change = diff(before, content)
+    before, after = seen.get("before", ""), seen.get("after", "")
+    change = diff(before, after) if repo_path.endswith("todos.md") else None
+
+    if preview:
+        told = change.summary() if change else "page replaced"
+        print(f"Would write {repo_path} (by {actor}); nothing committed\n  {told}")
+        return {
+            "ok": True, "committed": False, "preview": True, "path": repo_path,
+            "summary": told,
+            "destructive": bool(change and change.destructive()),
+            "removed": list(change.removed) if change else [],
+        }
 
     if not result.get("committed"):
         print(f"{repo_path} was already exactly this; nothing to commit")

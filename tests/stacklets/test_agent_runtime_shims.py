@@ -258,26 +258,106 @@ def test_a_vault_page_goes_to_the_memory_store_not_the_mount(nanobot, monkeypatc
     assert answer == "ticked off 1: Kühlbox"
 
 
-def test_a_partial_edit_is_refused_with_the_way_that_works(nanobot):
-    """A page is rewritten whole, and the refusal has to say so.
+def test_a_patch_reaches_the_store_with_its_edits_intact(nanobot, monkeypatch):
+    """The edits go to the store, not to the read-only mount.
 
-    `edit_file` and `apply_patch` cannot express "split this list in two"
-    against a read-only mount, so they decline — but a bare refusal just
-    makes the model try the next tool. It names `write_file` instead.
+    Sending them on rather than applying them here is the point: the store
+    matches `old_text` against the page as it currently stands, so an edit
+    written against a copy somebody else has since changed is refused by
+    name instead of quietly reverting them.
     """
     import asyncio
 
     mods = nanobot()
-    _, edit_file, apply_patch = _write_tools(mods)
+    import vault_write
 
-    answers = [
-        asyncio.run(edit_file().execute(path="vault/family/camping/todos.md")),
-        asyncio.run(apply_patch().execute(
-            edits=[{"path": "vault/family/camping/todos.md", "action": "replace"}])),
-    ]
-    for answer in answers:
-        assert "write_file" in answer
-        assert "family/camping/todos.md" in answer
+    seen = {}
+
+    def _fake_patch(page, edits, *, dry_run=False):
+        seen["page"], seen["edits"], seen["dry_run"] = page, edits, dry_run
+        return "ticked off 1: Wetter checken"
+
+    monkeypatch.setattr(vault_write, "patch_page", _fake_patch)
+
+    _, _, apply_patch = _write_tools(mods)
+    edit = {"path": "vault/family/camping/todos.md", "action": "replace",
+            "old_text": "- [ ] Wetter checken", "new_text": "- [x] Wetter checken"}
+    answer = asyncio.run(apply_patch().execute(edits=[edit]))
+
+    assert seen["page"] == "family/camping/todos.md"
+    assert seen["edits"] == [edit], "the edits must arrive unaltered"
+    assert seen["dry_run"] is False
+    assert answer == "ticked off 1: Wetter checken"
+
+
+def test_a_preview_stays_a_preview(nanobot, monkeypatch):
+    """`dry_run` has to survive the trip, or a preview silently commits.
+
+    The model is told it can validate without writing. Dropping the flag
+    on the way to the store turns "show me what this would do" into a
+    change to the family's list.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    seen = {}
+    monkeypatch.setattr(vault_write, "patch_page",
+                        lambda page, edits, *, dry_run=False:
+                        seen.update(dry_run=dry_run) or "would tick off 1")
+
+    _, _, apply_patch = _write_tools(mods)
+    asyncio.run(apply_patch().execute(dry_run=True, edits=[
+        {"path": "vault/family/camping/todos.md", "action": "replace",
+         "old_text": "a", "new_text": "b"}]))
+
+    assert seen["dry_run"] is True
+
+
+def test_one_patch_may_touch_a_page_and_an_ordinary_file(nanobot, monkeypatch):
+    """Mixed edits are normal, and neither half may be dropped.
+
+    A patch that silently ignored its non-vault edits (or its vault ones)
+    would report success for work it never did.
+    """
+    import asyncio
+
+    mods = nanobot()
+    import vault_write
+
+    monkeypatch.setattr(vault_write, "patch_page",
+                        lambda page, edits, *, dry_run=False: f"stored {page}")
+
+    _, _, apply_patch = _write_tools(mods)
+    answer = asyncio.run(apply_patch().execute(edits=[
+        {"path": "vault/family/camping/todos.md", "action": "add", "new_text": "x"},
+        {"path": "memory/notes.md", "action": "add", "new_text": "y"},
+    ]))
+
+    assert "stored family/camping/todos.md" in answer, "the page must reach the store"
+
+    # The stub echoes the edits it was handed, so its line says what the
+    # filesystem was asked to do — which must be the ordinary file and
+    # nothing else. Writing a page through both paths would double-apply it.
+    stock = next(line for line in answer.splitlines() if line.startswith("stock patch"))
+    assert "memory/notes.md" in stock
+    assert "camping" not in stock
+
+
+def test_an_edit_file_is_pointed_at_the_two_that_work(nanobot):
+    """`edit_file` is the redundant third spelling, so it declines.
+
+    A bare refusal would just make the model try the next tool, so it
+    names what to use instead.
+    """
+    import asyncio
+
+    _, edit_file, _ = _write_tools(nanobot())
+    answer = asyncio.run(edit_file().execute(path="vault/family/camping/todos.md"))
+
+    assert "write_file" in answer
+    assert "family/camping/todos.md" in answer
 
 
 def test_files_outside_the_vault_keep_stock_behaviour(nanobot):
