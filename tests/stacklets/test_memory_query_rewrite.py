@@ -62,7 +62,8 @@ class _StubLLM:
 
     async def complete(self, role, prompt, *, images=None,
                        json_mode=False, model_override=None, temperature=None):
-        self.calls.append({"role": role, "prompt": prompt, "json_mode": json_mode})
+        self.calls.append({"role": role, "prompt": prompt,
+                           "json_mode": json_mode, "temperature": temperature})
         if self._raises is not None:
             raise self._raises
         return self._response
@@ -209,6 +210,10 @@ class TestRewriteQuery:
         await rewrite_query("Autoversicherung?", llm=llm)
         assert llm.calls[0]["role"] == "recall"
         assert llm.calls[0]["json_mode"] is True
+        # Greedy: the same question has to search for the same words.
+        # Left to the server default, this samples, and two runs of one
+        # question return different keywords and different results.
+        assert llm.calls[0]["temperature"] == 0.0
 
     @pytest.mark.asyncio
     async def test_the_family_ontology_reaches_the_model(self):

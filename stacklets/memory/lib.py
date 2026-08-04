@@ -1724,7 +1724,14 @@ async def rewrite_query(
 
     prompt = build_rewrite_prompt(question, ontology_section, language)
     try:
-        raw = await llm.complete("recall", prompt, json_mode=True)
+        # Greedy, like the wiki generator and for the same reason:
+        # sampling makes the same question search for different words
+        # run to run. Picking the words a document already contains is
+        # a lookup, not a creative act, and a family comparing two
+        # searches should not be comparing two dice rolls.
+        raw = await llm.complete(
+            "recall", prompt, json_mode=True, temperature=0.0,
+        )
     except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
         logger.warning("[recall] LLM unavailable for rewrite: {}", e)
         return []
