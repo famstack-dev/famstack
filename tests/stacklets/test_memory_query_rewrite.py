@@ -72,6 +72,24 @@ def _llm_saying(*keywords: str) -> _StubLLM:
     return _StubLLM(response=json.dumps({"keywords": list(keywords)}))
 
 
+def _memory_cli_rewrite():
+    """Load memory's container-side `rewrite` command by file path.
+
+    Three stacklets ship a package called `cli`, so `from cli import
+    rewrite` resolves to whichever one another test imported first.
+    Inside the container only memory's is on the path and the plain
+    import is correct; here the file is named explicitly so the test
+    cannot quietly exercise the docs stacklet instead.
+    """
+    import importlib.util
+
+    path = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli" / "rewrite.py"
+    spec = importlib.util.spec_from_file_location("memory_cli_rewrite", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 # ── The prompt ──────────────────────────────────────────────────────────
 
 class TestBuildRewritePrompt:
@@ -283,6 +301,39 @@ class TestBothCallersShareTheRewrite:
         assert llm.calls[0]["prompt"] == build_rewrite_prompt(
             "Wann hatte Bart MMR?", "- Medical (Gesundheit)", "de",
         )
+
+    @pytest.mark.asyncio
+    async def test_the_cli_hop_prints_one_keyword_per_line(self, tmp_path, monkeypatch, capsys):
+        # `stack memory search --nl` reaches the same rewrite through a
+        # container, so the third caller is a command whose whole
+        # contract is its stdout. One keyword per line survives a
+        # `docker exec` round trip without anyone writing a parser.
+        rewrite = _memory_cli_rewrite()
+
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "absent"))
+        monkeypatch.setenv("LANGUAGE", "de")
+        llm = _llm_saying("Zelt", "Schlafsack")
+
+        code = await rewrite.run(llm, ["Was fehlt uns noch fürs Camping?"])
+
+        assert code == 0
+        assert capsys.readouterr().out == "Zelt\nSchlafsack\n"
+        # The container's own env carries the household language, so a
+        # German family gets German keywords without the host saying so.
+        assert "Language hint: de" in llm.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_the_cli_hop_reports_no_keywords_as_exit_one(self, tmp_path, monkeypatch):
+        # Exit 1 is not a failure here: the host reads it as "no
+        # rewrite available" and searches the question literally. A
+        # nonzero-means-broken reading would turn a quiet degradation
+        # into a dead command.
+        rewrite = _memory_cli_rewrite()
+
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "absent"))
+        llm = _StubLLM(response="I could not think of any keywords.")
+
+        assert await rewrite.run(llm, ["what did we buy"]) == 1
 
     @pytest.mark.asyncio
     async def test_the_chat_resolver_renders_memorys_regex(self):

@@ -15,7 +15,7 @@ documents; this command is for the curated layer above them.
 Contract — kept stable so wrappers (CLI, MCP, Matrix bot) can build
 on it without rework:
 
-    stack memory search <query> [--person <name>] [--tag <value>]
+    stack memory search <query> [--nl] [--person <name>] [--tag <value>]
                         [--scope <prefix>] [--limit N]
                         [--paths | --count]
                         [--vault <path>] [--no-refresh]
@@ -32,6 +32,42 @@ repeatable, OR-combined within their axis, AND-combined across axes.
 `--tag` normalizes internal whitespace so `Person:Homer` matches a
 file that tags `'Person: Homer'` — writers shouldn't have to know
 which spelling lives on disk.
+
+`--nl` is the sentence path. "What do we still need to buy for the
+camping trip" is not a regex — as one it asks for those exact words,
+adjacent, which no file contains — so with `--nl` the question goes
+to a model first, which answers with 2-4 words that would literally
+appear in a matching document, and *those* become the regex. The
+command prints what it searched for so a bad rewrite is visible
+rather than silent:
+
+    Searched for: Travel, Shopping, Trip
+
+The line is suppressed under `--paths` and `--count`, which are
+machine-readable output.
+
+Three properties of `--nl` are deliberate:
+
+  * **It degrades, never fails.** No AI configured, bot-runner down,
+    model unreachable, empty keyword list: the query is searched
+    literally instead. Recall is a quality-of-life feature, never a
+    gate, and the exit codes below mean the same thing either way.
+  * **A single bare word skips the model.** `search camping` is a
+    keyword, not a question. It short-circuits before the round trip,
+    so the cheap case stays cheap even when a caller passes `--nl`
+    on everything.
+  * **It is opt-in, and chat's trigger is not.** The archivist infers
+    the same rewrite from a trailing `?` (see `docs/bot/recall.py`),
+    which is right there and wrong here: on this surface the default
+    query language is a regex, where `?` is a quantifier, so
+    `Zelt?` would silently become a model call. Chat also pays per
+    message, while this is on an agent's hot path. The asymmetry is
+    the point, not an oversight.
+
+The model runs in `stack-core-bot-runner`, reached the same way
+`stack memory wiki` reaches it (`cli/_common.py`). The host stays
+stdlib-only; only the keywords cross the boundary, and the vault walk,
+the filters and the output all stay here.
 
 Results are sorted by frontmatter `date` (newest first). Files
 without a parseable date fall to the end.
@@ -65,7 +101,15 @@ from pathlib import Path
 # stdlib-only python3, so we manipulate sys.path before importing
 # from `lib` rather than relying on a package install.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import refresh_vault_if_stale, search_memory, vault_path_for  # noqa: E402
+from lib import (  # noqa: E402
+    keywords_to_regex,
+    refresh_vault_if_stale,
+    search_memory,
+    vault_path_for,
+)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import dispatch_capture  # noqa: E402
 
 
 HELP = "Full-text search over the curated memory vault"
@@ -79,6 +123,14 @@ def _parser() -> argparse.ArgumentParser:
         description=HELP,
     )
     p.add_argument("query", help="search term (regex, case-insensitive)")
+    p.add_argument(
+        "--nl", action="store_true",
+        help=(
+            "treat the query as a question: ask the model for search "
+            "keywords first, then search for those (falls back to a "
+            "literal search when no model is reachable)"
+        ),
+    )
     p.add_argument(
         "--person", action="append", default=[], metavar="NAME",
         help="filter by person; repeatable, OR within axis",
@@ -119,6 +171,57 @@ def _parser() -> argparse.ArgumentParser:
         help="skip the upstream-HEAD check before searching",
     )
     return p
+
+
+# ── the sentence path ───────────────────────────────────────────────────
+
+def _resolve_query(query: str) -> tuple[str, list[str]]:
+    """Turn a `--nl` question into `(regex, keywords)`.
+
+    Every failure lands on the same answer: `(query, [])`, meaning
+    "search what the caller typed". An empty keyword list is how the
+    caller tells the difference, and it is also what suppresses the
+    `Searched for:` line, because there is nothing to disclose when no
+    rewrite happened.
+
+    The single-word short-circuit is a cost decision, not a
+    correctness one. `search camping --nl` would round-trip to a
+    container and wait on a model to be told that the keyword for
+    "camping" is "camping". A query with no whitespace is already the
+    shape the walker wants.
+    """
+    if not _looks_like_a_sentence(query):
+        return query, []
+
+    rc, out, reason = dispatch_capture("rewrite", query)
+    if rc != 0:
+        # Container down, no docker, no AI endpoint, model timed out,
+        # or an entry point too old to know the command. Deliberately
+        # one branch and one line: the caller asked for results, not
+        # for a report on our infrastructure, and a literal search
+        # still finds whatever literally matches.
+        detail = f" ({reason})" if reason else ""
+        print(
+            f"[memory] no rewrite available{detail}, "
+            "searching the query literally",
+            file=sys.stderr,
+        )
+        return query, []
+
+    keywords = [line.strip() for line in out.splitlines() if line.strip()]
+    if not keywords:
+        return query, []
+    return keywords_to_regex(keywords), keywords
+
+
+def _looks_like_a_sentence(query: str) -> bool:
+    """Is this worth spending a model call on?
+
+    Whitespace is the whole test. One word is a keyword and already
+    works; two or more are a phrase, which as a regex means "these
+    words, adjacent" and is the case that returns nothing today.
+    """
+    return len(query.split()) > 1
 
 
 # ── output ──────────────────────────────────────────────────────────────
@@ -187,12 +290,20 @@ def run(args, stacklet, config) -> dict | None:
         # there's nothing to say, the second because nagging on every
         # offline call would be noise.
 
+    query, keywords = _resolve_query(ns.query) if ns.nl else (ns.query, [])
+
     results = search_memory(
-        ns.query, vault,
+        query, vault,
         persons=ns.person, tags=ns.tag,
         scopes=ns.scope or None,
         limit=ns.limit,
     )
+
+    # Before the results, and before the no-results exit: a rewrite
+    # that found nothing is exactly when a family needs to see which
+    # words were used. Machine-readable modes stay machine-readable.
+    if keywords and not (ns.paths or ns.count):
+        print(f"Searched for: {', '.join(keywords)}\n")
 
     if not results:
         sys.exit(1)

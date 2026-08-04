@@ -64,11 +64,17 @@ class MemorySearchTool(Tool):
         person: str | None = None,
         tag: str | None = None,
     ) -> str:
+        # `--nl` is what makes the parameter description above true. The
+        # CLI's default query language is a regex, so a question sent
+        # without it asks for those exact words, adjacent, and matches
+        # nothing. The CLI skips the model itself on a single word, so
+        # passing this always costs nothing on keyword lookups.
         args = [
             "stack",
             "memory",
             "search",
             query,
+            "--nl",
             "--limit",
             str(limit or 5),
         ]
