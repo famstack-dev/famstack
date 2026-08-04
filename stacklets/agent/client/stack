@@ -8,26 +8,87 @@ container<->host boundary, so we use host.docker.internal - the same path
 famstack uses for oMLX/whisper). The API is core-owned and dual-mode: a plaintext
 line gets the CLI's plaintext output back (token-lean, no JSON), confined to an
 allowlist of read/domain commands. See stacklets/core/famstack-api.py.
+
+THE LINE HAS TO SURVIVE THE ROUND TRIP
+
+argv goes over the wire as one line and the server rebuilds it with
+`shlex.split`, so this end has to quote the way shlex reads. Joining on a
+bare space instead lost every argument boundary: `memory search "school run"`
+arrived as four words, argparse rejected `run` as a stray positional, and
+`memory_search` - the agent's main retrieval tool - failed on every query
+with more than one word in it. `shlex.join` is the exact inverse of the
+server's `shlex.split`, so what the tool built is what the CLI runs.
+
+AND SO DOES THE EXIT CODE
+
+A failed command that exits 0 is worse than one that crashes, because the
+caller reads a usage message as a result. That is what turned the quoting
+bug into a hang: `memory_search` checks the return code, saw success, handed
+the model argparse's usage text as search output, and the model retried the
+identical call for as long as anyone let it. The plaintext protocol carries
+the status back as a trailing `stack-exit: N` line, added by the server only
+when the command failed, stripped here and turned back into our own exit
+code. Successful output is unchanged, byte for byte.
 """
 
 import os
+import shlex
 import socket
 import sys
 
-host, port = os.environ.get("STACK_API_ADDR", "host.docker.internal:42001").rsplit(":", 1)
-try:
-    # `with` closes the socket on every exit path, including errors.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(125)
-        sock.connect((host, int(port)))
-        sock.sendall((" ".join(sys.argv[1:]) + "\n").encode())
-        sock.shutdown(socket.SHUT_WR)  # done sending; half-close so the server reads EOF
-        while True:
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            sys.stdout.write(chunk.decode(errors="replace"))
-            sys.stdout.flush()
-except Exception as e:
-    sys.stderr.write(f"stack: cannot reach the famstack API ({e})\n")
-    sys.exit(1)
+# Written by the server after a failed command; never part of real output.
+EXIT_MARKER = "stack-exit:"
+
+
+def wire_line(argv):
+    """Encode argv as the single line the API parses with `shlex.split`."""
+    return shlex.join(argv) + "\n"
+
+
+def split_exit_code(output):
+    """(text, exit_code) - peel the server's trailing status line, if any."""
+    stripped = output.rstrip("\n")
+    body, sep, last = stripped.rpartition("\n")
+    candidate = last if sep else stripped
+    if candidate.startswith(EXIT_MARKER):
+        try:
+            code = int(candidate[len(EXIT_MARKER):].strip())
+        except ValueError:
+            return output, 0
+        text = body + "\n" if sep and body else ""
+        return text, code
+    return output, 0
+
+
+def main(argv):
+    host, port = os.environ.get(
+        "STACK_API_ADDR", "host.docker.internal:42001",
+    ).rsplit(":", 1)
+    try:
+        # `with` closes the socket on every exit path, including errors.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(125)
+            sock.connect((host, int(port)))
+            sock.sendall(wire_line(argv).encode())
+            sock.shutdown(socket.SHUT_WR)  # done sending; half-close so the server reads EOF
+            chunks = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+    except Exception as e:
+        sys.stderr.write(f"stack: cannot reach the famstack API ({e})\n")
+        return 1
+
+    # Buffered rather than streamed: the status line only arrives at the end,
+    # and printing it before peeling it off would put protocol noise in the
+    # model's context. Command output here is small by construction.
+    text, code = split_exit_code(b"".join(chunks).decode(errors="replace"))
+    sys.stdout.write(text)
+    sys.stdout.flush()
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
