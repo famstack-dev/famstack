@@ -27,12 +27,17 @@ a quality-of-life feature, never a gate.
 
 from __future__ import annotations
 
-import re
 from typing import Optional, Tuple
 
 from loguru import logger
 
 from pipeline import Classifier
+# Memory owns the vault, so it owns the rewrite and the regex the
+# walker reads. This module keeps the chat-side half: when to spend an
+# LLM call, and how Paperless wants the same keywords rendered. The
+# import above puts `stacklets/` on sys.path, which is what makes the
+# sibling stacklet reachable here.
+from memory.lib import keywords_to_regex
 
 
 async def resolve_search_query(
@@ -102,10 +107,9 @@ async def resolve_search_query(
         return query, query, []
     logger.info("[recall] keywords: {}", keywords)
 
-    # Memory side: regex alternation, re.escape each keyword so a
-    # chatty LLM that returns "C++" or "Lisa's" can't blow up the
-    # compile step.
-    memory_regex = "|".join(re.escape(k) for k in keywords)
+    # Memory side: regex alternation, escaped per keyword. Memory
+    # renders this because memory is what has to read it back.
+    memory_regex = keywords_to_regex(keywords)
     # Paperless side: Whoosh OR alternation, bare tokens. The
     # PaperlessAPI wraps this in `_to_search_query` which adds the
     # prefix wildcard on each bare term -- so "fish OR price" becomes
