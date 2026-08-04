@@ -1,6 +1,6 @@
 # Family Agent — Addressing & Activation Model
 
-> Status: Design, deferred (capture now, build later)
+> Status: Layer 2 (threads-as-conversation) **shipped**; layer 3 deferred
 > Applies to: the `agent` stacklet (Stacky, nanobot in a container)
 > Sibling docs:
 >   - [plan.md](plan.md) — the agent implementation plan
@@ -48,25 +48,36 @@ Constraints:
 A 1:1 room with `@stacky-bot` needs no mentions. This is the natural home for a
 private, fluid conversation with Stacky. No work required.
 
-### 2. Threads-as-conversation (DECIDED — the priority fix)
+### 2. Threads-as-conversation (SHIPPED, except the session key)
 > **Requirement (Arthur, with repro):** when a user **replies inside a thread
 > Stacky is part of**, Stacky must auto-respond **without a mention**. Repro:
 > Stacky posted the Itchy & Scratchy Land list; Homer replied in-thread "gibts
 > noch mehr?"; Stacky stayed silent because the thread reply carried no
 > `@`-mention. A thread you are in IS the conversation — no re-mentioning.
 
-Make a **thread the conversation unit** in shared rooms. Three shims (step 0 is
-the fix for the gap above — replies don't thread today):
-0. **Make Stacky actually reply in a thread** — propagate the incoming thread root
-   through to the outbound reply metadata (it is dropped today), and start a thread
-   on the first reply so even a plain mention opens one. (Without this, even after
-   the gate change below, Stacky's answer would land in the main timeline, not the
-   thread.)
+Make a **thread the conversation unit** in shared rooms. Three steps:
+
+0. ~~**Make Stacky actually reply in a thread**~~ — **no longer needed.** The
+   observation above predates the nanobot 0.2.x upgrade. In 0.2.2 the inbound
+   thread root does survive the agent loop: `_base_metadata` merges
+   `_thread_metadata(event)` on the way in, `loop.py`'s response builder copies
+   `msg.metadata` onto the `OutboundMessage`, and `send()` turns it back into an
+   `m.thread` relation via `_build_thread_relates_to`. A reply to a threaded
+   message threads. (nanobot still never *starts* a thread, so the first answer
+   to a top-level mention is top-level — the family opens the thread on it.)
 1. Fold the thread root into the session key so each thread is its own scoped
-   memory (today all threads share the room session).
-2. In `_should_process_message`, treat a message in a thread **whose root Stacky
-   authored, or where Stacky has already posted**, as addressed — so a thread reply
-   auto-responds with no mention. This is the core of the requirement above.
+   memory. **Still open:** all threads in a room share the room session, so two
+   parallel threads bleed context into each other.
+2. Treat a message in a thread **whose root Stacky authored, or where Stacky has
+   already posted**, as addressed. **Shipped** as the `thread_trigger` shim
+   (`stacklets/agent/runtime/thread_trigger.py`), specified by
+   `tests/stacklets/test_agent_thread_trigger.py`.
+
+   Two halves, because nanobot's gate is synchronous and the question is not:
+   `_on_message` (async) settles thread membership against the homeserver and
+   remembers a yes; `_is_bot_mentioned` (sync) reads that set. Scoped to threads
+   Stacky participates in rather than all threads, because the archivist and mail
+   bot thread in the same rooms and those conversations are theirs.
 
 Result: *mention once → Stacky opens a thread → the whole thread is a conversation,
 no re-mentioning → the thread is visibly scoped and just ends when you stop.* This
