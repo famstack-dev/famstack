@@ -102,13 +102,67 @@ class TestDebounce:
         assert d.observe("aaa", now=2000.0) is False
         assert d.observe("aaa", now=2180.0) is True
 
-    def test_retry_later_defers_a_failed_rebuild(self):
+    def test_a_failed_rebuild_waits_longer_than_the_quiet_window(self):
         d = Debounce(quiet_secs=180)
         d.observe("aaa", now=1000.0)
         assert d.observe("aaa", now=1180.0) is True
         d.retry_later(now=1200.0)
-        assert d.observe("aaa", now=1300.0) is False
-        assert d.observe("aaa", now=1380.0) is True
+        # One quiet window on its own would have fired again at 1380.
+        assert d.observe("aaa", now=1380.0) is False
+        assert d.observe("aaa", now=1560.0) is True
+
+    def test_each_consecutive_failure_widens_the_window(self):
+        # A rebuild fails for a reason that usually outlives one window —
+        # the AI endpoint is down. Retrying on the quiet window forever
+        # spends a subprocess and an LLM call every three minutes, all
+        # day, and reads in the log exactly like a healthy heartbeat.
+        d = Debounce(quiet_secs=180)
+        d.observe("aaa", now=0.0)
+        d.retry_later(now=0.0)
+        assert d.observe("aaa", now=359.0) is False
+        assert d.observe("aaa", now=360.0) is True
+        d.retry_later(now=360.0)
+        assert d.observe("aaa", now=1079.0) is False
+        assert d.observe("aaa", now=1080.0) is True
+
+    def test_backoff_stops_widening_at_the_cap(self):
+        # A ceiling keeps a days-long outage retrying on a human
+        # timescale rather than drifting out to never.
+        d = Debounce(quiet_secs=180, max_backoff_secs=900)
+        d.observe("aaa", now=0.0)
+        for _ in range(10):
+            d.retry_later(now=0.0)
+        assert d.observe("aaa", now=899.0) is False
+        assert d.observe("aaa", now=900.0) is True
+
+    def test_a_new_head_does_not_clear_the_backoff(self):
+        # Fresh commits keep arriving while the endpoint is down. They
+        # are not evidence that generation works again, so they must not
+        # reset the gap back to one quiet window.
+        d = Debounce(quiet_secs=180)
+        d.observe("aaa", now=0.0)
+        d.retry_later(now=0.0)
+        assert d.observe("bbb", now=100.0) is False
+        assert d.observe("bbb", now=459.0) is False
+        assert d.observe("bbb", now=460.0) is True
+
+    def test_a_successful_rebuild_clears_the_backoff(self):
+        d = Debounce(quiet_secs=180)
+        d.observe("aaa", now=0.0)
+        d.retry_later(now=0.0)
+        d.retry_later(now=360.0)
+        d.reset()                       # what the loop does on success
+        assert d.observe("bbb", now=1000.0) is False
+        assert d.observe("bbb", now=1180.0) is True
+
+    def test_the_window_it_is_waiting_on_is_reportable(self):
+        # The loop logs this, so an operator reading `docker logs` sees
+        # "retrying in 12m after 3 failures" instead of a silent cycle.
+        d = Debounce(quiet_secs=180)
+        assert d.window() == 180
+        d.retry_later(now=0.0)
+        assert d.window() == 360
+        assert d.failures == 1
 
 
 # ── member_selection ─────────────────────────────────────────────────────

@@ -71,6 +71,9 @@ def store(monkeypatch, tmp_path):
         def __init__(self):
             self.page = PAGE
             self.commits = []
+            # Whether the curator projected the commit into the trees the
+            # agent and the wiki read before the write returned.
+            self.mirrored = True
 
         def update_memory(self, config, repo_path, transform, *, actor, message):
             try:
@@ -84,7 +87,8 @@ def store(monkeypatch, tmp_path):
             subject = message(self.page, after) if callable(message) else message
             self.page = after
             self.commits.append((actor, subject))
-            return {"ok": True, "committed": True, "path": repo_path}
+            return {"ok": True, "committed": True, "path": repo_path,
+                    "mirrored": self.mirrored}
 
         @property
         def last_subject(self):
@@ -294,3 +298,29 @@ def test_writing_the_page_it_already_holds_commits_nothing(store, tmp_path):
 
     assert result["committed"] is False
     assert store.commits == []
+
+
+# ── saying whether the change is visible yet ─────────────────────────────
+#
+# Forgejo has the commit the instant `update_memory` returns, but the
+# agent reads a mount and the family reads Quartz, and both are fed by
+# the curator. When the curator has not caught up yet the caller has to
+# hear that as a delay, never as a failure — a model told anything less
+# than "done" re-runs the edit, and a re-run edit is a duplicate.
+
+def test_a_write_the_readers_already_show_reports_plainly(store, tmp_path, capsys):
+    store.mirrored = True
+    _run(store, PAGE.replace("- [ ] Wetter", "- [x] Wetter"), tmp=tmp_path)
+
+    assert "catch up" not in capsys.readouterr().out
+
+
+def test_a_write_the_readers_have_not_caught_up_with_is_still_done(store, tmp_path,
+                                                                   capsys):
+    store.mirrored = False
+    result = _run(store, PAGE.replace("- [ ] Wetter", "- [x] Wetter"), tmp=tmp_path)
+
+    assert result["committed"] is True, "the commit landed; only the view lags"
+    assert result["mirrored"] is False
+    out = capsys.readouterr().out
+    assert "Wrote" in out and "catch up" in out

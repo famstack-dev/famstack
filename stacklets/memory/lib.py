@@ -648,6 +648,117 @@ def _preserve_and_reset(git, local_head: str, remote_head: str) -> SyncResult:
     return SyncResult("preserved_and_reset" if rc == 0 else "failed", name if rc == 0 else err)
 
 
+# ─── Write propagation (Forgejo -> the trees people read) ────────────────
+#
+# A commit in Forgejo is the truth, and it is also invisible. The agent
+# reads the brain projection through a read-only mount; the family reads
+# Quartz's render of that same tree. Both are fed by the curator, which
+# pulls memory and mirrors it into brain on its poll tick. Left to the
+# tick alone a write is unseeable by its own author for most of a poll
+# interval -- which is how an agent comes to tick an item off, read the
+# page back to check itself, and find its own work missing.
+#
+# The curator stays brain's only writer (ADR-011), so a writer here asks
+# instead of mirroring: drop a trigger file the curator's tick loop
+# watches, then watch the sha it records until the commit shows up in it.
+# Both ends are plain files in the shared state dir, which is the one
+# thing a host process and a container process can both reach with no
+# transport between them.
+
+# The curator consumes the trigger by deleting it, so its content is
+# only ever a breadcrumb for whoever is debugging the loop.
+MIRROR_TRIGGER_NAME = "mirror-now"
+# The file the curator writes after each successful projection.
+MIRROR_SHA_NAME = "last-mirrored-sha"
+
+# How long a write waits for its own change to become visible. Short on
+# purpose: the curator slices its sleep by the second and a mirror is
+# file copies plus one commit, so this covers the ordinary case -- and
+# the extraordinary one must never hold up a commit that already landed.
+MIRROR_WAIT_SECS = 5.0
+MIRROR_POLL_INTERVAL = 0.25
+
+
+def curator_state_dir_for(data_dir: Path) -> Path:
+    """Where the curator keeps its progress, reachable from both planes."""
+    return Path(data_dir) / "memory" / "curator"
+
+
+def request_mirror(state_dir: Path) -> Path:
+    """Drop the trigger file the curator's tick loop watches."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    trigger = state_dir / MIRROR_TRIGGER_NAME
+    trigger.write_text(str(time.time()), encoding="utf-8")
+    return trigger
+
+
+def mirrored_contains(memory: Path, target: str, mirrored: str) -> bool:
+    """True when the curator's recorded sha already includes `target`.
+
+    Checked against the memory clone's history: the curator pulls that
+    same working copy before mirroring, so once `target` is projected
+    both commits exist there. A sha git does not know yet simply reads
+    as "not yet" and the caller keeps waiting.
+    """
+    if not mirrored:
+        return False
+    if mirrored == target:
+        return True
+    rc, _, _ = run_git(
+        Path(memory), "merge-base", "--is-ancestor", target, mirrored, timeout=10,
+    )
+    return rc == 0
+
+
+def wait_for_mirror(state_dir: Path, memory: Path, target: str, *,
+                    timeout: float = MIRROR_WAIT_SECS,
+                    interval: float = MIRROR_POLL_INTERVAL) -> Optional[str]:
+    """Poll `last-mirrored-sha` until it contains `target`.
+
+    Returns the mirrored sha, or None on timeout. The condition is
+    checked once before the clock is consulted, so an already-current
+    mirror succeeds even with a zero timeout.
+    """
+    sha_file = Path(state_dir) / MIRROR_SHA_NAME
+    deadline = time.monotonic() + timeout
+    while True:
+        mirrored = ""
+        if sha_file.exists():
+            mirrored = sha_file.read_text(encoding="utf-8").strip()
+        if mirrored_contains(memory, target, mirrored):
+            return mirrored
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(interval)
+
+
+def propagate_write(data_dir: Path, *,
+                    timeout: float = MIRROR_WAIT_SECS,
+                    interval: float = MIRROR_POLL_INTERVAL) -> bool:
+    """Ask the curator to project a just-committed write, and wait briefly.
+
+    Returns whether the change reached the read surfaces in time. False
+    is a delay, never a failure: the commit is in Forgejo either way and
+    the curator's own tick picks the trigger up regardless, so a caller
+    reports "saved, the view will catch up" rather than an error. That
+    distinction is the whole contract -- an agent told anything short of
+    "done" runs the edit again, and a re-run edit is a duplicate.
+    """
+    data_dir = Path(data_dir)
+    memory = vault_path_for(data_dir)
+    target = vault_local_head(memory)
+    if not target:
+        return False           # nothing to name as the target, so nothing to await
+    state_dir = curator_state_dir_for(data_dir)
+    try:
+        request_mirror(state_dir)
+    except OSError:
+        return False
+    return wait_for_mirror(
+        state_dir, memory, target, timeout=timeout, interval=interval,
+    ) is not None
+
+
 # ─── Vault writers ───────────────────────────────────────────────────────
 
 def _code_url_from_config(config: dict | None) -> str:
@@ -697,6 +808,11 @@ def update_memory(config: dict, repo_path: str,
     success (committed=False when the transform was a no-op, so nothing was
     written), or `{"error": ...}` when credentials are missing, the transform
     rejects the input (e.g. no matching todo), or Forgejo is unreachable.
+
+    A committed write also carries `mirrored`: whether the change had
+    reached the trees that are actually read (the agent's mount, the
+    wiki) by the time this returned. See `propagate_write` -- False
+    there means "not yet", never "not written".
     """
     secrets = config.get("secrets", {}) if config else {}
     token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
@@ -723,9 +839,14 @@ def update_memory(config: dict, repo_path: str,
         return {"ok": True, "committed": False}
 
     data_dir = config.get("data_dir") if config else None
+    mirrored = False
     if data_dir:
         pull_vault(vault_path_for(Path(data_dir)))  # write-through so reads agree
-    return {"ok": True, "committed": True, "path": repo_path}
+        # ...and on to the trees that are actually read. `pull_vault`
+        # only makes the *source clone* agree; the agent's mount and the
+        # wiki both render the projection, which only the curator writes.
+        mirrored = propagate_write(Path(data_dir))
+    return {"ok": True, "committed": True, "path": repo_path, "mirrored": mirrored}
 
 
 # ─── Vault readers ───────────────────────────────────────────────────────
