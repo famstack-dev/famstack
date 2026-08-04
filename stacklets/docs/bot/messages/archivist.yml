@@ -107,8 +107,8 @@ en:
 
   # Error
   error_processing: "\u274C Error processing file: {error}"
-  handler_error: "\u26A0\uFE0F Sorry \u2014 something went wrong handling that message. Try again?"
-  handler_timeout: "\u23F1\uFE0F Sorry \u2014 that took longer than I'm willing to wait. Try again?"
+  handler_error: "\u26A0\uFE0F Something went wrong handling that, sorry. React \U0001F501 on the message to try again."
+  handler_timeout: "\u23F1\uFE0F That took too long, so I stopped. React \U0001F501 on the message to try again."
 
   # Welcome / Help
   #
@@ -314,8 +314,8 @@ de:
 
   # Error
   error_processing: "\u274C Fehler bei der Verarbeitung: {error}"
-  handler_error: "\u26A0\uFE0F Da ist was schiefgelaufen \u2014 sorry. Versuch es nochmal?"
-  handler_timeout: "\u23F1\uFE0F Das hat zu lange gedauert. Versuch es nochmal?"
+  handler_error: "\u26A0\uFE0F Da ist was schiefgelaufen, sorry. Reagier mit \U0001F501 auf die Nachricht, dann versuche ich es nochmal."
+  handler_timeout: "\u23F1\uFE0F Das hat zu lange gedauert, ich habe abgebrochen. Reagier mit \U0001F501 auf die Nachricht, dann versuche ich es nochmal."
 
   # Welcome / Help -- siehe englischen Block für die Vier-Varianten-Logik.
   welcome_documents: |

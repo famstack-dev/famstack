@@ -394,6 +394,78 @@ class TestReactionDispatch:
         assert not cap and not txt
 
 
+class TestRetryReaction:
+    """🔁 / 🔄 — the recovery gesture for a filing that failed.
+
+    Filing can time out or hit a service that was restarting, and until
+    now the work was simply lost: nothing in chat could start it again.
+    Retry re-dispatches whichever handler owns that kind of message, so
+    a family member fixes a failed archive the same way they started it,
+    by reacting on the message the ❌ is sitting on.
+    """
+
+    def _bot(self, tmp_path, *, target):
+        bot = _build_bot(tmp_path)
+        calls = []
+
+        async def _archive_source(room, event, tgt, tgt_id):
+            calls.append(("source", tgt_id))
+
+        async def _on_file(room, ev):
+            calls.append(("file", getattr(ev, "event_id", None)))
+
+        bot._react_archive_source = _archive_source
+        bot._on_file = _on_file
+
+        async def _get_event(room_id, event_id):
+            return SimpleNamespace(event=target)
+
+        bot._client = SimpleNamespace(room_get_event=_get_event)
+        return bot, calls
+
+    @staticmethod
+    def _reaction(key="🔁"):
+        return SimpleNamespace(
+            key=key, reacts_to="$tgt", sender="@homer:server",
+            source={"content": {}},
+        )
+
+    @staticmethod
+    def _target(content):
+        return SimpleNamespace(
+            sender="@mail-bot:server", event_id="$tgt", source={"content": content},
+        )
+
+    async def test_retry_on_a_source_card_archives_it_again(self, tmp_path):
+        bot, calls = self._bot(tmp_path, target=self._target({
+            "body": "From: school",
+            "dev.famstack.source": {"source": "email", "raw_content": "hi"},
+        }))
+        await bot._on_reaction(_room(), self._reaction())
+        assert calls == [("source", "$tgt")]
+
+    async def test_retry_on_an_upload_files_it_again(self, tmp_path):
+        bot, calls = self._bot(tmp_path, target=self._target({
+            "msgtype": "m.file", "url": "mxc://server/abc", "body": "scan.pdf",
+        }))
+        await bot._on_reaction(_room(), self._reaction())
+        assert calls == [("file", "$tgt")]
+
+    async def test_counterclockwise_variant_also_retries(self, tmp_path):
+        bot, calls = self._bot(tmp_path, target=self._target({
+            "msgtype": "m.image", "url": "mxc://server/abc",
+        }))
+        await bot._on_reaction(_room(), self._reaction(key="🔄"))
+        assert calls == [("file", "$tgt")]
+
+    async def test_retry_on_a_plain_message_does_nothing(self, tmp_path):
+        # Nothing to redo: 🔁 is a recovery gesture, not a second way to
+        # capture a message that was never processed in the first place.
+        bot, calls = self._bot(tmp_path, target=self._target({"body": "hello"}))
+        await bot._on_reaction(_room(), self._reaction())
+        assert calls == []
+
+
 class TestOutcomeGlyph:
     """After a capture/filing finishes, the bot marks the source message
     with a terminal glyph alongside the 👀: ✅ when something was filed,

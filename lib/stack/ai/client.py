@@ -191,12 +191,14 @@ class LLM:
             )
         key = os.environ.get("OPENAI_KEY", "") or "not-needed"
         # The SDK default timeout is 600s — a hung local endpoint would
-        # freeze a caller for ten minutes. 120s covers a slow prefill
-        # on a long document; anything beyond that is a stuck server
-        # and should fail loudly.
+        # freeze a caller for ten minutes. 300s is the compromise: a
+        # 30K-token prefill on a local model (a scanned multi-page PDF
+        # going into a vision classify) needs several minutes before the
+        # first token, and 120s cancelled those mid-prefill; past 300s
+        # it is a stuck server and should fail loudly.
         client = AsyncOpenAI(
             base_url=url, api_key=key, max_retries=max_retries,
-            timeout=120.0,
+            timeout=300.0,
         )
         return cls(client, namespace=namespace, capabilities=capabilities)
 
