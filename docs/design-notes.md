@@ -98,3 +98,48 @@ succeeded. The cost is a framework concept where today there is a plain
 function, so it needs to earn its place - but "a resource nobody created
 and nobody noticed" is the second time this pattern has cost a debugging
 session.
+
+## Two query languages, one hop, and only one caller has it (2026-08-04)
+
+`stack memory search <query>` matches the query as a **Python regex** against
+file content. The archivist and the agent both search that vault, and only one
+of them knows it.
+
+The archivist routes a chat question through `stacklets/docs/bot/recall.py`,
+which is the hop. On a message ending in `?` it asks the classifier for 2-4
+keywords that would literally appear in a matching document, then OR-alternates
+them (`"|".join(re.escape(k) for k in keywords)`) for the memory walker and
+joins them with ` OR ` for Paperless, because Whoosh and `re` disagree about
+what `|` means. Asked "What do we still need to buy for the camping trip?" it
+reports `Searched for: Travel, Shopping, Trip` and answers with a citation.
+
+The agent's `memory_search` tool sends the sentence itself. As a regex that
+looks for those exact words adjacent, which no file contains, so every
+natural-language question returns nothing. The tool's own parameter
+description says "Natural-language question or keywords", so the contract the
+model is handed is not the contract the CLI implements. What the model does
+with an empty non-answer is ask again, differently, which is the shape of the
+loop in [ADR-012](adr/adr-012-nanobot-fork.md) lesson 5.
+
+**Where the hop belongs.** Not in the archivist. Own the resource, own the
+concern: memory owns the vault and owns what a query means against it, the
+same way the archivist owns filing because it owns Paperless. `recall.py` sits
+in `stacklets/docs/bot/` for historical reasons, and the archivist already
+imports `memory.lib`, so the dependency direction is established and points the
+right way.
+
+Moving it makes every caller correct at once: the agent tool, the archivist,
+`stack memory search` from a terminal, and whatever asks next. Leaving it
+means the next consumer re-learns this the way the agent did.
+
+**What has to be decided when it moves.** The rewrite needs an LLM, so a
+search command that has never called a model would start to, and that changes
+its latency and its failure modes. Options are a flag (`--natural`), inferring
+it from the trailing `?` the way the archivist does, or keeping the rewrite as
+a lib function that callers opt into. The archivist also needs the keywords
+back, not just the regex, because it shows `Searched for: ...` so a family can
+see when a bad rewrite hid results; that visibility is worth keeping and the
+return shape has to carry it.
+
+Both current callers should keep working unchanged through the move. That is
+the test.
