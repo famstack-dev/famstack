@@ -133,6 +133,24 @@ class MicroBot:
         self._http: aiohttp.ClientSession | None = None
         self._running = False
 
+    @property
+    def client(self) -> AsyncClient:
+        """The nio client, from `start()` onwards.
+
+        `_client` does not exist until `start()` builds it, which makes
+        every use after that point read as "might be None" even though
+        the bot cannot be running without one. Going through here says
+        that out loud: connected is the precondition, and a caller that
+        got it wrong hears so, instead of an `AttributeError: 'NoneType'
+        object has no attribute 'room_send'` from somewhere downstream.
+
+        Teardown and the paths that degrade gracefully when there is no
+        connection still read `_client` directly and check it.
+        """
+        if self._client is None:
+            raise RuntimeError(f"[{self.name}] not connected to Matrix yet")
+        return self._client
+
     async def start(self) -> None:
         """Start the bot: login -> initial sync -> register callbacks -> sync loop."""
         store_path = str(self._session_dir / f"{self.name}_crypto")
@@ -185,13 +203,13 @@ class MicroBot:
         async def on_invite(room, event):
             if isinstance(event, InviteMemberEvent) and event.state_key == self.user_id:
                 logger.info("[{}] Invited to {} by {}", self.name, room.room_id, event.sender)
-                resp = await self._client.join(room.room_id)
+                resp = await self.client.join(room.room_id)
                 logger.info("[{}] Join result: {}", self.name, resp)
                 if isinstance(resp, JoinResponse):
                     self._pending_room_joins.add(room.room_id)
                     self._anchor_cursor_on_join(room.room_id)
 
-        self._client.add_event_callback(on_invite, InviteMemberEvent)
+        self.client.add_event_callback(on_invite, InviteMemberEvent)
 
         # ── Initial sync ─────────────────────────────────────────────
         logger.info("[{}] Initial sync...", self.name)
@@ -224,7 +242,7 @@ class MicroBot:
                 if room.room_id in decrypt_notified:
                     return
                 decrypt_notified.add(room.room_id)
-                await self._client.room_send(
+                await self.client.room_send(
                     room_id=room.room_id,
                     message_type="m.room.message",
                     content={
@@ -310,7 +328,7 @@ class MicroBot:
             return False
 
         for attempt in range(1, retries + 1):
-            resp = await self._client.login(self.password)
+            resp = await self.client.login(self.password)
             if isinstance(resp, LoginResponse):
                 logger.info("[{}] Logged in (device {})", self.name, resp.device_id)
                 self._save_session()
@@ -417,9 +435,9 @@ class MicroBot:
         # Page backward from the live sync position, collecting events newer
         # than the cursor, until we cross it. Then process oldest-first.
         pending: list = []
-        start = self._client.next_batch
+        start = self.client.next_batch
         for _ in range(self.MAX_DRAIN_PAGES):
-            resp = await self._client.room_messages(
+            resp = await self.client.room_messages(
                 room_id, start=start, direction=MessageDirection.back,
                 limit=self.DRAIN_PAGE_SIZE,
             )
@@ -469,14 +487,14 @@ class MicroBot:
         if not event_id:
             return
         try:
-            await self._client.update_receipt_marker(room_id, event_id)
+            await self.client.update_receipt_marker(room_id, event_id)
         except Exception as e:
             logger.debug("[{}] read receipt update failed in {}: {}",
                          self.name, room_id, e)
 
     async def _dispatch(self, room_id: str, event) -> None:
         """Invoke every handler whose registered type matches the event."""
-        room = self._client.rooms.get(room_id)
+        room = self.client.rooms.get(room_id)
         if room is None:
             return
         for event_type, handler in self._handlers:
@@ -499,7 +517,7 @@ class MicroBot:
         """
         logger.info("[{}] typing -> {} in {}", self.name, "on" if on else "off", room_id)
         try:
-            resp = await self._client.room_typing(
+            resp = await self.client.room_typing(
                 room_id, typing_state=on, timeout=300000,
             )
             logger.info("[{}] typing response: {}", self.name, type(resp).__name__)
@@ -512,14 +530,14 @@ class MicroBot:
         content: dict,
         message_type: str = "m.room.message",
     ) -> None:
-        """Thin wrapper around ``self._client.room_send``.
+        """Thin wrapper around ``self.client.room_send``.
 
         Exists so subclasses can route every send through a single
         framework-owned method — useful when we want to add cross-
         cutting behavior (audit logging, retries, etc.) without
         touching every call site. Today it's a passthrough.
         """
-        await self._client.room_send(
+        await self.client.room_send(
             room_id=room_id, message_type=message_type, content=content,
         )
 
@@ -656,7 +674,7 @@ class MicroBot:
             return
         root = source_event
         try:
-            resp = await self._client.room_get_event(room_id, source_event)
+            resp = await self.client.room_get_event(room_id, source_event)
             existing = self.get_thread_root(getattr(resp, "event", None))
             if existing:
                 root = existing
@@ -745,7 +763,7 @@ class MicroBot:
                 "m.in_reply_to": {"event_id": thread_root_event_id},
             }
         try:
-            resp = await self._client.room_send(
+            resp = await self.client.room_send(
                 room_id=room_id, message_type="m.room.message", content=content,
             )
         except Exception as e:
@@ -776,7 +794,7 @@ class MicroBot:
         if not in_reply_to:
             return None
         try:
-            resp = await self._client.room_get_event(room_id, in_reply_to)
+            resp = await self.client.room_get_event(room_id, in_reply_to)
         except Exception as e:
             logger.debug("[{}] reply parent fetch failed: {}", self.name, e)
             return None
@@ -815,7 +833,7 @@ class MicroBot:
         envelopes: list[tuple[str, dict]] = []
         try:
             examined = 0
-            async for related in self._client.room_get_event_relations(
+            async for related in self.client.room_get_event_relations(
                 room_id, root_event_id, RelationshipType.thread,
             ):
                 examined += 1
@@ -864,10 +882,10 @@ class MicroBot:
         if not self.display_name:
             return
         try:
-            resp = await self._client.get_displayname(self.user_id)
+            resp = await self.client.get_displayname(self.user_id)
             current = getattr(resp, "displayname", None)
             if current != self.display_name:
-                await self._client.set_displayname(self.display_name)
+                await self.client.set_displayname(self.display_name)
                 logger.info(
                     "[{}] Display name set to {!r}", self.name, self.display_name,
                 )
@@ -891,7 +909,7 @@ class MicroBot:
         session = self._ensure_http()
         async with session.get(
             download_url,
-            headers={"Authorization": f"Bearer {self._client.access_token}"},
+            headers={"Authorization": f"Bearer {self.client.access_token}"},
         ) as resp:
             if resp.status == 200:
                 return await resp.read()
@@ -918,7 +936,7 @@ class MicroBot:
             params={"filename": filename},
             data=data,
             headers={
-                "Authorization": f"Bearer {self._client.access_token}",
+                "Authorization": f"Bearer {self.client.access_token}",
                 "Content-Type": content_type or "application/octet-stream",
             },
         ) as resp:
@@ -973,7 +991,7 @@ class MicroBot:
         if metadata:
             content.update(metadata)
         try:
-            resp = await self._client.room_send(
+            resp = await self.client.room_send(
                 room_id=room_id, message_type="m.room.message", content=content,
             )
         except Exception as e:
@@ -1010,7 +1028,7 @@ class MicroBot:
                 content["m.relates_to"] = {
                     "m.in_reply_to": {"event_id": reply_to},
                 }
-            await self._client.room_send(
+            await self.client.room_send(
                 room_id=room_id,
                 message_type="m.room.message",
                 content=content,
@@ -1032,7 +1050,7 @@ class MicroBot:
 
         Hook for join-time behaviour like posting a welcome message.
         Default is a no-op so subclasses opt in explicitly. Contract:
-        ``self._client.rooms[room_id]`` is guaranteed to exist and to
+        ``self.client.rooms[room_id]`` is guaranteed to exist and to
         carry members + name when this fires. The framework wires
         invite-accept to a sync-response callback to enforce that
         contract so subclasses do not need to poll or defer.
@@ -1189,7 +1207,7 @@ class MicroBot:
         )
 
     def _auth_headers(self) -> dict:
-        return {"Authorization": f"Bearer {self._client.access_token}"}
+        return {"Authorization": f"Bearer {self.client.access_token}"}
 
     async def get_room_config(self, room_id: str) -> dict:
         """The bot's config for this room (its ``dev.famstack.room`` room
@@ -1370,7 +1388,7 @@ class MicroBot:
         event shouldn't take down the caller's main path.
         """
         try:
-            await self._client.room_send(
+            await self.client.room_send(
                 room_id=room_id,
                 message_type=event_type,
                 content=body,
@@ -1386,13 +1404,13 @@ class MicroBot:
 
     def _trust_all_devices(self) -> None:
         """Mark all known devices as trusted without interactive verification."""
-        if not self._client.olm:
+        if not self.client.olm:
             return
         try:
-            for user_id in self._client.device_store.users:
-                for device in self._client.device_store.active_user_devices(user_id):
-                    if not self._client.olm.is_device_verified(device):
-                        self._client.verify_device(device)
+            for user_id in self.client.device_store.users:
+                for device in self.client.device_store.active_user_devices(user_id):
+                    if not self.client.olm.is_device_verified(device):
+                        self.client.verify_device(device)
                         logger.info("[{}] Trusted device {} of {}", self.name, device.device_id, user_id)
         except Exception as e:
             logger.debug("[{}] Trust devices: {}", self.name, e)
@@ -1403,9 +1421,9 @@ class MicroBot:
             return False
         try:
             data = json.loads(self.session_file.read_text())
-            self._client.access_token = data["access_token"]
-            self._client.user_id = data["user_id"]
-            self._client.device_id = data["device_id"]
+            self.client.access_token = data["access_token"]
+            self.client.user_id = data["user_id"]
+            self.client.device_id = data["device_id"]
             logger.info("[{}] Restored session (device {})", self.name, data["device_id"])
             return True
         except (json.JSONDecodeError, KeyError) as e:
@@ -1414,8 +1432,8 @@ class MicroBot:
 
     def _clear_session(self):
         """Wipe saved session and in-memory credentials."""
-        self._client.access_token = ""
-        self._client.device_id = ""
+        self.client.access_token = ""
+        self.client.device_id = ""
         if self.session_file.exists():
             self.session_file.unlink()
             logger.info("[{}] Deleted stale session file", self.name)
@@ -1424,9 +1442,9 @@ class MicroBot:
         """Persist the current session so it survives container restarts."""
         self.session_file.parent.mkdir(parents=True, exist_ok=True)
         self.session_file.write_text(json.dumps({
-            "access_token": self._client.access_token,
-            "user_id": self._client.user_id,
-            "device_id": self._client.device_id,
+            "access_token": self.client.access_token,
+            "user_id": self.client.user_id,
+            "device_id": self.client.device_id,
         }))
 
     # ── Message cursor ───────────────────────────────────────────────

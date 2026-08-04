@@ -585,8 +585,8 @@ class ArchivistBot(MicroBot):
         ``_send_room_welcome_if_needed`` orchestrator.
         """
 
-        for room_id in list(self._client.rooms):
-            room = self._client.rooms[room_id]
+        for room_id in list(self.client.rooms):
+            room = self.client.rooms[room_id]
             ctx = self._room_context(room)
             try:
                 await self._send_room_welcome_if_needed(room, ctx)
@@ -1232,7 +1232,7 @@ class ArchivistBot(MicroBot):
         if not event_id:
             return None
         try:
-            resp = await self._client.room_get_event(room_id, event_id)
+            resp = await self.client.room_get_event(room_id, event_id)
         except Exception as e:
             logger.debug("[archivist] event fetch failed for {}: {}", event_id, e)
             return None
@@ -1788,7 +1788,7 @@ class ArchivistBot(MicroBot):
         if not target_id:
             return
         try:
-            resp = await self._client.room_get_event(room.room_id, target_id)
+            resp = await self.client.room_get_event(room.room_id, target_id)
         except Exception as e:
             logger.debug("[archivist] reaction target fetch failed: {}", e)
             return
