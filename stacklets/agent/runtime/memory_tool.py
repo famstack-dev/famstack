@@ -84,7 +84,11 @@ class MemorySearchTool(Tool):
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=130)
         out = stdout.decode(errors="replace").strip()
         err = stderr.decode(errors="replace").strip()
-        if proc.returncode != 0:
+        # `stack memory search` exits 1 for "nothing matched", which is an
+        # answer. Only 2 and up (bad arguments, unreadable vault) are
+        # failures. Reporting an empty result as a failure tells the model
+        # to try again when the honest reply is that there is nothing there.
+        if proc.returncode not in (0, 1):
             return f"Error: memory search failed with exit {proc.returncode}: {err or out}"
         return out or "(no memory results)"
 

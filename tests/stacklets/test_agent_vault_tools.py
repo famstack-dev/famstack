@@ -212,6 +212,72 @@ def test_search_sends_no_backend_flag(vault_tools):
     assert "--backend" not in argv
 
 
+def result_of(tool_cls, *, returncode: int, stdout: bytes = b"",
+              stderr: bytes = b"", **kwargs) -> str:
+    """What a tool returns to the model for a given CLI outcome.
+
+    The sibling of `argv_of`: that one asks what went out, this one asks
+    what comes back. Both intercept at `create_subprocess_exec`, the
+    tool's real call site.
+    """
+    class _Proc:
+        pass
+
+    proc = _Proc()
+    proc.returncode = returncode
+
+    async def _communicate():
+        return stdout, stderr
+
+    proc.communicate = _communicate
+
+    async def _fake_exec(*_args, **_kwargs):
+        return proc
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    try:
+        return asyncio.run(tool_cls().execute(**kwargs))
+    finally:
+        monkey.undo()
+
+
+class TestNothingFoundIsAnAnswer:
+    """`stack memory search` documents exit 1 as "no results" -- an
+    outcome, not a failure (exit 2 is bad arguments, 3 a broken backend).
+
+    The distinction only started mattering when the shim began reporting
+    real exit codes at all; before that everything arrived as 0. Reading
+    "no results" as "the search broke" is the same shape of bug as the
+    one that caused the loop: the model is told something went wrong,
+    so it tries again instead of saying it found nothing.
+    """
+
+    def test_no_results_reads_as_no_results(self, vault_tools):
+        answer = result_of(vault_tools["memory_search"],
+                           returncode=1, stdout=b"", query="school run")
+
+        assert "error" not in answer.lower(), answer
+        assert "no memory results" in answer.lower()
+
+    def test_a_broken_search_still_reads_as_broken(self, vault_tools):
+        """The other half of the contract: exit 2 and up are real
+        failures and must not be dressed up as an empty result."""
+        answer = result_of(vault_tools["memory_search"], returncode=2,
+                           stderr=b"unrecognized arguments: --backend",
+                           query="school run")
+
+        assert "error" in answer.lower()
+        assert "--backend" in answer
+
+    def test_results_are_passed_through_verbatim(self, vault_tools):
+        block = b"2026-08-03 [Marge] family/camping/notes/packliste.md\n  Packliste\n"
+        answer = result_of(vault_tools["memory_search"],
+                           returncode=0, stdout=block, query="camping")
+
+        assert answer == block.decode().strip()
+
+
 # ── gate 3: the transport between the tool and the CLI ───────────────
 #
 # The two gates above both read argv straight out of the tool. Nothing
