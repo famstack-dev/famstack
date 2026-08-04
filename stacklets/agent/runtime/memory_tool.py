@@ -90,6 +90,12 @@ class MemorySearchTool(Tool):
         # to try again when the honest reply is that there is nothing there.
         if proc.returncode not in (0, 1):
             return f"Error: memory search failed with exit {proc.returncode}: {err or out}"
+        # The status decides, not the text. A search that matched nothing
+        # reaches here as the API's generic "(no output)" placeholder, which
+        # reads like something went wrong; the model's next move after an
+        # ambiguous non-answer is to ask again.
+        if proc.returncode == 1:
+            return "(no memory results)"
         return out or "(no memory results)"
 
 

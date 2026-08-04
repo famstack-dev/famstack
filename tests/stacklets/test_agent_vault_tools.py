@@ -260,6 +260,16 @@ class TestNothingFoundIsAnAnswer:
         assert "error" not in answer.lower(), answer
         assert "no memory results" in answer.lower()
 
+    def test_the_status_decides_and_not_the_placeholder_text(self, vault_tools):
+        """An empty search comes back from the host API as its generic
+        "(no output)" filler. Passed through, that reads to the model like
+        something went wrong rather than like an answer -- and an ambiguous
+        non-answer is what it responds to by asking again."""
+        answer = result_of(vault_tools["memory_search"], returncode=1,
+                           stdout=b"(no output)\n", query="school run")
+
+        assert answer == "(no memory results)"
+
     def test_a_broken_search_still_reads_as_broken(self, vault_tools):
         """The other half of the contract: exit 2 and up are real
         failures and must not be dressed up as an empty result."""
