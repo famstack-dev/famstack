@@ -1,5 +1,5 @@
 """
-stack messages send <room> "message" [--as <user>] [--mention <user>] — send a message to a room
+stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] — send a message to a room
 
 Sends a plain text message to the specified room. By default it posts as
 stacker-bot (the system account); pass `--as <user>` to post as a family
@@ -11,6 +11,12 @@ Pass `--mention <user>` (repeatable) to notify a user via the Matrix
 way, so `--mention agent` is how you get the agent to reply — putting "@Stacky"
 in the text alone does not, because the bot keys on the mention payload, not
 the display name.
+
+Pass `--thread <event-id>` to post inside a thread, the way a client's "Reply
+in thread" does. The event id comes back from the send that started the thread,
+so a whole threaded conversation can be driven from the terminal. The agent
+treats a thread it is part of as addressed to it, so this is also how you check
+that a follow-up needs no mention at all.
 
 This is the building block other stacklets use for notifications:
   - photos could notify #notifications when a backup completes
@@ -94,6 +100,7 @@ def run(args, stacklet, config):
     # sys.argv: ['stack', 'messages', 'send', '<room>', '<message>', ...]
     sender = None
     mentions = []
+    thread_root = None
     rest = []
     argv = sys.argv[3:]  # skip 'stack', 'messages', 'send'
     i = 0
@@ -110,10 +117,17 @@ def run(args, stacklet, config):
             mentions.append(argv[i + 1])
             i += 2
             continue
+        if argv[i] == "--thread":
+            if i + 1 >= len(argv):
+                return {"error": "--thread needs an event id"}
+            thread_root = argv[i + 1]
+            i += 2
+            continue
         rest.append(argv[i])
         i += 1
     if len(rest) < 2:
-        return {"error": 'Usage: stack messages send <room> "message" [--as <user>] [--mention <user>]'}
+        return {"error": 'Usage: stack messages send <room> "message" [--as <user>] '
+                         '[--mention <user>] [--thread <event-id>]'}
 
     room = rest[0]
     message = " ".join(rest[1:])
@@ -142,7 +156,10 @@ def run(args, stacklet, config):
 
     html = _simple_markdown_to_html(message)
 
-    ok, detail = client.send(room, message, html=html, mentions=mentions or None)
+    ok, detail = client.send(
+        room, message, html=html, mentions=mentions or None,
+        thread_root=thread_root,
+    )
     if ok:
         return {"ok": True, "room": room, "event_id": detail}
     else:
