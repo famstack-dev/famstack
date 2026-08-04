@@ -124,6 +124,40 @@ def check_exited(container: str, exit_code: int, since: str) -> Finding | None:
     )
 
 
+def check_missing_secrets(stacklet: str, missing: list[str]) -> Finding | None:
+    """A stacklet whose declared credentials were never provisioned.
+
+    Secrets are minted by `on_install_success`, which runs once, on the
+    first install. A stacklet that grows a new credential later leaves
+    every existing instance without it: the hook has already run and
+    will not run again, so the gap is permanent and silent. `memory`
+    did exactly that, and the symptom reached the operator as a vault
+    write failing with "Forgejo credentials missing" on a stack whose
+    containers were all green.
+
+    Generic on purpose, in the spirit of the rest of this module: the
+    stacklet says which keys it cannot work without (`required_secrets`
+    in its manifest) and the caller says which are absent. Nothing here
+    knows what a Forgejo token is, so the same rule covers whatever
+    credential the next stacklet adds.
+
+    Names only, never values - see `env_drift`.
+    """
+    if not missing:
+        return None
+    return Finding(
+        level=ERROR,
+        title=f"{stacklet} is missing credentials it needs",
+        detail=(
+            ", ".join(missing)
+            + " declared as required but absent from the secret store. "
+            "These are provisioned once, during install, so a stacklet "
+            "installed before it started needing one never gets it."
+        ),
+        fix=f"stack setup {stacklet}",
+    )
+
+
 def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     """A configured endpoint that does not answer.
 
@@ -142,12 +176,14 @@ def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
 
 
 def diagnose(stacklets, rendered_env, containers_for, container_env,
-             image_env) -> list[Finding]:
+             image_env, *, missing_secrets=None) -> list[Finding]:
     """Run every check across the given stacklets.
 
-    The five collaborators are injected rather than imported so the whole
-    walk is testable with plain dicts - no Docker, no instance. Each is a
+    The collaborators are injected rather than imported so the whole walk
+    is testable with plain dicts - no Docker, no instance. Each is a
     callable taking a stacklet id (or container name) and returning facts.
+    `missing_secrets` is optional so a caller that has no secret store to
+    consult still gets the container checks.
 
     A stacklet whose env cannot be rendered is skipped rather than fatal:
     one misconfigured stacklet should not stop the others being diagnosed,
@@ -157,7 +193,14 @@ def diagnose(stacklets, rendered_env, containers_for, container_env,
     for stacklet in stacklets:
         containers = containers_for(stacklet)
         if not containers:
+            # Nothing running means the stacklet is not part of this
+            # instance, so its missing credentials are not yet a problem.
             continue
+
+        if missing_secrets:
+            found = check_missing_secrets(stacklet, missing_secrets(stacklet))
+            if found:
+                findings.append(found)
 
         try:
             rendered = rendered_env(stacklet)

@@ -106,6 +106,7 @@ requires    = ["core", "messages"]
 | `type` | string | `"docker"` | `"docker"` (default) or `"host"`. Host stacklets install native macOS software (brew, compiled binaries) alongside optional Docker containers. |
 | `requires` | list | `[]` | Stacklet IDs that must be enabled before this one. The runtime enforces ordering on `stack up` and prevents destroying dependencies. |
 | `build` | bool | false | If true, the stacklet has a local Dockerfile. `stack up` rebuilds the image on every run instead of pulling from a registry. Use for stacklets with custom code (bots, agents). |
+| `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream
 
