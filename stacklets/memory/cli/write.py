@@ -159,10 +159,16 @@ def run(args, stacklet, config):
         print(f"{repo_path} was already exactly this; nothing to commit")
         return {"ok": True, "committed": False, "path": repo_path}
 
-    print(f"Wrote {repo_path} (by {actor})\n  {told}")
+    # Forgejo has the commit; the agent's mount and the wiki are fed by the
+    # curator and may be a beat behind. Say that as a delay, never as a
+    # doubt: a model that reads anything short of "done" writes the page
+    # again, and the second write is a duplicate nobody asked for.
+    mirrored = bool(result.get("mirrored"))
+    lag = "" if mirrored else "\n  The wiki and the vault mount catch up shortly."
+    print(f"Wrote {repo_path} (by {actor})\n  {told}{lag}")
     return {
         "ok": True, "committed": True, "path": repo_path, "by": actor,
-        "summary": told,
+        "summary": told, "mirrored": mirrored,
         "destructive": bool(change and change.destructive()),
         "removed": list(change.removed) if change else [],
     }

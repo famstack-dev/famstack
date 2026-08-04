@@ -1,11 +1,21 @@
-"""`stack memory sync` — trigger + wait, curator stays brain's only writer.
+"""Write propagation — a committed page reaching the surfaces that show it.
 
-The command owns no mirror logic: it drops the trigger file and polls
-`last-mirrored-sha` against the memory clone's history. What is worth
-pinning here is the wait machinery: the ancestry check that defines
-"mirrored", the immediate success on an already-current mirror, and a
-fast, capped timeout. The end-to-end path (trigger picked up by a live
-curator) rides the demo rig.
+Forgejo is the source of truth and nobody reads it. The agent reads the
+brain projection through a read-only mount; the family reads Quartz's
+render of that same tree. So a write that stops at Forgejo is invisible
+to both until the curator's next poll, which is exactly how "I ticked it
+off and nothing changed" happens.
+
+The curator stays brain's only writer (ADR-011), so propagation is a
+request and a wait, never a second writer. What is pinned here: the
+ancestry check that defines "mirrored", the immediate success when the
+mirror is already current, the capped wait, and — the property the write
+path leans on — that propagation which never lands still leaves the
+write committed. The end-to-end path (a live curator picking the trigger
+up) rides the demo rig.
+
+`stack memory sync` is the same two steps with an operator's patience
+instead of an agent's, so it is tested here as the thin wrapper it is.
 """
 
 from __future__ import annotations
@@ -20,18 +30,23 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _MEMORY_DIR = _REPO_ROOT / "stacklets" / "memory"
 sys.path.insert(0, str(_MEMORY_DIR))
 
+from lib import (  # noqa: E402
+    MIRROR_SHA_NAME,
+    MIRROR_TRIGGER_NAME,
+    curator_state_dir_for,
+    mirrored_contains,
+    propagate_write,
+    request_mirror,
+    vault_path_for,
+    wait_for_mirror,
+)
+
 _SPEC = importlib.util.spec_from_file_location(
     "memory_cli_sync", _MEMORY_DIR / "cli" / "sync.py",
 )
 assert _SPEC and _SPEC.loader
 memory_sync = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(memory_sync)
-
-MIRROR_SHA_NAME = memory_sync.MIRROR_SHA_NAME
-TRIGGER_NAME = memory_sync.TRIGGER_NAME
-mirrored_contains = memory_sync.mirrored_contains
-request_mirror = memory_sync.request_mirror
-wait_for_mirror = memory_sync.wait_for_mirror
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -42,28 +57,39 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _repo_with_two_commits(tmp_path: Path) -> tuple[Path, str, str]:
-    repo = tmp_path / "memory"
-    repo.mkdir()
+def _commit(repo: Path, name: str, body: str) -> str:
+    (repo / name).write_text(body, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", f"write {name}")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _init(repo: Path) -> None:
+    repo.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     _git(repo, "config", "user.email", "t@local")
     _git(repo, "config", "user.name", "t")
-    (repo / "a.md").write_text("a", encoding="utf-8")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "one")
-    first = _git(repo, "rev-parse", "HEAD")
-    (repo / "b.md").write_text("b", encoding="utf-8")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "two")
-    second = _git(repo, "rev-parse", "HEAD")
-    return repo, first, second
+
+
+def _repo_with_two_commits(tmp_path: Path) -> tuple[Path, str, str]:
+    repo = tmp_path / "memory"
+    _init(repo)
+    return repo, _commit(repo, "a.md", "a"), _commit(repo, "b.md", "b")
+
+
+def _data_dir_with_vault(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A stack data dir whose memory clone holds one committed page."""
+    data_dir = tmp_path / "data"
+    vault = vault_path_for(data_dir)
+    _init(vault)
+    return data_dir, vault, _commit(vault, "a.md", "a")
 
 
 class TestRequestMirror:
     def test_writes_trigger_and_creates_state_dir(self, tmp_path):
         state = tmp_path / "curator"
         trigger = request_mirror(state)
-        assert trigger == state / TRIGGER_NAME
+        assert trigger == state / MIRROR_TRIGGER_NAME
         assert trigger.exists()
 
 
@@ -117,6 +143,37 @@ class TestWaitForMirror:
         state.mkdir()
         (state / MIRROR_SHA_NAME).write_text(first, encoding="utf-8")
         assert wait_for_mirror(state, repo, second, timeout=0.05, interval=0.02) is None
+
+
+class TestPropagateWrite:
+    """What a just-committed write does to make itself visible."""
+
+    def test_a_mirror_already_carrying_the_write_reports_propagated(self, tmp_path):
+        data_dir, vault, head = _data_dir_with_vault(tmp_path)
+        state = curator_state_dir_for(data_dir)
+        state.mkdir(parents=True)
+        (state / MIRROR_SHA_NAME).write_text(head, encoding="utf-8")
+        assert propagate_write(data_dir, timeout=0) is True
+
+    def test_it_asks_the_curator_rather_than_writing_brain_itself(self, tmp_path):
+        # ADR-011: the curator is brain's only writer. Propagation drops a
+        # request and waits; it must never touch the projection directly.
+        data_dir, _, _ = _data_dir_with_vault(tmp_path)
+        propagate_write(data_dir, timeout=0.05, interval=0.02)
+        assert (curator_state_dir_for(data_dir) / MIRROR_TRIGGER_NAME).exists()
+        assert not (data_dir / "memory" / "brain").exists()
+
+    def test_a_stalled_curator_costs_the_write_nothing(self, tmp_path):
+        # The write is already committed to Forgejo by the time we get
+        # here. A curator that is down, or busy in a nightly sweep, means
+        # the wiki catches up later — never that the write failed.
+        data_dir, _, _ = _data_dir_with_vault(tmp_path)
+        assert propagate_write(data_dir, timeout=0.05, interval=0.02) is False
+
+    def test_an_unclonable_vault_is_simply_not_propagated(self, tmp_path):
+        # Nothing to name as the target, so there is nothing to wait for.
+        # Still no exception: propagation never speaks for the write.
+        assert propagate_write(tmp_path / "empty", timeout=0.05) is False
 
 
 class TestRunGuards:
