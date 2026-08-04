@@ -15,6 +15,14 @@ below pin both halves of getting there: telling a rejected credential
 apart from an unreachable host, and refusing to burn a good token when
 Forgejo is merely still starting up.
 
+A token that was never stored is the same hole seen from the other
+side, and it is the one production hit: an instance installed before
+the install hook learned to persist a token has none, `stack up memory`
+had nothing to test and so repaired nothing, and every vault write
+failed with "Forgejo credentials missing" until someone re-ran setup by
+hand. The start hook is driven end to end below for that case, because
+the bug lived in the branch that decides whether to repair at all.
+
 The third test asserts where a write actually lands, because a write
 addressed to the LAN IP is the failure that started all of this and no
 amount of reading the code proves the rewrite happened.
@@ -25,12 +33,15 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "hooks"))
 
+import on_start_ready  # noqa: E402
 from lib import (  # noqa: E402
     reissue_write_token,
     remote_rejects_credentials,
@@ -89,6 +100,132 @@ class TestReissuingIsBestEffort:
         """Port 9 (discard) refuses instantly. The caller keeps serving
         what is on disk; it does not take startup down with it."""
         assert reissue_write_token("http://127.0.0.1:9", "stackadmin", "pw") == ""
+
+
+class _RecordingCtx:
+    """The slice of hook context `on_start_ready` actually reads.
+
+    A real `StackContext` wants an instance on disk, a parsed config and
+    a Docker runtime. The hook wants four things: the data dir, the
+    rendered env, the secret store, and somewhere to log progress.
+    Standing up only those four is what lets the hook be driven end to
+    end here, which matters because the bug this file guards lived in
+    `run()` itself and not in any helper it calls.
+    """
+
+    def __init__(self, data_dir: Path, env: dict, secrets: dict):
+        self.stack = SimpleNamespace(data=data_dir)
+        self.env = env
+        self.secrets = secrets
+        self.steps: list[str] = []
+
+    def secret(self, name, value=None):
+        if value is not None:
+            self.secrets[name] = value
+            return value
+        return self.secrets.get(name)      # None when unset, as the store does
+
+    def step(self, message):
+        self.steps.append(message)
+
+
+@pytest.fixture
+def forgejo_issuing_tokens(httpserver) -> str:
+    """A Forgejo that is up and will mint `fresh-t0ken` on request.
+
+    Only the three calls `reissue_write_token` makes are served. Every
+    other path 500s, which is deliberate: the clone that follows the
+    repair then fails and the hook returns early, so these tests stay
+    about the credential decision and nothing downstream of it.
+    """
+    httpserver.expect_request("/api/v1/version").respond_with_json({})
+    httpserver.expect_request(
+        "/api/v1/users/stackadmin/tokens", method="GET",
+    ).respond_with_json([])
+    httpserver.expect_request(
+        "/api/v1/users/stackadmin/tokens", method="POST",
+    ).respond_with_json({"sha1": "fresh-t0ken"})
+    return httpserver.url_for("").rstrip("/")
+
+
+class TestAnInstanceThatNeverStoredAToken:
+    """The production failure: no token at all, and no way back.
+
+    Installs predating the persisting install hook hold no
+    `MEMORY_BOT_TOKEN`. Every host-side write answered "Forgejo
+    credentials missing" and every restart repaired nothing, because
+    the repair only ran once there was a remote to test and a missing
+    token builds no remote. The cure for "never had one" and for
+    "Forgejo rejected it" is the same call; only the trigger was wrong.
+    """
+
+    def _ctx(self, tmp_path, code_url, secrets):
+        return _RecordingCtx(
+            tmp_path / "data",
+            {
+                "CODE_URL": code_url,
+                "ADMIN_USER": "stackadmin",
+                "ADMIN_PASSWORD": "hunter2",
+            },
+            secrets,
+        )
+
+    def test_a_missing_token_is_minted_on_the_next_start(
+        self, tmp_path, forgejo_issuing_tokens,
+    ):
+        ctx = self._ctx(tmp_path, forgejo_issuing_tokens, {})
+
+        on_start_ready.run(ctx)
+
+        assert ctx.secrets.get("MEMORY_BOT_TOKEN") == "fresh-t0ken", (
+            "an instance with no stored token stayed unable to write to its "
+            "own vault, which is the state production was found in"
+        )
+
+    def test_the_operator_is_told_a_credential_was_created(
+        self, tmp_path, forgejo_issuing_tokens,
+    ):
+        """A credential appearing out of nowhere is worth one line.
+
+        Someone reading `stack up memory` should be able to connect a
+        vault that started working to the run that fixed it.
+        """
+        ctx = self._ctx(tmp_path, forgejo_issuing_tokens, {})
+
+        on_start_ready.run(ctx)
+
+        assert any("token" in step for step in ctx.steps)
+
+    def test_a_token_already_on_file_is_left_alone(
+        self, tmp_path, forgejo_issuing_tokens,
+    ):
+        """Reissuing is a repair, not a routine.
+
+        Forgejo deletes the old token when it issues a same-named
+        replacement, so minting on every start would invalidate the
+        credential any concurrent writer is holding. Here the remote
+        never answers "authentication failed" -- it is merely
+        unreachable for git -- so the stored token stands.
+        """
+        ctx = self._ctx(tmp_path, forgejo_issuing_tokens,
+                        {"MEMORY_BOT_TOKEN": "already-good"})
+
+        on_start_ready.run(ctx)
+
+        assert ctx.secrets["MEMORY_BOT_TOKEN"] == "already-good"
+
+    def test_no_token_is_invented_when_forgejo_is_down(self, tmp_path):
+        """Port 9 (discard) refuses instantly.
+
+        The hook must still fall through to its existing "credentials
+        missing, skipping" path rather than failing the start. A stack
+        coming up with the code stacklet not yet listening is normal.
+        """
+        ctx = self._ctx(tmp_path, "http://127.0.0.1:9", {})
+
+        on_start_ready.run(ctx)
+
+        assert not ctx.secrets.get("MEMORY_BOT_TOKEN")
 
 
 class TestWritesGoToTheHostsOwnAddress:
