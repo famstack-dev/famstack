@@ -21,13 +21,16 @@ swap to another stdlib parser keeps them passing.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
-                       / "stacklets" / "memory"))
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
 from lib import (  # noqa: E402
     load_correspondents_from_vault,
@@ -102,6 +105,40 @@ def test_correspondents_load_without_the_pip_package(bare_host, tmp_path):
 
     assert correspondent.canonical == "Duff Brewery"
     assert correspondent.aliases == ["Duff Beer"]
+
+
+# ── query rewrite: the LLM stack must stay off the host ──────────────
+
+def test_the_query_rewrite_does_not_drag_the_llm_stack_onto_the_host():
+    """`stack memory search` imports the module that holds the rewrite.
+
+    The rewrite needs a model, so its imports (loguru, the OpenAI SDK
+    through `stack.ai.client`) are inside the function that uses them.
+    Hoisting one of those to the top of the module is a natural-looking
+    tidy-up that kills the search command on every clean host, and no
+    test in the bot suites would notice, because the bot has both.
+
+    A subprocess is the point: it imports the module fresh, with those
+    packages blocked the way a machine that never ran `pip install`
+    blocks them.
+    """
+    probe = textwrap.dedent("""
+        import sys
+        for absent in ("loguru", "openai", "aiohttp", "frontmatter"):
+            sys.modules[absent] = None
+        import lib
+        print(lib.keywords_to_regex(["C++", "Camping"]))
+        print("keywords" in lib.build_rewrite_prompt("q?", "(...)", "en"))
+        print(lib.parse_rewrite_response('{"keywords": ["Zelt"]}'))
+    """)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([
+        str(_REPO_ROOT / "lib"), str(_REPO_ROOT / "stacklets" / "memory"),
+    ])}
+    result = subprocess.run([sys.executable, "-c", probe],
+                            capture_output=True, text=True, timeout=60, env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [r"C\+\+|Camping", "True", "['Zelt']"]
 
 
 def test_a_vault_with_nothing_in_it_is_not_an_error(bare_host, tmp_path):

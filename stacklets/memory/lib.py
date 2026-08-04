@@ -29,12 +29,13 @@ Forgejo was unreachable on install).
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 # Vault-layout conventions live in the framework so both stacklets share
 # one source. Re-exported here for memory's own callers (and back-compat
@@ -54,6 +55,11 @@ from stack.frontmatter import parse as _parse_frontmatter_new
 
 from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
+
+if TYPE_CHECKING:
+    # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
+    # host interpreter does not have. See the query-rewrite section.
+    from stack.ai.client import LLM
 
 
 STACKLET_DIR = Path(__file__).resolve().parent
@@ -1596,6 +1602,158 @@ def search_memory(
         reverse=True,
     )
     return results[:limit]
+
+
+# ─── Natural-language query rewrite ──────────────────────────────────────
+#
+# `search_memory` takes a Python regex. A family question is not one:
+# "What do we still need to buy for the camping trip?" asks for those
+# exact words, adjacent, which no file contains. Anyone holding a
+# sentence has to turn it into keywords first, and that step lives here
+# rather than in whichever bot happens to ask. Memory owns the vault,
+# so memory owns what a query means against it. The archivist had this
+# hop and the agent did not, which is why the same question answered in
+# chat and returned nothing from the CLI.
+#
+# The rewrite needs a model, and memory neither owns one nor opens one:
+# `rewrite_query` takes the caller's `stack.ai.client.LLM`. The
+# archivist already built one, and the memory CLI commands that need a
+# model already docker-exec into the same bot-runner container that
+# holds it (see `cli/_common.py`). Nothing new gets wired up.
+#
+# That is also why the third-party imports sit inside the function.
+# `stack memory search` runs on the host's stdlib-only python and
+# imports this module, exactly like the frontmatter loader above.
+
+
+def build_rewrite_prompt(
+    question: str, ontology_section: str, language: str = "en",
+) -> str:
+    """Recall-mode prompt: question in, JSON list of search keywords out.
+
+    The ontology block is what makes the keywords hit: it names the
+    topics and forms this family actually files under, so the model
+    expands and translates into the vault's vocabulary instead of
+    guessing at a generic one.
+    """
+    return f"""You extract search keywords from a question, so a regex walker can look up family documents.
+
+The family classifies their documents under these topics and forms:
+
+{ontology_section}
+
+Language hint: {language}.
+- If the question is in German, prefer German keywords.
+- If it is in English, prefer English keywords.
+- For an ambiguous or generic question, include the most likely topic name plus one or two synonyms in the document language.
+
+Question: {question}
+
+Reply with a JSON object: {{"keywords": ["word1", "word2", "word3"]}}.
+2 to 4 keywords. Each keyword is a literal word that would appear in
+the document (a noun, a name, a topic). No phrases, no quotes, no
+prose around the JSON. Output ONLY the JSON object."""
+
+
+def parse_rewrite_response(raw: str) -> List[str]:
+    """Pull a keyword list out of the rewrite model's response.
+
+    Accepts the requested object form `{"keywords": [...]}` and the
+    bare-array fallback that some smaller models produce when they
+    forget the wrapper. Empty list on any parse failure -- the caller
+    treats empty as "no rewrite, search the question verbatim." Caps
+    at 6 entries so a chatty model can't blow up the alternation
+    regex; trims whitespace and drops empties so a stray `""` doesn't
+    poison the join.
+    """
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+
+    if isinstance(data, dict):
+        v = data.get("keywords")
+        candidates = v if isinstance(v, list) else []
+    elif isinstance(data, list):
+        candidates = data
+    else:
+        candidates = []
+
+    cleaned: List[str] = []
+    for x in candidates:
+        if isinstance(x, (str, int, float)):
+            s = str(x).strip()
+            if s:
+                cleaned.append(s)
+        if len(cleaned) >= 6:
+            break
+    return cleaned
+
+
+async def rewrite_query(
+    question: str,
+    *,
+    llm: "LLM",
+    ontology_section: str = "",
+    language: str = "en",
+) -> List[str]:
+    """Extract search keywords from a natural-language question.
+
+    The model reads the family's topic and doctype ontology and
+    produces 2-4 keywords that would literally appear in a matching
+    document. Translation and synonym expansion happen here, so the
+    regex walker downstream stays dumb.
+
+    Best-effort: any transport failure or parse error returns an empty
+    list, which callers treat as "no rewrite, search the question
+    verbatim." Recall is a quality-of-life feature, never a gate.
+    Synonym selection is the model's job and we don't second-guess it,
+    but we do strip empties and cap the list length.
+
+    Callers get the keywords rather than a finished query because they
+    render differently: `keywords_to_regex` for the vault walker, an
+    ` OR ` join for Paperless, and a "Searched for: ..." line in chat
+    so a family can see when a bad rewrite hid results.
+    """
+    from loguru import logger
+    from stack.ai.client import (
+        LLMModelNotFoundError,
+        LLMTimeoutError,
+        LLMUnavailableError,
+    )
+
+    prompt = build_rewrite_prompt(question, ontology_section, language)
+    try:
+        raw = await llm.complete("recall", prompt, json_mode=True)
+    except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
+        logger.warning("[recall] LLM unavailable for rewrite: {}", e)
+        return []
+    keywords = parse_rewrite_response(raw)
+    if not keywords:
+        # Surface the raw payload so an empty keyword list is
+        # debuggable: an off-shape JSON response is a prompt or
+        # model issue, not a transport one, and we can't fix it
+        # blind.
+        logger.warning(
+            "[recall] rewrite parse produced no keywords; raw={!r}",
+            (raw or "")[:200],
+        )
+    return keywords
+
+
+def keywords_to_regex(keywords: List[str]) -> str:
+    """Render keywords as the alternation regex `search_memory` reads.
+
+    `re.escape` per keyword is mandatory, not decoration: a model that
+    answers "C++" or "Lisa's" or "(foo)" would otherwise ship a pattern
+    that fails to compile, and `search_memory` returns `[]` on a bad
+    regex, so the search would go quiet rather than loud.
+
+    An empty keyword list renders as the empty pattern, which matches
+    every line. Callers that got no keywords back fall back to the
+    literal query instead of calling this.
+    """
+    return "|".join(re.escape(k) for k in keywords)
 
 
 def install_memory_to_forgejo_admin(
