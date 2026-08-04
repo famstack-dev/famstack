@@ -41,7 +41,12 @@ Third, one shim that widens when the agent is allowed to answer at all:
    agent by its configured name counts as a mention, not just an autocompleted
    pill. Families type "Stacky, what's on our list?".
 
-8. join_greeting (join_greeting.py) — on being invited, take one turn and
+8. thread_trigger (thread_trigger.py) — a message inside a thread the agent is
+   part of counts as a mention too. A thread is a conversation; nobody repeats
+   the name on every line of one. Scoped to threads the agent participates in,
+   because the archivist and mail bot thread in the same rooms.
+
+9. join_greeting (join_greeting.py) — on being invited, take one turn and
    introduce the room's topic instead of joining in silence.
 
 WHY SHIMS AND NOT A FORK
@@ -71,6 +76,12 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  (all three are `async def`; a sync replacement returns a str
                  into the loop's `await` and the tool call dies with TypeError)
     name_trigger: `nanobot.channels.matrix.MatrixChannel._is_bot_mentioned(self, event) -> bool`
+    thread_trigger: `MatrixChannel._is_bot_mentioned` (same symbol, wrapped after it)
+                 `MatrixChannel._on_message(self, room, event)` (async)
+                 `MatrixChannel._on_media_message(self, room, event)` (async)
+                 `MatrixChannel.client` (nio AsyncClient), `MatrixChannel.config.user_id`
+                 — and that `groupPolicy: mention` still routes through
+                 `_is_bot_mentioned` (config.json sets that policy)
     join_greeting: `nanobot.channels.matrix.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
@@ -205,6 +216,57 @@ try:
     _log.info("name-trigger mention shim active")
 except Exception:
     _log.exception("name-trigger shim could not attach (nanobot internals changed?)")
+
+
+# ── thread_trigger: a reply inside the agent's own thread is addressed to it ──
+# The threaded half of the same gate, in two parts because nanobot's gate is
+# synchronous and the question is not: `_on_message` (async) settles whether the
+# thread is ours and remembers it, `_is_bot_mentioned` (sync) reads that answer.
+# Wraps whatever `_is_bot_mentioned` is by now, so pill mentions and the name
+# matcher keep working and this only gets a say when both said no — and so a
+# name-trigger that failed to attach costs only itself.
+try:
+    import nanobot.channels.matrix as _matrix_thread
+    from thread_trigger import AgentThreads as _AgentThreads
+    from thread_trigger import thread_root as _thread_root
+
+    _agent_threads = _AgentThreads()
+
+    def _learn_threads(orig):
+        """Settle the thread question before nanobot's gate asks it."""
+        async def _wrapped(self, room, event):
+            root = _thread_root(event)
+            if root and not _agent_threads.includes(root):
+                # Swallows its own failures; a homeserver hiccup must not
+                # stop the message being routed by the other rules.
+                await _agent_threads.observe(
+                    self.client, room.room_id, root, self.config.user_id,
+                )
+            return await orig(self, room, event)
+        return _wrapped
+
+    _orig_mentioned_pre_thread = _matrix_thread.MatrixChannel._is_bot_mentioned
+
+    def _is_bot_mentioned_or_our_thread(self, event):
+        if _orig_mentioned_pre_thread(self, event):
+            return True
+        try:
+            root = _thread_root(event)
+            return bool(root and _agent_threads.includes(root))
+        except Exception:
+            _log.exception("thread trigger failed; addressing by name still works")
+            return False
+
+    _matrix_thread.MatrixChannel._is_bot_mentioned = _is_bot_mentioned_or_our_thread
+    _matrix_thread.MatrixChannel._on_message = _learn_threads(
+        _matrix_thread.MatrixChannel._on_message,
+    )
+    _matrix_thread.MatrixChannel._on_media_message = _learn_threads(
+        _matrix_thread.MatrixChannel._on_media_message,
+    )
+    _log.info("thread-trigger mention shim active")
+except Exception:
+    _log.exception("thread-trigger shim could not attach (nanobot internals changed?)")
 
 
 # ── join_greeting: say something useful the moment you are invited ───────────

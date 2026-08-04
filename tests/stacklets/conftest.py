@@ -97,12 +97,30 @@ def nanobot_stub():
         class MatrixChannel:
             def __init__(self):
                 self.client = types.SimpleNamespace(rooms={})
+                self.config = types.SimpleNamespace(
+                    user_id="@stacky-bot:home.local", group_policy="mention",
+                )
                 self.handled = []
                 self.joined = []
+                self.processed = []
 
             def _is_bot_mentioned(self, event):
                 # Stock nanobot: only an autocompleted pill counts.
                 return getattr(event, "pill_mention", False)
+
+            def _should_process_message(self, room, event):
+                # Stock nanobot under `groupPolicy: mention`, which is what
+                # the agent ships with: the mention gate decides.
+                return self._is_bot_mentioned(event)
+
+            async def _on_message(self, room, event):
+                # Stock nanobot: gate, then hand the text to the agent.
+                if self._should_process_message(room, event):
+                    self.processed.append(event)
+
+            async def _on_media_message(self, room, event):
+                if self._should_process_message(room, event):
+                    self.processed.append(event)
 
             async def _on_room_invite(self, room, event):
                 # Stock nanobot: join, say nothing.

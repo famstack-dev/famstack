@@ -25,7 +25,7 @@ import pytest
 
 SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
                    "memory_tool", "person_tool", "history_tool", "grep_tool",
-                   "name_trigger", "join_greeting", "vault_write")
+                   "name_trigger", "thread_trigger", "join_greeting", "vault_write")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -141,6 +141,96 @@ def test_a_pill_mention_still_wins_on_the_original_path(nanobot, monkeypatch):
         body = "what's on our list?"
 
     assert channel._is_bot_mentioned(_Event())
+
+
+def _threaded(root, sender="@marge:home.local"):
+    import types as _types
+
+    return _types.SimpleNamespace(sender=sender, source={"content": {
+        "body": "and the sleeping mats?",
+        "m.relates_to": {"rel_type": "m.thread", "event_id": root},
+    }})
+
+
+def _room_with_thread(channel, *, root_sender, replies=()):
+    """Give the stub channel a homeserver holding one thread."""
+    import types as _types
+
+    async def room_get_event(room_id, event_id):
+        return _types.SimpleNamespace(
+            event=_types.SimpleNamespace(sender=root_sender),
+        )
+
+    def room_get_event_relations(room_id, event_id, rel_type=None, **kwargs):
+        async def _iter():
+            for sender in replies:
+                yield _types.SimpleNamespace(sender=sender)
+        return _iter()
+
+    channel.client.room_get_event = room_get_event
+    channel.client.room_get_event_relations = room_get_event_relations
+    return _types.SimpleNamespace(room_id="!family:home.local")
+
+
+def test_a_reply_in_the_agents_own_thread_is_processed(nanobot):
+    """Without this shim a thread with the agent stalls after one turn.
+
+    Driven through `_on_message` rather than the matcher, because the
+    shim is in two halves — an async lookup and a sync gate — and only
+    the whole path proves they are wired to each other. The message
+    carries no pill and no name: the thread is the entire signal.
+    """
+    import asyncio
+
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    room = _room_with_thread(channel, root_sender=channel.config.user_id)
+    event = _threaded("$stacky-answer")
+
+    asyncio.run(channel._on_message(room, event))
+
+    assert channel.processed == [event]
+
+
+def test_another_bots_thread_is_left_alone(nanobot):
+    """The shim widens the gate; it must not open it.
+
+    The archivist answers a filing under the uploaded document, in the
+    same family room. Every reply there would reach the agent too if
+    "in a thread" were the rule, and the family would get two bots
+    talking over one receipt.
+    """
+    import asyncio
+
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    room = _room_with_thread(
+        channel, root_sender="@archivist-bot:home.local",
+        replies=["@homer:home.local"],
+    )
+
+    asyncio.run(channel._on_message(room, _threaded("$archivist-card")))
+
+    assert channel.processed == []
+
+
+def test_a_top_level_message_still_needs_addressing(nanobot):
+    """Threads change nothing about the main timeline. A message with no
+    thread, no pill and no name is not for the agent."""
+    import asyncio
+    import types as _types
+
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    room = _types.SimpleNamespace(room_id="!family:home.local")
+    event = _types.SimpleNamespace(
+        sender="@marge:home.local", body="dinner at seven",
+        source={"content": {"body": "dinner at seven"}},
+    )
+
+    asyncio.run(channel._on_message(room, event))
+
+    assert channel.processed == []
 
 
 def test_an_invite_produces_a_greeting_turn(nanobot):
