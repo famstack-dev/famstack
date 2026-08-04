@@ -46,8 +46,15 @@ htmlcov/
 # scorecards) — written by `stacktests eval`, never committed.
 tests/integration/eval/runs/
 
-# AI assistant
-.claude/
+# AI assistant. Local settings and transcripts stay out, but the LSP plugin
+# is repo configuration: it makes agents read this codebase with a language
+# server instead of grep, so every clone should get it.
+# Git cannot re-include a file whose parent directory is excluded, so these
+# ignore directory *contents* and re-open the one path down to the plugin.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/famstack-lsp/
 
 # Internal development notes
 impl/

@@ -18,9 +18,11 @@ A single-file Python CLI (`./stack`) orchestrates Docker-based services
 | You are a... | Load this | Use it to... |
 |---|---|---|
 | **Operator** (running famstack on a Mac) | [docs/agent/ops.md](docs/agent/ops.md) | install, start/stop, troubleshoot, back up |
-| **Engineer** (changing famstack code) | [docs/agent/dev.md](docs/agent/dev.md) | write stacklets, hooks, CLI plugins, tests, commits |
+| **Engineer** (changing famstack code) | [docs/agent/dev.md](docs/agent/dev.md) | write stacklets, hooks, CLI plugins, tests, commits, static checks |
 
 If you might do both, load both. They are short on purpose.
+
+The type checker is worth one look before you start, whatever your harness: the tree carries a standing error count, so a bare run tells you nothing about your own change. The "Static checks" section of the engineer file has the two commands that separate the two, and works from any agent that can run a shell.
 
 ## Approach (universal)
 
@@ -93,6 +95,7 @@ Apply to every role, every session.
 | Doc | Purpose |
 |---|---|
 | [README.md](README.md) | Intro + quickstart |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev toolchain: setup, lint, type checking, language server |
 | [docs/admin-guide.md](docs/admin-guide.md) | Full operator manual (prose) |
 | [docs/user-guide.md](docs/user-guide.md) | Family-facing chat usage guide |
 | [docs/stack-reference.md](docs/stack-reference.md) | Framework reference: manifest, hooks, env, lifecycle |
