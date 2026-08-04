@@ -8,9 +8,10 @@ It also repairs the vault's `origin` URL on every run. Both halves of
 that URL rot on their own schedule, and they need different cures. The
 host part (a LAN IP baked in at clone time) is re-derived from the
 current config, because the answer is knowable. The embedded token is
-not: nothing anywhere holds a newer one, so a token Forgejo rejects is
-replaced with a freshly issued one rather than rewritten. Between them,
-a clone made months ago starts working again after a restart.
+not: nothing anywhere holds a newer one, so a token Forgejo rejects —
+or one that was never stored at all — is replaced with a freshly issued
+one rather than rewritten. Between them, a clone made months ago starts
+working again after a restart.
 """
 
 from __future__ import annotations
@@ -53,7 +54,8 @@ def run(ctx):
             vault_remote_url(code_url), BOT_USERNAME, tok,
         )
 
-    remote = remote_for(ctx.secret("MEMORY_BOT_TOKEN"))
+    token = ctx.secret("MEMORY_BOT_TOKEN")
+    remote = remote_for(token)
 
     # The token is minted once at install and read forever after, so a
     # token Forgejo has since rejected cannot be re-derived from
@@ -61,13 +63,30 @@ def run(ctx):
     # (a todo tick, an ontology edit) fails 401 and a restart changes
     # nothing, because re-pointing the remote writes the dead token
     # back. Checked before the pull so the pull gets the good one.
-    if remote and remote_rejects_credentials(remote):
+    #
+    # A token that was never stored needs the same cure and used to get
+    # none: instances installed before this hook's sibling learned to
+    # persist one hold nothing, a missing token builds no remote, and
+    # the repair below only ran once there was a remote to test. Those
+    # instances answered "Forgejo credentials missing" to every vault
+    # write until someone re-ran setup by hand. Both causes reduce to
+    # "we hold no credential Forgejo accepts", so both mint one.
+    if not code_url:
+        reason = ""
+    elif not token:
+        reason = "Memory: no vault write token on file"
+    elif remote_rejects_credentials(remote):
+        reason = "Memory: Forgejo rejected the stored token"
+    else:
+        reason = ""
+
+    if reason:
         if fresh := reissue_write_token(code_url, admin_user, admin_password):
             ctx.secret("MEMORY_BOT_TOKEN", fresh)
             remote = remote_for(fresh)
-            ctx.step("Memory: Forgejo rejected the stored token; issued a new one")
+            ctx.step(f"{reason}; issued a new one")
         else:
-            ctx.step("Memory: Forgejo rejected the stored token and it could not be replaced")
+            ctx.step(f"{reason} and it could not be replaced")
 
     # If the vault never got cloned (install hook ran before code
     # stacklet was reachable, for example), try once more here. This
