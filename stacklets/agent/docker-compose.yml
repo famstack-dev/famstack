@@ -47,6 +47,10 @@ services:
       # image runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with the Dockerfile COPY.
       - ./runtime:/app/runtime:ro
+      # The `stack` shim, live for the same reason. It is the agent's only
+      # route to the CLI, so a bug in it takes out every vault tool at once —
+      # and it stayed baked-only long enough for one to go unnoticed.
+      - ./client/stack:/usr/local/bin/stack:ro
     restart: unless-stopped
 
 networks:

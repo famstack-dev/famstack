@@ -150,34 +150,57 @@ def handle_request(data):
         return {"error": str(e)}
 
 
+# How a failed command reports itself over the plaintext protocol, which
+# otherwise carries only the CLI's text. Silence here is not neutral: the agent
+# reads a usage message as a result and retries the same call forever, which is
+# how one mis-parsed search argument became an unbounded tool loop. Appended
+# only on failure, so successful output stays byte-identical.
+EXIT_MARKER = "stack-exit:"
+
+
+def _with_exit(text, code):
+    """The reply body, plus a status line when the command failed."""
+    if not code:
+        return text
+    if not text.endswith("\n"):
+        text += "\n"
+    return f"{text}{EXIT_MARKER} {code}\n"
+
+
 def handle_plaintext(line):
     """Run one allowlisted `stack` command in the CLI's text mode.
 
     The token-lean counterpart to `handle_request`: the agent sends a plaintext
     command line and gets the CLI's normal text output back (no `--json`), so its
     context stays small. Confined to `DOMAIN_ALLOW` -- never lifecycle ops.
+
+    Every path that is not a command that ran and succeeded reports a non-zero
+    status, refusals included. A refusal the caller cannot distinguish from an
+    answer is a retry loop waiting to happen.
     """
     try:
         args = shlex.split(line)
     except ValueError as e:
-        return f"error: could not parse command ({e})\n"
+        return _with_exit(f"error: could not parse command ({e})\n", 2)
     if not args:
-        return "error: empty command\n"
+        return _with_exit("error: empty command\n", 2)
     if not any(args[:len(p)] == p for p in DOMAIN_ALLOW):
         allowed = ", ".join(" ".join(p) for p in DOMAIN_ALLOW)
-        return f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n"
+        return _with_exit(
+            f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n", 126,
+        )
     if _is_denied_write(args):
-        return DENY_HINT
+        return _with_exit(DENY_HINT, 126)
     try:
         r = subprocess.run(
             [str(STACK_BIN), *args], capture_output=True, text=True,
             timeout=120, cwd=str(REPO_ROOT),
         )
-        return r.stdout or r.stderr or "(no output)\n"
+        return _with_exit(r.stdout or r.stderr or "(no output)\n", r.returncode)
     except subprocess.TimeoutExpired:
-        return "error: command timed out\n"
+        return _with_exit("error: command timed out\n", 124)
     except Exception as e:
-        return f"error: {e}\n"
+        return _with_exit(f"error: {e}\n", 1)
 
 
 def handle_client(conn):

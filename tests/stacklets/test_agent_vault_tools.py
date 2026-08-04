@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.machinery
 import importlib.util
 import sys
 from pathlib import Path
@@ -41,8 +42,16 @@ TOOL_MODULES = ("memory_tool", "person_tool", "grep_tool", "sitecustomize")
 # ── loading the real components under test ───────────────────────────
 
 def _load_from_path(name: str, path: Path):
-    """Import a module by file path (famstack-api.py is not importable)."""
-    spec = importlib.util.spec_from_file_location(name, path)
+    """Import a module by file path.
+
+    Neither component under test is importable the ordinary way:
+    `famstack-api.py` has a hyphen in its name, and the client shim is an
+    extensionless script. The explicit loader is what makes the second
+    one work -- without it importlib cannot guess how to read a file with
+    no `.py` suffix and hands back a spec with no loader at all.
+    """
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_file_location(name, path, loader=loader)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -201,6 +210,115 @@ def test_search_sends_no_backend_flag(vault_tools):
     argv = argv_of(vault_tools["memory_search"], query="Homer")
 
     assert "--backend" not in argv
+
+
+# ── gate 3: the transport between the tool and the CLI ───────────────
+#
+# The two gates above both read argv straight out of the tool. Nothing
+# the agent runs reaches the CLI that way: it goes over a socket as one
+# line of text and is rebuilt on the other side. That hop was untested,
+# and it was losing every argument boundary.
+
+
+@pytest.fixture(scope="module")
+def shim():
+    """The container-side `stack` shim, the agent's only route to the CLI."""
+    return _load_from_path("stack_client_shim",
+                           REPO_ROOT / "stacklets" / "agent" / "client" / "stack")
+
+
+class TestArgvSurvivesTheWire:
+    """The shim encodes argv as one line; `handle_plaintext` rebuilds it
+    with `shlex.split`. If the two disagree about quoting, the CLI runs a
+    different command than the tool asked for -- and the tool cannot tell,
+    because it never sees the argv that actually ran.
+    """
+
+    def test_a_multi_word_argument_arrives_as_one_argument(self, shim):
+        """The regression, in one line.
+
+        `memory search "school run"` arrived as four words. argparse
+        rejected `run` as a stray positional, so the agent's main
+        retrieval tool failed on every query longer than one word --
+        which is nearly every real question a family asks.
+        """
+        import shlex
+        argv = ["memory", "search", "school run", "--limit", "10"]
+
+        assert shlex.split(shim.wire_line(argv)) == argv
+
+    @pytest.mark.parametrize("argument", [
+        "school run",
+        "when does the car insurance renew?",
+        "Marge's dentist",
+        'he said "no"',
+        "back\\slash",
+        "a  double  space",
+        "--not-a-flag",
+        "",
+    ])
+    def test_anything_a_family_might_type_survives(self, shim, argument):
+        """The query is free text a person typed, so the encoding has to
+        hold for apostrophes, quotes, question marks and empty strings --
+        not just for the tidy identifiers a hand test reaches for."""
+        import shlex
+        argv = ["memory", "search", argument]
+
+        assert shlex.split(shim.wire_line(argv)) == argv
+
+    def test_the_real_tool_argv_survives_it(self, api, shim, vault_tools):
+        """End to end: what the tool builds is what the CLI would run.
+
+        Uses a multi-word query on purpose. Every fixture in this file
+        used to search for "Homer", which is exactly why a bug that only
+        bites on a space lived through all of them.
+        """
+        import shlex
+        argv = argv_of(vault_tools["memory_search"],
+                       query="when is the school run", limit=10)
+
+        rebuilt = shlex.split(shim.wire_line(argv[1:]))
+
+        assert rebuilt == argv[1:]
+        assert any(rebuilt[:len(p)] == p for p in api.DOMAIN_ALLOW)
+
+
+class TestFailureIsVisibleToTheCaller:
+    """A command that failed must not look like one that worked.
+
+    This is what turned a one-argument bug into a hang: the shim always
+    exited 0, so `memory_search` read argparse's usage text as search
+    results, returned it to the model as an answer, and the model called
+    the identical tool again. It was still doing that five minutes later.
+    """
+
+    def test_a_failed_command_reports_its_status(self, api, shim):
+        reply = api._with_exit("stack memory search: error: unrecognized\n", 2)
+        text, code = shim.split_exit_code(reply)
+
+        assert code == 2
+        assert "unrecognized" in text
+        assert api.EXIT_MARKER not in text, "protocol noise must not reach the model"
+
+    def test_a_successful_command_is_untouched(self, api, shim):
+        """Success has to stay byte-identical, or every reply grows a line."""
+        reply = api._with_exit("#1  vault/homer/about.md  score=0.82\n", 0)
+
+        assert reply == "#1  vault/homer/about.md  score=0.82\n"
+        assert shim.split_exit_code(reply) == (reply, 0)
+
+    def test_a_refusal_is_a_failure_too(self, api, shim):
+        """A denied command used to come back as ordinary output. The
+        model cannot act on a refusal it cannot recognise as one."""
+        _, code = shim.split_exit_code(api.handle_plaintext("up memory"))
+
+        assert code != 0
+
+    def test_output_that_looks_like_the_marker_is_not_mistaken_for_one(self, shim):
+        # A vault note quoting the marker must not silently set an exit code.
+        body = "the log said stack-exit: 3 and then stopped\n"
+
+        assert shim.split_exit_code(body) == (body, 0)
 
 
 # ── the vault root a profile actually lives in ───────────────────────
