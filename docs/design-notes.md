@@ -132,14 +132,19 @@ Moving it makes every caller correct at once: the agent tool, the archivist,
 `stack memory search` from a terminal, and whatever asks next. Leaving it
 means the next consumer re-learns this the way the agent did.
 
-**What has to be decided when it moves.** The rewrite needs an LLM, so a
-search command that has never called a model would start to, and that changes
-its latency and its failure modes. Options are a flag (`--natural`), inferring
-it from the trailing `?` the way the archivist does, or keeping the rewrite as
-a lib function that callers opt into. The archivist also needs the keywords
-back, not just the regex, because it shows `Searched for: ...` so a family can
-see when a bad rewrite hid results; that visibility is worth keeping and the
-return shape has to carry it.
+**What was decided when it moved.** The rewrite lives in `memory.lib` and
+takes the caller's LLM, so memory owns the hop without owning a client. On the
+CLI it sits behind `stack memory search --nl`, which reaches the model in the
+bot-runner the same way `stack memory wiki` does. Opt-in rather than inferred:
+this surface's default query language is a regex, in which `?` is a quantifier,
+so inferring from a trailing `?` would turn `Zelt?` into a surprise model call,
+and it is on an agent's hot path where the default has to stay cheap. Chat keeps
+inferring, because there a rewrite per message is affordable and one character
+is a rule a family can learn. Two guards keep the cost honest: a query with no
+whitespace never leaves the host, and every failure (no AI, container down,
+model silent) falls back to searching the query literally. Both surfaces print
+`Searched for: ...`, because a rewrite that picked the wrong words has to look
+different from an empty vault.
 
 Both current callers should keep working unchanged through the move. That is
 the test.

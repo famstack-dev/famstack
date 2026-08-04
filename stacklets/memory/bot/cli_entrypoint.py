@@ -10,6 +10,13 @@ Same pattern as `stacklets/docs/bot/cli_entrypoint.py`; both stacklets
 re-use the bot-runner as their tools runtime.
 
 Commands:
+    rewrite <question>
+        Print the search keywords a question should be looked up by,
+        one per line. `stack memory search --nl` is the caller: it
+        does the searching on the host and only comes here for the
+        words. Exit 1 means no keywords, which the host treats as
+        "search it literally" rather than as a failure.
+
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
         `--dry-run` previews to stdout. Bare invocation regenerates
@@ -30,10 +37,11 @@ sys.path.insert(0, "/app")  # stack.ai.client, stack.forgejo, stack.prompt
 
 from stack.ai.client import LLM, LLMUnavailableError
 
-from cli import wiki
+from cli import rewrite, wiki
 
 
 _HANDLERS = {
+    "rewrite": rewrite.run,
     "wiki": wiki.run,
 }
 

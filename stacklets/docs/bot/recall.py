@@ -23,6 +23,14 @@ mode produced it.
 Everything is best-effort: an unreachable LLM, a malformed response,
 or an empty keyword list falls back to the literal query. Recall is
 a quality-of-life feature, never a gate.
+
+Chat infers the trigger; the CLI does not. `stack memory search`
+reaches the same rewrite behind an explicit `--nl`, and that
+difference is deliberate on both sides. Here, every message is
+already being read for a family, and one character is a rule a
+family can learn. There, the default query language is a regex, in
+which `?` is a quantifier, so inferring from it would turn `Zelt?`
+into a surprise model call. Do not "fix" either one into the other.
 """
 
 from __future__ import annotations
