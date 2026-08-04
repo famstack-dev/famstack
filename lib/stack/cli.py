@@ -838,13 +838,27 @@ def handle_doctor(stck, args):
     preferred = stck._cfg("core", "runtime", "orbstack")
     docker.init_runtime(preferred)
 
-    stacklets = sorted(s["id"] for s in stck.discover())
+    discovered = stck.discover()
+    stacklets = sorted(s["id"] for s in discovered)
+    manifests = {s["id"]: s["manifest"] for s in discovered}
+
+    def missing_secrets(stacklet_id):
+        """Declared credentials the secret store cannot produce.
+
+        `required_secrets` names them the way a stacklet's own hooks do,
+        without the namespace prefix, so the manifest reads the same as
+        the `ctx.secret("MEMORY_BOT_TOKEN")` call that consumes it.
+        """
+        required = manifests.get(stacklet_id, {}).get("required_secrets", [])
+        return [name for name in required if not stck.secret(stacklet_id, name)]
+
     findings = doctor.diagnose(
         stacklets,
         stck.env,
         docker.containers_for,
         docker.container_env,
         docker.image_env,
+        missing_secrets=missing_secrets,
     )
 
     print()

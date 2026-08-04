@@ -12,6 +12,7 @@ from stack.doctor import (
     check_endpoint,
     check_env_drift,
     check_exited,
+    check_missing_secrets,
     compose_supplied,
     diagnose,
     env_drift,
@@ -172,6 +173,69 @@ def test_nonzero_exit_names_the_container_and_code():
     assert "stack-core-watchtower" in finding.title
     assert "128" in finding.title
     assert "3 weeks ago" in finding.detail
+
+
+# ── missing credentials ──────────────────────────────────────────────────
+#
+# The real incident: `memory` mints its Forgejo write token in
+# on_install_success, which only ever runs on first install. Instances set
+# up before that hook learned to persist the token held none, every vault
+# write answered "Forgejo credentials missing", and doctor -- which knew
+# only about containers -- reported a perfectly healthy stack.
+
+def test_a_declared_credential_that_is_absent_is_an_error():
+    finding = check_missing_secrets("memory", ["MEMORY_BOT_TOKEN"])
+    assert finding.is_error
+    assert "MEMORY_BOT_TOKEN" in finding.detail
+    assert finding.fix == "stack setup memory"
+
+
+def test_all_credentials_present_is_not_a_finding():
+    assert check_missing_secrets("memory", []) is None
+
+
+def test_missing_credentials_are_reported_in_one_finding():
+    # One line per stacklet, not per key: a stacklet whose provisioning
+    # never ran is missing all of them, and the cure is a single command.
+    finding = check_missing_secrets("docs", ["API_TOKEN", "BOT_PASSWORD"])
+    assert "API_TOKEN" in finding.detail and "BOT_PASSWORD" in finding.detail
+    assert finding.fix == "stack setup docs"
+
+
+def test_a_stacklet_that_declares_no_secrets_is_never_flagged():
+    # The collaborator is optional; stacklets that declare nothing must
+    # not start reporting findings the moment the check ships.
+    containers = [{"name": "stack-x-1", "state": "running",
+                   "exit_code": 0, "since": "Up 1 minute"}]
+    findings = diagnose(
+        ["x"], lambda s: {"A": "1"}, lambda s: containers, lambda n: {"A": "1"},
+        lambda n: {}, missing_secrets=lambda s: [],
+    )
+    assert findings == []
+
+
+def test_diagnose_finds_the_missing_vault_token():
+    # End to end through the walk: this is the production symptom doctor
+    # was silent about.
+    containers = [{"name": "stack-memory-wiki", "state": "running",
+                   "exit_code": 0, "since": "Up 2 days"}]
+    findings = diagnose(
+        ["memory"], lambda s: {}, lambda s: containers, lambda n: {},
+        lambda n: {}, missing_secrets=lambda s: ["MEMORY_BOT_TOKEN"],
+    )
+    assert len(findings) == 1
+    assert findings[0].fix == "stack setup memory"
+
+
+def test_a_stacklet_that_was_never_installed_is_not_flagged():
+    # No containers means the stacklet is not part of this instance. Its
+    # credentials are supposed to be absent, and telling the reader to set
+    # up something they never asked for is noise.
+    findings = diagnose(
+        ["memory"], lambda s: {}, lambda s: [], lambda n: {}, lambda n: {},
+        missing_secrets=lambda s: ["MEMORY_BOT_TOKEN"],
+    )
+    assert findings == []
 
 
 def test_reachable_endpoint_is_not_a_finding():

@@ -29,6 +29,12 @@ requires    = ["code"]
 # tweaks (`quartz/*.ts`) land without manual image management.
 build = true
 
+# The Forgejo write token every host-side vault write needs. It is minted
+# during install and stored as a secret; `stack doctor` reports it missing
+# so an instance that predates the token (or lost it with a rebuilt code
+# stacklet) says so plainly instead of failing one write at a time.
+required_secrets = ["MEMORY_BOT_TOKEN"]
+
 # LAN port for the wiki's Quartz preview server. Sits at the end of
 # the 42xxx range used by other stacklets so future infra ports stay
 # easy to scan.
