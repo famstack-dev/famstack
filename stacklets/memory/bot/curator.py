@@ -59,6 +59,8 @@ sys.path.insert(0, "/app")  # stack.* framework
 
 from loguru import logger  # noqa: E402
 from memory.lib import (  # noqa: E402
+    MIRROR_SHA_NAME,
+    MIRROR_TRIGGER_NAME,
     PRESERVE_LOCAL,
     RESET_LOCAL,
     SyncResult,
@@ -103,10 +105,11 @@ _SKIP_TOP = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
 # removal operations.
 _GENERATED_NAMES = {"about.md", "index.md"}
 
-# Trigger file `stack memory sync` drops into the state dir to request
-# an immediate tick. The curator stays brain's only writer; the CLI
-# only asks and waits (one-writer invariant, ADR-011).
-TRIGGER_NAME = "mirror-now"
+# Both ends of the trigger protocol live in `memory.lib`: every writer
+# (the write seam on its way out, `stack memory sync` by hand) asks
+# there, and this loop is what answers. The curator stays brain's only
+# writer; callers only ask and wait (one-writer invariant, ADR-011).
+TRIGGER_NAME = MIRROR_TRIGGER_NAME
 
 # The curator's own git remote. `origin` belongs to the host plane
 # (hooks and the host CLI reach Forgejo on a localhost/LAN port); this
@@ -132,24 +135,42 @@ def only_own_commits(subjects: list[str]) -> bool:
 
 class Debounce:
     """Quiet-window tracker: `observe(head, now)` returns True once the
-    same head has been seen unchanged for `quiet_secs`."""
+    same head has been seen unchanged for the current window.
 
-    def __init__(self, quiet_secs: float):
+    The window is `quiet_secs` while rebuilds are succeeding, and doubles
+    with each consecutive failure up to `max_backoff_secs`. That second
+    part exists because the usual reason a rebuild fails is the AI
+    endpoint being down, and being down is a condition that outlives one
+    quiet window: retrying on the flat window spends a subprocess and an
+    LLM call every three minutes, all day, and prints a line each time
+    that is indistinguishable from a healthy heartbeat.
+    """
+
+    def __init__(self, quiet_secs: float, max_backoff_secs: float = 3600.0):
         self.quiet_secs = quiet_secs
+        self.max_backoff_secs = max_backoff_secs
+        self.failures = 0
         self._head: str | None = None
         self._since = 0.0
+
+    def window(self) -> float:
+        """The gap currently being waited out. Reported in the log."""
+        return min(self.quiet_secs * (2 ** self.failures), self.max_backoff_secs)
 
     def observe(self, head: str, now: float) -> bool:
         if head != self._head:
             self._head, self._since = head, now
             return False
-        return (now - self._since) >= self.quiet_secs
+        return (now - self._since) >= self.window()
 
     def reset(self) -> None:
+        """Nothing pending, or a rebuild worked: back to the flat window."""
         self._head = None
+        self.failures = 0
 
     def retry_later(self, now: float) -> None:
-        """Failed rebuild: keep the head, restart the quiet window."""
+        """Failed rebuild: keep the head, restart the window, wider."""
+        self.failures += 1
         self._since = now
 
 
@@ -790,7 +811,7 @@ async def main() -> None:
     shared_bucket = os.environ.get("SHARED_BUCKET", "family")
     state_dir = Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator"))
     sha_file = state_dir / "last-rebuilt-sha"
-    mirror_file = state_dir / "last-mirrored-sha"
+    mirror_file = state_dir / MIRROR_SHA_NAME
     nightly_file = state_dir / "last-nightly-date"
 
     while not (vault_dir / ".git").exists():
@@ -977,6 +998,14 @@ async def main() -> None:
             debounce.reset()
         else:
             debounce.retry_later(time.monotonic())
+            # Say the shape of the failure, not just that there was one. A
+            # per-cycle line at the same interval reads as a heartbeat; a
+            # widening gap with a count on it reads as an outage.
+            logger.warning(
+                "[curator] rebuild failed {}x in a row; next attempt in {}m "
+                "(source is still mirrored, only generated pages are stale)",
+                debounce.failures, round(debounce.window() / 60),
+            )
 
 
 if __name__ == "__main__":
