@@ -428,7 +428,7 @@ class MatrixClient:
 
     # ── Messaging ────────────────────────────────────────────────────────
 
-    def send(self, room, message, html=None, mentions=None):
+    def send(self, room, message, html=None, mentions=None, thread_root=None):
         """Send a text message to a room (by alias or ID).
 
         Resolves aliases automatically. If html is provided, sends a
@@ -437,6 +437,11 @@ class MatrixClient:
         That payload, not the display name in the text, is what a bot's
         mention gate keys on, so it is how you get a bot (like the agent) to
         answer in a group room. Returns (ok, detail).
+
+        `thread_root` posts the message inside the thread rooted at that
+        event id, the way a client's "Reply in thread" does. A thread is a
+        conversation the agent treats as addressed to it once it is part of
+        one, so this is how that path is exercised from the terminal.
         """
         if room.startswith("!"):
             room_id = room
@@ -452,6 +457,15 @@ class MatrixClient:
             body["formatted_body"] = html
         if mentions:
             body["m.mentions"] = {"user_ids": [self._full_user(u) for u in mentions]}
+        if thread_root:
+            # `is_falling_back` plus the in-reply-to pointer is what a real
+            # client sends, so thread-blind clients still render it in context.
+            body["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root},
+            }
         status, resp = _put(
             self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn}"),
             body,

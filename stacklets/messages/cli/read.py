@@ -1,14 +1,19 @@
 """
-stack messages read <room> [--limit N] — show a room's recent messages
+stack messages read <room> [--limit N] [--ids] — show a room's recent messages
 
 Prints the last N messages (default 20) in a room, oldest-first, as
 `HH:MM  sender: text`. Reads through the Synapse admin API, so it works for
 any room without the admin having to be a member — handy for checking what a
 bot replied after a capture, or reading back a conversation from the terminal.
 
+`--ids` prints each message's event id underneath it. That is what
+`stack messages send --thread <event-id>` takes, so the two together let you
+reply in a thread on a message you did not send — the bot's own answer, say.
+
 Examples:
     stack messages read chat
     stack messages read topic-camping --limit 5
+    stack messages read thread-rig --ids            # ids for --thread
     stack messages read '!abc123:home'          # a room ID works too
 
 The room can be a bare alias ('chat'), a full alias ('#chat:home'), or a room
@@ -29,29 +34,34 @@ from room import _connect  # noqa: E402
 
 
 def _parse_args(argv):
-    """(room, limit, error) from the raw arg list."""
+    """(room, limit, show_ids, error) from the raw arg list."""
     limit = 20
+    show_ids = False
     rest = []
     i = 0
     while i < len(argv):
         if argv[i] == "--limit":
             if i + 1 >= len(argv):
-                return None, None, "--limit needs a number"
+                return None, None, None, "--limit needs a number"
             try:
                 limit = int(argv[i + 1])
             except ValueError:
-                return None, None, f"--limit wants a number, got {argv[i + 1]!r}"
+                return None, None, None, f"--limit wants a number, got {argv[i + 1]!r}"
             i += 2
+            continue
+        if argv[i] == "--ids":
+            show_ids = True
+            i += 1
             continue
         rest.append(argv[i])
         i += 1
     if not rest:
-        return None, None, "Usage: stack messages read <room> [--limit N]"
-    return rest[0], limit, None
+        return None, None, None, "Usage: stack messages read <room> [--limit N] [--ids]"
+    return rest[0], limit, show_ids, None
 
 
 def run(args, stacklet, config):
-    room, limit, err = _parse_args(args or [])
+    room, limit, show_ids, err = _parse_args(args or [])
     if err:
         return {"error": err}
 
@@ -81,12 +91,19 @@ def run(args, stacklet, config):
         sender = ev.get("sender", "?").split(":")[0].lstrip("@")
         body = ev.get("content", {}).get("body", "")
         ts = ev.get("origin_server_ts")
+        event_id = ev.get("event_id", "")
         when = datetime.fromtimestamp(ts / 1000).strftime("%H:%M") if ts else "--:--"
         first, *more = body.split("\n")
         print(f"{when}  {sender}: {first}")
         for line in more:  # indent continuation lines so replies stay readable
             print(f"         {line}")
-        messages.append({"sender": sender, "body": body, "ts": ts})
+        if show_ids:
+            # The id is what `send --thread` takes, so print it where you can
+            # copy it: under the message it belongs to, not in a separate list.
+            print(f"         [{event_id}]")
+        messages.append(
+            {"sender": sender, "body": body, "ts": ts, "event_id": event_id},
+        )
 
     if not messages:
         print(f"(no messages in {room})")
