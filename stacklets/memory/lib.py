@@ -1635,6 +1635,17 @@ def build_rewrite_prompt(
     topics and forms this family actually files under, so the model
     expands and translates into the vault's vocabulary instead of
     guessing at a generic one.
+
+    It also has to be held at arm's length, which is what the closing
+    instruction does. Given the list and nothing else, a model answers
+    with the list: "what do we still need to buy for the camping
+    trip" came back as Travel, Shopping, Receipt, all real topic
+    names, none of them words any camping note contains, and the
+    search returned a Kwik-E-Mart receipt. `search_memory` matches
+    document bodies with frontmatter stripped, so a category that
+    only ever appears as a tag can never match. The subject of the
+    question comes first; the topics are there for spelling and
+    language.
     """
     return f"""You extract search keywords from a question, so a regex walker can look up family documents.
 
@@ -1650,9 +1661,13 @@ Language hint: {language}.
 Question: {question}
 
 Reply with a JSON object: {{"keywords": ["word1", "word2", "word3"]}}.
-2 to 4 keywords. Each keyword is a literal word that would appear in
-the document (a noun, a name, a topic). No phrases, no quotes, no
-prose around the JSON. Output ONLY the JSON object."""
+2 to 4 keywords. Start with the concrete subject of the question:
+the thing, place, activity or person it is about, written the way a
+document about it would write it. The topic list above is context for
+vocabulary and language, not a menu to answer from; a category name is
+only a keyword if a document would actually contain that word. No
+phrases, no quotes, no prose around the JSON. Output ONLY the JSON
+object."""
 
 
 def parse_rewrite_response(raw: str) -> List[str]:
