@@ -80,3 +80,113 @@ select = ["E4", "E7", "E9", "F"]
 # The top-level CLI wires up ~30 argparse subcommands with deliberate one-line
 # `p = sub.add_parser(...); p.add_argument(...)` pairs — compact by design.
 "lib/stack/cli.py" = ["E702"]
+
+# ---------------------------------------------------------------------------
+# Type checking (basedpyright)
+# ---------------------------------------------------------------------------
+# Ruff catches undefined names; this catches the layer above — wrong argument
+# types, attribute access on Optional, unbound branches. Run it on the files
+# you touched, not the tree: `uvx basedpyright <paths>`.
+#
+# The interesting part is the import roots. There is no installed package
+# here: the framework lives in `lib/`, and every stacklet bootstraps its own
+# directory onto `sys.path` at import time. A checker that only knows about
+# the repo root sees `import stack.config` and `from bot import ...` as
+# unresolved, and the noise buries the real findings. So each stacklet gets an
+# execution environment naming its own root. They cannot be merged into one
+# global `extraPaths` — `hooks/`, `cli/` and `bot/` exist in several stacklets
+# and would resolve to whichever came first.
+#
+# Three roots recur: `stacklets/core/bot-runner` (every bot imports
+# `microbot` from there), `stacklets` itself (cross-stacklet reads like
+# `memory.lib`), and the stacklet's own `bot/` directory (bot modules import
+# their siblings by bare name).
+#
+# What stays unresolved is what genuinely is not here: `nanobot`, `fastapi`
+# and friends live only inside their containers. Install them into `.venv`
+# only if you want those files checked too.
+
+[tool.basedpyright]
+# "standard" is pyright's own default. basedpyright's stricter default flags
+# every bare `dict`/`list` annotation, which is style, not correctness.
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["lib"]
+# `tests` is here so the language server can index it: without it, "find
+# every caller" silently skips the test suite, which is where much of the
+# calling happens. It reports nothing, though — see the tests execution
+# environment at the bottom. Test fixtures pass deliberately loose dicts
+# into typed SDK calls, and those 800-odd complaints would bury the ~200
+# real ones in shipped code. `ignore` wins even over a filename passed on
+# the command line, so to check a test file you comment that line out.
+include = ["lib", "stacklets", "tools", "hooks", "tests"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    ".venv",
+    ".stack",
+    "lib/simple_term_menu.py",  # vendored third-party file
+]
+# Analysed but silent. `exclude` would drop these files from the index and
+# take navigation with them; `ignore` keeps them resolved and suppresses
+# their diagnostics. That is what buys find-references over the test suite
+# without the fixture noise.
+ignore = ["tests"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "lib"
+extraPaths = ["lib", "stacklets/ai", "stacklets/core/bot-runner"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/agent"
+extraPaths = ["lib", "stacklets/agent", "stacklets/agent/bot", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/ai"
+extraPaths = ["lib", "stacklets/ai", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/backup"
+# on_install.py bootstraps the engine directory itself, not its parent, to
+# import `sync` for the canary string.
+extraPaths = ["lib", "stacklets/backup", "stacklets/backup/engines", "stacklets/backup/engines/external-disk", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/chatai"
+extraPaths = ["lib", "stacklets/chatai", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/code"
+extraPaths = ["lib", "stacklets/code", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/core"
+extraPaths = ["lib", "stacklets/core", "stacklets/core/bot", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/docs"
+# git_mirror.py reaches across to the memory stacklet's CLI for `todo_list`.
+extraPaths = ["lib", "stacklets/docs", "stacklets/docs/bot", "stacklets/memory/bot/cli", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/infra"
+extraPaths = ["lib", "stacklets/infra", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/memory"
+# `wiki` and `todo_list` live one level deeper, under bot/cli.
+extraPaths = ["lib", "stacklets/memory", "stacklets/memory/bot", "stacklets/memory/bot/cli", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/messages"
+extraPaths = ["lib", "stacklets/messages", "stacklets/messages/bot", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "stacklets/photos"
+extraPaths = ["lib", "stacklets/photos", "stacklets/core/bot-runner", "stacklets"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["lib", ".", "stacklets", "stacklets/core/bot-runner", "stacklets/agent/bot", "stacklets/core/bot", "stacklets/core/tools-server", "stacklets/docs/bot", "stacklets/memory/bot", "stacklets/memory/bot/cli", "stacklets/messages/bot"]

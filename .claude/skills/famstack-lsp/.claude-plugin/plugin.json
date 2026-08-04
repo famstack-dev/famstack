@@ -1,0 +1,11 @@
+{
+  "name": "famstack-lsp",
+  "description": "Python language server (basedpyright) for the famstack repo, so agents get diagnostics and code navigation instead of grepping.",
+  "version": "0.1.0",
+  "author": {
+    "name": "famstack",
+    "url": "https://github.com/famstack-dev/famstack"
+  },
+  "license": "AGPL-3.0-or-later",
+  "lspServers": "./.lsp.json"
+}

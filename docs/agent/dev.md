@@ -163,6 +163,45 @@ Use only the documented template variables in `[env.defaults]`. Adding a new one
 
 Most-used: `{data_dir}`, `{domain}`, `{ip}`, `{language}`, `{timezone}`, `{shared_bucket}`, `{stacklet_id}`, `{admin_username}`, `{admin_email}`, `{admin_password}`, `{ai_openai_url}`, `{ai_openai_url_docker}`, `{ai_default_model}`, `{messages_server_name}`.
 
+## Static checks
+
+```bash
+uvx ruff check .                 # undefined names, unused imports
+make typecheck                   # types across lib, stacklets, tools, hooks
+uvx basedpyright <paths>         # types in just what you touched
+```
+
+A language server (basedpyright) is wired up for this repo. **Check your own tool list before relying on it:** the plugin is read by the Claude Code CLI, and harnesses built on the Agent SDK do not start it. With no LSP tools in hand, use `uvx basedpyright <paths>` for diagnostics (same config, so it says what the server would) and grep for navigation. There is no MCP fallback and none is planned: basedpyright ships a CLI and a language server, nothing else, so the CLI is the whole story for an agent without LSP. With them, prefer asking for a definition or the references to a symbol over grepping for the name. Setup and the reasoning behind the type config live in [../../CONTRIBUTING.md](../../CONTRIBUTING.md) - do not duplicate here, it drifts.
+
+Two rules when reading its output:
+
+- **It is not a gate.** The tree is not clean and getting it to zero is not the job. Read what it says about the files you changed.
+- **If you add a stacklet, add its execution environment** to `[tool.basedpyright]`. Otherwise its imports go dark and nothing in it is checked. Container-only deps (`nanobot`, `fastapi`) stay unresolved on purpose.
+
+And three ways the server answers wrongly rather than saying it cannot answer. All three were hit in one session:
+
+- **A cold server under-reports.** It answers while still indexing instead of waiting, so the first find-references of a session can come back with just the definition. One symbol went 1, then 3, then 9, then 12 for the same query as more of the tree got parsed. An empty result is not evidence of no callers.
+- **Ask from both ends when the answer decides an edit.** For an attribute reached through `self`, asking at the definition missed every same-file use (5 results where the truth was 40); asking at a call site returned a superset that swept in unrelated symbols of the same name (106). Neither number was right. Two queries that agree are worth more than one that looks tidy.
+- **It reads `pyproject.toml` once, at startup.** Change the type config and the server keeps answering from the old view while the CLI already has the new one, which is the one way those two can disagree. `/reload-plugins` resyncs it.
+
+`tests/` is indexed but silent by design: navigation reaches test callers, and the CLI never reports test diagnostics. To type check a test file, comment out `ignore` in `[tool.basedpyright]` - naming the file on the command line does not override it.
+
+### Agents without LSP tools
+
+Navigation stays with grep, and none of the caveats above apply to you. But the CLI has one thing the language server does not, and it is the one that matters most here: a baseline, so you read the error you just wrote instead of the couple of hundred that were already there.
+
+```bash
+# once, before you touch anything
+uvx basedpyright --writebaseline --baselinefile /tmp/famstack-baseline.json
+
+# after each change: only what you introduced
+uvx basedpyright --baselinefile /tmp/famstack-baseline.json
+```
+
+Exit codes are the contract, so this works as a check and not just as reading material: **0** when you added nothing new, **1** when you did. A bare run without the baseline is always 1 while the tree is unclean, which is why it cannot tell you anything on its own. Add `--outputjson` to parse rather than read.
+
+Keep that file outside the repo. A committed baseline would quietly turn the type checker into the merge gate this repo says it is not, and that is a decision to take deliberately, not a side effect of where a file landed.
+
 ## Testing
 
 Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
