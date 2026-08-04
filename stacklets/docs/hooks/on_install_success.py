@@ -7,67 +7,28 @@ Runs once after Paperless-ngx is healthy:
 
 Also seeded on every `stack up docs` via on_start_ready.py
 so they stay in sync with users.toml and taxonomy.yaml changes.
+The token comes from `auth.ensure_api_token`, which both hooks share,
+so an instance that loses one does not have to wait for a reinstall.
 """
 
 import sys
 from pathlib import Path
 
-# seed.py lives one level up from hooks/
+# seed.py and auth.py live one level up from hooks/
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from auth import ensure_api_token
 from seed import seed_person_tags, seed_taxonomy
 
 def run(ctx):
-    env = ctx.env
-    secret = ctx.secret
-    step = ctx.step
-    http_post = ctx.http_post
-    http_get = ctx.http_get
-
-    PAPERLESS_URL = env.get("PAPERLESS_URL", "http://localhost:42020")
-
-    # Verify existing token still works (a previous destroy + up cycle
-    # creates a fresh database, invalidating the old token in secrets.toml)
-    existing_token = secret("API_TOKEN")
-    token_valid = False
-    if existing_token:
-        try:
-            http_get(
-                f"{PAPERLESS_URL}/api/documents/",
-                headers={"Authorization": f"Token {existing_token}"},
-            )
-            token_valid = True
-        except Exception:
-            step("Stored API token is invalid — obtaining a new one")
-
-    if not token_valid:
-        username = env.get("ADMIN_USER", "")
-        password = secret("ADMIN_PASSWORD")
-        if not username or not password:
-            step("No admin credentials — skipping API token")
-            return
-
-        step("Obtaining API token...")
-        try:
-            data = http_post(
-                f"{PAPERLESS_URL}/api/token/",
-                f"username={username}&password={password}",
-            )
-            existing_token = data.get("token")
-            if existing_token:
-                secret("API_TOKEN", existing_token)
-                step("API token saved")
-            else:
-                step("Unexpected response from Paperless token endpoint")
-                return
-        except Exception as e:
-            step(f"Could not obtain API token: {e}")
-            return
+    token = ensure_api_token(ctx)
+    if not token:
+        return
 
     # ── Create admin-role users as superusers ────────────────────────
-    _create_admin_users(ctx, existing_token)
+    _create_admin_users(ctx, token)
 
     # ── Seed person tags + category taxonomy ───────────────────────────
-    _seed_taxonomy(ctx, existing_token)
+    _seed_taxonomy(ctx, token)
 
 
 def _create_admin_users(ctx, token):
