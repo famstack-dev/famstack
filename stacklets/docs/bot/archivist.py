@@ -251,6 +251,18 @@ class ArchivistBot(MicroBot):
 
     name = "archivist-bot"
 
+    # Filing is the slowest thing any famstack bot does, and the framework
+    # default (180s) is a chat-bot budget, not a document-pipeline one. One
+    # archived email costs, in sequence: the Paperless upload + OCR wait
+    # (up to 120s), a vision classify pass, a layout reformat pass, and the
+    # entity-enrichment pass, each a full LLM call whose prefill on a local
+    # model can run into minutes for a long scan. Cancelling at 180s threw
+    # away work that was still progressing. Eight minutes is a stuck-handler
+    # guard, not a latency target: the pipeline's own per-step timeouts bound
+    # normal slowness, and a handler that blows this budget now fails
+    # visibly (❌ + a threaded notice) and can be retried with 🔁.
+    HANDLER_TIMEOUT_SECONDS = 480
+
     def __init__(self, homeserver, user_id, password, session_dir, **settings):
         super().__init__(homeserver, user_id, password, session_dir, **settings)
         # Shared config from env vars — rendered by the CLI from stack.toml
@@ -1767,6 +1779,8 @@ class ArchivistBot(MicroBot):
             "📌": self._react_bookmark,
             "📎": self._react_archive_source,
             "📄": self._react_archive_source,
+            "🔁": self._react_retry,
+            "🔄": self._react_retry,
         }
 
     async def _on_reaction(self, room, event) -> None:
@@ -1874,6 +1888,28 @@ class ArchivistBot(MicroBot):
             submitter_mxid=event.sender, user_hint=title_hint or None,
             extra_tags=[source_type], note_prefix=header or None,
         )
+
+    async def _react_retry(self, room, event, target, target_id) -> None:
+        """🔁 / 🔄 — do the work on this message again.
+
+        Filing fails for reasons that have nothing to do with the message:
+        the model was still loading, Paperless was restarting, the handler
+        ran past its timeout. Rather than a retry queue somebody has to
+        drain, the recovery gesture is the same shape as every other one
+        here: react on the message that failed. The ❌ the framework left
+        tells you which message; this tells you what to do about it.
+
+        Retry re-dispatches the handler that owns that kind of message, so
+        there is nothing to keep in sync as bindings are added. Both paths
+        are idempotent (Paperless dedups on content, captures key on the
+        target event id), so retrying something that actually succeeded is
+        a no-op rather than a second copy.
+        """
+        content = (getattr(target, "source", {}) or {}).get("content", {}) or {}
+        if isinstance(content.get(self.SOURCE_KEY), dict):
+            await self._react_archive_source(room, event, target, target_id)
+        elif content.get("msgtype") in SUPPORTED_MSGTYPES:
+            await self._on_file(room, target)
 
     async def _collect_source_attachments(
         self, room_id: str, card_id: str, max_pages: int = 5,

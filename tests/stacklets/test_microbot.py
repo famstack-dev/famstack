@@ -137,6 +137,24 @@ def _room(room_id="!r:server"):
     return SimpleNamespace(room_id=room_id)
 
 
+def _notice(client) -> dict:
+    """The error notice out of everything the failure path sent.
+
+    A failure now leaves two marks: an ``m.reaction`` (the ❌) and the
+    explanation itself. Tests about the wording ask for the latter.
+    """
+    messages = [c for _room_id, mtype, c in client.sends
+                if mtype == "m.room.message"]
+    assert len(messages) == 1, f"expected one notice, got {messages}"
+    return messages[0]
+
+
+def _reactions(client) -> list[str]:
+    """Every emoji the bot annotated an event with, in order sent."""
+    return [c["m.relates_to"]["key"] for _room_id, mtype, c in client.sends
+            if mtype == "m.reaction"]
+
+
 # ── Happy path ───────────────────────────────────────────────────────────
 
 class TestHappyPath:
@@ -338,10 +356,7 @@ class TestTimeout:
         # Typing still cleared on the way out.
         assert ("!r:server", False) in client.typing_calls
         # An error notice was sent.
-        assert len(client.sends) == 1
-        room_id, mtype, content = client.sends[0]
-        assert room_id == "!r:server"
-        assert mtype == "m.room.message"
+        content = _notice(client)
         assert content["msgtype"] == "m.notice"
         assert "wait" in content["body"].lower() or "longer" in content["body"].lower()
         # Reply-to threading is set so the user sees which message failed.
@@ -364,8 +379,7 @@ class TestException:
         await bot._wrapper(_room(), _event())
 
         assert ("!r:server", False) in client.typing_calls
-        assert len(client.sends) == 1
-        _room_id, _mtype, content = client.sends[0]
+        content = _notice(client)
         assert content["msgtype"] == "m.notice"
         # Default English message, no exception details leaked.
         assert "kaboom" not in content["body"]
@@ -386,7 +400,7 @@ class TestFormatHook:
         bot._format_handler_error = lambda ev, exc: "[stub] something is off"
 
         await bot._wrapper(_room(), _event())
-        assert client.sends[0][2]["body"] == "[stub] something is off"
+        assert _notice(client)["body"] == "[stub] something is off"
 
     @pytest.mark.asyncio
     async def test_timeout_routes_distinct_message(self, tmp_path):
@@ -406,7 +420,60 @@ class TestFormatHook:
         await bot._wrapper(_room(), _event())
 
         assert seen == [asyncio.TimeoutError]
-        assert client.sends[0][2]["body"] == "TIMEOUT"
+        assert _notice(client)["body"] == "TIMEOUT"
+
+
+# ── Where a failure is reported ──────────────────────────────────────────
+
+class TestErrorAnchoring:
+    """A failure has to be visible on the message that caused it.
+
+    Success already marks the source message (👀 then ✅), so a failure
+    that posted a loose reply somewhere else read as "nothing happened".
+    The framework anchors both halves of the bad news — the ❌ and the
+    explanation — on the message the user acted on, which for a reaction
+    is the message reacted *to*, not the reaction event itself.
+    """
+
+    @staticmethod
+    def _failing_bot(tmp_path):
+        async def handler(_room, _event):
+            raise RuntimeError("kaboom")
+        return _build_bot(tmp_path, handler=handler)
+
+    @pytest.mark.asyncio
+    async def test_failure_marks_the_message_with_a_cross(self, tmp_path):
+        bot, client = self._failing_bot(tmp_path)
+        await bot._wrapper(_room(), _event())
+
+        assert _reactions(client) == ["\U0000274C"]
+        target = [c for _r, mtype, c in client.sends if mtype == "m.reaction"][0]
+        assert target["m.relates_to"]["event_id"] == "$evt:server"
+
+    @pytest.mark.asyncio
+    async def test_explanation_lands_in_the_message_thread(self, tmp_path):
+        bot, client = self._failing_bot(tmp_path)
+        await bot._wrapper(_room(), _event())
+
+        rel = _notice(client)["m.relates_to"]
+        assert rel["rel_type"] == "m.thread"
+        assert rel["event_id"] == "$evt:server"
+
+    @pytest.mark.asyncio
+    async def test_reaction_failure_anchors_on_the_reacted_message(self, tmp_path):
+        # 📎 on a mail card: the handler's event is the reaction, but the
+        # card is what the family is looking at and what carries the 👀.
+        bot, client = self._failing_bot(tmp_path)
+        reaction = SimpleNamespace(
+            sender="@homer:server", server_timestamp=1_000_000,
+            event_id="$reaction:server", reacts_to="$card:server",
+            source={"content": {}},
+        )
+        await bot._wrapper(_room(), reaction)
+
+        marked = [c for _r, mtype, c in client.sends if mtype == "m.reaction"][0]
+        assert marked["m.relates_to"]["event_id"] == "$card:server"
+        assert _notice(client)["m.relates_to"]["event_id"] == "$card:server"
 
 
 # ── Best-effort send ─────────────────────────────────────────────────────

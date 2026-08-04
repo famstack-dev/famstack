@@ -569,7 +569,7 @@ class MicroBot:
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,
         *, metadata: dict | None = None, thread_root_event_id: str | None = None,
-        line_breaks: bool = False,
+        line_breaks: bool = False, msgtype: str = "m.text",
     ) -> None:
         """Send a formatted ``m.room.message``: markdown body + HTML.
 
@@ -595,11 +595,15 @@ class MicroBot:
         ``line_breaks`` adds the ``nl2br`` markdown extension so every newline
         becomes a ``<br>`` — chat behaviour (Slack/WhatsApp), needed for a
         pasted email body where single newlines would otherwise collapse.
+
+        ``msgtype`` is ``m.text`` for anything the family reads as a normal
+        answer; the framework's own error notices pass ``m.notice`` so
+        Element renders them in the muted bot styling.
         """
         exts = ["tables", "fenced_code"] + (["nl2br"] if line_breaks else [])
         html = markdown.markdown(text, extensions=exts)
         content: dict = {
-            "msgtype": "m.text",
+            "msgtype": msgtype,
             "body": text,
             "format": "org.matrix.custom.html",
             "formatted_body": html,
@@ -652,7 +656,7 @@ class MicroBot:
 
     async def _answer(
         self, room_id: str, text: str, source_event: str | None,
-        *, metadata: dict | None = None,
+        *, metadata: dict | None = None, msgtype: str = "m.text",
     ) -> None:
         """Post the bot's answer to a processed item.
 
@@ -670,7 +674,9 @@ class MicroBot:
         answer quotes the source via the reply fallback.
         """
         if not (source_event and self._reply_in_thread(room_id)):
-            await self._send(room_id, text, source_event, metadata=metadata)
+            await self._send(
+                room_id, text, source_event, metadata=metadata, msgtype=msgtype,
+            )
             return
         root = source_event
         try:
@@ -683,7 +689,7 @@ class MicroBot:
                          self.name, source_event, e)
         await self._send(
             room_id, text, reply_to=source_event,
-            thread_root_event_id=root, metadata=metadata,
+            thread_root_event_id=root, metadata=metadata, msgtype=msgtype,
         )
 
     # The famstack event envelope rides as a custom key on the visible
@@ -1011,28 +1017,38 @@ class MicroBot:
             return "Sorry — that took longer than I'm willing to wait. Try again?"
         return "Sorry — something went wrong handling that message."
 
-    async def _send_error(self, room_id: str, event, exc: BaseException) -> None:
-        """Post a user-facing error message into the room.
+    @staticmethod
+    def error_anchor(event) -> str | None:
+        """The message a failure should be reported against.
 
-        Replies to the original event so the user can see which message
-        triggered the failure. Best-effort — if the send itself fails
-        we log at warning and stop, no recursion. Uses ``m.notice`` so
-        Element renders it with the bot-message styling rather than as
-        a regular chat line.
+        For an ordinary event that is the event itself. For a
+        ``ReactionEvent`` it is ``reacts_to``: the user acted *on* another
+        message (📎 a mail card), so the reaction event id is bot
+        bookkeeping no client will render a reply to. Anchoring on the
+        target instead puts the ❌ and the explanation exactly where the
+        user is looking, next to the 👀 the handler already left there.
         """
+        return getattr(event, "reacts_to", None) or getattr(event, "event_id", None)
+
+    async def _send_error(self, room_id: str, event, exc: BaseException) -> None:
+        """Report a handler failure where the user can see it.
+
+        Two signals, both anchored on ``error_anchor``: a ❌ reaction so
+        the outcome is visible at a glance in the timeline, and the
+        explanation as a threaded reply, in the same thread every other
+        answer about that message lands in. Uses ``m.notice`` so Element
+        renders it with the bot-message styling rather than as a regular
+        chat line.
+
+        Best-effort — if the send itself fails we log at warning and
+        stop, no recursion.
+        """
+        anchor = self.error_anchor(event)
         try:
             text = self._format_handler_error(event, exc)
-            content = {"msgtype": "m.notice", "body": text}
-            reply_to = getattr(event, "event_id", None)
-            if reply_to:
-                content["m.relates_to"] = {
-                    "m.in_reply_to": {"event_id": reply_to},
-                }
-            await self.client.room_send(
-                room_id=room_id,
-                message_type="m.room.message",
-                content=content,
-            )
+            if anchor:
+                await self._react(room_id, anchor, CROSS)
+            await self._answer(room_id, text, anchor, msgtype="m.notice")
         except Exception as e:
             logger.warning(
                 "[{}] error-response send failed in {}: {}",
