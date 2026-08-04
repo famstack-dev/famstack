@@ -1394,6 +1394,7 @@ def main():
 
     # Stacklet CLI plugins
     stacklet_cmds = {}
+    stck = None
     if repo_root:
         stck = create_stack(repo_root, instance_dir)
         stacklet_cmds = _load_stacklet_commands(stck)
@@ -1414,13 +1415,13 @@ def main():
     args, _remaining = parser.parse_known_args()
 
     if args.version:
-        name = stck.product_name() if repo_root else "stack"
-        sha = stck._git_commit() if repo_root else "unknown"
+        name = stck.product_name() if stck else "stack"
+        sha = stck._git_commit() if stck else "unknown"
         print(f"{name} {VERSION} ({sha})")
         return
 
     if args.help:
-        name = stck.product_name() if repo_root else "stack"
+        name = stck.product_name() if stck else "stack"
         print_help(name, stacklet_cmds or None)
         sys.exit(0)
 
@@ -1436,7 +1437,7 @@ def main():
             else:
                 print_status(result)
             return
-        name = stck.product_name() if repo_root else "stack"
+        name = stck.product_name() if stck else "stack"
         print_help(name, stacklet_cmds or None)
         sys.exit(0)
 

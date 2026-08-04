@@ -186,6 +186,14 @@ def _t(lang: str, key: str, **kwargs) -> str:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+# Keyed by the doc type `google_docs_export_url` reports, for the "downloading
+# a Google Doc" line and the filename it lands under.
+_GOOGLE_TYPE_LABELS = {
+    "document": "Google Doc",
+    "spreadsheets": "Google Sheet",
+    "presentation": "Google Slides",
+}
+
 _MIME_BY_EXT = {
     "pdf": "application/pdf",
     "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -577,8 +585,8 @@ class ArchivistBot(MicroBot):
         ``_send_room_welcome_if_needed`` orchestrator.
         """
 
-        for room_id in list(self._client.rooms):
-            room = self._client.rooms[room_id]
+        for room_id in list(self.client.rooms):
+            room = self.client.rooms[room_id]
             ctx = self._room_context(room)
             try:
                 await self._send_room_welcome_if_needed(room, ctx)
@@ -1224,7 +1232,7 @@ class ArchivistBot(MicroBot):
         if not event_id:
             return None
         try:
-            resp = await self._client.room_get_event(room_id, event_id)
+            resp = await self.client.room_get_event(room_id, event_id)
         except Exception as e:
             logger.debug("[archivist] event fetch failed for {}: {}", event_id, e)
             return None
@@ -1780,7 +1788,7 @@ class ArchivistBot(MicroBot):
         if not target_id:
             return
         try:
-            resp = await self._client.room_get_event(room.room_id, target_id)
+            resp = await self.client.room_get_event(room.room_id, target_id)
         except Exception as e:
             logger.debug("[archivist] reaction target fetch failed: {}", e)
             return
@@ -2378,10 +2386,10 @@ class ArchivistBot(MicroBot):
         *, date_filed: str | None = None, submitter_mxid: str | None = None,
     ):
         google_export = _google_docs_export_url(url)
+        doc_type = ""
         if google_export:
             download_url, doc_type = google_export
-            type_labels = {"document": "Google Doc", "spreadsheets": "Google Sheet", "presentation": "Google Slides"}
-            await self._send(room_id, self.t("downloading_google", type=type_labels.get(doc_type, "Google Doc")), reply_to)
+            await self._send(room_id, self.t("downloading_google", type=_GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")), reply_to)
         else:
             download_url = url
             await self._send(room_id, self.t("downloading_url"), reply_to)
@@ -2407,7 +2415,7 @@ class ArchivistBot(MicroBot):
         # Determine filename
         if google_export:
             filename = f"google-{doc_type}.pdf"
-            display_name = type_labels.get(doc_type, "Google Doc")
+            display_name = _GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")
         elif "pdf" in content_type or url.lower().endswith(".pdf"):
             url_path = url.split("?")[0].split("#")[0]
             filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
