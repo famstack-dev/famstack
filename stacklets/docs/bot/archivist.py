@@ -2346,6 +2346,14 @@ class ArchivistBot(MicroBot):
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
     ) -> None:
+        # 👀 before the work, like every other capture shape: a link gets
+        # it from the pipeline's notifier, an upload from the handler. A
+        # note was the one path that filed in silence, and classification
+        # on a local model is seconds of it. That silence matters more
+        # now than it did -- in a room with other people 📌 is the only
+        # way to keep something, so this is the gesture with no fallback.
+        if reply_to:
+            await self._react(room_id, reply_to, EYES)
         binding = await self._topic_binding(
             self._room_by_id(room_id), sender_mxid,
         )

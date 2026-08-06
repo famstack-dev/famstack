@@ -394,6 +394,114 @@ class TestReactionDispatch:
         assert not cap and not txt
 
 
+class TestPinnedNoteCapture:
+    """What a person gets back for pinning a message.
+
+    📌 is now the only way to keep a message in a room with other
+    people in it: the ambient path reads a long message there as
+    conversation and leaves it alone. That promotion is what makes
+    both of these matter.
+
+    A gesture that is the sole way in has to say it registered. Filing
+    a note runs a classifier, which is seconds of nothing on a local
+    model, and the reactor is left wondering whether the pin took. 👀
+    is the same "picked this up" the bot already gives a pasted link
+    and an uploaded file; a pinned note was the one path without it.
+
+    And a note kept in a topic room belongs to that topic. The reactor
+    is not necessarily the author and neither of them is the point --
+    the room is. Filing it under whoever tapped the emoji buries a
+    shared topic's note in a personal bucket, where the rest of the
+    family's search scopes (`['family/', '<them>/']`) will never see
+    it.
+    """
+
+    TOPIC_BINDING = SimpleNamespace(
+        bucket="family/camping",
+        seed_topics=["camping"],
+        display_name="Camping",
+        scope="shared",
+        slug="camping",
+    )
+
+    def _bot(self, tmp_path, *, binding, target_body="remember the boiler service"):
+        """A bot whose capture pipeline records instead of filing.
+
+        `_reply_for_capture` is stubbed: the outcome-to-reply mapping
+        (✅ / ❌ / the threaded card) is pinned in its own tests, and
+        letting it run here would drag the presenter in for no gain.
+        What this class asserts is what happens *before* the reply --
+        the acknowledgement and the routing.
+        """
+        bot = _build_bot(tmp_path)
+        captures, reactions = [], []
+
+        class _RecordingPipeline:
+            async def capture_text(self, **kwargs):
+                captures.append(kwargs)
+                return SimpleNamespace(status="captured")
+
+        async def _react(room_id, event_id, emoji):
+            reactions.append((event_id, emoji))
+
+        async def _binding(_room, _sender):
+            return binding
+
+        async def _reply(*_a, **_kw):
+            return None
+
+        bot._capture = _RecordingPipeline()
+        bot._react = _react
+        bot._topic_binding = _binding
+        bot._reply_for_capture = _reply
+
+        async def _get_event(room_id, event_id):
+            return SimpleNamespace(event=SimpleNamespace(
+                sender="@marge:server", body=target_body,
+                source={"content": {"body": target_body}},
+            ))
+
+        bot._client = SimpleNamespace(
+            room_get_event=_get_event, rooms={"!r:server": _room()},
+        )
+        return bot, captures, reactions
+
+    @staticmethod
+    def _pin(sender="@homer:server"):
+        return SimpleNamespace(
+            key="📌", reacts_to="$tgt", sender=sender, source={"content": {}},
+        )
+
+    async def test_pinning_acknowledges_the_message_it_will_file(self, tmp_path):
+        """👀 lands on the pinned message, so the reactor knows the pin
+        took while the classifier is still working."""
+        bot, _captures, reactions = self._bot(tmp_path, binding=None)
+        await bot._on_reaction(_room(), self._pin())
+        assert ("$tgt", "\U0001F440") in reactions, (
+            "a pinned message must be acknowledged on the message itself"
+        )
+
+    async def test_a_pin_in_a_topic_room_files_under_that_topic(self, tmp_path):
+        """The room decides the bucket. A note pinned in `Thema: Camping`
+        is the family's camping note, not the pinner's."""
+        bot, captures, _reactions = self._bot(
+            tmp_path, binding=self.TOPIC_BINDING,
+        )
+        await bot._on_reaction(_room(), self._pin())
+        assert len(captures) == 1
+        assert captures[0]["bucket"] == "family/camping"
+        assert captures[0]["seed_topics"] == ["camping"]
+
+    async def test_a_pin_outside_a_topic_room_keeps_sender_routing(self, tmp_path):
+        """No topic binding, no override. A plain room still files under
+        the message's author, which is what the personal bucket is for."""
+        bot, captures, _reactions = self._bot(tmp_path, binding=None)
+        await bot._on_reaction(_room(), self._pin())
+        assert len(captures) == 1
+        assert captures[0]["bucket"] is None
+        assert captures[0]["sender_mxid"] == "@marge:server"
+
+
 class TestRetryReaction:
     """🔁 / 🔄 — the recovery gesture for a filing that failed.
 
