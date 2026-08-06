@@ -692,15 +692,74 @@ class TestMentionRoutesToSearch:
         assert calls == [("search", "Pollos")]
 
     @pytest.mark.asyncio
-    async def test_paste_without_mention_still_captures(self, bot_with_recorder):
+    async def test_paste_alone_in_a_room_still_captures(self, bot_with_recorder):
         """The mention is the gate. Without it, a long paste in a
         non-docs room continues to route to text capture — mention is
-        an additive signal, not a replacement for the capture flow."""
+        an additive signal, not a replacement for the capture flow.
+
+        One human, so nobody is being talked *to*: a long message here
+        is material dropped for the archivist."""
         bot, calls = bot_with_recorder
-        room = self._room_obj()
+        room = self._room_obj(members=[BOT_ID, "@homer:server"])
         long_text = "x" * 150
         event = self._text_event(long_text)
         await bot._on_text(room, event)
+        assert calls == [("capture_text", long_text)]
+
+    @pytest.mark.asyncio
+    async def test_paste_with_other_people_present_is_left_alone(
+        self, bot_with_recorder,
+    ):
+        """Two or more people means the room is a conversation, and
+        length stops meaning anything there: people write long messages
+        to each other all day and almost none of it is meant to be kept.
+        Guessing produced notes titled after somebody's error message.
+
+        The archivist keeps quiet. Keeping something is 📌, which is
+        explicit and visible in the timeline."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj(
+            members=[BOT_ID, "@homer:server", "@marge:server"],
+        )
+        event = self._text_event("x" * 150)
+        await bot._on_text(room, event)
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_link_is_still_bookmarked_with_people_present(
+        self, bot_with_recorder,
+    ):
+        """Only the guessing stops. Pasting a URL is a deliberate act
+        rather than a turn in a conversation, so it is filed in any room
+        exactly as before."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj(
+            members=[BOT_ID, "@homer:server", "@marge:server"],
+        )
+        event = self._text_event("https://example.com/tent-poles")
+        await bot._on_text(room, event)
+        assert calls == [("capture_url", "https://example.com/tent-poles")]
+
+    @pytest.mark.asyncio
+    async def test_pinning_keeps_it_anyway(self, bot_with_recorder):
+        """The escape hatch, and the reason turning the guess off is
+        safe: 📌 on the very message the ambient path ignored files it,
+        at any length, in any room, under any room mode."""
+        bot, calls = bot_with_recorder
+        room = self._room_obj(
+            members=[BOT_ID, "@homer:server", "@marge:server"],
+        )
+        long_text = "x" * 150
+        target = self._text_event(long_text)
+        await bot._on_text(room, target)
+        assert calls == []
+
+        bot._client = SimpleNamespace(
+            room_get_event=lambda _r, _e: _resp(target),
+        )
+        await bot._on_reaction(room, SimpleNamespace(
+            sender="@marge:server", key="📌", reacts_to="$evt:server",
+        ))
         assert calls == [("capture_text", long_text)]
 
     @pytest.mark.asyncio
@@ -741,3 +800,8 @@ class TestMentionRoutesToSearch:
 
 async def _none_coro():
     return None
+
+
+async def _resp(event):
+    """A `room_get_event` response wrapping one event."""
+    return SimpleNamespace(event=event)

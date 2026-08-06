@@ -175,7 +175,8 @@ en:
 
     **What I'll do here:**
 
-    - 📝 **Notes & links:** paste text or paste a URL → filed under `{bucket}/` with the `{slug}` tag
+    - 🔗 **Links:** paste a URL → filed under `{bucket}/` with the `{slug}` tag
+    - 📌 **Notes:** react 📌 to any message to keep it (in a room with just you, a long paste is kept on its own)
     - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
     - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
     - 🎤 **Multi-memo notes:** type `(` then send multiple voice memos, then `)` → combined into one note
@@ -202,7 +203,8 @@ en:
 
     **What I'll do here:**
 
-    - 📝 **Notes & links:** paste text or paste a URL → summarised and filed under the sender's bucket
+    - 🔗 **Links:** paste a URL → summarised and filed under the sender's bucket
+    - 📌 **Notes:** react 📌 to any message to keep it (in a room with just you, a long paste is kept on its own)
     - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
     - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
     - 🔍 **Ask me anything:** start a message with `?` (e.g. `?did we get the dentist confirmation`) → I search captures and documents
@@ -371,7 +373,8 @@ de:
 
     **Was ich hier mache:**
 
-    - 📝 **Notizen & Links:** Text einfügen oder URL pasten → wird unter `{bucket}/` mit dem Tag `{slug}` abgelegt
+    - 🔗 **Links:** URL einfügen → wird unter `{bucket}/` mit dem Tag `{slug}` abgelegt
+    - 📌 **Notizen:** mit 📌 auf eine Nachricht reagieren, dann merke ich sie mir (bist du allein im Raum, wird ein langer Text automatisch abgelegt)
     - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
     - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
     - 🎤 **Mehrere Sprachnachrichten:** `(` tippen, mehrere Memos senden, dann `)` → werden zu einer Notiz kombiniert
@@ -398,7 +401,8 @@ de:
 
     **Was ich hier mache:**
 
-    - 📝 **Notizen & Links:** Text einfügen oder URL pasten → wird zusammengefasst und im Bucket des Absenders abgelegt
+    - 🔗 **Links:** URL einfügen → wird zusammengefasst und im Bucket des Absenders abgelegt
+    - 📌 **Notizen:** mit 📌 auf eine Nachricht reagieren, dann merke ich sie mir (bist du allein im Raum, wird ein langer Text automatisch abgelegt)
     - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
     - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
     - 🔍 **Frag mich was:** Nachricht mit `?` beginnen (z.B. `?haben wir die Zahnarzt-Bestätigung bekommen`) → ich durchsuche Captures und Dokumente

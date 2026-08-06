@@ -1803,22 +1803,34 @@ class ArchivistBot(MicroBot):
                 sender=event.sender,
             )
 
-        elif self._looks_like_paste(query):
-            # Capture room + paste-shaped message, no mention → file
-            # as text capture. The user is dropping content into the
-            # room; without an @-tag we treat it as material to keep,
-            # not a question to answer.
+        elif self._looks_like_paste(query) and self._count_humans_in_room(room) < 2:
+            # One person in the room, paste-shaped message, no mention →
+            # file as text capture. Nobody is being talked *to* here, so
+            # a long message is material dropped for us to keep.
+            #
+            # Above one human the room is a conversation, and length
+            # stops meaning anything: people write long messages to each
+            # other all day and almost none of it is meant to be kept.
+            # Guessing there produced notes titled after somebody's error
+            # message. So the ambient path is off and 📌 is how you keep
+            # something -- explicit, visible in the timeline, and already
+            # the one trigger that ignores every room mode.
+            #
+            # Links and files are unaffected in either case: pasting a URL
+            # or dropping a PDF is a deliberate act, not a turn in a
+            # conversation.
             await self._handle_text_capture(
                 room.room_id, query, event.sender, reply_to,
                 capture_id=event.event_id,
             )
 
         else:
-            # Short message in a capture room — ignored. Pasting more
-            # context will trigger capture; chat-shaped messages don't.
+            # Chat, and nothing else matched. Either short (a capture
+            # room's own threshold) or long in a room with other people
+            # in it, where keeping something is 📌 rather than a guess.
             logger.debug(
-                "[archivist] capture room {} ignored short text: {!r}",
-                room.room_id, query[:60],
+                "[archivist] {} ignored text from {}: {!r}",
+                room.room_id, event.sender, query[:60],
             )
 
     # ── Reactions: user → bot per-message routing ────────────────────────
