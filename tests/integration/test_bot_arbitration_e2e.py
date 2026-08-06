@@ -3,9 +3,13 @@
 This file is an executable specification of `docs/design/brain/who-answers.md`.
 It is the contract; the implementation is expected to satisfy it.
 
-> STATUS: written 2026-08-06 alongside the fix, NOT yet reconciled against
-> the rig. Marked `unverified` until a green run confirms it, per the
-> marker's contract in pyproject.toml.
+> STATUS: verified green through `stacktests` on 2026-08-06. Two things
+> had to change to get there. stacker-bot was left to join the room on
+> its own, but the room is private and `stack messages send` joins as a
+> plain client, so Synapse turned it away and the send guard read the
+> error dict as a pass; it is invited at creation now. And the pinned
+> note filed in silence -- 👀 was missing from the one capture shape
+> that had no notifier -- which is what the first test caught.
 
 A famstack room holds several bots and several people, and the invariant
 is that exactly one component answers a message. Two rules decide it, and
@@ -45,9 +49,6 @@ while the agent stacklet may not be.
 """
 from __future__ import annotations
 
-import time
-
-import pytest
 from nio import AsyncClient
 
 from tests.integration.matrix import (
@@ -58,8 +59,6 @@ from tests.integration.matrix import (
     wait_for_room_events_until,
 )
 
-pytestmark = pytest.mark.unverified
-
 ARCHIVIST = mxid("archivist-bot")
 STACKER = mxid("stacker-bot")
 MARGE = mxid("marge")
@@ -67,11 +66,17 @@ EYES, CHECK = "👀", "✅"
 
 # Comfortably over `looks_like_paste`'s 100-character threshold, so the
 # only reason the archivist could ignore it is the rule under test.
-WALL_OF_TEXT = (
-    "Right, the plan is to load the car at four, leave by five, and stop "
-    "at the halfway services for dinner around seven so nobody has to "
-    "cook when we arrive."
-)
+#
+# A function, not a constant: the rig runs against a live instance whose
+# vault keeps whatever gets filed, and an LLM titles a capture from its
+# content, so nothing downstream carries the test's scope uid unless the
+# text does. Stamping it here is what makes a run's leavings findable.
+def wall_of_text(scope) -> str:
+    return (
+        "Right, the plan is to load the car at four, leave by five, and stop "
+        "at the halfway services for dinner around seven so nobody has to "
+        f"cook when we arrive. [ref: {scope.uid}]"
+    )
 
 
 def _norm(key: str) -> str:
@@ -149,7 +154,7 @@ async def _wait_until_listening(client, room_id: str) -> None:
     assert posted, "archivist never posted its welcome, so it is not listening"
 
 
-async def test_chat_between_people_is_not_filed_but_a_pin_is(homer, matrix):
+async def test_chat_between_people_is_not_filed_but_a_pin_is(homer, matrix, scope):
     """Two humans in a room: the archivist stops reading intent from
     shape, and 📌 is how you override it.
 
@@ -165,7 +170,7 @@ async def test_chat_between_people_is_not_filed_but_a_pin_is(homer, matrix):
     marge.device_id = marge_creds.device_id
     try:
         created = await homer.room_create(
-            name=f"arbitration-group-{int(time.time())}",
+            name=f"arbitration-group-{scope.uid}",
             invite=[MARGE, ARCHIVIST],
         )
         room = created.room_id
@@ -173,7 +178,7 @@ async def test_chat_between_people_is_not_filed_but_a_pin_is(homer, matrix):
         await _wait_until_listening(homer, room)
 
         # 1. Somebody talking is not material to file.
-        chat = await _send(homer, room, WALL_OF_TEXT)
+        chat = await _send(homer, room, wall_of_text(scope))
         quiet = await fetch_room_events(homer, room, duration=40)
         assert not _bot_reacted(quiet, key=EYES, target=chat), (
             "a long message in a room with other people in it is chat; "
@@ -209,7 +214,7 @@ async def test_chat_between_people_is_not_filed_but_a_pin_is(homer, matrix):
 
 
 async def test_the_archivist_stays_out_of_another_bots_thread(
-    homer, matrix, test_stack,
+    homer, matrix, test_stack, scope,
 ):
     """One human in the room, so ambient capture is live. The same paste
     is filed on the main timeline and ignored inside a thread another bot
@@ -219,8 +224,12 @@ async def test_the_archivist_stays_out_of_another_bots_thread(
     address beats ambient context, and it is the escape hatch that keeps
     the rule from locking the family out.
     """
+    # stacker-bot is invited at creation, not left to join: the room is
+    # private, `stack messages send` joins as a plain client, and Synapse
+    # turns that away. Bots don't count toward the human total that gates
+    # ambient capture, so its presence leaves the premise intact.
     created = await homer.room_create(
-        name=f"arbitration-solo-{int(time.time())}", invite=[ARCHIVIST],
+        name=f"arbitration-solo-{scope.uid}", invite=[ARCHIVIST, STACKER],
     )
     room = created.room_id
     await _wait_until_listening(homer, room)
@@ -228,7 +237,7 @@ async def test_the_archivist_stays_out_of_another_bots_thread(
     # Baseline: alone in the room there is nobody to talk to, so a long
     # paste is material and the ambient path files it. Without this the
     # negative below would also pass on a bot that had simply stopped.
-    solo = await _send(homer, room, WALL_OF_TEXT)
+    solo = await _send(homer, room, wall_of_text(scope))
     filed = await wait_for_room_events_until(
         homer, room,
         lambda events: _bot_reacted(events, key=CHECK, target=solo),
@@ -247,7 +256,7 @@ async def test_the_archivist_stays_out_of_another_bots_thread(
         "messages", "send", room,
         "The gas cartridge and the sleeping mats.", "--thread", ask,
     )
-    assert sent.get("ok") is not False, f"stacker-bot send failed: {sent}"
+    assert sent.get("ok") is True, f"stacker-bot send failed: {sent}"
     claimed = await wait_for_room_event(
         homer, room,
         lambda e: getattr(e, "sender", None) == STACKER,
@@ -257,7 +266,7 @@ async def test_the_archivist_stays_out_of_another_bots_thread(
 
     # The same paste, now inside that conversation. It is Homer talking
     # to the other bot, and the archivist has no part in it.
-    in_thread = await _send_in_thread(homer, room, ask, WALL_OF_TEXT)
+    in_thread = await _send_in_thread(homer, room, ask, wall_of_text(scope))
     ignored = await fetch_room_events(homer, room, duration=40)
     assert not _bot_reacted(ignored, key=EYES, target=in_thread), (
         "the thread belongs to the bot that answered in it first; the "
