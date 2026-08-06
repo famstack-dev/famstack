@@ -2,7 +2,7 @@
 
 > Status: Rule in force for threads, gaps named below
 > Created: 2026-08-06
-> Related: [interaction-patterns.md](interaction-patterns.md) (how one bot reads intent), [write-layer.md](write-layer.md) (finding 9, order-of-work step 4)
+> Related: [capture-paths.md](capture-paths.md) (what happens once a bot does act), [interaction-patterns.md](interaction-patterns.md) (how one bot reads intent), [write-layer.md](write-layer.md) (finding 9, order-of-work step 4)
 
 ## Why this exists
 
