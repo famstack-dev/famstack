@@ -1056,6 +1056,45 @@ class ArchivistBot(MicroBot):
         """
         return envelope.get("type", "").endswith((".filed", ".reclassified"))
 
+    async def _thread_is_ours(self, room_id: str, event) -> bool:
+        """Whether `event` is ours to act on, as far as threads decide it.
+
+        A thread is a bounded conversation with an owner, so the
+        archivist acts inside one only when the thread is its own -- the
+        filing thread hanging off an upload, where "this is Marge's, not
+        Homer's" is a correction. Every other thread is someone else's
+        conversation and is left alone, including a thread no bot has
+        answered in: two people talking to each other is not material
+        dropped for filing.
+
+        The main timeline is unchanged. A message that is in no thread is
+        always ours to route -- that is where dropping something for the
+        archivist happens.
+
+        This is the gate that was missing. The family agent lives in the
+        same rooms and answers in threads, and a person mid-conversation
+        with it does not repeat its name on every line, so from here
+        those lines looked like free-typed material: an agent error
+        message became a note titled "Fehler beim Speichern der
+        Packliste", and every reply typed afterwards read as a correction
+        to that note, because the thread now held one of our filing
+        cards.
+
+        An @-mention skips this gate at the call site: deliberate address
+        beats ambient context, the same rule corrections already follow.
+        """
+        root = self.get_thread_root(event)
+        if root is None:
+            return True
+        owner = await self.thread_owner(room_id, root)
+        if owner == self.user_id:
+            return True
+        logger.info(
+            "[archivist] thread {} belongs to {}; ignoring {} in {}",
+            root, owner or "nobody", event.sender, room_id,
+        )
+        return False
+
     async def _correction_anchor(
         self, room_id: str, event,
     ) -> tuple[str, dict] | None:
@@ -1482,6 +1521,11 @@ class ArchivistBot(MicroBot):
             )
             return
 
+        # An upload dropped into someone else's thread is material for
+        # that conversation, not for us. Same gate as `_on_text`.
+        if not mentioned and not await self._thread_is_ours(room.room_id, event):
+            return
+
         # On modern Matrix clients an upload can carry a human caption
         # alongside the file (Element X, FluffyChat, anything honoring
         # MSC4274). When present, the caption rides into the classify
@@ -1620,6 +1664,12 @@ class ArchivistBot(MicroBot):
                 "[archivist] skipping {} in {} per room mode",
                 event.sender, ctx.room_id,
             )
+            return
+
+        # Inside a thread, only our own -- see `_thread_is_ours`. Checked
+        # before every routing branch so a message in someone else's
+        # conversation is neither filed nor read as a correction.
+        if not mentioned and not await self._thread_is_ours(room.room_id, event):
             return
 
         # When the bot is mentioned, the mxid is conversational noise —

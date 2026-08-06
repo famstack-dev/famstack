@@ -23,6 +23,11 @@ happens to produce:
 A fixture built from our own `_send` output would only prove we agree
 with ourselves. The bug these tests pin was exactly a disagreement
 between our sender (thread-aware) and our reader (single reply hop).
+
+Reading the thread answers *which* filing a message corrects. It does
+not answer whether the message was for us at all -- other bots thread in
+the same rooms -- so `TestOnlyOurOwnThreads` states the gate in front of
+all of this: inside a thread, the archivist acts only in its own.
 """
 
 from __future__ import annotations
@@ -106,9 +111,10 @@ class FakeMatrix:
     """The slice of `nio.AsyncClient` the correction path reads.
 
     Holds a room's events and, per thread root, the ids of the events
-    hanging off it. `room_get_event_relations` is an async iterator that
-    yields newest-first, which is what Synapse returns for the default
-    backwards direction.
+    hanging off it in timeline order. `room_get_event_relations` is an
+    async iterator honouring `direction`: newest-first for the default
+    backwards direction, which is what Synapse returns, and oldest-first
+    for `front` — the order that says which reply came first.
     """
 
     def __init__(self):
@@ -126,10 +132,14 @@ class FakeMatrix:
         return SimpleNamespace(event=self.events.get(event_id))
 
     async def room_get_event_relations(
-        self, room_id, event_id, rel_type=None, **kwargs,
+        self, room_id, event_id, rel_type=None, direction=None, **kwargs,
     ):
+        from nio.api import MessageDirection
         self.relation_calls.append(event_id)
-        for child_id in reversed(self.threads.get(event_id, [])):
+        children = self.threads.get(event_id, [])
+        if direction is not MessageDirection.front:
+            children = reversed(children)
+        for child_id in children:
             yield self.events[child_id]
 
 
@@ -404,6 +414,132 @@ class TestNotACorrection:
                          content=_reply_relation("$spoof"))
         await bot._on_text(_docs_room(), event)
         assert bot.routed == [("search", "nice try")]
+
+
+class TestOnlyOurOwnThreads:
+    """Reading the thread is what makes a correction findable, and it is
+    also what let the archivist walk into conversations it has no part in.
+
+    The family agent lives in the same rooms and answers in threads, and
+    nobody repeats its name on every line of one. Those lines reached
+    `_on_text` looking like free-typed material: a long one got filed as
+    a note, and from then on the thread held one of our filing cards, so
+    every reply after it read as a correction to that note. One paste
+    became an unstoppable reclassification loop.
+
+    So the thread gate is ownership, not content: inside a thread the
+    archivist acts only where it answered first. `thread_owner` has the
+    framework-level tests; these state what the family sees.
+    """
+
+    AGENT = "@merlin-bot:server"
+
+    @staticmethod
+    def _family_room():
+        """A topic room -- not the documents room, so free text is
+        capture-or-nothing rather than search."""
+        return SimpleNamespace(
+            room_id="!camping:server", canonical_alias="#camping:server",
+            name="Camping",
+            users={uid: object() for uid in (BOT_ID, HOMER, "@merlin-bot:server")},
+        )
+
+    @pytest.fixture
+    def agent_thread(self, bot):
+        """Homer asking the agent something, and the agent answering in a
+        thread on his question -- the ordinary shape of talking to it."""
+        client = bot._client
+        client.add(_message("$ask", HOMER, "Merlin, what is still missing for camping?"))
+        client.add(
+            _message("$agent", self.AGENT, "The gas cartridge and the sleeping mats.",
+                     content=_thread_relation("$ask")),
+            thread_root="$ask",
+        )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_a_paste_in_the_agents_thread_is_not_filed(self, bot, agent_thread):
+        """The first wrong turn. Homer pastes the list he is working on
+        into the conversation; it is for the agent to act on, not for us
+        to file as a note."""
+        event = _message(
+            "$paste", HOMER,
+            "Error saving the packing list, please clean it up and save it "
+            "again because the shoe rack entry is still duplicated in there.",
+            content=_thread_relation("$ask", falls_back_to="$agent"),
+        )
+        await bot._on_text(self._family_room(), event)
+        assert bot.routed == []
+
+    @pytest.mark.asyncio
+    async def test_a_reply_in_the_agents_thread_is_not_a_correction(
+        self, bot, agent_thread,
+    ):
+        """The cascade. Even once one of our cards sits in the thread --
+        which is exactly how the loop sustained itself -- Homer's next
+        words are still aimed at the agent."""
+        agent_thread.add(
+            _message("$filed", BOT_ID, "Saved: error saving the packing list",
+                     content=_thread_relation("$ask"),
+                     envelope=_filed(topics=["Camping"])),
+            thread_root="$ask",
+        )
+        event = _message(
+            "$reply", HOMER, "no it is not, write the file!",
+            content=_thread_relation("$ask", falls_back_to="$filed"),
+        )
+        await bot._on_text(self._family_room(), event)
+        assert bot.routed == []
+
+    @pytest.mark.asyncio
+    async def test_a_mention_in_the_agents_thread_still_reaches_us(
+        self, bot, agent_thread,
+    ):
+        """Ownership is ambient; an @-mention is deliberate address, and
+        that beats it -- the same rule corrections already follow."""
+        event = _message(
+            "$q", HOMER, f"{BOT_ID} what did we pack last summer",
+            content={
+                "m.mentions": {"user_ids": [BOT_ID]},
+                **_thread_relation("$ask", falls_back_to="$agent"),
+            },
+        )
+        await bot._on_text(self._family_room(), event)
+        assert bot.routed == [("search", "what did we pack last summer")]
+
+    @pytest.mark.asyncio
+    async def test_two_people_talking_in_a_thread_are_left_alone(self, bot):
+        """A thread no bot answered in belongs to nobody. Two family
+        members working something out is a conversation, not material
+        dropped for filing."""
+        client = bot._client
+        client.add(_message("$plan", HOMER, "when are we leaving on Friday?"))
+        client.add(
+            _message("$marge", "@marge:server", "after Lisa's rehearsal",
+                     content=_thread_relation("$plan")),
+            thread_root="$plan",
+        )
+        event = _message(
+            "$paste", HOMER,
+            "Right, so the plan is to load the car at four, leave by five, and "
+            "stop at the halfway services for dinner around seven in the evening.",
+            content=_thread_relation("$plan"),
+        )
+        await bot._on_text(self._family_room(), event)
+        assert bot.routed == []
+
+    @pytest.mark.asyncio
+    async def test_the_main_timeline_is_untouched(self, bot, agent_thread):
+        """The gate is about threads only. Dropping something into the
+        room itself is still how you hand the archivist material, even
+        while a conversation with the agent is open alongside it."""
+        event = _message(
+            "$paste", HOMER,
+            "Campsite booking reference DUFF-4417, arrival Friday after six, "
+            "pitch 12 by the water, cancellation free up to two days before.",
+        )
+        await bot._on_text(self._family_room(), event)
+        assert [r[0] for r in bot.routed] == ["capture_text"]
 
 
 class TestChainedCorrections:

@@ -857,6 +857,67 @@ class MicroBot:
                          self.name, root_event_id, e)
         return envelopes
 
+    async def thread_owner(
+        self, room_id: str, root_event_id: str, *, limit: int = 20,
+    ) -> str | None:
+        """Which bot the thread at ``root_event_id`` belongs to.
+
+        famstack's bots all thread, so one room carries several
+        conversations at once: the archivist's filing under an upload,
+        the mail bot's email under its card, the family agent answering a
+        question. Inside a thread nobody repeats a name on every line —
+        the thread *is* the tie between a message and its responder — so
+        a bot that treats every thread it can see as its own ends up
+        answering, and filing, someone else's conversation.
+
+        **A thread belongs to the first bot that replied into it, other
+        than whoever started it.** Two halves, both load-bearing:
+
+        *First reply*, because that is what created the thread. Our
+        convention is that a bot answers by threading under the message
+        it answers, so the root is normally the human's own upload or
+        question; the reply is the bot's claim on it. Being first is also
+        a fact that never changes, which is what makes ownership stable —
+        a bot that merely spoke most recently could take a thread away
+        from the bot the family is actually mid-conversation with.
+
+        *Other than the starter*, because a producer posting under its
+        own root is still publishing, not conversing. The mail bot posts
+        an email's card, then its full body and attachments underneath;
+        the archivist's filing is the first real answer there, and the
+        family must be able to correct it in that thread.
+
+        Returns a bot mxid (possibly this bot's own), or None when no bot
+        has answered — a thread between people, which belongs to nobody.
+        Bounded by ``limit`` so one chat message can never become an
+        unbounded walk. Best-effort: a homeserver failure reads as
+        "nobody's", so a transient error leaves bots quiet rather than
+        letting one act on a thread it may not own.
+        """
+        try:
+            resp = await self.client.room_get_event(room_id, root_event_id)
+        except Exception as e:
+            logger.debug("[{}] thread root fetch failed for {}: {}",
+                         self.name, root_event_id, e)
+            return None
+        starter = getattr(getattr(resp, "event", None), "sender", None)
+        try:
+            examined = 0
+            async for related in self.client.room_get_event_relations(
+                room_id, root_event_id, RelationshipType.thread,
+                direction=MessageDirection.front,
+            ):
+                examined += 1
+                if examined > limit:
+                    break
+                sender = getattr(related, "sender", None)
+                if sender and sender != starter and self.is_bot_user(sender):
+                    return sender
+        except Exception as e:
+            logger.debug("[{}] thread relations fetch failed for {}: {}",
+                         self.name, root_event_id, e)
+        return None
+
     def _ensure_http(self) -> aiohttp.ClientSession:
         """The shared aiohttp session, created on first use.
 
