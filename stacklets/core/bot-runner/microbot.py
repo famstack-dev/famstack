@@ -708,6 +708,18 @@ class MicroBot:
     # person and carries provenance for the capture's tags.
     ATTACHMENT_KEY = "dev.famstack.attachment"
 
+    # The markers above are the two ways one component hands work to
+    # another. An event carrying one is addressed by contract, not by who
+    # is in the room, so the ambient rules that decide ordinary chat
+    # (thread ownership, mention) have no say over it.
+    HANDOFF_KEYS = (SOURCE_KEY, ATTACHMENT_KEY)
+
+    @classmethod
+    def is_handoff(cls, event) -> bool:
+        """Whether ``event`` was posted for another component to act on."""
+        content = (getattr(event, "source", None) or {}).get("content", {})
+        return any(key in content for key in cls.HANDOFF_KEYS)
+
     @staticmethod
     def is_bot_user(user_id: str) -> bool:
         """Whether a Matrix user is a famstack bot, by convention.

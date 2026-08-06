@@ -82,6 +82,14 @@ Both halves are load-bearing:
   The archivist's filing is the thread's first real answer, and the
   family has to be able to correct it there.
 
+**A handoff is exempt.** An event carrying `dev.famstack.source` or
+`dev.famstack.attachment` (`MicroBot.HANDOFF_KEYS`) is addressed by
+contract rather than by who is in the room, so no ambient rule gets a
+say. This is not a special case bolted on: the mail bot posts an email's
+attachments into the thread under its own card seconds before the
+archivist's filing lands there, so at that instant the thread is nobody's
+and an ownership-only gate drops the school permission slip.
+
 Consequences worth knowing:
 
 - A thread no bot answered in belongs to nobody, and no bot acts in it.
@@ -91,6 +99,116 @@ Consequences worth knowing:
 - The main timeline is untouched. Dropping something into the room is
   still how you hand the archivist material.
 - An @-mention reaches any bot in any thread.
+
+## The patterns
+
+Every bot sees every message in the room. What the gates decide is which
+one of them acts, so the interesting part of each diagram is the arrow
+that stops.
+
+### Filing something, then correcting it
+
+The pattern the archivist exists for, and the one the thread rule has to
+keep intact. The upload is on the main timeline, so nothing gates it; the
+archivist's answer creates the thread and claims it, which is what makes
+"this is Marge's" a correction rather than a stray note.
+
+```mermaid
+sequenceDiagram
+    actor Homer
+    participant R as Matrix room
+    participant A as archivist
+    participant M as agent
+
+    Homer->>R: uploads invoice.pdf (main timeline)
+    R-->>M: not addressed, ignores
+    R->>A: _on_file
+    Note over A: not in a thread → ours to route
+    A->>R: "Filed: Duff Insurance (#42)"<br/>opens a thread on the upload
+
+    Homer->>R: "this is Marge's, not Homer's"<br/>in that thread
+    R-->>M: thread is not the agent's, ignores
+    R->>A: _on_text
+    Note over A: thread_owner = archivist<br/>(first to reply) → ours
+    A->>R: re-runs classification with the hint
+```
+
+### Talking to the agent
+
+The tragedy, and where it now stops. Note the two different gates: the
+first line is judged by name and shape, everything after it by the
+thread.
+
+```mermaid
+sequenceDiagram
+    actor Homer
+    participant R as Matrix room
+    participant A as archivist
+    participant M as agent
+
+    Homer->>R: "Merlin, what is missing for camping?"
+    R->>M: name in the vocative → answers
+    R->>A: _on_text, not in a thread
+    rect rgb(90, 60, 60)
+        Note over A: GAP: only the shape ladder guards this.<br/>A long enough opening line is still filed.
+    end
+    M->>R: "The gas cartridge and the mats."<br/>opens a thread on Homer's question
+
+    Homer->>R: pastes the broken list, in that thread
+    R->>M: thread is the agent's → answers
+    R->>A: _on_text
+    Note over A: thread_owner = agent → stop
+    Note over A: nothing filed, so no card in the thread,<br/>so no correction loop to sustain
+```
+
+### Email arriving
+
+Two bots and one thread, settled by the handoff marker rather than by
+ownership. The archivist's filing is the thread's first real answer, so
+the family can still correct it there afterwards.
+
+```mermaid
+sequenceDiagram
+    participant Mail as mail bot
+    participant R as Matrix room
+    participant A as archivist
+    actor Marge
+
+    Mail->>R: source card (dev.famstack.source)
+    Mail->>R: full body, threaded under the card
+    Mail->>R: slip.pdf (dev.famstack.attachment),<br/>threaded under the card
+
+    R->>A: card → handoff, files it
+    R--)A: body → plain bot chatter, ignored
+    R->>A: slip.pdf → handoff, files it
+    Note over A: the thread is still nobody's at this point;<br/>the handoff exemption is what saves the slip
+    A->>R: "Filed: Permission slip"<br/>in the card's thread
+
+    Marge->>R: "this is Bart's, not Lisa's"<br/>in the card's thread
+    Note over A: mail bot started the thread, so it does not<br/>own it; archivist replied first → ours
+    A->>R: re-runs classification with the hint
+```
+
+### Two people in a thread
+
+No bot answered, so nobody owns it and nobody acts. This is the
+deliberate narrowing: the archivist used to capture pastes here.
+
+```mermaid
+sequenceDiagram
+    actor Homer
+    actor Marge
+    participant R as Matrix room
+    participant A as archivist
+
+    Homer->>R: "when are we leaving on Friday?"
+    Marge->>R: "after Lisa's rehearsal", in a thread
+    Homer->>R: pastes the whole plan, in that thread
+    R->>A: _on_text
+    Note over A: thread_owner = nobody → stop
+    Homer->>R: "@archivist save that"
+    R->>A: mention beats ambient → files it
+```
 
 ## Where each bot stands
 

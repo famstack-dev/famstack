@@ -1083,6 +1083,13 @@ class ArchivistBot(MicroBot):
         An @-mention skips this gate at the call site: deliberate address
         beats ambient context, the same rule corrections already follow.
         """
+        # A handoff is addressed to us by contract, so no ambient rule
+        # gets a say. The mail bot posts an email's attachments into the
+        # thread under its own card, seconds before our filing lands
+        # there, so at that moment the thread is still nobody's -- and
+        # without this the school permission slip is silently dropped.
+        if self.is_handoff(event):
+            return True
         root = self.get_thread_root(event)
         if root is None:
             return True
