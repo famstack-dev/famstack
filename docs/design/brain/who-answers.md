@@ -260,3 +260,11 @@ envelope rather than the prose.
   still lands, the main timeline is unchanged.
 - `tests/stacklets/test_agent_thread_trigger.py` - the same contract from
   the agent's side.
+- `tests/integration/test_bot_arbitration_e2e.py` - the whole contract
+  against real containers: real Synapse relations, a real second bot in
+  the thread, a real 📌. Marked `unverified` until a green rig run.
+
+Not covered end to end yet: the handoff exemption. A module test pins it
+(`test_bot_attachment_files_inside_the_source_card_thread`), but proving
+it against a live mail bot needs GreenMail plus the archivist in one
+rig lane, which `test_email_imap_e2e.py` does not currently reach.
