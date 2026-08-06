@@ -37,7 +37,8 @@ FamstackTitle.css = `
 .famstack-title {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  /* Room for the title's underline to sit clear of the wordmark. */
+  gap: 0.5rem;
 }
 
 .famstack-title .page-title {
@@ -47,6 +48,20 @@ FamstackTitle.css = `
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.1;
+}
+
+/* Underlined, because it is the way back to the front page from
+   anywhere and should look like somewhere you can go. Drawn as a
+   border rather than text-decoration so it sits clear of the
+   descenders in a name like Simpsons. */
+.famstack-title .page-title > a {
+  border-bottom: 2px solid var(--secondary);
+  padding-bottom: 2px;
+  transition: border-color 0.2s ease;
+}
+
+.famstack-title .page-title > a:hover {
+  border-bottom-color: var(--tertiary);
 }
 
 .famstack-title .fs-brandmark {

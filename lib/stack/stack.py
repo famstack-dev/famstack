@@ -248,8 +248,16 @@ class Stack:
         # Tech admin — internal service account for all stacklets
         from .users import (
             TECH_ADMIN_USERNAME, TECH_ADMIN_EMAIL,
-            get_admin_password, load_users, user_id,
+            family_display_name, get_admin_password, load_users, user_id,
         )
+
+        # What the household calls itself ("The Simpsons"), for surfaces
+        # the family actually reads. Empty on instances installed before
+        # stack_owner existed, so anything using it needs a fallback.
+        template_vars["family_display_name"] = family_display_name(
+            self._cfg("core", "stack_owner", "")
+        )
+
         template_vars["admin_username"] = TECH_ADMIN_USERNAME
         template_vars["admin_email"] = TECH_ADMIN_EMAIL
         template_vars["admin_password"] = get_admin_password(self.secrets) or ""

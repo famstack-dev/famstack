@@ -24,9 +24,16 @@ const wikiPort = process.env.WIKI_PORT || "42070"
 const haveRealHost = wikiHost && !wikiHost.endsWith(".")
 const baseUrl = haveRealHost ? wikiHost : `${wikiIp || "localhost"}:${wikiPort}`
 
+// The household's own name for the site, from stack.toml [core]
+// stack_owner by way of WIKI_TITLE ("The Simpsons"). A family reading
+// their own wiki should see themselves at the top of it, not a product
+// noun. Instances installed before stack_owner existed send nothing, so
+// the generic title stays as the fallback.
+const wikiTitle = process.env.WIKI_TITLE?.trim() || "Family Memory"
+
 const config: QuartzConfig = {
   configuration: {
-    pageTitle: "Family Memory",
+    pageTitle: wikiTitle,
     pageTitleSuffix: "",
     enableSPA: true,
     enablePopovers: true,
