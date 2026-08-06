@@ -86,10 +86,14 @@ class FakeClient:
         return SimpleNamespace(event=self.parent_events.get(event_id))
 
     async def room_get_event_relations(self, room_id, event_id, rel_type=None,
-                                       **kwargs):
+                                       direction=None, **kwargs):
         if self.relations_raise is not None:
             raise self.relations_raise
-        for event in reversed(self.thread_children.get(event_id, [])):
+        from nio.api import MessageDirection
+        children = self.thread_children.get(event_id, [])
+        if direction is not MessageDirection.front:
+            children = reversed(children)
+        for event in children:
             yield event
 
 
@@ -889,6 +893,116 @@ class TestThreadEnvelopes:
         bot, client = _bare_bot(tmp_path)
         client.relations_raise = ConnectionError("synapse down")
         assert await bot._thread_envelopes("!r:server", "$root") == []
+
+
+# ── Thread ownership ───────────────────────────────────────────────────────
+
+
+class TestThreadOwner:
+    """`thread_owner` answers "whose conversation is this thread".
+
+    A famstack room holds several at once -- the archivist's filing under
+    an upload, the mail bot's email under its card, the family agent
+    answering a question -- and inside a thread nobody repeats a name on
+    every line. Without an owner every bot reads every thread as spoken
+    to it, which is how a family's chat with the agent ended up filed as
+    notes.
+
+    The rule is the first bot to *reply*, ignoring whoever started the
+    thread. First, because that reply is what created the thread and is a
+    fact that never changes; not the starter, because a producer posting
+    under its own root is still publishing."""
+
+    @staticmethod
+    def _msg(event_id, sender):
+        return SimpleNamespace(
+            event_id=event_id, sender=sender,
+            source={"content": {"msgtype": "m.text", "body": "…"}},
+        )
+
+    def _rooted_at(self, client, root_id, sender):
+        client.parent_events[root_id] = self._msg(root_id, sender)
+
+    @pytest.mark.asyncio
+    async def test_the_bot_that_answered_first_owns_the_thread(self, tmp_path):
+        """Our convention: a bot answers by threading under the message it
+        answers, so the root is the human's and the reply is the claim."""
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$upload", "@homer:server")
+        client.thread_children["$upload"] = [self._msg("$filed", "@test-bot:server")]
+        assert await bot.thread_owner("!r:server", "$upload") == "@test-bot:server"
+
+    @pytest.mark.asyncio
+    async def test_a_later_bot_cannot_take_the_thread_over(self, tmp_path):
+        """Ownership is settled by the first answer, so a bot that chimes
+        into an existing conversation does not inherit it. Were it "who
+        spoke last", the family agent replying once inside a filing thread
+        would silently stop corrections landing there."""
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$upload", "@homer:server")
+        client.thread_children["$upload"] = [
+            self._msg("$filed", "@archivist-bot:server"),
+            self._msg("$aside", "@test-bot:server"),
+        ]
+        assert await bot.thread_owner("!r:server", "$upload") == "@archivist-bot:server"
+
+    @pytest.mark.asyncio
+    async def test_posting_under_your_own_root_is_not_answering(self, tmp_path):
+        """The mail bot's shape: it posts an email as a card, then the full
+        body and the attachments underneath. None of that is a
+        conversation, so the archivist's filing is the thread's first real
+        answer and the family can still correct it there."""
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$card", "@mail-bot:server")
+        client.thread_children["$card"] = [
+            self._msg("$body", "@mail-bot:server"),
+            self._msg("$attachment", "@mail-bot:server"),
+            self._msg("$filed", "@test-bot:server"),
+        ]
+        assert await bot.thread_owner("!r:server", "$card") == "@test-bot:server"
+
+    @pytest.mark.asyncio
+    async def test_a_thread_between_people_belongs_to_nobody(self, tmp_path):
+        """Two family members talking is not material dropped for a bot,
+        and no bot should answer into it."""
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$chat", "@homer:server")
+        client.thread_children["$chat"] = [self._msg("$reply", "@marge:server")]
+        assert await bot.thread_owner("!r:server", "$chat") is None
+
+    @pytest.mark.asyncio
+    async def test_an_unanswered_thread_belongs_to_nobody(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$chat", "@homer:server")
+        assert await bot.thread_owner("!r:server", "$chat") is None
+
+    @pytest.mark.asyncio
+    async def test_bounded_by_events_examined(self, tmp_path):
+        """One chat message must never become an unbounded walk, so a bot
+        answering far down a long thread is simply not found."""
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$chat", "@homer:server")
+        client.thread_children["$chat"] = [
+            *[self._msg(f"$chat{i}", "@homer:server") for i in range(5)],
+            self._msg("$late", "@test-bot:server"),
+        ]
+        assert await bot.thread_owner("!r:server", "$chat", limit=3) is None
+
+    @pytest.mark.asyncio
+    async def test_nobodys_when_the_root_cannot_be_read(self, tmp_path):
+        """Without the starter we cannot tell publishing from answering,
+        and a wrong claim files someone else's conversation. Staying quiet
+        is the cheaper failure."""
+        bot, client = _bare_bot(tmp_path)
+        client.get_event_raises = ConnectionError("synapse down")
+        assert await bot.thread_owner("!r:server", "$upload") is None
+
+    @pytest.mark.asyncio
+    async def test_nobodys_when_the_thread_cannot_be_read(self, tmp_path):
+        bot, client = _bare_bot(tmp_path)
+        self._rooted_at(client, "$upload", "@homer:server")
+        client.relations_raise = ConnectionError("synapse down")
+        assert await bot.thread_owner("!r:server", "$upload") is None
 
 
 # ── Per-room config + emoji + !config command ────────────────────────────

@@ -165,6 +165,7 @@ A design note, not a prescriptive plan. Captures the direction agreed in the 202
 
 ## Related
 
+- [[who-answers]] — which bot answers at all, once several share a room
 - [[topic-rooms]] — room-state-as-intent, the seed of this design
 - [[knowledge-architecture]] — the broader event bus and storage layout
 - [[wiki-engine]] — the deriver work the reply-chain UX will lean on for confidence signals

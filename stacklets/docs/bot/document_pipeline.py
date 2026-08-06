@@ -227,6 +227,7 @@ class DocumentPipeline:
             return FilingOutcome(
                 status="filed_no_details", display_name=display_name,
                 doc_id=doc_id, link=link,
+                envelope=self._filed_envelope(doc_id, {}),
             )
 
         ocr_text = doc.get("content", "") or ""
@@ -278,18 +279,13 @@ class DocumentPipeline:
             paperless_tags=paperless_tags, summary=result.summary,
         )
 
-        envelope = None
-        if classification:
-            envelope = build_document_event(
-                doc_id, classification,
-                resolved_topics=result.resolved_topics,
-                resolved_persons=result.resolved_persons,
-                resolved_correspondent=result.resolved_correspondent,
-                resolved_type=result.resolved_type,
-                link_base_url=self.link_base_url,
-                actor=self.actor,
-                ts=utc_now_isoformat(),
-            )
+        envelope = self._filed_envelope(
+            doc_id, classification,
+            resolved_topics=result.resolved_topics,
+            resolved_persons=result.resolved_persons,
+            resolved_correspondent=result.resolved_correspondent,
+            resolved_type=result.resolved_type,
+        )
 
         return FilingOutcome(
             status="enriched", display_name=display_name, doc_id=doc_id, link=link,
@@ -375,6 +371,30 @@ class DocumentPipeline:
                 model = None
             return body_text, "ai_formatted", model
         return body_text, "ocr", None
+
+    def _filed_envelope(self, doc_id: int, classification: dict, **resolved) -> dict:
+        """The `document.filed` envelope for a document that reached Paperless.
+
+        Emitted for every filed document, including the ones we could
+        say nothing about. The envelope names *which document a message
+        is about*; it is not a report of what the classifier concluded,
+        and the document exists either way.
+
+        That distinction is load-bearing. It is what makes the bot's
+        reply correctable: the reply-to-correct walker finds a filing by
+        its envelope, so a filing without one silently becomes a dead
+        end, and the user's correction routes to search instead. A scan
+        with no text layer is exactly the case where the family types
+        the classification in themselves, so it is the last filing that
+        can afford to be uncorrectable.
+        """
+        return build_document_event(
+            doc_id, classification,
+            link_base_url=self.link_base_url,
+            actor=self.actor,
+            ts=utc_now_isoformat(),
+            **resolved,
+        )
 
     async def reprocess(
         self, *, doc_id: int, user_hint: str, date_filed: str | None = None,

@@ -343,6 +343,27 @@ async def test_bot_attachment_files_without_bot_as_person(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_bot_attachment_files_inside_the_source_card_thread(tmp_path):
+    """The shape the mail bot actually sends.
+
+    An email's attachments are posted into the thread under its own
+    source card, moments after the card and well before the archivist's
+    filing lands there. At that instant the thread is nobody's, so a bot
+    that only acts in threads it owns would drop the school permission
+    slip on the floor. A handoff carries its own address; thread
+    ownership decides ordinary chat, not this.
+    """
+    bot = _bot(tmp_path)
+    captured = _wire_file(bot)
+    threaded = {
+        **_ATTACH_CONTENT,
+        "m.relates_to": {"rel_type": "m.thread", "event_id": "$card:server"},
+    }
+    await bot._on_file(_room(), _file_event(threaded))
+    assert captured["filename"] == "slip.pdf"
+
+
+@pytest.mark.asyncio
 async def test_unmarked_file_keeps_sender_attribution(tmp_path):
     # A human upload (no attachment marker) still attributes the sender.
     bot = _bot(tmp_path)

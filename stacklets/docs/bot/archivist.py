@@ -1056,6 +1056,52 @@ class ArchivistBot(MicroBot):
         """
         return envelope.get("type", "").endswith((".filed", ".reclassified"))
 
+    async def _thread_is_ours(self, room_id: str, event) -> bool:
+        """Whether `event` is ours to act on, as far as threads decide it.
+
+        A thread is a bounded conversation with an owner, so the
+        archivist acts inside one only when the thread is its own -- the
+        filing thread hanging off an upload, where "this is Marge's, not
+        Homer's" is a correction. Every other thread is someone else's
+        conversation and is left alone, including a thread no bot has
+        answered in: two people talking to each other is not material
+        dropped for filing.
+
+        The main timeline is unchanged. A message that is in no thread is
+        always ours to route -- that is where dropping something for the
+        archivist happens.
+
+        This is the gate that was missing. The family agent lives in the
+        same rooms and answers in threads, and a person mid-conversation
+        with it does not repeat its name on every line, so from here
+        those lines looked like free-typed material: an agent error
+        message became a note titled "Fehler beim Speichern der
+        Packliste", and every reply typed afterwards read as a correction
+        to that note, because the thread now held one of our filing
+        cards.
+
+        An @-mention skips this gate at the call site: deliberate address
+        beats ambient context, the same rule corrections already follow.
+        """
+        # A handoff is addressed to us by contract, so no ambient rule
+        # gets a say. The mail bot posts an email's attachments into the
+        # thread under its own card, seconds before our filing lands
+        # there, so at that moment the thread is still nobody's -- and
+        # without this the school permission slip is silently dropped.
+        if self.is_handoff(event):
+            return True
+        root = self.get_thread_root(event)
+        if root is None:
+            return True
+        owner = await self.thread_owner(room_id, root)
+        if owner == self.user_id:
+            return True
+        logger.info(
+            "[archivist] thread {} belongs to {}; ignoring {} in {}",
+            root, owner or "nobody", event.sender, room_id,
+        )
+        return False
+
     async def _correction_anchor(
         self, room_id: str, event,
     ) -> tuple[str, dict] | None:
@@ -1482,6 +1528,11 @@ class ArchivistBot(MicroBot):
             )
             return
 
+        # An upload dropped into someone else's thread is material for
+        # that conversation, not for us. Same gate as `_on_text`.
+        if not mentioned and not await self._thread_is_ours(room.room_id, event):
+            return
+
         # On modern Matrix clients an upload can carry a human caption
         # alongside the file (Element X, FluffyChat, anything honoring
         # MSC4274). When present, the caption rides into the classify
@@ -1622,6 +1673,12 @@ class ArchivistBot(MicroBot):
             )
             return
 
+        # Inside a thread, only our own -- see `_thread_is_ours`. Checked
+        # before every routing branch so a message in someone else's
+        # conversation is neither filed nor read as a correction.
+        if not mentioned and not await self._thread_is_ours(room.room_id, event):
+            return
+
         # When the bot is mentioned, the mxid is conversational noise —
         # strip it so the remaining body drives command matching and
         # the search query. A bare ping with no content becomes "help"
@@ -1746,22 +1803,34 @@ class ArchivistBot(MicroBot):
                 sender=event.sender,
             )
 
-        elif self._looks_like_paste(query):
-            # Capture room + paste-shaped message, no mention → file
-            # as text capture. The user is dropping content into the
-            # room; without an @-tag we treat it as material to keep,
-            # not a question to answer.
+        elif self._looks_like_paste(query) and self._count_humans_in_room(room) < 2:
+            # One person in the room, paste-shaped message, no mention →
+            # file as text capture. Nobody is being talked *to* here, so
+            # a long message is material dropped for us to keep.
+            #
+            # Above one human the room is a conversation, and length
+            # stops meaning anything: people write long messages to each
+            # other all day and almost none of it is meant to be kept.
+            # Guessing there produced notes titled after somebody's error
+            # message. So the ambient path is off and 📌 is how you keep
+            # something -- explicit, visible in the timeline, and already
+            # the one trigger that ignores every room mode.
+            #
+            # Links and files are unaffected in either case: pasting a URL
+            # or dropping a PDF is a deliberate act, not a turn in a
+            # conversation.
             await self._handle_text_capture(
                 room.room_id, query, event.sender, reply_to,
                 capture_id=event.event_id,
             )
 
         else:
-            # Short message in a capture room — ignored. Pasting more
-            # context will trigger capture; chat-shaped messages don't.
+            # Chat, and nothing else matched. Either short (a capture
+            # room's own threshold) or long in a room with other people
+            # in it, where keeping something is 📌 rather than a guess.
             logger.debug(
-                "[archivist] capture room {} ignored short text: {!r}",
-                room.room_id, query[:60],
+                "[archivist] {} ignored text from {}: {!r}",
+                room.room_id, event.sender, query[:60],
             )
 
     # ── Reactions: user → bot per-message routing ────────────────────────
@@ -2277,6 +2346,14 @@ class ArchivistBot(MicroBot):
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
     ) -> None:
+        # 👀 before the work, like every other capture shape: a link gets
+        # it from the pipeline's notifier, an upload from the handler. A
+        # note was the one path that filed in silence, and classification
+        # on a local model is seconds of it. That silence matters more
+        # now than it did -- in a room with other people 📌 is the only
+        # way to keep something, so this is the gesture with no fallback.
+        if reply_to:
+            await self._react(room_id, reply_to, EYES)
         binding = await self._topic_binding(
             self._room_by_id(room_id), sender_mxid,
         )
