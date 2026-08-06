@@ -97,6 +97,25 @@ def _filed(paperless_id=DOC_ID, **data):
     }
 
 
+def _filed_bare(paperless_id=DOC_ID):
+    """The envelope a filing with nothing to say still carries.
+
+    A scan with no text layer reaches Paperless and the classifier
+    produces nothing, so every field is empty except the one that
+    matters: which document this message is about.
+    """
+    return {
+        "source": "docs", "type": "document.filed",
+        "summary": f"Document #{paperless_id} filed",
+        "data": {
+            "paperless_id": paperless_id, "title": "", "date": None,
+            "topics": [], "persons": [], "correspondent": None,
+            "document_type": None, "summary": "", "facts": [],
+            "action_items": [],
+        },
+    }
+
+
 def _reclassified(paperless_id=DOC_ID, **data):
     return {
         "source": "docs", "type": "document.reclassified",
@@ -320,6 +339,42 @@ class TestCorrectionInsideAThread:
         await bot._on_text(_docs_room(), event)
         assert bot.routed[0][0] == "reprocess"
         assert bot.routed[0][3] == {"paperless_id": DOC_ID, "persons": ["Marge"]}
+
+    @pytest.mark.asyncio
+    async def test_a_filing_with_nothing_to_say_is_still_correctable(self, bot):
+        """The case that matters most, and the one that was broken.
+
+        A scan with no text layer files fine and the archivist has
+        nothing to add: "no text recognised, please tag it manually in
+        Paperless". That is exactly the moment a person types the
+        classification in themselves. Their words are the only
+        description the document will ever have, so the reply has to
+        reach reprocess and carry them as the hint.
+
+        It used to run as a search, which answered a question nobody
+        asked and quietly lost the correction.
+        """
+        client = bot._client
+        client.add(_message("$scan", HOMER, "Gescannt_20260806-1532.pdf"))
+        client.add(
+            _message("$filed", BOT_ID,
+                     "Filed: Gescannt_20260806-1532.pdf — no text recognised",
+                     content=_thread_relation("$scan"),
+                     envelope=_filed_bare()),
+            thread_root="$scan",
+        )
+        hint = ('Classify as "Grundriss". It is a house plan for the '
+                'Mühlenstr. Tag it "haus" and "mühlenstr".')
+        event = _message(
+            "$correction", HOMER, hint,
+            content=_thread_relation("$scan", falls_back_to="$filed"),
+        )
+        await bot._on_text(_docs_room(), event)
+        assert [r[0] for r in bot.routed] == ["reprocess"], \
+            f"expected a reclassification, got {bot.routed}"
+        assert bot.routed[0][1] == DOC_ID
+        assert bot.routed[0][2] == hint, \
+            "the user's own words are the prompt input for the reclassify"
 
     @pytest.mark.asyncio
     async def test_capture_thread_reaches_the_capture_pipeline(self, bot):

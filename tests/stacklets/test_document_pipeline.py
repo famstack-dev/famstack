@@ -150,8 +150,44 @@ class TestEnrichedOutcomes:
         assert out.status == "enriched"
         assert out.has_text is False
         assert out.classification == {}
-        assert out.envelope is None
         assert len(mirror.published) == 1  # mirrored regardless
+
+    @pytest.mark.asyncio
+    async def test_a_filing_with_nothing_to_say_still_names_its_document(self):
+        """A scan with no text layer lands in Paperless and the LLM has
+        nothing to add. It still gets an envelope.
+
+        The envelope's job is to say *which document this message is
+        about*, not to report what we concluded, and that is true the
+        moment the document exists. Withholding it made the reply
+        uncorrectable: the archivist could not tell that "classify this
+        as a floor plan" was aimed at document #5, so it ran the words
+        as a search instead. The document that most needs a human was
+        the only one that could not accept one.
+        """
+        doc = {"id": 5, "content": "x"}
+        out = await _process(
+            _pipeline(FakePaperless(doc_id=5, doc=doc), mirror=FakeMirror()),
+            data=b"x",
+        )
+        assert out.classification == {}, "nothing was classified"
+        assert out.envelope is not None, \
+            "a filed document must be correctable even with no details"
+        assert out.envelope["type"] == "document.filed"
+        assert out.envelope["data"]["paperless_id"] == 5
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_filing_also_names_its_document(self):
+        """Same rule one branch earlier: the upload was accepted and the
+        document exists, so a reply about it has a target, even though
+        Paperless never gave us anything back to read."""
+        out = await _process(
+            _pipeline(FakePaperless(doc_id=7, doc=None), mirror=FakeMirror()),
+        )
+        assert out.status == "filed_no_details"
+        assert out.envelope is not None, \
+            "a filed document must be correctable even when unreadable"
+        assert out.envelope["data"]["paperless_id"] == 7
 
     @pytest.mark.asyncio
     async def test_classify_disabled_files_without_llm(self):

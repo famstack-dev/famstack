@@ -36,6 +36,15 @@ else that differs between the two is accident, not design.
 | **Correction** | reply in the filing thread, `reprocess(doc_id, hint)` | reply in the filing thread, `reprocess(vault_path, hint)` |
 | **Envelope** | `document.filed` / `document.reclassified` | `capture.filed` / `capture.reclassified` |
 
+**Invariant: anything filed carries an envelope.** The envelope names
+*which* item a message is about; it is not a report of what the
+classifier concluded. Both paths emit one as soon as the artifact exists
+(a Paperless id, a vault path), including when there was nothing to say
+about it. Withholding it makes the bot's own reply a dead end, because
+the reply-to-correct walker finds a filing by its envelope: a scan with
+no text layer was uncorrectable for exactly this reason, and that is the
+case where the family types the classification in themselves.
+
 ```mermaid
 flowchart LR
     subgraph In
