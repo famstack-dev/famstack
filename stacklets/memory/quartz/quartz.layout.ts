@@ -9,6 +9,12 @@
 
 import { PageLayout, SharedLayout } from "./quartz/cfg"
 import * as Component from "./quartz/components"
+// Our own components, imported directly rather than through the
+// `Component` namespace so we do not have to overlay upstream's
+// components/index.ts as well. Quartz collects a component's `.css` by
+// walking the layout, so a direct import styles itself just the same.
+import FamstackTitle from "./quartz/components/FamstackTitle"
+import Welcome from "./quartz/components/Welcome"
 
 // `CODE_URL` is set in the container env from {code_url} — the
 // user-facing Forgejo URL. Empty falls back to a `#` placeholder so
@@ -27,10 +33,13 @@ export const sharedPageComponents: SharedLayout = {
   }),
 }
 
-// Single-page layout (one note): keep the upstream sidebar with
-// search + dark mode toggle on the left, graph + ToC + backlinks
-// on the right. This is the layout that makes the vault feel like
-// a wiki rather than a folder dump.
+// Single-page layout (one note): search on the left, graph + ToC +
+// backlinks on the right. This is the layout that makes the vault feel
+// like a wiki rather than a folder dump.
+//
+// No dark mode toggle. famstack has no dark palette yet, so the toggle
+// could only swap parchment for parchment. It comes back with the
+// palette, not before.
 export const defaultContentPageLayout: PageLayout = {
   beforeBody: [
     Component.ConditionalRender({
@@ -40,14 +49,18 @@ export const defaultContentPageLayout: PageLayout = {
     Component.ArticleTitle(),
     Component.ContentMeta(),
     Component.TagList(),
+    // The greeting belongs to the front door only.
+    Component.ConditionalRender({
+      component: Welcome(),
+      condition: (page) => page.fileData.slug === "index",
+    }),
   ],
   left: [
-    Component.PageTitle(),
+    FamstackTitle(),
     Component.MobileOnly(Component.Spacer()),
     Component.Flex({
       components: [
         { Component: Component.Search(), grow: true },
-        { Component: Component.Darkmode() },
         { Component: Component.ReaderMode() },
       ],
     }),
@@ -70,13 +83,10 @@ export const defaultListPageLayout: PageLayout = {
     Component.ContentMeta(),
   ],
   left: [
-    Component.PageTitle(),
+    FamstackTitle(),
     Component.MobileOnly(Component.Spacer()),
     Component.Flex({
-      components: [
-        { Component: Component.Search(), grow: true },
-        { Component: Component.Darkmode() },
-      ],
+      components: [{ Component: Component.Search(), grow: true }],
     }),
     Component.Explorer(),
   ],

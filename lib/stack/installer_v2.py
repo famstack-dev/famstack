@@ -16,6 +16,7 @@ from .prompt import (
     clear, nl, out, dim, bold, done, warn,
     heading, section, banner, rule, Spinner, ask, confirm,
 )
+from .users import family_plural
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -393,8 +394,7 @@ def wizard():
     nl()
     rule()
     nl()
-    plural = family_name if family_name.lower().endswith("s") else family_name + "s"
-    bold(f"The {ORANGE}{plural}{RESET}")
+    bold(f"The {ORANGE}{family_plural(family_name)}{RESET}")
     nl()
     for u in users:
         uid = user_id(u)
@@ -507,8 +507,7 @@ def wizard():
     clear()
     nl()
     out(f"{ORANGE}{BOLD}famstack{RESET}")
-    plural = family_name if family_name.lower().endswith("s") else family_name + "s"
-    out(f"{GREEN}The {plural} are online{RESET}")
+    out(f"{GREEN}The {family_plural(family_name)} are online{RESET}")
 
     from .users import user_id as uid2
     admin_id = uid2(admin)

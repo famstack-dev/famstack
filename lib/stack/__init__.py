@@ -11,7 +11,7 @@ from .stack import Stack
 from .secrets import TomlSecretStore
 from .hooks import HookResolver, StackContext, build_hook_ctx
 from .output import SilentOutput, CollectorOutput
-from .users import user_id
+from .users import user_id, family_display_name, family_plural
 from .ai import resolve_model
 from . import docker
 from .cli import CLI
@@ -29,6 +29,8 @@ __all__ = [
     "SilentOutput",
     "CollectorOutput",
     "user_id",
+    "family_display_name",
+    "family_plural",
     "resolve_model",
     "docker",
     "CLI",

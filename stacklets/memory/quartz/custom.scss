@@ -1,0 +1,280 @@
+// custom.scss — the famstack layer over Quartz.
+//
+// Quartz ships this file as its sanctioned override slot: upstream's
+// copy is `@use "./base.scss";` and a comment inviting you to write
+// here. Keeping that first line is not optional. It is what pulls in
+// base, syntax and callouts; drop it and the site loses every style it
+// has, including the ones this file assumes are already there.
+//
+// The nine colours and four font slots in quartz.config.ts carry the
+// palette and the type. They cannot carry the rest of what makes a page
+// look like famstack: paper sitting on parchment, teal edges at the
+// weight of a pencil line, mono uppercase labels over each sidebar
+// panel. That is this file's job.
+//
+// Colours here are rgba() rather than the color-mix() the website uses.
+// Quartz minifies through lightningcss targeting Safari 15.6, which
+// predates color-mix, and a browser that cannot parse the border simply
+// has no border. rgba composites over parchment and over paper alike,
+// so one value works on both.
+
+@use "./base.scss";
+@use "./fonts.scss";
+
+// ── Tokens ──────────────────────────────────────────────────────────
+//
+// Quartz writes its own :root block *after* this file, so anything
+// named --light, --secondary and friends belongs in quartz.config.ts,
+// not here. These are the famstack tokens with no Quartz equivalent.
+
+:root {
+  --fs-paper: #f7f6f0;
+  --fs-border: rgba(61, 143, 160, 0.22);
+  --fs-border-light: rgba(61, 143, 160, 0.14);
+  --fs-border-faint: rgba(61, 143, 160, 0.08);
+  --fs-lava: #f07d45;
+  --fs-mark-line: #f5c842aa;
+  --fs-code-bg: #161f24;
+  --fs-code-text: #d4e8ec;
+}
+
+// ── Canvas and type ─────────────────────────────────────────────────
+
+body {
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+// Newsreader carries the headlines, Space Grotesk the smaller headings.
+// The website splits them at the same place: h1 and h2 are editorial,
+// h3 downwards are labels on sections of a page.
+h1,
+h2 {
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--titleFont);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.page-title {
+  font-family: var(--titleFont);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+// Markdown emphasis renders as a highlighter stroke rather than a
+// filled block: the line sits under the text baseline, the way a person
+// marking up a printed page would draw it.
+.text-highlight {
+  background-color: transparent;
+  background-image: linear-gradient(
+    180deg,
+    transparent 50%,
+    var(--fs-mark-line) 50%,
+    var(--fs-mark-line) 88%,
+    transparent 88%
+  );
+  border-radius: 0;
+  padding: 0 3px;
+}
+
+// ── The page as paper ───────────────────────────────────────────────
+//
+// One card holds the title and the body together. Quartz keeps them in
+// separate elements (.page-header, then article), so the card goes on
+// their shared parent and the header's stock top margin comes off.
+
+.page > #quartz-body .center {
+  background: var(--fs-paper);
+  border: 1px solid var(--fs-border);
+  border-radius: 10px;
+  // Paper and parchment are four values apart, which is the point:
+  // this is one sheet on a desk, not a window on a screen. At that
+  // distance the border alone does not lift it, so a shadow does the
+  // separating and the edge stays quiet.
+  box-shadow:
+    0 1px 2px rgba(22, 31, 36, 0.04),
+    0 10px 28px rgba(22, 31, 36, 0.05);
+  padding: 2rem 2.5rem 2.5rem;
+  box-sizing: border-box;
+
+  @media all and (max-width: 800px) {
+    padding: 1.25rem 1.25rem 2rem;
+    border-radius: 8px;
+  }
+}
+
+.page > #quartz-body .center > .page-header {
+  margin-top: 0;
+}
+
+// ── Sidebar panels ──────────────────────────────────────────────────
+//
+// Every panel gets the same mono uppercase label. It is the strongest
+// single cue that this is a famstack surface, and it does the honest
+// work of telling four stacked panels apart at a glance.
+
+.sidebar .toc-header > h3,
+.sidebar .backlinks > h3,
+.sidebar .graph > h3,
+.sidebar .explorer-toggle > h2,
+.sidebar .recent-notes > h3 {
+  font-family: var(--codeFont);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+.sidebar .explorer-ul,
+.sidebar .toc-content {
+  font-size: 0.85rem;
+}
+
+// Folder names are structure, not prose, so they take the UI face
+// rather than the editorial one. Upstream sets --headerFont on the
+// button and the anchor themselves, not on the .folder-title span
+// inside them, so those are the elements to catch.
+.explorer .folder-container div > a,
+.explorer .folder-container div > button {
+  font-family: var(--titleFont);
+  font-size: 0.9rem;
+}
+
+// ── Links ───────────────────────────────────────────────────────────
+//
+// Teal, not lava. DESIGN.md keeps lava for calls to action and makes
+// one exception: article and guide body links read better in teal on
+// parchment. A wiki page is body text from top to bottom, so the
+// exception is the rule here. Lava stays for hover, which base already
+// wires to --tertiary.
+
+// Quartz gives internal links a filled background. On a stock digital
+// garden with a handful of links per page that reads as a nice touch;
+// on a family wiki page it does not. Our pages are reference-dense by
+// construction — a person page is mostly links to documents, a document
+// page mostly links to people — so the fill turns whole paragraphs into
+// a run of coloured blocks and the reader loses the sentence.
+//
+// Underline instead, at a weight that says "link" without shouting. The
+// --highlight token stays as configured because code line highlighting
+// uses it too; only the link background is overridden.
+//
+// Heading anchors carry .internal as well and must keep their bare
+// look, hence the :not().
+a.internal:not([role="anchor"]) {
+  background-color: transparent;
+  border-radius: 0;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(61, 143, 160, 0.4);
+  text-underline-offset: 2px;
+}
+
+a.internal:not([role="anchor"]):hover {
+  background-color: transparent;
+  text-decoration-color: var(--tertiary);
+}
+
+// ── Quotes, rules, tables ───────────────────────────────────────────
+
+blockquote {
+  background: rgba(61, 143, 160, 0.05);
+  border-radius: 0 6px 6px 0;
+  padding: 0.5rem 1rem;
+}
+
+hr {
+  background-color: var(--fs-border-light);
+}
+
+.table-container > table {
+  margin: 1rem 0;
+  padding: 0;
+}
+
+th {
+  font-family: var(--codeFont);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--gray);
+  border-bottom: 1px solid var(--fs-border);
+}
+
+tr {
+  border-bottom: 1px solid var(--fs-border-faint);
+}
+
+// ── Code ────────────────────────────────────────────────────────────
+//
+// Blocks go dark, the way they do on famstack.dev. This only reads if
+// the syntax theme agrees, which is why quartz.config.ts sets the light
+// mode highlighter to github-dark. Inline code stays light: it sits
+// inside a sentence and a dark chip mid-paragraph is a hole in the page.
+
+pre {
+  background: var(--fs-code-bg);
+  border: none;
+  border-radius: 8px;
+  padding: 0.25rem 0.9rem;
+}
+
+pre > code {
+  color: var(--fs-code-text);
+  font-size: 0.82rem;
+}
+
+figure[data-rehype-pretty-code-figure] > [data-rehype-pretty-code-title] {
+  font-family: var(--codeFont);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--fs-border-light);
+  border-radius: 5px 5px 0 0;
+  border-bottom: none;
+  background: var(--fs-paper);
+  color: var(--gray);
+}
+
+code {
+  background: rgba(61, 143, 160, 0.1);
+  border-radius: 3px;
+}
+
+// ── Overlays ────────────────────────────────────────────────────────
+
+.popover > .popover-inner,
+.search > .search-container > .search-space {
+  background: var(--fs-paper);
+  border: 1px solid var(--fs-border);
+  border-radius: 10px;
+}
+
+.search .search-button {
+  border-radius: 6px;
+}
+
+// ── Footer ──────────────────────────────────────────────────────────
+
+footer {
+  font-family: var(--codeFont);
+  font-size: 0.72rem;
+  color: var(--gray);
+}
+
+footer ul {
+  font-size: 0.72rem;
+}

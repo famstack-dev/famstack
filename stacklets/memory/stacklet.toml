@@ -103,3 +103,10 @@ WIKI_NIGHTLY            = "{wiki_nightly}"
 # auto-detected LAN IP via `{ip}` so the site stays reachable.
 WIKI_HOST = "wiki.{domain}"
 WIKI_IP   = "{ip}"
+
+# What the wiki calls itself, in the sidebar and the browser tab: the
+# household's own name from stack.toml [core] stack_owner, rendered as
+# "The Simpsons". Empty on instances installed before stack_owner
+# existed, and the wiki falls back to a generic title rather than show a
+# half-written name.
+WIKI_TITLE = "{family_display_name}"

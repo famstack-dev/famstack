@@ -42,6 +42,9 @@ services:
       WIKI_HOST: ${WIKI_HOST}
       WIKI_IP: ${WIKI_IP}
       WIKI_PORT: "42070"
+      # The household's own name for the site. Blank is expected on
+      # instances predating stack_owner, and quartz.config.ts falls back.
+      WIKI_TITLE: ${WIKI_TITLE:-}
     ports:
       # Container's Quartz preview server listens on 8080; we publish
       # on the stacklet's declared port (42070). PORT_BIND_IP is set

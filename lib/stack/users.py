@@ -14,6 +14,40 @@ TECH_ADMIN_USERNAME = "stackadmin"
 TECH_ADMIN_EMAIL = "stackadmin@home.local"
 
 
+# ── Naming the household ──────────────────────────────────────────────
+#
+# stack.toml's [core] stack_owner is the surname the installer asked
+# for. It reaches the family on the installer's closing line and in the
+# title of their wiki, so both go through here and spell it the same.
+#
+# "Family name" gets answered two ways: one person types "Simpson", the
+# next types "Simpsons". Both mean the same household, and only one of
+# them needs an s adding.
+
+
+def family_plural(owner: str | None) -> str:
+    """The surname as you would address the whole household: "Simpsons".
+
+    Returns "" when no owner is configured, so callers can fall back to
+    something generic rather than render a name with a hole in it.
+    Instances predating stack_owner still run, so that is a live path
+    rather than a hypothetical.
+    """
+    name = (owner or "").strip()
+    if not name:
+        return ""
+    return name if name.lower().endswith("s") else name + "s"
+
+
+def family_display_name(owner: str | None) -> str:
+    """The household as it appears on screen: "The Simpsons".
+
+    Empty when no owner is configured. See `family_plural`.
+    """
+    plural = family_plural(owner)
+    return f"The {plural}" if plural else ""
+
+
 def load_users(root: Path) -> list[dict]:
     """Load all users from users.toml."""
     path = root / "users.toml"
