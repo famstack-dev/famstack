@@ -125,6 +125,76 @@ class TestEarlyExits:
         assert mirror.published[0]["fallback_title"] == "note.txt"
 
 
+class TestResumingAnUnfinishedFiling:
+    """A re-upload finishes a document whose classification never ran.
+
+    Paperless rejects a re-upload on content hash, and that used to end
+    the story. It made the most common real failure unrecoverable: the
+    upload succeeds, enrichment dies (a timeout, a model still loading),
+    and the document sits in Paperless with no tags, no correspondent
+    and no vault entry. Every retry hit the duplicate wall before
+    reaching enrichment, so the answer was always "already filed" and
+    the document stayed unreadable to search forever.
+
+    Re-uploading is how a family member asks for that job to be
+    finished. The pipeline reads the twin: no archivist summary means
+    the work never completed, so it resumes on the existing document
+    rather than stopping.
+    """
+
+    @staticmethod
+    def _summarised(doc_id=42):
+        """A twin the archivist has already finished with."""
+        return {
+            "id": doc_id,
+            "content": "a fully readable document body here",
+            "notes": [{"id": 1, "note": "## Summary\nA gas bill.\n\n<!-- archivist-bot -->"}],
+        }
+
+    @staticmethod
+    def _naked(doc_id=42):
+        """A twin that was filed but never enriched."""
+        return {"id": doc_id, "content": "a fully readable document body here"}
+
+    @pytest.mark.asyncio
+    async def test_reupload_of_an_unenriched_document_resumes_it(self):
+        dup = PaperlessDuplicateError(doc_id=42, title="Existing")
+        mirror = FakeMirror()
+        out = await _process(_pipeline(
+            FakePaperless(duplicate=dup, doc=self._naked()),
+            mirror=mirror, classify_enabled=False,
+        ))
+
+        assert out.status != "duplicate", "a naked twin must not dead-end"
+        assert out.doc_id == 42, "resumes the existing document, no second copy"
+        assert len(mirror.published) == 1, "the missing vault entry now exists"
+
+    @pytest.mark.asyncio
+    async def test_reupload_of_a_finished_document_is_still_a_duplicate(self):
+        # An accidental re-drop of something already filed. Reporting the
+        # twin is the whole job; re-running the LLM would cost minutes on
+        # the small machines this stack is built for.
+        dup = PaperlessDuplicateError(doc_id=42, title="Existing")
+        mirror = FakeMirror()
+        out = await _process(_pipeline(
+            FakePaperless(duplicate=dup, doc=self._summarised()), mirror=mirror,
+        ))
+
+        assert out.status == "duplicate"
+        assert out.duplicate is dup
+        assert mirror.published == [], "no work redone for a finished document"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_of_a_deleted_twin_is_still_a_duplicate(self):
+        # Paperless named a twin that is no longer there. Nothing to
+        # resume, so the honest answer remains the duplicate report.
+        dup = PaperlessDuplicateError(doc_id=42, title="Existing")
+        out = await _process(_pipeline(
+            FakePaperless(duplicate=dup, doc=None), mirror=FakeMirror(),
+        ))
+        assert out.status == "duplicate"
+
+
 class TestReprocess:
 
     @pytest.mark.asyncio

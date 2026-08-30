@@ -35,6 +35,7 @@ from pipeline import (
     ImageAttachment,
     PaperlessDuplicateError,
     enrich_document,
+    extract_bot_summary,
     reformat_document,
 )
 from stack import resolve_model
@@ -208,8 +209,14 @@ class DocumentPipeline:
         try:
             doc_id = await self._paperless.wait_task(task_id)
         except PaperlessDuplicateError as e:
-            return FilingOutcome(
-                status="duplicate", display_name=display_name, duplicate=e,
+            doc_id = await self._unfinished_twin(e)
+            if doc_id is None:
+                return FilingOutcome(
+                    status="duplicate", display_name=display_name, duplicate=e,
+                )
+            logger.info(
+                "[archivist] Resuming unfinished doc #{} from re-upload of {}",
+                doc_id, display_name,
             )
         if not doc_id:
             return FilingOutcome(status="ocr_failed", display_name=display_name)
@@ -301,6 +308,31 @@ class DocumentPipeline:
             llm_error=result.llm_error,
             envelope=envelope,
         )
+
+    async def _unfinished_twin(self, dup: PaperlessDuplicateError) -> int | None:
+        """The existing document a re-upload should finish, if any.
+
+        Paperless rejects a re-upload on content hash, which used to end
+        the story. That made the most common real failure unrecoverable:
+        the upload lands, enrichment dies, and the document sits with no
+        tags, no correspondent and no vault entry. Every retry hit the
+        duplicate wall before reaching enrichment, so the answer was
+        always "already filed" and the document stayed invisible to
+        search forever.
+
+        An archivist summary is the mark of a finished filing (the same
+        marker the note sweep keys on), so a twin without one is work
+        that was interrupted: return its id and let the caller resume on
+        it. A twin that has one is a genuine re-drop of something already
+        filed, and re-running the LLM there would cost minutes on the
+        small machines this stack is built for.
+        """
+        if dup.doc_id is None:
+            return None
+        doc = await self._paperless.get_doc(dup.doc_id)
+        if not doc or extract_bot_summary(doc):
+            return None
+        return dup.doc_id
 
     async def _enrich(
         self, doc, ext, is_image, is_pdf_with_text, is_pdf_ocr_layer,
