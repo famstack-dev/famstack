@@ -190,15 +190,24 @@ class LLM:
                 "No AI endpoint configured — set up AI with 'stack up ai'"
             )
         key = os.environ.get("OPENAI_KEY", "") or "not-needed"
-        # The SDK default timeout is 600s — a hung local endpoint would
-        # freeze a caller for ten minutes. 300s is the compromise: a
-        # 30K-token prefill on a local model (a scanned multi-page PDF
-        # going into a vision classify) needs several minutes before the
-        # first token, and 120s cancelled those mid-prefill; past 300s
-        # it is a stuck server and should fail loudly.
+        # This is a read timeout, and the call is not streamed, so it
+        # covers the entire silent wait while the model reads a document
+        # and generates an answer. Prefill alone, measured against local
+        # oMLX (Qwen3.5-9B-MLX-4bit) on a dense 14-page PDF:
+        #
+        #     1,000 tokens ->   7.6s      15,000 tokens ->  58.4s
+        #     3,000 tokens ->  20.4s      28,400 tokens -> 163.6s
+        #     7,500 tokens ->  36.7s
+        #
+        # That machine had RAM to spare. A 16GB Mac running photos and
+        # documents alongside is several times slower, so 120s and then
+        # 300s were both cancelling healthy work partway through a big
+        # scan and discarding every minute already spent on it. 900s
+        # covers ~158K tokens here, past any context this serves, and
+        # still bounds a genuinely dead endpoint.
         client = AsyncOpenAI(
             base_url=url, api_key=key, max_retries=max_retries,
-            timeout=300.0,
+            timeout=900.0,
         )
         return cls(client, namespace=namespace, capabilities=capabilities)
 

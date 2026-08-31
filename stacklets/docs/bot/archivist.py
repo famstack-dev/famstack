@@ -253,15 +253,23 @@ class ArchivistBot(MicroBot):
 
     # Filing is the slowest thing any famstack bot does, and the framework
     # default (180s) is a chat-bot budget, not a document-pipeline one. One
-    # archived email costs, in sequence: the Paperless upload + OCR wait
+    # archived document costs, in sequence: the Paperless upload + OCR wait
     # (up to 120s), a vision classify pass, a layout reformat pass, and the
-    # entity-enrichment pass, each a full LLM call whose prefill on a local
-    # model can run into minutes for a long scan. Cancelling at 180s threw
-    # away work that was still progressing. Eight minutes is a stuck-handler
-    # guard, not a latency target: the pipeline's own per-step timeouts bound
-    # normal slowness, and a handler that blows this budget now fails
-    # visibly (❌ + a threaded notice) and can be retried with 🔁.
-    HANDLER_TIMEOUT_SECONDS = 480
+    # entity-enrichment pass — three separate LLM calls, each paying its own
+    # prefill before it emits a token.
+    #
+    # Those prefills are the whole budget. Measured on a dense 14-page PDF
+    # against local oMLX, one 28K-token pass took 163s on a machine with RAM
+    # to spare; a 16GB Mac running photos and documents alongside is several
+    # times slower. Three such calls plus the OCR wait clears eight minutes
+    # comfortably, which is why 480s still cancelled long documents and threw
+    # the work away.
+    #
+    # 30 minutes is deliberately far past any healthy filing. It is a
+    # stuck-handler guard, not a latency target: the pipeline's own per-step
+    # timeouts bound normal slowness, and a handler that does blow this now
+    # fails visibly (❌ + a threaded notice) and can be retried with 🔁.
+    HANDLER_TIMEOUT_SECONDS = 1800
 
     def __init__(self, homeserver, user_id, password, session_dir, **settings):
         super().__init__(homeserver, user_id, password, session_dir, **settings)
