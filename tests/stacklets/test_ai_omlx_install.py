@@ -12,14 +12,25 @@ an older Homebrew with no trust gate still reaches the install.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "ai" / "hooks"))
 
-from on_install import OMLX_TAP, _install_omlx_formula  # noqa: E402
+# Every stacklet has a hook module named `on_install`, so a plain
+# `import on_install` after a sys.path insert resolves to whichever test
+# ran first and cached it in sys.modules -- the ai hook would shadow the
+# backup one for the rest of the session. Load this one from its path
+# under its own name so the tests stay order-independent.
+_HOOK_PATH = _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_install.py"
+_spec = importlib.util.spec_from_file_location("ai_hooks_on_install", _HOOK_PATH)
+_ai_on_install = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_ai_on_install)
+
+OMLX_TAP = _ai_on_install.OMLX_TAP
+_install_omlx_formula = _ai_on_install._install_omlx_formula
 
 
 class FakeCtx:
