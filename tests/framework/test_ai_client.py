@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -49,7 +50,9 @@ def stub_resolver(monkeypatch):
 
 
 def _make_llm(httpserver: HTTPServer, *, timeout: float = 5.0,
-              capabilities: ModelCapabilities | None = None) -> LLM:
+              capabilities: ModelCapabilities | None = None,
+              first_token_timeout: float = 5.0,
+              stall_timeout: float = 5.0) -> LLM:
     """Build an LLM pointed at the local httpserver mock.
 
     `max_retries=0` keeps tests fast and lets a 401/404 surface on the
@@ -60,21 +63,162 @@ def _make_llm(httpserver: HTTPServer, *, timeout: float = 5.0,
         max_retries=0,
         timeout=timeout,
     )
-    return LLM(client, namespace="test-bot", capabilities=capabilities)
+    return LLM(client, namespace="test-bot", capabilities=capabilities,
+               first_token_timeout=first_token_timeout,
+               stall_timeout=stall_timeout)
 
 
-def _completion_payload(content: str, *, model: str = "test-model") -> dict:
-    return {
+def _chunk(delta: dict, *, model: str = "test-model") -> str:
+    """One `chat.completion.chunk` as an SSE event."""
+    body = {
         "id": "cmpl-test",
-        "object": "chat.completion",
+        "object": "chat.completion.chunk",
         "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
     }
+    return f"data: {json.dumps(body)}\n\n"
+
+
+def _sse_body(*contents: str, model: str = "test-model") -> str:
+    """A complete streamed answer: one chunk per piece, then DONE."""
+    events = [_chunk({"content": c}, model=model) for c in contents]
+    return "".join(events) + "data: [DONE]\n\n"
+
+
+def _sse_response(*contents: str, model: str = "test-model"):
+    """The whole answer at once. `complete` still returns it joined."""
+    from werkzeug.wrappers import Response
+    return Response(_sse_body(*contents, model=model),
+                    content_type="text/event-stream")
+
+
+def _sse_trickle(*contents: str, gap: float = 0.0, lead: float = 0.0,
+                 tail: float = 0.0, preamble: bool = False):
+    """A stream paced like a real one, so silence can be tested.
+
+    `lead` is the quiet before anything arrives (prefill). `gap` is the
+    quiet between pieces. `tail` is a hang after the last piece but before
+    DONE. `preamble` opens with a role-only chunk carrying no content, the
+    way some servers announce themselves before generating.
+    """
+    from werkzeug.wrappers import Response
+
+    def generate():
+        if preamble:
+            yield _chunk({"role": "assistant"})
+        if lead:
+            time.sleep(lead)
+        for i, c in enumerate(contents):
+            if i and gap:
+                time.sleep(gap)
+            yield _chunk({"content": c})
+        if tail:
+            time.sleep(tail)
+        yield "data: [DONE]\n\n"
+
+    return Response(generate(), content_type="text/event-stream")
+
+
+# ── complete(): liveness ─────────────────────────────────────────────────
+
+class TestSlowIsNotBroken:
+    """The distinction the old wall-clock timeout could not make.
+
+    A local model on a small Mac is slow, not broken. The client used to
+    wait for a complete response with no bytes on the wire, so the only
+    question it could ask was "has too much time passed", and the answer
+    was the same for a 30K-token prefill that was progressing fine and a
+    server that had wedged. It cancelled healthy work mid-flight and threw
+    away everything spent on it.
+
+    Streaming turns that into a question worth asking: has it gone *quiet*.
+    """
+
+    async def test_an_answer_that_keeps_arriving_is_never_cut_off(
+            self, httpserver: HTTPServer):
+        """Total time far exceeds the stall budget; no single gap does.
+
+        This is the property that matters for a slow machine: as long as
+        output keeps coming, there is no deadline at all.
+        """
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_handler(
+            lambda _r: _sse_trickle("slow ", "but ", "still ", "working", gap=0.3),
+        )
+
+        llm = _make_llm(httpserver, stall_timeout=0.6, first_token_timeout=2.0)
+        result = await llm.complete("classifier", "long document")
+        assert result == "slow but still working"
+        await llm.aclose()
+
+    async def test_a_long_silent_prefill_is_allowed(self, httpserver: HTTPServer):
+        """Nothing comes back while the model reads a long document. That
+        silence is the work, not a fault, so it gets its own budget."""
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_handler(lambda _r: _sse_trickle("done", lead=0.8))
+
+        llm = _make_llm(httpserver, first_token_timeout=3.0, stall_timeout=0.3)
+        assert await llm.complete("classifier", "scan") == "done"
+        await llm.aclose()
+
+    async def test_a_role_only_preamble_does_not_start_the_stall_clock(
+            self, httpserver: HTTPServer):
+        """Some servers announce themselves before generating. Counting
+        that as "generation started" would drop us onto the tight budget
+        with the whole silent prefill still ahead."""
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_handler(
+            lambda _r: _sse_trickle("here", preamble=True, lead=0.8),
+        )
+
+        llm = _make_llm(httpserver, first_token_timeout=3.0, stall_timeout=0.3)
+        assert await llm.complete("classifier", "scan") == "here"
+        await llm.aclose()
+
+
+class TestSilenceIsBroken:
+    """The other half: a server that stops producing must still be caught,
+    and caught sooner than the old deadline caught it."""
+
+    async def test_silence_before_any_answer_gives_up(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_handler(lambda _r: _sse_trickle("never", lead=2.0))
+
+        llm = _make_llm(httpserver, first_token_timeout=0.3, stall_timeout=0.3)
+        with pytest.raises(LLMTimeoutError) as excinfo:
+            await llm.complete("classifier", "hi")
+        assert "before answering" in str(excinfo.value)
+        await llm.aclose()
+
+    async def test_silence_partway_through_an_answer_gives_up(
+            self, httpserver: HTTPServer):
+        """Generation started and then stopped. The tight budget applies
+        here precisely because tokens were already flowing."""
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_handler(lambda _r: _sse_trickle("started", "stalled", gap=2.0))
+
+        llm = _make_llm(httpserver, first_token_timeout=3.0, stall_timeout=0.3)
+        with pytest.raises(LLMTimeoutError) as excinfo:
+            await llm.complete("classifier", "hi")
+        assert "mid-answer" in str(excinfo.value)
+        await llm.aclose()
+
+
+class TestReassembly:
+    async def test_deltas_are_joined_into_one_answer(self, httpserver: HTTPServer):
+        """Streaming is an implementation detail; callers get a string."""
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_handler(lambda _r: _sse_response("Kwik-", "E-", "Mart"))
+
+        llm = _make_llm(httpserver)
+        assert await llm.complete("classifier", "shop") == "Kwik-E-Mart"
+        await llm.aclose()
 
 
 # ── complete(): happy path ───────────────────────────────────────────────
@@ -83,7 +227,7 @@ class TestComplete:
     async def test_returns_assistant_text(self, httpserver: HTTPServer):
         httpserver.expect_request(
             "/v1/chat/completions", method="POST",
-        ).respond_with_json(_completion_payload("hello world"))
+        ).respond_with_handler(lambda _r: _sse_response("hello world"))
 
         llm = _make_llm(httpserver)
         result = await llm.complete("classifier", "say hi")
@@ -98,11 +242,7 @@ class TestComplete:
 
         def handler(request):
             captured["body"] = json.loads(request.get_data().decode())
-            from werkzeug.wrappers import Response
-            return Response(
-                json.dumps(_completion_payload("ok")),
-                content_type="application/json",
-            )
+            return _sse_response("ok")
 
         httpserver.expect_request(
             "/v1/chat/completions", method="POST",
@@ -118,11 +258,7 @@ class TestComplete:
 
         def handler(request):
             captured["body"] = json.loads(request.get_data().decode())
-            from werkzeug.wrappers import Response
-            return Response(
-                json.dumps(_completion_payload('{"k":1}')),
-                content_type="application/json",
-            )
+            return _sse_response('{"k":1}')
 
         httpserver.expect_request(
             "/v1/chat/completions", method="POST",
@@ -138,11 +274,7 @@ class TestComplete:
 
         def handler(request):
             captured["body"] = json.loads(request.get_data().decode())
-            from werkzeug.wrappers import Response
-            return Response(
-                json.dumps(_completion_payload("ok")),
-                content_type="application/json",
-            )
+            return _sse_response("ok")
 
         httpserver.expect_request(
             "/v1/chat/completions", method="POST",
@@ -164,11 +296,7 @@ class TestComplete:
 
         def handler(request):
             captured["body"] = json.loads(request.get_data().decode())
-            from werkzeug.wrappers import Response
-            return Response(
-                json.dumps(_completion_payload("ok")),
-                content_type="application/json",
-            )
+            return _sse_response("ok")
 
         httpserver.expect_request(
             "/v1/chat/completions", method="POST",
@@ -322,7 +450,7 @@ class TestHasVision:
         cap = ModelCapabilities(path=tmp_path / "caps.json")
         httpserver.expect_request(
             "/v1/chat/completions", method="POST",
-        ).respond_with_json(_completion_payload("ok"))
+        ).respond_with_handler(lambda _r: _sse_response("ok"))
 
         llm = _make_llm(httpserver, capabilities=cap)
         assert await llm.has_vision() is True

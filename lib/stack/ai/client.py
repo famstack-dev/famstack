@@ -21,10 +21,12 @@ typed error hierarchy so callers can handle "AI is down" uniformly.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 from dataclasses import dataclass
 
+import httpx
 import openai
 from loguru import logger
 from openai import AsyncOpenAI
@@ -148,6 +150,46 @@ _NO_VISION_HINTS = (
 )
 
 
+# ── Liveness, not deadlines ──────────────────────────────────────────────
+#
+# A local model on a small Mac is slow, not broken. A 30K-token prefill on
+# a scanned document can run for minutes before the first token, and a
+# wall-clock deadline cannot tell that apart from a wedged server: it just
+# hangs up on work that was progressing fine, throwing away everything
+# spent so far. That is what a non-streaming call forces, because not one
+# byte comes back until generation is complete.
+#
+# So we stream and time the *gaps* instead. Two different questions, two
+# different budgets:
+#
+#   FIRST_TOKEN_TIMEOUT — how long we allow silence before anything comes
+#     back. This covers prefill, which scales with input size and with how
+#     hard the machine is swapping, so it has to be generous.
+#   STALL_TIMEOUT — how long we allow silence *between* pieces of an answer
+#     already underway. Once tokens flow, gaps are short on any machine, so
+#     a long one means the server stopped rather than slowed.
+#
+# Measured against local oMLX (Qwen3.5-9B-MLX-4bit, dense 14-page PDF), to
+# first token:
+#
+#     1,000 tokens ->   7.6s      15,000 tokens ->  58.4s
+#     3,000 tokens ->  20.4s      28,400 tokens -> 163.6s
+#     7,500 tokens ->  36.7s
+#
+# Roughly linear at ~5.7ms/token, and that is a machine with RAM to spare;
+# a 16GB Mac running photos and documents alongside is several times
+# slower. Gaps *after* the first token were 0.07-0.13s. Hence the lopsided
+# pair: the first-token budget must swallow minutes of nothing, while the
+# stall budget can be tight enough to notice a dead server and still sit
+# orders of magnitude above any real gap.
+#
+# The consequence that matters: while output is arriving we never give up,
+# no matter how long the document takes. A genuinely hung endpoint is
+# caught sooner than the old deadline caught it.
+FIRST_TOKEN_TIMEOUT = 900.0
+STALL_TIMEOUT = 90.0
+
+
 class LLM:
     """An OpenAI-compatible chat client scoped to one stacklet/bot.
 
@@ -158,9 +200,13 @@ class LLM:
     """
 
     def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None,
-                 capabilities: ModelCapabilities | None = None):
+                 capabilities: ModelCapabilities | None = None,
+                 first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
+                 stall_timeout: float = STALL_TIMEOUT):
         self._client = client
         self.namespace = namespace
+        self.first_token_timeout = first_token_timeout
+        self.stall_timeout = stall_timeout
         # Default to in-memory; bots inject a disk-backed cache so the
         # vision probe survives container restarts.
         self.capabilities = capabilities or ModelCapabilities()
@@ -190,24 +236,17 @@ class LLM:
                 "No AI endpoint configured — set up AI with 'stack up ai'"
             )
         key = os.environ.get("OPENAI_KEY", "") or "not-needed"
-        # This is a read timeout, and the call is not streamed, so it
-        # covers the entire silent wait while the model reads a document
-        # and generates an answer. Prefill alone, measured against local
-        # oMLX (Qwen3.5-9B-MLX-4bit) on a dense 14-page PDF:
-        #
-        #     1,000 tokens ->   7.6s      15,000 tokens ->  58.4s
-        #     3,000 tokens ->  20.4s      28,400 tokens -> 163.6s
-        #     7,500 tokens ->  36.7s
-        #
-        # That machine had RAM to spare. A 16GB Mac running photos and
-        # documents alongside is several times slower, so 120s and then
-        # 300s were both cancelling healthy work partway through a big
-        # scan and discarding every minute already spent on it. 900s
-        # covers ~158K tokens here, past any context this serves, and
-        # still bounds a genuinely dead endpoint.
+        # No read timeout on purpose: `complete` streams and enforces
+        # liveness per chunk (see FIRST_TOKEN_TIMEOUT / STALL_TIMEOUT).
+        # A deadline down here could only ever fire on work that was still
+        # producing output, which is the bug being fixed. Raising the
+        # ceiling (120s, then 300s, then 900s) only moved the point at
+        # which a big enough document got cancelled; timing the silence
+        # instead removes it. Connect stays short: an endpoint that will
+        # not accept a socket is down, and that answer arrives at once.
         client = AsyncOpenAI(
             base_url=url, api_key=key, max_retries=max_retries,
-            timeout=900.0,
+            timeout=httpx.Timeout(None, connect=10.0),
         )
         return cls(client, namespace=namespace, capabilities=capabilities)
 
@@ -242,11 +281,26 @@ class LLM:
             kwargs["temperature"] = temperature
 
         try:
-            resp = await self._client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": content}],
-                **kwargs,
+            # The first-token budget has to cover this call, not just the
+            # chunks after it: a server that withholds its response headers
+            # until the first token spends the whole prefill in here, where
+            # no per-chunk timeout can see it. With no read timeout on the
+            # SDK, that would otherwise be an unbounded wait.
+            stream = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": content}],
+                    stream=True,
+                    **kwargs,
+                ),
+                timeout=self.first_token_timeout,
             )
+            return await self._read_stream(stream, model)
+        except asyncio.TimeoutError as e:
+            raise LLMTimeoutError(
+                f"{model} — went silent before answering "
+                f"for {self.first_token_timeout:.0f}s"
+            ) from e
         # Order matters: APITimeoutError < APIConnectionError, and
         # Authentication/NotFound < APIStatusError — catch specific first.
         except openai.APITimeoutError as e:
@@ -260,7 +314,53 @@ class LLM:
         except openai.APIStatusError as e:
             raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
 
-        return resp.choices[0].message.content or ""
+    async def _read_stream(self, stream, model: str) -> str:
+        """Reassemble a streamed completion, giving up only on silence.
+
+        Callers still get one string back; streaming is an implementation
+        detail they should not have to care about. What it buys is the
+        progress signal: every chunk that arrives proves the server is
+        still working, so the budget for the next one resets.
+
+        The switch from the first-token budget to the stall budget waits
+        for actual *content*, not merely the first chunk. Some servers open
+        with a role-only preamble before prefill has finished, and treating
+        that as "generation started" would drop us onto the tight budget
+        with the long silent part still ahead.
+        """
+        parts: list[str] = []
+        chunks = stream.__aiter__()
+        while True:
+            budget = self.stall_timeout if parts else self.first_token_timeout
+            try:
+                chunk = await asyncio.wait_for(chunks.__anext__(), timeout=budget)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError as e:
+                await self._close_stream(stream)
+                where = "mid-answer" if parts else "before answering"
+                raise LLMTimeoutError(
+                    f"{model} — went silent {where} for {budget:.0f}s"
+                ) from e
+            # A chunk with no choices (a usage-only trailer) still counts as
+            # the server being alive, it just carries no text.
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta is not None and delta.content:
+                    parts.append(delta.content)
+        return "".join(parts)
+
+    @staticmethod
+    async def _close_stream(stream) -> None:
+        """Release an abandoned stream's connection, best effort.
+
+        We only get here on a timeout, where the useful error is the
+        timeout itself; a failure to hang up cleanly must not replace it.
+        """
+        try:
+            await stream.close()
+        except Exception as e:
+            logger.debug("[llm] closing abandoned stream failed: {}", e)
 
     async def has_vision(self, *, role: str = "classifier",
                          model_override: str | None = None) -> bool:
