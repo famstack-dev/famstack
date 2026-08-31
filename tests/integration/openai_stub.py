@@ -53,19 +53,27 @@ _ROUTES: tuple[tuple[str, str], ...] = (
 _KINDS = ("classify", "reformat", "rewrite", "synthesize")
 
 
-def _chat_completion(content: str, model: str = "test-model") -> dict:
-    """OpenAI chat.completion response envelope."""
-    return {
+def _chat_completion(content: str, model: str = "test-model") -> Response:
+    """A streamed chat completion, the way real backends answer.
+
+    The client streams every call so it can tell a slow model from a stopped
+    one, so a stub that replies with a single JSON body is no longer
+    speaking the same protocol as the thing it stands in for. Sent as one
+    content chunk: the stub's job is to be a believable endpoint, not to
+    reproduce token-by-token pacing (the client's own tests cover pacing).
+    """
+    chunk = {
         "id": "cmpl-test",
-        "object": "chat.completion",
+        "object": "chat.completion.chunk",
         "model": model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
+            "delta": {"role": "assistant", "content": content},
+            "finish_reason": None,
         }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+    body = f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n"
+    return Response(body, content_type="text/event-stream")
 
 
 def _prompt_of(body: dict) -> str:
@@ -125,10 +133,7 @@ class OpenAIStub:
             body = {}
         prompt = _prompt_of(body)
         if prompt.lstrip().startswith(_VISION_PROBE_MARKER):
-            return Response(
-                json.dumps(_chat_completion("ok")),
-                content_type="application/json",
-            )
+            return _chat_completion("ok")
         head = " ".join(prompt.split())[:120]
         kind = _route(prompt)
         with self._lock:
@@ -142,10 +147,7 @@ class OpenAIStub:
                 )
                 return Response(f"openai stub: {kind} queue empty", status=500)
             content = queue.popleft()
-        return Response(
-            json.dumps(_chat_completion(content)),
-            content_type="application/json",
-        )
+        return _chat_completion(content)
 
     # ── queueing ─────────────────────────────────────────────────────────
 
