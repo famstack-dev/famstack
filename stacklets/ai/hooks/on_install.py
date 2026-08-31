@@ -16,10 +16,16 @@ import shutil
 import time
 from pathlib import Path
 
-from stack.prompt import section, dim, done, warn
+from stack.prompt import section, dim, done, out, warn
 
 
 OMLX_PORT = 42060
+# Where oMLX is published. Homebrew 6 refuses to load a formula from a
+# third-party tap until that tap is trusted, so the trust step in
+# `_install_omlx_formula` is what stands between a working `stack up ai`
+# and an install that dies at the first brew command.
+OMLX_TAP = "jundot/omlx"
+OMLX_TAP_URL = "https://github.com/jundot/omlx"
 WHISPER_MODEL = "ggml-large-v3-turbo.bin"
 WHISPER_MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{WHISPER_MODEL}"
 WHISPER_PORT = 42062
@@ -51,6 +57,41 @@ def run(ctx):
     section("Setup complete")
 
 
+def _install_omlx_formula(ctx) -> None:
+    """Tap, trust, and install oMLX, saying out loud what is being trusted.
+
+    Homebrew 6 will not load a formula from a tap outside its own
+    repositories until that tap has been trusted, and the refusal is
+    fatal: `brew install` exits non-zero, `on_install` fails, and the AI
+    stacklet cannot be set up at all. So the trust is not an optimisation,
+    it is the install. That makes it exactly the kind of thing to say out
+    loud rather than slip past the user inside a compound shell command:
+    we are widening what Homebrew will execute on their machine, and they
+    should be able to see it happen and undo it.
+
+    Split into three steps for the same reason the one-liner was a
+    problem: chained with `&&`, a failure anywhere reported the whole
+    string, so the trust refusal looked like a tap failure.
+
+    `brew trust` arrived in Homebrew 6. On older versions there is no gate
+    to clear, so a missing subcommand means the job is already done.
+    """
+    ctx.step("Installing oMLX via Homebrew...")
+    ctx.shell_live(f"brew tap {OMLX_TAP} {OMLX_TAP_URL}")
+
+    out(f"Trusting the {OMLX_TAP} Homebrew tap")
+    dim("  Homebrew asks before running formulas from outside its own")
+    dim("  repositories. This one publishes oMLX, the engine that runs")
+    dim("  language models on your Mac's GPU.")
+    dim(f"  To undo later: brew untrust {OMLX_TAP}")
+    try:
+        ctx.shell(f"brew trust {OMLX_TAP}")
+    except RuntimeError:
+        dim("  (this Homebrew has no trust gate — nothing to do)")
+
+    ctx.shell_live("brew install omlx --with-grammar")
+
+
 def _install_omlx(ctx, state_dir: Path):
     section("oMLX", "MLX inference (Metal GPU)")
 
@@ -72,8 +113,7 @@ def _install_omlx(ctx, state_dir: Path):
         ctx.shell("brew list omlx")
         done("oMLX already installed")
     except RuntimeError:
-        ctx.step("Installing oMLX via Homebrew...")
-        ctx.shell_live("brew tap jundot/omlx https://github.com/jundot/omlx && brew install omlx --with-grammar")
+        _install_omlx_formula(ctx)
         done("oMLX installed")
 
     # Configure: port 42060, shared models directory

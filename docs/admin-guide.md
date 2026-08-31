@@ -406,13 +406,21 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 First-run setup takes 10 to 20 minutes:
 
 1. Asks managed oMLX (default, recommended) or external OpenAI-compatible endpoint.
-2. Installs oMLX via Homebrew.
+2. Taps and trusts the `jundot/omlx` Homebrew tap, then installs oMLX (see below).
 3. Installs `cmake` and `ffmpeg` if missing.
 4. Clones and builds whisper.cpp with Metal support (1 to 2 minutes of compilation).
 5. Downloads the Whisper large-v3-turbo model (1.5 GB).
 6. Downloads the LLM picked for your RAM tier (2.5 to 25 GB).
 7. Starts oMLX as a Homebrew service, Whisper as a launchd service.
 8. Brings up the Piper TTS container.
+
+**About the Homebrew tap.** oMLX is not in Homebrew's own repositories, it is published through the `jundot/omlx` tap. Homebrew 6 refuses to run formulas from outside taps until you trust them, so `stack up ai` trusts this one for you and says so while it does it. That is a real widening of what Homebrew will execute on your Mac, which is why it is called out rather than buried in the install log. To take it back:
+
+```bash
+brew untrust jundot/omlx
+```
+
+Trusted taps are recorded in `~/.homebrew/trust.json` (or under `$XDG_CONFIG_HOME/homebrew/` if you set it). On Homebrew 5 and older there is no trust gate and the step is skipped.
 
 Why native instead of Docker? Metal GPU acceleration does not pass through Docker on macOS cleanly. Roughly 10x performance difference. Docker for orchestrated services, native for the GPU work.
 
