@@ -167,10 +167,21 @@ _NO_VISION_HINTS = (
 #     hard the machine is swapping, so it has to be generous.
 #   STALL_TIMEOUT — how long we allow silence *between* pieces of an answer
 #     already underway. Once tokens flow, gaps are short on any machine, so
-#     a long one means the server stopped rather than slowed. Measured
-#     against oMLX, a warm 9B on an idle Mac still went quiet for ~4s
-#     mid-answer (it batches tokens), so this needs real headroom, not a
-#     tight bound.
+#     a long one means the server stopped rather than slowed.
+#
+# Measured against local oMLX (Qwen3.5-9B-MLX-4bit, dense 14-page PDF), to
+# first token:
+#
+#     1,000 tokens ->   7.6s      15,000 tokens ->  58.4s
+#     3,000 tokens ->  20.4s      28,400 tokens -> 163.6s
+#     7,500 tokens ->  36.7s
+#
+# Roughly linear at ~5.7ms/token, and that is a machine with RAM to spare;
+# a 16GB Mac running photos and documents alongside is several times
+# slower. Gaps *after* the first token were 0.07-0.13s. Hence the lopsided
+# pair: the first-token budget must swallow minutes of nothing, while the
+# stall budget can be tight enough to notice a dead server and still sit
+# orders of magnitude above any real gap.
 #
 # The consequence that matters: while output is arriving we never give up,
 # no matter how long the document takes. A genuinely hung endpoint is
