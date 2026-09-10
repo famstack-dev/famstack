@@ -27,7 +27,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> [**v0.3.0-beta.2**](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.2) is the current Beta.
+> [**v0.3.0-beta.3**](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.3) is the current Beta.
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
