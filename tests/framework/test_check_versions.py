@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.integration._check_versions import _normalise
+from tests.integration._check_versions import _normalise, _readme_version
 
 
 @pytest.mark.parametrize(
@@ -53,3 +53,21 @@ def test_prerelease_markers_map_to_canonical_letters():
 def test_bare_marker_implies_zero():
     # `1.2.0b` and `1.2.0b0` are the same release under PEP 440.
     assert _normalise("1.2.0b") == "1.2.0b0"
+
+
+class TestReadmeIsCheckedToo:
+    """README is the first file anyone reads and was the last one nothing
+    verified, which is how v0.3.0-beta.2 shipped announcing beta.1 as
+    current. These pin that the claim is now machine-checked."""
+
+    def test_the_current_release_claim_is_found_and_parses(self):
+        # Reads the real README, so a reworded sentence fails here rather
+        # than silently disabling the check at release time.
+        assert _readme_version(), "README must state which release is current"
+
+    def test_it_agrees_with_the_shipped_version(self):
+        from tests.integration._check_versions import (
+            _cli_version, _pyproject_version,
+        )
+        assert _normalise(_readme_version()) == _normalise(_cli_version())
+        assert _normalise(_readme_version()) == _normalise(_pyproject_version())
