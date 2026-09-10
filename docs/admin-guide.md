@@ -422,6 +422,33 @@ brew untrust jundot/omlx
 
 Trusted taps are recorded in `~/.homebrew/trust.json` (or under `$XDG_CONFIG_HOME/homebrew/` if you set it). On Homebrew 5 and older there is no trust gate and the step is skipped.
 
+**Maintaining oMLX by hand.** famstack installs it with `--with-grammar`, which
+brings in xgrammar. That is what makes the model return structured JSON, and
+document classification depends on it: without xgrammar, filing still happens
+but every document arrives with no tags, no correspondent and no summary.
+
+Upgrading is safe. Homebrew records the options a formula was built with and
+reuses them, so `brew upgrade omlx` keeps grammar. You can check what yours was
+built with:
+
+```bash
+grep -o '"--with-grammar"' /opt/homebrew/Cellar/omlx/*/INSTALL_RECEIPT.json
+```
+
+Uninstalling is what loses it, because that receipt goes with it. If you ever
+remove and reinstall oMLX yourself, pass the flag again:
+
+```bash
+brew install omlx --with-grammar
+```
+
+Two failures worth recognising. `brew` refusing to load the formula at all
+means the tap is no longer trusted, so trust it again as above. And a
+`bad interpreter: .../bin/python3.11: no such file or directory` from the
+`omlx` command means its virtualenv broke, usually after a Python upgrade;
+`brew reinstall omlx` rebuilds it. `stack up ai` reports a missing oMLX
+rather than starting and failing a health check with no stated cause.
+
 Why native instead of Docker? Metal GPU acceleration does not pass through Docker on macOS cleanly. Roughly 10x performance difference. Docker for orchestrated services, native for the GPU work.
 
 Once up, voice messages in chat get transcribed automatically and the document classifier starts using the LLM.
