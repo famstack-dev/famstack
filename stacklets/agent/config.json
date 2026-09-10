@@ -13,7 +13,8 @@
   },
   "agents": {
     "defaults": {
-      "model_preset": "primary"
+      "model_preset": "primary",
+      "max_tool_iterations": 12
     }
   },
   "tools": {
