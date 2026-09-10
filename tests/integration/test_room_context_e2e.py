@@ -88,13 +88,20 @@ async def _room_with_members(host, others: list[AsyncClient]) -> str:
 async def _await_room(client, room_id: str, *, members: int, tries: int = 12):
     """Sync until the bot's view of the room has `members` joined users.
 
-    Membership propagates over a sync or two after invites/joins; poll
-    full_state until the count settles so DM detection sees ground truth.
+    Membership propagates over a sync or two after invites/joins, so this
+    polls until the count settles and DM detection sees ground truth.
+
+    Only the first sync asks for full state. `full_state=True` re-fetches
+    the complete state of *every* joined room, so repeating it per tick
+    made each iteration cost more as the suite accumulated rooms, and a
+    test that does 0.7s of its own work was taking over five minutes by
+    the end of a run. Later syncs are incremental and still carry the
+    membership events this is waiting for.
     """
     import asyncio
     room = None
-    for _ in range(tries):
-        await client.sync(timeout=2000, full_state=True)
+    for attempt in range(tries):
+        await client.sync(timeout=2000, full_state=(attempt == 0))
         room = client.rooms.get(room_id)
         if room is not None and len(room.users) >= members:
             return room
