@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -585,8 +586,16 @@ class Stack:
           url = "..."
           name = "..."
           hint = "..."
+          skip_when_env = "STACK_AI_NO_VOICE"  # drop when that var is "1"
           [health.checks.headers]
           Authorization = "Bearer {api_key}"
+
+        `skip_when_env` exists because a stacklet can be told to start only
+        part of itself, and a check for the part that was deliberately left
+        out is not a failure, it is a question nobody asked. Waiting on it
+        costs the full per-check timeout and then reports a container that
+        was never meant to be running as broken. The manifest names the
+        condition; the framework only reads it.
         """
         health = manifest.get("health", {})
         checks_list = health.get("checks", [])
@@ -594,6 +603,9 @@ class Stack:
         if checks_list:
             result = []
             for c in checks_list:
+                skip_env = c.get("skip_when_env", "")
+                if skip_env and os.environ.get(skip_env) == "1":
+                    continue
                 url_tpl = c.get("url", "")
                 name = c.get("name", "")
                 hint = c.get("hint", "")

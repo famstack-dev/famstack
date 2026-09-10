@@ -205,6 +205,25 @@ expect = "pong"
 | `expect` | Expected HTTP status code (as string) or response body value. |
 | `path` | JSONPath into the response body. If set, `expect` is compared against the extracted value instead of the status code. |
 
+For several endpoints, use `[[health.checks]]`, which additionally takes a
+`name`, a `hint` shown when the check fails, and `[health.checks.headers]`.
+
+```toml
+[[health.checks]]
+name          = "TTS"
+url           = "http://localhost:42063/"
+hint          = "TTS not running — check 'docker logs stack-ai-speech'"
+skip_when_env = "STACK_AI_NO_VOICE"
+```
+
+`skip_when_env` names an environment variable that, when set to `"1"`,
+drops the check entirely. Use it for a part of a stacklet the user can
+choose not to start: `stack up ai --no-voice` leaves the speech containers
+out, and without this the start sequence waits a full timeout for each of
+them and then reports containers it was told to skip as broken. Any other
+value, including `"0"` or empty, leaves the check in place, so an
+accidentally exported variable cannot quietly disable monitoring.
+
 ### Native Services (host stacklets)
 
 Host stacklets (`type = "host"`) declare native macOS services that run

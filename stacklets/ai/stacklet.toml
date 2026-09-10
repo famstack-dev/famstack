@@ -21,15 +21,20 @@ hints = [
     "Try: stack ai models",
 ]
 
+# Both belong to the voice profile. `stack up ai --no-voice` never starts
+# them, so without the skip the start sequence waits out two full timeouts
+# and then reports containers it was told to leave alone as failures.
 [[health.checks]]
 name = "TTS"
 url  = "http://localhost:42063/"
 hint = "TTS not running — check 'docker logs stack-ai-speech'"
+skip_when_env = "STACK_AI_NO_VOICE"
 
 [[health.checks]]
 name = "Whisper"
 url  = "http://localhost:42062/"
 hint = "Whisper not running — check whisper-server logs"
+skip_when_env = "STACK_AI_NO_VOICE"
 
 [[health.checks]]
 name = "LLM"
