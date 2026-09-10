@@ -36,6 +36,20 @@ def _ctx(make_stack, env):
 
 
 @pytest.fixture(autouse=True)
+def _engine_installed(monkeypatch):
+    """Pretend oMLX is on the machine, because that is not what these cover.
+
+    on_start refuses to start a managed provider whose oMLX binary has gone
+    missing; that behaviour has its own tests. Without this stub these would
+    pass or fail on whether the machine running the suite happens to have
+    oMLX installed -- green on a developer Mac, red on CI, for reasons that
+    have nothing to do with compose profiles.
+    """
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/local/bin/omlx")
+
+
+@pytest.fixture(autouse=True)
 def _restore_no_voice():
     old = os.environ.get("STACK_AI_NO_VOICE")
     yield
