@@ -111,6 +111,9 @@ from lib import (  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import dispatch_capture  # noqa: E402
 
+# The `/go` namespace owns its own URL shapes; we join, never build.
+from stack.links import go_capture, public  # noqa: E402
+
 
 HELP = "Full-text search over the curated memory vault"
 
@@ -226,12 +229,20 @@ def _looks_like_a_sentence(query: str) -> bool:
 
 # ── output ──────────────────────────────────────────────────────────────
 
-def _format_block(r: dict) -> str:
+def _format_block(r: dict, link_base: str = "") -> str:
     """Render one result as the default human/agent block.
 
     `date` is shown as a 10-char placeholder when missing so the
     columns stay aligned; an empty string would shift the persons
     bracket leftwards.
+
+    The last line is the source link, so whoever reads the answer
+    this hit ends up in can open the page it came from. It is keyed
+    on the capture id, never on `rel`: the path carries the bucket,
+    the topic slug and the title slug, and a re-scope, a rename or a
+    corrected title moves it. A page with no capture id (a
+    hand-written wiki entry) gets no line rather than a link that
+    would break quietly.
     """
     persons = (
         "[" + ",".join(r["persons"]) + "]" if r["persons"] else "[]"
@@ -243,6 +254,9 @@ def _format_block(r: dict) -> str:
     ]
     if r["excerpt"]:
         lines.append(f"  …{r['excerpt']}…")
+    if capture_id := (r.get("capture_id") or "").strip():
+        if url := public(go_capture(capture_id), link_base):
+            lines.append(f"  {url}")
     return "\n".join(lines)
 
 
@@ -317,5 +331,10 @@ def run(args, stacklet, config) -> dict | None:
             print(r["rel"])
         return None
 
-    print("\n\n".join(_format_block(r) for r in results))
+    # `home_url` is core's mode-correct base; LINK_BASE_URL is that plus
+    # `/go`, and the containers get it rendered. On the host we join it
+    # the same way rather than reading a container's env.
+    home_url = (config or {}).get("home_url", "")
+    link_base = f"{home_url}/go" if home_url else ""
+    print("\n\n".join(_format_block(r, link_base) for r in results))
     return None

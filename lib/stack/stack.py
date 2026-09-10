@@ -943,6 +943,11 @@ class Stack:
                 from .users import load_users
                 config = {
                     "domain": self._cfg("core", "domain"),
+                    # Same base the containers get as LINK_BASE_URL, for
+                    # plugins that print a `/go` link. Derived here rather
+                    # than from `domain` above, because port mode has no
+                    # domain and the LAN fallback lives in _home_url.
+                    "home_url": self._home_url(),
                     "data_dir": str(self.data),
                     "repo_root": str(self.root),
                     "instance_dir": str(self.instance_dir),
