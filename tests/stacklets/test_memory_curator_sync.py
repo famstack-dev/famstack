@@ -319,6 +319,21 @@ def warnings_logged():
     logger.remove(sink_id)
 
 
+@pytest.fixture
+def debug_logged():
+    """Everything the curator says, DEBUG included.
+
+    `warnings_logged` deliberately starts at WARNING. The line pinned
+    below only ever appears at DEBUG, so it needs its own sink.
+    """
+    from loguru import logger
+
+    lines: list[str] = []
+    sink_id = logger.add(lines.append, level="DEBUG")
+    yield lines
+    logger.remove(sink_id)
+
+
 class TestVaultSync:
     """The curator's vault sync: source policy, one auth retry, loud."""
 
@@ -414,3 +429,25 @@ class TestBrainSync:
         assert any("not reaching Forgejo" in line for line in warnings_logged)
         # The commit is still here for the next cycle to deliver.
         assert "brain: project" in _log_subjects(local)
+
+    async def test_a_routine_commit_does_not_report_git_as_failing(
+        self, git_healthy_clone, tmp_path, debug_logged,
+    ):
+        """`git diff --cached --quiet` answers with its exit code, and 1
+        means staged changes exist — the reason to commit, not a fault.
+        Reporting it as "brain git diff failed" told anyone reading the
+        curator's log that the mirror was broken at exactly the moments
+        it was working, which is worse than silence.
+        """
+        from curator import CURATOR_REMOTE, Brain
+
+        local = git_healthy_clone.local
+        _git(local, "remote", "add", CURATOR_REMOTE,
+             str(git_healthy_clone.remote))
+        (local / "index.md").write_text("generated\n", encoding="utf-8")
+
+        pushed = await Brain(local, tmp_path / "source").commit_push("brain: project")
+
+        assert pushed is True
+        assert "brain: project" in _log_subjects(local)
+        assert [ln for ln in debug_logged if "git diff failed" in ln] == []

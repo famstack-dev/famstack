@@ -685,8 +685,12 @@ class Brain:
         True when a commit was made and pushed (or there was nothing to
         commit, which is still a success)."""
         self._run("add", "-A")
-        # `diff --cached --quiet` exits 1 when staged changes exist.
-        code, _, _ = self._run("diff", "--cached", "--quiet")
+        # `diff --cached --quiet` exits 1 when staged changes exist, so its
+        # exit code is the answer to "is there anything to commit?" rather
+        # than a fault. It calls git directly to stay out of `_run`, which
+        # reports every non-zero exit as a failure and would therefore
+        # announce a broken mirror on every cycle that had work to do.
+        code, _, _ = run_git(self.path, "diff", "--cached", "--quiet", env=self._env)
         if code != 0:
             rc, _, _ = self._run(
                 "-c", f"user.name={_BRAIN_AUTHOR_NAME}",
