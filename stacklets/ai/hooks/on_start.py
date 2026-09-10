@@ -6,6 +6,7 @@ check required config first, raise with a clear fix if missing.
 """
 
 import os
+import shutil
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 
@@ -30,6 +31,24 @@ def run(ctx):
         out(f"  {TEAL}stack up ai{RESET}         (re-runs configuration)")
         nl()
         raise RuntimeError("AI provider not configured")
+
+    if provider == "managed" and shutil.which("omlx") is None:
+        # Setup ran once and left a marker, so the install hook will not run
+        # again on its own. If the binary has since gone -- a Python upgrade
+        # that broke its virtualenv, a brew cleanup, a migrated machine --
+        # nothing notices: the containers start, `stack up` reports success,
+        # and the only symptom is an LLM health check failing with no stated
+        # cause. Say what is actually wrong and how to undo it, using the
+        # same two-command recovery this hook already teaches above.
+        nl()
+        warn("oMLX is not installed (no `omlx` command found).")
+        out("The AI engine was set up before but is no longer on this Mac.")
+        out("Reinstall it with:")
+        nl()
+        out(f"  {TEAL}stack destroy ai{RESET}    (keeps your downloaded models)")
+        out(f"  {TEAL}stack up ai{RESET}         (reinstalls oMLX)")
+        nl()
+        raise RuntimeError("oMLX missing for managed provider")
 
     if provider == "external":
         url = ctx.cfg("openai_url", default="")
