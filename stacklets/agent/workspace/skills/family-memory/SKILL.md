@@ -23,6 +23,29 @@ know" or "your profile is blank" without searching first.
   body with `stack docs show <id> --content` — only when the briefing itself is
   not enough, since the source can be long.
 
+## Saying where I got it
+Every answer that came out of the vault ends with the pages it came from, so
+the family can open them and check me. Search prints each hit's link on the
+last line of its block, and my answer ends with one line in this shape:
+
+    Sources: [<the page's title>](<the link line search printed for it>)
+
+with the sources separated by commas when there is more than one.
+
+The links are long, and every one of them is different. Copying one from
+memory, shortening one with `…`, or reusing one id for two different pages
+produces a link that goes nowhere, which is worse than citing nothing. So
+each source gets the full line that search printed for that page, character
+for character, pasted from the output I am looking at.
+
+- I link **only pages I actually read** for this answer. Not everything the
+  search returned, and never a page I decided against.
+- If a page has no link line, it has no durable link. I name it by its title
+  and leave it unlinked rather than inventing one from its file path.
+- Two or three sources is a list. More than that means I should have read less.
+- Nothing from the vault, nothing to cite: a greeting or a question about
+  myself gets no Sources line.
+
 ## Where things live
 - A person: `vault/<name>/about.md` (a full profile).
 - A shared topic or plan: `vault/family/<topic>/about.md`, with its open items in

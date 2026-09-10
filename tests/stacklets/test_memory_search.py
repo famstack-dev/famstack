@@ -100,6 +100,7 @@ def vault(tmp_path):
           - 'Person: Marge'
           - 'Person: Lisa'
           - Topic:Education
+        capture_id: $EltEvt123
         ---
 
         # Elternabend Klasse 4b
@@ -262,6 +263,39 @@ class TestOutput:
         # frontmatter.
         assert "title:" not in out
         assert "persons:" not in out
+
+
+# ─── Citable links ───────────────────────────────────────────────────────
+
+class TestSourceLink:
+    """A hit carries the link that lets a reader open the source.
+
+    Stacky answers from pages it searched, and a family that cannot
+    check the source has to take the answer on faith. The link is
+    `/go/capture/<event-id>` rather than a vault path because the
+    path carries the bucket, the topic slug and the title slug, and
+    all three move under ordinary use; the capture id never does.
+    """
+
+    def test_capture_backed_hit_carries_its_go_link(self, stack_cli, vault):
+        code, out, _ = stack_cli(
+            "memory", "search", "Hoover", "--vault", str(vault),
+        )
+        assert code == 0
+        # The id is percent-encoded into a single path segment: a
+        # Matrix event id starts with "$" and older room versions
+        # allow "/" inside it.
+        assert "/go/capture/%24EltEvt123" in out
+
+    def test_hit_without_a_capture_id_prints_no_link(self, stack_cli, vault):
+        # A hand-written wiki page has no id to key on. No honest
+        # durable link exists, so the block stays as it was rather
+        # than inventing a path-shaped one that breaks on a rename.
+        code, out, _ = stack_cli(
+            "memory", "search", "Brummen", "--vault", str(vault),
+        )
+        assert code == 0
+        assert "/go/" not in out
 
 
 # ─── Tag filter ──────────────────────────────────────────────────────────
