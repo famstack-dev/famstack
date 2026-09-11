@@ -110,6 +110,8 @@ class TestMigrateVault:
 
 # ── The immutable flag ─────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "darwin",
+                    reason="chflags is BSD-only; the rest of this file is portable")
 class TestLockedFilesSurvive:
     """The reason this is a rename and not a copy."""
 
