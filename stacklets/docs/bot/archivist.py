@@ -419,6 +419,7 @@ class ArchivistBot(MicroBot):
         if self.openai_url:
             self._classifier = Classifier.from_endpoint(
                 self.openai_url, self.openai_key, bot_name=self.name,
+                language=self.language,
                 capabilities=ModelCapabilities(
                     path=self._session_dir / "model-capabilities.json",
                 ),

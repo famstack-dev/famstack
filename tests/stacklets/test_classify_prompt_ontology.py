@@ -157,3 +157,37 @@ class TestRealOntologyShape:
         prompt = _build_classify_prompt(**COMMON, ontology_section=section)
         assert "Insurance (policy, coverage)" in prompt
         assert "Invoice" in prompt
+
+
+class TestDocumentPromptSpeaksOneLanguage:
+    """Same contract as the capture prompt: an install is shown examples
+    in its own language, and the language rule names none.
+
+    The document prompt carried the heavier load — Kfz-Versicherung,
+    Rechnung, Quittung, Kassenbon, Krankenversicherung, Schule, Steuer —
+    all of it shipped to English households too.
+    """
+
+    GERMAN = ("Kfz-Versicherung", "Rechnung", "Quittung", "Kassenbon",
+              "Krankenversicherung", "Schule", "Steuer", "Versicherter",
+              "Erwachsene", "Marges")
+
+    COMMON = dict(
+        ocr_text="(ocr)", person_names=["Homer"], category_tags=["Insurance"],
+        doc_types=["Invoice"], correspondents=["Duff Insurance"],
+        user_hint="a note from the human",
+    )
+
+    def test_an_english_prompt_carries_no_german(self):
+        prompt = _build_classify_prompt(**self.COMMON, lang="en")
+        found = [w for w in self.GERMAN if w in prompt]
+        assert not found, f"German leaked into an English prompt: {found}"
+
+    def test_a_german_prompt_carries_german_examples(self):
+        prompt = _build_classify_prompt(**self.COMMON, lang="de")
+        assert any(w in prompt for w in self.GERMAN)
+
+    def test_the_language_rule_names_no_language(self):
+        prompt = _build_classify_prompt(**self.COMMON, lang="en")
+        assert "document's own language" in prompt
+        assert "A German document gets a German title" not in prompt

@@ -1005,13 +1005,22 @@ class TestClassifyPromptPersonsRule:
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
         )
-        # Must explicitly forbid guessing — references group counts as
-        # the canonical "do not invent" case.
+        # Must explicitly forbid guessing, with a headcount as the
+        # canonical "do not invent" case. The worked example is now
+        # supplied in the household's language, so this asserts the rule
+        # rather than the wording of the example.
         assert "NEVER guess" in prompt
-        assert "2 Erwachsene, 2 Kinder" in prompt
+        assert "headcount" in prompt
         # Mentions the submitter fallback so the model knows empty
         # is the right answer when names aren't in the text.
         assert "fallback" in prompt.lower()
+
+    def test_the_headcount_example_follows_the_household_language(self):
+        from pipeline import _build_classify_prompt
+        common = dict(ocr_text="x", person_names=[], category_tags=[],
+                      doc_types=[], correspondents=[])
+        assert "2 adults, 2 children" in _build_classify_prompt(**common, lang="en")
+        assert "2 Erwachsene, 2 Kinder" in _build_classify_prompt(**common, lang="de")
 
 
 # ── Reformat ──────────────────────────────────────────────────────────────
