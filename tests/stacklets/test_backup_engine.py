@@ -198,12 +198,30 @@ class TestSourceCountsFromHistory:
 
     def test_it_reads_the_previous_runs_counts(self):
         run = {"sources": [
-            {"id": "photos/library", "source_files": 4021},
-            {"id": "docs/media", "source_files": 57},
+            {"id": "photos/library", "status": "ok", "source_files": 4021},
+            {"id": "docs/media", "status": "ok", "source_files": 57},
         ]}
         assert previous_source_counts(run) == {
             "photos/library": 4021, "docs/media": 57,
         }
+
+    def test_a_run_recorded_before_this_field_existed_yields_nothing(self):
+        """Upgrade path. Runs written by the previous engine carry
+        `total_files` but no `source_files`, so the first run after an
+        upgrade has no baseline and must not read that as loss."""
+        run = {"sources": [
+            {"id": "photos/library", "status": "ok",
+             "total_files": 4021, "new_files": 3},
+        ]}
+        assert previous_source_counts(run) == {}
+
+    def test_a_failed_source_contributes_no_baseline(self):
+        """It did not finish, so its count does not describe what the
+        source held."""
+        run = {"sources": [
+            {"id": "photos/library", "status": "FAILED", "source_files": 0},
+        ]}
+        assert previous_source_counts(run) == {}
 
     def test_no_previous_run_means_no_baseline(self):
         assert previous_source_counts(None) == {}

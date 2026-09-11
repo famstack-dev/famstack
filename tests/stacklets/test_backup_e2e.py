@@ -161,6 +161,10 @@ def _seed_history(backup_data_dir: Path, counts: dict) -> None:
     }) + "\n")
 
 
+def _count_files(path: Path) -> int:
+    return sum(1 for p in Path(path).rglob("*") if p.is_file())
+
+
 def _run_engine(backup_data_dir: Path, vault_name: str, sources_env: str,
                 *, args=None):
     env = os.environ.copy()
@@ -517,3 +521,106 @@ class TestOrchestratorE2E:
         # Spot-check the uchg flag on a few files
         assert _has_uchg(photos[0])
         assert _has_uchg(docs[0])
+
+
+class TestUpgradingAnExistingVault:
+    """An instance that has been backing up photos and documents for
+    months, upgraded to a release that adds snapshots and a new archive.
+
+    Two things could go wrong. The shrink check reads each source's count
+    from the previous run, and every run recorded before the upgrade
+    predates that field, so an absent baseline must not read as loss. And
+    the new sources must be added to the vault without disturbing what is
+    already on it, which is immutable and cannot be rewritten.
+    """
+
+    def _existing_vault(self, mount: Path) -> dict:
+        """Photos and documents already synced and locked, as a vault in
+        use would be."""
+        before = {}
+        for subdir, count in (("photos-library", 6), ("docs-media", 4)):
+            d = mount / "data" / subdir
+            d.mkdir(parents=True)
+            for i in range(count):
+                (d / f"old-{i}.txt").write_text("x")
+            # Files only, as the engine locks them. Locking the directory
+            # would stop rsync writing into it, which it never does.
+            subprocess.run(
+                ["find", str(d), "-type", "f", "-exec", "chflags", "uchg",
+                 "{}", "+"], check=False,
+            )
+            before[subdir] = sorted(p.name for p in d.iterdir())
+        return before
+
+    def _old_format_history(self, backup_data_dir: Path) -> None:
+        """A run record as written before `source_files` existed."""
+        history = backup_data_dir / "logs" / "history.jsonl"
+        history.parent.mkdir(parents=True, exist_ok=True)
+        history.write_text(json.dumps({
+            "engine": "external-disk",
+            "success": True,
+            "sources": [
+                {"id": "photos/library", "display": "Photos", "status": "ok",
+                 "total_files": 6, "new_files": 0},
+                {"id": "docs/media", "display": "Documents", "status": "ok",
+                 "total_files": 4, "new_files": 0},
+            ],
+        }) + "\n")
+
+    def test_the_first_upgraded_sync_adds_without_disturbing(
+        self, vault_image, backup_data_dir, fake_sources, tmp_path,
+    ):
+        name, mount = vault_image
+        before = self._existing_vault(mount)
+        self._old_format_history(backup_data_dir)
+
+        # The new sources: Matrix media, and a snapshot staging directory.
+        media = tmp_path / "data" / "messages" / "media_store" / "local_content"
+        media.mkdir(parents=True)
+        for i in range(3):
+            (media / f"voice-{i}.ogg").write_text("audio")
+        snaps = tmp_path / "data" / "snapshots" / "messages-synapse"
+        snaps.mkdir(parents=True)
+        (snaps / "synapse-20260911T000000Z.tar.gz").write_text("dump")
+
+        sources = "\n".join([
+            _sources_env(fake_sources),
+            f"messages/media|Messages|{media}|data/messages-media|0",
+            f"messages/synapse|Messages|{snaps}|data/messages-synapse|1",
+        ])
+        result = _run_engine(backup_data_dir, name, sources, args=["--no-eject"])
+        assert result.returncode == 0
+
+        data = _read_result(backup_data_dir)
+        assert data["success"] is True
+
+        # Everything already on the vault is still there. The sync adds
+        # the source's files alongside; it never removes or rewrites.
+        for subdir, names in before.items():
+            now = {p.name for p in (mount / "data" / subdir).iterdir()}
+            assert set(names) <= now
+
+        # And the new sources arrived.
+        assert len(list((mount / "data" / "messages-media").iterdir())) == 3
+        assert len(list((mount / "data" / "messages-synapse").iterdir())) == 1
+
+    def test_it_records_a_baseline_the_next_run_can_use(
+        self, vault_image, backup_data_dir, fake_sources,
+    ):
+        """The upgraded run has no baseline to check against, so it also
+        has to leave one behind or the guard never arms."""
+        name, mount = vault_image
+        self._existing_vault(mount)
+        self._old_format_history(backup_data_dir)
+
+        _run_engine(backup_data_dir, name, _sources_env(fake_sources),
+                    args=["--no-eject"])
+
+        counts = {
+            s["id"]: s.get("source_files")
+            for s in _read_result(backup_data_dir)["sources"]
+        }
+        # Counted from the sources themselves, so the assertion states the
+        # rule rather than a number that drifts with the fixture.
+        assert counts["photos/library"] == _count_files(fake_sources["photos"])
+        assert counts["docs/media"] == _count_files(fake_sources["docs"])

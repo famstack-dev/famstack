@@ -313,15 +313,15 @@ def verify_canary(canary_file: Path) -> None:
 def previous_source_counts(latest_run: Optional[dict]) -> dict:
     """What each source held on the previous run, by source id.
 
-    A source that was skipped contributes nothing: it had no data, and
-    recording that as a baseline of zero would make the next run look
-    like growth from nothing and disarm the guard permanently.
+    Only a source that synced contributes one. A skipped source had no
+    data, and a failed source did not finish, so neither describes a
+    count the next run should be measured against.
     """
     if not latest_run:
         return {}
     counts = {}
     for entry in latest_run.get("sources", []):
-        if entry.get("status") == "skipped":
+        if entry.get("status") != "ok":
             continue
         sid = entry.get("id")
         count = entry.get("source_files")
