@@ -256,3 +256,68 @@ include   = ["{data_dir}/messages/synapse/homeserver.yaml"]
         self._stacklet(tmp_path, "photos", 'id = "photos"\nname = "Photos"\n')
         self._enable(tmp_path, "photos")
         assert discover_snapshots(tmp_path, tmp_path, Path("/data")) == []
+
+
+class TestRecordedVersions:
+    """A dump is only restorable into something compatible with what wrote
+    it. Paperless makes the point sharply: a 3.x database will not boot
+    under 2.x, and there is no downgrade.
+
+    So a snapshot records what produced it. This is the one piece of a
+    snapshot that cannot be added later: whatever a restore tool eventually
+    does, it can only be as good as the metadata captured at the time, and
+    a tarball taken today without it stays ambiguous forever.
+    """
+
+    def _versions(self, payload=None, error=None):
+        def probe(spec):
+            if error is not None:
+                raise error
+            return payload if payload is not None else {
+                "containers": {
+                    "stack-messages-synapse": {
+                        "image": "matrixdotorg/synapse:latest",
+                        "version": "1.160.0",
+                        "digest": "sha256:1231c84d",
+                    },
+                },
+                "postgres": "16.15",
+            }
+        return probe
+
+    def test_the_manifest_records_what_produced_it(self, tmp_path):
+        path = take_snapshot(_spec(tmp_path), tmp_path / "s",
+                             dump=_fake_dump(), versions=self._versions())
+        with tarfile.open(path) as tar:
+            manifest = json.loads(tar.extractfile("MANIFEST.json").read())
+
+        synapse = manifest["versions"]["containers"]["stack-messages-synapse"]
+        assert synapse["version"] == "1.160.0"
+        assert manifest["versions"]["postgres"] == "16.15"
+
+    def test_the_digest_is_kept_because_a_tag_is_not_a_version(self, tmp_path):
+        """The running image is tagged `latest`, which means something
+        different every year and nothing at all in five. The digest is the
+        only identifier that still names this exact image later."""
+        path = take_snapshot(_spec(tmp_path), tmp_path / "s",
+                             dump=_fake_dump(), versions=self._versions())
+        with tarfile.open(path) as tar:
+            manifest = json.loads(tar.extractfile("MANIFEST.json").read())
+
+        synapse = manifest["versions"]["containers"]["stack-messages-synapse"]
+        assert synapse["digest"].startswith("sha256:")
+
+    def test_unavailable_versions_do_not_cost_the_dump(self, tmp_path):
+        """Docker unreachable, a container not running, an image pruned.
+        None of that is worth losing the database over."""
+        path = take_snapshot(
+            _spec(tmp_path), tmp_path / "s", dump=_fake_dump(),
+            versions=self._versions(error=RuntimeError("docker is not running")),
+        )
+        with tarfile.open(path) as tar:
+            manifest = json.loads(tar.extractfile("MANIFEST.json").read())
+            assert "synapse.sql" in tar.getnames()
+
+        # Recorded as unknown rather than omitted, so a reader can tell
+        # "we could not look" from "this predates version recording".
+        assert manifest["versions"] == {}

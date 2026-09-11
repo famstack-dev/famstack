@@ -35,6 +35,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -155,11 +156,79 @@ def pg_dump(spec: SnapshotSpec) -> bytes:
     return proc.stdout
 
 
+def container_versions(spec: SnapshotSpec) -> dict:
+    """What was running when this snapshot was taken.
+
+    A dump only restores into something compatible with what produced it,
+    and the failure is not subtle: a Paperless 3.x database will not boot
+    under 2.x, and there is no downgrade. Recording the versions is the
+    one part of a snapshot that cannot be added later, so it happens even
+    though nothing reads it yet.
+
+    The image *digest* is the load-bearing field. Tags lie over time —
+    the homeserver runs `matrixdotorg/synapse:latest`, which names a
+    different image every month and nothing identifiable in five years.
+    The digest still names this exact image whenever someone comes back
+    to it.
+
+    Containers are found by the compose project label rather than a
+    manifest list, so a stacklet does not have to enumerate its own
+    services and cannot forget one when it adds another.
+    """
+    project = f"stack-{spec.stacklet_id}"
+    names = _docker(
+        "ps", "--filter", f"label=com.docker.compose.project={project}",
+        "--format", "{{.Names}}",
+    ).split()
+
+    containers = {}
+    for name in names:
+        image = _docker("inspect", name, "--format", "{{.Config.Image}}")
+        version = _docker(
+            "inspect", name, "--format",
+            '{{index .Config.Labels "org.opencontainers.image.version"}}',
+        )
+        digest = _docker(
+            "image", "inspect", image, "--format",
+            "{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}",
+        )
+        entry = {"image": image}
+        if version and version != "<no value>":
+            entry["version"] = version
+        if "@" in digest:
+            entry["digest"] = digest.split("@", 1)[1]
+        containers[name] = entry
+
+    versions: dict = {"containers": containers}
+    if spec.container:
+        pg = _docker(
+            "exec", spec.container,
+            "psql", "-U", spec.user, "-d", spec.database,
+            "-tAc", "show server_version;",
+        )
+        if pg:
+            versions["postgres"] = pg
+    return versions
+
+
+def _docker(*args: str) -> str:
+    """One docker call, stripped. Empty string when it fails: version
+    metadata is nice to have, never worth losing a dump over."""
+    try:
+        proc = subprocess.run(["docker", *args], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.decode(errors="replace").strip()
+
+
 def take_snapshot(
     spec: SnapshotSpec,
     out_root: Path,
     *,
     dump: Optional[Callable[[SnapshotSpec], bytes]] = None,
+    versions: Optional[Callable[[SnapshotSpec], dict]] = None,
     now: Optional[time.struct_time] = None,
 ) -> Path:
     """Write one dated tarball for `spec` and return its path.
@@ -170,6 +239,7 @@ def take_snapshot(
     sit there looking like a backup.
     """
     dump = dump or pg_dump
+    versions = versions or container_versions
     stamp = time.strftime("%Y%m%dT%H%M%SZ", now or time.gmtime())
 
     # Raises on failure, before anything is created.
@@ -190,6 +260,16 @@ def take_snapshot(
     dump_name = f"{spec.database or spec.name}.sql"
     included: List[str] = []
 
+    # Never worth losing the dump over: docker unreachable, a container
+    # stopped, an image pruned. Recorded as empty rather than omitted, so
+    # a reader can tell "we could not look" from "this predates version
+    # recording at all".
+    try:
+        recorded = versions(spec)
+    except Exception as e:
+        logger_warn(f"could not record versions for {spec.id}: {e}")
+        recorded = {}
+
     fd, tmp_path = tempfile.mkstemp(dir=out_dir, suffix=".tar.gz.partial")
     os.close(fd)
     try:
@@ -204,7 +284,8 @@ def take_snapshot(
                         tar.add(p, arcname=p.name)
                         included.append(p.name)
             _add_bytes(tar, "MANIFEST.json", json.dumps(
-                _manifest(spec, dump_name, stamp, included), indent=2,
+                _manifest(spec, dump_name, stamp, included, recorded),
+                indent=2,
             ).encode())
         os.replace(tmp_path, target)
     except BaseException:
@@ -221,8 +302,13 @@ def _add_bytes(tar: tarfile.TarFile, name: str, payload: bytes) -> None:
     tar.addfile(info, io.BytesIO(payload))
 
 
+def logger_warn(msg: str) -> None:
+    print(f"    warning: {msg}", file=sys.stderr)
+
+
 def _manifest(
     spec: SnapshotSpec, dump_name: str, stamp: str, included: List[str],
+    versions: dict,
 ) -> dict:
     """What this tarball is, for whoever opens it without the code.
 
@@ -237,6 +323,9 @@ def _manifest(
         "database": spec.database,
         "dump_file": dump_name,
         "included_files": included,
+        # What produced this dump. A restore has to refuse an incompatible
+        # target rather than discover it the hard way.
+        "versions": versions,
         "taken_at": time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.strptime(stamp, "%Y%m%dT%H%M%SZ"),
         ),

@@ -723,7 +723,9 @@ A Synapse snapshot is around 200 KB and contains:
 | `synapse.sql` | The whole timeline: rooms, messages, who said what when |
 | `homeserver.yaml` | Config, and the secret that keeps existing logins valid |
 | `*.signing.key` | The server's identity |
-| `MANIFEST.json` | What this file is and how to put it back |
+| `MANIFEST.json` | What this file is, what produced it, and how to put it back |
+
+The manifest also records the exact image versions and digests that were running when the snapshot was taken. A dump only restores into something compatible with what wrote it, and the failure is not subtle: a Paperless 3.x database will not boot under 2.x, and there is no downgrade. The digest matters more than the tag, because `latest` names a different image every month and nothing identifiable in five years. Nothing reads this yet. It is recorded now because it is the one part of a snapshot that cannot be added afterwards.
 
 Those config files carry live secrets, including the database password. That is deliberate, because a dump without them restores a server nobody can log into, and it is one more reason the archive disk is a physical object you keep somewhere safe.
 
