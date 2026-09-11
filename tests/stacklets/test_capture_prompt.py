@@ -179,13 +179,15 @@ class TestTagQualityBias:
         assert "'camping' beats 'travel'" in prompt
         assert "PREFER SPECIFIC" in prompt or "Prefer specific" in prompt
 
-    def test_includes_german_tag_examples(self):
-        """The family is bilingual; tags follow the content's language.
-        Without German examples, the model defaults to English tags on
-        German voice memos -- which then fail to match German search."""
-        prompt = _build_capture_prompt(**COMMON)
-        # At least one German content-specific tag in the examples
-        # (rotates between voice-memo and document scenarios in real use).
+    def test_a_german_household_gets_german_tag_examples(self):
+        """A German household's tags follow its content, and German
+        examples are what keep the model from emitting English tags on a
+        German memo -- which would then fail to match a German search.
+
+        Scoped to `lang="de"` since the fix: the same examples on an
+        English install were dragging English content into German. See
+        TestPromptSpeaksOneLanguage."""
+        prompt = _build_capture_prompt(**COMMON, lang="de")
         assert "wäschesack" in prompt or "campingurlaub" in prompt
 
     def test_retrieval_test_framing_in_rules(self):
@@ -310,3 +312,56 @@ class TestShowingTheClassifierTheCurrentList:
 
         assert "ALREADY RECORDED" not in prompt
         assert "Alternative Dachbox" not in prompt
+
+
+# ── Language ─────────────────────────────────────────────────────────────
+
+# Domain words that only belong in a German household's prompt. Taken from
+# the examples that shipped unconditionally and caused the bug below.
+GERMAN_VOCAB = (
+    "wäschesack", "haushalt", "bremsen", "kindergarten", "campingurlaub",
+    "Kfz-Versicherung", "Rechnung", "Quittung", "Kassenbon",
+    "Krankenversicherung", "Schule", "Steuer",
+)
+
+
+class TestPromptSpeaksOneLanguage:
+    """The prompt must not teach the model a language the household does
+    not use.
+
+    Reported from a user running an English install: summaries kept coming
+    back in German. The cause was ours. The examples were hardcoded, so
+    every install was sent a bilingual prompt, and a small model copied the
+    nearest example rather than following the abstract "use the content's
+    language" rule. Reproduced against a 9B (famstack's own RAM-tier
+    default) with an empty vault and English input:
+
+        note about brakes  -> tags ['bremsen', 'auto-wartung']
+        note about camping -> "Vorräte und Zeltstangen prüfen für
+                               Campingurlaub", summary in German
+
+    The drift fired exactly where the user's subject matter collided with
+    one of our examples, which is why it looked intermittent.
+    """
+
+    def test_an_english_prompt_carries_no_german(self):
+        prompt = _build_capture_prompt(**COMMON, lang="en").lower()
+        found = [w for w in GERMAN_VOCAB if w.lower() in prompt]
+        assert not found, f"German leaked into an English prompt: {found}"
+
+    def test_a_german_prompt_carries_german_examples(self):
+        """German households keep the German examples; they were only ever
+        wrong on installs that do not speak it."""
+        prompt = _build_capture_prompt(**COMMON, lang="de").lower()
+        assert any(w.lower() in prompt for w in GERMAN_VOCAB)
+
+    def test_the_language_rule_is_about_the_content_not_a_fixed_language(self):
+        """Naming one language in the rule invites that language. The rule
+        has to be generic for the examples to stay examples."""
+        prompt = _build_capture_prompt(**COMMON, lang="en")
+        assert "content's language" in prompt.lower()
+        assert "german content" not in prompt.lower()
+
+    def test_english_is_the_default(self):
+        prompt = _build_capture_prompt(**COMMON).lower()
+        assert not [w for w in GERMAN_VOCAB if w.lower() in prompt]

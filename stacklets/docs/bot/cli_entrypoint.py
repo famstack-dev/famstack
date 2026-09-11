@@ -104,6 +104,7 @@ async def main(argv: list[str]) -> int:
         classifier = Classifier.from_endpoint(
             os.environ.get("OPENAI_URL", ""),
             os.environ.get("OPENAI_KEY", ""),
+            language=os.environ.get("LANGUAGE", "en"),
         )
         return await fn(paperless, classifier, rest)
 
