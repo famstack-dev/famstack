@@ -65,4 +65,3 @@ expect = "200"
 [[backup.archive]]
 name      = "media"
 path      = "{data_dir}/docs/paperless/media"
-min_files = 10

@@ -101,4 +101,3 @@ include   = [
 [[backup.archive]]
 name      = "media"
 path      = "{data_dir}/messages/synapse/media_store/local_content"
-min_files = 1

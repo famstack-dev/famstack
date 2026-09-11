@@ -30,6 +30,7 @@ from sync import (
     format_number,
     parse_sources,
     preflight_check_sources,
+    previous_source_counts,
     probe_filesystem,
     read_latest_run,
     verify_canary,
@@ -41,7 +42,7 @@ from sync import (
 class TestParseSources:
     def test_single_record(self):
         sources = parse_sources(
-            "photos/library|Photos|/data/photos/library|data/photos-library|10"
+            "photos/library|Photos|/data/photos/library|data/photos-library|0"
         )
         assert len(sources) == 1
         s = sources[0]
@@ -49,22 +50,24 @@ class TestParseSources:
         assert s.display == "Photos"
         assert s.src_path == Path("/data/photos/library")
         assert s.vault_subdir == "data/photos-library"
-        assert s.min_files == 10
+        assert s.rolling is False
 
     def test_multiple_records_separated_by_newlines(self):
         sources = parse_sources(
-            "photos/library|Photos|/a|data/p|10\n"
-            "docs/media|Documents|/b|data/d|5"
+            "photos/library|Photos|/a|data/p|0\n"
+            "messages/synapse|Messages|/b|data/d|1"
         )
-        assert [s.id for s in sources] == ["photos/library", "docs/media"]
-        assert sources[1].min_files == 5
+        assert [s.id for s in sources] == ["photos/library", "messages/synapse"]
+        # A snapshot staging area: pruned on purpose, so shrinking is not
+        # a loss and the engine must be told so.
+        assert sources[1].rolling is True
 
     def test_blank_lines_ignored(self):
         sources = parse_sources(
             "\n"
-            "photos/library|Photos|/a|data/p|10\n"
+            "photos/library|Photos|/a|data/p|0\n"
             "   \n"
-            "docs/media|Documents|/b|data/d|5\n"
+            "docs/media|Documents|/b|data/d|0\n"
         )
         assert len(sources) == 2
 
@@ -84,11 +87,7 @@ class TestParseSources:
 
     def test_too_many_fields_aborts(self):
         with pytest.raises(SyncAborted, match="Malformed source record"):
-            parse_sources("a|b|c|d|10|extra")
-
-    def test_non_integer_min_files_aborts(self):
-        with pytest.raises(SyncAborted, match="min_files must be an integer"):
-            parse_sources("a|b|c|d|many")
+            parse_sources("a|b|c|d|0|extra")
 
 
 # ── Canary ─────────────────────────────────────────────────────────────────
@@ -122,7 +121,7 @@ class TestVerifyCanary:
 # ── Preflight ──────────────────────────────────────────────────────────────
 
 class TestPreflightCheckSources:
-    def _make_source(self, tmp_path: Path, name: str, file_count: int, min_files: int) -> Source:
+    def _make_source(self, tmp_path: Path, name: str, file_count: int) -> Source:
         src_dir = tmp_path / name
         src_dir.mkdir()
         for i in range(file_count):
@@ -132,65 +131,89 @@ class TestPreflightCheckSources:
             display=name.title(),
             src_path=src_dir,
             vault_subdir=f"data/test-{name}",
-            min_files=min_files,
         )
 
-    def test_passes_when_each_source_meets_min(self, tmp_path, capsys):
-        sources = [
-            self._make_source(tmp_path, "a", file_count=20, min_files=10),
-            self._make_source(tmp_path, "b", file_count=15, min_files=10),
-        ]
-        assert len(preflight_check_sources(sources)) == 2
+    def test_a_first_ever_run_syncs_whatever_is_there(self, tmp_path, capsys):
+        """No history means no baseline, so nothing can be judged a loss."""
+        sources = [self._make_source(tmp_path, "a", file_count=20)]
+        assert len(preflight_check_sources(sources, {})) == 1
 
-    def test_aborts_when_any_source_under_min(self, tmp_path, capsys):
-        sources = [
-            self._make_source(tmp_path, "ok", file_count=20, min_files=10),
-            self._make_source(tmp_path, "low", file_count=2, min_files=10),
-        ]
-        with pytest.raises(SyncAborted, match="Preflight failed"):
-            preflight_check_sources(sources)
+    def test_growth_is_normal(self, tmp_path, capsys):
+        sources = [self._make_source(tmp_path, "a", file_count=20)]
+        assert len(preflight_check_sources(sources, {"test/a": 15})) == 1
 
     def test_a_source_with_no_data_yet_is_skipped_not_fatal(self, tmp_path, capsys):
         """A stacklet that has never had data must not cost the household
         every other backup.
 
-        Matrix media is the case that forced this: the media store is not
-        created until somebody sends the first photo, so a fresh install
-        would have failed every backup until then, photos and documents
-        included. Nothing is at risk either way — the engine syncs with
-        `--ignore-existing` and never `--delete`, so an empty source
-        copies nothing and the vault keeps everything it already had.
+        Matrix media forced this: Synapse does not create the media store
+        until somebody sends the first photo, so a fresh install would
+        have failed every backup until then, photos included. Nothing is
+        at risk — the engine syncs with `--ignore-existing` and never
+        `--delete`, so an empty source copies nothing and the vault keeps
+        what it had.
         """
         missing = Source(
             id="test/missing", display="Missing",
             src_path=tmp_path / "does-not-exist",
-            vault_subdir="data/test-missing", min_files=1,
+            vault_subdir="data/test-missing",
         )
-        present = self._make_source(tmp_path, "ok", file_count=20, min_files=10)
+        present = self._make_source(tmp_path, "ok", file_count=20)
 
-        syncable = preflight_check_sources([missing, present])
+        syncable = preflight_check_sources([missing, present], {})
 
         assert [s.id for s in syncable] == ["test/ok"]
 
-    def test_an_empty_source_directory_is_skipped_too(self, tmp_path, capsys):
-        empty = self._make_source(tmp_path, "empty", file_count=0, min_files=1)
-        assert preflight_check_sources([empty]) == []
-
-    def test_a_source_that_lost_most_of_its_files_still_aborts(
-        self, tmp_path, capsys,
-    ):
-        """The distinction that keeps the guard worth having. Nothing is
-        "no data yet"; some-but-far-fewer is "something removed it", and
-        that deserves a human looking before anything else runs."""
-        sources = [self._make_source(tmp_path, "raided", file_count=2,
-                                     min_files=10)]
+    def test_a_source_that_vanished_aborts(self, tmp_path, capsys):
+        """Empty now, but it had files last run. That is the disaster."""
+        gone = self._make_source(tmp_path, "gone", file_count=0)
         with pytest.raises(SyncAborted, match="Preflight failed"):
-            preflight_check_sources(sources)
+            preflight_check_sources([gone], {"test/gone": 4000})
 
-    def test_exact_min_count_passes(self, tmp_path, capsys):
-        # Edge: file_count == min_files should pass (not "strictly greater than").
-        sources = [self._make_source(tmp_path, "exact", file_count=10, min_files=10)]
-        assert len(preflight_check_sources(sources)) == 1
+    def test_a_source_that_lost_most_of_its_files_aborts(self, tmp_path, capsys):
+        """The case a hand-written `min_files` could never catch. A library
+        of 50,000 photos reduced to 11 sails past `min_files = 10`; against
+        its own previous count it is unmissable."""
+        raided = self._make_source(tmp_path, "photos", file_count=11)
+        with pytest.raises(SyncAborted, match="Preflight failed"):
+            preflight_check_sources([raided], {"test/photos": 50_000})
+
+    def test_a_modest_loss_is_allowed(self, tmp_path, capsys):
+        """People do delete things. The guard is for catastrophe, not for
+        policing a household's own housekeeping."""
+        tidied = self._make_source(tmp_path, "photos", file_count=18)
+        assert len(preflight_check_sources([tidied], {"test/photos": 20})) == 1
+
+    def test_a_rolling_source_may_shrink_to_its_window(self, tmp_path, capsys):
+        """Snapshot staging directories are pruned on purpose. Shrinking is
+        their normal operation, not a loss."""
+        rolling = self._make_source(tmp_path, "snaps", file_count=7)
+        rolling.rolling = True
+        assert len(preflight_check_sources([rolling], {"test/snaps": 40})) == 1
+
+
+class TestSourceCountsFromHistory:
+    """The baseline each run is judged against: what the source itself
+    held last time. Self-calibrating, so no manifest has to guess."""
+
+    def test_it_reads_the_previous_runs_counts(self):
+        run = {"sources": [
+            {"id": "photos/library", "source_files": 4021},
+            {"id": "docs/media", "source_files": 57},
+        ]}
+        assert previous_source_counts(run) == {
+            "photos/library": 4021, "docs/media": 57,
+        }
+
+    def test_no_previous_run_means_no_baseline(self):
+        assert previous_source_counts(None) == {}
+
+    def test_a_skipped_source_contributes_no_baseline(self):
+        """A source skipped for having nothing must not become a baseline
+        of zero that makes the next run look like growth from nothing."""
+        run = {"sources": [{"id": "messages/media", "status": "skipped",
+                            "source_files": 0}]}
+        assert previous_source_counts(run) == {}
 
 
 # ── _stat_fs_type (mocked mount output) ────────────────────────────────────
@@ -486,8 +509,7 @@ class TestSyncDataLock:
         src.mkdir()
         (src / "a.jpg").write_text("x")
         return Source(id="photos/library", display="Photos",
-                      src_path=src, vault_subdir="data/photos-library",
-                      min_files=1)
+                      src_path=src, vault_subdir="data/photos-library")
 
     def _fake_run(self, chflags_returncode: int):
         from types import SimpleNamespace

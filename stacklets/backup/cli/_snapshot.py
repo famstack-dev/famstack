@@ -257,16 +257,16 @@ def _manifest(
 def snapshot_source(spec: SnapshotSpec, out_root: Path) -> SourceRecord:
     """The engine source that carries this snapshot's tarballs to the vault.
 
-    ``min_files`` is 1 because we write the directory ourselves
-    immediately before the sync runs, so exactly one tarball is always
-    present. Anything higher would fail a household's first backup.
+    Marked ``rolling``: this directory is pruned to a fixed window on
+    purpose, so its shrinking is normal operation rather than the data
+    loss the engine's guard looks for.
     """
     return SourceRecord(
         id=spec.id,
         display=spec.display,
         src_path=out_root / spec.subdir,
         vault_subdir=f"data/{spec.subdir}",
-        min_files=1,
+        rolling=True,
     )
 
 

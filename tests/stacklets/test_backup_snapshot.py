@@ -167,10 +167,10 @@ class TestSnapshotSource:
         assert src.src_path == tmp_path / "snapshots" / "messages-synapse"
         assert src.vault_subdir == "data/messages-synapse"
 
-    def test_it_expects_at_least_the_snapshot_just_taken(self, tmp_path):
-        """We write the directory ourselves immediately before the sync,
-        so one file is always there. Higher would fail a first run."""
-        assert snapshot_source(_spec(tmp_path), tmp_path / "s").min_files == 1
+    def test_it_is_marked_rolling(self, tmp_path):
+        """Pruned to a fixed window on purpose, so the engine must not read
+        its shrinking as the data loss its guard looks for."""
+        assert snapshot_source(_spec(tmp_path), tmp_path / "s").rolling is True
 
 
 # ── Keeping the internal disk honest ─────────────────────────────────────

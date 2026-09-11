@@ -132,12 +132,33 @@ def fake_sources(tmp_path):
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _sources_env(fake_sources: dict, *, photos_min: int = 10, docs_min: int = 5) -> str:
-    """Build the ``$SOURCES`` env string the engine expects."""
+def _sources_env(fake_sources: dict, *, rolling: bool = False) -> str:
+    """Build the ``$SOURCES`` env string the engine expects.
+
+    Final field is the rolling flag: 1 for a source pruned on purpose
+    (a snapshot staging area), 0 for an ordinary append-only archive.
+    """
+    flag = 1 if rolling else 0
     return "\n".join([
-        f"photos/library|Photos|{fake_sources['photos']}|data/photos-library|{photos_min}",
-        f"docs/media|Documents|{fake_sources['docs']}|data/docs-media|{docs_min}",
+        f"photos/library|Photos|{fake_sources['photos']}|data/photos-library|{flag}",
+        f"docs/media|Documents|{fake_sources['docs']}|data/docs-media|{flag}",
     ])
+
+
+def _seed_history(backup_data_dir: Path, counts: dict) -> None:
+    """Record a previous run, so the next one has a baseline to be judged
+    against. This is what replaced a hand-written `min_files`."""
+    history = backup_data_dir / "logs" / "history.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    history.write_text(json.dumps({
+        "engine": "external-disk",
+        "success": True,
+        "sources": [
+            {"id": sid, "display": sid, "status": "ok",
+             "total_files": n, "new_files": 0, "source_files": n}
+            for sid, n in counts.items()
+        ],
+    }) + "\n")
 
 
 def _run_engine(backup_data_dir: Path, vault_name: str, sources_env: str,
@@ -314,15 +335,16 @@ class TestEngineSyncE2E:
         assert data["success"] is False
         assert "canary" in (data["failure_reason"] or "").lower()
 
-    def test_refuses_when_source_under_minimum(
+    def test_refuses_when_a_source_lost_files_since_last_run(
         self, vault_image, backup_data_dir, fake_sources
     ):
-        """Preflight is the coarse ransomware guard — refuses to sync
-        a source that's been wiped to fewer files than the declared
-        minimum. Critically, no vault writes happen."""
+        """Preflight judges a source against its own previous count, so
+        the guard means the same thing at any scale and nothing has to be
+        configured. Critically, no vault writes happen."""
         name, mount = vault_image
-        # photos has 15 files; bump min to 100 so preflight fails
-        sources = _sources_env(fake_sources, photos_min=100)
+        # photos has 15 files on disk; last run it held 5,000.
+        _seed_history(backup_data_dir, {"photos/library": 5000})
+        sources = _sources_env(fake_sources)
 
         result = _run_engine(backup_data_dir, name, sources, args=["--no-eject"])
         assert result.returncode != 0
