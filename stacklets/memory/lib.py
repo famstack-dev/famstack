@@ -112,7 +112,6 @@ BRAIN_SEED_README = (
 )
 BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
 BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
-GENERATED_PAGE_MARKER = "<!-- begin: generated -->"
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
 INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
 
@@ -1227,6 +1226,25 @@ def seed_brain(
     return {"created": created, "skipped": skipped}
 
 
+def _declares_generated(content: str) -> bool:
+    """True when a page's frontmatter declares the whole file generated.
+
+    The splice marker only brackets a *region*, and a hand-written page may
+    reserve one for the wiki to fill in later — the seeded root `index.md`
+    does exactly that. Treating the marker as proof of a generated page
+    deleted that welcome page on every start, which left a fresh install
+    serving 404 at the wiki root until the first nightly sweep.
+
+    `generated: true` is the whole-page declaration, and the generator
+    stamps it on every page it publishes (`_with_generated_marker`), so
+    every real projection artifact still matches.
+    """
+    value = _parse_frontmatter(content).get("generated")
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
 def purge_generated_memory_pages(
     client: ForgejoClient,
     *,
@@ -1236,9 +1254,10 @@ def purge_generated_memory_pages(
 
     B1 moves generation to `family/brain`, but upgraded instances can
     already have generated wiki pages in the source repo from pre-B1
-    runs. The migration is marker-based so it does not depend on stale
-    path conventions: any markdown file with the generated splice marker
-    is a projection artifact and is removed from memory.
+    runs. The migration keys off the page's own frontmatter rather than
+    stale path conventions: any markdown file declaring `generated: true`
+    is a projection artifact and is removed from memory. See
+    `_declares_generated` for why the splice marker alone is not enough.
     """
     deleted: list[str] = []
     tree = client.list_tree(REPO_OWNER, REPO_NAME)
@@ -1252,7 +1271,7 @@ def purge_generated_memory_pages(
         if not existing:
             continue
         content = existing.get("content", "")
-        if GENERATED_PAGE_MARKER not in content:
+        if not _declares_generated(content):
             continue
         client.delete_file(
             REPO_OWNER, REPO_NAME, path,
@@ -1281,7 +1300,7 @@ def purge_local_generated_memory_pages(vault_path: Path) -> dict:
             content = md.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if GENERATED_PAGE_MARKER not in content:
+        if not _declares_generated(content):
             continue
         try:
             rel = str(md.relative_to(vault_path))

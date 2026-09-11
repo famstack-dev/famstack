@@ -382,7 +382,7 @@ class TestPurgeGeneratedMemoryPages:
             method="GET",
         ).respond_with_json(_file_response(
             "index.md",
-            "---\ntitle: Home\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
+            "---\ntitle: Home\ngenerated: true\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
         ))
         httpserver.expect_request(
             f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/index.md",
@@ -393,7 +393,7 @@ class TestPurgeGeneratedMemoryPages:
             method="GET",
         ).respond_with_json(_file_response(
             "homer/about.md",
-            "---\ntitle: Homer\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
+            "---\ntitle: Homer\ngenerated: true\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n",
         ))
         httpserver.expect_request(
             f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents/homer/about.md",
@@ -419,7 +419,7 @@ class TestPurgeLocalGeneratedMemoryPages:
         generated = tmp_path / "homer" / "about.md"
         generated.parent.mkdir(parents=True)
         generated.write_text(
-            "---\ntitle: Homer\n---\n<!-- begin: generated -->\nbody\n",
+            "---\ntitle: Homer\ngenerated: true\n---\n<!-- begin: generated -->\nbody\n",
             encoding="utf-8",
         )
         readme = tmp_path / "family" / "correspondents" / "README.md"
@@ -435,3 +435,27 @@ class TestPurgeLocalGeneratedMemoryPages:
         assert not generated.exists()
         assert readme.exists()
         assert source.exists()
+
+    def test_keeps_a_seeded_page_that_merely_reserves_a_generated_region(
+        self, tmp_path,
+    ):
+        """The seeded root `index.md` is hand-written: a welcome page that
+        reserves an empty generated region for the wiki to fill in later.
+
+        It is not a projection artifact, and deleting it is what left a
+        fresh install serving 404 at the wiki root until the first nightly
+        sweep. Only frontmatter saying `generated: true` marks a whole page
+        as generated, and the generator writes that on every page it
+        publishes.
+        """
+        seeded = tmp_path / "index.md"
+        seeded.write_text(
+            "---\ntitle: Family Memory\n---\n\nWelcome to your family's memory.\n"
+            "<!-- begin: generated -->\n<!-- end: generated -->\n",
+            encoding="utf-8",
+        )
+
+        result = purge_local_generated_memory_pages(tmp_path)
+
+        assert result == {"deleted": []}
+        assert seeded.exists()
