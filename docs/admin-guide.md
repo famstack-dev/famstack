@@ -683,7 +683,7 @@ All commands output JSON when piped. Use `--json` to force it, `--pretty` to for
 
 ## Backups
 
-This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet for the irreplaceable file-level data (photo originals, scanned documents). It does not yet cover stacklet databases or your config files; for those, layer it with Time Machine or a periodic tar.
+This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet that covers the irreplaceable data: photo originals, scanned documents, and everything in your family chat including the voice messages. Immich's and Paperless's databases are not covered yet, so layer it with Time Machine or a periodic tar if you want full coverage today.
 
 ### The backup stacklet
 
@@ -695,14 +695,72 @@ Run `stack up backup`. You need an APFS-formatted external drive plugged in. The
 |---|---|
 | Immich photo originals | `/Volumes/<disk>/data/photos-library/` |
 | Paperless archived PDFs | `/Volumes/<disk>/data/docs-media/` |
+| Matrix uploads: voice messages, photos, files | `/Volumes/<disk>/data/messages-media/` |
+| Matrix timeline, as dated snapshots | `/Volumes/<disk>/data/messages-synapse/` |
 
-Postgres databases for both are not backed up yet. You get your files back but lose albums, tags, custom fields, and saved views. Pg-dump snapshots will ship as `[[backup.snapshot]]` in a later release.
+Immich's and Paperless's Postgres databases are still not covered. You get those files back but lose albums, tags, custom fields and saved views. They use the same snapshot mechanism the chat server already uses, so wiring them up is a small change rather than a new design.
 
 **How the protection works**
 
 Every file written to the archive gets the kernel `uchg` flag. macOS refuses to modify or delete uchg files, even with `sudo`. `rsync --ignore-existing` means files already in the archive are skipped on every run, so the backup is append-only by design and accidental `rm -rf` on your main system cannot propagate.
 
+A second check watches the sources themselves. Before each run the engine compares every source against **the number of files it held on the previous run**, recorded in its own history. A source that is suddenly empty, or that has lost more than half its files, aborts the whole run so you look before anything else happens. There is nothing to configure: the baseline is the source's own past, so it means the same thing whether you have fifty files or five hundred thousand. A source that has never had any data, like the chat media store before anyone sends a photo, is simply skipped and reported.
+
 A **canary file** is a tripwire (named after the canary miners used to take underground to detect bad air). famstack plants a small file with known contents inside `~/famstack-data`; before every sync the engine reads it and refuses to proceed if the contents have changed. If something has been encrypting or modifying files under the data directory, the canary will not match what was planted and the sync aborts before opening the archive, so the corrupted state cannot propagate.
+
+**Database snapshots**
+
+Files that never change are easy: rsync copies them and the kernel locks them. A database is the opposite. Its files change under you continuously, and a copy taken mid-write will not restore. So databases are dumped instead.
+
+Before each sync the backup stacklet runs `pg_dump` against every database that declares itself, and packs the dump into one dated `.tar.gz`. `pg_dump` takes its own consistent view, so nothing stops and nobody gets logged out while it runs. The tarballs then ride to the archive disk as an ordinary append-only source: each run adds one, no run ever touches an older one.
+
+The chat server is the first thing wired up, and it is the one that matters most. The media store holds your family's actual voice recordings; the database is what makes them messages. Without it you would restore a folder of anonymous audio blobs with no sender, no room and no date.
+
+A Synapse snapshot is around 200 KB and contains:
+
+| File | Why |
+|---|---|
+| `synapse.sql` | The whole timeline: rooms, messages, who said what when |
+| `homeserver.yaml` | Config, and the secret that keeps existing logins valid |
+| `*.signing.key` | The server's identity |
+| `MANIFEST.json` | What this file is and how to put it back |
+
+Those config files carry live secrets, including the database password. That is deliberate, because a dump without them restores a server nobody can log into, and it is one more reason the archive disk is a physical object you keep somewhere safe.
+
+The last seven tarballs are kept on the internal disk; the archive disk keeps every one ever made. Pruning locally is safe precisely because the archive never deletes.
+
+**Restoring the chat server**
+
+Recover the snapshot and the media together, and do the database first. Media the database does not know about is harmless; a message whose recording is missing is broken.
+
+```bash
+# 1. Take the snapshot off the archive disk and unpack it
+sudo chflags nouchg /Volumes/<disk>/data/messages-synapse/synapse-<date>.tar.gz
+cp /Volumes/<disk>/data/messages-synapse/synapse-<date>.tar.gz ~/
+tar xzf ~/synapse-<date>.tar.gz -C ~/restore/
+
+# 2. Stop the homeserver so nothing writes while you work
+./stack down messages
+
+# 3. Put the database back
+docker start stack-messages-db
+docker exec stack-messages-db dropdb -U synapse --if-exists synapse
+docker exec stack-messages-db createdb -U synapse synapse
+docker exec -i stack-messages-db psql -U synapse -d synapse < ~/restore/synapse.sql
+
+# 4. Put the config and identity back
+cp ~/restore/homeserver.yaml ~/restore/*.signing.key \
+   ~/famstack-data/messages/synapse/
+
+# 5. Put the recordings back
+sudo chflags -R nouchg /Volumes/<disk>/data/messages-media/
+cp -R /Volumes/<disk>/data/messages-media/* \
+   ~/famstack-data/messages/synapse/media_store/local_content/
+
+./stack up messages
+```
+
+`MANIFEST.json` inside every tarball repeats the essentials, so this works even years from now with no famstack and no documentation to hand.
 
 **Daily operation**
 
@@ -788,7 +846,7 @@ git pull
 ./stack up docs
 ```
 
-The backup stacklet does not cover this. It archives files, not the Postgres database, so a `stack backup sync` alone will not get you back to 2.x.
+The backup stacklet does not cover this yet. It archives Paperless's files but not its Postgres database, so a `stack backup sync` alone will not get you back to 2.x. (Database snapshots exist and are wired up for the chat server; Paperless is next.)
 
 **If Watchtower already moved you to 3.x.** Older famstack releases tracked the `:latest` Paperless tag, and Watchtower's nightly pull rolled some instances from 2.x straight to 3.0 without asking. If that happened to you, your database is already migrated and pinning the image back to 2.20.15 will not start. You need a backup taken before the 3.x boot. Without one, staying on 3.x is the only option, which this release makes the supported path. Paperless is now pinned to an exact tag, so Watchtower can still deliver 3.0.x patches but can no longer jump a major version on its own.
 
