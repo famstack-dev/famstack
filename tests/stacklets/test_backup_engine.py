@@ -140,7 +140,7 @@ class TestPreflightCheckSources:
             self._make_source(tmp_path, "a", file_count=20, min_files=10),
             self._make_source(tmp_path, "b", file_count=15, min_files=10),
         ]
-        preflight_check_sources(sources)  # should not raise
+        assert len(preflight_check_sources(sources)) == 2
 
     def test_aborts_when_any_source_under_min(self, tmp_path, capsys):
         sources = [
@@ -150,21 +150,47 @@ class TestPreflightCheckSources:
         with pytest.raises(SyncAborted, match="Preflight failed"):
             preflight_check_sources(sources)
 
-    def test_aborts_when_source_dir_missing(self, tmp_path, capsys):
-        source = Source(
-            id="test/missing",
-            display="Missing",
+    def test_a_source_with_no_data_yet_is_skipped_not_fatal(self, tmp_path, capsys):
+        """A stacklet that has never had data must not cost the household
+        every other backup.
+
+        Matrix media is the case that forced this: the media store is not
+        created until somebody sends the first photo, so a fresh install
+        would have failed every backup until then, photos and documents
+        included. Nothing is at risk either way — the engine syncs with
+        `--ignore-existing` and never `--delete`, so an empty source
+        copies nothing and the vault keeps everything it already had.
+        """
+        missing = Source(
+            id="test/missing", display="Missing",
             src_path=tmp_path / "does-not-exist",
-            vault_subdir="data/test-missing",
-            min_files=1,
+            vault_subdir="data/test-missing", min_files=1,
         )
+        present = self._make_source(tmp_path, "ok", file_count=20, min_files=10)
+
+        syncable = preflight_check_sources([missing, present])
+
+        assert [s.id for s in syncable] == ["test/ok"]
+
+    def test_an_empty_source_directory_is_skipped_too(self, tmp_path, capsys):
+        empty = self._make_source(tmp_path, "empty", file_count=0, min_files=1)
+        assert preflight_check_sources([empty]) == []
+
+    def test_a_source_that_lost_most_of_its_files_still_aborts(
+        self, tmp_path, capsys,
+    ):
+        """The distinction that keeps the guard worth having. Nothing is
+        "no data yet"; some-but-far-fewer is "something removed it", and
+        that deserves a human looking before anything else runs."""
+        sources = [self._make_source(tmp_path, "raided", file_count=2,
+                                     min_files=10)]
         with pytest.raises(SyncAborted, match="Preflight failed"):
-            preflight_check_sources([source])
+            preflight_check_sources(sources)
 
     def test_exact_min_count_passes(self, tmp_path, capsys):
         # Edge: file_count == min_files should pass (not "strictly greater than").
         sources = [self._make_source(tmp_path, "exact", file_count=10, min_files=10)]
-        preflight_check_sources(sources)  # should not raise
+        assert len(preflight_check_sources(sources)) == 1
 
 
 # ── _stat_fs_type (mocked mount output) ────────────────────────────────────

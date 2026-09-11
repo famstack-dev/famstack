@@ -295,38 +295,63 @@ def verify_canary(canary_file: Path) -> None:
 
 # ── Preflight ──────────────────────────────────────────────────────────────
 
-def preflight_check_sources(sources: List[Source]) -> None:
-    """Each source must exist and contain at least ``min_files`` entries.
+def preflight_check_sources(sources: List[Source]) -> List[Source]:
+    """Return the sources worth syncing; abort on one that looks raided.
 
-    The canary catches "every file got encrypted in place"; this catches
-    "the directory got ``rm -rf``'d." Together they're a layered smoke
-    test that refuses to propagate a broken source to the vault.
+    Two different situations look similar and must not be treated alike.
+
+    *Nothing there yet.* A stacklet whose data directory is missing or
+    empty simply has nothing to back up. Matrix media is the case that
+    forced the distinction: Synapse does not create the media store until
+    somebody sends the first photo, so treating that as fatal would fail
+    every backup on a fresh install, photos and documents included. These
+    are skipped and reported, and the run continues.
+
+    *Most of it vanished.* A source that has some files but far fewer than
+    declared is the signal the guard exists for, and it still aborts the
+    whole run so a human looks before anything else happens.
+
+    Nothing is at risk in the skip case either way: the engine syncs with
+    ``--ignore-existing`` and never ``--delete``, so an empty source
+    copies nothing and the vault keeps everything it already held. The
+    canary remains the precise tripwire for "encrypted in place".
     """
     header("Preflight checks")
 
+    syncable: List[Source] = []
     failures: List[str] = []
+
     for src in sources:
-        if not src.src_path.is_dir():
-            error(f"{src.display}: source directory not found ({src.src_path})")
-            failures.append(src.display)
+        exists = src.src_path.is_dir()
+        count = count_files(src.src_path) if exists else 0
+
+        if count == 0:
+            warn(
+                f"{src.display}: nothing to back up yet "
+                f"({'empty' if exists else 'not created'}) — skipping"
+            )
             continue
-        count = count_files(src.src_path)
+
         if count < src.min_files:
             error(
                 f"{src.display}: only {count} files "
                 f"(minimum: {src.min_files}) — refusing to sync"
             )
             failures.append(src.display)
-        else:
-            info(
-                f"{src.display}: {format_number(count)} files "
-                f"(minimum: {src.min_files}) — ok"
-            )
+            continue
+
+        info(
+            f"{src.display}: {format_number(count)} files "
+            f"(minimum: {src.min_files}) — ok"
+        )
+        syncable.append(src)
 
     if failures:
         raise SyncAborted(
-            "Preflight failed — source directories missing or too few files"
+            "Preflight failed — a source lost files it had before"
         )
+
+    return syncable
 
 
 # ── Mount vault ────────────────────────────────────────────────────────────
@@ -985,14 +1010,23 @@ def run_sync(
             print(f"  {YELLOW}DRY RUN — no changes will be made{NC}")
 
         verify_canary(canary_file)
-        preflight_check_sources(sources)
+        # Sources with nothing in them are dropped here rather than
+        # failing the run; they are still reported below so an empty
+        # source is visible rather than silently absent.
+        syncable = preflight_check_sources(sources)
+        skipped = [s for s in sources if s not in syncable]
         mount_vault(vault_disk, mount_point, args.dry_run)
         if not args.dry_run:
             probe_filesystem(mount_point)
         check_vault_space(mount_point)
 
         result.sources = sync_data(
-            sources, mount_point, log_path, args.dry_run, args.verbose
+            syncable, mount_point, log_path, args.dry_run, args.verbose
+        )
+        result.sources.extend(
+            SourceResult(id=s.id, display=s.display, status="skipped",
+                         total_files=0, new_files=0)
+            for s in skipped
         )
         if any(r.status == "FAILED" for r in result.sources):
             result.success = False
@@ -1002,7 +1036,7 @@ def run_sync(
         result.vault_size = measure_vault_size(mount_point)
 
         if args.verify:
-            verify_sync(sources, mount_point)
+            verify_sync(syncable, mount_point)
 
         eject_vault(vault_disk, args.dry_run, args.no_eject)
 
