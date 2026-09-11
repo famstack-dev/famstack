@@ -317,3 +317,42 @@ class TestRecordedVersions:
         # Recorded as unknown rather than omitted, so a reader can tell
         # "we could not look" from "this predates version recording".
         assert manifest["versions"] == {}
+
+
+class TestTheShippedManifest:
+    """Parses the real `stacklets/messages/stacklet.toml` rather than a
+    fixture.
+
+    The other discovery tests write their own manifest, so they verify the
+    parser against an example the test also wrote. They stay green if the
+    declaration that actually ships is malformed or renames a key, which
+    is a failure only a live snapshot would otherwise reveal.
+    """
+
+    def _enabled(self, tmp_path: Path, stacklet_id: str) -> Path:
+        (tmp_path / ".stack").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".stack" / f"{stacklet_id}.setup-done").touch()
+        return tmp_path
+
+    def test_the_messages_snapshot_declaration_parses(self, tmp_path):
+        specs = discover_snapshots(
+            _ROOT, self._enabled(tmp_path, "messages"), Path("/data"),
+        )
+
+        assert [s.id for s in specs] == ["messages/synapse"]
+        spec = specs[0]
+        assert spec.container == "stack-messages-db"
+        assert spec.database == "synapse"
+        assert spec.user == "synapse"
+
+    def test_it_carries_the_files_a_homeserver_cannot_restore_without(
+        self, tmp_path,
+    ):
+        spec = discover_snapshots(
+            _ROOT, self._enabled(tmp_path, "messages"), Path("/data"),
+        )[0]
+
+        assert any(p.endswith("homeserver.yaml") for p in spec.include)
+        assert any(p.endswith("*.signing.key") for p in spec.include)
+        # `{data_dir}` is rendered, not passed through to the glob.
+        assert all(p.startswith("/data/") for p in spec.include)
