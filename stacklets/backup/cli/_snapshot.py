@@ -1,0 +1,289 @@
+"""Snapshots — the half of a backup rsync cannot do.
+
+An archive is a pile of files that only ever grows. Photos, scanned
+documents, voice recordings: written once, never edited, never deleted.
+rsync with ``--ignore-existing`` handles that perfectly, and the vault
+locks each new file immutable.
+
+A database is the opposite. Its files change under you continuously, a
+copy taken mid-write is unrestorable, and no amount of care with rsync
+fixes that. What you want instead is one consistent dump per run.
+
+A snapshot is that dump plus whatever small files must travel with it,
+packed into a single dated tarball. Each run writes a new tarball and
+never touches an old one, which turns a mutable database into exactly the
+append-only shape the vault already knows how to keep. The tarballs then
+reach the vault through the ordinary engine, as just another source.
+
+Two consequences worth knowing:
+
+*Local snapshots are a staging area, not the backup.* The vault copy is
+the backup. The engine syncs with ``--ignore-existing`` and never
+``--delete``, so :func:`prune_snapshots` can keep the internal disk small
+without any risk of reaching the vault.
+
+*Snapshots hold secrets.* A Synapse snapshot carries `homeserver.yaml`
+(database password, macaroon key) and the signing key, because a dump
+without them restores a homeserver nobody can log into. That is the right
+trade, and it is a reason the vault disk is a physical object you hold.
+"""
+
+from __future__ import annotations
+
+import glob
+import io
+import json
+import os
+import subprocess
+import tarfile
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, List, Optional
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover — py < 3.11 fallback
+    from stack._vendor import tomli as tomllib  # type: ignore
+
+from _orchestrator import SourceRecord
+
+
+# How many tarballs to keep on the internal disk. Enough that a bad
+# snapshot can be stepped over without reaching for the vault, small
+# enough that a database an order of magnitude larger still fits.
+DEFAULT_KEEP = 7
+
+
+@dataclass
+class SnapshotSpec:
+    """One ``[[backup.snapshot]]`` entry, after template rendering."""
+
+    id: str                     # "{stacklet_id}/{name}", e.g. "messages/synapse"
+    display: str                # Human-readable, e.g. "Messages"
+    name: str                   # "synapse"
+    container: str              # Docker container running Postgres
+    database: str               # Database to dump
+    user: str                   # Postgres role to dump as
+    include: List[str] = field(default_factory=list)  # extra files (globs ok)
+
+    @property
+    def stacklet_id(self) -> str:
+        return self.id.split("/", 1)[0]
+
+    @property
+    def subdir(self) -> str:
+        """Directory name for this snapshot's tarballs, on disk and in the
+        vault. Namespaced so two stacklets can't collide."""
+        return f"{self.stacklet_id}-{self.name}"
+
+
+# ── Discovery ──────────────────────────────────────────────────────────────
+
+def discover_snapshots(
+    repo_root: Path, instance_dir: Path, data_dir: Path,
+) -> List[SnapshotSpec]:
+    """Walk every ``stacklets/*/stacklet.toml`` for ``[[backup.snapshot]]``.
+
+    Mirrors ``discover_archive_sources``: a stacklet contributes only if
+    it is enabled (``.stack/{id}.setup-done``), and ``{data_dir}`` is the
+    one template variable rendered into paths.
+    """
+    stacklets_dir = repo_root / "stacklets"
+    if not stacklets_dir.is_dir():
+        return []
+
+    template_vars = {"data_dir": str(data_dir)}
+    specs: List[SnapshotSpec] = []
+
+    for manifest_path in sorted(stacklets_dir.glob("*/stacklet.toml")):
+        stacklet_id = manifest_path.parent.name
+        if not (instance_dir / ".stack" / f"{stacklet_id}.setup-done").exists():
+            continue
+
+        try:
+            with open(manifest_path, "rb") as f:
+                manifest = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+
+        entries = manifest.get("backup", {}).get("snapshot", [])
+        display = manifest.get("name", stacklet_id)
+
+        for entry in entries:
+            name = entry.get("name", "default")
+            includes = []
+            for raw in entry.get("include", []):
+                try:
+                    includes.append(raw.format(**template_vars))
+                except (KeyError, IndexError):
+                    # Unknown template var: keep the literal so the failure
+                    # surfaces as a missing file rather than a crash.
+                    includes.append(raw)
+            specs.append(SnapshotSpec(
+                id=f"{stacklet_id}/{name}",
+                display=display,
+                name=name,
+                container=entry.get("container", ""),
+                database=entry.get("database", ""),
+                user=entry.get("user", ""),
+                include=includes,
+            ))
+
+    return specs
+
+
+# ── Taking one ─────────────────────────────────────────────────────────────
+
+def pg_dump(spec: SnapshotSpec) -> bytes:
+    """Dump `spec`'s database through the container running it.
+
+    `pg_dump` takes its own consistent view via MVCC, so this runs
+    against a live homeserver with nothing stopped and no downtime.
+    """
+    proc = subprocess.run(
+        ["docker", "exec", spec.container,
+         "pg_dump", "-U", spec.user, "-d", spec.database],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode(errors="replace").strip()[:400]
+        raise RuntimeError(
+            f"pg_dump failed for {spec.database} in {spec.container}: {detail}"
+        )
+    return proc.stdout
+
+
+def take_snapshot(
+    spec: SnapshotSpec,
+    out_root: Path,
+    *,
+    dump: Optional[Callable[[SnapshotSpec], bytes]] = None,
+    now: Optional[time.struct_time] = None,
+) -> Path:
+    """Write one dated tarball for `spec` and return its path.
+
+    Built in a temporary file and moved into place only once complete, so
+    a dump that fails halfway leaves nothing behind. A half-written
+    tarball would otherwise sync to the vault, get locked immutable, and
+    sit there looking like a backup.
+    """
+    dump = dump or pg_dump
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", now or time.gmtime())
+
+    # Raises on failure, before anything is created.
+    sql = dump(spec)
+
+    out_dir = out_root / spec.subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Second resolution reads well in a directory listing, but two runs
+    # inside one second would otherwise land on the same name and the
+    # second would overwrite the first. Overwriting is the one thing a
+    # snapshot must never do, so a collision takes a counter instead.
+    target = out_dir / f"{spec.name}-{stamp}.tar.gz"
+    attempt = 2
+    while target.exists():
+        target = out_dir / f"{spec.name}-{stamp}-{attempt}.tar.gz"
+        attempt += 1
+
+    dump_name = f"{spec.database or spec.name}.sql"
+    included: List[str] = []
+
+    fd, tmp_path = tempfile.mkstemp(dir=out_dir, suffix=".tar.gz.partial")
+    os.close(fd)
+    try:
+        with tarfile.open(tmp_path, "w:gz") as tar:
+            _add_bytes(tar, dump_name, sql)
+            for pattern in spec.include:
+                # A config file this install never created must not cost
+                # the dump, which is the part that cannot be recreated.
+                for path in sorted(glob.glob(pattern)):
+                    p = Path(path)
+                    if p.is_file():
+                        tar.add(p, arcname=p.name)
+                        included.append(p.name)
+            _add_bytes(tar, "MANIFEST.json", json.dumps(
+                _manifest(spec, dump_name, stamp, included), indent=2,
+            ).encode())
+        os.replace(tmp_path, target)
+    except BaseException:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
+
+    return target
+
+
+def _add_bytes(tar: tarfile.TarFile, name: str, payload: bytes) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(payload)
+    info.mtime = int(time.time())
+    tar.addfile(info, io.BytesIO(payload))
+
+
+def _manifest(
+    spec: SnapshotSpec, dump_name: str, stamp: str, included: List[str],
+) -> dict:
+    """What this tarball is, for whoever opens it without the code.
+
+    A backup nobody can interpret is not a backup. The restore line is
+    deliberately a literal command rather than a pointer to documentation
+    that may not exist by then.
+    """
+    return {
+        "famstack_snapshot": 1,
+        "stacklet": spec.stacklet_id,
+        "name": spec.name,
+        "database": spec.database,
+        "dump_file": dump_name,
+        "included_files": included,
+        "taken_at": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.strptime(stamp, "%Y%m%dT%H%M%SZ"),
+        ),
+        "restore": (
+            f"createdb -U {spec.user} {spec.database} && "
+            f"psql -U {spec.user} -d {spec.database} -f {dump_name}"
+        ),
+        "note": (
+            "Restore the database first, then the media files from the "
+            "matching archive. Media without a database row is harmless; "
+            "a database row without its media is a broken message."
+        ),
+    }
+
+
+# ── Feeding the vault ──────────────────────────────────────────────────────
+
+def snapshot_source(spec: SnapshotSpec, out_root: Path) -> SourceRecord:
+    """The engine source that carries this snapshot's tarballs to the vault.
+
+    ``min_files`` is 1 because we write the directory ourselves
+    immediately before the sync runs, so exactly one tarball is always
+    present. Anything higher would fail a household's first backup.
+    """
+    return SourceRecord(
+        id=spec.id,
+        display=spec.display,
+        src_path=out_root / spec.subdir,
+        vault_subdir=f"data/{spec.subdir}",
+        min_files=1,
+    )
+
+
+# ── Keeping the internal disk honest ───────────────────────────────────────
+
+def prune_snapshots(directory: Path, keep: int = DEFAULT_KEEP) -> List[Path]:
+    """Delete all but the newest `keep` tarballs; return what was removed.
+
+    Safe by construction: the vault copy is the backup, and the engine
+    syncs with ``--ignore-existing`` and never ``--delete``, so nothing
+    here can reach it. Names sort chronologically because the timestamp
+    is fixed-width and UTC.
+    """
+    if not directory.is_dir():
+        return []
+    tarballs = sorted(directory.glob("*.tar.gz"))
+    doomed = tarballs[:-keep] if keep > 0 else tarballs
+    for path in doomed:
+        path.unlink(missing_ok=True)
+    return doomed
