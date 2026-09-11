@@ -89,12 +89,29 @@ engine supports append-only semantics. Adding a second target later
 ```
 stack backup sync     [--dry-run] [--no-eject] [--verbose]
 stack backup status   # last run, source counts, cron presence
+stack backup migrate  [--dry-run]  # move a vault to the current layout
 ```
 
 Per-stacklet aliases (`stack photos backup`, `stack docs backup`) and
 restore (`stack backup restore --source=…`) are intentionally not in
 v1 — they'll layer on once the engine port lands and the manifest
 contract has been exercised on at least one production sync.
+
+## Vault layout
+
+Each source owns one directory under `data/`, named after its id:
+`photos/library` lands in `data/photos/library/`. One directory per
+stacklet keeps everything that has to be restored together in one
+place, and it stays unambiguous when a stacklet id or a source name
+contains a hyphen.
+
+Vaults written by 0.3.0-beta.3 and earlier hold the flat form,
+`data/photos-library/`. The engine reads both and keeps writing into
+whichever directory it finds, because adopting the new path would copy
+every file a second time and the old tree could not be removed
+afterwards: its files are locked immutable. `stack backup migrate`
+renames the directories in place, which moves no data and preserves the
+locks.
 
 ## Guarding the sources
 

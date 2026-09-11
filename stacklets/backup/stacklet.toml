@@ -5,7 +5,8 @@
 #
 #   1. Files locked with chflags uchg (kernel refuses modify or delete).
 #   2. rsync --ignore-existing (append-only: never overwrites existing).
-#   3. Canary + min-file-count preflight (ransomware tripwire).
+#   3. Canary + a preflight that measures each source against what
+#      it held on the previous run (ransomware tripwire).
 #   4. APFS encryption optional (defends physical theft only).
 #   5. Eject after sync — works from Terminal, sandbox-blocked from cron.
 #      Treat as a bonus, not a guarantee: the disk usually stays mounted

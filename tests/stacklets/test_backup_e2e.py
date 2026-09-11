@@ -38,6 +38,10 @@ pytestmark = pytest.mark.skipif(
     reason="backup E2E tests require macOS (hdiutil + chflags + APFS)",
 )
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] /
+                       "stacklets" / "backup" / "cli"))
+from migrate import migrate_vault  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINE_SCRIPT = REPO_ROOT / "stacklets" / "backup" / "engines" / "external-disk" / "sync.py"
 STACK_BIN = REPO_ROOT / "stack"
@@ -140,8 +144,8 @@ def _sources_env(fake_sources: dict, *, rolling: bool = False) -> str:
     """
     flag = 1 if rolling else 0
     return "\n".join([
-        f"photos/library|Photos|{fake_sources['photos']}|data/photos-library|{flag}",
-        f"docs/media|Documents|{fake_sources['docs']}|data/docs-media|{flag}",
+        f"photos/library|Photos|{fake_sources['photos']}|data/photos/library|{flag}",
+        f"docs/media|Documents|{fake_sources['docs']}|data/docs/media|{flag}",
     ])
 
 
@@ -214,8 +218,8 @@ class TestEngineSyncE2E:
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
 
-        vault_photos = mount / "data" / "photos-library"
-        vault_docs = mount / "data" / "docs-media"
+        vault_photos = mount / "data" / "photos" / "library"
+        vault_docs = mount / "data" / "docs" / "media"
         assert vault_photos.is_dir()
         assert vault_docs.is_dir()
 
@@ -244,7 +248,7 @@ class TestEngineSyncE2E:
         _run_engine(backup_data_dir, name, _sources_env(fake_sources),
                     args=["--no-eject"])
 
-        locked = next((mount / "data" / "photos-library").glob("*.jpg"))
+        locked = next((mount / "data" / "photos" / "library").glob("*.jpg"))
         with pytest.raises(PermissionError):
             locked.write_bytes(b"tampered")
 
@@ -257,7 +261,7 @@ class TestEngineSyncE2E:
         sources = _sources_env(fake_sources)
         _run_engine(backup_data_dir, name, sources, args=["--no-eject"])
 
-        photos = mount / "data" / "photos-library"
+        photos = mount / "data" / "photos" / "library"
         before = {p.name: p.stat().st_mtime for p in photos.iterdir()}
 
         result = _run_engine(backup_data_dir, name, sources, args=["--no-eject"])
@@ -283,7 +287,7 @@ class TestEngineSyncE2E:
         result = _run_engine(backup_data_dir, name, sources, args=["--no-eject"])
         assert result.returncode == 0
 
-        new_on_vault = mount / "data" / "photos-library" / "extra.jpg"
+        new_on_vault = mount / "data" / "photos" / "library" / "extra.jpg"
         assert new_on_vault.is_file()
         assert _has_uchg(new_on_vault)
 
@@ -356,7 +360,7 @@ class TestEngineSyncE2E:
         # The vault stays clean — preflight failure means we never
         # mounted (or in this case never wrote, since the disk was
         # already mounted by the test fixture).
-        assert not (mount / "data" / "photos-library").exists()
+        assert not (mount / "data" / "photos" / "library").exists()
 
         data = _read_result(backup_data_dir)
         assert data["success"] is False
@@ -507,8 +511,8 @@ class TestOrchestratorE2E:
             f"stderr:\n{result.stderr}"
         )
 
-        vault_photos = mount / "data" / "photos-library"
-        vault_docs = mount / "data" / "docs-media"
+        vault_photos = mount / "data" / "photos" / "library"
+        vault_docs = mount / "data" / "docs" / "media"
         assert vault_photos.is_dir(), \
             f"orchestrator didn't write photos to vault.\nstdout:\n{result.stdout}"
         assert vault_docs.is_dir()
@@ -527,11 +531,14 @@ class TestUpgradingAnExistingVault:
     """An instance that has been backing up photos and documents for
     months, upgraded to a release that adds snapshots and a new archive.
 
-    Two things could go wrong. The shrink check reads each source's count
-    from the previous run, and every run recorded before the upgrade
-    predates that field, so an absent baseline must not read as loss. And
-    the new sources must be added to the vault without disturbing what is
-    already on it, which is immutable and cannot be rewritten.
+    Three things could go wrong. The shrink check reads each source's
+    count from the previous run, and every run recorded before the
+    upgrade predates that field, so an absent baseline must not read as
+    loss. The new sources must be added to the vault without disturbing
+    what is already on it, which is immutable and cannot be rewritten.
+    And the directories already on the vault use the flat layout that
+    release wrote, which this one has to go on using until the household
+    runs `stack backup migrate`.
     """
 
     def _existing_vault(self, mount: Path) -> dict:
@@ -579,14 +586,14 @@ class TestUpgradingAnExistingVault:
         media.mkdir(parents=True)
         for i in range(3):
             (media / f"voice-{i}.ogg").write_text("audio")
-        snaps = tmp_path / "data" / "snapshots" / "messages-synapse"
+        snaps = tmp_path / "data" / "snapshots" / "messages" / "synapse"
         snaps.mkdir(parents=True)
         (snaps / "synapse-20260911T000000Z.tar.gz").write_text("dump")
 
         sources = "\n".join([
             _sources_env(fake_sources),
-            f"messages/media|Messages|{media}|data/messages-media|0",
-            f"messages/synapse|Messages|{snaps}|data/messages-synapse|1",
+            f"messages/media|Messages|{media}|data/messages/media|0",
+            f"messages/synapse|Messages|{snaps}|data/messages/synapse|1",
         ])
         result = _run_engine(backup_data_dir, name, sources, args=["--no-eject"])
         assert result.returncode == 0
@@ -600,9 +607,15 @@ class TestUpgradingAnExistingVault:
             now = {p.name for p in (mount / "data" / subdir).iterdir()}
             assert set(names) <= now
 
-        # And the new sources arrived.
-        assert len(list((mount / "data" / "messages-media").iterdir())) == 3
-        assert len(list((mount / "data" / "messages-synapse").iterdir())) == 1
+        # The photos went into the directory that was already there,
+        # rather than starting a second copy under the new layout.
+        assert len(list((mount / "data" / "photos-library").glob("*.jpg"))) == 15
+        assert not (mount / "data" / "photos").exists()
+
+        # New sources have no directory to inherit, so they get the
+        # current layout.
+        assert len(list((mount / "data" / "messages" / "media").iterdir())) == 3
+        assert len(list((mount / "data" / "messages" / "synapse").iterdir())) == 1
 
     def test_it_records_a_baseline_the_next_run_can_use(
         self, vault_image, backup_data_dir, fake_sources,
@@ -624,3 +637,57 @@ class TestUpgradingAnExistingVault:
         # rule rather than a number that drifts with the fixture.
         assert counts["photos/library"] == _count_files(fake_sources["photos"])
         assert counts["docs/media"] == _count_files(fake_sources["docs"])
+
+
+class TestMigratingAVault:
+    """`stack backup migrate`, against a vault holding real immutable files.
+
+    The rename has to leave the vault in a state the engine recognises:
+    it goes on adding to the moved directory, and the files already
+    there are neither re-copied nor unlocked.
+    """
+
+    def _legacy_env(self, fake_sources: dict) -> str:
+        """What the engine was told before the layout changed."""
+        return "\n".join([
+            f"photos/library|Photos|{fake_sources['photos']}|data/photos-library|0",
+            f"docs/media|Documents|{fake_sources['docs']}|data/docs-media|0",
+        ])
+
+    def test_a_migrated_vault_keeps_syncing_incrementally(
+        self, vault_image, backup_data_dir, fake_sources,
+    ):
+        name, mount = vault_image
+
+        # An earlier release fills the vault with flat directories.
+        first = _run_engine(backup_data_dir, name,
+                            self._legacy_env(fake_sources), args=["--no-eject"])
+        assert first.returncode == 0
+        assert len(list((mount / "data" / "photos-library").glob("*.jpg"))) == 15
+
+        moves = migrate_vault(
+            mount, [("docs/media", "Documents"), ("photos/library", "Photos")],
+            dry_run=False,
+        )
+        assert [m.status for m in moves] == ["moved", "moved"]
+
+        photos = mount / "data" / "photos" / "library"
+        assert len(list(photos.glob("*.jpg"))) == 15
+        assert not (mount / "data" / "photos-library").exists()
+        # The move carried the immutability with it. A copy could not:
+        # the lock is applied to new files after a sync, and an unlocked
+        # window is what the vault design exists to exclude.
+        assert _has_uchg(next(photos.glob("*.jpg")))
+
+        # One new photo since. The next sync adds that and nothing else,
+        # which is only true if it recognised the moved directory.
+        (Path(fake_sources["photos"]) / "photo-015.jpg").write_bytes(b"x" * 256)
+        second = _run_engine(backup_data_dir, name, _sources_env(fake_sources),
+                             args=["--no-eject"])
+        assert second.returncode == 0
+
+        result = next(s for s in _read_result(backup_data_dir)["sources"]
+                      if s["id"] == "photos/library")
+        assert result["new_files"] == 1
+        assert result["total_files"] == 16
+        assert not (mount / "data" / "photos-library").exists()
