@@ -1,15 +1,12 @@
 """Scribe retires itself.
 
-Transcription moved into the transport, so Scribe has no job left. It
-ships for one more release as a shell that explains itself and leaves,
-because the framework has no way to deprovision a removed bot: delete the
-declaration and the Matrix account simply survives, still joined to
-whatever room someone invited it to, answering nothing forever.
+Transcription moved into the transport, leaving this bot without a job.
+It ships for one more release because the framework cannot deprovision a
+bot: removing the declaration leaves the Matrix account joined to rooms
+and answering nothing.
 
-Scribe declared no room of its own, so the only installs affected are the
-ones where a person went looking for it and invited it by hand. Those are
-exactly the people who would notice it going quiet, which is why it says
-goodbye rather than just stopping.
+Scribe declared no room of its own, so the only affected installs are
+those where someone invited it by hand.
 """
 
 from __future__ import annotations
@@ -75,8 +72,8 @@ class TestScribeRetires:
 
     @pytest.mark.asyncio
     async def test_the_goodbye_explains_itself(self, tmp_path):
-        """A member that vanishes without a word is a mystery to debug.
-        It has to say what replaced it and that nothing is lost."""
+        """The notice names what replaced the bot and confirms nothing
+        needs setting up, so its departure is self-explanatory."""
         client = _FakeClient("!kitchen:simpson")
         bot = _bot(tmp_path, client)
 
@@ -90,8 +87,8 @@ class TestScribeRetires:
 
     @pytest.mark.asyncio
     async def test_it_leaves_a_room_it_is_freshly_invited_to(self, tmp_path):
-        """Someone following an older guide invites it. Same answer, so
-        the invite does not leave a silent member behind."""
+        """An invite gets the same response as the boot sweep, so it
+        does not leave a silent member behind."""
         client = _FakeClient("!new:simpson")
         bot = _bot(tmp_path, client)
 
@@ -104,8 +101,8 @@ class TestScribeRetires:
     async def test_a_room_it_cannot_leave_does_not_stop_the_others(
         self, tmp_path,
     ):
-        """The sweep runs on every launch, so a failure is retried next
-        boot. It must not strand the rooms behind it in the meantime."""
+        """A room that cannot be left is retried on the next launch, and
+        must not block the rooms after it in this one."""
         client = _FakeClient("!stuck:simpson", "!fine:simpson",
                              leave_error=RuntimeError("homeserver said no"))
         bot = _bot(tmp_path, client)
@@ -126,9 +123,9 @@ class TestScribeRetires:
 
 
 class TestScribeAnswersNothing:
-    """It transcribes nothing and replies to nothing. The framework does
-    the transcribing now, and a second transcriber in the same process is
-    the exact thing this release removed."""
+    """The bot registers no handlers and builds no transcriber. The
+    framework performs the decode, and a second transcriber in the same
+    process is what this release removed."""
 
     @pytest.mark.asyncio
     async def test_it_registers_no_message_handlers(self, tmp_path):
@@ -141,8 +138,8 @@ class TestScribeAnswersNothing:
         assert bot._handlers == []
 
     def test_it_builds_no_transcriber_of_its_own(self, tmp_path, monkeypatch):
-        """MicroBot gives every bot one for the transport decode; Scribe
-        must not reach for it. Nothing here should ever call whisper."""
+        """MicroBot builds one for the transport decode. Scribe does not
+        use it and should never reach whisper."""
         monkeypatch.setenv("WHISPER_URL", "http://localhost:42062/v1")
         bot = _bot(tmp_path, _FakeClient())
         assert not hasattr(bot, "_scribe_transcriber")

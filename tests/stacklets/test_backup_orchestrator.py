@@ -54,8 +54,6 @@ def _make_fake_stacklet(
         lines.append("[[backup.archive]]")
         lines.append(f'name = "{archive["name"]}"')
         lines.append(f'path = "{archive["path"]}"')
-        if "min_files" in archive:
-            lines.append(f'min_files = {archive["min_files"]}')
 
     (stacklets_dir / "stacklet.toml").write_text("\n".join(lines) + "\n")
 
@@ -71,7 +69,7 @@ class TestDiscoverArchiveSources:
     def test_finds_archive_entries_from_enabled_stacklets(self, tmp_path):
         _make_fake_stacklet(
             tmp_path, "photos",
-            [{"name": "library", "path": "{data_dir}/photos/library/library", "min_files": 10}],
+            [{"name": "library", "path": "{data_dir}/photos/library/library"}],
             name="Photos",
         )
         sources = discover_archive_sources(
@@ -83,18 +81,19 @@ class TestDiscoverArchiveSources:
         assert s.display == "Photos"
         assert s.src_path == Path("/var/famstack-data/photos/library/library")
         assert s.vault_subdir == "data/photos-library"
-        assert s.min_files == 10
+        # Replaced by a baseline the engine derives itself.
+        assert s.rolling is False
 
     def test_skips_unenabled_stacklets(self, tmp_path):
         # Enabled photos contributes; disabled docs does not.
         _make_fake_stacklet(
             tmp_path, "photos",
-            [{"name": "library", "path": "{data_dir}/photos", "min_files": 1}],
+            [{"name": "library", "path": "{data_dir}/photos"}],
             enabled=True,
         )
         _make_fake_stacklet(
             tmp_path, "docs",
-            [{"name": "media", "path": "{data_dir}/docs", "min_files": 1}],
+            [{"name": "media", "path": "{data_dir}/docs"}],
             enabled=False,
         )
         sources = discover_archive_sources(tmp_path, tmp_path, Path("/d"))
@@ -116,8 +115,8 @@ class TestDiscoverArchiveSources:
         _make_fake_stacklet(
             tmp_path, "photos",
             [
-                {"name": "library", "path": "{data_dir}/a", "min_files": 1},
-                {"name": "shared",  "path": "{data_dir}/b", "min_files": 1},
+                {"name": "library", "path": "{data_dir}/a"},
+                {"name": "shared",  "path": "{data_dir}/b"},
             ],
         )
         sources = discover_archive_sources(tmp_path, tmp_path, Path("/d"))
@@ -128,7 +127,7 @@ class TestDiscoverArchiveSources:
         # {data_dir} must expand to whatever the orchestrator was given.
         _make_fake_stacklet(
             tmp_path, "photos",
-            [{"name": "library", "path": "{data_dir}/photos/library", "min_files": 1}],
+            [{"name": "library", "path": "{data_dir}/photos/library"}],
         )
         sources = discover_archive_sources(
             tmp_path, tmp_path, Path("/totally/custom/data")
@@ -141,7 +140,7 @@ class TestDiscoverArchiveSources:
         # error pointing at the broken path.
         _make_fake_stacklet(
             tmp_path, "photos",
-            [{"name": "library", "path": "{nonexistent_var}/photos", "min_files": 1}],
+            [{"name": "library", "path": "{nonexistent_var}/photos"}],
         )
         sources = discover_archive_sources(tmp_path, tmp_path, Path("/d"))
         # The format() call raises KeyError, we fall back to the raw string.
@@ -156,7 +155,7 @@ class TestDiscoverArchiveSources:
         # of all the others.
         _make_fake_stacklet(
             tmp_path, "photos",
-            [{"name": "library", "path": "{data_dir}/p", "min_files": 1}],
+            [{"name": "library", "path": "{data_dir}/p"}],
         )
         broken = tmp_path / "stacklets" / "broken"
         broken.mkdir(parents=True)
@@ -230,18 +229,27 @@ class TestSerializeSourcesEnv:
         sources = [SourceRecord(
             id="photos/library", display="Photos",
             src_path=Path("/var/famstack-data/photos/library/library"),
-            vault_subdir="data/photos-library", min_files=10,
+            vault_subdir="data/photos-library",
         )]
         env = serialize_sources_env(sources)
         assert env == (
             "photos/library|Photos|/var/famstack-data/photos/library/library|"
-            "data/photos-library|10"
+            "data/photos-library|0"
         )
+
+    def test_a_rolling_source_is_flagged_for_the_engine(self):
+        """Snapshot staging areas are pruned on purpose, and the engine
+        has to know so it does not read that as data loss."""
+        sources = [SourceRecord(
+            id="messages/synapse", display="Messages", src_path=Path("/a"),
+            vault_subdir="data/messages-synapse", rolling=True,
+        )]
+        assert serialize_sources_env(sources).endswith("|1")
 
     def test_multiple_records_newline_joined(self):
         sources = [
-            SourceRecord("photos/library", "Photos", Path("/a"), "data/p", 10),
-            SourceRecord("docs/media", "Documents", Path("/b"), "data/d", 5),
+            SourceRecord("photos/library", "Photos", Path("/a"), "data/p"),
+            SourceRecord("docs/media", "Documents", Path("/b"), "data/d"),
         ]
         env = serialize_sources_env(sources)
         lines = env.split("\n")

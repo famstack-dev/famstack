@@ -38,7 +38,7 @@ Input (environment):
                     mount point is ``/Volumes/<name>``.
 ``SOURCES``         Required. Newline-separated records, pipe-delimited::
 
-                        <id>|<display>|<src_path>|<vault_subdir>|<min_files>
+                        <id>|<display>|<src_path>|<vault_subdir>|<rolling>
 ``TZ``              Optional. Affects log timestamps.
 ==================  ==========================================================
 
@@ -79,6 +79,14 @@ APPLE_FILESYSTEMS = frozenset({"apfs", "hfs"})
 NETWORK_FILESYSTEMS = frozenset({"smbfs", "nfs", "afpfs"})
 REMOVABLE_FILESYSTEMS = frozenset({"msdos", "exfat", "ntfs"})
 
+# How much of last run's file count a source must still hold. Deleting
+# things is normal household behaviour, so the guard is deliberately loose
+# — it is looking for catastrophe (a wipe, an encryption run, a mount that
+# came up empty), not policing somebody's tidying. Judged against the
+# source's own previous count, so it means the same thing whether the
+# household has fifty files or five hundred thousand.
+SHRINK_FLOOR = 0.5
+
 # rsync exit codes that aren't real failures for incremental backups:
 # 0 = success, 23 = partial transfer (vanished files during sync),
 # 24 = source files vanished. All acceptable in our context.
@@ -95,7 +103,10 @@ class Source:
     display: str       # human-readable label, e.g. "Photos"
     src_path: Path     # absolute path on the internal SSD
     vault_subdir: str  # relative path under /Volumes/<vault>/
-    min_files: int     # coarse ransomware guard threshold
+    # A rolling source is pruned on purpose (a snapshot staging area
+    # keeps a fixed window), so shrinking is its normal operation rather
+    # than a loss. Set by the orchestrator, never by a manifest.
+    rolling: bool = False
 
 
 @dataclass
@@ -107,6 +118,11 @@ class SourceResult:
     status: str        # "ok" | "FAILED" | "skipped"
     total_files: int   # files on vault after this run
     new_files: int     # files added this run
+    # What the *source* held this run. This is the baseline the next run
+    # judges itself against, and the reason no manifest has to guess a
+    # threshold. Cumulative vault counts cannot serve: a household deletes
+    # things over years, so source and vault drift apart legitimately.
+    source_files: int = 0
 
 
 @dataclass
@@ -190,7 +206,10 @@ def parse_sources(sources_env: str) -> List[Source]:
 
     Records are newline-separated, fields pipe-delimited::
 
-        <id>|<display>|<src_path>|<vault_subdir>|<min_files>
+        <id>|<display>|<src_path>|<vault_subdir>|<rolling>
+
+    ``rolling`` is "1" for a source that is pruned on purpose (a snapshot
+    staging area) and "0" otherwise.
 
     Pipe over colon because paths can (rarely) contain colons on macOS
     but never pipes. Empty input or malformed records raise
@@ -208,17 +227,13 @@ def parse_sources(sources_env: str) -> List[Source]:
                 f"Malformed source record: {line!r} "
                 f"(expected 5 pipe-delimited fields, got {len(parts)})"
             )
-        id_, display, src_path, vault_subdir, min_files = parts
-        try:
-            min_files_int = int(min_files)
-        except ValueError:
-            raise SyncAborted(f"min_files must be an integer in {line!r}")
+        id_, display, src_path, vault_subdir, rolling = parts
         records.append(Source(
             id=id_,
             display=display,
             src_path=Path(src_path),
             vault_subdir=vault_subdir,
-            min_files=min_files_int,
+            rolling=rolling.strip() == "1",
         ))
     if not records:
         raise SyncAborted("No sources provided — $SOURCES is empty.")
@@ -295,38 +310,106 @@ def verify_canary(canary_file: Path) -> None:
 
 # ── Preflight ──────────────────────────────────────────────────────────────
 
-def preflight_check_sources(sources: List[Source]) -> None:
-    """Each source must exist and contain at least ``min_files`` entries.
+def previous_source_counts(latest_run: Optional[dict]) -> dict:
+    """What each source held on the previous run, by source id.
 
-    The canary catches "every file got encrypted in place"; this catches
-    "the directory got ``rm -rf``'d." Together they're a layered smoke
-    test that refuses to propagate a broken source to the vault.
+    Only a source that synced contributes one. A skipped source had no
+    data, and a failed source did not finish, so neither describes a
+    count the next run should be measured against.
+    """
+    if not latest_run:
+        return {}
+    counts = {}
+    for entry in latest_run.get("sources", []):
+        if entry.get("status") != "ok":
+            continue
+        sid = entry.get("id")
+        count = entry.get("source_files")
+        if sid and isinstance(count, int):
+            counts[sid] = count
+    return counts
+
+
+def preflight_check_sources(
+    sources: List[Source], previous: Optional[dict] = None,
+) -> List[Source]:
+    """Return the sources worth syncing; abort on one that lost data.
+
+    Each source is judged against **what it held on the previous run**,
+    read from the engine's own history. That baseline is the whole point.
+    The threshold used to be `min_files`, a constant a developer wrote in
+    a manifest while guessing at a household they would never see, and it
+    could only ever catch "dropped to almost exactly zero". A library of
+    50,000 photos reduced to 11 sailed straight past `min_files = 10`,
+    which is precisely the disaster the check existed for.
+
+    Against its own previous count, that same library is unmissable, at
+    any scale, with nothing for anyone to configure.
+
+    Three outcomes:
+
+    *Nothing there yet.* Empty or not created, and no baseline. The
+    stacklet simply has no data — Synapse does not create its media store
+    until the first upload — so it is skipped and the run continues.
+    Nothing is at risk: the engine syncs with ``--ignore-existing`` and
+    never ``--delete``, so an empty source copies nothing and the vault
+    keeps everything it held.
+
+    *Lost most of it.* Below :data:`SHRINK_FLOOR` of last run's count, or
+    empty when it used to have files. The run aborts so a human looks
+    before anything else happens.
+
+    *Fine.* Everything else, including growth and the ordinary deleting
+    people do. A rolling source (a snapshot staging area, pruned to a
+    fixed window on purpose) is never judged to have shrunk.
+
+    The canary remains the separate, precise tripwire for "encrypted in
+    place", which no count can detect.
     """
     header("Preflight checks")
 
+    previous = previous or {}
+    syncable: List[Source] = []
     failures: List[str] = []
+
     for src in sources:
-        if not src.src_path.is_dir():
-            error(f"{src.display}: source directory not found ({src.src_path})")
+        exists = src.src_path.is_dir()
+        count = count_files(src.src_path) if exists else 0
+        was = previous.get(src.id)
+
+        if count == 0 and not was:
+            warn(
+                f"{src.display}: nothing to back up yet "
+                f"({'empty' if exists else 'not created'}) — skipping"
+            )
+            continue
+
+        if count == 0:
+            error(
+                f"{src.display}: empty, but held {format_number(was)} files "
+                f"last run — refusing to sync"
+            )
             failures.append(src.display)
             continue
-        count = count_files(src.src_path)
-        if count < src.min_files:
+
+        if was and not src.rolling and count < was * SHRINK_FLOOR:
             error(
-                f"{src.display}: only {count} files "
-                f"(minimum: {src.min_files}) — refusing to sync"
+                f"{src.display}: {format_number(count)} files, down from "
+                f"{format_number(was)} last run — refusing to sync"
             )
             failures.append(src.display)
-        else:
-            info(
-                f"{src.display}: {format_number(count)} files "
-                f"(minimum: {src.min_files}) — ok"
-            )
+            continue
+
+        seen = f" (was {format_number(was)})" if was else ""
+        info(f"{src.display}: {format_number(count)} files{seen} — ok")
+        syncable.append(src)
 
     if failures:
         raise SyncAborted(
-            "Preflight failed — source directories missing or too few files"
+            "Preflight failed — a source lost files it had last run"
         )
+
+    return syncable
 
 
 # ── Mount vault ────────────────────────────────────────────────────────────
@@ -725,6 +808,7 @@ def sync_data(
             status="ok",
             total_files=after_count,
             new_files=new_count,
+            source_files=count_files(src.src_path),
         ))
         if dry_run:
             info(
@@ -985,14 +1069,25 @@ def run_sync(
             print(f"  {YELLOW}DRY RUN — no changes will be made{NC}")
 
         verify_canary(canary_file)
-        preflight_check_sources(sources)
+        # Each source is judged against what it held on the previous run,
+        # read from our own history. Sources with nothing in them are
+        # dropped rather than failing the run; they are still reported
+        # below, so an empty source is visible rather than silently absent.
+        previous = previous_source_counts(read_latest_run(history_path))
+        syncable = preflight_check_sources(sources, previous)
+        skipped = [s for s in sources if s not in syncable]
         mount_vault(vault_disk, mount_point, args.dry_run)
         if not args.dry_run:
             probe_filesystem(mount_point)
         check_vault_space(mount_point)
 
         result.sources = sync_data(
-            sources, mount_point, log_path, args.dry_run, args.verbose
+            syncable, mount_point, log_path, args.dry_run, args.verbose
+        )
+        result.sources.extend(
+            SourceResult(id=s.id, display=s.display, status="skipped",
+                         total_files=0, new_files=0)
+            for s in skipped
         )
         if any(r.status == "FAILED" for r in result.sources):
             result.success = False
@@ -1002,7 +1097,7 @@ def run_sync(
         result.vault_size = measure_vault_size(mount_point)
 
         if args.verify:
-            verify_sync(sources, mount_point)
+            verify_sync(syncable, mount_point)
 
         eject_vault(vault_disk, args.dry_run, args.no_eject)
 

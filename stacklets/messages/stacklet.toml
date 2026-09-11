@@ -58,3 +58,44 @@ DB_NAME          = "synapse"
 [health]
 url    = "http://localhost:42031/_matrix/client/versions"
 expect = "200"
+
+# Backup snapshot — the Matrix timeline, dumped consistently.
+#
+# The media store holds the family's actual voice recordings, but the
+# database is what makes them messages: who spoke, in which room, when,
+# and which media id belongs to which event. Without it the recordings
+# are anonymous blobs.
+#
+# Postgres cannot be rsynced (its files change under you and a mid-write
+# copy will not restore), so the backup stacklet dumps it instead and
+# packs the dump with the files a homeserver cannot come back without:
+# the signing key, which is its identity, and homeserver.yaml, whose
+# macaroon secret keeps every existing login valid.
+#
+# pg_dump takes its own consistent view, so this runs against a live
+# server with no downtime. A dump of this database compresses to a few
+# hundred KB; the recordings themselves stay out of the tarball and ride
+# the incremental archive path instead, so they are never re-copied and
+# never subject to snapshot retention.
+[[backup.snapshot]]
+name     = "synapse"
+postgres = { container = "stack-messages-db", database = "synapse", user = "synapse" }
+include  = [
+  "{data_dir}/messages/synapse/homeserver.yaml",
+  "{data_dir}/messages/synapse/*.signing.key",
+  "{data_dir}/messages/synapse/*.log.config",
+]
+
+# The recordings themselves. Append-only by construction: Synapse writes a
+# media file once and never edits it, and famstack ships with both message
+# and media retention disabled, so nothing here is ever purged.
+#
+# Only local_content — the originals. local_thumbnails regenerates from
+# them, and url_cache is a cache of other people's web pages.
+#
+# Synapse does not create this directory until somebody sends the first
+# photo or voice message, so on a new install the backup reports it as
+# "nothing to back up yet" and carries on with everything else.
+[[backup.archive]]
+name      = "media"
+path      = "{data_dir}/messages/synapse/media_store/local_content"

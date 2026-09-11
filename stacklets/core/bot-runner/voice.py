@@ -1,28 +1,21 @@
-"""Voice messages are messages. The transport decodes them, not the bots.
+"""Decoding voice messages into text before handlers see them.
 
-Someone holding the mic button and someone typing are doing the same
-thing: putting words in the room. Only the encoding differs, so only the
-transport should know about it. By the time a handler runs, an `m.audio`
-event has already become an ordinary text event — same sender, same event
-id, same thread — and every gate a typed message passes through (room
-mode, thread ownership, mention, routing) applies to it unchanged.
+Speech and typing differ only in encoding, so only the transport needs to
+know which one arrived. By the time a handler runs, an `m.audio` event has
+become an ordinary text event carrying the same sender, event id and
+thread relation, and every gate a typed message passes through applies to
+it unchanged.
 
-This is deliberately not a capability bots reach for. That was the earlier
-design, and it grew an audio branch in every consumer, two whisper clients
-in one process, and three places that could transcribe the same bytes.
-Decoding belongs beside decryption: below everyone, done once.
+This is deliberately not a capability that bots invoke. The previous
+design made transcription a per-bot concern, which produced an audio
+branch in each consumer and three code paths that could transcribe the
+same recording. Decoding sits alongside decryption instead: below every
+handler, performed once.
 
-What survives the decode is provenance. Whisper is lossy in a way a
-keyboard is not, so the text event carries a `dev.famstack.transcript`
-block naming the audio it came from. Routing ignores it; the bot that
-acts on the words uses it to echo them back, which is the only way a
-mistranscription is visible without opening the vault. The audio itself
-stays on the timeline as the reproducibility anchor (ADR-010) — we never
-need to keep a second copy of the bytes.
-
-The module owns the pure half: recognising a voice event and rewriting its
-raw source dict. `MicroBot._dispatch` owns the I/O half (download,
-whisper, share).
+The decoded event carries a `dev.famstack.transcript` block recording the
+audio it came from. Routing ignores that block; the reply layer reads it
+to quote the words back for checking. The audio itself stays on the
+timeline and remains the reproducibility anchor (ADR-010).
 """
 
 from __future__ import annotations
@@ -39,28 +32,26 @@ from pathlib import Path
 from loguru import logger
 
 
-# Provenance on a decoded message: which audio event these words came
-# from. Its presence is the answer to "were these words guessed at by a
-# machine?" — a question the reply layer asks and the routing layer must not.
+# Marks a text event as decoded from audio, and names the recording.
 TRANSCRIPT_KEY = "dev.famstack.transcript"
 
-# Fields of the audio event that describe the payload rather than the
-# message. They move into the provenance block; leaving them on a text
-# event would let a consumer treat it as an upload and re-file the bytes.
+# Fields describing the audio payload rather than the message. They move
+# into the provenance block; left in place, a consumer would read the
+# decoded event as an upload and file the bytes a second time.
 _PAYLOAD_FIELDS = ("url", "file", "info", "filename")
 
 
 def is_voice(event) -> bool:
-    """Whether this timeline event is speech we can decode.
+    """Whether `event` is audio this module can decode.
 
-    Any `m.audio` with a plain mxc payload counts. We do not try to tell
-    a voice memo from a music file first: whisper answering "no words
-    here" is a better detector than a guess at the sender's intent, and
-    the clients families use mark both the same way.
+    Any `m.audio` carrying a plain mxc payload qualifies. No attempt is
+    made to distinguish a voice memo from a music file first, because
+    whisper returning no speech is a more reliable answer than inferring
+    the sender's intent from metadata.
 
-    Encrypted media (`file` rather than `url`) is deliberately not
-    claimed. The framework already tells encrypted rooms it cannot read
-    them, so saying yes here would only produce a download that fails.
+    Encrypted media, which carries `file` instead of `url`, is excluded.
+    The framework already declines to read encrypted rooms, so claiming
+    it here would only produce downloads that fail.
     """
     content = (getattr(event, "source", None) or {}).get("content") or {}
     if content.get("msgtype") != "m.audio":
@@ -71,22 +62,20 @@ def is_voice(event) -> bool:
 def was_transcribed(content: dict) -> bool:
     """Whether a message's words were transcribed rather than typed.
 
-    Reads the framework contract, so it works for any consumer without
-    knowing which component decoded the audio. Consumers ask this to
-    decide whether to show the words back for checking, never to decide
-    routing — routing is the whole thing that must not care.
+    Read by the reply layer to decide whether to quote the words back for
+    checking. Routing does not consult it: handling speech and typing
+    identically is the point of decoding in the transport.
     """
     return isinstance(content.get(TRANSCRIPT_KEY), dict)
 
 
 def transcribed_source(source: dict, transcript: str) -> dict:
-    """Rewrite a voice event's raw source dict as the text event it is.
+    """Return `source` rewritten as the text event it decodes to.
 
-    Identity is preserved wholesale — event id, sender, timestamp,
-    thread relation — because this is the same message, read aloud
-    rather than typed. Bots reply to it, react on it and claim thread
-    ownership of it by that identity, so a synthesised id would detach
-    every one of those from the message the family can actually see.
+    Event id, sender, timestamp and thread relation are preserved
+    unchanged. Replies, reactions and thread ownership are all keyed on
+    that identity, so a synthesised id would detach each of them from the
+    message visible in the room.
     """
     out = copy.deepcopy(source)
     content = out.setdefault("content", {})
@@ -114,28 +103,17 @@ def transcribed_source(source: dict, transcript: str) -> dict:
 class TranscriptStore:
     """Transcripts on disk, keyed by Matrix event id.
 
-    Transcription is the most expensive thing the stack does per message:
-    minutes of GPU for a long memo. Three callers want the same answer and
-    must not each pay for it.
+    Transcription costs minutes of GPU for a long recording, and three
+    callers arrive at the same message independently: every bot in a room
+    drains the same timeline, the drain is at-least-once so a failed
+    handler brings its event back, and a backfill walks history in a
+    separate process. The store is therefore durable and shared, with one
+    file per message written atomically.
 
-      * Every bot in the room drains the same timeline in the same
-        process, so each reaches the same audio independently.
-      * The drain is at-least-once, so a handler that dies mid-flight
-        brings its event back around.
-      * A backfill walks a room's whole history in a *separate* process.
-        The memories room holds years of recordings; re-transcribing that
-        because the answer was only ever in RAM is not acceptable once,
-        let alone every time something wants to read it.
-
-    So the store is durable and shared, and the in-flight map on top of it
-    collapses concurrent askers onto one run. One file per voice message,
-    written atomically, because the backfill and the bot runner are
-    different processes writing the same directory.
-
-    Each record keeps the raw whisper output next to the polished text.
-    Polishing is cheap and improves with better models; whisper is not and
-    does not. Keeping both means years of recordings can be re-polished
-    without touching the audio again.
+    Each record holds the raw whisper output beside the polished text.
+    Polishing is cheap and improves with better models; transcription is
+    neither, so keeping both allows a later re-polish without returning
+    to the audio.
     """
 
     def __init__(self, path: str | Path | None = None):
@@ -163,8 +141,12 @@ class TranscriptStore:
             return None
 
     def write(self, event_id: str, record: dict) -> None:
-        """Persist a record. A store we cannot write is not fatal — the
-        transcript still reaches the handler, it just costs again later."""
+        """Write a record, replacing any existing one atomically.
+
+        A store that cannot be written is logged and ignored. The
+        transcript still reaches the handler; only the saving is lost, at
+        the cost of transcribing again later.
+        """
         target = self._file(event_id)
         try:
             self.path.mkdir(parents=True, exist_ok=True)
@@ -179,11 +161,12 @@ class TranscriptStore:
     async def run(
         self, event_id: str, produce: Callable[[], Awaitable[dict]],
     ) -> dict:
-        """The record for `event_id`, produced at most once across callers.
+        """Return the record for `event_id`, producing it at most once.
 
-        A failure is never remembered. The drain is at-least-once and
-        whisper outages are transient, so caching an error would turn a
-        restartable service into a permanently silent message.
+        A stored record short-circuits; concurrent callers await the
+        first one's result. Failures are not retained: whisper outages
+        are transient and the drain retries, so caching an error would
+        make a message permanently undecodable.
         """
         if (stored := self.read(event_id)) is not None:
             return stored
@@ -203,8 +186,9 @@ class TranscriptStore:
             future.exception()
             raise
         record.setdefault("at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        # Publish before releasing the slot, so a caller arriving in
-        # between finds the answer rather than starting a second run.
+        # Written and published before the in-flight slot is released, so
+        # a caller arriving in between finds the result rather than
+        # starting a second transcription.
         self.write(event_id, record)
         if not future.done():
             future.set_result(record)

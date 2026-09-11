@@ -50,7 +50,10 @@ class SourceRecord:
     display: str       # Human-readable, e.g. "Photos"
     src_path: Path     # Absolute path on internal SSD (post-rendering)
     vault_subdir: str  # Relative path under /Volumes/<vault>/
-    min_files: int     # Coarse ransomware guard threshold
+    # Pruned on purpose (a snapshot staging area keeps a fixed window), so
+    # the engine must not read its shrinking as data loss. Set here, never
+    # by a manifest.
+    rolling: bool = False
 
 
 @dataclass
@@ -116,17 +119,11 @@ def discover_archive_sources(
                 # will surface the problem with a useful error.
                 rendered_path = raw_path
 
-            try:
-                min_files = int(archive.get("min_files", 1))
-            except (TypeError, ValueError):
-                min_files = 1
-
             sources.append(SourceRecord(
                 id=f"{stacklet_id}/{name}",
                 display=stacklet_display,
                 src_path=Path(rendered_path),
                 vault_subdir=f"data/{stacklet_id}-{name}",
-                min_files=min_files,
             ))
 
     return sources
@@ -180,10 +177,10 @@ def serialize_sources_env(sources: List[SourceRecord]) -> str:
     """Format SourceRecords for the engine's ``$SOURCES`` env var.
 
     The engine's :func:`parse_sources` expects newline-separated,
-    pipe-delimited records: ``id|display|src_path|vault_subdir|min_files``.
+    pipe-delimited records: ``id|display|src_path|vault_subdir|rolling``.
     """
     return "\n".join(
-        f"{s.id}|{s.display}|{s.src_path}|{s.vault_subdir}|{s.min_files}"
+        f"{s.id}|{s.display}|{s.src_path}|{s.vault_subdir}|{1 if s.rolling else 0}"
         for s in sources
     )
 

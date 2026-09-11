@@ -1,13 +1,11 @@
-"""Voice messages arrive at handlers as text.
+"""Voice messages reach handlers as text.
 
-Holding the mic button and typing are the same act: putting words in the
-room. Only the encoding differs, so only the transport should know about
-it. These tests pin that contract from the caller's side — a bot registers
-an ordinary text handler and receives spoken words through it, with the
-speaker still the sender, having passed every gate a typed message passes.
+Speech and typing differ only in encoding, so the decode happens in the
+transport and handlers see an ordinary text event: same sender, same
+event id, same thread, having passed the same gates.
 
-The whisper call itself is stubbed; what is under test is the framework
-wiring, not the speech model.
+The whisper call is stubbed throughout. What is under test is the
+framework wiring, not the speech model.
 """
 
 from __future__ import annotations
@@ -167,9 +165,9 @@ class TestVoiceIsJustAMessage:
 
     @pytest.mark.asyncio
     async def test_the_speaker_remains_the_sender(self, tmp_path):
-        """Replies, reactions and thread ownership all key off the sender
-        and event id. If the framework re-attributed the words to itself,
-        a bot would answer its own message and corrections would break."""
+        """Replies, reactions and thread ownership are keyed on the
+        sender and event id. Re-attributing the words to the framework
+        would detach all three from the visible message."""
         bot = _bot(tmp_path, transcriber=_StubTranscriber())
         seen = _collect(bot)
 
@@ -196,9 +194,9 @@ class TestVoiceIsJustAMessage:
 
     @pytest.mark.asyncio
     async def test_the_words_are_marked_as_transcribed(self, tmp_path):
-        """Whisper is lossy in a way a keyboard is not, so provenance has
-        to survive: what was said, and the audio it came from, so a bad
-        transcript is visible and correctable."""
+        """Transcription can be wrong in ways typing cannot, so the
+        decoded event records the audio it came from and the reply layer
+        can quote the words back."""
         bot = _bot(tmp_path, transcriber=_StubTranscriber())
         seen = _collect(bot)
 
@@ -216,8 +214,8 @@ class TestVoiceIsJustAMessage:
 
     @pytest.mark.asyncio
     async def test_audio_handlers_no_longer_see_it(self, tmp_path):
-        """The decode is total, not a fan-out: nothing downstream is left
-        holding raw audio, so there is no second place to transcribe."""
+        """The decode replaces the event rather than duplicating it, so
+        no handler is left holding raw audio to transcribe again."""
         bot = _bot(tmp_path, transcriber=_StubTranscriber())
         audio_seen = _collect(bot, RoomMessageAudio)
         text_seen = _collect(bot, RoomMessageText)
@@ -240,9 +238,8 @@ class TestVoiceIsJustAMessage:
 
 
 class TestWhenTheWordsCannotBeRecovered:
-    """Undecodable speech is dispatched to nobody. It is not an error to
-    answer: the family sees their own voice message sitting in the room,
-    the same as a message in a language the stack cannot read."""
+    """Speech that cannot be decoded is dispatched to no handler and
+    draws no reply. The recording stays visible in the room."""
 
     @pytest.mark.asyncio
     async def test_without_whisper_nothing_is_dispatched(self, tmp_path):
@@ -289,9 +286,8 @@ class TestWhenTheWordsCannotBeRecovered:
 
 
 class TestOneWhisperRunPerMessage:
-    """Every bot in a room drains the same timeline in the same process.
-    Without sharing, a five-minute memo would be sent to whisper once per
-    bot listening."""
+    """Bots in a room drain the same timeline in one process, so without
+    sharing a long recording would be sent to whisper once per bot."""
 
     @pytest.mark.asyncio
     async def test_two_bots_transcribe_the_same_memo_once(self, tmp_path):
@@ -311,8 +307,8 @@ class TestOneWhisperRunPerMessage:
 
     @pytest.mark.asyncio
     async def test_a_stored_transcript_is_not_produced_again(self, tmp_path):
-        """The backfill and the drain are different processes over one
-        store. Whatever already cost GPU time must never cost it twice."""
+        """The drain and a backfill are separate processes over one
+        store, so a transcript already produced is reused."""
         first = _StubTranscriber("buy milk")
         bot = _bot(tmp_path, transcriber=first)
         _collect(bot)
@@ -330,8 +326,8 @@ class TestOneWhisperRunPerMessage:
 
     @pytest.mark.asyncio
     async def test_a_failure_is_not_remembered(self, tmp_path):
-        """A whisper outage must not poison the message forever — the
-        drain is at-least-once, so the retry has to be able to succeed."""
+        """Outages are transient and the drain retries, so a failure is
+        not retained."""
         from stack.ai.client import LLMError
 
         broken = _StubTranscriber(error=LLMError("whisper down"))
@@ -393,10 +389,9 @@ class TestIsVoice:
 
 
 class TestThePolishPass:
-    """whisper.cpp emits one unbroken lowercase run of words. The polish
-    pass puts the sentences back. It is kept deliberately word-preserving:
-    the memories room holds things people said to their children, and a
-    model "improving" those is not a transcript any more."""
+    """whisper returns an unpunctuated run of words and the polish pass
+    restores sentence boundaries. The prompt forbids changing any word,
+    so the result stays verbatim."""
 
     @pytest.mark.asyncio
     async def test_handlers_receive_the_polished_text(self, tmp_path):
@@ -415,9 +410,8 @@ class TestThePolishPass:
     async def test_the_raw_transcript_is_kept_alongside_the_polished_one(
         self, tmp_path,
     ):
-        """Polishing gets better with better models and costs almost
-        nothing; whisper does not and is not. Keeping the raw text means
-        years of recordings can be re-polished without the audio."""
+        """Re-polishing is cheap and re-transcribing is not, so the raw
+        output is kept alongside the polished text."""
         bot = _bot(
             tmp_path,
             transcriber=_StubTranscriber("buy milk on the way home"),
@@ -434,7 +428,7 @@ class TestThePolishPass:
 
     @pytest.mark.asyncio
     async def test_without_an_llm_the_raw_transcript_still_lands(self, tmp_path):
-        """A rough transcript beats no transcript. Polish is never a gate."""
+        """Polish is optional; without an LLM the raw output is used."""
         bot = _bot(tmp_path, transcriber=_StubTranscriber("buy milk"),
                    cleanup=None)
         seen = _collect(bot)
@@ -446,8 +440,8 @@ class TestThePolishPass:
 
 
 class TestTranscriptStore:
-    """Durable because a backfill over the memories room is years of
-    recordings, and a separate process from the bot that reads them."""
+    """Durable and shared, because a backfill runs in a separate process
+    from the bots and covers a room's whole history."""
 
     def test_a_record_survives_a_new_store_over_the_same_directory(self, tmp_path):
         store = voice.TranscriptStore(tmp_path / "t")
@@ -468,8 +462,8 @@ class TestTranscriptStore:
         assert store.read(awkward)["text"] == "fine"
 
     def test_an_unwritable_store_does_not_break_the_message(self, tmp_path):
-        """A store we cannot write costs us the transcript again later.
-        It must never cost the family the message now."""
+        """An unwritable store costs a later re-transcription, not the
+        message itself."""
         blocked = tmp_path / "afile"
         blocked.write_text("not a directory")
         store = voice.TranscriptStore(blocked / "t")
@@ -478,10 +472,9 @@ class TestTranscriptStore:
 
 
 class TestTheWorkingIndicator:
-    """Whisper runs before any handler can say it is working, so the
-    framework raises the indicator itself. Whoever raises it owns putting
-    it down — a bot left "typing" at a room it is not going to answer
-    sits there for the full five-minute timeout."""
+    """Transcription runs before any handler could raise the typing
+    indicator, so the framework raises it. It must also clear it on the
+    paths where no handler runs, or it persists for the full timeout."""
 
     @pytest.mark.asyncio
     async def test_typing_stops_when_no_handler_wants_the_message(self, tmp_path):
@@ -508,9 +501,8 @@ class TestTheWorkingIndicator:
 
     @pytest.mark.asyncio
     async def test_a_typed_message_never_raises_it(self, tmp_path):
-        """Only the decode needs the indicator; ordinary text is fast and
-        the handler decides for itself. (The handler wrap still clears it
-        on the way out, as it does for every message.)"""
+        """Only the decode raises it. The handler wrap still clears it on
+        the way out, as it does for every message."""
         bot = _bot(tmp_path, transcriber=_StubTranscriber())
         _collect(bot)
 

@@ -71,4 +71,3 @@ expect = "pong"
 [[backup.archive]]
 name      = "library"
 path      = "{data_dir}/photos/library/library"
-min_files = 10

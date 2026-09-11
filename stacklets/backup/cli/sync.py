@@ -2,7 +2,15 @@
 
 Discovers ``[[backup.archive]]`` sources from every enabled stacklet
 (append-only stores) and routes them through every configured
-``[backup.targets.*]`` engine. Each engine writes a structured result
+``[backup.targets.*]`` engine.
+
+``[[backup.snapshot]]`` declarations run first. Each writes one dated
+tarball (a database dump plus the small files that must travel with it)
+and then joins the source list, so a mutable database reaches the vault
+in the same append-only shape as everything else. Snapshots run *before*
+the sync so a dump is never newer than the media it references: media
+without a database row is a harmless orphan, a row without its media is
+a broken message. Each engine writes a structured result
 to ``$BACKUP_DATA_DIR/logs/history.jsonl``; the orchestrator reads
 that file, formats a per-target summary, and posts it to the
 ``#famstack`` room as ``stacker-bot``.
@@ -35,6 +43,12 @@ from _orchestrator import (
     invoke_engine,
     read_latest_run,
 )
+from _snapshot import (
+    discover_snapshots,
+    prune_snapshots,
+    snapshot_source,
+    take_snapshot,
+)
 
 # MatrixClient lives in the messages stacklet — the canonical Matrix
 # interface for any CLI plugin that needs to post. Cross-stacklet import
@@ -42,6 +56,46 @@ from _orchestrator import (
 # notification anyway: if messages isn't around, neither is MatrixClient.
 _messages_cli = _here.parent.parent / "messages" / "cli"
 sys.path.insert(0, str(_messages_cli))
+
+
+def _take_snapshots(
+    repo_root: Path, instance_dir: Path, data_dir: Path,
+    backup_data_dir: Path, *, dry_run: bool,
+) -> tuple[list, bool]:
+    """Take every declared snapshot; return its sources and whether any failed.
+
+    A stacklet whose database will not dump must not cost the household
+    its photos, so a failure here is reported and the run continues with
+    the archives. The caller turns that into a non-zero exit, because a
+    backup that silently captured less than it was asked to is the exact
+    failure mode backups are supposed to protect against.
+    """
+    specs = discover_snapshots(repo_root, instance_dir, data_dir)
+    if not specs:
+        return [], False
+
+    out_root = backup_data_dir / "snapshots"
+    sources, failed = [], False
+
+    print("\n  Snapshots")
+    for spec in specs:
+        if dry_run:
+            print(f"    {spec.display}: would snapshot {spec.database}")
+            # No tarball was written, so the directory may not exist and
+            # the engine's own --dry-run would trip over a missing source.
+            continue
+        try:
+            path = take_snapshot(spec, out_root)
+        except Exception as e:
+            print(f"    {spec.display}: snapshot FAILED — {e}", file=sys.stderr)
+            failed = True
+            continue
+        size_kb = max(1, path.stat().st_size // 1024)
+        print(f"    {spec.display}: {path.name} ({size_kb} KB)")
+        prune_snapshots(out_root / spec.subdir)
+        sources.append(snapshot_source(spec, out_root))
+
+    return sources, failed
 
 
 def _parse_args(argv: list) -> argparse.Namespace:
@@ -167,7 +221,13 @@ def run(args, stacklet, config):
                      "block to stack.toml (see stack.example.toml)."
         }
 
+    snapshot_sources, snapshot_failed = _take_snapshots(
+        repo_root, instance_dir, data_dir, backup_data_dir,
+        dry_run=parsed.dry_run,
+    )
+
     sources = discover_archive_sources(repo_root, instance_dir, data_dir)
+    sources = snapshot_sources + sources
     if not sources:
         return {
             "error": "No backup sources discovered. No enabled stacklet declares "
@@ -209,6 +269,12 @@ def run(args, stacklet, config):
                 print(f"  [{target.name}] notification skipped: {notify_error}",
                       file=sys.stderr)
 
+    if snapshot_failed:
+        # The archives still synced, which is the right call: a database
+        # that would not dump must not cost you the photos. But the run
+        # did not capture everything it was asked to, and saying "ok"
+        # here is how a backup quietly stops being one.
+        return {"error": "One or more snapshots failed; the archives synced"}
     if any_failed:
         return {"error": "One or more targets failed; see history.jsonl for details"}
     return {
