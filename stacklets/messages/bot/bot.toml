@@ -1,0 +1,6 @@
+# Deprecated. Transcription moved into the framework; this bot exists only
+# to tell rooms it was invited to that it is going away, and then leave.
+# Remove this declaration and scribe.py one release after it ships.
+id          = "scribe-bot"
+name        = "Scribe"
+description = "Retired — voice messages are transcribed automatically now"
