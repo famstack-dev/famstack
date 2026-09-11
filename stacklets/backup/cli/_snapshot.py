@@ -1,31 +1,19 @@
-"""Snapshots — the half of a backup rsync cannot do.
+"""Snapshots: capturing state that cannot be rsynced.
 
-An archive is a pile of files that only ever grows. Photos, scanned
-documents, voice recordings: written once, never edited, never deleted.
-rsync with ``--ignore-existing`` handles that perfectly, and the vault
-locks each new file immutable.
+An archive source is a directory whose files are written once and never
+changed, which rsync can copy incrementally. A database is not: its files
+are rewritten continuously, and a copy taken while it is running does not
+restore. Such state is dumped instead.
 
-A database is the opposite. Its files change under you continuously, a
-copy taken mid-write is unrestorable, and no amount of care with rsync
-fixes that. What you want instead is one consistent dump per run.
+A snapshot is one dump per run, packed with the files that must accompany
+it, into a dated tarball. Runs add tarballs and never modify an existing
+one, which gives mutable state the same append-only shape the vault
+already stores.
 
-A snapshot is that dump plus whatever small files must travel with it,
-packed into a single dated tarball. Each run writes a new tarball and
-never touches an old one, which turns a mutable database into exactly the
-append-only shape the vault already knows how to keep. The tarballs then
-reach the vault through the ordinary engine, as just another source.
-
-Two consequences worth knowing:
-
-*Local snapshots are a staging area, not the backup.* The vault copy is
-the backup. The engine syncs with ``--ignore-existing`` and never
-``--delete``, so :func:`prune_snapshots` can keep the internal disk small
-without any risk of reaching the vault.
-
-*Snapshots hold secrets.* A Synapse snapshot carries `homeserver.yaml`
-(database password, macaroon key) and the signing key, because a dump
-without them restores a homeserver nobody can log into. That is the right
-trade, and it is a reason the vault disk is a physical object you hold.
+The tarballs on the internal disk are a staging area; the copy on the
+vault is the backup. `prune_snapshots` can therefore delete local
+tarballs freely, because the engine syncs with `--ignore-existing` and
+never passes `--delete`.
 """
 
 from __future__ import annotations
@@ -48,12 +36,13 @@ try:
 except ModuleNotFoundError:  # pragma: no cover — py < 3.11 fallback
     from stack._vendor import tomli as tomllib  # type: ignore
 
+from stack import postgres
+
 from _orchestrator import SourceRecord
 
 
-# How many tarballs to keep on the internal disk. Enough that a bad
-# snapshot can be stepped over without reaching for the vault, small
-# enough that a database an order of magnitude larger still fits.
+# Tarballs retained on the internal disk. The vault retains all of them,
+# so this bounds local disk use only.
 DEFAULT_KEEP = 7
 
 
@@ -64,10 +53,23 @@ class SnapshotSpec:
     id: str                     # "{stacklet_id}/{name}", e.g. "messages/synapse"
     display: str                # Human-readable, e.g. "Messages"
     name: str                   # "synapse"
-    container: str              # Docker container running Postgres
-    database: str               # Database to dump
-    user: str                   # Postgres role to dump as
+    # Capture parameters, keyed by the mechanism that reads them. The
+    # namespace lets a stacklet storing state elsewhere declare a
+    # snapshot without the contract assuming Postgres.
+    postgres: dict = field(default_factory=dict)
     include: List[str] = field(default_factory=list)  # extra files (globs ok)
+
+    @property
+    def container(self) -> str:
+        return self.postgres.get("container", "")
+
+    @property
+    def database(self) -> str:
+        return self.postgres.get("database", "")
+
+    @property
+    def user(self) -> str:
+        return self.postgres.get("user", "")
 
     @property
     def stacklet_id(self) -> str:
@@ -75,8 +77,9 @@ class SnapshotSpec:
 
     @property
     def subdir(self) -> str:
-        """Directory name for this snapshot's tarballs, on disk and in the
-        vault. Namespaced so two stacklets can't collide."""
+        """Directory holding this snapshot's tarballs, used both on the
+        internal disk and under the vault's `data/`. Qualified by stacklet
+        so two stacklets choosing the same `name` do not collide."""
         return f"{self.stacklet_id}-{self.name}"
 
 
@@ -85,11 +88,11 @@ class SnapshotSpec:
 def discover_snapshots(
     repo_root: Path, instance_dir: Path, data_dir: Path,
 ) -> List[SnapshotSpec]:
-    """Walk every ``stacklets/*/stacklet.toml`` for ``[[backup.snapshot]]``.
+    """Return the ``[[backup.snapshot]]`` entries of enabled stacklets.
 
-    Mirrors ``discover_archive_sources``: a stacklet contributes only if
-    it is enabled (``.stack/{id}.setup-done``), and ``{data_dir}`` is the
-    one template variable rendered into paths.
+    Follows the same rules as ``discover_archive_sources``: a stacklet
+    counts as enabled when `.stack/{id}.setup-done` exists, and
+    `{data_dir}` is the only template variable rendered into paths.
     """
     stacklets_dir = repo_root / "stacklets"
     if not stacklets_dir.is_dir():
@@ -119,16 +122,15 @@ def discover_snapshots(
                 try:
                     includes.append(raw.format(**template_vars))
                 except (KeyError, IndexError):
-                    # Unknown template var: keep the literal so the failure
-                    # surfaces as a missing file rather than a crash.
+                    # An unrecognised variable is kept verbatim, so the
+                    # problem appears later as a file that did not match
+                    # rather than as an exception during discovery.
                     includes.append(raw)
             specs.append(SnapshotSpec(
                 id=f"{stacklet_id}/{name}",
                 display=display,
                 name=name,
-                container=entry.get("container", ""),
-                database=entry.get("database", ""),
-                user=entry.get("user", ""),
+                postgres=entry.get("postgres", {}) or {},
                 include=includes,
             ))
 
@@ -138,42 +140,25 @@ def discover_snapshots(
 # ── Taking one ─────────────────────────────────────────────────────────────
 
 def pg_dump(spec: SnapshotSpec) -> bytes:
-    """Dump `spec`'s database through the container running it.
-
-    `pg_dump` takes its own consistent view via MVCC, so this runs
-    against a live homeserver with nothing stopped and no downtime.
-    """
-    proc = subprocess.run(
-        ["docker", "exec", spec.container,
-         "pg_dump", "-U", spec.user, "-d", spec.database],
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        detail = proc.stderr.decode(errors="replace").strip()[:400]
-        raise RuntimeError(
-            f"pg_dump failed for {spec.database} in {spec.container}: {detail}"
-        )
-    return proc.stdout
+    """Default capture for a spec declaring `postgres` parameters."""
+    return postgres.dump(spec.container, spec.database, spec.user)
 
 
 def container_versions(spec: SnapshotSpec) -> dict:
-    """What was running when this snapshot was taken.
+    """Return the images and Postgres version present at snapshot time.
 
-    A dump only restores into something compatible with what produced it,
-    and the failure is not subtle: a Paperless 3.x database will not boot
-    under 2.x, and there is no downgrade. Recording the versions is the
-    one part of a snapshot that cannot be added later, so it happens even
-    though nothing reads it yet.
+    A dump loads only into a compatible version of the application that
+    produced it, so a restore needs to know what that was. Nothing reads
+    this yet; it is recorded now because it describes a moment that has
+    passed by the time anything wants it.
 
-    The image *digest* is the load-bearing field. Tags lie over time —
-    the homeserver runs `matrixdotorg/synapse:latest`, which names a
-    different image every month and nothing identifiable in five years.
-    The digest still names this exact image whenever someone comes back
-    to it.
+    Both the tag and the digest are kept. Tags are mutable, so a
+    reference like `synapse:latest` resolves to different images over
+    time and only the digest identifies the exact one.
 
-    Containers are found by the compose project label rather than a
-    manifest list, so a stacklet does not have to enumerate its own
-    services and cannot forget one when it adds another.
+    Containers are found through the compose project label rather than a
+    list in the manifest, so a stacklet that gains a service does not
+    also have to remember to declare it here.
     """
     project = f"stack-{spec.stacklet_id}"
     names = _docker(
@@ -201,19 +186,18 @@ def container_versions(spec: SnapshotSpec) -> dict:
 
     versions: dict = {"containers": containers}
     if spec.container:
-        pg = _docker(
-            "exec", spec.container,
-            "psql", "-U", spec.user, "-d", spec.database,
-            "-tAc", "show server_version;",
-        )
+        pg = postgres.server_version(spec.container, spec.database, spec.user)
         if pg:
             versions["postgres"] = pg
     return versions
 
 
 def _docker(*args: str) -> str:
-    """One docker call, stripped. Empty string when it fails: version
-    metadata is nice to have, never worth losing a dump over."""
+    """Run one docker command and return its stripped stdout.
+
+    Any failure yields an empty string. Callers use this for metadata
+    only, where an absent value is preferable to an aborted snapshot.
+    """
     try:
         proc = subprocess.run(["docker", *args], capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -233,24 +217,23 @@ def take_snapshot(
 ) -> Path:
     """Write one dated tarball for `spec` and return its path.
 
-    Built in a temporary file and moved into place only once complete, so
-    a dump that fails halfway leaves nothing behind. A half-written
-    tarball would otherwise sync to the vault, get locked immutable, and
-    sit there looking like a backup.
+    The tarball is assembled under a temporary name and moved into place
+    only once complete. A partially written file left in the output
+    directory would be picked up by the next sync and locked immutable on
+    the vault, where it could not be replaced.
     """
     dump = dump or pg_dump
     versions = versions or container_versions
     stamp = time.strftime("%Y%m%dT%H%M%SZ", now or time.gmtime())
 
-    # Raises on failure, before anything is created.
+    # Taken first, so a failure propagates before any file exists.
     sql = dump(spec)
 
     out_dir = out_root / spec.subdir
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Second resolution reads well in a directory listing, but two runs
-    # inside one second would otherwise land on the same name and the
-    # second would overwrite the first. Overwriting is the one thing a
-    # snapshot must never do, so a collision takes a counter instead.
+    # The timestamp has second resolution, so two runs within the same
+    # second would otherwise produce the same name. A suffix keeps them
+    # distinct rather than letting the second overwrite the first.
     target = out_dir / f"{spec.name}-{stamp}.tar.gz"
     attempt = 2
     while target.exists():
@@ -260,10 +243,9 @@ def take_snapshot(
     dump_name = f"{spec.database or spec.name}.sql"
     included: List[str] = []
 
-    # Never worth losing the dump over: docker unreachable, a container
-    # stopped, an image pruned. Recorded as empty rather than omitted, so
-    # a reader can tell "we could not look" from "this predates version
-    # recording at all".
+    # Recorded as an empty mapping rather than omitted, which
+    # distinguishes a snapshot whose versions could not be read from one
+    # written before versions were recorded at all.
     try:
         recorded = versions(spec)
     except Exception as e:
@@ -276,8 +258,9 @@ def take_snapshot(
         with tarfile.open(tmp_path, "w:gz") as tar:
             _add_bytes(tar, dump_name, sql)
             for pattern in spec.include:
-                # A config file this install never created must not cost
-                # the dump, which is the part that cannot be recreated.
+                # Patterns that match nothing are skipped. An install may
+                # legitimately lack a file another one has, and that is
+                # not a reason to discard the dump.
                 for path in sorted(glob.glob(pattern)):
                     p = Path(path)
                     if p.is_file():
@@ -310,11 +293,11 @@ def _manifest(
     spec: SnapshotSpec, dump_name: str, stamp: str, included: List[str],
     versions: dict,
 ) -> dict:
-    """What this tarball is, for whoever opens it without the code.
+    """Describe the tarball for a reader who does not have this code.
 
-    A backup nobody can interpret is not a backup. The restore line is
-    deliberately a literal command rather than a pointer to documentation
-    that may not exist by then.
+    `restore` holds a literal command rather than a reference to
+    documentation, so the tarball remains self-describing if it is opened
+    somewhere the project is not available.
     """
     return {
         "famstack_snapshot": 1,
@@ -323,8 +306,6 @@ def _manifest(
         "database": spec.database,
         "dump_file": dump_name,
         "included_files": included,
-        # What produced this dump. A restore has to refuse an incompatible
-        # target rather than discover it the hard way.
         "versions": versions,
         "taken_at": time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.strptime(stamp, "%Y%m%dT%H%M%SZ"),
@@ -344,11 +325,11 @@ def _manifest(
 # ── Feeding the vault ──────────────────────────────────────────────────────
 
 def snapshot_source(spec: SnapshotSpec, out_root: Path) -> SourceRecord:
-    """The engine source that carries this snapshot's tarballs to the vault.
+    """Return the engine source carrying this snapshot's tarballs.
 
-    Marked ``rolling``: this directory is pruned to a fixed window on
-    purpose, so its shrinking is normal operation rather than the data
-    loss the engine's guard looks for.
+    Marked `rolling`, because `prune_snapshots` keeps the directory at a
+    fixed size. Without that flag the engine's shrink check would read
+    routine pruning as data loss.
     """
     return SourceRecord(
         id=spec.id,
@@ -362,12 +343,14 @@ def snapshot_source(spec: SnapshotSpec, out_root: Path) -> SourceRecord:
 # ── Keeping the internal disk honest ───────────────────────────────────────
 
 def prune_snapshots(directory: Path, keep: int = DEFAULT_KEEP) -> List[Path]:
-    """Delete all but the newest `keep` tarballs; return what was removed.
+    """Delete all but the newest `keep` tarballs; return those removed.
 
-    Safe by construction: the vault copy is the backup, and the engine
-    syncs with ``--ignore-existing`` and never ``--delete``, so nothing
-    here can reach it. Names sort chronologically because the timestamp
-    is fixed-width and UTC.
+    Only the internal disk is affected. The engine syncs with
+    `--ignore-existing` and never `--delete`, so tarballs already on the
+    vault are unaffected by anything removed here.
+
+    Ordering by name is ordering by time, because the timestamp is
+    fixed-width and UTC.
     """
     if not directory.is_dir():
         return []

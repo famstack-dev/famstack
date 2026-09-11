@@ -129,10 +129,9 @@ class MicroBot:
         # via sync. The SyncResponse callback drains this set and fires
         # `on_room_joined` once nio has populated the room.
         self._pending_room_joins: set[str] = set()
-        # Speech-to-text for the decode in `_dispatch`. Built here rather
-        # than on demand because a missing whisper is a normal state, not
-        # an error: without it, audio simply stays audio and reaches no
-        # handler, the same as a message in a language we cannot read.
+        # Built at construction rather than on first use, because an
+        # absent whisper is an ordinary configuration, not a fault.
+        # Without it audio is simply never decoded and reaches no handler.
         try:
             self._transcriber = Transcriber.from_env(namespace=self.name)
         except LLMUnavailableError as e:
@@ -141,8 +140,7 @@ class MicroBot:
                 "as audio", self.name, e,
             )
             self._transcriber = None
-        # Optional polish on raw whisper output (punctuation, sentence
-        # breaks). Absent, the transcript still lands, just rougher.
+        # Optional. Without it the raw transcript is used unchanged.
         try:
             self._transcript_cleanup = LLM.from_env(namespace=self.name)
         except LLMUnavailableError:
@@ -525,11 +523,10 @@ class MicroBot:
 
         decoding = voice.is_voice(event)
         if decoding:
-            # Transcription is the one part of handling a message that can
-            # run for minutes, and it happens before any handler gets to
-            # signal it is working. A matched handler's wrap clears the
-            # indicator in its `finally`; we clear it ourselves on the two
-            # paths where no handler ever runs.
+            # Transcription can run for minutes and happens before any
+            # handler could raise the indicator itself. A handler that
+            # matches clears it in the wrap's `finally`; the two paths
+            # below clear it where no handler runs at all.
             await self._set_typing(room_id, on=True)
             event = await self._decode_voice(room_id, event)
             if event is None:
@@ -545,14 +542,14 @@ class MicroBot:
             await self._set_typing(room_id, on=False)
 
     async def _decode_voice(self, room_id: str, event):
-        """Turn a voice message into the text event it is, or None.
+        """Return the text event this voice message decodes to, or None.
 
-        None means the words could not be recovered — whisper is absent,
-        unreachable, or heard nothing. That is dispatched to nobody
-        rather than answered with an apology: the family can see their
-        own voice message sitting in the room, and a bot volunteering
-        "I could not hear that" in every room it is in, for audio nobody
-        was addressing to it, is noise.
+        None means the words could not be recovered, because whisper is
+        absent, unreachable, or found no speech. The event is then
+        dispatched to no handler rather than answered with an error: the
+        recording remains visible in the room, and every bot present
+        reporting the same failure for audio not addressed to it would
+        add noise without adding information.
         """
         if self._transcriber is None:
             logger.debug(
@@ -570,10 +567,10 @@ class MicroBot:
             if not audio:
                 raise LLMError(f"could not download {url}")
             raw = await self._transcriber.transcribe(audio, filename=filename)
-            # whisper emits one unbroken lowercase run of words; the polish
-            # pass puts the sentences back without changing them. Both are
-            # kept: polishing again with a better model is cheap, and
-            # transcribing again is not.
+            # whisper returns an unpunctuated run of words; the polish
+            # pass restores sentence boundaries. Both forms are stored,
+            # since re-polishing later is cheap and re-transcribing is
+            # not.
             text = raw
             if raw.strip() and self._transcript_cleanup is not None:
                 text = await Transcriber.polish(raw, self._transcript_cleanup)

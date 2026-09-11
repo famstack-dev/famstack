@@ -89,6 +89,7 @@ Apply to every role, every session.
 9. **Announce actions before running them.** No silent long running or integration test runs, scripts, or background commands.
 10. **No em dashes in user-facing prose.** Use hyphens or sentence breaks.
 11. **Put data in through the front door.** Seed and exercise a stacklet the way a family does, never by writing to the service behind it. Documents go through `tools/family-docs/ingest.py` (Matrix room -> archivist -> OCR -> classify -> mirror), never a direct `POST /api/documents/post_document/`. The back door skips the pipeline, so what lands is not what users get: no tags, no correspondent, no document type, no rewritten title, no summary note, no vault entry. Any conclusion drawn from that data is about a system famstack does not ship.
+12. **Comments explain the code, not sell it.** Literate but neutral: state the constraint and the reason, without rhetoric or drama. Write `# Tags are mutable, so only the digest identifies the image this dump came from.` rather than `# Tags lie over time -- the digest is the load-bearing field that still names this exact image in five years.`
 
 ## Deeper docs (load on demand)
 

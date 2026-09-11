@@ -1,18 +1,13 @@
-"""Snapshots — the half of a backup that rsync cannot do.
+"""Snapshots: capturing state that rsync cannot copy.
 
-An archive is a pile of files that only ever grows, which rsync handles
-perfectly. A database is not that: its files change under you, a copy
-taken mid-write is unrestorable, and what you actually want is one
-consistent dump per run.
+An archive source is a directory whose files are written once and never
+changed. A database is not, so it is dumped instead: one consistent dump
+per run, packed with the files that must accompany it, into a dated
+tarball that later runs add to but never modify.
 
-So a snapshot is a `pg_dump` plus whatever small files must travel with
-it, packed into one dated tarball. Each run writes a new tarball and
-never touches an old one, which turns a mutable database into exactly the
-append-only shape the vault already knows how to keep.
-
-Synapse is the first instance. It is also the one that matters most: the
-media store holds the family's voice messages, and without the database
-those are anonymous blobs with no sender, no room and no date.
+Synapse is the first stacklet wired up. Its media store holds the
+recordings themselves, while the database holds the sender, room and
+date that make each one a message.
 """
 
 from __future__ import annotations
@@ -41,9 +36,8 @@ def _spec(tmp_path, **kw) -> SnapshotSpec:
         id="messages/synapse",
         display="Messages",
         name="synapse",
-        container="stack-messages-db",
-        database="synapse",
-        user="synapse",
+        postgres={"container": "stack-messages-db",
+                  "database": "synapse", "user": "synapse"},
         include=[],
     )
     defaults.update(kw)
@@ -89,9 +83,9 @@ class TestTakeSnapshot:
         assert "the whole database" in body
 
     def test_named_files_travel_with_the_dump(self, tmp_path):
-        """A Synapse dump alone does not restore a homeserver: the signing
-        key is its identity and homeserver.yaml holds the secrets that keep
-        existing logins valid."""
+        """A dump alone does not restore a homeserver. The signing key is
+        the server's identity, and homeserver.yaml holds the macaroon
+        secret that keeps existing device logins valid."""
         cfg = tmp_path / "synapse"
         cfg.mkdir()
         (cfg / "homeserver.yaml").write_text("{}")
@@ -108,8 +102,9 @@ class TestTakeSnapshot:
         assert "simpson.signing.key" in names
 
     def test_a_missing_include_is_skipped_not_fatal(self, tmp_path):
-        """A config file an install never created must not cost you the
-        database dump, which is the part that cannot be recreated."""
+        """Installs differ in which optional config files exist. A
+        pattern matching nothing is skipped, because the dump is the part
+        that cannot be reproduced from elsewhere."""
         path = take_snapshot(
             _spec(tmp_path, include=[str(tmp_path / "nope.yaml")]),
             tmp_path / "s", dump=_fake_dump(),
@@ -118,9 +113,8 @@ class TestTakeSnapshot:
             assert "synapse.sql" in tar.getnames()
 
     def test_it_carries_a_manifest_describing_itself(self, tmp_path):
-        """Whoever opens this in five years will not have the code that
-        wrote it. The tarball has to say what it is and how to put it
-        back."""
+        """The tarball is self-describing, so it can be interpreted
+        without this code available."""
         path = take_snapshot(_spec(tmp_path), tmp_path / "s",
                              dump=_fake_dump())
         with tarfile.open(path) as tar:
@@ -133,8 +127,8 @@ class TestTakeSnapshot:
         assert "psql" in manifest["restore"]
 
     def test_each_run_adds_a_tarball_and_keeps_the_old_one(self, tmp_path):
-        """The append-only contract, at the snapshot level. A run must
-        never overwrite the snapshot that proved restorable yesterday."""
+        """Runs add tarballs and never modify an existing one, so a
+        snapshot verified earlier stays as it was verified."""
         out = tmp_path / "s"
         first = take_snapshot(_spec(tmp_path), out, dump=_fake_dump("one"))
         second = take_snapshot(_spec(tmp_path), out, dump=_fake_dump("two"))
@@ -143,8 +137,9 @@ class TestTakeSnapshot:
         assert first.exists() and second.exists()
 
     def test_a_failed_dump_leaves_no_tarball(self, tmp_path):
-        """A half-written snapshot is worse than none: it would sync to
-        the vault, get locked immutable, and look like a backup."""
+        """A partial tarball would sync to the vault and be locked
+        immutable there, so nothing is written unless the dump
+        succeeds."""
         def boom(spec):
             raise RuntimeError("postgres is down")
 
@@ -158,8 +153,8 @@ class TestTakeSnapshot:
 # ── Feeding the vault ────────────────────────────────────────────────────
 
 class TestSnapshotSource:
-    """Snapshots reach the vault through the same engine as everything
-    else: the output directory is just another append-only source."""
+    """Snapshots reach the vault through the ordinary engine. The
+    output directory is registered as another append-only source."""
 
     def test_the_output_directory_becomes_a_source(self, tmp_path):
         src = snapshot_source(_spec(tmp_path), tmp_path / "snapshots")
@@ -168,17 +163,17 @@ class TestSnapshotSource:
         assert src.vault_subdir == "data/messages-synapse"
 
     def test_it_is_marked_rolling(self, tmp_path):
-        """Pruned to a fixed window on purpose, so the engine must not read
-        its shrinking as the data loss its guard looks for."""
+        """The directory is pruned to a fixed size, so the engine's
+        shrink check must not read that as data loss."""
         assert snapshot_source(_spec(tmp_path), tmp_path / "s").rolling is True
 
 
 # ── Keeping the internal disk honest ─────────────────────────────────────
 
 class TestPrune:
-    """Local snapshots are a staging area, not the backup. The vault copy
-    is the backup, and the engine syncs with `--ignore-existing` and no
-    `--delete`, so pruning here can never reach it."""
+    """Local tarballs are a staging area; the vault copy is the backup.
+    The engine syncs with `--ignore-existing` and never `--delete`, so
+    pruning here does not affect the vault."""
 
     def _fill(self, d: Path, n: int) -> list[Path]:
         d.mkdir(parents=True, exist_ok=True)
@@ -228,11 +223,9 @@ id = "messages"
 name = "Messages"
 
 [[backup.snapshot]]
-name      = "synapse"
-container = "stack-messages-db"
-database  = "synapse"
-user      = "synapse"
-include   = ["{data_dir}/messages/synapse/homeserver.yaml"]
+name     = "synapse"
+postgres = { container = "stack-messages-db", database = "synapse", user = "synapse" }
+include  = ["{data_dir}/messages/synapse/homeserver.yaml"]
 '''
 
     def test_it_finds_an_enabled_stacklets_snapshot(self, tmp_path):
@@ -244,7 +237,10 @@ include   = ["{data_dir}/messages/synapse/homeserver.yaml"]
         assert len(found) == 1
         spec = found[0]
         assert spec.id == "messages/synapse"
+        # Namespaced in the manifest, read back through the accessor so
+        # callers never touch the raw dict.
         assert spec.container == "stack-messages-db"
+        assert spec.database == "synapse"
         assert spec.include == ["/data/messages/synapse/homeserver.yaml"]
 
     def test_a_disabled_stacklet_contributes_nothing(self, tmp_path):
@@ -259,14 +255,13 @@ include   = ["{data_dir}/messages/synapse/homeserver.yaml"]
 
 
 class TestRecordedVersions:
-    """A dump is only restorable into something compatible with what wrote
-    it. Paperless makes the point sharply: a 3.x database will not boot
-    under 2.x, and there is no downgrade.
+    """A dump loads only into a compatible version of the application
+    that wrote it. Paperless is the concrete case: a 3.x database will not
+    boot under 2.x, and there is no downgrade path.
 
-    So a snapshot records what produced it. This is the one piece of a
-    snapshot that cannot be added later: whatever a restore tool eventually
-    does, it can only be as good as the metadata captured at the time, and
-    a tarball taken today without it stays ambiguous forever.
+    The snapshot therefore records what produced it. This describes a
+    moment that has passed by the time a restore wants it, so it cannot
+    be reconstructed later.
     """
 
     def _versions(self, payload=None, error=None):
@@ -296,9 +291,9 @@ class TestRecordedVersions:
         assert manifest["versions"]["postgres"] == "16.15"
 
     def test_the_digest_is_kept_because_a_tag_is_not_a_version(self, tmp_path):
-        """The running image is tagged `latest`, which means something
-        different every year and nothing at all in five. The digest is the
-        only identifier that still names this exact image later."""
+        """Tags are mutable, so a reference like `synapse:latest`
+        resolves to different images over time. The digest identifies the
+        exact one."""
         path = take_snapshot(_spec(tmp_path), tmp_path / "s",
                              dump=_fake_dump(), versions=self._versions())
         with tarfile.open(path) as tar:
@@ -308,8 +303,9 @@ class TestRecordedVersions:
         assert synapse["digest"].startswith("sha256:")
 
     def test_unavailable_versions_do_not_cost_the_dump(self, tmp_path):
-        """Docker unreachable, a container not running, an image pruned.
-        None of that is worth losing the database over."""
+        """Version lookup can fail for reasons unrelated to the data:
+        docker unreachable, a container stopped, an image pruned. The dump
+        still proceeds."""
         path = take_snapshot(
             _spec(tmp_path), tmp_path / "s", dump=_fake_dump(),
             versions=self._versions(error=RuntimeError("docker is not running")),

@@ -47,13 +47,17 @@ turns mutable state into the same append-only shape the vault keeps.
 ```toml
 # stacklets/messages/stacklet.toml
 [[backup.snapshot]]
-name      = "synapse"
-container = "stack-messages-db"
-database  = "synapse"
-user      = "synapse"
-include   = ["{data_dir}/messages/synapse/homeserver.yaml",
-             "{data_dir}/messages/synapse/*.signing.key"]
+name     = "synapse"
+postgres = { container = "stack-messages-db", database = "synapse", user = "synapse" }
+include  = ["{data_dir}/messages/synapse/homeserver.yaml",
+            "{data_dir}/messages/synapse/*.signing.key"]
 ```
+
+The capture key is namespaced by what does the capturing, so a stacklet
+on something other than Postgres can declare a snapshot without the
+contract assuming every database is this one. The invocation itself lives
+in `stack.postgres`, next to the restore half, rather than inside this
+coordinator.
 
 Snapshots run before the sync, so a dump is never newer than the media it
 references, and their output directory then joins the source list as an

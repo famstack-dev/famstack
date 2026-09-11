@@ -410,20 +410,24 @@ state the same append-only shape an archive has.
 ```toml
 # stacklets/messages/stacklet.toml
 [[backup.snapshot]]
-name      = "synapse"
-container = "stack-messages-db"
-database  = "synapse"
-user      = "synapse"
-include   = ["{data_dir}/messages/synapse/homeserver.yaml",
-             "{data_dir}/messages/synapse/*.signing.key"]
+name     = "synapse"
+postgres = { container = "stack-messages-db", database = "synapse", user = "synapse" }
+include  = ["{data_dir}/messages/synapse/homeserver.yaml",
+            "{data_dir}/messages/synapse/*.signing.key"]
 ```
 
 | Field | Description |
 |---|---|
 | `name` | Short slug, as for an archive. Becomes the source id (`messages/synapse`). |
-| `container` | Container running Postgres. The dump goes through `docker exec`. |
-| `database`, `user` | What to dump, and as whom. |
+| `postgres` | How to capture the state, namespaced by what captures it. `container` is where the database runs (the dump goes through `docker exec`), `database` and `user` are what to dump and as whom. |
 | `include` | Files that must travel with the dump for a restore to be possible. Globs allowed; a path this install never created is skipped rather than failing the snapshot. |
+
+The capture key is namespaced so a stacklet keeping state somewhere other
+than Postgres can declare a snapshot later without the contract having to
+pretend every database looks like this one. Driving a containerised
+Postgres lives in `stack.postgres`, shared with whatever eventually
+restores one, rather than inside the backup coordinator where only it
+could reach it.
 
 Snapshots run before the sync, so a dump is never newer than the files it
 references. `pg_dump` takes its own consistent view, so nothing stops and
