@@ -375,16 +375,23 @@ job.
 ```toml
 # stacklets/photos/stacklet.toml
 [[backup.archive]]
-name      = "library"
-path      = "{data_dir}/photos/library/library"
-min_files = 10
+name = "library"
+path = "{data_dir}/photos/library/library"
 ```
 
 | Field | Description |
 |---|---|
 | `name` | Short slug for this source. Combined with the stacklet id, this becomes the global source id (`photos/library`). Used in `stack backup status` output and (future) `--source=` selection. |
 | `path` | Filesystem path to sync. Template variables from the rendered environment are available (`{data_dir}`, etc.). |
-| `min_files` | Coarse ransomware smoke test. The engine counts files at `path` before syncing and refuses if the count is below this. The canary file is the precise tripwire; this is the dumb-and-cheap secondary check. Keep low enough that fresh installs don't trip it. |
+
+There is no threshold to declare. The engine judges each source against
+the number of files it held on the previous run, recorded in its own
+history, and refuses to sync one that is suddenly empty or has lost more
+than half its files. This replaced a `min_files` constant, which could
+not work: a number written at authoring time cannot know the scale of the
+household it guards, so a library of 50,000 photos reduced to 11 passed
+`min_files = 10` without complaint. A source that has never held anything
+is skipped rather than failing the run.
 
 **`[[backup.archive]]`** declares an append-only store: files are added,
 never modified, never deleted. The engine commits to kernel-enforced
@@ -393,10 +400,37 @@ genuinely append-only (photo originals, archived PDFs), this is the
 right section. (Storage-industry vocabulary calls this WORM — Write
 Once Read Many.)
 
-**`[[backup.snapshot]]`** is reserved for time-stamped point-in-time
-captures of mutable state (Postgres dumps, Docker volume tarballs). Not
-yet implemented — declare an `archive` section today; a `snapshot`
-section will be added later when DB-restore semantics ship.
+**`[[backup.snapshot]]`** declares mutable state that cannot be rsynced.
+A database changes under you continuously and a copy taken mid-write will
+not restore, so it is dumped instead: one `pg_dump` per run, packed with
+whatever small files must travel beside it, into a dated `.tar.gz`. Each
+run adds a tarball and never touches an older one, which gives mutable
+state the same append-only shape an archive has.
+
+```toml
+# stacklets/messages/stacklet.toml
+[[backup.snapshot]]
+name      = "synapse"
+container = "stack-messages-db"
+database  = "synapse"
+user      = "synapse"
+include   = ["{data_dir}/messages/synapse/homeserver.yaml",
+             "{data_dir}/messages/synapse/*.signing.key"]
+```
+
+| Field | Description |
+|---|---|
+| `name` | Short slug, as for an archive. Becomes the source id (`messages/synapse`). |
+| `container` | Container running Postgres. The dump goes through `docker exec`. |
+| `database`, `user` | What to dump, and as whom. |
+| `include` | Files that must travel with the dump for a restore to be possible. Globs allowed; a path this install never created is skipped rather than failing the snapshot. |
+
+Snapshots run before the sync, so a dump is never newer than the files it
+references. `pg_dump` takes its own consistent view, so nothing stops and
+nobody is logged out while it runs. The tarball records the image
+versions and digests that produced it; nothing reads that yet, but it is
+the one part of a snapshot that cannot be added afterwards, and a restore
+has to be able to refuse an incompatible target.
 
 A stacklet may declare zero, one, or several entries of each kind. Sources
 flow to every configured target whose engine supports the declared
