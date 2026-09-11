@@ -52,6 +52,7 @@ services:
       - ../../stacklets/core/bot-runner/microbot.py:/app/microbot.py:ro
       - ../../stacklets/core/bot-runner/room_context.py:/app/room_context.py:ro
       - ../../stacklets/core/bot-runner/accounts.py:/app/accounts.py:ro
+      - ../../stacklets/core/bot-runner/voice.py:/app/voice.py:ro
       # Per-stacklet bot data (sessions, crypto stores)
       - ${DATA_DIR}:/data
       # API is TCP on host.docker.internal:42001 — no socket mount needed

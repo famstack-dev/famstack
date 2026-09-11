@@ -45,6 +45,11 @@ STACK_ADMIN_USER_IDS = "{admin_user_ids}"
 OPENAI_URL     = "{ai_openai_url_docker}"
 OPENAI_KEY     = "{ai_openai_key}"
 WHISPER_URL    = "{ai_whisper_url_docker}/audio/transcriptions"
+# Transcripts are a cache over the audio, not a record: the mxc on the
+# timeline stays the anchor. Kept on disk because whisper costs minutes
+# of GPU per memo and a backfill over the memories room must never pay
+# for the same recording twice.
+TRANSCRIPT_DIR = "/data/core/transcripts"
 
 # Paperless — document search for archivist bot and tools server
 PAPERLESS_URL        = "http://stack-docs-paperless:8000"

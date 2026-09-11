@@ -71,11 +71,6 @@ en:
   scan_complete_single: "\U0001F4CB Scan complete (1 page) — analyzing..."
   scan_complete_multi: "\U0001F4CB Scan complete — combining {count} pages into PDF..."
   scan_combine_failed: "\u274C Failed to combine pages into PDF: {error}"
-  scan_voice_failed: "\u274C Failed to download voice memo: {error}"
-  scan_voice_failed_matrix: "\u274C Failed to download voice memo from Matrix."
-  scan_voice_no_transcriber: "\U0001F3A4 Voice transcription is not configured. Set up AI with 'stack up ai'."
-  scan_voice_empty: "\U0001F3A4 Couldn't hear anything in that voice memo."
-  scan_voice_complete: "\U0001F3A4 Combining {count} voice memos into one note. Analyzing..."
   no_active_scan: "No active scan. Send ( or 'scan' to start one."
 
   # URL archiving
@@ -89,7 +84,6 @@ en:
 
   # URL capture (knowledge rooms — links become summarized notes, not Paperless docs)
   capture_failed: "\u274C Couldn't read that link. Either the host is unreachable or there's no article body to extract."
-  capture_failed_transcription: "\U0001F3A4 Couldn't transcribe that voice memo. Whisper may be down or misconfigured."
   capture_failed_binary: "\u274C Couldn't read that file."
   capture_llm_failed: "\U0001F4DD Captured the page, but classification skipped: {error}"
   capture_no_mirror: "\u274C Captures need the `code` stacklet up so I can write to the memory vault. Run `stack up code`."
@@ -280,11 +274,6 @@ de:
   scan_complete_single: "\U0001F4CB Scan abgeschlossen (1 Seite) — wird analysiert..."
   scan_complete_multi: "\U0001F4CB Scan abgeschlossen — {count} Seiten werden zu PDF zusammengefasst..."
   scan_combine_failed: "\u274C Seiten konnten nicht zu PDF zusammengefasst werden: {error}"
-  scan_voice_failed: "\u274C Sprachnachricht konnte nicht heruntergeladen werden: {error}"
-  scan_voice_failed_matrix: "\u274C Sprachnachricht konnte nicht aus Matrix heruntergeladen werden."
-  scan_voice_no_transcriber: "\U0001F3A4 Sprach-Transkription ist nicht eingerichtet. 'stack up ai' ausführen."
-  scan_voice_empty: "\U0001F3A4 Konnte nichts in der Sprachnachricht hören."
-  scan_voice_complete: "\U0001F3A4 Kombiniere {count} Sprachnachrichten zu einer Notiz. Wird analysiert..."
   no_active_scan: "Kein aktiver Scan. Sende ( oder 'scan' um einen zu starten."
 
   # URL archiving
@@ -298,7 +287,6 @@ de:
 
   # URL-Capture (Wissensräume — Links werden zu zusammengefassten Notizen, nicht zu Paperless-Dokumenten)
   capture_failed: "\u274C Konnte den Link nicht lesen. Entweder ist die Seite nicht erreichbar, oder es gibt keinen Artikel-Inhalt zum Extrahieren."
-  capture_failed_transcription: "\U0001F3A4 Konnte die Sprachnachricht nicht transkribieren. Whisper ist möglicherweise nicht erreichbar oder falsch konfiguriert."
   capture_failed_binary: "\u274C Konnte diese Datei nicht lesen."
   capture_llm_failed: "\U0001F4DD Seite gespeichert, aber Klassifizierung übersprungen: {error}"
   capture_no_mirror: "\u274C Captures brauchen das `code`-Stacklet, damit ich in den Memory-Vault schreiben kann. Starte `stack up code`."

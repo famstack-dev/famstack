@@ -67,12 +67,15 @@ from nio import (
     LoginResponse,
     MegolmEvent,
     MessageDirection,
+    RoomMessage,
     RoomMessagesResponse,
     SyncResponse,
 )
 from nio.api import RelationshipType
 
+import voice
 from room_context import RoomContext, context_for
+from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 
 # The framework's "I picked this up and I'm working on it" signal. A
 # bot reacts with 👀 on the source message the moment it starts a
@@ -126,6 +129,24 @@ class MicroBot:
         # via sync. The SyncResponse callback drains this set and fires
         # `on_room_joined` once nio has populated the room.
         self._pending_room_joins: set[str] = set()
+        # Speech-to-text for the decode in `_dispatch`. Built here rather
+        # than on demand because a missing whisper is a normal state, not
+        # an error: without it, audio simply stays audio and reaches no
+        # handler, the same as a message in a language we cannot read.
+        try:
+            self._transcriber = Transcriber.from_env(namespace=self.name)
+        except LLMUnavailableError as e:
+            logger.info(
+                "[{}] no transcription: {} — voice messages will be left "
+                "as audio", self.name, e,
+            )
+            self._transcriber = None
+        # Optional polish on raw whisper output (punctuation, sentence
+        # breaks). Absent, the transcript still lands, just rougher.
+        try:
+            self._transcript_cleanup = LLM.from_env(namespace=self.name)
+        except LLMUnavailableError:
+            self._transcript_cleanup = None
         self._client: AsyncClient | None = None
         # Lazily-created shared aiohttp session for non-nio HTTP (media
         # download, and subclasses' own API calls). Owned by the
@@ -493,13 +514,92 @@ class MicroBot:
                          self.name, room_id, e)
 
     async def _dispatch(self, room_id: str, event) -> None:
-        """Invoke every handler whose registered type matches the event."""
+        """Invoke every handler whose registered type matches the event.
+
+        Speech is decoded first, so what handlers match against is the
+        text of the message rather than its encoding.
+        """
         room = self.client.rooms.get(room_id)
         if room is None:
             return
+
+        decoding = voice.is_voice(event)
+        if decoding:
+            # Transcription is the one part of handling a message that can
+            # run for minutes, and it happens before any handler gets to
+            # signal it is working. A matched handler's wrap clears the
+            # indicator in its `finally`; we clear it ourselves on the two
+            # paths where no handler ever runs.
+            await self._set_typing(room_id, on=True)
+            event = await self._decode_voice(room_id, event)
+            if event is None:
+                await self._set_typing(room_id, on=False)
+                return
+
+        handled = False
         for event_type, handler in self._handlers:
             if isinstance(event, event_type):
+                handled = True
                 await handler(room, event)
+        if decoding and not handled:
+            await self._set_typing(room_id, on=False)
+
+    async def _decode_voice(self, room_id: str, event):
+        """Turn a voice message into the text event it is, or None.
+
+        None means the words could not be recovered — whisper is absent,
+        unreachable, or heard nothing. That is dispatched to nobody
+        rather than answered with an apology: the family can see their
+        own voice message sitting in the room, and a bot volunteering
+        "I could not hear that" in every room it is in, for audio nobody
+        was addressing to it, is noise.
+        """
+        if self._transcriber is None:
+            logger.debug(
+                "[{}] voice from {} left as audio (no whisper)",
+                self.name, event.sender,
+            )
+            return None
+
+        content = event.source.get("content", {})
+        url = content.get("url", "")
+        filename = content.get("filename") or content.get("body") or "voice.ogg"
+
+        async def run() -> dict:
+            audio = await self._download_media(url)
+            if not audio:
+                raise LLMError(f"could not download {url}")
+            raw = await self._transcriber.transcribe(audio, filename=filename)
+            # whisper emits one unbroken lowercase run of words; the polish
+            # pass puts the sentences back without changing them. Both are
+            # kept: polishing again with a better model is cheap, and
+            # transcribing again is not.
+            text = raw
+            if raw.strip() and self._transcript_cleanup is not None:
+                text = await Transcriber.polish(raw, self._transcript_cleanup)
+            return {"raw": raw, "text": text, "url": url, "filename": filename}
+
+        try:
+            transcript = (await voice.TRANSCRIPTS.run(event.event_id, run))["text"]
+        except LLMError as e:
+            logger.warning(
+                "[{}] transcription failed for {}: {}",
+                self.name, event.event_id, e,
+            )
+            return None
+        if not transcript.strip():
+            logger.info(
+                "[{}] no speech found in {}", self.name, event.event_id,
+            )
+            return None
+
+        logger.info(
+            "[{}] heard {} in {}: {}...",
+            self.name, event.sender, room_id, transcript[:80],
+        )
+        return RoomMessage.parse_event(
+            voice.transcribed_source(event.source, transcript)
+        )
 
     # ── Typing + error response ──────────────────────────────────────────
     #

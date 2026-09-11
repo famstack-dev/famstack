@@ -120,10 +120,11 @@ class FakeNotifier:
 
 
 def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
-              transcriber=None, llm=None):
+              llm=None, text_extractor=None):
     return CapturePipeline(
         url_extractor=FakeExtractor(_source(source_uri="http://src")),
-        text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
+        text_extractor=text_extractor
+        or FakeExtractor(_source(source_uri="http://embedded")),
         classifier=classifier or FakeClassifier(),
         mirror=mirror,
         capture_tags=FakeTags(),
@@ -132,35 +133,8 @@ def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
         classify_max_chars=10000,
         capture_keep_body=capture_keep_body,
         capture_tag_prompt_size=50,
-        transcriber=transcriber,
         llm=llm,
     )
-
-
-class FakeTranscriber:
-    """Stand-in for stack.ai.client.Transcriber — records calls and
-    returns a configured transcript or raises a configured error.
-
-    Mirrors the real signature including ``cleanup_with`` so the capture
-    pipeline can pass an LLM through and we can assert the routing.
-    """
-
-    def __init__(self, transcript: str = "I forgot to renew the boiler service",
-                 error: Exception | None = None):
-        self.transcript = transcript
-        self.error = error
-        self.calls: list[dict] = []
-
-    async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
-                         model: str | None = None,
-                         cleanup_with=None) -> str:
-        self.calls.append({
-            "audio": audio, "filename": filename,
-            "cleanup_with": cleanup_with,
-        })
-        if self.error is not None:
-            raise self.error
-        return self.transcript
 
 
 class TestCaptureUrl:
@@ -236,88 +210,6 @@ class TestCaptureText:
         assert out.status == "empty"
 
 
-class TestCaptureVoiceBatch:
-    """The ( ... ) batch flow: N voice memos arrive, each gets transcribed
-    on its way in (with LLM cleanup if available), then `)` combines them
-    into one note via capture_voice_batch."""
-
-    @pytest.mark.asyncio
-    async def test_concatenates_transcripts_with_paragraph_breaks(self):
-        mirror = FakeMirror()
-        pipe = _pipeline(mirror=mirror)
-        out = await pipe.capture_voice_batch(
-            transcripts=[
-                "First memo about the boiler.",
-                "Second memo about Bart's prescription.",
-                "Third memo with shopping list.",
-            ],
-            primary_mxc="mxc://server/first",
-            sender_mxid="@homer:s",
-        )
-        assert out.status == "captured"
-        body = mirror.captures[0]["body_text"]
-        assert "First memo about the boiler." in body
-        assert "Second memo about Bart's prescription." in body
-        assert "Third memo with shopping list." in body
-        # Paragraph breaks between memos so the LLM and the human reader
-        # both see them as distinct thoughts.
-        assert "boiler.\n\nSecond" in body
-
-    @pytest.mark.asyncio
-    async def test_empty_transcripts_returns_empty_status(self):
-        """A `(` ... `)` with no voice memos (or all silent ones) drops
-        out as empty -- the orchestrator silently no-ops, matching the
-        existing scan_cancelled semantics for empty PDF batches."""
-        pipe = _pipeline(mirror=FakeMirror())
-        out = await pipe.capture_voice_batch(
-            transcripts=[], primary_mxc=None, sender_mxid="@homer:s",
-        )
-        assert out.status == "empty"
-
-    @pytest.mark.asyncio
-    async def test_blank_transcripts_filtered(self):
-        """Empty / whitespace-only transcripts are dropped silently so
-        one silent memo in the middle of a batch doesn't add a hole
-        of blank lines to the combined body."""
-        mirror = FakeMirror()
-        pipe = _pipeline(mirror=mirror)
-        out = await pipe.capture_voice_batch(
-            transcripts=["real one", "   ", "", "another real one"],
-            primary_mxc="mxc://server/first",
-            sender_mxid="@homer:s",
-        )
-        assert out.status == "captured"
-        body = mirror.captures[0]["body_text"]
-        assert body == "real one\n\nanother real one"
-
-    @pytest.mark.asyncio
-    async def test_primary_mxc_threads_through_as_source_uri(self):
-        """The first memo's mxc becomes the vault note's link -- the
-        wiki entry points back to the start of the conversation."""
-        mirror = FakeMirror()
-        pipe = _pipeline(mirror=mirror)
-        out = await pipe.capture_voice_batch(
-            transcripts=["just one"],
-            primary_mxc="mxc://server/start-of-batch",
-            sender_mxid="@homer:s",
-        )
-        assert mirror.captures[0]["source_uri"] == "mxc://server/start-of-batch"
-        assert out.display_link == "mxc://server/start-of-batch"
-
-    @pytest.mark.asyncio
-    async def test_outcome_carries_transcript_for_reply_echo(self):
-        """The mime=audio/ogg on the synthetic SourceContent triggers
-        the same transcript-in-reply behaviour single-memo captures
-        get -- so the sender sees the combined text quoted back."""
-        pipe = _pipeline(mirror=FakeMirror())
-        out = await pipe.capture_voice_batch(
-            transcripts=["one", "two"],
-            primary_mxc="mxc://server/x",
-            sender_mxid="@homer:s",
-        )
-        assert out.transcript == "one\n\ntwo"
-
-
 class TestTagList:
     """`_tag_list` mixes the classifier's free-form tags with a `Person: X`
     tag per attributed person, normalising types and whitespace."""
@@ -391,9 +283,9 @@ class TestSourceFromBinary:
         assert kind == "bookmark"
 
     def test_unsupported_mime_returns_none(self):
-        # _source_from_binary itself doesn't handle audio; capture_binary
-        # routes audio through _source_from_audio upstream. Video and
-        # archives still land here and fall through to None.
+        # Video and archives land here and fall through to None. (Audio
+        # never reaches the capture pipeline at all: the transport
+        # decodes it to text before any handler sees it.)
         pipe = self._pipe()
         source, images, _kind = pipe._source_from_binary(
             file_data=b"riff-wave",
@@ -441,140 +333,16 @@ class TestSourceFromBinary:
 # ── Audio capture (voice memos) ────────────────────────────────────────
 
 
-class TestSourceFromAudio:
-    """The audio branch: transcribe via the injected Transcriber, return
-    a note-shaped SourceContent. When no transcriber is wired, soft-skip
-    with None so the orchestrator surfaces a friendly extract_failed."""
-
-    @pytest.mark.asyncio
-    async def test_transcribes_audio_into_note(self):
-        tr = FakeTranscriber(transcript="Reminder: book the boiler service")
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
-        source, images, kind = await pipe._source_from_audio(
-            file_data=b"opus-bytes", mime="audio/ogg",
-            filename="voice-2026-06-09.ogg",
-            source_uri="mxc://server/abc",
-        )
-        assert len(tr.calls) == 1
-        assert tr.calls[0]["audio"] == b"opus-bytes"
-        assert tr.calls[0]["filename"] == "voice-2026-06-09.ogg"
-        assert source is not None
-        assert source.text == "Reminder: book the boiler service"
-        assert source.mime == "audio/ogg"
-        assert source.title_hint == "voice-2026-06-09.ogg"
-        assert source.source_uri == "mxc://server/abc"
-        assert images == []
-        assert kind == "note"
-
-    @pytest.mark.asyncio
-    async def test_no_transcriber_soft_skips(self):
-        # WHISPER_URL unset at bootstrap -> the pipeline drops audio
-        # rather than raising. Bot replies with extract_failed.
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=None)
-        source, images, _kind = await pipe._source_from_audio(
-            file_data=b"opus-bytes", mime="audio/ogg",
-            filename="voice.ogg", source_uri="mxc://server/abc",
-        )
-        assert source is None
-        assert images == []
-
-    @pytest.mark.asyncio
-    async def test_transcriber_error_soft_skips(self):
-        # Whisper is misconfigured or down -> log + drop, same shape as
-        # the no-transcriber case so the user-facing reply is uniform.
-        from stack.ai.client import LLMUnavailableError
-        tr = FakeTranscriber(error=LLMUnavailableError("whisper down"))
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
-        source, images, _kind = await pipe._source_from_audio(
-            file_data=b"opus-bytes", mime="audio/ogg",
-            filename="voice.ogg", source_uri="mxc://server/abc",
-        )
-        assert source is None
-        assert images == []
-
-    @pytest.mark.asyncio
-    async def test_empty_transcript_soft_skips(self):
-        # whisper.cpp sometimes returns "" for a silent clip; treat it
-        # like an unreadable scan -- no point classifying empty bytes.
-        tr = FakeTranscriber(transcript="   \n  ")
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
-        source, images, _kind = await pipe._source_from_audio(
-            file_data=b"silence", mime="audio/ogg",
-            filename="voice.ogg", source_uri="mxc://server/abc",
-        )
-        assert source is None
-        assert images == []
-
-
-class TestCaptureBinaryAudioRouting:
-    """capture_binary peeks at the mime: audio/* -> _source_from_audio,
-    everything else -> _source_from_binary. The classify + mirror tail
-    runs identically afterwards, so a transcribed voice memo lands in
-    the mirror as a fully classified note."""
-
-    @pytest.mark.asyncio
-    async def test_audio_mime_routes_through_transcriber(self):
-        mirror = FakeMirror()
-        tr = FakeTranscriber(transcript="Pick up Bart's prescription Friday")
-        pipe = _pipeline(mirror=mirror, transcriber=tr)
-        out = await pipe.capture_binary(
-            file_data=b"opus-data", mime="audio/ogg",
-            filename="voice-2026-06-09.ogg",
-            source_uri="mxc://server/abc",
-            sender_mxid="@homer:s",
-        )
-        # The transcript reached the mirror via the classify tail.
-        assert len(tr.calls) == 1
-        assert tr.calls[0]["audio"] == b"opus-data"
-        assert tr.calls[0]["filename"] == "voice-2026-06-09.ogg"
-        assert out.status == "captured"
-        assert mirror.captures, "expected the transcript to be mirrored as a note"
-        published = mirror.captures[0]
-        # The body the mirror writes IS the transcript -- voice memo as a
-        # searchable note in the sender's bucket.
-        assert "Pick up Bart's prescription Friday" in published["body_text"]
-        assert published["kind"] == "note"
-        # The outcome carries the transcript so the reply renderer can
-        # echo it back to the sender; PDF/URL/note captures get None.
-        assert out.transcript == "Pick up Bart's prescription Friday"
-
-    @pytest.mark.asyncio
-    async def test_non_audio_capture_outcome_has_no_transcript(self):
-        """A markdown note capture must not surface a transcript field --
-        only audio captures get one, so the reply layer can branch on
-        presence rather than mime-sniffing again."""
-        mirror = FakeMirror()
-        pipe = _pipeline(mirror=mirror, transcriber=FakeTranscriber())
-        out = await pipe.capture_binary(
-            file_data=b"# Hello\n\nbody",
-            mime="text/markdown", filename="note.md",
-            source_uri="mxc://server/md1", sender_mxid="@homer:s",
-        )
-        assert out.status == "captured"
-        assert out.transcript is None
-
-    @pytest.mark.asyncio
-    async def test_audio_without_transcriber_returns_extract_failed(self):
-        # Mirrors a bot booted before `stack up ai` -- the rest of the
-        # bot is alive, but voice messages can't be processed yet.
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=None)
-        out = await pipe.capture_binary(
-            file_data=b"opus-data", mime="audio/ogg",
-            filename="voice.ogg", source_uri="mxc://server/abc",
-            sender_mxid="@homer:s",
-        )
-        assert out.status == "extract_failed"
-        # The reason qualifies the failure so the reply layer can render
-        # a voice-shaped message ('Couldn't transcribe...') rather than
-        # the URL-shaped message ('Couldn't read that link...').
-        assert out.failure_reason == "transcription"
+class TestCaptureBinaryFailures:
+    """capture_binary handles the shapes it can read and says which
+    shape failed, so the reply layer can word the error correctly."""
 
     @pytest.mark.asyncio
     async def test_unreadable_binary_returns_binary_failure_reason(self):
-        """A non-audio mime that the binary path can't extract (e.g.
-        an unsupported video format) returns failure_reason='binary' so
-        the user gets the file-shaped error message, not the link one."""
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=FakeTranscriber())
+        """A mime the binary path can't extract (e.g. an unsupported
+        video format) returns failure_reason='binary' so the user gets
+        the file-shaped error message, not the link one."""
+        pipe = _pipeline(mirror=FakeMirror())
         out = await pipe.capture_binary(
             file_data=b"random-bytes", mime="video/mp4",
             filename="clip.mp4", source_uri="mxc://server/v",
@@ -582,56 +350,6 @@ class TestCaptureBinaryAudioRouting:
         )
         assert out.status == "extract_failed"
         assert out.failure_reason == "binary"
-
-    @pytest.mark.asyncio
-    async def test_non_audio_mime_bypasses_transcriber(self):
-        # An image upload must not get sent to whisper -- the transcriber
-        # is for audio only, so non-audio mimes never touch it.
-        tr = FakeTranscriber()
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr)
-        await pipe.capture_binary(
-            file_data=b"\xff\xd8jpg", mime="image/jpeg",
-            filename="recipe.jpg", source_uri="mxc://server/abc",
-            sender_mxid="@homer:s",
-        )
-        assert tr.calls == []
-
-    @pytest.mark.asyncio
-    async def test_llm_passed_to_transcriber_as_cleanup_with(self):
-        """The CapturePipeline.llm kwarg threads through to the Transcriber's
-        cleanup_with on every audio capture. This is the wiring contract
-        that powers transcript cleanup -- the Transcriber owns the prompt;
-        the pipeline only has to hand it the LLM."""
-        # Sentinel object: not actually called by FakeTranscriber, but we
-        # assert it shows up in the recorded call.
-        sentinel_llm = object()
-        tr = FakeTranscriber(transcript="raw words")
-        pipe = _pipeline(
-            mirror=FakeMirror(), transcriber=tr, llm=sentinel_llm,
-        )
-        await pipe.capture_binary(
-            file_data=b"opus-data", mime="audio/ogg",
-            filename="voice.ogg", source_uri="mxc://server/abc",
-            sender_mxid="@homer:s",
-        )
-        assert tr.calls[0]["cleanup_with"] is sentinel_llm
-
-    @pytest.mark.asyncio
-    async def test_no_llm_means_no_cleanup(self):
-        """When the LLM isn't wired (e.g. archivist boots before
-        OPENAI_URL is set), cleanup_with is None and the Transcriber
-        returns the raw transcript verbatim."""
-        tr = FakeTranscriber(transcript="raw words")
-        pipe = _pipeline(mirror=FakeMirror(), transcriber=tr, llm=None)
-        await pipe.capture_binary(
-            file_data=b"opus-data", mime="audio/ogg",
-            filename="voice.ogg", source_uri="mxc://server/abc",
-            sender_mxid="@homer:s",
-        )
-        assert tr.calls[0]["cleanup_with"] is None
-
-
-# ── Topic-room tag-seed invariant ────────────────────────────────────────
 
 
 class TestTopicSeedMerge:
@@ -1035,21 +753,6 @@ class TestTopicSeedEndToEnd:
         assert non_person == ["van-life", "gear", "vans"]
 
     @pytest.mark.asyncio
-    async def test_capture_voice_batch_with_seed_files_seed_tag(self):
-        """Voice batches go through `_publish` like every other
-        capture; the seed applies the same way."""
-        mirror = FakeMirror()
-        pipe = _pipeline(mirror=mirror)
-        out = await pipe.capture_voice_batch(
-            transcripts=["first memo", "second memo"],
-            primary_mxc="mxc://server/abc",
-            sender_mxid="@homer:s",
-            seed_topics=["camping"],
-        )
-        assert out.status == "captured"
-        assert "camping" in mirror.captures[0]["tags"]
-
-    @pytest.mark.asyncio
     async def test_seed_recorded_in_capture_tag_cache(self):
         """The capture-tag cache feeds the next capture's prompt as
         existing-tags context. A seeded topic-room capture should
@@ -1275,3 +978,30 @@ class TestCaptureEmail:
         assert out.status == "empty"
         assert mirror.emails == []
         assert mirror.captures == []
+
+
+class TestCaptureOrigin:
+    """The footer tells the family where a capture came from. Speech and
+    a paste are not the same provenance and must not read the same."""
+
+    # Spoken words rarely contain a URL, so the footer falls through to
+    # the origin label — which is the whole point of the label.
+    NO_LINK = staticmethod(lambda: FakeExtractor(_source(source_uri=None)))
+
+    @pytest.mark.asyncio
+    async def test_a_transcribed_note_reads_as_a_voice_message(self):
+        pipe = _pipeline(mirror=FakeMirror(), text_extractor=self.NO_LINK())
+        out = await pipe.capture_text(
+            text="Sort out the loft before Christmas.",
+            sender_mxid="@homer:s", transcribed=True,
+        )
+        assert out.display_link == "(voice message)"
+
+    @pytest.mark.asyncio
+    async def test_a_typed_note_still_reads_as_pasted_text(self):
+        pipe = _pipeline(mirror=FakeMirror(), text_extractor=self.NO_LINK())
+        out = await pipe.capture_text(
+            text="Sort out the loft before Christmas.",
+            sender_mxid="@homer:s",
+        )
+        assert out.display_link == "(pasted text)"
