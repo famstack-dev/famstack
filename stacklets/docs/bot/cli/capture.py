@@ -177,7 +177,6 @@ def render_receipt(outcome) -> str:
 
     what = {
         "url": "that link",
-        "transcription": "that voice memo",
         "binary": "that file",
     }.get(getattr(outcome, "failure_reason", None), "the content")
     return f"Nothing captured: could not read {what}."

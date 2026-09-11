@@ -41,7 +41,6 @@ from pipeline import (
     LLMUnavailableError,
 )
 from stack import resolve_model
-from stack.ai.client import LLMError
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -64,11 +63,6 @@ TEXT_MIMES = {
     "text/plain", "text/markdown", "text/x-markdown",
 }
 TEXT_EXTS = {"md", "markdown", "txt"}
-
-# Voice memos: when whisper is wired, the transcript IS the note body.
-# Element and most Matrix clients upload Opus-in-OGG; the other formats
-# show up when people attach a file picker rather than the in-app recorder.
-AUDIO_MIME_PREFIX = "audio/"
 
 # Ratio that the reformatted body must be of the input for the
 # reformat to count as a useful rewrite. A well-behaved reformat
@@ -131,7 +125,6 @@ class CapturePipeline:
         capture_keep_body: bool,
         capture_tag_prompt_size: int,
         vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
-        transcriber=None,
         llm=None,
     ):
         self._url_extractor = url_extractor
@@ -145,13 +138,6 @@ class CapturePipeline:
         self.capture_keep_body = capture_keep_body
         self.capture_tag_prompt_size = capture_tag_prompt_size
         self.vision_max_pdf_pages = vision_max_pdf_pages
-        # Optional: when None, audio uploads soft-skip with extract_failed
-        # so the bot tells the sender it can't transcribe right now.
-        self._transcriber = transcriber
-        # Optional: when present, the transcriber uses it to polish raw
-        # whisper output (add punctuation + sentence breaks). The same
-        # LLM the classifier already runs on -- no extra HTTP client.
-        # Missing -> raw transcript falls through, never a hard failure.
         self._llm = llm
 
     async def capture_url(
@@ -205,23 +191,32 @@ class CapturePipeline:
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
+        transcribed: bool = False,
     ) -> CaptureOutcome:
-        """File a pasted body as a note. Nothing is fetched — the text is
+        """File a message body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
-        The body is always kept (the user typed those exact bytes).
+        The body is always kept (those are the exact words sent).
 
         ``seed_topics`` and ``bucket`` carry the topic-room guarantees
         through; see ``capture_url``.
+
+        ``transcribed`` marks a body that whisper produced rather than a
+        keyboard. It changes nothing about how the note is filed — only
+        whether the reply quotes the words back, which is the sender's
+        one chance to catch a mishearing.
         """
         source = await self._text_extractor.extract(text)
         if source is None:
             return CaptureOutcome(status="empty")
+        # The footer says where a capture came from. "(pasted text)" is a
+        # lie about something somebody said out loud.
+        origin = "(voice message)" if transcribed else "(pasted text)"
         return await self._publish(
             source=source, kind="note", sender_mxid=sender_mxid,
-            display_link=source.source_uri or "(pasted text)",
+            display_link=source.source_uri or origin,
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket,
+            bucket=bucket, transcribed=transcribed,
         )
 
     async def capture_email(
@@ -267,48 +262,6 @@ class CapturePipeline:
             default_person=False,
         )
 
-    async def capture_voice_batch(
-        self, *,
-        transcripts: list[str],
-        primary_mxc: str | None,
-        sender_mxid: str,
-        capture_id: str | None = None,
-        seed_topics: list[str] | None = None,
-        bucket: str | None = None,
-    ) -> CaptureOutcome:
-        """File N voice memos as a single combined note.
-
-        Used by the `( ... )` batch flow: each voice memo has already
-        been transcribed (and LLM-cleaned) on arrival, so this just
-        concatenates them with paragraph breaks and ships the result
-        through the standard publish path. ``primary_mxc`` is the
-        first memo's media URL -- the vault note links back to the
-        start of the conversation; other memos stay discoverable via
-        chat scrollback.
-
-        Marking the SourceContent as ``audio/ogg`` makes ``_publish``
-        echo the combined transcript in the capture reply, same as
-        single-memo captures, so the sender sees the whole batch's
-        text quoted back to them.
-        """
-        bodies = [t.strip() for t in transcripts if t and t.strip()]
-        if not bodies:
-            return CaptureOutcome(status="empty")
-        combined = "\n\n".join(bodies)
-        source = SourceContent(
-            text=combined,
-            mime="audio/ogg",
-            title_hint=None,
-            source_uri=primary_mxc,
-        )
-        return await self._publish(
-            source=source, kind="note", sender_mxid=sender_mxid,
-            display_link=primary_mxc or "(voice batch)",
-            actor=sender_mxid,
-            capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket,
-        )
-
     async def capture_binary(
         self, *,
         file_data: bytes,
@@ -333,21 +286,13 @@ class CapturePipeline:
         wiki entry links back to the original binary -- we don't
         re-store the bytes; Matrix already has them.
         """
-        is_audio = bool(mime and mime.startswith(AUDIO_MIME_PREFIX))
-        if is_audio:
-            source, images, kind = await self._source_from_audio(
-                file_data=file_data, mime=mime, filename=filename,
-                source_uri=source_uri,
-            )
-        else:
-            source, images, kind = self._source_from_binary(
-                file_data=file_data, mime=mime, filename=filename,
-                source_uri=source_uri,
-            )
+        source, images, kind = self._source_from_binary(
+            file_data=file_data, mime=mime, filename=filename,
+            source_uri=source_uri,
+        )
         if source is None:
             return CaptureOutcome(
-                status="extract_failed",
-                failure_reason="transcription" if is_audio else "binary",
+                status="extract_failed", failure_reason="binary",
             )
         source = self._cap_pdf_body(source)
         source = await self._maybe_reformat_pdf(source, kind)
@@ -420,49 +365,6 @@ class CapturePipeline:
             mime=source.mime,
             title_hint=source.title_hint,
             source_uri=source.source_uri,
-        )
-
-    async def _source_from_audio(
-        self, *, file_data: bytes, mime: str, filename: str,
-        source_uri: str | None,
-    ) -> tuple[SourceContent | None, list[ImageAttachment], str]:
-        """Transcribe a voice memo into a note-shaped SourceContent.
-
-        The transcript IS the note body: same kind ("note") that md/txt
-        uploads use, so the classifier sees the transcribed text and the
-        mirror writes the words verbatim. Returning ``None`` signals the
-        capture as extract_failed -- the orchestrator already renders a
-        friendly reply for that case, so a missing/down whisper service
-        surfaces uniformly across PDFs and audio.
-        """
-        if self._transcriber is None:
-            logger.info(
-                "[capture] audio dropped: no transcriber configured "
-                "(WHISPER_URL unset?)"
-            )
-            return (None, [], "note")
-        try:
-            transcript = await self._transcriber.transcribe(
-                file_data, filename=filename or "voice.ogg",
-                cleanup_with=self._llm,
-            )
-        except LLMError as e:
-            # Same failure shape the LLM client uses for chat outages;
-            # the orchestrator already maps extract_failed to a user-
-            # visible "I couldn't process that" reply.
-            logger.warning("[capture] transcription failed: {}", e)
-            return (None, [], "note")
-        if not transcript.strip():
-            return (None, [], "note")
-        return (
-            SourceContent(
-                text=transcript,
-                mime=mime,
-                title_hint=filename or None,
-                source_uri=source_uri,
-            ),
-            [],
-            "note",
         )
 
     def _source_from_binary(
@@ -651,6 +553,7 @@ class CapturePipeline:
         bucket: str | None = None,
         email_meta: dict | None = None,
         default_person: bool = True,
+        transcribed: bool = False,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -777,12 +680,11 @@ class CapturePipeline:
                 if user_hint:
                     envelope["data"]["user_hint"] = user_hint
 
-        # Voice captures echo the transcript back to the sender so they
-        # can spot a mistranscription without opening the vault. Other
-        # capture shapes (PDFs, images, URLs, notes) leave it None.
-        source_mime = getattr(source, "mime", None) or ""
-        is_audio_source = source_mime.startswith(AUDIO_MIME_PREFIX)
-        transcript = source.text if is_audio_source else None
+        # Transcribed captures echo the words back to the sender so they
+        # can spot a mishearing without opening the vault. The caller says
+        # so; by the time the text reaches here it is an ordinary note,
+        # indistinguishable from a typed one, which is the point.
+        transcript = source.text if transcribed else None
 
         return CaptureOutcome(
             status="reclassified" if reclassified else "captured",

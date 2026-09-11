@@ -50,6 +50,7 @@ from nio import (
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
+import voice
 from microbot import CHECK, CROSS, EYES, MicroBot
 from pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
@@ -65,10 +66,7 @@ from stack import resolve_model
 from stack.email_message import defang_links
 from stack.links import go_docs, go_topic, public
 from stack.ai.client import (
-    LLMError,
-    LLMUnavailableError,
     ModelCapabilities,
-    Transcriber,
 )
 
 # Make sibling stacklets importable. In the bot-runner container,
@@ -161,7 +159,7 @@ def _llm_error_for_chat(
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SUPPORTED_MSGTYPES = {"m.file", "m.image", "m.audio"}
+SUPPORTED_MSGTYPES = {"m.file", "m.image"}
 
 SCAN_BEGIN = {"scan", "("}
 SCAN_END = {"done", "fertig", ")"}
@@ -223,8 +221,6 @@ def _guess_mime(filename: str, msgtype: str) -> str:
         return _MIME_BY_EXT[ext]
     if msgtype == "m.image":
         return "image/jpeg"
-    if msgtype == "m.audio":
-        return "audio/ogg"
     return "application/octet-stream"
 
 
@@ -301,10 +297,6 @@ class ArchivistBot(MicroBot):
         self.link_base_url = os.environ.get("LINK_BASE_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
         self.openai_key = os.environ.get("OPENAI_KEY", "")
-        # Voice transcription endpoint. When unset (e.g. the AI stacklet
-        # isn't installed yet), the archivist still files PDFs/images; only
-        # the audio-capture path becomes a soft-skip with a friendly reply.
-        self.whisper_url = os.environ.get("WHISPER_URL", "")
         self.language = os.environ.get("LANGUAGE", "en")
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
@@ -378,7 +370,6 @@ class ArchivistBot(MicroBot):
         self._pipeline: DocumentPipeline | None = None
         self._search: SearchService | None = None
         self._capture: CapturePipeline | None = None
-        self._transcriber: Transcriber | None = None
         self._vault: VaultContext | None = None
         self._paperless_version: str = ""
 
@@ -475,27 +466,6 @@ class ArchivistBot(MicroBot):
             shared_bucket=self.shared_bucket,
             vault=self._vault,
         )
-        # Whisper speaks /v1/audio/transcriptions on its own port, so the
-        # Transcriber gets its own client. When WHISPER_URL is unset the
-        # archivist still works for PDFs/images; only the voice-capture
-        # branch in the pipeline soft-skips.
-        if self.whisper_url:
-            try:
-                self._transcriber = Transcriber.from_env(namespace=self.name)
-            except LLMUnavailableError as e:
-                logger.warning("[archivist] no transcription: {}", e)
-                self._transcriber = None
-        else:
-            logger.info(
-                "[archivist] WHISPER_URL unset — voice messages will be ignored "
-                "(set up AI with 'stack up ai' to enable transcription)"
-            )
-
-        # The capture pipeline borrows the classifier's framework LLM for
-        # transcript cleanup -- punctuating raw whisper output with the
-        # model that's already running. When the classifier isn't built
-        # (AI not configured), cleanup soft-skips and the raw transcript
-        # falls through.
         capture_llm = self._classifier.llm if self._classifier is not None else None
         self._capture = CapturePipeline(
             url_extractor=self._url_extractor,
@@ -509,7 +479,6 @@ class ArchivistBot(MicroBot):
             capture_keep_body=self.capture_keep_body,
             capture_tag_prompt_size=self.capture_tag_prompt_size,
             vision_max_pdf_pages=self.vision_max_pdf_pages,
-            transcriber=self._transcriber,
             llm=capture_llm,
         )
         # Warm the vision-capability cache on every boot. Previously
@@ -1509,17 +1478,6 @@ class ArchivistBot(MicroBot):
         if msgtype not in SUPPORTED_MSGTYPES:
             return
 
-        # Voice messages depend on the optional whisper service. When the
-        # transcriber wasn't wired (WHISPER_URL unset or whisper missing
-        # at boot), silently ignore audio so the bot still files PDFs and
-        # images normally; the startup log already warned the admin.
-        if msgtype == "m.audio" and self._transcriber is None:
-            logger.debug(
-                "[archivist] ignoring voice from {} (transcription disabled)",
-                event.sender,
-            )
-            return
-
         url = content.get("url", "")
         if not url or not url.startswith("mxc://"):
             return
@@ -1553,20 +1511,12 @@ class ArchivistBot(MicroBot):
         display_name = _clean_filename(raw_filename, msgtype)
         reply_to = event.event_id
 
-        # Multi-page scan / multi-message batch mode. PDFs and images
-        # take the existing page-accumulator path; voice memos take the
-        # transcription-and-accumulate path so a single `(` ... `)`
-        # session can collect either kind (or both, filed as separate
-        # captures on close).
+        # Multi-page scan mode: accumulate pages until `)` closes the
+        # session and the batch is filed as one document.
         if event.sender in self._scan_sessions:
-            if msgtype == "m.audio":
-                await self._handle_voice_batch_message(
-                    room.room_id, event, url, raw_filename,
-                )
-            else:
-                await self._handle_scan_page(
-                    room.room_id, event, url, raw_filename, caption,
-                )
+            await self._handle_scan_page(
+                room.room_id, event, url, raw_filename, caption,
+            )
             return
 
         file_data = await self._download_media(url)
@@ -1593,11 +1543,7 @@ class ArchivistBot(MicroBot):
         # capture room: PDFs and images become visual bookmarks in the
         # sender's bucket; Matrix already stores the binary, so we link
         # to the mxc URL and don't re-archive the bytes.
-        #
-        # Voice memos always take the capture path, even in #documents:
-        # a transcript belongs in the sender's own notes, not in Paperless
-        # alongside scanned invoices and IDs.
-        if self._is_documents_room(ctx) and msgtype != "m.audio":
+        if self._is_documents_room(ctx):
             await self._process_document(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
                 date_filed=self._event_date(event),
@@ -1661,6 +1607,11 @@ class ArchivistBot(MicroBot):
             return
         query_lower = query.lower()
         reply_to = event.event_id
+        # Whether these words were spoken rather than typed. Used twice
+        # below, and for nothing else: never to route, only to decide
+        # whether the message was handed to us deliberately and whether
+        # to quote it back for checking.
+        transcribed = voice.was_transcribed(event.source.get("content", {}))
 
         ctx = self._room_context(room)
         # First-encounter welcome -- idempotent, gated by a per-room
@@ -1739,8 +1690,7 @@ class ArchivistBot(MicroBot):
         elif (begin := _split_scan_command(query, SCAN_BEGIN))[0]:
             sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
             self._scan_sessions[event.sender] = {
-                "files": [], "voice_inputs": [],
-                "room_id": room.room_id, "caption": begin[1],
+                "files": [], "room_id": room.room_id, "caption": begin[1],
             }
             await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
 
@@ -1812,7 +1762,9 @@ class ArchivistBot(MicroBot):
                 sender=event.sender,
             )
 
-        elif self._looks_like_paste(query) and self._count_humans_in_room(room) < 2:
+        elif transcribed or (
+            self._looks_like_paste(query) and self._count_humans_in_room(room) < 2
+        ):
             # One person in the room, paste-shaped message, no mention →
             # file as text capture. Nobody is being talked *to* here, so
             # a long message is material dropped for us to keep.
@@ -1827,10 +1779,21 @@ class ArchivistBot(MicroBot):
             #
             # Links and files are unaffected in either case: pasting a URL
             # or dropping a PDF is a deliberate act, not a turn in a
-            # conversation.
+            # conversation. A voice memo is the same kind of act: nobody
+            # holds the mic button for thirty seconds as a turn in a chat,
+            # and the length heuristic that stands in for deliberateness
+            # elsewhere cannot read it. So speech carries itself past this
+            # gate, in any room, exactly as an upload does.
+            #
+            # This is not speech being routed differently. Everything
+            # above still applies to it unchanged -- a memo addressed to
+            # the bot is a question, in the documents room it is a search,
+            # in a thread it obeys ownership. Only "was this handed to us
+            # on purpose?" is answered another way, because for speech
+            # there is another way to answer it.
             await self._handle_text_capture(
                 room.room_id, query, event.sender, reply_to,
-                capture_id=event.event_id,
+                capture_id=event.event_id, transcribed=transcribed,
             )
 
         else:
@@ -2154,82 +2117,21 @@ class ArchivistBot(MicroBot):
         # the timeline clean; the scan-complete reply is the closure.
         await self._react(room_id, reply_to, EYES)
 
-    async def _handle_voice_batch_message(
-        self, room_id: str, event, url: str, raw_filename: str,
-    ):
-        """Transcribe a voice memo and stash it on the open batch session.
-
-        Mirrors _handle_scan_page: download, normalise input, append to
-        the session, ack the count. The transcript is computed eagerly
-        (with the LLM cleanup pass) so by the time `)` arrives we just
-        concatenate ready text -- no extra round-trip on close.
-        """
-        reply_to = event.event_id
-        if self._transcriber is None:
-            await self._send(
-                room_id, self.t("scan_voice_no_transcriber"), reply_to,
-            )
-            return
-        try:
-            audio = await self._download_media(url)
-        except Exception as e:
-            await self._send(
-                room_id, self.t("scan_voice_failed", error=str(e)), reply_to,
-            )
-            return
-        if not audio:
-            await self._send(
-                room_id, self.t("scan_voice_failed_matrix"), reply_to,
-            )
-            return
-
-        cleanup_llm = self._classifier.llm if self._classifier is not None else None
-        try:
-            transcript = await self._transcriber.transcribe(
-                audio, filename=raw_filename or "voice.ogg",
-                cleanup_with=cleanup_llm,
-            )
-        except LLMError as e:
-            logger.warning("[archivist] batch voice transcribe failed: {}", e)
-            await self._send(
-                room_id, self.t("scan_voice_failed", error=str(e)), reply_to,
-            )
-            return
-
-        if not transcript.strip():
-            await self._send(room_id, self.t("scan_voice_empty"), reply_to)
-            return
-
-        session = self._scan_sessions[event.sender]
-        session["voice_inputs"].append({
-            "transcript": transcript,
-            "mxc": url,
-            "event_id": event.event_id,
-        })
-        # 👀 acknowledges the memo landed in the batch; the scan-complete
-        # reply is the closure (mirrors _handle_scan_page).
-        await self._react(room_id, reply_to, EYES)
-
     async def _handle_scan_complete(
         self, room_id: str, sender: str, reply_to: str | None = None,
         *, date_filed: str | None = None,
     ):
         session = self._scan_sessions.pop(sender)
         files = session["files"]
-        voice_inputs = session.get("voice_inputs") or []
         caption = session.get("caption", "").strip()
         sender_name = sender.split(":")[0].replace("@", "").capitalize()
 
         # Nothing accumulated -- the user opened a session and closed it
         # without sending anything. Treat as cancelled, same as today.
-        if not files and not voice_inputs:
+        if not files:
             await self._send(room_id, self.t("scan_cancelled"), reply_to)
             return
 
-        # Files (PDFs / images) take the existing PDF combine path. A
-        # mixed batch files both: the PDF as a document and the voice
-        # memos as a separate note below, since the vault data model
-        # has one body per capture.
         if files:
             if len(files) == 1:
                 filename, file_data = files[0]
@@ -2267,40 +2169,6 @@ class ArchivistBot(MicroBot):
                     user_hint=caption or None,
                     submitter_mxid=sender,
                 )
-
-        if voice_inputs:
-            await self._handle_voice_batch_complete(
-                room_id, sender, voice_inputs, reply_to,
-            )
-
-    async def _handle_voice_batch_complete(
-        self, room_id: str, sender: str, voice_inputs: list[dict],
-        reply_to: str | None,
-    ):
-        """File the accumulated voice memos as one combined note.
-
-        Each input already carries a cleaned transcript (the LLM pass
-        ran at message time), so this just hands the list to the
-        capture pipeline and renders the resulting reply. We post a
-        progress line first because the classify call is the slowest
-        step and the sender deserves to know we're working.
-        """
-        n = len(voice_inputs)
-        await self._send(
-            room_id, self.t("scan_voice_complete", count=n), reply_to,
-        )
-        binding = await self._topic_binding(
-            self._room_by_id(room_id), sender,
-        )
-        outcome = await self._capture.capture_voice_batch(
-            transcripts=[v["transcript"] for v in voice_inputs],
-            primary_mxc=voice_inputs[0].get("mxc"),
-            sender_mxid=sender,
-            capture_id=voice_inputs[0].get("event_id"),
-            seed_topics=binding.seed_topics if binding else None,
-            bucket=binding.bucket if binding else None,
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
 
     # ── URL capture (knowledge rooms, DMs, per-person notes rooms) ───────
     #
@@ -2354,6 +2222,7 @@ class ArchivistBot(MicroBot):
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
+        transcribed: bool = False,
     ) -> None:
         # 👀 before the work, like every other capture shape: a link gets
         # it from the pipeline's notifier, an upload from the handler. A
@@ -2371,6 +2240,7 @@ class ArchivistBot(MicroBot):
             capture_id=capture_id,
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
+            transcribed=transcribed,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -2448,7 +2318,6 @@ class ArchivistBot(MicroBot):
             # back to the original URL-shaped message for legacy callers.
             failure_keys = {
                 "url": "capture_failed",
-                "transcription": "capture_failed_transcription",
                 "binary": "capture_failed_binary",
             }
             key = failure_keys.get(o.failure_reason or "", "capture_failed")

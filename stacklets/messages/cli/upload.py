@@ -14,7 +14,8 @@ By default the file is posted as stacker-bot (the system account). Pass
 The user's password is read from the secrets store (the same place the
 account was created), so the sender shows up correctly in the timeline and
 the archivist's "received from <name>" reply. Images (.png/.jpg) are sent
-as m.image; everything else as m.file.
+as m.image, audio (.ogg/.opus/.m4a/.mp3/.wav) as m.audio so it is treated
+as a voice message and transcribed; everything else as m.file.
 """
 
 HELP = "Upload a file to a chat room"
@@ -27,7 +28,10 @@ sys.path.insert(0, str(_here))
 from _matrix import MatrixClient, resolve_login
 
 # Extension → (mime type, Matrix msgtype). Images go as m.image so the
-# archivist takes its vision path; everything else is m.file.
+# archivist takes its vision path. Audio goes as m.audio, which is what a
+# phone's mic button sends, so the framework transcribes it and the bots
+# see the words — the only way to exercise voice from the terminal.
+# Everything else is m.file.
 _MIME = {
     ".pdf": ("application/pdf", "m.file"),
     ".png": ("image/png", "m.image"),
@@ -36,6 +40,11 @@ _MIME = {
     ".webp": ("image/webp", "m.image"),
     ".gif": ("image/gif", "m.image"),
     ".txt": ("text/plain", "m.file"),
+    ".ogg": ("audio/ogg", "m.audio"),
+    ".opus": ("audio/ogg", "m.audio"),
+    ".m4a": ("audio/mp4", "m.audio"),
+    ".mp3": ("audio/mpeg", "m.audio"),
+    ".wav": ("audio/wav", "m.audio"),
 }
 
 

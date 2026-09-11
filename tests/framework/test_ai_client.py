@@ -554,9 +554,11 @@ class _StubLLM:
         self.result = result
         self.error = error
         self.calls: list[tuple[str, str]] = []
+        self.kwargs: list[dict] = []
 
-    async def complete(self, role: str, prompt: str) -> str:
+    async def complete(self, role: str, prompt: str, **kw) -> str:
         self.calls.append((role, prompt))
+        self.kwargs.append(kw)
         if self.error is not None:
             raise self.error
         return self.result
@@ -633,4 +635,164 @@ class TestTranscriberCleanup:
         empty_llm = _StubLLM(result="   \n  ")
         tr = _make_transcriber(httpserver)
         assert await tr.transcribe(b"audio", cleanup_with=empty_llm) == "raw words present"
+        await tr.aclose()
+
+
+class TestPolishKeepsTheWords:
+    """The polish pass may add punctuation, capitalization and sentence
+    breaks. It may not change what was said.
+
+    This is not a theoretical guard. Pointed at a reasoning model with
+    thinking left on, the cleanup prompt came back with a page of the
+    model's own deliberation and no transcript at all. Without a check,
+    that monologue is what gets written into the family's vault in place
+    of the words somebody actually spoke — and the audio it came from is
+    the only remaining copy.
+
+    So the polish is verified against its own contract rather than
+    trusted: same words, same order, or we keep the raw transcript.
+    """
+
+    async def test_punctuation_and_capitalization_are_accepted(
+        self, httpserver: HTTPServer,
+    ):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "hey i forgot to renew the boiler"})
+        llm = _StubLLM(result="Hey, I forgot to renew the boiler.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "Hey, I forgot to renew the boiler."
+        )
+        await tr.aclose()
+
+    async def test_a_model_thinking_out_loud_is_rejected(
+        self, httpserver: HTTPServer,
+    ):
+        """The failure that prompted this: reasoning leaks into content."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "book the campsite for july"})
+        llm = _StubLLM(result=(
+            "Here's a thinking process:\n\n1. **Analyze User Input:** The "
+            "user wants punctuation restored. Let me check the constraints."
+        ))
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "book the campsite for july"
+        )
+        await tr.aclose()
+
+    async def test_a_summary_is_rejected(self, httpserver: HTTPServer):
+        """Dropping words is the quiet failure: it reads fine and is wrong."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({
+            "text": "remember to book the campsite by the lake for july",
+        })
+        llm = _StubLLM(result="Book the campsite.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "remember to book the campsite by the lake for july"
+        )
+        await tr.aclose()
+
+    async def test_a_truncated_polish_is_rejected(self, httpserver: HTTPServer):
+        """Hitting the token limit mid-sentence loses the tail silently."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "one two three four five six"})
+        llm = _StubLLM(result="One, two, three.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "one two three four five six"
+        )
+        await tr.aclose()
+
+    async def test_reordered_words_are_rejected(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "marge called about bart"})
+        llm = _StubLLM(result="Bart called about Marge.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "marge called about bart"
+        )
+        await tr.aclose()
+
+    async def test_whitespace_and_line_breaks_are_accepted(
+        self, httpserver: HTTPServer,
+    ):
+        """whisper emits segment-per-line with leading spaces; rejoining
+        those into paragraphs is exactly what the polish is for."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "book the campsite.\n by the lake."})
+        llm = _StubLLM(result="Book the campsite, by the lake.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "Book the campsite, by the lake."
+        )
+        await tr.aclose()
+
+
+class TestPolishIsDeterministic:
+    """Polishing is a transformation, not a generation: the same words in
+    should give the same punctuation out. Sampling only invites the model
+    to rephrase, which the word check then rejects — so a run that costs a
+    model call ends up returning the raw transcript anyway."""
+
+    async def test_the_cleanup_call_pins_temperature(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "book the campsite"})
+        llm = _StubLLM(result="Book the campsite.")
+        tr = _make_transcriber(httpserver)
+        await tr.transcribe(b"a", cleanup_with=llm)
+        assert llm.kwargs[0]["temperature"] == 0.0
+        await tr.aclose()
+
+
+class TestPolishMayAddPunctuationInsideWords:
+    """Regression: the first word-level check rejected every real polish.
+
+    Whisper writes "theres" and "well known"; restoring the apostrophe and
+    the hyphen is punctuation, which the prompt permits. A check that
+    split on non-word characters counted those as new words and threw the
+    polish away, so the feature silently did nothing against a live model
+    while every stubbed test passed.
+    """
+
+    async def test_a_restored_apostrophe_is_accepted(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "theres decorations in the loft"})
+        llm = _StubLLM(result="There's decorations in the loft.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "There's decorations in the loft."
+        )
+        await tr.aclose()
+
+    async def test_a_restored_hyphen_is_accepted(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "its a well known campsite"})
+        llm = _StubLLM(result="It's a well-known campsite.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "It's a well-known campsite."
+        )
+        await tr.aclose()
+
+    async def test_a_changed_word_is_still_rejected(self, httpserver: HTTPServer):
+        """The loosening must not swallow an actual edit."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "theres decorations in the loft"})
+        llm = _StubLLM(result="There are decorations in the attic.")
+        tr = _make_transcriber(httpserver)
+        assert await tr.transcribe(b"a", cleanup_with=llm) == (
+            "theres decorations in the loft"
+        )
         await tr.aclose()

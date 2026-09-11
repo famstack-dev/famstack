@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from dataclasses import dataclass
 
 import openai
@@ -245,6 +246,7 @@ class LLM:
             resp = await self._client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
+                extra_body=_NO_THINKING,
                 **kwargs,
             )
         # Order matters: APITimeoutError < APIConnectionError, and
@@ -297,6 +299,23 @@ class LLM:
     async def aclose(self) -> None:
         """Close the underlying HTTP client. Owned by us via from_env()."""
         await self._client.close()
+
+
+# Every prompt famstack sends wants an answer, not a monologue: classify
+# this, summarise that, punctuate these words. Reasoning models default to
+# writing their deliberation into `content`, which at best burns tokens and
+# at worst *is* the output — a Qwen3 with thinking on answered the
+# transcript-polish prompt with a page of its own analysis and never
+# reached the transcript.
+#
+# `chat_template_kwargs` is the switch that actually works. Verified
+# against oMLX: `reasoning_effort`, a top-level `enable_thinking`, a
+# `reasoning` object and the `/no_think` prompt suffix all had no effect,
+# while this returned clean output with finish_reason=stop. vLLM, SGLang
+# and Ollama take the same key; servers that don't know it ignore unknown
+# body fields. Sent on every call rather than hidden behind a setting,
+# because there is no famstack prompt that wants the other behaviour.
+_NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 def _content_parts(prompt: str, images: list) -> list[dict]:
@@ -451,27 +470,81 @@ class Transcriber:
         raw = (getattr(resp, "text", "") or "").strip()
         if not raw or cleanup_with is None:
             return raw
-        return await self._cleanup(raw, cleanup_with)
+        return await self.polish(raw, cleanup_with)
 
     @staticmethod
-    async def _cleanup(raw: str, llm: "LLM") -> str:
-        """Run the LLM-cleanup pass; fall back to raw on any failure.
+    def _comparable(text: str) -> str:
+        """`text` reduced to what the polish is not allowed to change.
 
-        Cleanup is best-effort: if the LLM is down or the model returns
-        empty output, the caller still gets a usable transcript. We log
-        a warning so the admin can see drift between raw and clean if
-        they ever want to investigate model quality.
+        Letters and digits only, lowercased. Punctuation is dropped
+        rather than treated as a separator, because the polish is
+        *supposed* to add it — including inside words. Splitting on
+        non-word characters instead would read a restored apostrophe
+        ("theres" -> "there's") or a restored hyphen ("well known" ->
+        "well-known") as an added word and reject a correct polish.
+        That is not hypothetical: it rejected every real polish on the
+        first run against a live model.
+
+        The failures this exists to catch all move far more than a
+        boundary — reasoning leaking into the reply, a summary, a
+        truncation, reordered words — so comparing the letter stream
+        catches them while leaving legitimate punctuation alone.
+        """
+        return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+    @staticmethod
+    async def polish(raw: str, llm: "LLM") -> str:
+        """Restore punctuation and sentence breaks in a raw transcript.
+
+        whisper.cpp emits one unbroken lowercase run of words. This pass
+        makes it readable again without changing what was said — the
+        prompt forbids adding, removing, reordering or rephrasing, so the
+        result is still verbatim. That restraint is deliberate: the
+        memories room holds things people said to their children, and a
+        model "improving" those is not a transcript any more.
+
+        Public because the polish and the transcription are separately
+        useful: a backfill keeps the raw text so a better model can
+        re-polish years of recordings without paying for whisper twice.
+
+        Best-effort: if the LLM is down or returns nothing, the caller
+        still gets a usable transcript. We log a warning so the admin can
+        see drift between raw and polished if they want to investigate
+        model quality.
         """
         try:
             cleaned = await llm.complete(
                 _CLEANUP_ROLE, _CLEANUP_PROMPT.format(raw=raw),
+                # A transformation, not a generation: the same words
+                # should always get the same punctuation. Sampling only
+                # invites the rephrasing the word check below rejects,
+                # which turns a paid model call into a raw transcript.
+                temperature=0.0,
             )
         except LLMError as e:
             logger.warning("[transcriber] cleanup failed, returning raw: {}", e)
             return raw
         cleaned = (cleaned or "").strip()
         # A model that returned nothing is no better than no model.
-        return cleaned or raw
+        if not cleaned:
+            return raw
+        # Verify rather than trust. The prompt permits punctuation,
+        # capitalization and line breaks and nothing else, so the word
+        # sequence is an exact, checkable invariant — and the failures
+        # worth catching all break it: reasoning leaking into `content`,
+        # a summary instead of a transcript, a polish truncated at the
+        # token limit, words reordered. Any of those would otherwise be
+        # written into the vault as what somebody said, with the audio
+        # as the only surviving copy of the truth.
+        raw_cmp, clean_cmp = Transcriber._comparable(raw), Transcriber._comparable(cleaned)
+        if raw_cmp != clean_cmp:
+            logger.warning(
+                "[transcriber] polish changed the words, keeping raw "
+                "(raw={} chars, polished={} chars)",
+                len(raw_cmp), len(clean_cmp),
+            )
+            return raw
+        return cleaned
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client. Owned by us via from_env()."""

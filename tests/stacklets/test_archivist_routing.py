@@ -27,6 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
+import voice  # noqa: E402
 from archivist import ArchivistBot  # noqa: E402
 
 
@@ -712,6 +713,51 @@ class TestStripReplyFallback:
 
 # ── Mention as routing signal ─────────────────────────────────────────────
 
+@pytest.fixture
+def bot_with_recorder(tmp_path):
+    """Build a bot wired with stubs that record handler dispatches.
+
+    Avoids any I/O. The handlers under test (_handle_search,
+    _handle_capture, _handle_text_capture) are replaced with
+    recorders so we can assert which branch fired with which query.
+    """
+    bot = _build_bot(tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    async def _record_search(room_id, query, reply_to=None, *, sender=None):
+        calls.append(("search", query))
+
+    async def _record_capture(room_id, url, sender, reply_to=None,
+                              *, capture_id=None):
+        calls.append(("capture_url", url))
+
+    async def _record_text_capture(room_id, text, sender, reply_to=None,
+                                   *, capture_id=None, transcribed=False):
+        calls.append(("capture_text", text))
+
+    async def _record_url(room_id, url, reply_to=None, **kw):
+        calls.append(("paperless_url", url))
+
+    async def _record_send(*a, **kw):
+        calls.append(("send", a[1] if len(a) > 1 else ""))
+
+    bot._handle_search = _record_search
+    bot._handle_capture = _record_capture
+    bot._handle_text_capture = _record_text_capture
+    bot._handle_url = _record_url
+    bot._send = _record_send
+    # Correction lookup needs the client; short-circuit it. What it
+    # resolves is pinned in test_archivist_corrections.py.
+    bot._correction_anchor = lambda *_a, **_kw: _none_coro()
+    # The per-room welcome path runs ahead of routing decisions in
+    # `_on_text` / `_on_file`. These tests focus on the routing
+    # dispatch, not the welcome -- stub it out so the recorded
+    # calls list stays clean. The welcome itself has its own test
+    # file: tests/stacklets/test_archivist_welcome.py.
+    bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none_coro()
+    return bot, calls
+
+
 class TestMentionRoutesToSearch:
     """Mention promotes any free-text message to a search query, in any
     room. The mxid is stripped first so command matching and search see
@@ -744,49 +790,6 @@ class TestMentionRoutesToSearch:
             users={uid: object() for uid in (members or [BOT_ID, "@homer:server", "@marge:server"])},
         )
 
-    @pytest.fixture
-    def bot_with_recorder(self, tmp_path):
-        """Build a bot wired with stubs that record handler dispatches.
-
-        Avoids any I/O. The handlers under test (_handle_search,
-        _handle_capture, _handle_text_capture) are replaced with
-        recorders so we can assert which branch fired with which query.
-        """
-        bot = _build_bot(tmp_path)
-        calls: list[tuple[str, str]] = []
-
-        async def _record_search(room_id, query, reply_to=None, *, sender=None):
-            calls.append(("search", query))
-
-        async def _record_capture(room_id, url, sender, reply_to=None,
-                                  *, capture_id=None):
-            calls.append(("capture_url", url))
-
-        async def _record_text_capture(room_id, text, sender, reply_to=None,
-                                       *, capture_id=None):
-            calls.append(("capture_text", text))
-
-        async def _record_url(room_id, url, reply_to=None, **kw):
-            calls.append(("paperless_url", url))
-
-        async def _record_send(*a, **kw):
-            calls.append(("send", a[1] if len(a) > 1 else ""))
-
-        bot._handle_search = _record_search
-        bot._handle_capture = _record_capture
-        bot._handle_text_capture = _record_text_capture
-        bot._handle_url = _record_url
-        bot._send = _record_send
-        # Correction lookup needs the client; short-circuit it. What it
-        # resolves is pinned in test_archivist_corrections.py.
-        bot._correction_anchor = lambda *_a, **_kw: _none_coro()
-        # The per-room welcome path runs ahead of routing decisions in
-        # `_on_text` / `_on_file`. These tests focus on the routing
-        # dispatch, not the welcome -- stub it out so the recorded
-        # calls list stays clean. The welcome itself has its own test
-        # file: tests/stacklets/test_archivist_welcome.py.
-        bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none_coro()
-        return bot, calls
 
     @pytest.mark.asyncio
     async def test_mention_in_group_room_routes_to_search(self, bot_with_recorder):
@@ -913,3 +916,97 @@ async def _none_coro():
 async def _resp(event):
     """A `room_get_event` response wrapping one event."""
     return SimpleNamespace(event=event)
+
+
+class TestSpokenMessagesAreDeliberate:
+    """A voice memo is a deliberate handover, the way a link or an upload
+    is. Holding the mic button for thirty seconds is not a turn in a
+    conversation, so the ambient-capture gate that silences long *typed*
+    messages in a shared room must not silence it.
+
+    Routing is otherwise identical to typed text — that is the whole
+    point of decoding speech in the transport. What differs is only the
+    "is this material or chatter?" heuristic, which is the same judgement
+    the gate already makes in favour of links and files.
+    """
+
+    @staticmethod
+    def _event(body, *, transcribed, sender="@homer:server"):
+        content: dict = {}
+        if transcribed:
+            content[voice.TRANSCRIPT_KEY] = {
+                "source_msgtype": "m.audio",
+                "url": "mxc://server/abc",
+            }
+        return SimpleNamespace(
+            body=body, sender=sender, event_id="$evt:server",
+            server_timestamp=1, source={"content": content},
+        )
+
+    @staticmethod
+    def _shared_room():
+        """A topic room with two humans in it — the shape that closes the
+        ambient gate for typed text."""
+        return SimpleNamespace(
+            room_id="!room:server",
+            canonical_alias="#topic-camping:server",
+            name="Topic: Camping",
+            users={uid: object() for uid in
+                   (BOT_ID, "@homer:server", "@marge:server")},
+        )
+
+    # Comfortably under the 100-char paste threshold, so nothing but the
+    # spoken-ness can be carrying it past the gate.
+    SHORT = "Book the campsite for July."
+
+    @pytest.mark.asyncio
+    async def test_a_memo_is_captured_in_a_room_with_other_people(
+        self, bot_with_recorder,
+    ):
+        bot, calls = bot_with_recorder
+        await bot._on_text(
+            self._shared_room(), self._event(self.SHORT, transcribed=True),
+        )
+        assert calls == [("capture_text", self.SHORT)]
+
+    @pytest.mark.asyncio
+    async def test_the_same_words_typed_stay_chatter(self, bot_with_recorder):
+        """The contrast that makes the rule honest: it is the deliberate
+        act being recognised, not the words."""
+        bot, calls = bot_with_recorder
+        await bot._on_text(
+            self._shared_room(), self._event(self.SHORT, transcribed=False),
+        )
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_the_capture_is_told_the_words_were_transcribed(
+        self, bot_with_recorder,
+    ):
+        """So the reply quotes them back — the sender's only chance to
+        catch whisper mishearing them without opening the vault."""
+        bot, seen = bot_with_recorder
+        flags: list[bool] = []
+
+        async def _record(room_id, text, sender, reply_to=None, *,
+                          capture_id=None, transcribed=False):
+            flags.append(transcribed)
+
+        bot._handle_text_capture = _record
+        await bot._on_text(
+            self._shared_room(), self._event(self.SHORT, transcribed=True),
+        )
+        assert flags == [True]
+
+    @pytest.mark.asyncio
+    async def test_a_mention_still_asks_rather_than_files(
+        self, bot_with_recorder,
+    ):
+        """Speaking to the bot is asking it something, exactly as typing
+        to it is. Deliberateness decides capture, never who is addressed."""
+        bot, calls = bot_with_recorder
+        event = self._event("Archivist, where is the campsite booking?",
+                            transcribed=True)
+        event.source["content"]["m.mentions"] = {"user_ids": [BOT_ID]}
+        await bot._on_text(self._shared_room(), event)
+        assert [c[0] for c in calls] == ["search"]

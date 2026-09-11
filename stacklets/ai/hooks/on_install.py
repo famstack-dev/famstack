@@ -28,6 +28,13 @@ OMLX_TAP = "jundot/omlx"
 OMLX_TAP_URL = "https://github.com/jundot/omlx"
 WHISPER_MODEL = "ggml-large-v3-turbo.bin"
 WHISPER_MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{WHISPER_MODEL}"
+# Floor for "this download finished". The model is ~1.5 GB; anything far
+# under that is a download the network cut short. Existence alone is not
+# enough: a half-file loads far enough to report "not all tensors loaded"
+# and then abort, so the install would keep saying "model ready" while
+# whisper died on every boot. Deliberately loose so a slightly smaller
+# re-quantisation upstream does not trip it.
+WHISPER_MODEL_MIN_BYTES = 1_000_000_000
 WHISPER_PORT = 42062
 PLIST_LABEL = "dev.famstack.whisper"
 
@@ -200,11 +207,25 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
 
     # Download model
     model_path = model_dir / WHISPER_MODEL
-    if not model_path.exists():
+    have = model_path.exists() and model_path.stat().st_size >= WHISPER_MODEL_MIN_BYTES
+    if not have:
+        if model_path.exists():
+            size_mb = model_path.stat().st_size // (1024 * 1024)
+            dim(f"  Existing model is only {size_mb} MB — re-downloading.")
+            model_path.unlink()
         ctx.step("Downloading Whisper model: large-v3-turbo (~1.5 GB)...")
         dim("  One-time download. OpenAI's distilled model — nearly")
         dim("  identical accuracy to large-v3, but 6x faster on Metal GPU.")
-        ctx.shell_live(f'curl -L --progress-bar -o "{model_path}" "{WHISPER_MODEL_URL}"')
+        # -f so an HTTP error page is never written out as a model file.
+        ctx.shell_live(
+            f'curl -fL --progress-bar -o "{model_path}" "{WHISPER_MODEL_URL}"'
+        )
+        if (not model_path.exists()
+                or model_path.stat().st_size < WHISPER_MODEL_MIN_BYTES):
+            raise RuntimeError(
+                "Whisper model download did not complete — run 'stack up ai' "
+                "again to resume. Voice transcription stays off until it does."
+            )
         done("Model downloaded")
     else:
         done("Whisper model ready (large-v3-turbo)")

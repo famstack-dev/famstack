@@ -189,7 +189,8 @@ def bot(tmp_path):
                                  reply_to, *, initial_classification=None):
         bot.routed.append(("capture_reprocess", vault_path, user_hint))
 
-    async def _text_capture(room_id, text, sender, reply_to=None, *, capture_id=None):
+    async def _text_capture(room_id, text, sender, reply_to=None, *,
+                            capture_id=None, transcribed=False):
         bot.routed.append(("capture_text", text))
 
     async def _send(room_id, text, *a, **kw):

@@ -1,285 +1,150 @@
-"""ScribeBot voice handling.
+"""Scribe retires itself.
 
-Scribe used to call nio's media download, `room_typing`, and a hand-
-built `room_send` directly. After the transport consolidation it goes
-through the framework: `_download_media` (authenticated endpoint),
-`_set_typing`, and `_send` (formatted, threaded). These pin that the
-handler drives the framework methods rather than the raw client.
+Transcription moved into the transport, so Scribe has no job left. It
+ships for one more release as a shell that explains itself and leaves,
+because the framework has no way to deprovision a removed bot: delete the
+declaration and the Matrix account simply survives, still joined to
+whatever room someone invited it to, answering nothing forever.
 
-The transcription HTTP call is delegated to the shared `Transcriber`
-capability on the AI client; these tests inject a stub Transcriber so
-the bot's wiring is exercised without a whisper server.
+Scribe declared no room of its own, so the only installs affected are the
+ones where a person went looking for it and invited it by hand. Those are
+exactly the people who would notice it going quiet, which is why it says
+goodbye rather than just stopping.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "bot"))
-# `lib/` hosts `stack.ai.client`, which the bot now imports at module load.
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
+_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "stacklets" / "core" / "bot-runner"))
+sys.path.insert(0, str(_ROOT / "stacklets" / "messages" / "bot"))
+sys.path.insert(0, str(_ROOT / "lib"))
 
 from scribe import ScribeBot  # noqa: E402
-from stack.ai.client import LLMUnavailableError  # noqa: E402
+
+
+class _Room:
+    def __init__(self, room_id):
+        self.room_id = room_id
 
 
 class _FakeClient:
-    """Supports the legacy surface so pre-migration code runs to a clean
-    assertion failure rather than crashing."""
-
-    def __init__(self):
-        self.sends: list[tuple] = []
+    def __init__(self, *room_ids, leave_error: Exception | None = None):
+        self.rooms = {r: _Room(r) for r in room_ids}
+        self.sent: list[dict] = []
+        self.left: list[str] = []
+        self._leave_error = leave_error
 
     def add_event_callback(self, cb, event_type):
         pass
 
-    async def room_typing(self, room_id, typing_state, timeout=None):
-        pass
+    async def room_send(self, room_id, message_type, content, **kw):
+        self.sent.append({"room_id": room_id, "content": content})
 
-    async def room_send(self, room_id, message_type, content):
-        self.sends.append((room_id, message_type, content))
-
-    async def download(self, url):
-        # Not a DownloadResponse — legacy path bails here, so the spies
-        # below stay empty and the assertions fail cleanly (RED).
-        return SimpleNamespace(body=b"")
+    async def room_leave(self, room_id):
+        if self._leave_error is not None:
+            raise self._leave_error
+        self.left.append(room_id)
 
 
-class _StubTranscriber:
-    """Stand-in for `stack.ai.client.Transcriber` — records calls and
-    returns a configured transcript (or raises a configured error)."""
-
-    def __init__(self, result: str = "hello world", error: Exception | None = None):
-        self.result = result
-        self.error = error
-        self.calls: list[tuple[bytes, str]] = []
-
-    async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
-                         model: str | None = None,
-                         cleanup_with=None) -> str:
-        self.calls.append({
-            "audio": audio, "filename": filename,
-            "cleanup_with": cleanup_with,
-        })
-        if self.error is not None:
-            raise self.error
-        return self.result
-
-
-def _build(tmp_path, monkeypatch, *, transcriber: _StubTranscriber | None = None):
-    # Transcriber.from_env reads WHISPER_URL at construction; we don't
-    # care what URL the stub is "pointed at", but the constructor refuses
-    # an empty value, so pin a benign placeholder.
-    monkeypatch.setenv("WHISPER_URL", "http://test.local/v1")
-    bot = ScribeBot(
-        homeserver="http://x", user_id="@scribe-bot:server",
-        password="x", session_dir=str(tmp_path),
-    )
-    bot._client = _FakeClient()
-    bot._transcriber = transcriber or _StubTranscriber()
+def _bot(tmp_path, client) -> ScribeBot:
+    bot = ScribeBot(homeserver="http://hs", user_id="@scribe-bot:simpson",
+                    password="x", session_dir=str(tmp_path))
+    bot._client = client
     return bot
 
 
-@pytest.mark.asyncio
-async def test_voice_routes_through_framework(tmp_path, monkeypatch):
-    """A voice message is downloaded via `_download_media`, transcribed,
-    and posted via `_send` threaded to the voice event; typing toggles
-    via `_set_typing`."""
-    bot = _build(tmp_path, monkeypatch)
+class TestScribeRetires:
+    """The one behaviour it has left."""
 
-    calls = {"download": [], "send": [], "typing": []}
+    @pytest.mark.asyncio
+    async def test_it_says_goodbye_and_leaves_every_room(self, tmp_path):
+        client = _FakeClient("!kitchen:simpson", "!notes:simpson")
+        bot = _bot(tmp_path, client)
 
-    async def fake_download(mxc):
-        calls["download"].append(mxc)
-        return b"audio-bytes"
+        await bot.retire_everywhere()
 
-    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
-        calls["send"].append((room_id, text, reply_to))
+        assert client.left == ["!kitchen:simpson", "!notes:simpson"]
+        assert [s["room_id"] for s in client.sent] == [
+            "!kitchen:simpson", "!notes:simpson",
+        ]
 
-    async def fake_typing(room_id, on=True):
-        calls["typing"].append((room_id, on))
+    @pytest.mark.asyncio
+    async def test_the_goodbye_explains_itself(self, tmp_path):
+        """A member that vanishes without a word is a mystery to debug.
+        It has to say what replaced it and that nothing is lost."""
+        client = _FakeClient("!kitchen:simpson")
+        bot = _bot(tmp_path, client)
 
-    bot._download_media = fake_download
-    bot._send = fake_send
-    bot._set_typing = fake_typing
+        await bot.retire_everywhere()
 
-    event = SimpleNamespace(
-        sender="@homer:server", url="mxc://server/abc123",
-        event_id="$v:server", body="voice.ogg",
-    )
-    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
+        body = client.sent[0]["content"]["body"].lower()
+        assert "voice" in body
+        assert "automatic" in body or "automatically" in body
+        # A notice, not a chat message: this is the machine talking.
+        assert client.sent[0]["content"]["msgtype"] == "m.notice"
 
-    assert calls["download"] == ["mxc://server/abc123"]
-    # The Transcriber got the downloaded bytes and the caption filename.
-    assert len(bot._transcriber.calls) == 1
-    assert bot._transcriber.calls[0]["audio"] == b"audio-bytes"
-    assert bot._transcriber.calls[0]["filename"] == "voice.ogg"
-    # The bot built no LLM (no OPENAI_URL in the test env), so cleanup
-    # is skipped: cleanup_with comes through as None.
-    assert bot._transcriber.calls[0]["cleanup_with"] is None
-    assert len(calls["send"]) == 1
-    room_id, text, reply_to = calls["send"][0]
-    assert room_id == "!r:server"
-    assert "hello world" in text
-    assert reply_to == "$v:server"
-    # Typing was driven via the framework helper (on at least once).
-    assert ("!r:server", True) in calls["typing"]
+    @pytest.mark.asyncio
+    async def test_it_leaves_a_room_it_is_freshly_invited_to(self, tmp_path):
+        """Someone following an older guide invites it. Same answer, so
+        the invite does not leave a silent member behind."""
+        client = _FakeClient("!new:simpson")
+        bot = _bot(tmp_path, client)
 
+        await bot.on_room_joined("!new:simpson")
 
-@pytest.mark.asyncio
-async def test_failed_download_sends_nothing(tmp_path, monkeypatch):
-    """When media can't be downloaded, scribe bails without posting."""
-    bot = _build(tmp_path, monkeypatch)
-    sent = []
+        assert client.left == ["!new:simpson"]
+        assert len(client.sent) == 1
 
-    async def fake_download(mxc):
-        return None
+    @pytest.mark.asyncio
+    async def test_a_room_it_cannot_leave_does_not_stop_the_others(
+        self, tmp_path,
+    ):
+        """The sweep runs on every launch, so a failure is retried next
+        boot. It must not strand the rooms behind it in the meantime."""
+        client = _FakeClient("!stuck:simpson", "!fine:simpson",
+                             leave_error=RuntimeError("homeserver said no"))
+        bot = _bot(tmp_path, client)
 
-    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
-        sent.append(text)
+        await bot.retire_everywhere()
 
-    async def fake_typing(room_id, on=True):
-        pass
+        assert len(client.sent) == 2
 
-    bot._download_media = fake_download
-    bot._send = fake_send
-    bot._set_typing = fake_typing
+    @pytest.mark.asyncio
+    async def test_it_speaks_the_household_language(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LANGUAGE", "de")
+        client = _FakeClient("!kueche:simpson")
+        bot = _bot(tmp_path, client)
 
-    event = SimpleNamespace(
-        sender="@homer:server", url="mxc://server/missing",
-        event_id="$v:server", body="voice.ogg",
-    )
-    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
-    assert sent == []
-    # The Transcriber must not be called when there's nothing to transcribe.
-    assert bot._transcriber.calls == []
+        await bot.retire_everywhere()
+
+        assert "Sprachnachrichten" in client.sent[0]["content"]["body"]
 
 
-@pytest.mark.asyncio
-async def test_llm_threaded_into_transcribe_when_configured(tmp_path, monkeypatch):
-    """When OPENAI_URL is set, scribe builds an LLM and passes it as
-    cleanup_with so whisper's raw output gets polished. The LLM itself
-    isn't called in this test -- we use a stub transcriber that just
-    records what kwarg it received."""
-    monkeypatch.setenv("WHISPER_URL", "http://test.local/v1")
-    monkeypatch.setenv("OPENAI_URL", "http://test.local/v1")
-    bot = ScribeBot(
-        homeserver="http://x", user_id="@scribe-bot:server",
-        password="x", session_dir=str(tmp_path),
-    )
-    bot._client = _FakeClient()
-    assert bot._llm is not None, "scribe should construct an LLM when OPENAI_URL is set"
+class TestScribeAnswersNothing:
+    """It transcribes nothing and replies to nothing. The framework does
+    the transcribing now, and a second transcriber in the same process is
+    the exact thing this release removed."""
 
-    stub = _StubTranscriber(result="Cleaned text.")
-    bot._transcriber = stub
+    @pytest.mark.asyncio
+    async def test_it_registers_no_message_handlers(self, tmp_path):
+        # Async because `register_callbacks` schedules the retirement
+        # sweep, and the framework always calls it from inside `start()`'s
+        # running loop.
+        client = _FakeClient()
+        bot = _bot(tmp_path, client)
+        bot.register_callbacks(client)
+        assert bot._handlers == []
 
-    async def fake_download(mxc):
-        return b"audio-bytes"
-
-    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
-        pass
-
-    async def fake_typing(room_id, on=True):
-        pass
-
-    bot._download_media = fake_download
-    bot._send = fake_send
-    bot._set_typing = fake_typing
-
-    event = SimpleNamespace(
-        sender="@homer:server", url="mxc://server/abc",
-        event_id="$v:server", body="voice.ogg",
-    )
-    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
-
-    # The bot's own LLM instance came through as cleanup_with -- not a
-    # different one, not None.
-    assert stub.calls[0]["cleanup_with"] is bot._llm
-
-
-@pytest.mark.asyncio
-async def test_no_whisper_url_does_not_crash_construction(tmp_path, monkeypatch):
-    """WHISPER_URL missing -> the bot still constructs, sets transcriber=None,
-    and logs a warning. The family server should boot scribe even when AI
-    hasn't been installed yet."""
-    monkeypatch.delenv("WHISPER_URL", raising=False)
-    bot = ScribeBot(
-        homeserver="http://x", user_id="@scribe-bot:server",
-        password="x", session_dir=str(tmp_path),
-    )
-    assert bot._transcriber is None
-
-
-@pytest.mark.asyncio
-async def test_voice_no_op_when_transcriber_disabled(tmp_path, monkeypatch):
-    """Without a transcriber the bot silently ignores audio: no typing
-    indicator, no apology reply, no download. The warning at startup is
-    the one and only signal."""
-    monkeypatch.delenv("WHISPER_URL", raising=False)
-    bot = ScribeBot(
-        homeserver="http://x", user_id="@scribe-bot:server",
-        password="x", session_dir=str(tmp_path),
-    )
-    bot._client = _FakeClient()
-    assert bot._transcriber is None
-
-    calls = {"download": [], "send": [], "typing": []}
-
-    async def fake_download(mxc):
-        calls["download"].append(mxc)
-        return b"audio-bytes"
-
-    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
-        calls["send"].append(text)
-
-    async def fake_typing(room_id, on=True):
-        calls["typing"].append((room_id, on))
-
-    bot._download_media = fake_download
-    bot._send = fake_send
-    bot._set_typing = fake_typing
-
-    event = SimpleNamespace(
-        sender="@homer:server", url="mxc://server/abc",
-        event_id="$v:server", body="voice.ogg",
-    )
-    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
-
-    assert calls == {"download": [], "send": [], "typing": []}
-
-
-@pytest.mark.asyncio
-async def test_transcriber_error_falls_back_to_apology(tmp_path, monkeypatch):
-    """If whisper is down (Transcriber raises LLMError) the bot tells the
-    sender it couldn't do it — silent failure leaves people wondering."""
-    failing = _StubTranscriber(error=LLMUnavailableError("whisper offline"))
-    bot = _build(tmp_path, monkeypatch, transcriber=failing)
-    sent: list[str] = []
-
-    async def fake_download(mxc):
-        return b"audio-bytes"
-
-    async def fake_send(room_id, text, reply_to=None, *, metadata=None):
-        sent.append(text)
-
-    async def fake_typing(room_id, on=True):
-        pass
-
-    bot._download_media = fake_download
-    bot._send = fake_send
-    bot._set_typing = fake_typing
-
-    event = SimpleNamespace(
-        sender="@homer:server", url="mxc://server/abc",
-        event_id="$v:server", body="voice.ogg",
-    )
-    await bot._on_voice(SimpleNamespace(room_id="!r:server"), event)
-
-    assert len(sent) == 1
-    assert "couldn't transcribe" in sent[0].lower()
+    def test_it_builds_no_transcriber_of_its_own(self, tmp_path, monkeypatch):
+        """MicroBot gives every bot one for the transport decode; Scribe
+        must not reach for it. Nothing here should ever call whisper."""
+        monkeypatch.setenv("WHISPER_URL", "http://localhost:42062/v1")
+        bot = _bot(tmp_path, _FakeClient())
+        assert not hasattr(bot, "_scribe_transcriber")
+        import scribe
+        assert "Transcriber" not in scribe.__dict__

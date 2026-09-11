@@ -1,103 +1,101 @@
-"""Scribe — voice message transcription bot.
+"""Scribe — retired, and saying so.
 
-Send a voice message in any room where Scribe is present, and it replies
-with the transcribed text. Uses whisper.cpp running natively on the host
-for Metal GPU acceleration — a 5-minute voice memo transcribes in ~20
-seconds, vs 10+ minutes CPU-only inside Docker.
+Transcribing voice messages used to be this bot's whole job. It is the
+transport's job now: a voice message is decoded before any handler sees
+it, so every bot in every room gets the words without asking, and nothing
+needs Scribe to be present.
 
-The transcription API call is delegated to the shared `Transcriber`
-capability on the AI client; the bot is just the Matrix-side wiring —
-download audio, hand bytes to the Transcriber, post the result.
+This shell exists for one release only, because the framework has no way
+to deprovision a bot that goes away. Deleting the declaration stops the
+runner from launching it, but the Matrix account survives — still joined
+to whatever rooms it was invited to, listed as a member, answering
+nothing, forever. Somebody would eventually go looking for why.
+
+So instead of vanishing it explains itself once per room and leaves. The
+people this reaches are the only ones it can have affected: Scribe
+declared no room of its own, so it was never in a room unless a person
+went and invited it by hand. Those are exactly the people who would
+notice it go quiet.
+
+Delete this file and its bot.toml one release after it ships.
 """
 
+import asyncio
+import os
+
 from loguru import logger
-from nio import (
-    AsyncClient,
-    RoomMessageAudio,
-)
+from nio import AsyncClient
 
 from microbot import MicroBot
-from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
+
+
+# Kept inline rather than in a message catalogue: this is two strings with
+# a known expiry, and a catalogue would outlive the bot that uses it.
+_GOODBYE = {
+    "en": (
+        "**Voice messages are transcribed automatically now.**\n\n"
+        "famstack does it for every room, so you no longer need me here. "
+        "Keep sending voice messages exactly as you always have. They are "
+        "transcribed the moment they arrive, and the other bots read the "
+        "words rather than the recording.\n\n"
+        "Nothing is lost and there is nothing to set up. I am leaving this "
+        "room; you can remove my account whenever you like."
+    ),
+    "de": (
+        "**Sprachnachrichten werden jetzt automatisch transkribiert.**\n\n"
+        "famstack übernimmt das für jeden Raum, ihr braucht mich hier also "
+        "nicht mehr. Schickt Sprachnachrichten weiter wie bisher. Sie "
+        "werden sofort transkribiert, und die anderen Bots lesen den Text "
+        "statt der Aufnahme.\n\n"
+        "Es geht nichts verloren und es ist nichts einzurichten. Ich "
+        "verlasse diesen Raum; mein Konto könnt ihr jederzeit löschen."
+    ),
+}
 
 
 class ScribeBot(MicroBot):
     name = "scribe-bot"
 
-    def __init__(self, homeserver, user_id, password, session_dir, **config):
-        super().__init__(homeserver, user_id, password, session_dir, **config)
-        # The Transcriber owns the HTTP client; we don't have a clean
-        # shutdown hook in the MicroBot base, so we accept that the
-        # underlying client lives for the lifetime of the bot process.
-        #
-        # When WHISPER_URL isn't set (e.g. the AI stacklet hasn't been
-        # installed yet) the constructor would otherwise crash here. We
-        # degrade to a no-op bot instead: still in the room, still
-        # joinable, but silent on voice messages until whisper is wired.
-        try:
-            self._transcriber = Transcriber.from_env(namespace=self.name)
-        except LLMUnavailableError as e:
-            logger.warning(
-                "[scribe] transcription disabled: {} — "
-                "voice messages will be ignored until WHISPER_URL is set",
-                e,
-            )
-            self._transcriber = None
-
-        # The LLM is optional: when present, it polishes raw whisper
-        # output into a punctuated paragraph (the Transcriber owns the
-        # prompt). When absent, scribe still posts the raw transcript --
-        # less readable but never a blocker.
-        try:
-            self._llm = LLM.from_env(namespace=self.name)
-        except LLMUnavailableError as e:
-            logger.warning(
-                "[scribe] transcript cleanup disabled: {} — "
-                "voice messages will post the raw whisper output",
-                e,
-            )
-            self._llm = None
-
     def register_callbacks(self, client: AsyncClient) -> None:
-        self.add_event_callback(self._on_voice, RoomMessageAudio)
+        """Register nothing, and start the retirement sweep.
 
-    async def _on_voice(self, room, event: RoomMessageAudio) -> None:
-        if event.sender == self.user_id:
-            return
-        if self._transcriber is None:
-            # The startup warning already told the admin why; don't
-            # spam a per-message error reply or a typing indicator that
-            # leads nowhere.
-            return
+        No message handlers at all: this bot answers nothing. The sweep
+        runs on every launch rather than once, so a room it could not
+        leave (homeserver hiccup, lost network) is retried next boot
+        instead of keeping a silent member forever.
 
-        logger.info("[scribe] Voice from {} in {}", event.sender, room.room_id)
-        await self._set_typing(room.room_id, on=True)
+        Scheduled as a task because `register_callbacks` is sync and runs
+        inside `start()`'s event loop, after the initial sync has
+        populated `client.rooms`.
+        """
+        asyncio.create_task(self.retire_everywhere())
 
-        audio = await self._download_media(event.url)
-        if audio is None:
-            await self._set_typing(room.room_id, on=False)
-            logger.error("[scribe] Download failed for {}", event.url)
-            return
+    async def on_room_joined(self, room_id: str) -> None:
+        """Someone followed an older guide and invited it. Same answer,
+        so an invite never leaves a silent member behind."""
+        await self._retire_from(room_id)
 
-        filename = event.body if event.body else "voice.ogg"
-        text = ""
+    async def retire_everywhere(self) -> None:
+        """Say goodbye in every room this account is still in, and leave."""
+        room_ids = list(self.client.rooms.keys())
+        if room_ids:
+            logger.info(
+                "[{}] retiring from {} room(s)", self.name, len(room_ids),
+            )
+        for room_id in room_ids:
+            await self._retire_from(room_id)
+
+    async def _retire_from(self, room_id: str) -> None:
+        """Explain, then leave. A failure to leave is logged and dropped:
+        the goodbye still landed, and the next launch tries again."""
+        lang = os.environ.get("LANGUAGE", "en")
+        await self._send(
+            room_id, _GOODBYE.get(lang, _GOODBYE["en"]), msgtype="m.notice",
+        )
         try:
-            text = await self._transcriber.transcribe(
-                audio, filename=filename, cleanup_with=self._llm,
-            )
-        except LLMError as e:
-            # The Transcriber maps every transport / API failure to an
-            # LLMError; we log and fall through to the empty-text branch
-            # so the family sees a friendly reply instead of silence.
-            logger.error("[scribe] Transcription failed: {}", e)
-        await self._set_typing(room.room_id, on=False)
-
-        if text:
-            logger.info("[scribe] Transcribed: {}...", text[:80])
-            await self._send(
-                room.room_id, f"**Transcription:**\n\n{text}",
-                reply_to=event.event_id,
-            )
-        else:
-            await self._send(
-                room.room_id, "Sorry, I couldn't transcribe that audio.",
+            await self.client.room_leave(room_id)
+        except Exception as e:
+            logger.warning(
+                "[{}] could not leave {}: {} — will retry on next launch",
+                self.name, room_id, e,
             )
