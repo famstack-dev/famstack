@@ -1,0 +1,213 @@
+# spec.en.yaml — the Memories test corpus, Simpsons edition (English).
+# Same items, patterns, bursts, and ground-truth dates as spec.de.yaml;
+# only the language differs, so pipeline behavior can be compared
+# across locales. See spec.de.yaml for the full pattern commentary.
+
+voices:
+  marge: alloy
+  homer: onyx
+
+items:
+  - id: memo-bart-zeugnis
+    true_date: 2026-03-16
+    date_source: spoken
+    pattern: addressed-memo
+    kind: voice
+    sender: marge
+    text: >
+      Hi Bart, today is March sixteenth. I wanted to tell you how proud
+      I was of you today, even if your report card was another
+      adventure. Principal Skinner called, but for once with good news.
+      You stood up for the new girl when the others were mean to her.
+      I won't forget that.
+
+  - id: batch-lisa-saxophon
+    true_date: 2026-03-20
+    date_source: spoken
+    pattern: batch-upload
+    burst: sync-1
+    kind: voice
+    sender: marge
+    text: >
+      Hi Lisa, today is March twentieth. Your saxophone concert last
+      night was beautiful. Even your father didn't snore, and that's
+      saying something. Mrs. Krabappel said Springfield hasn't seen
+      talent like yours in years.
+
+  - id: batch-maggie-zahn
+    true_date: 2026-03-17
+    date_source: spoken
+    pattern: batch-upload
+    burst: sync-1
+    kind: voice
+    sender: marge
+    text: >
+      Hi Maggie, today is March seventeenth. Your first tooth is here!
+      You chewed on your pacifier all day and nobody knew why. Daddy
+      spotted it at dinner and almost cried. He says he just had
+      something in his eye, of course.
+
+  - id: batch-bart-fahrrad
+    true_date: 2026-03-19
+    date_source: spoken
+    pattern: batch-upload
+    burst: sync-1
+    kind: voice
+    sender: marge
+    text: >
+      Hi Bart, today is March nineteenth. You rode without training
+      wheels today, once all the way around the block. The second time
+      you landed in Flanders' hedge, but you laughed and got right
+      back on.
+
+  - id: fragment-urlaub-a
+    true_date: 2026-03-22
+    date_source: spoken
+    pattern: fragment-pair
+    burst: sync-2
+    fragment_of: urlaub
+    kind: voice
+    sender: homer
+    text: >
+      Hi kids, today is March twenty-second. I'm sitting in the garage
+      planning our summer vacation. Your mother doesn't know anything
+      yet, so shush. I was thinking this year we finally go to the
+      beach, and I mean
+
+  - id: fragment-urlaub-b
+    true_date: 2026-03-22
+    date_source: inherited-from-fragment
+    pattern: fragment-pair
+    burst: sync-2
+    fragment_of: urlaub
+    kind: voice
+    sender: homer
+    text: >
+      not that motel like last time, but a real hotel with a pool.
+      I've been saving the couch change for three months. Don't tell
+      Mom, that's our surprise.
+
+  - id: dialog-kueche
+    true_date: 2026-03-28
+    date_source: live-timestamp
+    pattern: kitchen-table-dialogue
+    kind: dialogue
+    sender: homer
+    turns:
+      - voice: marge
+        text: >
+          Homie, do you remember our first date? You claimed you picked
+          the restaurant.
+      - voice: homer
+        text: >
+          Of course I did. Moe just... helped. And the candles were my
+          idea.
+      - voice: marge
+        text: >
+          The candles were birthday candles from the Kwik-E-Mart, on a
+          donut.
+      - voice: homer
+        text: >
+          It was a romantic donut, Marge. The kids should know their
+          father has style.
+      - voice: marge
+        text: >
+          They should know their parents can still laugh about the same
+          donut today. That's why we're recording this.
+
+  - id: memo-ohne-datum
+    true_date: 2026-03-25
+    date_source: live-timestamp
+    pattern: memo-no-date
+    kind: voice
+    sender: homer
+    text: >
+      Bart, old buddy. Just real quick: that thing with the treehouse
+      today stays between us men. Your mother doesn't need to know the
+      ladder was already broken. You were very brave, and the doctor
+      says the cast can come off in four weeks.
+
+  - id: bild-zeichnung
+    true_date: 2026-04-02
+    date_source: live-timestamp
+    pattern: image-with-caption-reply
+    kind: image
+    sender: marge
+    image_label: "Kid's drawing"
+
+  - id: bild-zeichnung-caption
+    true_date: 2026-04-02
+    date_source: live-timestamp
+    pattern: image-with-caption-reply
+    kind: text
+    sender: marge
+    reply_to: bild-zeichnung
+    delay_after_prev: 90
+    text: >
+      Maggie drew this today — it's supposed to be all of us in front
+      of the house. Homer is the big yellow circle.
+
+  - id: bild-kontextlos
+    true_date: 2026-04-03
+    date_source: live-timestamp
+    pattern: image-no-context
+    kind: image
+    sender: homer
+    image_label: "Photo without context"
+
+  - id: text-tagebuch
+    true_date: 2026-04-04
+    date_source: spoken
+    pattern: text-with-edit
+    kind: text
+    sender: marge
+    text: >
+      Today was one of those days you want to hold on to. Maggie took
+      her first step, right in the middle of the living room, and
+      nobody had a camera in hand. Homer jumped off the couch and threw
+      the chip bowl across the room doing it. Bart claimed he filmed
+      it, but it was just a video of his skateboard. Lisa immediately
+      composed a song about it. I'm writing this down so we never
+      forget it.
+    edit_text: >
+      Today was one of those days you want to hold on to. Maggie took
+      her first step, right in the middle of the living room, and
+      nobody had a camera in hand. Homer jumped off the couch and threw
+      the chip bowl across the room doing it. Bart claimed he filmed
+      it, but it was just a video of his skateboard. Lisa immediately
+      composed a song about it — she calls it "Maggie's First March".
+      I'm writing this down so we never forget it. P.S.: It was April
+      fourth, just after lunch.
+
+  - id: kommentar-zu-memo
+    true_date: 2026-04-05
+    date_source: live-timestamp
+    pattern: text-reply-to-audio
+    kind: text
+    sender: homer
+    reply_to: memo-bart-zeugnis
+    text: >
+      He gets that from me. The helping part, not the report card part.
+
+  - id: impliziter-kontext
+    true_date: 2026-04-03
+    date_source: live-timestamp
+    pattern: implicit-context
+    kind: text
+    sender: homer
+    text: >
+      By the way, the picture above is from the barbecue. The black
+      spot on the left is not the grill, that's the steak.
+
+  - id: memo-ohne-datum-im-sync
+    true_date: 2026-03-21
+    date_source: unrecoverable
+    pattern: memo-no-date-in-sync-burst
+    burst: sync-2
+    kind: voice
+    sender: homer
+    text: >
+      Lisa, sweetie, your dad here. I read your essay about justice,
+      the one you left on the fridge. I didn't understand all of it,
+      but I've never been so proud of not understanding something.
+      Keep it up.

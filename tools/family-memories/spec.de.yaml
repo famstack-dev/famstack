@@ -1,0 +1,242 @@
+# spec.yaml — the Memories test corpus, Simpsons edition (German).
+#
+# One ordered timeline. Every item reproduces a message pattern observed
+# in a real Memories room, including the chaotic ones. The `pattern`
+# field names what each item is testing so pipeline assertions can key
+# off the manifest instead of guessing.
+#
+# Voices map to the speech service's OpenAI-compatible voice names.
+#
+# Dates — the core difficulty this corpus encodes. Matrix stamps only
+# the moment an event reaches the server. Live-sent messages therefore
+# carry a usable timestamp; offline-recorded, later-synced messages do
+# NOT (their timestamp is the sync moment, days off). Some memos speak
+# their date, some don't. `true_date` is the ground truth for scoring:
+# the pipeline should recover it from the spoken opening, or from a
+# trustworthy live timestamp, or explicitly mark the date uncertain
+# (no-date memo inside a sync burst — the unanswerable case).
+
+voices:
+  marge: alloy
+  homer: onyx
+
+items:
+  # -- 1: the canonical addressed memo: greeting + addressee + spoken date
+  - id: memo-bart-zeugnis
+    true_date: 2026-03-16
+    date_source: spoken
+    pattern: addressed-memo
+    kind: voice
+    sender: marge
+    text: >
+      Hallo Bart, heute ist der sechzehnte März. Ich wollte dir sagen,
+      dass ich richtig stolz auf dich war heute, auch wenn dein Zeugnis
+      wieder ein Abenteuer war. Direktor Skinner hat angerufen, aber
+      diesmal ausnahmsweise mit einer guten Nachricht. Du hast der
+      neuen Schülerin geholfen, als die anderen gemein zu ihr waren.
+      Das vergesse ich dir nicht.
+
+  # -- 2: batch upload — three SEPARATE memos, recorded on different days,
+  #       uploaded in one go, and OUT OF ORDER (spoken dates shuffled).
+  - id: batch-lisa-saxophon
+    true_date: 2026-03-20
+    date_source: spoken
+    pattern: batch-upload
+    burst: sync-1
+    kind: voice
+    sender: marge
+    text: >
+      Hallo Lisa, heute ist der zwanzigste März. Dein Saxophonkonzert
+      gestern Abend war wunderschön. Sogar dein Vater hat nicht
+      geschnarcht, und das will etwas heißen. Frau Krabappel hat gesagt,
+      so ein Talent hatte Springfield seit Jahren nicht.
+  - id: batch-maggie-zahn
+    true_date: 2026-03-17
+    date_source: spoken
+    pattern: batch-upload
+    burst: sync-1
+    kind: voice
+    sender: marge
+    text: >
+      Hallo Maggie, heute ist der siebzehnte März. Dein erster Zahn ist
+      da! Du hast den ganzen Tag auf deinem Schnuller herumgekaut und
+      niemand hat gemerkt, warum. Papa hat es beim Abendessen entdeckt
+      und fast geweint. Er sagt natürlich, ihm war nur etwas im Auge.
+  - id: batch-bart-fahrrad
+    true_date: 2026-03-19
+    date_source: spoken
+    pattern: batch-upload
+    burst: sync-1
+    kind: voice
+    sender: marge
+    text: >
+      Hallo Bart, heute ist der neunzehnte März. Du bist heute ohne
+      Stützräder gefahren, einmal ganz um den Block. Beim zweiten Mal
+      bist du in Flanders' Hecke gelandet, aber du hast gelacht und
+      bist gleich wieder aufgestiegen.
+
+  # -- 3: a TRUE fragment: one recording split mid-sentence into two
+  #       messages. A ends mid-thought, B continues it. The trap's twin.
+  - id: fragment-urlaub-a
+    true_date: 2026-03-22
+    date_source: spoken
+    pattern: fragment-pair
+    burst: sync-2
+    fragment_of: urlaub
+    kind: voice
+    sender: homer
+    text: >
+      Hallo Kinder, heute ist der zweiundzwanzigste März. Ich sitze
+      gerade in der Garage und plane unseren Sommerurlaub. Eure Mutter
+      weiß noch nichts davon, also pssst. Ich dachte, wir fahren dieses
+      Jahr endlich mal ans Meer, und zwar
+  - id: fragment-urlaub-b
+    true_date: 2026-03-22
+    date_source: inherited-from-fragment
+    pattern: fragment-pair
+    burst: sync-2
+    fragment_of: urlaub
+    kind: voice
+    sender: homer
+    text: >
+      nicht in dieses Motel wie letztes Mal, sondern in ein richtiges
+      Hotel mit Pool. Ich habe schon drei Monate lang das Wechselgeld
+      aus dem Sofa gespart. Sagt Mama nichts, das ist unsere
+      Überraschung.
+
+  # -- 4: kitchen-table dialogue, two speakers, no date opening
+  - id: dialog-kueche
+    true_date: 2026-03-28
+    date_source: live-timestamp
+    pattern: kitchen-table-dialogue
+    kind: dialogue
+    sender: homer
+    turns:
+      - voice: marge
+        text: >
+          Homie, erinnerst du dich an unser erstes Date? Du hast
+          behauptet, du hättest das Restaurant ausgesucht.
+      - voice: homer
+        text: >
+          Natürlich habe ich das. Moe hat nur... geholfen. Und die
+          Kerzen waren meine Idee.
+      - voice: marge
+        text: >
+          Die Kerzen waren Geburtstagskerzen aus dem Kwik-E-Mart, auf
+          einem Donut.
+      - voice: homer
+        text: >
+          Es war ein romantischer Donut, Marge. Die Kinder sollen
+          wissen, dass ihr Vater Stil hat.
+      - voice: marge
+        text: >
+          Sie sollen wissen, dass ihre Eltern über denselben Donut
+          heute noch lachen können. Deshalb nehmen wir das hier auf.
+
+  # -- 5: memo with NO date opening at all — date must come from nowhere
+  - id: memo-ohne-datum
+    true_date: 2026-03-25
+    date_source: live-timestamp
+    pattern: memo-no-date
+    kind: voice
+    sender: homer
+    text: >
+      Bart, alter Kumpel. Nur ganz kurz: das mit dem Baumhaus heute,
+      das bleibt unter uns Männern. Deine Mutter muss nicht wissen,
+      dass die Leiter schon vorher kaputt war. Du warst sehr tapfer,
+      und der Arzt hat gesagt, der Gips kann in vier Wochen ab.
+
+  # -- 6: image + caption arriving late as a reply
+  - id: bild-zeichnung
+    true_date: 2026-04-02
+    date_source: live-timestamp
+    pattern: image-with-caption-reply
+    kind: image
+    sender: marge
+    image_label: "Kinderzeichnung"
+  - id: bild-zeichnung-caption
+    true_date: 2026-04-02
+    date_source: live-timestamp
+    pattern: image-with-caption-reply
+    kind: text
+    sender: marge
+    reply_to: bild-zeichnung
+    delay_after_prev: 90
+    text: >
+      Das hat Maggie heute gemalt — das sollen wir alle sein, vor dem
+      Haus. Homer ist der große gelbe Kreis.
+
+  # -- 7: image WITHOUT any caption or context
+  - id: bild-kontextlos
+    true_date: 2026-04-03
+    date_source: live-timestamp
+    pattern: image-no-context
+    kind: image
+    sender: homer
+    image_label: "Foto ohne Kontext"
+
+  # -- 8: written diary entry, then edited (m.replace)
+  - id: text-tagebuch
+    true_date: 2026-04-04
+    date_source: spoken
+    pattern: text-with-edit
+    kind: text
+    sender: marge
+    text: >
+      Heute war einer dieser Tage, die man festhalten möchte. Maggie
+      hat ihren ersten Schritt gemacht, mitten im Wohnzimmer, und
+      niemand hatte eine Kamera in der Hand. Homer ist vom Sofa
+      gesprungen und hat dabei die Chipsschale durchs Zimmer geworfen.
+      Bart hat behauptet, er hätte es gefilmt, aber es war nur ein
+      Video von seinem Skateboard. Lisa hat sofort ein Lied darüber
+      komponiert. Ich schreibe das hier auf, damit wir es nie
+      vergessen.
+    edit_text: >
+      Heute war einer dieser Tage, die man festhalten möchte. Maggie
+      hat ihren ersten Schritt gemacht, mitten im Wohnzimmer, und
+      niemand hatte eine Kamera in der Hand. Homer ist vom Sofa
+      gesprungen und hat dabei die Chipsschale durchs Zimmer geworfen.
+      Bart hat behauptet, er hätte es gefilmt, aber es war nur ein
+      Video von seinem Skateboard. Lisa hat sofort ein Lied darüber
+      komponiert — sie nennt es „Maggies erster Marsch". Ich schreibe
+      das hier auf, damit wir es nie vergessen. Nachtrag: Es war der
+      vierte April, kurz nach dem Mittagessen.
+
+  # -- 9: short text reply commenting on an audio
+  - id: kommentar-zu-memo
+    true_date: 2026-04-05
+    date_source: live-timestamp
+    pattern: text-reply-to-audio
+    kind: text
+    sender: homer
+    reply_to: memo-bart-zeugnis
+    text: >
+      Das hat er von mir. Das mit dem Helfen, nicht das mit dem Zeugnis.
+
+  # -- 10: text referencing an image WITHOUT a reply relation (implicit
+  #        context — the nastiest pattern for the compiler)
+  - id: impliziter-kontext
+    true_date: 2026-04-03
+    date_source: live-timestamp
+    pattern: implicit-context
+    kind: text
+    sender: homer
+    text: >
+      Das Bild oben ist übrigens vom Grillfest. Der schwarze Fleck
+      links ist nicht der Grill, das ist das Steak.
+
+  # -- 11: the unanswerable case — NO spoken date, inside a sync burst.
+  #        The upload timestamp is days off; the pipeline must mark the
+  #        date uncertain instead of trusting the server timestamp.
+  - id: memo-ohne-datum-im-sync
+    true_date: 2026-03-21
+    date_source: unrecoverable
+    pattern: memo-no-date-in-sync-burst
+    burst: sync-2
+    kind: voice
+    sender: homer
+    text: >
+      Lisa, Schatz, dein Vater hier. Ich habe deinen Aufsatz über
+      Gerechtigkeit gelesen, den du am Kühlschrank vergessen hast.
+      Ich habe nicht alles verstanden, aber ich war noch nie so stolz,
+      etwas nicht zu verstehen. Weiter so.
