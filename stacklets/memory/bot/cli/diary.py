@@ -248,6 +248,94 @@ async def _read(message, llm) -> diary.Reading:
     )
 
 
+# ── Recalling a month ─────────────────────────────────────────────────
+#
+# The one piece of writing on a diary page that is not the family's own.
+# It opens a month and it is allowed to be warm, but it may not invent:
+# the entries underneath are the record, and a summary that adds to them
+# is a lie told about someone's childhood.
+
+
+_SUMMARY_PROMPT = """\
+Write the opening paragraph of a family's diary page for {month}. Below
+are that month's entries, quoted exactly as the family recorded them.
+
+Write two to four sentences recalling what happened that month, the way
+someone in the family would remember it later.
+
+Rules:
+- Use only what the entries say. Never add an event, a feeling, a place
+  or an outcome that is not in them.
+- Keep every detail with the person the entry keeps it with. Do not move
+  something one child did onto another child.
+- Keep the direction of what happened. If one person did something for,
+  to, or about another, do not swap them round.
+- Name people as the entries name them.
+- Report what the entries report, and no more. Do not frame the month as
+  an occasion, and do not describe an event the entries only mention in
+  passing as though the family gathered for it.
+- An entry marked "date unknown" happened at no stated time. Do not give
+  it one.
+- Plain, warm, specific. No marketing words. Never write "heartwarming",
+  "cherished", "precious", "journey", "chapter", or a closing sentence
+  about what the month meant.
+- Return the paragraph and nothing else: no heading, no list, no
+  preamble, no quotation marks around it.
+
+Entries:
+{evidence}
+"""
+
+
+def _evidence(entries) -> str:
+    """A month's entries as the summariser sees them.
+
+    Each line names who recorded it and when, because attribution is the
+    thing the model gets wrong: without the date and the sender pinned to
+    the words, a summary quietly reassigns a first tooth to the wrong
+    child.
+    """
+    out = []
+    for entry in entries:
+        when = ("date unknown" if entry.confidence == "uncertain"
+                else entry.on.strftime("%-d %B"))
+        # Sender only. The addressee is the classifier's reading, and
+        # feeding one generation's guess into another compounds it: a
+        # nickname misread as a third person becomes a third person in
+        # the prose. Whoever a memo is spoken to is named in its words
+        # anyway, where the model can read it as evidence.
+        who = entry.sender.title()
+        body = entry.body.strip() or "(a photo, no caption)"
+        for sender, text in entry.comments:
+            body += f"\n  {sender.title()} replied: {text.strip()}"
+        out.append(f"- [{when}] {who}: {body}")
+    return "\n".join(out)
+
+
+async def _summarise(entries, llm) -> str:
+    """A paragraph recalling one month, or "" if the model cannot.
+
+    Temperature 0, so a recompile of an unchanged month reads the same
+    way. A failure returns empty and the page falls back to its factual
+    opening -- a diary missing its introduction is fine, a diary whose
+    introduction changes wording every night is not.
+    """
+    month = entries[0].on.strftime("%B %Y")
+    prompt = _SUMMARY_PROMPT.format(month=month, evidence=_evidence(entries))
+    try:
+        text = await llm.complete("writer", prompt, temperature=0)
+    except LLMError as e:
+        _err(f"  could not summarise {month}: {e}")
+        return ""
+    # A model that answers with a heading or a bulleted list has ignored
+    # the brief; the opening is prose or it is nothing.
+    cleaned = " ".join(text.strip().split())
+    if cleaned.startswith(("#", "-", "*")):
+        _err(f"  discarded a non-prose summary for {month}")
+        return ""
+    return cleaned
+
+
 # ── The command ───────────────────────────────────────────────────────
 
 
@@ -323,7 +411,16 @@ async def run(llm, argv: list[str]) -> int:
     entries = diary.compile_entries(decoded, readings)
     _err(f"{len(entries)} diary entr{'y' if len(entries) == 1 else 'ies'}")
 
-    pages = diary.pages_for(entries, room_id=room_id)
+    months: dict[str, list] = {}
+    for entry in entries:
+        key = f"{diary.year_key(entry.on)}-{diary.month_key(entry.on)}"
+        months.setdefault(key, []).append(entry)
+
+    summaries = {}
+    for key, in_month in sorted(months.items()):
+        summaries[key] = await _summarise(in_month, llm)
+
+    pages = diary.pages_for(entries, room_id=room_id, summaries=summaries)
     if dry_run:
         for path, body, _title in pages:
             print(f"\n{'=' * 70}\n{bucket}/{path}\n{'=' * 70}\n{body}")

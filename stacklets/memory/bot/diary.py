@@ -469,12 +469,60 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
     return "\n".join(lines).rstrip()
 
 
+def year_key(on: date) -> str:
+    return on.strftime("%Y")
+
+
 def month_key(on: date) -> str:
-    return on.strftime("%Y-%m")
+    """A month's own slug, which is its number.
+
+    The year is already the folder, so the file is `03.md` rather than
+    `2026-03.md`: it reads as `/diary/2026/03`, and numbering sorts the
+    explorer chronologically where month names would sort April before
+    March.
+    """
+    return on.strftime("%m")
 
 
-def render_month(entries, *, room_id: str = "") -> str:
+def _by_year(entries) -> "dict[str, list[Entry]]":
+    out: dict[str, list[Entry]] = {}
+    for entry in entries:
+        out.setdefault(year_key(entry.on), []).append(entry)
+    return out
+
+
+def _by_month(entries) -> "dict[str, list[Entry]]":
+    out: dict[str, list[Entry]] = {}
+    for entry in entries:
+        out.setdefault(month_key(entry.on), []).append(entry)
+    return out
+
+
+def _recorded_by(entries) -> list[str]:
+    """Who captured a year's entries, in order of first appearance.
+
+    Senders only. A sender is a Matrix account and is therefore a fact;
+    an addressee is the model's reading of who was spoken to, and a
+    landing page is the wrong place for a guess -- it reads as a roster
+    of the household. Addressees stay on the entries themselves, where
+    a misread is visible next to the words that caused it.
+    """
+    seen: list[str] = []
+    for entry in entries:
+        name = (entry.sender or "").strip()
+        pretty = name.title() if name.islower() else name
+        if pretty and pretty not in seen:
+            seen.append(pretty)
+    return seen
+
+
+def render_month(entries, *, room_id: str = "", summary: str = "") -> str:
     """A month of entries, grouped by the day they happened.
+
+    `summary` is an optional paragraph recalling the month, and the one
+    piece of writing here that is not the family's own. It opens the
+    page; everything under it is verbatim. That promise is made once, on
+    the diary's front page, rather than restated on every month.
 
     Entries whose date could not be recovered are still shown on the day
     they surfaced, under a heading that says as much. Hiding them would
@@ -484,16 +532,9 @@ def render_month(entries, *, room_id: str = "") -> str:
     if not entries:
         return "No entries yet."
 
-    title = entries[0].on.strftime("%B %Y")
-    count = len(entries)
-    lines = [
-        f"# {title}",
-        "",
-        f"{count} {'moment' if count == 1 else 'moments'} from the family's "
-        "memories room, in the words they were recorded in. Nothing on this "
-        "page has been summarised.",
-        "",
-    ]
+    lines = [f"# {entries[0].on.strftime('%B %Y')}", ""]
+    if summary.strip():
+        lines += [summary.strip(), ""]
 
     current: date | None = None
     for entry in entries:
@@ -509,8 +550,35 @@ def render_month(entries, *, room_id: str = "") -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_year(entries) -> str:
+    """A year's landing page: its months, and who is in them.
+
+    Deterministic. Counting entries and naming the people who appear is
+    reading, not summarising, so nothing here needs a model and nothing
+    here can drift between runs.
+    """
+    year = entries[0].on.strftime("%Y")
+    lines = [f"# {year}", ""]
+
+    n = len(entries)
+    people = _recorded_by(entries)
+    opening = f"{n} {'entry' if n == 1 else 'entries'} this year"
+    if people:
+        opening += f", recorded by {_and_list(people)}"
+    lines += [opening + ".", "", "## Months", ""]
+
+    for key, month in sorted(_by_month(entries).items()):
+        label = month[0].on.strftime("%B")
+        count = len(month)
+        lines.append(
+            f"- [{label}]({key}) — {count} {'entry' if count == 1 else 'entries'}")
+    lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_index(entries) -> str:
-    """The diary's front door: what it is, and a way into every month."""
+    """The diary's front door: what it is, and a way into every year."""
     lines = [
         "# Family Diary",
         "",
@@ -523,16 +591,14 @@ def render_index(entries) -> str:
         lines += ["Nothing has been compiled yet.", ""]
         return "\n".join(lines)
 
-    by_month: dict[str, list[Entry]] = {}
-    for entry in entries:
-        by_month.setdefault(month_key(entry.on), []).append(entry)
-
-    lines += ["## Months", ""]
-    for key in sorted(by_month, reverse=True):
-        month = by_month[key]
-        label = month[0].on.strftime("%B %Y")
-        n = len(month)
-        lines.append(f"- [{label}]({key}) — {n} {'entry' if n == 1 else 'entries'}")
+    lines += ["## Years", ""]
+    for key, year in sorted(_by_year(entries).items(), reverse=True):
+        count = len(year)
+        months = len(_by_month(year))
+        lines.append(
+            f"- [{key}]({key}/about) — {count} "
+            f"{'entry' if count == 1 else 'entries'} across {months} "
+            f"{'month' if months == 1 else 'months'}")
     lines.append("")
 
     unsure = [e for e in entries if e.confidence == "uncertain"]
@@ -551,22 +617,41 @@ def render_index(entries) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def pages_for(entries, *, room_id: str = "") -> list[tuple[str, str, str]]:
+def _and_list(names: list[str]) -> str:
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+def pages_for(entries, *, room_id: str = "",
+              summaries: "dict[str, str] | None" = None,
+              ) -> list[tuple[str, str, str]]:
     """Every page the diary publishes: (path, body, title).
 
-    Paths are relative to the shared bucket, which the caller prefixes --
-    the bucket is named in config (`family`, `office`, a surname) and
-    this module has no business knowing which.
-    """
-    by_month: dict[str, list[Entry]] = {}
-    for entry in entries:
-        by_month.setdefault(month_key(entry.on), []).append(entry)
+    Three levels, because a diary outlives its first year: the root
+    names the years, a year names its months, and a month holds the
+    entries. Breadcrumbs come free from the path.
 
-    out = [(f"{DIARY_DIR}/index.md", render_index(entries), "Family Diary")]
-    for key, month in sorted(by_month.items()):
+    A folder's own page is `about.md`, not `index.md`, matching every
+    other entity in this wiki. That convention exists for a reason:
+    Quartz serves a folder URL through its folder-page layout, which
+    renders no body here, so an `index.md` would be a page whose
+    contents nobody can read.
+
+    Paths are relative to the shared bucket, which the caller prefixes
+    -- the bucket is named in config (`family`, `office`, a surname)
+    and this module has no business knowing which.
+    """
+    out = [(f"{DIARY_DIR}/about.md", render_index(entries), "Family Diary")]
+    for year, in_year in sorted(_by_year(entries).items()):
         out.append((
-            f"{DIARY_DIR}/{key}.md",
-            render_month(month, room_id=room_id),
-            f"Diary: {month[0].on.strftime('%B %Y')}",
+            f"{DIARY_DIR}/{year}/about.md", render_year(in_year), year,
         ))
+        for month, in_month in sorted(_by_month(in_year).items()):
+            out.append((
+                f"{DIARY_DIR}/{year}/{month}.md",
+                render_month(in_month, room_id=room_id,
+                             summary=(summaries or {}).get(f"{year}-{month}", "")),
+                in_month[0].on.strftime("%B %Y"),
+            ))
     return out

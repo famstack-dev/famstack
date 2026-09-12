@@ -431,18 +431,88 @@ class TestRendering:
 
         assert spoken in page
 
-    def test_the_index_lists_a_page_for_every_month(self):
+    def test_a_month_opens_with_its_summary(self):
+        entries = _compile()
+        march = [e for e in entries if e.on.month == 3]
+
+        page = diary.render_month(march, summary="A month of firsts.")
+
+        assert page.startswith("# March 2026\n\nA month of firsts.")
+
+    def test_a_month_without_a_summary_goes_straight_to_its_entries(self):
+        """The summary is the only writing here that is not the family's,
+        so its absence leaves the page shorter, never padded with
+        boilerplate the reader sees on every other month."""
+        entries = _compile()
+        march = [e for e in entries if e.on.month == 3]
+
+        page = diary.render_month(march)
+
+        assert page.startswith("# March 2026\n\n## ")
+        assert "memories room" not in page
+
+    def test_a_summary_reaches_the_month_it_describes(self):
+        pages = {path: body for path, body, _title in
+                 diary.pages_for(_compile(),
+                                 summaries={"2026-03": "Only March."})}
+
+        assert "Only March." in pages["diary/2026/03.md"]
+        assert "Only March." not in pages["diary/2026/04.md"]
+
+    def test_the_index_lists_a_page_for_every_year(self):
         entries = _compile()
 
         index = diary.render_index(entries)
 
-        for key in {diary.month_key(e.on) for e in entries}:
-            assert f"]({key})" in index
+        for key in {diary.year_key(e.on) for e in entries}:
+            assert f"]({key}/about)" in index
 
-    def test_pages_are_named_for_the_months_they_cover(self):
-        pages = diary.pages_for(_compile())
-        paths = [path for path, _body, _title in pages]
+    def test_a_year_lists_its_months_and_who_is_in_them(self):
+        entries = _compile()
+        in_2026 = [e for e in entries if e.on.year == 2026]
 
-        assert "diary/index.md" in paths
-        assert "diary/2026-03.md" in paths
+        page = diary.render_year(in_2026)
+
+        assert "## Months" in page
+        assert "[March](03)" in page
+        assert "recorded by Marge and Homer" in page
+
+    def test_a_year_credits_only_who_recorded(self):
+        """An addressee is the model's reading, not a fact about the
+        household, so it never reaches a landing page."""
+        page = diary.render_year([diary.Entry(
+            on=date(2026, 3, 16), confidence="spoken", basis="b", kind="voice",
+            sender="marge", body="words", addressee="Bart")])
+
+        assert "recorded by Marge" in page
+        assert "Bart" not in page
+
+    def test_a_diary_nests_month_inside_year(self):
+        """A diary outlives its first year, so months live under one.
+
+        Flat `2026-03.md` files pile every month of every year into one
+        folder, which is the explorer sidebar the family actually reads.
+        """
+        paths = [path for path, _body, _title in diary.pages_for(_compile())]
+
+        assert "diary/about.md" in paths
+        assert "diary/2026/about.md" in paths
+        assert "diary/2026/03.md" in paths
         assert all(p.startswith("diary/") for p in paths)
+
+    def test_a_folders_own_page_is_about_not_index(self):
+        """Quartz renders a folder URL through a layout with no body in
+        this wiki, so an `index.md` would be unreadable. Every other
+        entity here is `about.md` for the same reason."""
+        paths = [path for path, _body, _title in diary.pages_for(_compile())]
+
+        assert not any(p.endswith("index.md") for p in paths)
+
+    def test_a_month_page_is_titled_with_its_year(self):
+        """The folder gives context in the sidebar; a link or a search
+        result does not, so the title carries the year itself."""
+        titles = {path: title for path, _body, title in
+                  diary.pages_for(_compile())}
+
+        assert titles["diary/2026/03.md"] == "March 2026"
+        assert titles["diary/2026/about.md"] == "2026"
