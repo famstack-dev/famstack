@@ -17,6 +17,14 @@ Commands:
         words. Exit 1 means no keywords, which the host treats as
         "search it literally" rather than as a failure.
 
+    diary [--room <alias>] [--burst-window <seconds>] [--dry-run]
+        Compile the memories room into the family diary. Walks the
+        room's full history, transcribes every recording (cached in
+        TRANSCRIPT_DIR), recovers the date each one was made, and
+        publishes month pages under the shared bucket. Rerunnable:
+        the room is the source of truth, so a second run recompiles
+        rather than appends. See `cli/diary.py` for the date rules.
+
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
         `--dry-run` previews to stdout. Bare invocation regenerates
@@ -37,10 +45,11 @@ sys.path.insert(0, "/app")  # stack.ai.client, stack.forgejo, stack.prompt
 
 from stack.ai.client import LLM, LLMUnavailableError
 
-from cli import rewrite, wiki
+from cli import diary, rewrite, wiki
 
 
 _HANDLERS = {
+    "diary": diary.run,
     "rewrite": rewrite.run,
     "wiki": wiki.run,
 }
