@@ -68,3 +68,10 @@ impl/
 !/AGENT.md
 # Local planning workspace (Nimbalyst) — not product source
 nimbalyst-local/
+
+# Rendered test corpora — the spec is the source of truth, the audio
+# and images it renders are disposable artifacts.
+tools/family-memories/out/
+
+# Nimbalyst editor scratch (screenshots, transcript images)
+.nimbalyst/

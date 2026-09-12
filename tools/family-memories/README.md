@@ -50,6 +50,28 @@ python tools/family-memories/ingest.py \
 assertions. Bursts land back-to-back; replies, edits, and the MSC3245
 voice flag are sent exactly as real clients send them.
 
+## What a replay cannot reproduce
+
+Matrix stamps an event when the server receives it, and only an
+application service may backdate one. So a replay lands the whole
+corpus on the day it runs, and two things follow:
+
+- **Live-timestamp dating is not scored.** Items with
+  `date_source: live-timestamp` carry a `true_date` months before the
+  replay date, and no compiler could recover it. They verify that a
+  message *without* a spoken date falls back to its timestamp, not that
+  the timestamp is right.
+- **The burst window has to shrink.** In a real room, live messages sit
+  hours or days apart and a sync burst lands within seconds, so 120s
+  separates them. The replay compresses the live gaps to `--delay`
+  (2s by default) while burst members still land ~0.1s apart. The ratio
+  survives; the absolute threshold does not. Compile this corpus with
+  `stack memory diary --burst-window 1`.
+
+Everything else scores against ground truth as authored: spoken-date
+recovery, fragment joining, burst grouping, the unrecoverable case,
+edits, and caption attachment.
+
 ## What the corpus encodes about dates
 
 Matrix stamps events with **server receipt time only** — there is no

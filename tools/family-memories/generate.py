@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import struct
 import sys
 import urllib.request
 import wave
@@ -35,13 +34,27 @@ TURN_GAP_MS = 400
 
 
 def tts(text: str, voice: str) -> bytes:
+    """Synthesize `text`, or stop.
+
+    The speech service answers 200 with a header-only WAV when the
+    Piper model behind a voice is missing, so silence arrives looking
+    like success. Checked here because a corpus of empty recordings
+    still ingests, still transcribes to nothing, and scores as a
+    pipeline result rather than a broken rig.
+    """
     body = json.dumps({
         "model": "tts-1", "voice": voice,
         "response_format": "wav", "input": text.strip(),
     }).encode()
     req = urllib.request.Request(
         TTS_URL, data=body, headers={"Content-Type": "application/json"})
-    return urllib.request.urlopen(req, timeout=300).read()
+    blob = urllib.request.urlopen(req, timeout=300).read()
+    _, frames = wav_params(blob)
+    if not frames:
+        sys.exit(f"speech service returned silence for voice '{voice}'. "
+                 "Its Piper model is most likely not downloaded: check "
+                 "'docker logs stack-ai-speech'.")
+    return blob
 
 
 def wav_params(blob: bytes):

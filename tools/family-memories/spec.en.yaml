@@ -3,9 +3,14 @@
 # only the language differs, so pipeline behavior can be compared
 # across locales. See spec.de.yaml for the full pattern commentary.
 
+# Both speakers share one voice on purpose. The stack's Piper map
+# points every non-alloy name at a model it never downloads, so a
+# second voice would render as silence. Nothing in the pipeline reads
+# the audio for speaker identity (v1 has no diarization), so the
+# corpus loses realism here and no ground truth.
 voices:
   marge: alloy
-  homer: onyx
+  homer: alloy
 
 items:
   - id: memo-bart-zeugnis

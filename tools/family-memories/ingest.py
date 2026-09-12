@@ -100,6 +100,31 @@ def image_content(item, mxc):
                      "size": (OUT / item["file"]).stat().st_size}}
 
 
+def burst_ordered(manifest):
+    """Send order with each burst's members contiguous.
+
+    A sync burst is a phone coming back online and flushing its queue,
+    so its members reach the server back-to-back regardless of when
+    they were recorded. The spec lists items in timeline order, which
+    interleaves burst members with live messages; replaying that order
+    literally spaces them out and erases the pattern they exist to
+    encode. Members are emitted where the burst's first one appears.
+    """
+    groups = {}
+    for item in manifest:
+        if burst := item.get("burst"):
+            groups.setdefault(burst, []).append(item)
+
+    out, sent = [], set()
+    for item in manifest:
+        if item["id"] in sent:
+            continue
+        for member in groups.get(item.get("burst"), [item]):
+            out.append(member)
+            sent.add(member["id"])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--homeserver", required=True)
@@ -140,7 +165,7 @@ def main():
         c.join(room_id, t)
 
     event_ids, prev_burst = {}, None
-    for item in manifest:
+    for item in burst_ordered(manifest):
         tok = tokens[item["sender"]]
         burst = item.get("burst")
         if "delay_after_prev" in item:
