@@ -9,6 +9,20 @@ as diary pages in the wiki, in the words it was recorded in.
     stack memory diary --dry-run         print the pages, write nothing
     stack memory diary --room memories   read a different room
     stack memory diary --burst-window 1  tighten sync-burst detection
+    stack memory diary --rebuild         read it all again from scratch
+
+WHEN IT RUNS
+    The curator compiles the diary on its nightly sweep, so new
+    recordings reach the wiki overnight without anyone asking. Running
+    it by hand does the same thing sooner.
+
+    Every run is a full pass over the room rather than an append. It has
+    to be: a reply to a memo from March can arrive in September, an edit
+    can land on a year-old note, and a remark can turn out to be about a
+    photo from last spring. A compiler that walked forward from where it
+    last stopped would never attach any of them. It stays cheap because
+    what each recording and each reading cost is kept against the
+    message it belongs to, so a nightly pass pays only for what is new.
 
 WHAT IT RECOVERS
     Matrix stamps an event with the time the server received it, never

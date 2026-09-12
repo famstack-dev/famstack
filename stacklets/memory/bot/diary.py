@@ -23,6 +23,7 @@ classification step returns a small record of facts rather than prose.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone, tzinfo
@@ -590,6 +591,26 @@ def month_key(on: date) -> str:
     March.
     """
     return on.strftime("%m")
+
+
+def month_digest(entries) -> str:
+    """A fingerprint of everything a month's summary was written from.
+
+    The summary is cached against this, so it is recomputed exactly when
+    the month's content moves and not otherwise. It covers what the
+    summariser is shown -- who, when, and the words, including remarks
+    attached later -- so a memo surfacing months after the fact rewrites
+    the page it lands on, while an untouched month keeps its paragraph
+    word for word rather than being quietly reworded every night.
+    """
+    parts = []
+    for entry in sorted(entries, key=lambda e: (e.on, e.at)):
+        parts.append("\x1f".join([
+            ",".join(entry.event_ids), entry.on.isoformat(),
+            entry.confidence, entry.sender, entry.body,
+            "|".join(f"{who}:{text}" for who, text in entry.comments),
+        ]))
+    return hashlib.sha256("\x1e".join(parts).encode("utf-8")).hexdigest()
 
 
 def _by_year(entries) -> "dict[str, list[Entry]]":

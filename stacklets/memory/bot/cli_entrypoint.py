@@ -18,12 +18,18 @@ Commands:
         "search it literally" rather than as a failure.
 
     diary [--room <alias>] [--burst-window <seconds>] [--dry-run]
+          [--rebuild]
         Compile the memories room into the family diary. Walks the
-        room's full history, transcribes every recording (cached in
-        TRANSCRIPT_DIR), recovers the date each one was made, and
-        publishes month pages under the shared bucket. Rerunnable:
-        the room is the source of truth, so a second run recompiles
-        rather than appends. See `cli/diary.py` for the date rules.
+        room's full history, transcribes every recording, recovers the
+        date each one was made, and publishes month pages under the
+        shared bucket. The curator runs it on the nightly sweep.
+
+        Always a full pass, never an append: a reply or an edit
+        arriving tonight can belong to an entry from years back. It
+        stays cheap because transcripts, readings, and month summaries
+        are all kept against the thing they describe, so only what is
+        new costs anything. `--rebuild` ignores those and reads
+        everything again, for when the model has improved.
 
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;

@@ -76,6 +76,19 @@ BRAIN_REPO_DIR = "{data_dir}/memory/brain"
 # containers expect.
 MEMORY_DATA_DIR = "{data_dir}/memory"
 
+# What the diary compiler remembers between runs: the model's reading of
+# each message and the paragraph opening each month. Not a record of how
+# far it got -- the compiler re-reads the whole room every time, because
+# a reply or an edit can land on an entry from years back. These are a
+# cache of what each piece cost, so a nightly pass pays only for what is
+# new.
+DIARY_STATE_DIR = "{data_dir}/memory/diary"
+
+# The shared transcript cache, written by the bots and read by the diary
+# backfill. Same directory core gives the bot-runner: whisper costs
+# minutes of GPU per recording and neither side should pay twice.
+CORE_DATA_DIR = "{data_dir}/core"
+
 # Curator runtime — the slim sidecar runs the same wiki generation the
 # CLI does, so it needs the LLM endpoint (docker-side), model config,
 # Forgejo admin credentials (CODE_URL is overridden to the container-
@@ -85,6 +98,15 @@ OPENAI_KEY       = "{ai_openai_key}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"
 LANGUAGE         = "{language}"
+# The memories room the diary compiler reads, and the whisper endpoint
+# it decodes recordings with. Same values core gives the bot-runner:
+# the curator runs the compiler on its nightly sweep, so it needs them
+# too. The literal homeserver address resolves on the stack network
+# whether or not messages was installed first.
+MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
+MATRIX_SERVER_NAME = "{messages_server_name}"
+WHISPER_URL        = "{ai_whisper_url_docker}/audio/transcriptions"
+
 TIMEZONE         = "{timezone}"
 MATRIX_ADMIN_USER     = "{admin_username}"
 MATRIX_ADMIN_PASSWORD = "{admin_password}"

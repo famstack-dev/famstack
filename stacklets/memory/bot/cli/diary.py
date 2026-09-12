@@ -17,6 +17,7 @@ expensive half is cached rather than repeated: transcripts live in
     stack memory diary --dry-run            print the pages, write nothing
     stack memory diary --room memories      a different room
     stack memory diary --burst-window 1     see below
+    stack memory diary --rebuild            re-read everything from scratch
 
 WHY THE BURST WINDOW IS A KNOB
     Messages that synced late carry arrival timestamps, not recording
@@ -42,12 +43,20 @@ from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import aiohttp
+# httpx rather than aiohttp: the OpenAI SDK already pulls it into every
+# container that can talk to a model, so the compiler runs unchanged in
+# the bot-runner and in the curator that schedules it nightly.
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bot/
-sys.path.insert(0, "/app")  # voice, stack.ai.client
+sys.path.insert(0, "/app")  # stack.ai.client, and voice in the bot-runner
+# The transcript store lives with the bot-runner's voice module. The
+# bot-runner has it baked at /app; the curator, which schedules this
+# nightly, only mounts /stacklets. Both see it here.
+sys.path.append("/stacklets/core/bot-runner")
 
 import diary  # noqa: E402
+import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 
@@ -72,19 +81,19 @@ def _err(msg: str) -> None:
 # with standing access to the most private room in the house.
 
 
-async def _admin_token(session: aiohttp.ClientSession, homeserver: str) -> str:
+async def _admin_token(session: httpx.AsyncClient, homeserver: str) -> str:
     user = os.environ.get("MATRIX_ADMIN_USER", "")
     password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not user or not password:
         raise RuntimeError("MATRIX_ADMIN_USER/PASSWORD not set in this container")
-    async with session.post(f"{homeserver}/_matrix/client/v3/login", json={
+    resp = await session.post(f"{homeserver}/_matrix/client/v3/login", json={
         "type": "m.login.password",
         "identifier": {"type": "m.id.user", "user": user},
         "password": password,
-    }) as resp:
-        if resp.status != 200:
-            raise RuntimeError(f"admin login failed: HTTP {resp.status}")
-        return (await resp.json())["access_token"]
+    })
+    if resp.status_code != 200:
+        raise RuntimeError(f"admin login failed: HTTP {resp.status_code}")
+    return resp.json()["access_token"]
 
 
 async def _resolve_room(session, homeserver, token, room: str) -> str:
@@ -92,13 +101,13 @@ async def _resolve_room(session, homeserver, token, room: str) -> str:
         return room
     alias = room if room.startswith("#") else \
         f"#{room}:{os.environ.get('MATRIX_SERVER_NAME', '')}"
-    async with session.get(
+    resp = await session.get(
         f"{homeserver}/_matrix/client/v3/directory/room/{quote(alias)}",
         headers={"Authorization": f"Bearer {token}"},
-    ) as resp:
-        if resp.status != 200:
-            raise RuntimeError(f"no such room: {alias}")
-        return (await resp.json())["room_id"]
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"no such room: {alias}")
+    return resp.json()["room_id"]
 
 
 async def _history(session, homeserver, token, room_id: str) -> list[dict]:
@@ -115,10 +124,10 @@ async def _history(session, homeserver, token, room_id: str) -> list[dict]:
                f"/messages?dir=b&limit={_PAGE}")
         if cursor:
             url += f"&from={quote(cursor)}"
-        async with session.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"could not read room: HTTP {resp.status}")
-            payload = await resp.json()
+        resp = await session.get(url, headers=headers)
+        if resp.status_code != 200:
+            raise RuntimeError(f"could not read room: HTTP {resp.status_code}")
+        payload = resp.json()
         chunk = payload.get("chunk") or []
         events.extend(chunk)
         cursor = payload.get("end") or ""
@@ -130,11 +139,11 @@ async def _download(session, homeserver, token, mxc: str) -> bytes | None:
     server, _, media_id = mxc.replace("mxc://", "").partition("/")
     url = (f"{homeserver}/_matrix/client/v1/media/download/"
            f"{quote(server)}/{quote(media_id)}")
-    async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
-        if resp.status != 200:
-            _err(f"  media {mxc}: HTTP {resp.status}")
-            return None
-        return await resp.read()
+    resp = await session.get(url, headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        _err(f"  media {mxc}: HTTP {resp.status_code}")
+        return None
+    return resp.content
 
 
 # ── Decoding and reading ──────────────────────────────────────────────
@@ -256,7 +265,7 @@ def _chunks(messages):
     return out
 
 
-async def _read_room(messages, llm):
+async def _read_room(messages, llm, cache=None):
     """Read the room: facts per message, and the links between them.
 
     One call per slice of history rather than one per message. Reading a
@@ -264,6 +273,13 @@ async def _read_room(messages, llm):
     that it is a remark about the photo above -- and a call with no
     neighbours also mistakes a two-person conversation for one person
     reminiscing. The batch is what makes those answerable.
+
+    What the model finds is remembered against the message it describes.
+    Both halves of that are permanent: a message never changes (an edit
+    is a new event pointing at the old one), and a link, once seen, is a
+    fact about two messages rather than about the run they arrived in.
+    So a slice read end to end is never sent again, and a nightly pass
+    costs only what is genuinely new.
 
     Returns `(readings, continues, refers_to)`. A slice the model fails
     or garbles contributes nothing and the rest still compiles: the
@@ -273,8 +289,34 @@ async def _read_room(messages, llm):
     readings: dict[str, diary.Reading] = {}
     continues: dict[str, str] = {}
     refers_to: dict[str, str] = {}
+    known: set[str] = set()
+
+    def remember(event_id: str, row: dict) -> None:
+        readings[event_id] = diary.Reading(
+            mode=str(row.get("mode") or "monologue"),
+            spoken_date=row.get("spoken_date") or None,
+            addressee=row.get("addressee") or None,
+        )
+        if target := row.get("continues"):
+            continues[event_id] = target
+        if target := row.get("refers_to"):
+            refers_to[event_id] = target
+        known.add(event_id)
+
+    if cache is not None:
+        for msg in messages:
+            if (stored := cache.get(msg.event_id)) is not None:
+                remember(msg.event_id, stored)
+    if known:
+        _err(f"  {len(known)} message(s) already read, "
+             f"{len(messages) - len(known)} new")
 
     for chunk in _chunks(messages):
+        # A slice whose every message is on file has nothing left to
+        # say: its links were recorded with the messages they join.
+        if all(m.event_id in known for m in chunk):
+            continue
+
         prompt = _READ_PROMPT.format(messages=_as_prompt(chunk))
         try:
             raw = await llm.complete("classifier", prompt,
@@ -292,21 +334,26 @@ async def _read_room(messages, llm):
             if not isinstance(row, dict):
                 continue
             here = _resolve_n(row.get("n"), chunk)
-            if here is None:
+            if here is None or here.event_id in known:
                 continue
-            readings.setdefault(here.event_id, diary.Reading(
-                mode=str(row.get("mode") or "monologue"),
-                spoken_date=row.get("spoken_date") or None,
-                addressee=(row.get("addressee") or None),
-            ))
-            # A later chunk sees a pair the earlier one straddled, so a
-            # link found anywhere wins over one found nowhere.
-            if (target := _resolve_n(row.get("continues"), chunk)) is not None:
-                continues[here.event_id] = target.event_id
-            if (target := _resolve_n(row.get("refers_to"), chunk)) is not None:
-                refers_to[here.event_id] = target.event_id
+            found = {
+                "mode": str(row.get("mode") or "monologue"),
+                "spoken_date": row.get("spoken_date") or None,
+                "addressee": row.get("addressee") or None,
+                "continues": _link(row.get("continues"), chunk),
+                "refers_to": _link(row.get("refers_to"), chunk),
+            }
+            remember(here.event_id, found)
+            if cache is not None:
+                cache.put(here.event_id, found)
 
     return readings, continues, refers_to
+
+
+def _link(value, chunk) -> str | None:
+    """The event id a returned number points at, or None."""
+    target = _resolve_n(value, chunk)
+    return target.event_id if target is not None else None
 
 
 def _resolve_n(value, chunk):
@@ -438,6 +485,7 @@ def _opt(argv: list[str], flag: str, fallback: str) -> str:
 async def run(llm, argv: list[str]) -> int:
     room_arg = _opt(argv, "--room", "memories")
     dry_run = "--dry-run" in argv
+    rebuild = "--rebuild" in argv
     try:
         window = float(_opt(argv, "--burst-window",
                             str(diary.DEFAULT_BURST_WINDOW_S)))
@@ -446,6 +494,7 @@ async def run(llm, argv: list[str]) -> int:
         return 2
 
     zone = _household_zone()
+    readings_cache, summaries_cache = diary_store.open_stores()
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:
         _err("MATRIX_HOMESERVER not set — is core up?")
@@ -458,12 +507,14 @@ async def run(llm, argv: list[str]) -> int:
         _err(f"no transcription available: {e}")
         return 1
 
-    async with aiohttp.ClientSession() as session:
+    # Recordings can be tens of megabytes; the default five seconds is
+    # for APIs, not for media.
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as session:
         try:
             token = await _admin_token(session, homeserver)
             room_id = await _resolve_room(session, homeserver, token, room_arg)
             events = await _history(session, homeserver, token, room_id)
-        except (RuntimeError, aiohttp.ClientError) as e:
+        except (RuntimeError, httpx.HTTPError) as e:
             _err(str(e))
             return 1
 
@@ -489,7 +540,8 @@ async def run(llm, argv: list[str]) -> int:
                 continue
             decoded.append(msg.__class__(**{**msg.__dict__, "body": text}))
 
-        readings, continues, refers_to = await _read_room(decoded, llm)
+        readings, continues, refers_to = await _read_room(
+            decoded, llm, None if rebuild else readings_cache)
 
     await transcriber.aclose()
 
@@ -505,7 +557,18 @@ async def run(llm, argv: list[str]) -> int:
 
     summaries = {}
     for key, in_month in sorted(months.items()):
+        digest = diary.month_digest(in_month)
+        kept = "" if rebuild else summaries_cache.get(key, digest)
+        if kept:
+            summaries[key] = kept
+            continue
         summaries[key] = await _summarise(in_month, llm)
+        if summaries[key]:
+            summaries_cache.put(key, digest, summaries[key])
+
+    if not dry_run:
+        readings_cache.save()
+        summaries_cache.save()
 
     pages = diary.pages_for(entries, room_id=room_id, summaries=summaries)
     if dry_run:

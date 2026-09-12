@@ -34,6 +34,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "tools" / "family-memories"))
 
 import diary  # noqa: E402
+import diary_store  # noqa: E402
 from ingest import burst_ordered  # noqa: E402
 
 SPEC = _REPO_ROOT / "tools" / "family-memories" / "spec.en.yaml"
@@ -686,3 +687,97 @@ class TestRendering:
 
         assert titles["diary/2026/03.md"] == "March 2026"
         assert titles["diary/2026/about.md"] == "2026"
+
+
+# ── What survives between runs ────────────────────────────────────────
+
+
+class TestRememberingBetweenRuns:
+    """The nightly must pay for what is new and nothing else.
+
+    Deliberately not a watermark. The compiler re-reads the whole room
+    every run, because a reply, an edit, or a remark arriving tonight
+    can belong to an entry from years back, and anything walking forward
+    from a last-processed id would never attach it. What is kept is what
+    each message cost, keyed by the message.
+    """
+
+    def test_a_reading_survives_a_restart(self, tmp_path):
+        readings, _ = diary_store.open_stores(tmp_path)
+        readings.put("$a", {"mode": "monologue", "spoken_date": "2026-03-16",
+                            "addressee": "Bart", "continues": None,
+                            "refers_to": None})
+        readings.save()
+
+        reopened, _ = diary_store.open_stores(tmp_path)
+
+        assert reopened.get("$a")["spoken_date"] == "2026-03-16"
+
+    def test_a_link_is_remembered_with_the_message_that_carries_it(self, tmp_path):
+        """A slice read end to end is never sent again, so its links
+        have to come back with it or a joined recording would split."""
+        readings, _ = diary_store.open_stores(tmp_path)
+        readings.put("$b", {"mode": "monologue", "continues": "$a",
+                            "refers_to": None})
+        readings.save()
+
+        reopened, _ = diary_store.open_stores(tmp_path)
+
+        assert reopened.get("$b")["continues"] == "$a"
+
+    def test_a_first_run_finds_an_empty_cache(self, tmp_path):
+        readings, summaries = diary_store.open_stores(tmp_path / "nothing-here")
+
+        assert len(readings) == 0
+        assert readings.get("$a") is None
+        assert summaries.get("2026-03", "digest") == ""
+
+    def test_a_corrupt_cache_is_not_a_broken_compile(self, tmp_path):
+        """Paying for a reading twice beats refusing to run."""
+        (tmp_path / "readings.json").write_text("{not json at all")
+
+        readings, _ = diary_store.open_stores(tmp_path)
+
+        assert readings.get("$a") is None
+
+    def test_an_unchanged_month_keeps_the_words_it_had(self, tmp_path):
+        """Not only a saving. Re-summarising a settled month every night
+        would reword the family's past while they slept.
+        """
+        _, summaries = diary_store.open_stores(tmp_path)
+        summaries.put("2026-03", "abc", "A month of firsts.")
+
+        assert summaries.get("2026-03", "abc") == "A month of firsts."
+
+    def test_a_month_that_moved_is_written_again(self, tmp_path):
+        _, summaries = diary_store.open_stores(tmp_path)
+        summaries.put("2026-03", "abc", "A month of firsts.")
+
+        assert summaries.get("2026-03", "xyz") == ""
+
+
+class TestMonthDigest:
+    def test_the_same_month_fingerprints_the_same(self):
+        march = [e for e in _compile() if e.on.month == 3]
+
+        assert diary.month_digest(march) == diary.month_digest(march)
+
+    def test_a_reply_arriving_later_moves_the_month(self):
+        """A memo from March can collect a remark in September. The
+        March page has to be written again when it does.
+        """
+        march = [e for e in _compile() if e.on.month == 3]
+        before = diary.month_digest(march)
+        march[0].comments.append(("homer", "He gets that from me."))
+
+        assert diary.month_digest(march) != before
+
+    def test_a_memo_surfacing_late_moves_the_month_it_lands_in(self):
+        march = [e for e in _compile() if e.on.month == 3]
+        latecomer = diary.Entry(
+            on=date(2026, 3, 30), confidence="spoken", basis="b",
+            kind="voice", sender="marge", body="one more thing",
+            at=BASE_TS, event_ids=["$late"])
+
+        assert diary.month_digest(march + [latecomer]) \
+            != diary.month_digest(march)
