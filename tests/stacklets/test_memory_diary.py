@@ -112,23 +112,43 @@ def _readings_from_spec(items: list[dict]) -> dict[str, diary.Reading]:
 
     `date_source: spoken` means the recording says its own date, so the
     reading carries it; anything else leaves it null and the compiler
-    has to fall back. Fragment halves are marked where the spec says the
-    recording was cut.
+    has to fall back.
     """
-    readings = {}
-    for item in items:
-        source = item["date_source"]
-        fragment = item.get("fragment_of")
-        first_half = fragment and item["id"].endswith("-a")
-        second_half = fragment and not item["id"].endswith("-a")
-        readings[f"${item['id']}"] = diary.Reading(
+    return {
+        f"${item['id']}": diary.Reading(
             mode="note" if item["kind"] == "text" else "monologue",
             spoken_date=(item["true_date"].isoformat()
-                         if source == "spoken" else None),
-            starts_mid_thought=bool(second_half),
-            ends_mid_thought=bool(first_half),
+                         if item["date_source"] == "spoken" else None),
         )
-    return readings
+        for item in items
+    }
+
+
+def _links_from_spec(items: list[dict]):
+    """The links between messages a correct reader would find.
+
+    These are the judgments that need two messages in view at once, so
+    the spec is where they come from: `fragment_of` names the halves of
+    a split recording, and an `implicit-context` item is a remark about
+    the last picture posted before it.
+    """
+    continues: dict[str, str] = {}
+    refers_to: dict[str, str] = {}
+    halves: dict[str, str] = {}
+    last_image: str | None = None
+
+    for item in items:
+        event_id = f"${item['id']}"
+        if fragment := item.get("fragment_of"):
+            if earlier := halves.get(fragment):
+                continues[event_id] = earlier
+            halves[fragment] = event_id
+        if item["pattern"] == "implicit-context" and last_image:
+            refers_to[event_id] = last_image
+        if item["kind"] == "image":
+            last_image = event_id
+
+    return continues, refers_to
 
 
 def _words(item: dict) -> str:
@@ -156,7 +176,9 @@ def _compile(items=None):
     items = items if items is not None else _spec_items()
     messages = diary.resolve(_room_from_spec(items), burst_window_s=WINDOW_S)
     messages = _transcribed(messages, items)
-    return diary.compile_entries(messages, _readings_from_spec(items))
+    continues, refers_to = _links_from_spec(items)
+    return diary.compile_entries(messages, _readings_from_spec(items),
+                                 continues=continues, refers_to=refers_to)
 
 
 def _entry_for(entries, item_id: str) -> diary.Entry:
@@ -364,22 +386,30 @@ class TestBurstsInARealRoom:
 
 
 class TestJoiningInARealRoom:
-    def test_a_memo_that_tails_off_does_not_swallow_a_later_one(self):
-        """Whisper often clips the end of a recording, so "ends mid
-        thought" is common. Only halves that arrived together may join;
-        otherwise a Tuesday memo absorbs Thursday's."""
-        days_apart = [
-            _msg(event_id="$a", ts=BASE_TS, body="I was going to say"),
-            _msg(event_id="$b", ts=BASE_TS + 2 * 86_400_000, body="and then"),
-        ]
-        readings = {
-            "$a": diary.Reading(ends_mid_thought=True),
-            "$b": diary.Reading(starts_mid_thought=True),
-        }
-        messages = diary.mark_bursts(
-            days_apart, window_s=diary.DEFAULT_BURST_WINDOW_S)
+    def test_a_link_that_reaches_past_the_previous_message_is_refused(self):
+        """A split recording is two adjacent uploads, always.
 
-        groups = diary.join_fragments(messages, readings)
+        A model that links across an intervening message has misread,
+        and merging on it would fuse two unrelated memories into one
+        entry. The room is the check on the reading.
+        """
+        messages = [
+            _msg(event_id="$a", ts=BASE_TS, body="I was going to say"),
+            _msg(event_id="$b", ts=BASE_TS + 60_000, body="something else"),
+            _msg(event_id="$c", ts=BASE_TS + 120_000, body="and then"),
+        ]
+
+        groups = diary.join_fragments(messages, {"$c": "$a"})
+
+        assert [len(g) for g in groups] == [1, 1, 1]
+
+    def test_a_different_speaker_never_finishes_your_sentence(self):
+        messages = [
+            _msg(event_id="$a", sender="marge", ts=BASE_TS, body="I meant"),
+            _msg(event_id="$b", sender="homer", ts=BASE_TS + 1000, body="to say"),
+        ]
+
+        groups = diary.join_fragments(messages, {"$b": "$a"})
 
         assert [len(g) for g in groups] == [1, 1]
 
@@ -502,6 +532,18 @@ class TestEntries:
         with pytest.raises(AssertionError):
             # It is not an entry of its own.
             assert _entry_for(entries, "bild-zeichnung-caption").kind == "text"
+
+    def test_a_remark_about_a_photo_is_filed_under_that_photo(self):
+        """"The picture above is from the barbecue" carries no Matrix
+        relation at all. Nothing in the event says what it is about, so
+        the link can only come from reading the two together -- and once
+        it does, the remark stops being a memory of its own.
+        """
+        entries = _compile()
+
+        photo = _entry_for(entries, "bild-kontextlos")
+        assert "$impliziter-kontext" in photo.event_ids
+        assert "barbecue" in photo.comments[0][1]
 
     def test_a_reply_to_a_memo_is_filed_under_that_memo(self):
         entries = _compile()

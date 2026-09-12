@@ -37,7 +37,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -165,19 +165,36 @@ async def _transcribe(message, *, session, homeserver, token,
         return ""
 
 
+# How many messages go to the model at once, and how many of the
+# previous chunk to repeat. The overlap exists so a recording split
+# across a chunk boundary is still seen whole by one call; a split is
+# always two adjacent uploads, so a few messages of run-up is plenty.
+_CHUNK = 40
+_OVERLAP = 4
+
+
 _READ_PROMPT = """\
-You are reading one message from a family's private memories room so it
-can be filed in their diary. Do not rewrite it, summarise it, translate
-it, or comment on it. Report only facts about the text as it stands.
+You are reading a family's private memories room so their diary can be
+compiled. Report facts about these messages. Never rewrite one, never
+summarise one, never translate one.
 
-This message reached the server on {arrival}.
+The messages are in the order the server received them, which is not
+always the order they were recorded: a phone that has been offline
+uploads everything at once when it reconnects.
 
-Message from {sender}:
----
-{body}
----
+{messages}
 
-Reply with a JSON object with exactly these keys:
+Reply with a JSON object {{"messages": [...]}} holding one object per
+message above, in the same order, each with these keys:
+
+"n": the message's number.
+
+"spoken_date": the date the speaker states inside the message, as
+  YYYY-MM-DD. Use only a date the text actually names, such as "today is
+  March sixteenth". If it names a day and month but no year, choose the
+  most recent such date on or before the day the message was received.
+  If the text states no date, use null. Never derive one from the
+  received date alone.
 
 "mode": a recorded conversation carries no speaker labels, so judge by
   the turns rather than by names. Answer "dialogue" when a statement in
@@ -187,67 +204,118 @@ Reply with a JSON object with exactly these keys:
   throughout, however many people they mention or address. Answer "note"
   if it reads as written rather than spoken.
 
-"spoken_date": the date the speaker states inside the message, as
-  YYYY-MM-DD. Use only a date the text actually names, such as "today is
-  March sixteenth". If it names a day and month but no year, choose the
-  most recent such date on or before {arrival}. If the text states no
-  date at all, use null. Never derive a date from the arrival date
-  alone.
+"addressee": who the message is spoken to, exactly as it names them
+  ("Bart", "kids"), or null if it is not addressed to anyone in
+  particular. In a dialogue both speakers are present, so use null.
 
-"starts_mid_thought": true if the text begins part-way through a
-  sentence or thought, as though the recording started late.
+"continues": the number of the message directly before this one, when
+  the two are halves of a single recording that was cut in the middle
+  of a sentence: the earlier one stops mid-thought and this one picks
+  up the same sentence. Otherwise null. Messages that merely arrived
+  together are not halves of each other -- three uploads in the same
+  second are usually three separate memos, and joining them would fuse
+  three memories into one.
 
-"ends_mid_thought": true if the text stops part-way through a sentence
-  or thought, as though the recording was cut off.
-
-"addressee": who the message is spoken to, written exactly as the
-  message names them ("Bart", "kids", "Maggie"), or null if it is not
-  addressed to anyone in particular. Never name the speaker themselves:
-  in a conversation between two people who are both present, there is
-  no addressee, so use null.
+"refers_to": the number of an earlier message this one is a remark
+  about rather than a memory of its own: a caption for a photo, or a
+  line like "the picture above is from the barbecue". Otherwise null.
 """
 
 
-async def _read(message, llm) -> diary.Reading:
-    """Ask the model what this message says about itself.
+def _as_prompt(chunk) -> str:
+    """The messages as the reader sees them, numbered from one.
 
-    Temperature 0: the same recording must read the same way on every
-    compile, or a rerun would silently reshuffle the diary. A model that
-    fails or answers with nonsense yields an empty reading, which dates
-    the entry from its timestamp -- worse, but not wrong in a way that
-    hides anything.
-
-    Dates, fragment boundaries and addressees come back reliably at this
-    model tier. `mode` does not: an unlabelled two-speaker transcript
-    reads as one person recounting a conversation, and a 35B model calls
-    it a monologue. The prompt is tuned to suppress the false positive
-    rather than chase the false negative, because "Conversation" printed
-    over a private memo to a child is a worse page than "Voice note"
-    printed over a dinner-table recording. Recovering the rest needs
-    diarization, which v1 does not have.
+    Numbered rather than keyed by event id because the links come back
+    as references and a model copying a 43-character Matrix id is a
+    transcription test, not a reading one.
     """
-    prompt = _READ_PROMPT.format(
-        arrival=message.sent_on.isoformat(),
-        sender=message.sender,
-        body=message.body.strip(),
-    )
-    try:
-        raw = await llm.complete("classifier", prompt,
-                                 json_mode=True, temperature=0)
-        data = json.loads(raw)
-    except (LLMError, json.JSONDecodeError, TypeError) as e:
-        _err(f"  could not read {message.event_id}: {e}")
-        return diary.Reading()
+    lines = []
+    for n, msg in enumerate(chunk, start=1):
+        when = datetime.fromtimestamp(
+            msg.ts / 1000, msg.zone).strftime("%Y-%m-%d %H:%M")
+        kind = {"voice": "voice recording", "image": "photo",
+                "video": "video", "file": "file"}.get(msg.kind, "text")
+        body = msg.body.strip() or "(no caption)"
+        lines.append(f"[{n}] {msg.sender}, received {when}, {kind}:\n{body}")
+    return "\n\n".join(lines)
 
-    if not isinstance(data, dict):
-        return diary.Reading()
-    return diary.Reading(
-        mode=str(data.get("mode") or "monologue"),
-        spoken_date=data.get("spoken_date") or None,
-        starts_mid_thought=bool(data.get("starts_mid_thought")),
-        ends_mid_thought=bool(data.get("ends_mid_thought")),
-        addressee=(data.get("addressee") or None),
-    )
+
+def _chunks(messages):
+    """Slices of room history, in arrival order, with a little run-up.
+
+    Arrival order rather than calendar day on purpose: the day a memo
+    belongs to is what this pass works out, so it cannot also be what
+    decides the batching.
+    """
+    if len(messages) <= _CHUNK:
+        return [list(messages)]
+    out, start = [], 0
+    while start < len(messages):
+        out.append(list(messages[start:start + _CHUNK]))
+        start += _CHUNK - _OVERLAP
+    return out
+
+
+async def _read_room(messages, llm):
+    """Read the room: facts per message, and the links between them.
+
+    One call per slice of history rather than one per message. Reading a
+    message alone cannot see that it finishes the sentence before it, or
+    that it is a remark about the photo above -- and a call with no
+    neighbours also mistakes a two-person conversation for one person
+    reminiscing. The batch is what makes those answerable.
+
+    Returns `(readings, continues, refers_to)`. A slice the model fails
+    or garbles contributes nothing and the rest still compiles: the
+    entries are the family's words either way, and a missing reading
+    costs a date, not a memory.
+    """
+    readings: dict[str, diary.Reading] = {}
+    continues: dict[str, str] = {}
+    refers_to: dict[str, str] = {}
+
+    for chunk in _chunks(messages):
+        prompt = _READ_PROMPT.format(messages=_as_prompt(chunk))
+        try:
+            raw = await llm.complete("classifier", prompt,
+                                     json_mode=True, temperature=0)
+            payload = json.loads(raw)
+            rows = payload.get("messages") if isinstance(payload, dict) else None
+        except (LLMError, json.JSONDecodeError, TypeError) as e:
+            _err(f"  could not read {len(chunk)} message(s): {e}")
+            continue
+        if not isinstance(rows, list):
+            _err(f"  unreadable answer for {len(chunk)} message(s)")
+            continue
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            here = _resolve_n(row.get("n"), chunk)
+            if here is None:
+                continue
+            readings.setdefault(here.event_id, diary.Reading(
+                mode=str(row.get("mode") or "monologue"),
+                spoken_date=row.get("spoken_date") or None,
+                addressee=(row.get("addressee") or None),
+            ))
+            # A later chunk sees a pair the earlier one straddled, so a
+            # link found anywhere wins over one found nowhere.
+            if (target := _resolve_n(row.get("continues"), chunk)) is not None:
+                continues[here.event_id] = target.event_id
+            if (target := _resolve_n(row.get("refers_to"), chunk)) is not None:
+                refers_to[here.event_id] = target.event_id
+
+    return readings, continues, refers_to
+
+
+def _resolve_n(value, chunk):
+    """The message a returned number points at, or None if it points off
+    the end. Models occasionally answer with a number that is not in
+    front of them; a link into thin air is dropped rather than guessed."""
+    if not isinstance(value, int) or not 1 <= value <= len(chunk):
+        return None
+    return chunk[value - 1]
 
 
 # ── Recalling a month ─────────────────────────────────────────────────
@@ -421,16 +489,13 @@ async def run(llm, argv: list[str]) -> int:
                 continue
             decoded.append(msg.__class__(**{**msg.__dict__, "body": text}))
 
-        readings = {}
-        for msg in decoded:
-            if msg.kind == "image" or not msg.body.strip():
-                readings[msg.event_id] = diary.Reading(mode="note")
-                continue
-            readings[msg.event_id] = await _read(msg, llm)
+        readings, continues, refers_to = await _read_room(decoded, llm)
 
     await transcriber.aclose()
 
-    entries = diary.compile_entries(decoded, readings)
+    entries = diary.compile_entries(decoded, readings,
+                                    continues=continues,
+                                    refers_to=refers_to)
     _err(f"{len(entries)} diary entr{'y' if len(entries) == 1 else 'ies'}")
 
     months: dict[str, list] = {}

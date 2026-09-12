@@ -75,20 +75,21 @@ class Message:
 
 @dataclass(frozen=True)
 class Reading:
-    """What the classifier read out of one message.
+    """What the model read out of one message.
 
     Facts about the text, not a rewrite of it. `spoken_date` is the date
     said aloud ("today is March sixteenth") and is the only in-band
-    record of when a recording was made. The two mid-thought flags exist
-    because a burst and a split recording look identical from timing
-    alone: three files a second apart are three memos or one memo in
-    three pieces, and only the words can tell you which.
+    record of when a recording was made.
+
+    Relationships between messages are not here. They live in the
+    `continues` and `refers_to` maps, because reading one message can
+    never establish them: whether an upload finishes the one before it,
+    or whether a line of text is about the photo above it, is only
+    visible to something looking at both.
     """
 
     mode: str = "monologue"  # "monologue" | "dialogue" | "note"
     spoken_date: str | None = None
-    starts_mid_thought: bool = False
-    ends_mid_thought: bool = False
     addressee: str | None = None
 
 
@@ -323,39 +324,44 @@ def confirm_bursts(messages, readings):
 # ── Step 2: join ──────────────────────────────────────────────────────
 
 
-def join_fragments(messages, readings):
+def join_fragments(messages, continues):
     """Group messages into the recordings they actually are.
 
     One memo split mid-sentence arrives as two files that look exactly
-    like two memos sent back to back. The only evidence that separates
-    them is the words: the first stops mid-thought and the second picks
-    it up. So a join needs both halves to agree, and a burst label alone
-    is never enough -- three same-second uploads are usually three
-    independent memos.
+    like two memos sent back to back, and timing cannot tell them apart:
+    three uploads in one second are usually three separate thoughts.
+    Only the words decide, and only to something reading both halves at
+    once -- which is why `continues` is handed in, mapping a message to
+    the one it finishes.
+
+    The link is still checked against the room: a join must be with the
+    message immediately before, from the same person, of the same kind.
+    A recording cut in two arrives as two adjacent uploads, so a link
+    reaching further than that is a misreading, and merging on it would
+    fuse two unrelated memories into one entry.
 
     Returns a list of groups, each a list of messages in order.
     """
     groups: list[list[Message]] = []
-    for msg in messages:
-        reading = readings.get(msg.event_id, Reading())
-        if groups:
-            prev = groups[-1][-1]
-            prev_reading = readings.get(prev.event_id, Reading())
-            continues = (
-                msg.kind == "voice" and prev.kind == "voice"
-                and msg.sender == prev.sender
-                # Uploaded together: a recording that was cut in two
-                # arrives as two files back to back. Without this, a
-                # memo whose transcript merely tails off joins itself to
-                # whatever was recorded days later.
-                and msg.burst is not None and msg.burst == prev.burst
-                and prev_reading.ends_mid_thought
-                and reading.starts_mid_thought
-            )
-            if continues:
-                groups[-1].append(msg)
-                continue
-        groups.append([msg])
+    holding: dict[str, list[Message]] = {}
+
+    for i, msg in enumerate(messages):
+        target = continues.get(msg.event_id)
+        previous = messages[i - 1] if i else None
+        adjacent = (
+            previous is not None
+            and target == previous.event_id
+            and msg.sender == previous.sender
+            and msg.kind == previous.kind
+        )
+        group = holding.get(target) if adjacent else None
+        if group is None:
+            group = [msg]
+            groups.append(group)
+        else:
+            group.append(msg)
+        holding[msg.event_id] = group
+
     return groups
 
 
@@ -402,20 +408,26 @@ def date_for(msg: Message, reading: Reading) -> tuple[date, str, str]:
 # ── Step 4: compile ───────────────────────────────────────────────────
 
 
-def compile_entries(messages, readings) -> list[Entry]:
+def compile_entries(messages, readings, *,
+                    continues: "dict[str, str] | None" = None,
+                    refers_to: "dict[str, str] | None" = None) -> list[Entry]:
     """Messages and their readings to dated diary entries.
 
-    Two kinds of message do not earn an entry of their own. A reply
-    belongs to what it replies to, and a caption that arrives behind its
-    photo is that photo's caption -- rendering either separately breaks
-    the pair apart and leaves a line of commentary floating with no
-    subject.
+    Some messages do not earn an entry of their own. A reply belongs to
+    what it replies to; so does a caption trailing its photo, and so
+    does a line like "the picture above is from the barbecue" -- which
+    carries no Matrix relation at all and is only recognisable to
+    something that read the two together. `refers_to` carries those.
+    Rendering any of them separately breaks the pair apart and leaves a
+    remark floating with no subject.
     """
-    # Join on candidate runs (a split recording arrives as two adjacent
-    # uploads), then decide which runs were really a queue being
-    # flushed. Dating reads the confirmed view; joining cannot, because
-    # confirmation strips the very label that pairs the halves.
-    groups = join_fragments(messages, readings)
+    continues = continues or {}
+    about = refers_to or {}
+
+    # Join first (a split recording is two adjacent uploads), then
+    # decide which runs were really a queue being flushed. Dating reads
+    # the confirmed view.
+    groups = join_fragments(messages, continues)
     confirmed = {m.event_id: m for m in confirm_bursts(messages, readings)}
     entries: list[Entry] = []
     by_event: dict[str, Entry] = {}
@@ -424,8 +436,9 @@ def compile_entries(messages, readings) -> list[Entry]:
     for group in groups:
         head = confirmed.get(group[0].event_id, group[0])
         reading = readings.get(head.event_id, Reading())
-        if head.reply_to:
-            pending.append((head, group))
+        parent = head.reply_to or about.get(head.event_id)
+        if parent:
+            pending.append((replace(head, reply_to=parent), group))
             continue
 
         on, confidence, basis = date_for(head, reading)
