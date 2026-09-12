@@ -693,12 +693,16 @@ Run `stack up backup`. You need an APFS-formatted external drive plugged in. The
 
 | Source | Path on the archive disk |
 |---|---|
-| Immich photo originals | `/Volumes/<disk>/data/photos-library/` |
-| Paperless archived PDFs | `/Volumes/<disk>/data/docs-media/` |
-| Matrix uploads: voice messages, photos, files | `/Volumes/<disk>/data/messages-media/` |
-| Matrix timeline, as dated snapshots | `/Volumes/<disk>/data/messages-synapse/` |
+| Immich photo originals | `/Volumes/<disk>/data/photos/library/` |
+| Paperless archived PDFs | `/Volumes/<disk>/data/docs/media/` |
+| Matrix uploads: voice messages, photos, files | `/Volumes/<disk>/data/messages/media/` |
+| Matrix timeline, as dated snapshots | `/Volumes/<disk>/data/messages/synapse/` |
 
 Immich's and Paperless's Postgres databases are still not covered. You get those files back but lose albums, tags, custom fields and saved views. They use the same snapshot mechanism the chat server already uses, so wiring them up is a small change rather than a new design.
+
+**Disks from an earlier release**
+
+Backups written by 0.3.0-beta.3 and earlier used one flat directory per source, `data/photos-library/` where this release writes `data/photos/library/`. Both layouts are read, and a sync keeps using whichever directory it finds, so leaving it alone is a valid choice. To move to the current layout, connect the disk and run `stack backup migrate`. It renames the directories in place, so nothing is copied however much is on the disk, and the files keep the immutable flag that makes the archive append-only. Add `--dry-run` to see what it would do first.
 
 **How the protection works**
 
@@ -737,8 +741,8 @@ Recover the snapshot and the media together, and do the database first. Media th
 
 ```bash
 # 1. Take the snapshot off the archive disk and unpack it
-sudo chflags nouchg /Volumes/<disk>/data/messages-synapse/synapse-<date>.tar.gz
-cp /Volumes/<disk>/data/messages-synapse/synapse-<date>.tar.gz ~/
+sudo chflags nouchg /Volumes/<disk>/data/messages/synapse/synapse-<date>.tar.gz
+cp /Volumes/<disk>/data/messages/synapse/synapse-<date>.tar.gz ~/
 tar xzf ~/synapse-<date>.tar.gz -C ~/restore/
 
 # 2. Stop the homeserver so nothing writes while you work
@@ -755,8 +759,8 @@ cp ~/restore/homeserver.yaml ~/restore/*.signing.key \
    ~/famstack-data/messages/synapse/
 
 # 5. Put the recordings back
-sudo chflags -R nouchg /Volumes/<disk>/data/messages-media/
-cp -R /Volumes/<disk>/data/messages-media/* \
+sudo chflags -R nouchg /Volumes/<disk>/data/messages/media/
+cp -R /Volumes/<disk>/data/messages/media/* \
    ~/famstack-data/messages/synapse/media_store/local_content/
 
 ./stack up messages
@@ -780,8 +784,8 @@ The scheduled nightly run leaves the disk mounted between runs (cron cannot trig
 Plug the archive disk into any Mac and browse the files in Finder. To copy locked files out:
 
 ```bash
-sudo chflags -R nouchg /Volumes/<disk>/data/photos-library/<folder>/
-cp -R /Volumes/<disk>/data/photos-library/<folder>/ ~/recovered/
+sudo chflags -R nouchg /Volumes/<disk>/data/photos/library/<folder>/
+cp -R /Volumes/<disk>/data/photos/library/<folder>/ ~/recovered/
 ```
 
 A `stack backup restore` command and `on_restore` hooks for database recovery are planned but not yet shipped.

@@ -66,6 +66,29 @@ class Target:
     schedule: str    # Cron expression; informational at this level
 
 
+# ── Vault layout ───────────────────────────────────────────────────────────
+
+def vault_subdir(source_id: str) -> str:
+    """Where a source's files live on the vault, relative to the mount.
+
+    The source id is already ``{stacklet_id}/{name}``, so the vault
+    mirrors it: ``data/messages/synapse``. One directory per stacklet
+    groups everything that has to be restored together.
+    """
+    return f"data/{source_id}"
+
+
+def legacy_vault_subdir(source_id: str) -> str:
+    """The flat form used by vaults written with 0.3.0-beta.3 or earlier.
+
+    Both halves of a source id may contain hyphens, so ``data/{id with
+    the slash replaced}`` cannot be split back into stacklet and name.
+    It is still read, because those directories exist on disks in the
+    field; ``stack backup migrate`` renames them.
+    """
+    return f"data/{source_id.replace('/', '-')}"
+
+
 # ── Source discovery ───────────────────────────────────────────────────────
 
 def discover_archive_sources(
@@ -81,10 +104,8 @@ def discover_archive_sources(
     (currently just ``{data_dir}``) are rendered into the path field.
 
     The source ``id`` is ``{stacklet_id}/{archive.name}`` so a single
-    stacklet can declare multiple archives without collision. The
-    vault subdirectory is derived as ``data/{stacklet_id}-{name}`` —
-    short, stable, and namespaced so future stacklets can't accidentally
-    clobber existing archive directories.
+    stacklet can declare multiple archives without collision, and the
+    vault subdirectory mirrors it (see :func:`vault_subdir`).
     """
     stacklets_dir = repo_root / "stacklets"
     if not stacklets_dir.is_dir():
@@ -119,11 +140,12 @@ def discover_archive_sources(
                 # will surface the problem with a useful error.
                 rendered_path = raw_path
 
+            source_id = f"{stacklet_id}/{name}"
             sources.append(SourceRecord(
-                id=f"{stacklet_id}/{name}",
+                id=source_id,
                 display=stacklet_display,
                 src_path=Path(rendered_path),
-                vault_subdir=f"data/{stacklet_id}-{name}",
+                vault_subdir=vault_subdir(source_id),
             ))
 
     return sources

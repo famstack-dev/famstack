@@ -381,7 +381,7 @@ path = "{data_dir}/photos/library/library"
 
 | Field | Description |
 |---|---|
-| `name` | Short slug for this source. Combined with the stacklet id, this becomes the global source id (`photos/library`). Used in `stack backup status` output and (future) `--source=` selection. |
+| `name` | Short slug for this source. Combined with the stacklet id, this becomes the global source id (`photos/library`), which is also the directory it occupies on a vault (`data/photos/library/`). Used in `stack backup status` output and (future) `--source=` selection. |
 | `path` | Filesystem path to sync. Template variables from the rendered environment are available (`{data_dir}`, etc.). |
 
 There is no threshold to declare. The engine judges each source against

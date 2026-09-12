@@ -240,6 +240,40 @@ def parse_sources(sources_env: str) -> List[Source]:
     return records
 
 
+# ── Vault layout ───────────────────────────────────────────────────────────
+
+def legacy_vault_subdir(vault_subdir: str) -> str:
+    """The flat directory name a vault used before the nested layout.
+
+    ``data/messages/synapse`` was written as ``data/messages-synapse``.
+    The two encodings of the same source id differ only in the
+    separator before the last component.
+    """
+    head, _, name = vault_subdir.rpartition("/")
+    return f"{head}-{name}"
+
+
+def vault_dir(mount_point: Path, src: Source) -> Path:
+    """The directory on this vault holding the source's files.
+
+    A vault written by an earlier release keeps its flat directory until
+    ``stack backup migrate`` renames it. Switching without that rename
+    would copy every file again under the new path, and the flat tree
+    could not be removed afterwards: its files are locked immutable.
+
+    An empty flat directory does not count. It is what a migration
+    leaves behind if the rename is interrupted, and following it would
+    strand the data that did move.
+    """
+    dest = mount_point / src.vault_subdir
+    if dest.is_dir():
+        return dest
+    legacy = mount_point / legacy_vault_subdir(src.vault_subdir)
+    if legacy.is_dir() and any(legacy.iterdir()):
+        return legacy
+    return dest
+
+
 # ── Number formatting ──────────────────────────────────────────────────────
 
 def format_number(n: int) -> str:
@@ -719,7 +753,12 @@ def sync_data(
 
     results: List[SourceResult] = []
     for src in sources:
-        dest = mount_point / src.vault_subdir
+        dest = vault_dir(mount_point, src)
+        if dest != mount_point / src.vault_subdir:
+            warn(
+                f"{src.display}: vault uses the old flat layout "
+                f"({dest.name}/). Run 'stack backup migrate' to update it."
+            )
         before_count = count_files(dest) if dest.is_dir() else 0
 
         if not dry_run:
@@ -836,7 +875,7 @@ def verify_sync(sources: List[Source], mount_point: Path) -> None:
     header("Verifying sync")
 
     for src in sources:
-        dest = mount_point / src.vault_subdir
+        dest = vault_dir(mount_point, src)
         src_count = count_files(src.src_path)
         dest_count = count_files(dest)
         if dest_count >= src_count:

@@ -66,7 +66,7 @@ class TestTakeSnapshot:
         path = take_snapshot(_spec(tmp_path), out, dump=_fake_dump())
 
         # Namespaced per stacklet+name so two stacklets cannot collide.
-        assert path.parent == out / "messages-synapse"
+        assert path.parent == out / "messages" / "synapse"
         assert path.suffixes[-2:] == [".tar", ".gz"]
         assert path.name.startswith("synapse-")
         assert path.exists()
@@ -159,8 +159,8 @@ class TestSnapshotSource:
     def test_the_output_directory_becomes_a_source(self, tmp_path):
         src = snapshot_source(_spec(tmp_path), tmp_path / "snapshots")
         assert src.id == "messages/synapse"
-        assert src.src_path == tmp_path / "snapshots" / "messages-synapse"
-        assert src.vault_subdir == "data/messages-synapse"
+        assert src.src_path == tmp_path / "snapshots" / "messages" / "synapse"
+        assert src.vault_subdir == "data/messages/synapse"
 
     def test_it_is_marked_rolling(self, tmp_path):
         """The directory is pruned to a fixed size, so the engine's

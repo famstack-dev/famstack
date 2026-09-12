@@ -92,7 +92,7 @@ def _take_snapshots(
             continue
         size_kb = max(1, path.stat().st_size // 1024)
         print(f"    {spec.display}: {path.name} ({size_kb} KB)")
-        prune_snapshots(out_root / spec.subdir)
+        prune_snapshots(out_root / spec.id)
         sources.append(snapshot_source(spec, out_root))
 
     return sources, failed

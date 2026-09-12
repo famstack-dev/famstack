@@ -38,7 +38,7 @@ except ModuleNotFoundError:  # pragma: no cover — py < 3.11 fallback
 
 from stack import postgres
 
-from _orchestrator import SourceRecord
+from _orchestrator import SourceRecord, vault_subdir
 
 
 # Tarballs retained on the internal disk. The vault retains all of them,
@@ -50,7 +50,10 @@ DEFAULT_KEEP = 7
 class SnapshotSpec:
     """One ``[[backup.snapshot]]`` entry, after template rendering."""
 
-    id: str                     # "{stacklet_id}/{name}", e.g. "messages/synapse"
+    # "{stacklet_id}/{name}", e.g. "messages/synapse". Doubles as the
+    # directory holding this snapshot's tarballs, both in the staging
+    # area and under the vault's `data/`.
+    id: str
     display: str                # Human-readable, e.g. "Messages"
     name: str                   # "synapse"
     # Capture parameters, keyed by the mechanism that reads them. The
@@ -74,13 +77,6 @@ class SnapshotSpec:
     @property
     def stacklet_id(self) -> str:
         return self.id.split("/", 1)[0]
-
-    @property
-    def subdir(self) -> str:
-        """Directory holding this snapshot's tarballs, used both on the
-        internal disk and under the vault's `data/`. Qualified by stacklet
-        so two stacklets choosing the same `name` do not collide."""
-        return f"{self.stacklet_id}-{self.name}"
 
 
 # ── Discovery ──────────────────────────────────────────────────────────────
@@ -229,7 +225,7 @@ def take_snapshot(
     # Taken first, so a failure propagates before any file exists.
     sql = dump(spec)
 
-    out_dir = out_root / spec.subdir
+    out_dir = out_root / spec.id
     out_dir.mkdir(parents=True, exist_ok=True)
     # The timestamp has second resolution, so two runs within the same
     # second would otherwise produce the same name. A suffix keeps them
@@ -334,8 +330,8 @@ def snapshot_source(spec: SnapshotSpec, out_root: Path) -> SourceRecord:
     return SourceRecord(
         id=spec.id,
         display=spec.display,
-        src_path=out_root / spec.subdir,
-        vault_subdir=f"data/{spec.subdir}",
+        src_path=out_root / spec.id,
+        vault_subdir=vault_subdir(spec.id),
         rolling=True,
     )
 

@@ -80,7 +80,7 @@ class TestDiscoverArchiveSources:
         assert s.id == "photos/library"
         assert s.display == "Photos"
         assert s.src_path == Path("/var/famstack-data/photos/library/library")
-        assert s.vault_subdir == "data/photos-library"
+        assert s.vault_subdir == "data/photos/library"
         # Replaced by a baseline the engine derives itself.
         assert s.rolling is False
 
@@ -121,7 +121,7 @@ class TestDiscoverArchiveSources:
         )
         sources = discover_archive_sources(tmp_path, tmp_path, Path("/d"))
         assert [s.id for s in sources] == ["photos/library", "photos/shared"]
-        assert [s.vault_subdir for s in sources] == ["data/photos-library", "data/photos-shared"]
+        assert [s.vault_subdir for s in sources] == ["data/photos/library", "data/photos/shared"]
 
     def test_template_variable_renders(self, tmp_path):
         # {data_dir} must expand to whatever the orchestrator was given.
@@ -229,12 +229,12 @@ class TestSerializeSourcesEnv:
         sources = [SourceRecord(
             id="photos/library", display="Photos",
             src_path=Path("/var/famstack-data/photos/library/library"),
-            vault_subdir="data/photos-library",
+            vault_subdir="data/photos/library",
         )]
         env = serialize_sources_env(sources)
         assert env == (
             "photos/library|Photos|/var/famstack-data/photos/library/library|"
-            "data/photos-library|0"
+            "data/photos/library|0"
         )
 
     def test_a_rolling_source_is_flagged_for_the_engine(self):
@@ -242,7 +242,7 @@ class TestSerializeSourcesEnv:
         has to know so it does not read that as data loss."""
         sources = [SourceRecord(
             id="messages/synapse", display="Messages", src_path=Path("/a"),
-            vault_subdir="data/messages-synapse", rolling=True,
+            vault_subdir="data/messages/synapse", rolling=True,
         )]
         assert serialize_sources_env(sources).endswith("|1")
 

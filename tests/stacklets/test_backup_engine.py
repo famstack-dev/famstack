@@ -33,6 +33,7 @@ from sync import (
     previous_source_counts,
     probe_filesystem,
     read_latest_run,
+    vault_dir,
     verify_canary,
 )
 
@@ -42,14 +43,14 @@ from sync import (
 class TestParseSources:
     def test_single_record(self):
         sources = parse_sources(
-            "photos/library|Photos|/data/photos/library|data/photos-library|0"
+            "photos/library|Photos|/data/photos/library|data/photos/library|0"
         )
         assert len(sources) == 1
         s = sources[0]
         assert s.id == "photos/library"
         assert s.display == "Photos"
         assert s.src_path == Path("/data/photos/library")
-        assert s.vault_subdir == "data/photos-library"
+        assert s.vault_subdir == "data/photos/library"
         assert s.rolling is False
 
     def test_multiple_records_separated_by_newlines(self):
@@ -88,6 +89,54 @@ class TestParseSources:
     def test_too_many_fields_aborts(self):
         with pytest.raises(SyncAborted, match="Malformed source record"):
             parse_sources("a|b|c|d|0|extra")
+
+
+# ── Vault layout ───────────────────────────────────────────────────────────
+
+class TestVaultDir:
+    """Where a source's files go on the vault.
+
+    The current layout nests a source under its stacklet,
+    `data/photos/library`. Vaults written by 0.3.0-beta.3 and earlier
+    hold `data/photos-library`, and those directories stay in use until
+    the household runs `stack backup migrate`: the files in them are
+    locked immutable, so adopting the new path would copy every one
+    again and leave the old tree undeletable.
+    """
+
+    def _source(self) -> Source:
+        return Source(id="photos/library", display="Photos",
+                      src_path=Path("/src"), vault_subdir="data/photos/library")
+
+    def test_a_fresh_vault_gets_the_nested_layout(self, tmp_path):
+        assert vault_dir(tmp_path, self._source()) == \
+            tmp_path / "data" / "photos" / "library"
+
+    def test_an_existing_flat_directory_keeps_being_used(self, tmp_path):
+        flat = tmp_path / "data" / "photos-library"
+        flat.mkdir(parents=True)
+        (flat / "holiday.jpg").write_text("x")
+
+        assert vault_dir(tmp_path, self._source()) == flat
+
+    def test_an_empty_flat_directory_does_not_count(self, tmp_path):
+        """What an interrupted migration leaves behind. Following it
+        would strand the files that did move."""
+        (tmp_path / "data" / "photos-library").mkdir(parents=True)
+
+        assert vault_dir(tmp_path, self._source()) == \
+            tmp_path / "data" / "photos" / "library"
+
+    def test_a_migrated_vault_never_looks_back(self, tmp_path):
+        """Both directories present means the migration ran and left an
+        empty husk, or someone made one by hand. The nested one wins."""
+        (tmp_path / "data" / "photos" / "library").mkdir(parents=True)
+        flat = tmp_path / "data" / "photos-library"
+        flat.mkdir(parents=True)
+        (flat / "holiday.jpg").write_text("x")
+
+        assert vault_dir(tmp_path, self._source()) == \
+            tmp_path / "data" / "photos" / "library"
 
 
 # ── Canary ─────────────────────────────────────────────────────────────────
@@ -130,7 +179,7 @@ class TestPreflightCheckSources:
             id=f"test/{name}",
             display=name.title(),
             src_path=src_dir,
-            vault_subdir=f"data/test-{name}",
+            vault_subdir=f"data/test/{name}",
         )
 
     def test_a_first_ever_run_syncs_whatever_is_there(self, tmp_path, capsys):
@@ -156,7 +205,7 @@ class TestPreflightCheckSources:
         missing = Source(
             id="test/missing", display="Missing",
             src_path=tmp_path / "does-not-exist",
-            vault_subdir="data/test-missing",
+            vault_subdir="data/test/missing",
         )
         present = self._make_source(tmp_path, "ok", file_count=20)
 
@@ -527,7 +576,7 @@ class TestSyncDataLock:
         src.mkdir()
         (src / "a.jpg").write_text("x")
         return Source(id="photos/library", display="Photos",
-                      src_path=src, vault_subdir="data/photos-library")
+                      src_path=src, vault_subdir="data/photos/library")
 
     def _fake_run(self, chflags_returncode: int):
         from types import SimpleNamespace

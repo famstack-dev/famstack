@@ -87,7 +87,7 @@ call, no separate process needed.
 |---|---|
 | `BACKUP_DATA_DIR` | Host-side state directory (canary, logs, result JSON). Refused if under `/Volumes/`. |
 | `VAULT_DISK` | APFS volume name. Mount point is `/Volumes/<name>`. |
-| `SOURCES` | Newline-separated, pipe-delimited records: `<id>\|<display>\|<src_path>\|<vault_subdir>\|<min_files>` |
+| `SOURCES` | Newline-separated, pipe-delimited records: `<id>\|<display>\|<src_path>\|<vault_subdir>\|<rolling>` |
 
 Arguments are POSIX-style: `--dry-run`, `--no-eject`, `--verbose`,
 `--verify`.
