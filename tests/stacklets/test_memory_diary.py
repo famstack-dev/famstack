@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
@@ -195,9 +196,64 @@ class TestResolve:
         body = "> <@marge:test> the original memo\n\nHe gets that from me."
         events = [{"type": "m.room.message", "event_id": "$r",
                    "sender": "@homer:test", "origin_server_ts": BASE_TS,
-                   "content": {"msgtype": "m.text", "body": body}}]
+                   "content": {"msgtype": "m.text", "body": body,
+                               "m.relates_to": {
+                                   "m.in_reply_to": {"event_id": "$p"}}}}]
 
         assert diary.resolve(events)[0].body == "He gets that from me."
+
+    def test_an_entry_may_open_with_a_quote(self):
+        """A leading blockquote is only a reply fallback on a reply.
+
+        Stripping it from everything would eat the opening of any entry
+        that starts by quoting something, which in a diary is a natural
+        way to write.
+        """
+        body = "> the only thing we have to fear\n\nLisa said this today."
+        events = [{"type": "m.room.message", "event_id": "$t",
+                   "sender": "@marge:test", "origin_server_ts": BASE_TS,
+                   "content": {"msgtype": "m.text", "body": body}}]
+
+        assert diary.resolve(events)[0].body == body
+
+    def test_a_video_is_not_dropped_on_the_floor(self):
+        """A family posts a clip as readily as a photo."""
+        events = [{"type": "m.room.message", "event_id": "$v",
+                   "sender": "@marge:test", "origin_server_ts": BASE_TS,
+                   "content": {"msgtype": "m.video", "body": "clip.mp4",
+                               "url": "mxc://test/v"}}]
+
+        resolved = diary.resolve(events)
+
+        assert [m.kind for m in resolved] == ["video"]
+        assert resolved[0].body == "", "a filename is not a caption"
+
+    def test_a_client_that_repeats_the_filename_sends_no_caption(self):
+        """Some clients set `filename` and `body` to the same string."""
+        events = [{"type": "m.room.message", "event_id": "$i",
+                   "sender": "@marge:test", "origin_server_ts": BASE_TS,
+                   "content": {"msgtype": "m.image", "body": "IMG_4021.png",
+                               "filename": "IMG_4021.png",
+                               "url": "mxc://test/x"}}]
+
+        assert diary.resolve(events)[0].body == ""
+
+    def test_a_late_night_memo_belongs_to_the_night_it_was_recorded(self):
+        """Day boundaries are the household's, not UTC's.
+
+        Half past midnight in Berlin is still the previous day in UTC,
+        so reading the clock in UTC files the memo under a heading the
+        family would not recognise.
+        """
+        berlin = ZoneInfo("Europe/Berlin")
+        recorded = datetime(2026, 3, 17, 0, 30, tzinfo=berlin)
+        events = [{"type": "m.room.message", "event_id": "$n",
+                   "sender": "@marge:test",
+                   "origin_server_ts": int(recorded.timestamp() * 1000),
+                   "content": {"msgtype": "m.text", "body": "still awake"}}]
+
+        assert diary.resolve(events, zone=berlin)[0].sent_on == date(2026, 3, 17)
+        assert diary.resolve(events)[0].sent_on == date(2026, 3, 16)
 
     def test_a_bare_upload_has_no_caption(self):
         """An image's `body` is its filename until a caption displaces it."""
@@ -254,6 +310,78 @@ class TestBursts:
 
         assert all(m.burst for m in diary.mark_bursts(run, window_s=10))
         assert not any(m.burst for m in diary.mark_bursts(run, window_s=1))
+
+
+class TestBurstsInARealRoom:
+    """Pinned at the default window, against timings a replay cannot have.
+
+    The corpus is replayed, so it compresses day-scale gaps to seconds
+    and has to be compiled with a tiny window. These cases use the
+    shipped default and the spacing a real room has, because the
+    question they answer -- does an ordinary evening get called
+    undateable -- is the one the corpus cannot ask.
+    """
+
+    def _run(self, gap_s, count=3, **reading_kw):
+        messages = diary.mark_bursts(
+            [_msg(event_id=f"$m{i}", ts=BASE_TS + i * gap_s * 1000, body="x")
+             for i in range(count)],
+            window_s=diary.DEFAULT_BURST_WINDOW_S,
+        )
+        readings = {"$m0": diary.Reading(**reading_kw)} if reading_kw else {}
+        return diary.compile_entries(messages, readings)
+
+    def test_memos_recorded_one_after_another_keep_their_timestamps(self):
+        """Three memos at the dinner table are not a sync burst.
+
+        This is the common case in a real room, and calling it
+        undateable would put a warning on most of the diary.
+        """
+        entries = self._run(gap_s=40)
+
+        assert [e.confidence for e in entries] == ["sent", "sent", "sent"]
+
+    def test_a_memo_that_contradicts_its_own_timestamp_condemns_its_run(self):
+        """One spoken date days off its arrival proves a flushed queue."""
+        entries = self._run(gap_s=40, spoken_date="2026-03-16")
+
+        assert [e.confidence for e in entries] \
+            == ["spoken", "uncertain", "uncertain"]
+
+    def test_a_memo_synced_just_after_midnight_is_not_a_contradiction(self):
+        """Recorded before midnight, received after, is an honest day of
+        drift rather than evidence the timestamps are lying."""
+        spoken = datetime.fromtimestamp(
+            BASE_TS / 1000, timezone.utc).date() - timedelta(days=1)
+        entries = self._run(gap_s=40, spoken_date=spoken.isoformat())
+
+        assert [e.confidence for e in entries] == ["spoken", "sent", "sent"]
+
+    def test_messages_far_apart_never_form_a_run(self):
+        entries = self._run(gap_s=3600, spoken_date="2026-03-16")
+
+        assert [e.confidence for e in entries] == ["spoken", "sent", "sent"]
+
+
+class TestJoiningInARealRoom:
+    def test_a_memo_that_tails_off_does_not_swallow_a_later_one(self):
+        """Whisper often clips the end of a recording, so "ends mid
+        thought" is common. Only halves that arrived together may join;
+        otherwise a Tuesday memo absorbs Thursday's."""
+        days_apart = [
+            _msg(event_id="$a", ts=BASE_TS, body="I was going to say"),
+            _msg(event_id="$b", ts=BASE_TS + 2 * 86_400_000, body="and then"),
+        ]
+        readings = {
+            "$a": diary.Reading(ends_mid_thought=True),
+            "$b": diary.Reading(starts_mid_thought=True),
+        }
+        messages = diary.mark_bursts(
+            days_apart, window_s=diary.DEFAULT_BURST_WINDOW_S)
+
+        groups = diary.join_fragments(messages, readings)
+
+        assert [len(g) for g in groups] == [1, 1]
 
 
 # ── The trap the corpus was built to set ──────────────────────────────

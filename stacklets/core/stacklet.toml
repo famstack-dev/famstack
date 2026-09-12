@@ -110,6 +110,12 @@ IMMICH_API_KEY = "{photos__API_KEY}"
 # Tools server port — Open WebUI connects here for tool calling
 TOOLS_PORT = "42000"
 
+# Household timezone — the clock the family keeps. Anything that turns a
+# timestamp into a calendar day needs it: a voice memo recorded at half
+# past midnight belongs to the day the family would say it happened on,
+# not to whatever day it was in UTC.
+TIMEZONE         = "{timezone}"
+
 # Household language — drives bot-side i18n, ontology rendering, and
 # any prompt that should be in the family's primary language. Distinct
 # from `[ai].language` (`{ai_language}`), which controls AI subsystem

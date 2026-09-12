@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, tzinfo
 
 # A sync burst is a phone coming back online and flushing its queue, so
 # its members land seconds apart whatever their recording dates. 120s is
@@ -53,16 +53,24 @@ class Message:
     event_id: str
     sender: str
     ts: int
-    kind: str  # "voice" | "image" | "text"
+    kind: str  # "voice" | "image" | "video" | "file" | "text"
     body: str = ""
     url: str | None = None
     duration_ms: int | None = None
     reply_to: str | None = None
     burst: str | None = None
+    zone: tzinfo = timezone.utc
 
     @property
     def sent_on(self) -> date:
-        return datetime.fromtimestamp(self.ts / 1000, timezone.utc).date()
+        """The calendar day the family would say this happened on.
+
+        Read in the household's timezone, not UTC. A memo recorded at
+        half past midnight in Berlin is a UTC message from the previous
+        day, and filing it there puts it under the wrong heading in a
+        diary whose whole job is saying when things happened.
+        """
+        return datetime.fromtimestamp(self.ts / 1000, self.zone).date()
 
 
 @dataclass(frozen=True)
@@ -122,7 +130,13 @@ _FALLBACK_LINE = re.compile(r"^>.*$")
 
 
 def strip_reply_fallback(body: str) -> str:
-    """Drop the quoted-original block a client prepends to a reply."""
+    """Drop the quoted-original block a client prepends to a reply.
+
+    Only ever called for a message that really is a reply. A leading
+    blockquote is otherwise just a leading blockquote, and stripping it
+    unconditionally would silently eat the opening of any entry that
+    starts by quoting something.
+    """
     lines = body.splitlines()
     i = 0
     while i < len(lines) and _FALLBACK_LINE.match(lines[i]):
@@ -134,11 +148,28 @@ def strip_reply_fallback(body: str) -> str:
     return "\n".join(lines[i:])
 
 
+# Uploads whose `body` is a filename rather than words. A caption, when
+# a client sends one, displaces it (MSC2530) and the real name moves to
+# `filename`.
+_UPLOADS = ("image", "video", "file")
+
+
 def _kind_of(msgtype: str) -> str | None:
-    return {"m.audio": "voice", "m.image": "image", "m.text": "text"}.get(msgtype)
+    """The kind of entry a message makes, or None to ignore it.
+
+    Video and arbitrary files count. A family posts a clip of a first
+    step to the memories room as readily as a photo, and a compiler that
+    recognised only the three types its test corpus happened to contain
+    would drop it without saying so.
+    """
+    return {
+        "m.audio": "voice", "m.image": "image", "m.video": "video",
+        "m.file": "file", "m.text": "text",
+    }.get(msgtype)
 
 
-def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S):
+def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
+            zone: tzinfo = timezone.utc):
     """Room events to messages: edits applied, replies linked, bursts marked.
 
     `events` is the raw chunk from Synapse in any order; the result is
@@ -170,13 +201,20 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S):
             continue
 
         info = content.get("info") or {}
-        # For an upload, `body` is the filename and `filename` is absent;
-        # a client that attaches a caption puts the caption in `body` and
-        # moves the real name to `filename`. Without this the diary would
-        # print "IMG_4021.png" where the caption belongs.
-        body = strip_reply_fallback(content.get("body", ""))
-        if kind == "image" and not content.get("filename"):
-            body = ""
+        in_reply_to = (relates.get("m.in_reply_to") or {}).get("event_id")
+
+        body = content.get("body", "")
+        if in_reply_to:
+            body = strip_reply_fallback(body)
+        if kind in _UPLOADS:
+            # `body` is the filename until a caption displaces it, at
+            # which point the name moves to `filename`. Clients that set
+            # `filename` to the same string are still sending a bare
+            # upload, so compare rather than test for presence -- else
+            # the diary prints "IMG_4021.png" where a caption belongs.
+            filename = content.get("filename")
+            body = body if (filename and filename != body) else ""
+
         plain.append(Message(
             event_id=ev.get("event_id", ""),
             sender=(ev.get("sender") or "").split(":")[0].lstrip("@"),
@@ -185,7 +223,8 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S):
             body=body,
             url=content.get("url"),
             duration_ms=info.get("duration"),
-            reply_to=(relates.get("m.in_reply_to") or {}).get("event_id"),
+            reply_to=in_reply_to,
+            zone=zone,
         ))
 
     plain.sort(key=lambda m: (m.ts, m.event_id))
@@ -204,10 +243,12 @@ def mark_bursts(messages, *, window_s: float = DEFAULT_BURST_WINDOW_S):
     arriving shortly after another is just someone typing quickly, and
     calling that a burst would throw away a timestamp that is fine.
 
-    The label means "these timestamps are arrival times, not recording
-    times". It does not mean the messages belong together -- that is
-    `join_fragments`, and confusing the two is the trap this corpus was
-    built to set.
+    The label means only "these arrived together". Whether that makes
+    them a *sync* burst -- a queue being flushed, whose timestamps are
+    days off -- is `confirm_bursts`'s question, and it needs evidence
+    this function does not have. Nor does arriving together mean the
+    messages belong together: that is `join_fragments`, and confusing
+    the two is the trap this corpus was built to set.
     """
     out = list(messages)
     run: list[int] = []
@@ -236,6 +277,49 @@ def mark_bursts(messages, *, window_s: float = DEFAULT_BURST_WINDOW_S):
     return out
 
 
+# How far a spoken date must sit from its own timestamp before that
+# timestamp is provably not the recording date. A day of slack absorbs
+# the honest cases: a memo recorded before midnight that reaches the
+# server after it, or a household clock a few hours off UTC.
+CONTRADICTION_DAYS = 1
+
+
+def confirm_bursts(messages, readings):
+    """Keep the burst label only where the timestamps are provably lying.
+
+    Arriving together is not evidence of anything by itself. A family
+    recording three memos at the dinner table sends them a minute apart,
+    and those timestamps are perfectly good; marking that run a sync
+    burst would file three entries as undateable when nothing was wrong
+    with any of them. That is the failure worth avoiding, because a
+    diary that cries uncertainty over ordinary evenings teaches the
+    family to ignore the warning on the one entry that earned it.
+
+    So a run must contradict itself: some message in it says aloud that
+    it was made on a day its own timestamp disagrees with. That is proof
+    the queue was flushed rather than lived, and it makes the rest of
+    the run suspect too.
+
+    A synced burst in which nobody spoke a date is therefore dated as
+    though it were live. Wrong, but undetectably so -- there is no
+    signal in the room to find, and inventing suspicion from timing
+    alone costs more than it recovers.
+    """
+    lying = set()
+    for msg in messages:
+        if not msg.burst:
+            continue
+        spoken = parse_spoken_date(
+            readings.get(msg.event_id, Reading()).spoken_date)
+        if spoken is None:
+            continue
+        if abs((msg.sent_on - spoken).days) > CONTRADICTION_DAYS:
+            lying.add(msg.burst)
+
+    return [m if m.burst in lying else replace(m, burst=None)
+            for m in messages]
+
+
 # ── Step 2: join ──────────────────────────────────────────────────────
 
 
@@ -260,6 +344,11 @@ def join_fragments(messages, readings):
             continues = (
                 msg.kind == "voice" and prev.kind == "voice"
                 and msg.sender == prev.sender
+                # Uploaded together: a recording that was cut in two
+                # arrives as two files back to back. Without this, a
+                # memo whose transcript merely tails off joins itself to
+                # whatever was recorded days later.
+                and msg.burst is not None and msg.burst == prev.burst
                 and prev_reading.ends_mid_thought
                 and reading.starts_mid_thought
             )
@@ -322,13 +411,18 @@ def compile_entries(messages, readings) -> list[Entry]:
     the pair apart and leaves a line of commentary floating with no
     subject.
     """
+    # Join on candidate runs (a split recording arrives as two adjacent
+    # uploads), then decide which runs were really a queue being
+    # flushed. Dating reads the confirmed view; joining cannot, because
+    # confirmation strips the very label that pairs the halves.
     groups = join_fragments(messages, readings)
+    confirmed = {m.event_id: m for m in confirm_bursts(messages, readings)}
     entries: list[Entry] = []
     by_event: dict[str, Entry] = {}
     pending: list[tuple[Message, list[Message]]] = []
 
     for group in groups:
-        head = group[0]
+        head = confirmed.get(group[0].event_id, group[0])
         reading = readings.get(head.event_id, Reading())
         if head.reply_to:
             pending.append((head, group))
@@ -357,6 +451,7 @@ def compile_entries(messages, readings) -> list[Entry]:
     for msg, group in pending:
         parent = by_event.get(msg.reply_to or "")
         if parent is None:
+            msg = confirmed.get(msg.event_id, msg)
             reading = readings.get(msg.event_id, Reading())
             on, confidence, basis = date_for(msg, reading)
             orphan = Entry(

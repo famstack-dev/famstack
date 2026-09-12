@@ -37,8 +37,10 @@ import asyncio
 import json
 import os
 import sys
+from datetime import timezone
 from pathlib import Path
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
 
@@ -339,6 +341,25 @@ async def _summarise(entries, llm) -> str:
 # ── The command ───────────────────────────────────────────────────────
 
 
+def _household_zone():
+    """The clock the family keeps, for turning timestamps into days.
+
+    Falls back to UTC with a warning rather than failing: a diary with
+    some entries an hour either side of midnight is worth more than no
+    diary, and the operator can see why in the output.
+    """
+    name = os.environ.get("TIMEZONE", "").strip()
+    if not name:
+        _err("TIMEZONE not set, reading timestamps as UTC "
+             "— late-night entries may land on the wrong day")
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        _err(f"unknown timezone {name!r}, reading timestamps as UTC")
+        return timezone.utc
+
+
 def _opt(argv: list[str], flag: str, fallback: str) -> str:
     for i, arg in enumerate(argv):
         if arg == flag and i + 1 < len(argv):
@@ -356,6 +377,7 @@ async def run(llm, argv: list[str]) -> int:
         _err("--burst-window wants a number of seconds")
         return 2
 
+    zone = _household_zone()
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:
         _err("MATRIX_HOMESERVER not set — is core up?")
@@ -377,7 +399,7 @@ async def run(llm, argv: list[str]) -> int:
             _err(str(e))
             return 1
 
-        messages = diary.resolve(events, burst_window_s=window)
+        messages = diary.resolve(events, burst_window_s=window, zone=zone)
         if not messages:
             _err(f"nothing in {room_arg} to compile")
             return 0
