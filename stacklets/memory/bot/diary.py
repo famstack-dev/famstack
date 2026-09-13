@@ -553,12 +553,22 @@ def _duration(ms: int | None) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
+# What each kind of entry is called on the page. Every kind the
+# compiler accepts needs a name here: falling through to the internal
+# word prints "video" in a line of otherwise written English.
+_KIND_NOUNS = {
+    "image": "Photo", "video": "Video", "file": "File",
+    "text": "Written note",
+}
+
+
 def _kind_label(entry: Entry) -> str:
     if entry.kind == "voice":
         noun = "Conversation" if entry.mode == "dialogue" else "Voice note"
-        length = _duration(entry.duration_ms)
-        return f"{noun}, {length}" if length else noun
-    return {"image": "Photo", "text": "Written note"}.get(entry.kind, entry.kind)
+    else:
+        noun = _KIND_NOUNS.get(entry.kind, "Attachment")
+    length = _duration(entry.duration_ms)
+    return f"{noun}, {length}" if length else noun
 
 
 def _permalink(room_id: str, event_id: str) -> str:
@@ -591,8 +601,8 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
 
     if entry.body.strip():
         lines += [entry.body.strip(), ""]
-    elif entry.kind == "image" and not entry.comments:
-        lines += ["No caption came with this one.", ""]
+    elif entry.kind in _UPLOADS and not entry.comments:
+        lines += ["Nothing was written alongside this one.", ""]
 
     for who_replied, text in entry.comments:
         lines += [f"> [!quote] {who_replied.title()} replied", ]
@@ -600,7 +610,8 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
         lines.append("")
 
     if room_id and entry.event_ids:
-        label = {"voice": "Listen in the room", "image": "See it in the room"}
+        label = {"voice": "Listen in the room", "image": "See it in the room",
+                 "video": "Watch it in the room"}
         lines.append(
             f"[{label.get(entry.kind, 'Open in the room')}]"
             f"({_permalink(room_id, entry.event_ids[0])})"

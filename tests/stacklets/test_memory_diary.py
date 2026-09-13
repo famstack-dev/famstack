@@ -632,12 +632,22 @@ class TestRendering:
         assert "[!warning]" in page
         assert "sync burst" in page
 
+    def test_every_kind_of_upload_is_named_in_plain_words(self):
+        """A kind with no name falls through to the internal word and
+        prints "video" in a line of otherwise written English."""
+        for kind, expected in (("image", "Photo"), ("video", "Video"),
+                               ("file", "File"), ("text", "Written note")):
+            page = diary.render_month([diary.Entry(
+                on=date(2026, 9, 13), confidence="sent", basis="b", kind=kind,
+                sender="bart", body="")])
+            assert expected in page, kind
+
     def test_a_photo_without_a_caption_says_so_rather_than_naming_a_file(self):
         page = diary.render_month([diary.Entry(
             on=date(2026, 4, 3), confidence="sent", basis="dated from when it "
             "was sent", kind="image", sender="homer", body="")])
 
-        assert "No caption came with this one." in page
+        assert "Nothing was written alongside this one." in page
         assert ".png" not in page
 
     def test_a_speaker_is_not_addressed_to_themselves(self):
