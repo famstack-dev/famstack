@@ -77,5 +77,25 @@ room history (paginated, oldest-first)
   `dev.famstack.recorded_ts` into event content would eliminate the
   uncertain class for future memos. Family habit of speaking the date
   covers the past.
-- Burst window (120s) and join thresholds: tune against the corpus
-  (`true_date` / `fragment_of` ground truth in the manifests).
+- Burst window (120s): settled differently than expected. Timing alone
+  turned out to be the wrong signal -- three memos recorded a minute
+  apart at the dinner table are not a sync burst, and calling them one
+  filed a normal evening as undateable. A run now has to contradict
+  itself (some memo says aloud it was made on a day its own timestamp
+  disagrees with) before its timestamps are distrusted, which leaves
+  the window doing nothing but grouping what arrived together.
+- Join thresholds: gone. The model names which message finishes which,
+  having both in front of it; the room checks the link is adjacent,
+  same sender, same kind.
+
+- The polish pass could take the household vocabulary too. Whisper now
+  decodes against the family's names and topics, which is where a
+  misheard name has to be fixed -- polish may not change words and
+  should not. But the same vocabulary would help polish decide where
+  sentences break around a proper noun it now knows is a name. Its
+  contract does not move: clean sentences out of an imperfect
+  transcription, same tone, same words.
+- Re-transcription when the vocabulary changes. A new family member
+  does not improve recordings already decoded, and re-running whisper
+  over years of audio to pick up one name is the wrong default. An
+  explicit `--retranscribe` would make it a choice.
