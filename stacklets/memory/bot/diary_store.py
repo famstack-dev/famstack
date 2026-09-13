@@ -23,6 +23,7 @@ twice is cheaper than a compile that refuses to run.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -88,23 +89,36 @@ class JsonStore:
 
 
 class ReadingStore(JsonStore):
-    """The model's reading of each message, keyed by event id.
+    """The model's reading of each message, keyed by the words it read.
 
-    A message never changes: an edit is a new event pointing at the old
-    one, so a reading is good forever and this cache never needs
-    invalidating. The links between messages are deliberately not kept
-    here -- they are a property of a slice of history rather than of one
-    message, and a later message can create one.
+    An edit arrives as a new event, so a message's identity never moves.
+    Its words can: hand whisper the household's names and a memo it once
+    heard as "Part" comes back as "Bart", and the reading taken from the
+    old wording is now wrong about who was being spoken to. So the words
+    are part of the key, and a better transcript re-reads itself.
+
+    The links between messages are deliberately not kept here -- they
+    are a property of a slice of history rather than of one message, and
+    a later message can create one.
     """
 
     section = "readings"
 
-    def get(self, event_id: str) -> dict | None:
+    def get(self, event_id: str, body: str = "") -> dict | None:
         found = self._items.get(event_id)
-        return found if isinstance(found, dict) else None
+        if not isinstance(found, dict):
+            return None
+        if found.get("said") != _said(body):
+            return None
+        return found
 
-    def put(self, event_id: str, reading: dict) -> None:
-        self._items[event_id] = reading
+    def put(self, event_id: str, reading: dict, body: str = "") -> None:
+        self._items[event_id] = {**reading, "said": _said(body)}
+
+
+def _said(body: str) -> str:
+    """A fingerprint of the words a reading was taken from."""
+    return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()[:16]
 
 
 class SummaryStore(JsonStore):

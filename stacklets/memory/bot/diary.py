@@ -117,6 +117,43 @@ class Entry:
     comments: list[tuple[str, str]] = field(default_factory=list)
 
 
+# ── What this household says ──────────────────────────────────────────
+
+
+def spoken_vocabulary(people, topics=()) -> str:
+    """A hint for whisper about the words this family uses.
+
+    Whisper decodes against it, so names it would otherwise hear as
+    ordinary words come back right. This is the only place a name can be
+    fixed: the polish pass is forbidden from changing words, and it is
+    right to be -- the memories room holds what people said to their
+    children, and a model quietly editing that is not a transcript any
+    more. So the input is corrected instead of the output.
+
+    Phrased as a sentence rather than a bare list because that is what
+    the parameter is for: whisper treats it as preceding speech, and a
+    list of nouns biases the decoder toward answering in lists.
+    """
+    names = [n.strip() for n in people if n and n.strip()]
+    subjects = [t.strip() for t in topics if t and t.strip()]
+    parts = []
+    if names:
+        parts.append("The people in this family are "
+                     + _and_list(_unique(names)) + ".")
+    if subjects:
+        parts.append("They often talk about "
+                     + _and_list(_unique(subjects)) + ".")
+    return " ".join(parts)
+
+
+def _unique(values):
+    seen = []
+    for v in values:
+        if v not in seen:
+            seen.append(v)
+    return seen
+
+
 # ── Step 1: resolve ───────────────────────────────────────────────────
 #
 # Pure Matrix mechanics, no reading of meaning. Edits collapse onto the

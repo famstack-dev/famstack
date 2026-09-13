@@ -424,6 +424,7 @@ class Transcriber:
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
                          model: str | None = None,
+                         vocabulary: str = "",
                          cleanup_with: "LLM | None" = None) -> str:
         """Transcribe audio bytes to text, stripped of leading/trailing space.
 
@@ -431,6 +432,15 @@ class Transcriber:
         sniffs the container from the filename). ``model`` is forwarded to
         the SDK for OpenAI-compat servers that route by model name; the
         native whisper-server ignores it.
+
+        ``vocabulary`` is a hint about words this household says: the
+        names of the people in it, the topics they keep. Whisper decodes
+        against it, so a family name it would otherwise hear as a common
+        word comes back right the first time. That matters more than it
+        sounds: a memo opening "Bart, today is..." transcribes as "Part"
+        or loses the name entirely, and the polish pass cannot repair it
+        without rewriting what was said, which it is forbidden to do.
+        Fixing the input is the only way to fix the words.
 
         ``cleanup_with`` is an optional :class:`LLM` to polish the raw STT
         output with punctuation and sentence breaks. When provided, the
@@ -448,6 +458,7 @@ class Transcriber:
                 model=model or _DEFAULT_WHISPER_MODEL,
                 file=(filename, audio),
                 response_format="json",
+                **({"prompt": vocabulary} if vocabulary.strip() else {}),
             )
         except openai.APITimeoutError as e:
             raise LLMTimeoutError(

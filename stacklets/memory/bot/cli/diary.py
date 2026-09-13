@@ -47,6 +47,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # container that can talk to a model, so the compiler runs unchanged in
 # the bot-runner and in the curator that schedules it nightly.
 import httpx
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bot/
 sys.path.insert(0, "/app")  # stack.ai.client, and voice in the bot-runner
@@ -149,8 +150,77 @@ async def _download(session, homeserver, token, mxc: str) -> bytes | None:
 # ── Decoding and reading ──────────────────────────────────────────────
 
 
+# Whisper's decoder prompt is a small window (a couple of hundred
+# tokens); past it the hint is truncated from the front, which would
+# drop the names silently. Names first, topics only with room to spare.
+_VOCAB_BUDGET = 600
+
+
+def _household_vocabulary() -> str:
+    """The names and subjects this family uses, for whisper to decode against.
+
+    People come from the wiki's person pages, which already carry the
+    household's own spelling of each name and any variants it uses. The
+    ontology's topics follow, because a family's proper nouns are not
+    only its people -- a campsite, a school, a pet -- and those mishear
+    just as readily.
+
+    Best-effort: a vault that has not been generated yet simply yields
+    nothing, and transcription proceeds exactly as it did before.
+    """
+    people: list[str] = []
+    brain = Path(os.environ.get("BRAIN_REPO_DIR", ""))
+    if brain.is_dir():
+        for about in sorted(brain.glob("*/about.md")):
+            front = _frontmatter(about)
+            if front.get("type") != "person":
+                continue
+            for key in ("canonical", "title"):
+                if value := front.get(key):
+                    people.append(str(value))
+                    break
+            synonyms = front.get("synonyms")
+            if isinstance(synonyms, list):
+                people.extend(str(x) for x in synonyms)
+
+    topics: list[str] = []
+    vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    lang = os.environ.get("LANGUAGE", "en")
+    try:
+        from stack.ontology import Ontology
+        loaded = Ontology.load(vault / "ontology.toml")
+        for topic in loaded.topics.values():
+            topics.append(topic.name(lang))
+            topics.extend(topic.synonyms_for(lang))
+    except Exception as e:  # noqa: BLE001 - a hint is never worth failing over
+        _err(f"  no ontology for the transcript hint: {e}")
+
+    hint = diary.spoken_vocabulary(people, topics)
+    if len(hint) <= _VOCAB_BUDGET:
+        return hint
+    # Over budget: keep the people, who are what mishears most.
+    return diary.spoken_vocabulary(people)[:_VOCAB_BUDGET]
+
+
+def _frontmatter(path: Path) -> dict:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---", 4)
+    if end < 0:
+        return {}
+    try:
+        loaded = yaml.safe_load(text[4:end])
+    except yaml.YAMLError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 async def _transcribe(message, *, session, homeserver, token,
-                      transcriber, llm) -> str:
+                      transcriber, llm, vocabulary: str = "") -> str:
     """The words of a recording, transcribed once and remembered.
 
     Shares `TRANSCRIPT_DIR` with the bots, so a memo the archivist
@@ -162,7 +232,8 @@ async def _transcribe(message, *, session, homeserver, token,
         audio = await _download(session, homeserver, token, message.url or "")
         if not audio:
             raise LLMError(f"could not download {message.url}")
-        raw = await transcriber.transcribe(audio, filename=message.body or "voice.wav")
+        raw = await transcriber.transcribe(
+            audio, filename=message.body or "voice.wav", vocabulary=vocabulary)
         text = await Transcriber.polish(raw, llm) if raw.strip() else raw
         return {"raw": raw, "text": text, "url": message.url,
                 "filename": message.body}
@@ -310,7 +381,7 @@ async def _read_room(messages, llm, cache=None):
 
     if cache is not None:
         for msg in messages:
-            if (stored := cache.get(msg.event_id)) is not None:
+            if (stored := cache.get(msg.event_id, msg.body)) is not None:
                 remember(msg.event_id, stored)
     if known:
         _err(f"  {len(known)} message(s) already read, "
@@ -350,7 +421,7 @@ async def _read_room(messages, llm, cache=None):
             }
             remember(here.event_id, found)
             if cache is not None:
-                cache.put(here.event_id, found)
+                cache.put(here.event_id, found, here.body)
 
     return readings, continues, refers_to
 
@@ -532,6 +603,10 @@ async def run(llm, argv: list[str]) -> int:
         # Transcription first and on its own: every later step reads
         # words, and a recording that cannot be decoded should drop out
         # before the model is asked to interpret its filename.
+        vocabulary = _household_vocabulary()
+        if vocabulary:
+            _err(f"  decoding against: {vocabulary[:90]}...")
+
         decoded = []
         for msg in messages:
             if msg.kind != "voice":
@@ -539,7 +614,7 @@ async def run(llm, argv: list[str]) -> int:
                 continue
             text = await _transcribe(
                 msg, session=session, homeserver=homeserver, token=token,
-                transcriber=transcriber, llm=llm)
+                transcriber=transcriber, llm=llm, vocabulary=vocabulary)
             if not text.strip():
                 _err(f"  no speech in {msg.event_id}, skipped")
                 continue

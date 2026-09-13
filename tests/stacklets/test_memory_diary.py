@@ -771,30 +771,43 @@ class TestRememberingBetweenRuns:
         readings, _ = diary_store.open_stores(tmp_path)
         readings.put("$a", {"mode": "monologue", "spoken_date": "2026-03-16",
                             "addressee": "Bart", "continues": None,
-                            "refers_to": None})
+                            "refers_to": None}, "today is March 16th")
         readings.save()
 
         reopened, _ = diary_store.open_stores(tmp_path)
 
-        assert reopened.get("$a")["spoken_date"] == "2026-03-16"
+        assert reopened.get("$a", "today is March 16th")["spoken_date"] \
+            == "2026-03-16"
+
+    def test_a_better_transcript_is_read_again(self, tmp_path):
+        """Give whisper the household's names and a memo it heard as
+        "Part" comes back as "Bart". The reading taken from the old
+        wording is now wrong about who was spoken to, so it has to go.
+        """
+        readings, _ = diary_store.open_stores(tmp_path)
+        readings.put("$a", {"addressee": None},
+                     "Part, today is July the 5th")
+
+        assert readings.get("$a", "Part, today is July the 5th") is not None
+        assert readings.get("$a", "Bart, today is July the 5th") is None
 
     def test_a_link_is_remembered_with_the_message_that_carries_it(self, tmp_path):
         """A slice read end to end is never sent again, so its links
         have to come back with it or a joined recording would split."""
         readings, _ = diary_store.open_stores(tmp_path)
         readings.put("$b", {"mode": "monologue", "continues": "$a",
-                            "refers_to": None})
+                            "refers_to": None}, "and then")
         readings.save()
 
         reopened, _ = diary_store.open_stores(tmp_path)
 
-        assert reopened.get("$b")["continues"] == "$a"
+        assert reopened.get("$b", "and then")["continues"] == "$a"
 
     def test_a_first_run_finds_an_empty_cache(self, tmp_path):
         readings, summaries = diary_store.open_stores(tmp_path / "nothing-here")
 
         assert len(readings) == 0
-        assert readings.get("$a") is None
+        assert readings.get("$a", "x") is None
         assert summaries.get("2026-03", "digest") == ""
 
     def test_a_corrupt_cache_is_not_a_broken_compile(self, tmp_path):
@@ -803,7 +816,7 @@ class TestRememberingBetweenRuns:
 
         readings, _ = diary_store.open_stores(tmp_path)
 
-        assert readings.get("$a") is None
+        assert readings.get("$a", "x") is None
 
     def test_an_unchanged_month_keeps_the_words_it_had(self, tmp_path):
         """Not only a saving. Re-summarising a settled month every night
@@ -846,3 +859,44 @@ class TestMonthDigest:
 
         assert diary.month_digest(march + [latecomer]) \
             != diary.month_digest(march)
+
+
+# ── Telling whisper who lives here ────────────────────────────────────
+
+
+class TestSpokenVocabulary:
+    """The only place a misheard name can be put right.
+
+    The polish pass may not change words, and should not: the memories
+    room holds what people said to their children. So the names go in
+    before the audio is decoded rather than after.
+    """
+
+    def test_the_family_is_named(self):
+        hint = diary.spoken_vocabulary(["Bart", "Lisa", "Maggie"])
+
+        assert "Bart, Lisa and Maggie" in hint
+
+    def test_topics_follow_the_people(self):
+        hint = diary.spoken_vocabulary(["Marge"], ["camping", "the PTA"])
+
+        assert hint.index("Marge") < hint.index("camping")
+
+    def test_a_name_said_twice_is_written_once(self):
+        hint = diary.spoken_vocabulary(["Bart", "Bart", "Lisa"])
+
+        assert hint.count("Bart") == 1
+
+    def test_nothing_known_is_no_hint_at_all(self):
+        """An ungenerated vault must not send whisper an empty sentence
+        to decode against."""
+        assert diary.spoken_vocabulary([], []) == ""
+        assert diary.spoken_vocabulary(["", "  "]) == ""
+
+    def test_it_reads_as_speech_not_as_a_word_list(self):
+        """Whisper treats the hint as preceding speech, so a bare list
+        biases the decoder toward answering in lists."""
+        hint = diary.spoken_vocabulary(["Homer"], ["camping"])
+
+        assert hint.endswith(".")
+        assert "The people in this family are Homer." in hint
