@@ -17,8 +17,7 @@ Commands:
         words. Exit 1 means no keywords, which the host treats as
         "search it literally" rather than as a failure.
 
-    diary [--room <alias>] [--burst-window <seconds>] [--dry-run]
-          [--rebuild]
+    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force]
         Compile the memories room into the family diary. Walks the
         room's full history, transcribes every recording, recovers the
         date each one was made, and publishes month pages under the
@@ -28,7 +27,7 @@ Commands:
         arriving tonight can belong to an entry from years back. It
         stays cheap because transcripts, readings, and month summaries
         are all kept against the thing they describe, so only what is
-        new costs anything. `--rebuild` ignores those and reads
+        new costs anything. `--force` ignores those and reads
         everything again, for when the model has improved.
 
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]

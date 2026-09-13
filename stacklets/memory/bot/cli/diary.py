@@ -15,9 +15,9 @@ expensive half is cached rather than repeated: transcripts live in
 
     stack memory diary                      compile and publish
     stack memory diary --dry-run            print the pages, write nothing
-    stack memory diary --room memories      a different room
+    stack memory diary letters              a different room
     stack memory diary --burst-window 1     see below
-    stack memory diary --rebuild            re-read everything from scratch
+    stack memory diary --force              re-read everything from scratch
 
 WHY THE BURST WINDOW IS A KNOB
     Messages that synced late carry arrival timestamps, not recording
@@ -551,6 +551,11 @@ def _household_zone():
         return timezone.utc
 
 
+# Flags that consume the token after them, so the room can be picked out
+# of the rest without mistaking a flag's value for it.
+_TAKES_A_VALUE = ("--burst-window",)
+
+
 def _opt(argv: list[str], flag: str, fallback: str) -> str:
     for i, arg in enumerate(argv):
         if arg == flag and i + 1 < len(argv):
@@ -558,10 +563,29 @@ def _opt(argv: list[str], flag: str, fallback: str) -> str:
     return fallback
 
 
+def _positional(argv: list[str], fallback: str) -> str:
+    """The room, named the way every other command names one.
+
+    `stack messages read <room>`, `join <room>`, `send <room>`: a room
+    is a positional everywhere in this CLI, so it is one here too.
+    """
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg in _TAKES_A_VALUE:
+            skip = True
+            continue
+        if not arg.startswith("-"):
+            return arg
+    return fallback
+
+
 async def run(llm, argv: list[str]) -> int:
-    room_arg = _opt(argv, "--room", "memories")
+    room_arg = _positional(argv, "memories")
     dry_run = "--dry-run" in argv
-    rebuild = "--rebuild" in argv
+    rebuild = "--force" in argv
     try:
         window = float(_opt(argv, "--burst-window",
                             str(diary.DEFAULT_BURST_WINDOW_S)))

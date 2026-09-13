@@ -7,9 +7,9 @@ as diary pages in the wiki, in the words it was recorded in.
 
     stack memory diary                   compile and publish
     stack memory diary --dry-run         print the pages, write nothing
-    stack memory diary --room memories   read a different room
+    stack memory diary letters           read a different room
     stack memory diary --burst-window 1  tighten sync-burst detection
-    stack memory diary --rebuild         read it all again from scratch
+    stack memory diary --force           read it all again from scratch
 
 WHEN IT RUNS
     The curator compiles the diary on its nightly sweep, so new
