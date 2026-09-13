@@ -433,14 +433,14 @@ class Transcriber:
         the SDK for OpenAI-compat servers that route by model name; the
         native whisper-server ignores it.
 
-        ``vocabulary`` is a hint about words this household says: the
-        names of the people in it, the topics they keep. Whisper decodes
-        against it, so a family name it would otherwise hear as a common
-        word comes back right the first time. That matters more than it
-        sounds: a memo opening "Bart, today is..." transcribes as "Part"
-        or loses the name entirely, and the polish pass cannot repair it
-        without rewriting what was said, which it is forbidden to do.
-        Fixing the input is the only way to fix the words.
+        ``vocabulary`` primes the decoder with terms the audio is likely
+        to contain -- proper nouns, names, jargon. Whisper reads it as
+        speech preceding the clip and biases towards it, so a word it
+        would otherwise render as a commoner homophone comes back right.
+        The window is a couple of hundred tokens and overflow is dropped,
+        so put what matters first. Priming is the only place a misheard
+        word can be corrected: :meth:`polish` may not alter the word
+        sequence and verifies that it did not.
 
         ``cleanup_with`` is an optional :class:`LLM` to polish the raw STT
         output with punctuation and sentence breaks. When provided, the
