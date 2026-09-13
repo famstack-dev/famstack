@@ -409,6 +409,38 @@ def date_for(msg: Message, reading: Reading) -> tuple[date, str, str]:
 # ── Step 4: compile ───────────────────────────────────────────────────
 
 
+# How long a remark may trail the thing it is about. A caption is posted
+# while its photo is still on screen; a follow-up months later is its own
+# memory, however clearly it answers an older one. Time rather than
+# position, so a busy evening and a quiet week are judged the same way.
+REMARK_WINDOW_S = 3600.0
+
+
+def _remarks_only_on_what_is_still_in_view(messages, refers_to):
+    """Drop `refers_to` links that reach back beyond living memory.
+
+    The model is asked which messages are remarks about an earlier one
+    rather than memories of their own, and it is right about captions.
+    It also, given a recording that ends "the cast comes off in four
+    weeks" and a note four weeks later saying it did, reads the second
+    as a remark on the first. They are related; that does not make the
+    later one a footnote. Filing it as one costs it its own date, its
+    own place in the month, and credits it as a reply nobody made.
+
+    So the room checks the reading, as it does for joined recordings: a
+    remark belongs to something still in view when it was written.
+    """
+    at = {m.event_id: m.ts for m in messages}
+    kept = {}
+    for child, parent in refers_to.items():
+        if child not in at or parent not in at:
+            continue
+        gap = (at[child] - at[parent]) / 1000.0
+        if 0 <= gap <= REMARK_WINDOW_S:
+            kept[child] = parent
+    return kept
+
+
 def compile_entries(messages, readings, *,
                     continues: "dict[str, str] | None" = None,
                     refers_to: "dict[str, str] | None" = None) -> list[Entry]:
@@ -423,7 +455,7 @@ def compile_entries(messages, readings, *,
     remark floating with no subject.
     """
     continues = continues or {}
-    about = refers_to or {}
+    about = _remarks_only_on_what_is_still_in_view(messages, refers_to or {})
 
     # Join first (a split recording is two adjacent uploads), then
     # decide which runs were really a queue being flushed. Dating reads

@@ -546,6 +546,37 @@ class TestEntries:
         assert "$impliziter-kontext" in photo.event_ids
         assert "barbecue" in photo.comments[0][1]
 
+    def test_a_follow_up_months_later_keeps_its_own_page(self):
+        """Related is not the same as subordinate.
+
+        A recording ends "the cast comes off in four weeks"; a note four
+        weeks later says it did. A reader sees a remark on the first.
+        Filing it as one costs that note its own date, its own place in
+        the month, and credits it as a reply nobody made.
+        """
+        memo = _msg(event_id="$memo", sender="homer", ts=BASE_TS,
+                    body="the doctor says the cast comes off in four weeks")
+        later = _msg(event_id="$later", sender="homer", kind="text",
+                     ts=BASE_TS + 28 * 86_400_000,
+                     body="Bart got his cast off today.")
+
+        entries = diary.compile_entries(
+            [memo, later], {}, refers_to={"$later": "$memo"})
+
+        assert len(entries) == 2
+        assert not any(e.comments for e in entries)
+
+    def test_a_caption_minutes_behind_its_photo_still_belongs_to_it(self):
+        photo = _msg(event_id="$photo", kind="image", ts=BASE_TS, body="")
+        caption = _msg(event_id="$cap", kind="text", ts=BASE_TS + 90_000,
+                       body="Maggie drew this today.")
+
+        entries = diary.compile_entries(
+            [photo, caption], {}, refers_to={"$cap": "$photo"})
+
+        assert len(entries) == 1
+        assert entries[0].comments[0][1] == "Maggie drew this today."
+
     def test_a_reply_to_a_memo_is_filed_under_that_memo(self):
         entries = _compile()
 

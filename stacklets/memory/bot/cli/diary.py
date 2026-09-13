@@ -227,7 +227,12 @@ message above, in the same order, each with these keys:
 
 "refers_to": the number of an earlier message this one is a remark
   about rather than a memory of its own: a caption for a photo, or a
-  line like "the picture above is from the barbecue". Otherwise null.
+  line like "the picture above is from the barbecue". A message that
+  reports something that happened is a memory of its own even when it
+  follows up on an earlier one -- "his cast came off today" answers a
+  recording from weeks ago and is still its own memory, not a footnote
+  to it. Use this only when the message would make no sense on its own
+  page. Otherwise null.
 """
 
 
