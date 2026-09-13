@@ -546,6 +546,30 @@ class TestEntries:
         assert "$impliziter-kontext" in photo.event_ids
         assert "barbecue" in photo.comments[0][1]
 
+    def test_a_reply_reaches_back_as_far_as_it_likes(self):
+        """Pointing at a memory is not the same as being read as one.
+
+        Replying to a memo from March is how the family corrects or adds
+        to it, and they do that whenever they happen to reread it. The
+        age guard exists for links the model inferred; a reply carries
+        the family's own intent, so it attaches however old its parent
+        is -- and the memory keeps March's date, because that is when it
+        happened.
+        """
+        memo = _msg(event_id="$memo", sender="marge", ts=BASE_TS,
+                    body="Hi Bart, today is March 16th.")
+        correction = _msg(
+            event_id="$fix", sender="marge", kind="text",
+            ts=BASE_TS + 180 * 86_400_000, reply_to="$memo",
+            body="It was Principal Skinner who called, not Mrs Krabappel.")
+
+        entries = diary.compile_entries(
+            [memo, correction], {"$memo": diary.Reading(spoken_date="2026-03-16")})
+
+        assert len(entries) == 1
+        assert entries[0].on == date(2026, 3, 16)
+        assert "Principal Skinner" in entries[0].comments[0][1]
+
     def test_a_follow_up_months_later_keeps_its_own_page(self):
         """Related is not the same as subordinate.
 
