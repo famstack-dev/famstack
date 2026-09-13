@@ -39,7 +39,7 @@ attachment against `out/manifest.json`.
 # render everything into out/ (needs the ai stacklet's speech service)
 python tools/family-memories/generate.py            # both locales; --locale de/en
 
-# replay into a TEST RIG (never production — the script refuses merles.eu)
+# replay into a TEST RIG (only runs on a Simpsons instance)
 python tools/family-memories/ingest.py \
     --homeserver http://<testrig>:42031 \
     --room '#memories:<testrig>' \

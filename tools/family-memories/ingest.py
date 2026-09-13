@@ -13,9 +13,11 @@ tests can assert against ground truth.
         --room '#memories:testrig.local' \
         --login marge:PASSWORD --login homer:PASSWORD
 
-SAFETY: this tool refuses to run against the production homeserver
-(merles.eu). There is no default homeserver on purpose. --force-i-know
-overrides the guard and should never be needed.
+SAFETY: this writes invented Simpsons memories into a room, so it only
+runs on an instance configured as the Simpsons. Any other household is
+somebody's real family, and this is the last place fabricated memories
+belong. There is no default homeserver on purpose, and --force-i-know
+overrides the check.
 """
 
 from __future__ import annotations
@@ -24,13 +26,35 @@ import argparse
 import json
 import sys
 import time
+import tomllib
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
-PRODUCTION_MARKERS = ("merles.eu",)
+REPO_ROOT = HERE.parents[1]
+
+# The household this corpus is about. Everything it sends is a Simpsons
+# memory, so the instance being the Simpsons is the real precondition:
+# on any other household these are fabricated memories in a room meant
+# for the family's own.
+DEMO_HOUSEHOLD = "simpson"
+
+
+def configured_household(root: Path) -> str:
+    """The family name this checkout is installed for, or "" if unknown.
+
+    Unknown fails the check. An instance with no `stack.toml` has not
+    been set up, and guessing in its favour is the wrong way to be
+    wrong about where invented memories get written.
+    """
+    try:
+        with open(root / "stack.toml", "rb") as f:
+            core = tomllib.load(f).get("core") or {}
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    return str(core.get("stack_owner") or "")
 
 
 class Client:
@@ -140,10 +164,14 @@ def main():
     global OUT
     OUT = OUT / args.locale
 
-    if not args.force_i_know and any(
-            m in args.homeserver or m in args.room for m in PRODUCTION_MARKERS):
-        sys.exit("REFUSING: target looks like the production instance. "
-                 "This corpus is for test rigs only.")
+    household = configured_household(REPO_ROOT)
+    if not args.force_i_know and \
+            not household.lower().startswith(DEMO_HOUSEHOLD):
+        sys.exit(
+            f"REFUSING: this instance is set up for "
+            f"{household or 'no household'}, not the Simpsons. Everything "
+            "below is an invented Simpsons memory and does not belong in "
+            "another family's room.")
 
     manifest = json.loads((OUT / "manifest.json").read_text())
     c = Client(args.homeserver)
@@ -151,11 +179,6 @@ def main():
     for spec in args.login:
         user, _, pw = spec.partition(":")
         tokens[user], user_ids[user] = c.login(user, pw)
-    if not args.force_i_know and any(
-            uid.endswith(m) for uid in user_ids.values()
-            for m in PRODUCTION_MARKERS):
-        sys.exit("REFUSING: logged-in server is production (merles.eu).")
-
     missing = {i["sender"] for i in manifest} - set(tokens)
     if missing:
         sys.exit(f"no --login for sender(s): {', '.join(sorted(missing))}")
