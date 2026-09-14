@@ -313,14 +313,28 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
         f'</plist>\n'
     )
 
-    if (plist_path.exists() and plist_path.read_text() == plist_content
-            and wrapper.exists() and wrapper.read_text() == wrapper_text):
+    unchanged = (plist_path.exists()
+                 and plist_path.read_text() == plist_content
+                 and wrapper.exists()
+                 and wrapper.read_text() == wrapper_text)
+    try:
+        ctx.shell(f'launchctl list "{PLIST_LABEL}"')
+        loaded = True
+    except RuntimeError:
+        loaded = False
+
+    # Unchanged and loaded: nothing to do, do not bounce the service.
+    # Unchanged but not loaded: `stack down` unloads the agent and
+    # RunAtLoad only fires at login, so every up must load it again.
+    # Changed: rewrite, then reload.
+    if unchanged and loaded:
         return
 
-    section("Whisper server", "launchd service")
-    wrapper.write_text(wrapper_text)
-    wrapper.chmod(0o755)
-    plist_path.write_text(plist_content)
+    if not unchanged:
+        section("Whisper server", "launchd service")
+        wrapper.write_text(wrapper_text)
+        wrapper.chmod(0o755)
+        plist_path.write_text(plist_content)
 
     ctx.step("Loading whisper-server into launchd...")
     try:
