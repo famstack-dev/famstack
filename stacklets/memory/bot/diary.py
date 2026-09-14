@@ -82,13 +82,12 @@ _STRINGS = {
         "year_opening": "{count} this year",
         "recorded_by": "recorded by",
         "months_h": "Months", "years_h": "Years",
-        "diary_title": "Family Diary",
+        "diary_title": "Family Memories",
         "index_intro": (
-            "Everything the family has put in the memories room: voice "
-            "notes, photos, conversations someone hit record on. Words "
-            "shown as someone's own are word-for-word from the "
-            "recording. The text around them is the chronicle, and "
-            "every entry links back to the original in the room."),
+            "The things this family wanted to keep: voice notes, "
+            "photos, conversations someone hit record on. Every entry "
+            "links back to the original recording — there to be "
+            "listened to, today or in twenty years."),
         "nothing_compiled": "Nothing has been compiled yet.",
         "unrecovered_h": "Dates we could not recover",
         "unrecovered_body": (
@@ -135,14 +134,13 @@ _STRINGS = {
         "year_opening": "{count} in diesem Jahr",
         "recorded_by": "aufgenommen von",
         "months_h": "Monate", "years_h": "Jahre",
-        "diary_title": "Familientagebuch",
+        "diary_title": "Familienerinnerungen",
         "index_intro": (
-            "Alles, was die Familie im Erinnerungsraum festgehalten "
-            "hat: Sprachnotizen, Fotos, Gespr\u00e4che, die jemand "
-            "aufgenommen hat. W\u00f6rter, die als jemandes eigene "
-            "erscheinen, stammen Wort f\u00fcr Wort aus der Aufnahme. "
-            "Der Text darum herum ist die Chronik, und jeder Eintrag "
-            "verlinkt auf das Original im Chat."),
+            "Was diese Familie festhalten wollte: Sprachnotizen, "
+            "Fotos, Gespr\u00e4che, die jemand aufgenommen hat. Jeder "
+            "Eintrag f\u00fchrt zur\u00fcck zur Originalaufnahme "
+            "\u2014 zum Nachh\u00f6ren, heute oder in zwanzig "
+            "Jahren."),
         "nothing_compiled": "Noch nichts zusammengestellt.",
         "unrecovered_h": "Nicht datierbare Eintr\u00e4ge",
         "unrecovered_body": (
