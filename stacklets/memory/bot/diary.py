@@ -82,19 +82,13 @@ _STRINGS = {
         "year_opening": "{count} this year",
         "recorded_by": "recorded by",
         "months_h": "Months", "years_h": "Years",
-        "diary_title": "Family Memories",
+        "diary_title": "Family Diary",
         "index_intro": (
             "Your memories, kept in a chronicle to read back. Voice "
             "notes, photos, conversations you recorded. Every entry "
             "leads back to the original recording, there to be "
             "listened to, today or in twenty years."),
         "nothing_compiled": "Nothing has been compiled yet.",
-        "unrecovered_h": "Dates we could not recover",
-        "unrecovered_body": (
-            "{count} arrived in a sync burst without a spoken date. "
-            "They are filed under the week they surfaced and marked on "
-            "their page. Saying the date aloud at the start of a "
-            "recording is what prevents this."),
         "across": "across",
     },
     "de": {
@@ -134,7 +128,7 @@ _STRINGS = {
         "year_opening": "{count} in diesem Jahr",
         "recorded_by": "aufgenommen von",
         "months_h": "Monate", "years_h": "Jahre",
-        "diary_title": "Familienerinnerungen",
+        "diary_title": "Familientagebuch",
         "index_intro": (
             "Eure Erinnerungen, festgehalten in einer Chronik zum "
             "Nachlesen. Sprachnotizen, Fotos, Gespr\u00e4che, die ihr "
@@ -142,12 +136,6 @@ _STRINGS = {
             "zur Originalaufnahme \u2014 zum Nachh\u00f6ren, heute "
             "oder in zwanzig Jahren."),
         "nothing_compiled": "Noch nichts zusammengestellt.",
-        "unrecovered_h": "Nicht datierbare Eintr\u00e4ge",
-        "unrecovered_body": (
-            "{count} kamen in einem Sync-Schub ohne gesprochenes Datum "
-            "an. Sie sind in der Woche ihres Auftauchens eingeordnet "
-            "und auf ihrer Seite markiert. Das Datum am Anfang einer "
-            "Aufnahme laut zu sagen verhindert das."),
         "across": "in",
     },
 }
@@ -837,10 +825,10 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
     else:
         heading = f"### {who}"
 
-    meta = [_kind_label(entry)]
-    if entry.confidence != "uncertain":
-        meta.append(entry.basis)
-    lines = [heading, f"*{' · '.join(m for m in meta if m)}*", ""]
+    # How the date was derived is our concern, not the reader's, and it
+    # would repeat under every entry on every page. Where it matters,
+    # because we could not derive one, the callout below says so.
+    lines = [heading, f"*{_kind_label(entry)}*", ""]
 
     if entry.confidence == "uncertain":
         lines += [
@@ -1040,17 +1028,10 @@ def render_index(entries) -> str:
             f"{_counted(months, 'month_one', 'month_many')}")
     lines.append("")
 
-    unsure = [e for e in entries if e.confidence == "uncertain"]
-    if unsure:
-        n = len(unsure)
-        lines += [
-            f"## {_L['unrecovered_h']}",
-            "",
-            _L["unrecovered_body"].format(
-                count=_counted(n, "entry_one", "entry_many")),
-            "",
-        ]
-
+    # No note here about entries we could not date. It is a system
+    # caveat in our own vocabulary, and the front door of a family's
+    # diary is the wrong place for it. Each affected entry already
+    # carries the warning on the page where it is read.
     return "\n".join(lines).rstrip() + "\n"
 
 

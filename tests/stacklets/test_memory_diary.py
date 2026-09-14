@@ -992,7 +992,6 @@ class TestGermanRendering:
         assert "Gespräch" in page
         assert "Diese Aufnahme konnte nicht transkribiert werden." in page
         assert "Im Chat anhören" in page
-        assert "datiert nach dem Sendezeitpunkt" in page
         for english in ("Conversation", "Listen in the room",
                         "could not be transcribed"):
             assert english not in page
