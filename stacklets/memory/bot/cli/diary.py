@@ -14,7 +14,7 @@ expensive half is cached rather than repeated: transcripts live in
 `TRANSCRIPT_DIR`, keyed by event id, shared with the bots.
 
     stack memory diary                      compile and publish
-    stack memory diary --dry-run            print the pages, write nothing
+    stack memory diary --dry-run            print the pages, publish nothing
     stack memory diary letters              a different room
     stack memory diary --burst-window 1     see below
     stack memory diary --force              re-read everything from scratch
@@ -26,6 +26,10 @@ WHY THE BURST WINDOW IS A KNOB
     cleanly. A *replayed* test corpus compresses those gaps to seconds
     and needs a window well under a second. There is no single value
     that fits both, so the caller picks.
+
+A dry run publishes no pages but still writes the transcript, reading
+and summary caches. These are cost caches, not output: discarding them
+would make a preview run as expensive as the compile that follows.
 
 Runs inside `stack-core-bot-runner`: it has the whisper client, the LLM
 client, the brain working copy, and the Matrix admin credentials. The
@@ -116,6 +120,11 @@ async def _history(session, homeserver, token, room_id: str) -> list[dict]:
 
     Paginates backwards until Synapse stops handing back a cursor. The
     caller sorts; order here is only what the API gives us.
+
+    Counts out loud as it goes. A room with years in it takes many
+    round trips before anything else can start, and a command that
+    prints nothing for that long is indistinguishable from one that has
+    hung.
     """
     events: list[dict] = []
     cursor = ""
@@ -131,6 +140,8 @@ async def _history(session, homeserver, token, room_id: str) -> list[dict]:
         payload = resp.json()
         chunk = payload.get("chunk") or []
         events.extend(chunk)
+        if chunk:
+            _err(f"  read {len(events)} events so far")
         cursor = payload.get("end") or ""
         if not chunk or not cursor:
             return events
@@ -154,6 +165,14 @@ async def _download(session, homeserver, token, mxc: str) -> bytes | None:
 # tokens); past it the hint is truncated from the front, which would
 # drop the names silently. Names first, topics only with room to spare.
 _VOCAB_BUDGET = 600
+
+
+def _length(ms: int | None) -> str:
+    """Duration as m:ss, for the progress line."""
+    if not ms:
+        return "length unknown"
+    total = round(ms / 1000)
+    return f"{total // 60}:{total % 60:02d}"
 
 
 def _household_vocabulary() -> str:
@@ -387,11 +406,13 @@ async def _read_room(messages, llm, cache=None):
         _err(f"  {len(known)} message(s) already read, "
              f"{len(messages) - len(known)} new")
 
-    for chunk in _chunks(messages):
+    slices = _chunks(messages)
+    for n, chunk in enumerate(slices, start=1):
         # A slice whose every message is on file has nothing left to
         # say: its links were recorded with the messages they join.
         if all(m.event_id in known for m in chunk):
             continue
+        _err(f"  reading slice {n} of {len(slices)}")
 
         prompt = _READ_PROMPT.format(messages=_as_prompt(chunk))
         try:
@@ -422,6 +443,11 @@ async def _read_room(messages, llm, cache=None):
             remember(here.event_id, found)
             if cache is not None:
                 cache.put(here.event_id, found, here.body)
+
+        # Saved per slice rather than once at the end, so an
+        # interrupted run resumes from the last completed slice.
+        if cache is not None:
+            cache.save()
 
     return readings, continues, refers_to
 
@@ -631,11 +657,24 @@ async def run(llm, argv: list[str]) -> int:
         if vocabulary:
             _err(f"  decoding against: {vocabulary[:90]}...")
 
-        decoded = []
+        # Transcription dominates runtime, so each recording is logged
+        # before the whisper call rather than after. Cached transcripts
+        # return immediately and are not logged.
+        recordings = [m for m in messages if m.kind == "voice"]
+        pending = sum(1 for m in recordings
+                      if voice.TRANSCRIPTS.read(m.event_id) is None)
+        if recordings:
+            _err(f"  {len(recordings)} recording(s), {pending} to decode")
+
+        decoded, heard = [], 0
         for msg in messages:
             if msg.kind != "voice":
                 decoded.append(msg)
                 continue
+            heard += 1
+            if voice.TRANSCRIPTS.read(msg.event_id) is None:
+                _err(f"  [{heard}/{len(recordings)}] decoding {msg.sender}, "
+                     f"{_length(msg.duration_ms)}")
             text = await _transcribe(
                 msg, session=session, homeserver=homeserver, token=token,
                 transcriber=transcriber, llm=llm, vocabulary=vocabulary)
@@ -666,13 +705,14 @@ async def run(llm, argv: list[str]) -> int:
         if kept:
             summaries[key] = kept
             continue
+        _err(f"  summarising {in_month[0].on.strftime('%B %Y')}")
         summaries[key] = await _summarise(in_month, llm)
         if summaries[key]:
             summaries_cache.put(key, digest, summaries[key])
+            summaries_cache.save()
 
-    if not dry_run:
-        readings_cache.save()
-        summaries_cache.save()
+    readings_cache.save()
+    summaries_cache.save()
 
     pages = diary.pages_for(entries, room_id=room_id, summaries=summaries)
     if dry_run:

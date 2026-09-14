@@ -93,4 +93,10 @@ def _usage() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(sys.argv[1:])))
+    try:
+        sys.exit(asyncio.run(main(sys.argv[1:])))
+    except KeyboardInterrupt:
+        # Exit 130 (128 + SIGINT) without the asyncio traceback.
+        # Completed transcripts and readings are already on disk.
+        _err("\ninterrupted; completed work is cached")
+        sys.exit(130)
