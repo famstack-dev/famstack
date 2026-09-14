@@ -172,7 +172,7 @@ model had ignored.
 | English output in a German diary | prompts are English; models answer in the prompt language | target language stated in every prompt; rendered strings from the language table |
 | whisper dead after every `stack down ai` / `up ai` | stop hook unloads the LaunchAgent; nothing on the up path loaded it; `RunAtLoad` fires only at login | on_start reconciles the agent by content and loads it when absent |
 | undatable memories | Matrix has no compose-time field; offline recordings carry sync time | spoken-date extraction; honest "unrecoverable" state; recording habit: say the date aloud |
-| stale caches serving old wording | summary cache keyed by month digest; prompt changes do not change the digest | `--force` re-reads; pass versioning covers the transcript side; prompt-affected caches need a manual force after prompt changes |
+| stale caches serving old wording | caches were keyed by content only; prompt changes did not change the keys | every cached artifact stores a fingerprint (hash) of the prompt or pass parameters that produced it; a prompt edit invalidates exactly the affected artifacts on the next compile |
 
 ## Open items
 
@@ -181,7 +181,7 @@ model had ignored.
   affected entries).
 - Episode grouping: a vacation spanning many entries currently
   renders as independent entries plus one month summary.
-- Retranscription sweeps driven by `stale_passes` are manual; no
-  scheduled job exists.
-- Prompt changes do not invalidate reading/summary caches
-  automatically (see Pitfalls, last row).
+- Retranscription (`--retranscribe`) is manual; it is needed only
+  when whisper's configuration or vocabulary changes. Pass and prompt
+  changes regenerate automatically via fingerprints during any
+  compile, including the nightly one.

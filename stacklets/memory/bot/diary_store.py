@@ -104,16 +104,26 @@ class ReadingStore(JsonStore):
 
     section = "readings"
 
+    def __init__(self, path, fingerprint: str = ""):
+        super().__init__(path)
+        # Hash of the reading prompt. A prompt edit changes it, every
+        # stored reading misses once, and the next compile re-reads
+        # the room under the new prompt. No manual invalidation.
+        self.fingerprint = fingerprint
+
     def get(self, event_id: str, body: str = "") -> dict | None:
         found = self._items.get(event_id)
         if not isinstance(found, dict):
             return None
         if found.get("said") != _said(body):
             return None
+        if found.get("prompt", "") != self.fingerprint:
+            return None
         return found
 
     def put(self, event_id: str, reading: dict, body: str = "") -> None:
-        self._items[event_id] = {**reading, "said": _said(body)}
+        self._items[event_id] = {**reading, "said": _said(body),
+                                 "prompt": self.fingerprint}
 
 
 def _said(body: str) -> str:
@@ -134,19 +144,31 @@ class SummaryStore(JsonStore):
 
     section = "summaries"
 
+    def __init__(self, path, fingerprint: str = ""):
+        super().__init__(path)
+        # Same mechanism as ReadingStore: the summary prompt's hash.
+        self.fingerprint = fingerprint
+
     def get(self, month: str, digest: str) -> str:
         found = self._items.get(month)
         if not isinstance(found, dict) or found.get("digest") != digest:
+            return ""
+        if found.get("prompt", "") != self.fingerprint:
             return ""
         text = found.get("text")
         return text if isinstance(text, str) else ""
 
     def put(self, month: str, digest: str, text: str) -> None:
-        self._items[month] = {"digest": digest, "text": text}
+        self._items[month] = {"digest": digest, "text": text,
+                              "prompt": self.fingerprint}
 
 
-def open_stores(directory: Path | None = None):
+def open_stores(directory: Path | None = None, *,
+                reading_fingerprint: str = "",
+                summary_fingerprint: str = ""):
     """Both caches, loaded. Missing files are simply empty ones."""
     root = Path(directory) if directory else state_dir()
-    return (ReadingStore(root / "readings.json").load(),
-            SummaryStore(root / "summaries.json").load())
+    return (ReadingStore(root / "readings.json",
+                         reading_fingerprint).load(),
+            SummaryStore(root / "summaries.json",
+                         summary_fingerprint).load())

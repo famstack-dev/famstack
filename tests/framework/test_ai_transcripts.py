@@ -79,8 +79,8 @@ class TestRunPasses:
 
         assert record["text"] == "HI"
         assert record["passes"] == [
-            {"name": "upper", "version": 2, "outcome": "applied",
-             "model": "m1"}]
+            {"name": "upper", "version": 2, "fingerprint": "",
+             "outcome": "applied", "model": "m1"}]
         assert record["raw"] == "hi"
 
     async def test_a_failing_pass_keeps_the_text_and_the_chain(self):
@@ -109,7 +109,8 @@ class TestRunPasses:
                               "outcome": "clean"}]}
         record = await run_passes(record, [TranscriptPass("gate", 2, noop)])
         assert record["passes"] == [
-            {"name": "gate", "version": 2, "outcome": "clean"}]
+            {"name": "gate", "version": 2, "fingerprint": "",
+             "outcome": "clean"}]
 
 
 class TestStalePasses:
@@ -245,3 +246,31 @@ class TestCorrectPass:
         text, outcome, _ = await correct_pass(llm, ["Anna"]).apply(record)
         assert outcome.startswith("skipped")
         assert llm.calls == []
+
+
+class TestFingerprints:
+    """A pass result is stale when the version or the fingerprint of
+    the pass changed. A prompt edit changes the fingerprint, so the
+    affected artifacts regenerate without manual invalidation."""
+
+    @staticmethod
+    def _pass(fp):
+        async def noop(record):
+            return record.get("text", ""), "clean", {}
+        return TranscriptPass("gate", 1, noop, fingerprint=fp)
+
+    async def test_the_trail_records_the_fingerprint(self):
+        record = await run_passes({"raw": "hi", "text": "hi"},
+                                  [self._pass("abc")])
+        assert record["passes"][0]["fingerprint"] == "abc"
+
+    def test_a_changed_fingerprint_is_stale(self):
+        record = {"passes": [{"name": "gate", "version": 1,
+                              "fingerprint": "old"}]}
+        assert stale_passes(record, [self._pass("new")]) != []
+        assert stale_passes(record, [self._pass("old")]) == []
+
+    def test_fingerprint_is_stable_and_input_sensitive(self):
+        from stack.ai.transcripts import fingerprint
+        assert fingerprint("a", 1) == fingerprint("a", 1)
+        assert fingerprint("a", 1) != fingerprint("a", 2)

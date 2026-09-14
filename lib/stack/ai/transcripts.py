@@ -165,6 +165,10 @@ class TranscriptPass:
     name: str
     version: int
     apply: Callable[[dict], Awaitable[tuple[str, str, dict]]]
+    # Hash of the prompt or parameters that shape this pass's output.
+    # A changed fingerprint marks stored results stale, so a prompt
+    # edit regenerates exactly the artifacts it produced.
+    fingerprint: str = ""
 
 
 async def run_passes(record: dict, passes: list[TranscriptPass]) -> dict:
@@ -184,6 +188,7 @@ async def run_passes(record: dict, passes: list[TranscriptPass]) -> dict:
             logger.warning("[transcripts] pass {} failed: {}", p.name, e)
         trail = [e for e in trail if e.get("name") != p.name]
         trail.append({"name": p.name, "version": p.version,
+                      "fingerprint": p.fingerprint,
                       "outcome": outcome, **extra})
     record["passes"] = trail
     return record
@@ -196,9 +201,17 @@ def stale_passes(record: dict, passes: list[TranscriptPass]) -> list[TranscriptP
     invalidated. The input is the cached raw text. Whisper does not
     run again.
     """
-    ran = {e.get("name"): e.get("version")
+    ran = {e.get("name"): (e.get("version"), e.get("fingerprint", ""))
            for e in (record.get("passes") or [])}
-    return [p for p in passes if ran.get(p.name) != p.version]
+    return [p for p in passes
+            if ran.get(p.name) != (p.version, p.fingerprint)]
+
+
+def fingerprint(*parts) -> str:
+    """A short stable hash of the values that shape a pass's output."""
+    import hashlib
+    joined = "\x1f".join(str(p) for p in parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
 
 
 def gate_pass() -> TranscriptPass:
@@ -220,7 +233,13 @@ def gate_pass() -> TranscriptPass:
             return "", f"blocked: {why}", {}
         return record.get("text") or raw, "clean", {}
 
-    return TranscriptPass(name="gate", version=1, apply=apply)
+    from . import client as _c
+    return TranscriptPass(
+        name="gate", version=1, apply=apply,
+        fingerprint=fingerprint(
+            _c._DEGENERATE_REPEATS, _c._DEGENERATE_CJK_FRACTION,
+            _c._QUALITY_LOGPROB_FLOOR, _c._QUALITY_NO_SPEECH,
+            _c._QUALITY_POOR_FRACTION))
 
 
 def structure_pass(min_pause_s: float = 1.5,
@@ -267,7 +286,9 @@ def structure_pass(min_pause_s: float = 1.5,
         outcome = "applied" if len(paragraphs) > 1 else "unchanged"
         return structured, outcome, {}
 
-    return TranscriptPass(name="structure", version=1, apply=apply)
+    return TranscriptPass(
+        name="structure", version=1, apply=apply,
+        fingerprint=fingerprint(min_pause_s, min_words))
 
 
 _CORRECT_PROMPT = """\
@@ -331,7 +352,11 @@ def correct_pass(llm, people: list[str]) -> TranscriptPass:
             return text, "unchanged", {}
         return text, "applied", {"replacements": applied}
 
-    return TranscriptPass(name="correct", version=1, apply=apply)
+    # The people list is part of the fingerprint: a new household
+    # member makes old refusals worth another look.
+    return TranscriptPass(
+        name="correct", version=1, apply=apply,
+        fingerprint=fingerprint(_CORRECT_PROMPT, *sorted(allowed)))
 
 
 def polish_pass(llm) -> TranscriptPass:
@@ -354,4 +379,9 @@ def polish_pass(llm) -> TranscriptPass:
             extra = {}
         return polished, outcome, extra
 
-    return TranscriptPass(name="polish", version=1, apply=apply)
+    from . import client as _c
+    return TranscriptPass(
+        name="polish", version=1, apply=apply,
+        fingerprint=fingerprint(_c._CLEANUP_PROMPT,
+                                _c._CLEANUP_CHARS_PER_TOKEN,
+                                _c._CLEANUP_HEADROOM))

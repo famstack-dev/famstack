@@ -258,6 +258,12 @@ def _frontmatter(path: Path) -> dict:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _pass_chain(llm, people: list | None):
+    return [transcripts.gate_pass(), transcripts.polish_pass(llm),
+            transcripts.correct_pass(llm, people or []),
+            transcripts.structure_pass()]
+
+
 async def _transcribe(message, *, session, homeserver, token,
                       transcriber, llm, vocabulary: str = "",
                       people: list | None = None,
@@ -269,6 +275,8 @@ async def _transcribe(message, *, session, homeserver, token,
     at all. That is the whole reason a backfill over a full room is
     affordable.
     """
+    chain = _pass_chain(llm, people)
+
     async def produce() -> dict:
         audio = await _download(session, homeserver, token, message.url or "")
         if not audio:
@@ -283,10 +291,7 @@ async def _transcribe(message, *, session, homeserver, token,
         # restores punctuation. The record lists each pass, so a
         # better future model can run one pass again on the cached
         # raw text. Whisper does not run again.
-        record = await transcripts.run_passes(
-            record, [transcripts.gate_pass(), transcripts.polish_pass(llm),
-                     transcripts.correct_pass(llm, people or []),
-                     transcripts.structure_pass()])
+        record = await transcripts.run_passes(record, chain)
         gate = next((p for p in record["passes"] if p["name"] == "gate"), {})
         if str(gate.get("outcome", "")).startswith("blocked"):
             _err(f"  transcript of {message.event_id} unusable "
@@ -294,8 +299,20 @@ async def _transcribe(message, *, session, homeserver, token,
         return record
 
     try:
-        return (await voice.TRANSCRIPTS.run(
-            message.event_id, produce, force=retranscribe))["text"]
+        record = await voice.TRANSCRIPTS.run(
+            message.event_id, produce, force=retranscribe)
+        # A cached record skipped produce() and with it the passes. A
+        # changed pass fingerprint (prompt edit, new household member,
+        # version bump) re-runs the whole chain from raw text. Whisper
+        # does not run again.
+        if stale := transcripts.stale_passes(record, chain):
+            _err(f"  passes changed for {message.event_id}: "
+                 + ", ".join(p.name for p in stale))
+            record = dict(record)
+            record["text"] = record.get("raw") or ""
+            record = await transcripts.run_passes(record, chain)
+            voice.TRANSCRIPTS.write(message.event_id, record)
+        return record["text"]
     except LLMError as e:
         _err(f"  could not transcribe {message.event_id}: {e}")
         return ""
@@ -488,10 +505,7 @@ async def _read_room(messages, llm, cache=None):
 
     if cache is not None:
         for msg in messages:
-            stored = cache.get(msg.event_id, msg.body)
-            # Readings from before distillation carry no "moments" key.
-            # Treat them as absent so the message is read again once.
-            if stored is not None and "moments" in stored:
+            if (stored := cache.get(msg.event_id, msg.body)) is not None:
                 remember(msg.event_id, stored)
     if known:
         _err(f"  {len(known)} message(s) already read, "
@@ -808,7 +822,9 @@ async def run(llm, argv: list[str]) -> int:
     zone = _household_zone()
     # Pages render in the household language. Selected once per run.
     diary.configure_language(os.environ.get("LANGUAGE", ""))
-    readings_cache, summaries_cache = diary_store.open_stores()
+    readings_cache, summaries_cache = diary_store.open_stores(
+        reading_fingerprint=transcripts.fingerprint(_READ_PROMPT),
+        summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:
         _err("MATRIX_HOMESERVER not set — is core up?")
