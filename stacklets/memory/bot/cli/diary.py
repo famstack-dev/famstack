@@ -21,6 +21,8 @@ expensive half is cached rather than repeated: transcripts live in
     stack memory diary --retranscribe       decode all recordings again
                                             (after a whisper config or
                                             vocabulary change)
+    stack memory diary --limit 20           only the newest 20 messages
+                                            (bounded preview)
 
 WHY THE BURST WINDOW IS A KNOB
     Messages that synced late carry arrival timestamps, not recording
@@ -119,11 +121,14 @@ async def _resolve_room(session, homeserver, token, room: str) -> str:
     return resp.json()["room_id"]
 
 
-async def _history(session, homeserver, token, room_id: str) -> list[dict]:
-    """Every message event in the room, newest page first.
+async def _history(session, homeserver, token, room_id: str,
+                   limit: int = 0) -> list[dict]:
+    """Message events in the room, newest page first.
 
-    Paginates backwards until Synapse stops handing back a cursor. The
-    caller sorts; order here is only what the API gives us.
+    Paginates backwards until Synapse stops handing back a cursor. A
+    positive ``limit`` stops after that many events: the newest part
+    of the room, for a bounded preview run. The caller sorts; order
+    here is only what the API gives us.
 
     Counts out loud as it goes. A room with years in it takes many
     round trips before anything else can start, and a command that
@@ -147,6 +152,8 @@ async def _history(session, homeserver, token, room_id: str) -> list[dict]:
         if chunk:
             _err(f"  read {len(events)} events so far")
         cursor = payload.get("end") or ""
+        if limit and len(events) >= limit:
+            return events[:limit]
         if not chunk or not cursor:
             return events
 
@@ -675,6 +682,11 @@ async def run(llm, argv: list[str]) -> int:
     except ValueError:
         _err("--burst-window wants a number of seconds")
         return 2
+    try:
+        limit = int(_opt(argv, "--limit", "0"))
+    except ValueError:
+        _err("--limit wants a number of messages")
+        return 2
 
     zone = _household_zone()
     readings_cache, summaries_cache = diary_store.open_stores()
@@ -696,7 +708,8 @@ async def run(llm, argv: list[str]) -> int:
         try:
             token = await _admin_token(session, homeserver)
             room_id = await _resolve_room(session, homeserver, token, room_arg)
-            events = await _history(session, homeserver, token, room_id)
+            events = await _history(session, homeserver, token, room_id,
+                                    limit=limit)
         except (RuntimeError, httpx.HTTPError) as e:
             _err(str(e))
             return 1

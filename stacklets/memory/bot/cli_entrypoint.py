@@ -17,7 +17,7 @@ Commands:
         words. Exit 1 means no keywords, which the host treats as
         "search it literally" rather than as a failure.
 
-    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe]
+    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>]
         Compile the memories room into the family diary. Walks the
         room's full history, transcribes every recording, recovers the
         date each one was made, and publishes month pages under the
