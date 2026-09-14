@@ -736,6 +736,55 @@ class TestPolishKeepsTheWords:
         await tr.aclose()
 
 
+class TestPolishIsBounded:
+    """A polish may only add punctuation, so its output size is known in
+    advance. Without a cap, a model that repeats itself generates until
+    the client timeout, which on a local endpoint occupies the host for
+    that whole period."""
+
+    async def test_the_cap_scales_with_the_transcript(self, httpserver: HTTPServer):
+        long_transcript = "book the campsite " * 500
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": long_transcript})
+        llm = _StubLLM(result=long_transcript)
+        tr = _make_transcriber(httpserver)
+
+        await tr.transcribe(b"a", cleanup_with=llm)
+
+        cap = llm.kwargs[0]["max_tokens"]
+        assert cap < len(long_transcript)
+        assert cap > len(long_transcript) / 4
+        await tr.aclose()
+
+    async def test_a_short_transcript_still_gets_room_to_work(
+            self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "hi"})
+        llm = _StubLLM(result="Hi.")
+        tr = _make_transcriber(httpserver)
+
+        await tr.transcribe(b"a", cleanup_with=llm)
+
+        assert llm.kwargs[0]["max_tokens"] >= 256
+        await tr.aclose()
+
+    async def test_the_call_does_not_use_the_document_reading_budget(
+            self, httpserver: HTTPServer):
+        """The client default is sized for reading long documents."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "book the campsite"})
+        llm = _StubLLM(result="Book the campsite.")
+        tr = _make_transcriber(httpserver)
+
+        await tr.transcribe(b"a", cleanup_with=llm)
+
+        assert llm.kwargs[0]["timeout"] <= 300
+        await tr.aclose()
+
+
 class TestPolishIsDeterministic:
     """Polishing is a transformation, not a generation: the same words in
     should give the same punctuation out. Sampling only invites the model

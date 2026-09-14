@@ -271,6 +271,16 @@ async def _transcribe(message, *, session, homeserver, token,
 _CHUNK = 40
 _OVERLAP = 4
 
+# One small JSON object per message in the slice, plus the enclosing
+# structure. A model that loops instead of closing the array is capped
+# here rather than at the client timeout.
+_READ_TOKENS_PER_MESSAGE = 120
+_READ_TIMEOUT_S = 300.0
+
+# Two to four sentences.
+_SUMMARY_TOKENS = 600
+_SUMMARY_TIMEOUT_S = 180.0
+
 
 _READ_PROMPT = """\
 You are reading a family's private memories room so their diary can be
@@ -416,8 +426,10 @@ async def _read_room(messages, llm, cache=None):
 
         prompt = _READ_PROMPT.format(messages=_as_prompt(chunk))
         try:
-            raw = await llm.complete("classifier", prompt,
-                                     json_mode=True, temperature=0)
+            raw = await llm.complete(
+                "classifier", prompt, json_mode=True, temperature=0,
+                max_tokens=len(chunk) * _READ_TOKENS_PER_MESSAGE + 256,
+                timeout=_READ_TIMEOUT_S)
             payload = json.loads(raw)
             rows = payload.get("messages") if isinstance(payload, dict) else None
         except (LLMError, json.JSONDecodeError, TypeError) as e:
@@ -542,7 +554,9 @@ async def _summarise(entries, llm) -> str:
     month = entries[0].on.strftime("%B %Y")
     prompt = _SUMMARY_PROMPT.format(month=month, evidence=_evidence(entries))
     try:
-        text = await llm.complete("writer", prompt, temperature=0)
+        text = await llm.complete("writer", prompt, temperature=0,
+                                  max_tokens=_SUMMARY_TOKENS,
+                                  timeout=_SUMMARY_TIMEOUT_S)
     except LLMError as e:
         _err(f"  could not summarise {month}: {e}")
         return ""

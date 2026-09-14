@@ -221,7 +221,9 @@ class LLM:
                        images: "list | None" = None,
                        json_mode: bool = False,
                        model_override: str | None = None,
-                       temperature: float | None = None) -> str:
+                       temperature: float | None = None,
+                       max_tokens: int | None = None,
+                       timeout: float | None = None) -> str:
         """Run a single chat completion and return the response text.
 
         ``role`` resolves to a concrete model via `resolve_model`. Pass
@@ -232,6 +234,14 @@ class LLM:
         evidence to yield the same page); None keeps the server
         default. SDK errors are translated to the typed LLM errors
         above.
+
+        ``max_tokens`` caps the generation. Set it whenever the size of
+        a valid answer is known in advance. Without a cap, a model that
+        enters a repetition loop generates until the client timeout,
+        which on a local endpoint means the host is busy for that whole
+        time. ``timeout`` overrides the client default for one call and
+        should accompany a cap that is much smaller than the default
+        budget allows for.
         """
         model = model_override or resolve_model(self._full_role(role))
         content = prompt if not images else _content_parts(prompt, images)
@@ -241,6 +251,10 @@ class LLM:
             kwargs["response_format"] = {"type": "json_object"}
         if temperature is not None:
             kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if timeout is not None:
+            kwargs["timeout"] = timeout
 
         try:
             resp = await self._client.chat.completions.create(
@@ -262,7 +276,18 @@ class LLM:
         except openai.APIStatusError as e:
             raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
 
-        return resp.choices[0].message.content or ""
+        # A capped call that stops on length rather than on a stop token
+        # did not finish its answer. Every caller treats a truncated
+        # reply as a failure of some kind, and without this line the only
+        # evidence is a short answer that looks deliberate.
+        choice = resp.choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            logger.warning(
+                "[llm] {} hit the {}-token cap and was cut off; "
+                "the answer is incomplete",
+                model, kwargs.get("max_tokens", "default"),
+            )
+        return choice.message.content or ""
 
     async def has_vision(self, *, role: str = "classifier",
                          model_override: str | None = None) -> bool:
@@ -360,6 +385,19 @@ _DEFAULT_WHISPER_MODEL = "whisper-1"
 # these constraints reliably when the rules are imperative and the
 # input is the last thing in the prompt.
 _CLEANUP_ROLE = "transcript_cleanup"
+
+# Polish may only add punctuation, so its output is the input plus a few
+# tokens. Two times the estimated input size is generous headroom and
+# still stops a repetition loop early. Without a cap the call runs to
+# the client timeout, which on a local endpoint occupies the host for
+# that whole period.
+_CLEANUP_TOKEN_RATIO = 2.0
+_CLEANUP_TOKEN_FLOOR = 256
+
+# Generation is slower than prefill, so a cap of N tokens still takes
+# time. This bounds one call to minutes rather than the client default,
+# which is sized for reading long documents.
+_CLEANUP_TIMEOUT_S = 180.0
 _CLEANUP_PROMPT = """\
 You are cleaning up a raw speech-to-text transcript that has no \
 punctuation, capitalization, or sentence breaks. Restore them in the \
@@ -484,6 +522,21 @@ class Transcriber:
         return await self.polish(raw, cleanup_with)
 
     @staticmethod
+    def _divergence(expected: str, actual: str, window: int = 60) -> str:
+        """Where two word sequences first differ, with context.
+
+        A length comparison says a polish went wrong; this says where. A
+        model that loops repeats a phrase from the point it lost track,
+        and that point is what identifies the input that triggered it.
+        """
+        limit = min(len(expected), len(actual))
+        i = 0
+        while i < limit and expected[i] == actual[i]:
+            i += 1
+        return (f"char {i}: expected ...{expected[i:i + window]!r}, "
+                f"got ...{actual[i:i + window]!r}")
+
+    @staticmethod
     def _comparable(text: str) -> str:
         """`text` reduced to what the polish is not allowed to change.
 
@@ -522,7 +575,17 @@ class Transcriber:
         still gets a usable transcript. We log a warning so the admin can
         see drift between raw and polished if they want to investigate
         model quality.
+
+        The call is capped in output tokens and in time. A repetition
+        loop therefore ends in a truncated answer, which fails the word
+        check below and yields the raw transcript, instead of occupying
+        the endpoint until the client timeout.
         """
+        # ~4 characters per token is the usual estimate for this family
+        # of models. The exact figure does not matter; the cap only has
+        # to be above any correct answer and far below a runaway one.
+        budget = max(_CLEANUP_TOKEN_FLOOR,
+                     int(len(raw) / 4 * _CLEANUP_TOKEN_RATIO))
         try:
             cleaned = await llm.complete(
                 _CLEANUP_ROLE, _CLEANUP_PROMPT.format(raw=raw),
@@ -531,6 +594,8 @@ class Transcriber:
                 # invites the rephrasing the word check below rejects,
                 # which turns a paid model call into a raw transcript.
                 temperature=0.0,
+                max_tokens=budget,
+                timeout=_CLEANUP_TIMEOUT_S,
             )
         except LLMError as e:
             logger.warning("[transcriber] cleanup failed, returning raw: {}", e)
@@ -551,8 +616,9 @@ class Transcriber:
         if raw_cmp != clean_cmp:
             logger.warning(
                 "[transcriber] polish changed the words, keeping raw "
-                "(raw={} chars, polished={} chars)",
+                "(raw={} chars, polished={} chars); diverges at {}",
                 len(raw_cmp), len(clean_cmp),
+                Transcriber._divergence(raw_cmp, clean_cmp),
             )
             return raw
         return cleaned
