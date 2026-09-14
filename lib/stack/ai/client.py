@@ -399,6 +399,13 @@ _CLEANUP_CHARS_PER_TOKEN = 3
 _CLEANUP_HEADROOM = 1.1
 _CLEANUP_TOKEN_FLOOR = 256
 
+# Hallucination signatures, thresholds measured on the recordings that
+# triggered the September 2026 runaway (see looks_degenerate). Real
+# loops repeated a phrase 5-147x; legitimately repetitive speech never
+# exceeded 2x. Three keeps a child singing the same line twice.
+_DEGENERATE_REPEATS = 3
+_DEGENERATE_CJK_FRACTION = 0.3
+
 # Generation is slower than prefill, so a cap of N tokens still takes
 # time. This bounds one call to minutes rather than the client default,
 # which is sized for reading long documents.
@@ -537,6 +544,40 @@ class Transcriber:
         return max(_CLEANUP_TOKEN_FLOOR, int(estimated * _CLEANUP_HEADROOM))
 
     @staticmethod
+    def looks_degenerate(text: str) -> str | None:
+        """Why `text` looks hallucinated rather than heard, or None.
+
+        Whisper fails loudly in two measured ways when a recording has
+        no usable speech. It loops: over the recordings behind the
+        September runaway, one six-word phrase covered the transcript 5
+        to 147 times, while real speech — including a child repeating a
+        song line — stayed at 1 to 2. Or its language detection
+        free-falls and lands in CJK: famstack households write German or
+        English, so a transcript that is mostly CJK letters was never
+        heard, it was invented.
+
+        Public because two different decisions hang on it: `polish`
+        refuses to feed such text to a model (a loop is an unbounded
+        echo task), and the diary refuses to publish it as words a
+        person said.
+        """
+        words = text.split()
+        if len(words) >= 12:
+            counts: dict[tuple, int] = {}
+            for i in range(len(words) - 6):
+                gram = tuple(words[i:i + 6])
+                counts[gram] = counts.get(gram, 0) + 1
+            top = max(counts.values(), default=0)
+            if top >= _DEGENERATE_REPEATS:
+                return f"one phrase repeats {top}x"
+        letters = [c for c in text if c.isalpha()]
+        cjk = sum(1 for c in letters
+                  if "぀" <= c <= "鿿" or "가" <= c <= "힯")
+        if letters and cjk / len(letters) > _DEGENERATE_CJK_FRACTION:
+            return "mostly CJK letters"
+        return None
+
+    @staticmethod
     def _divergence(expected: str, actual: str, window: int = 60) -> str:
         """Where two word sequences first differ, with context.
 
@@ -599,6 +640,16 @@ class Transcriber:
         the derived cap for a caller that knows better; the derived one
         is the input size plus 10%.
         """
+        # A degenerate transcript never reaches the model. Polish is an
+        # echo task, and echoing a loop is how the September runaway
+        # happened — the token cap below bounds the damage, this removes
+        # the exposure. The caller gets the raw text back and decides
+        # what a transcript that was never really heard is worth.
+        if (reason := Transcriber.looks_degenerate(raw)) is not None:
+            logger.warning(
+                "[transcriber] transcript looks hallucinated ({}), "
+                "not polishing", reason)
+            return raw
         budget = max_tokens or Transcriber.cleanup_budget(raw)
         try:
             cleaned = await llm.complete(

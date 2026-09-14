@@ -743,7 +743,9 @@ class TestPolishIsBounded:
     that whole period."""
 
     async def test_the_cap_scales_with_the_transcript(self, httpserver: HTTPServer):
-        long_transcript = "book the campsite " * 500
+        # Long but not repetitive — a looping transcript would (rightly)
+        # be refused by the degeneracy gate before any cap applies.
+        long_transcript = " ".join(f"wort{i}" for i in range(1500))
         httpserver.expect_request(
             "/v1/audio/transcriptions", method="POST",
         ).respond_with_json({"text": long_transcript})
@@ -862,3 +864,41 @@ class TestPolishMayAddPunctuationInsideWords:
             "theres decorations in the loft"
         )
         await tr.aclose()
+
+
+class TestDegenerateTranscriptsNeverReachTheModel:
+    """Polish is an echo task: handed a transcript that loops, the model
+    loops with it. The gate refuses the input instead of trusting the
+    output cap to contain it — the cap bounds the damage, the gate
+    removes the exposure. Thresholds come from the September 2026
+    incident: real hallucination loops repeated one phrase 5-147x,
+    legitimately repetitive speech (a child singing the same line)
+    stayed at 1-2x."""
+
+    def test_a_looping_transcript_is_flagged(self):
+        looping = "und dann sind wir los und dann sind wir " * 12
+        assert Transcriber.looks_degenerate(looping) is not None
+
+    def test_a_song_line_sung_twice_is_not(self):
+        song = ("die affen rasen durch den wald der eine macht den "
+                "andern kalt die affen rasen durch den wald wer hat "
+                "die kokosnuss geklaut")
+        assert Transcriber.looks_degenerate(song) is None
+
+    def test_cjk_on_a_latin_household_is_flagged(self):
+        """Whisper's language detection free-falls on non-speech (baby
+        sounds, music) and lands in CJK. famstack households write
+        German or English, so a mostly-CJK transcript was invented."""
+        assert Transcriber.looks_degenerate("嬰兒 咿呀 學語 的 聲音 嬰兒") is not None
+
+    def test_ordinary_german_is_not(self):
+        assert Transcriber.looks_degenerate(
+            "hallo bart heute ist der sechzehnte märz ich wollte dir "
+            "sagen dass ich stolz auf dich war") is None
+
+    async def test_polish_refuses_a_looping_transcript(self):
+        looping = "and then we went " * 40
+        llm = _StubLLM(result="should never be asked")
+
+        assert await Transcriber.polish(looping, llm) == looping
+        assert llm.kwargs == []

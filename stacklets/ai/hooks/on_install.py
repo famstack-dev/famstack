@@ -235,22 +235,36 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
 
 
 def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: Path, state_dir: Path):
-    section("Whisper server", "launchd service")
+    """Write the wrapper + LaunchAgent and (re)load the service.
 
+    Idempotent by content: when what is on disk already matches, nothing
+    is written and the running service is not bounced. on_start calls
+    this on every `stack up ai`, which is how a flag change here reaches
+    existing installs on a plain restart instead of waiting for a
+    `stack setup ai` nobody thinks to run.
+    """
     agents_dir = Path.home() / "Library" / "LaunchAgents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     # Wrapper script — launchd doesn't inherit PATH, ffmpeg needs it
     wrapper = data_dir / "ai" / "famstack-whisper"
-    wrapper.write_text(
+    wrapper_text = (
         f"#!/bin/bash\n"
         f'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"\n'
         f'exec "{whisper_bin}" "$@"\n'
     )
-    wrapper.chmod(0o755)
+
+    # Whisper hears what the household speaks: [core].language first,
+    # with the ai-stacklet language (primarily a TTS-voice knob) as the
+    # fallback. Pinning beats auto-detection, which free-falls on
+    # silence and noise — but pinning the wrong language would be worse
+    # than auto, so this must never read a voice preference as a
+    # transcription language when the household says otherwise.
+    language = ctx.stack._cfg("core", "language",
+                              ctx.cfg("language", default="auto"))
 
     plist_path = agents_dir / f"{PLIST_LABEL}.plist"
-    plist_path.write_text(
+    plist_content = (
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
         f'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
@@ -276,8 +290,18 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
         f'    <string>--inference-path</string>\n'
         f'    <string>/v1/audio/transcriptions</string>\n'
         f'    <string>--convert</string>\n'
+        # The language comes from config — auto-detection free-falls on
+        # silence and noise (measured: baby sounds transcribed as CJK).
+        # --max-context 0 stops a hallucinated segment from seeding the
+        # next one, and --suppress-nst drops non-speech tokens; each of
+        # the three flags fixed loops the other two did not, and only
+        # the combination cleared every recording behind the September
+        # 2026 runaway generation.
         f'    <string>--language</string>\n'
-        f'    <string>auto</string>\n'
+        f'    <string>{language}</string>\n'
+        f'    <string>--max-context</string>\n'
+        f'    <string>0</string>\n'
+        f'    <string>--suppress-nst</string>\n'
         f'    <string>--threads</string>\n'
         f'    <string>4</string>\n'
         f'  </array>\n'
@@ -288,6 +312,15 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
         f'</dict>\n'
         f'</plist>\n'
     )
+
+    if (plist_path.exists() and plist_path.read_text() == plist_content
+            and wrapper.exists() and wrapper.read_text() == wrapper_text):
+        return
+
+    section("Whisper server", "launchd service")
+    wrapper.write_text(wrapper_text)
+    wrapper.chmod(0o755)
+    plist_path.write_text(plist_content)
 
     ctx.step("Loading whisper-server into launchd...")
     try:

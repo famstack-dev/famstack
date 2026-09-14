@@ -253,7 +253,20 @@ async def _transcribe(message, *, session, homeserver, token,
             raise LLMError(f"could not download {message.url}")
         raw = await transcriber.transcribe(
             audio, filename=message.body or "voice.wav", vocabulary=vocabulary)
-        text = await Transcriber.polish(raw, llm) if raw.strip() else raw
+        # A hallucinated transcript (whisper looping on noise, or its
+        # language detection landing in CJK on baby sounds) must not
+        # reach the page as words somebody said. The entry keeps its
+        # place and its audio; the words are simply not there. The raw
+        # text stays in the record so a rerun under a better whisper
+        # config can be compared against what this one heard.
+        if raw.strip() and (why := Transcriber.looks_degenerate(raw)):
+            _err(f"  transcript of {message.event_id} looks hallucinated "
+                 f"({why}); keeping the recording without words")
+            text = ""
+        elif raw.strip():
+            text = await Transcriber.polish(raw, llm)
+        else:
+            text = raw
         return {"raw": raw, "text": text, "url": message.url,
                 "filename": message.body}
 
