@@ -639,7 +639,7 @@ def _household_zone():
 
 # Flags that consume the token after them, so the room can be picked out
 # of the rest without mistaking a flag's value for it.
-_TAKES_A_VALUE = ("--burst-window",)
+_TAKES_A_VALUE = ("--burst-window", "--limit")
 
 
 def _opt(argv: list[str], flag: str, fallback: str) -> str:
