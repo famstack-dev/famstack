@@ -20,16 +20,8 @@ timeline and remains the reproducibility anchor (ADR-010).
 
 from __future__ import annotations
 
-import asyncio
-import base64
 import copy
-import json
-import os
-import time
-from collections.abc import Awaitable, Callable
-from pathlib import Path
 
-from loguru import logger
 
 
 # Marks a text event as decoded from audio, and names the recording.
