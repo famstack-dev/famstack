@@ -95,6 +95,12 @@ class Reading:
     mode: str = "monologue"  # "monologue" | "dialogue" | "note"
     spoken_date: str | None = None
     addressee: str | None = None
+    # Distillation, for long recordings. `gist` is one narrative
+    # sentence about the message. `moments` are passages the model
+    # copied from the text; verify_moments() checks each one against
+    # the body before it can render as a quote.
+    gist: str | None = None
+    moments: tuple = ()
 
 
 @dataclass
@@ -118,6 +124,11 @@ class Entry:
     duration_ms: int | None = None
     mode: str = "monologue"
     comments: list[tuple[str, str]] = field(default_factory=list)
+    # Distilled view for long recordings: one narrative sentence and
+    # verified word-for-word quotes. Empty for short entries; the
+    # renderer then shows the body in full.
+    gist: str = ""
+    moments: list[str] = field(default_factory=list)
 
 
 # ── What this household says ──────────────────────────────────────────
@@ -527,6 +538,8 @@ def compile_entries(messages, readings, *,
             addressee=reading.addressee,
             duration_ms=_total_duration(group),
             mode=reading.mode,
+            gist=(reading.gist or "").strip(),
+            moments=verify_moments(_joined_body(group), reading.moments),
         )
         entries.append(entry)
         for m in group:
@@ -545,6 +558,8 @@ def compile_entries(messages, readings, *,
                 sender=msg.sender, body=_joined_body(group), at=msg.ts,
                 event_ids=[m.event_id for m in group],
                 addressee=reading.addressee, mode=reading.mode,
+                gist=(reading.gist or "").strip(),
+                moments=verify_moments(_joined_body(group), reading.moments),
             )
             entries.append(orphan)
             by_event[msg.event_id] = orphan
@@ -558,6 +573,57 @@ def compile_entries(messages, readings, *,
     # as randomness on the page.
     entries.sort(key=lambda e: (e.on, e.at))
     return entries
+
+
+# A distilled entry shows at most this many quotes.
+_MAX_MOMENTS = 3
+
+# Entries below this length render in full; a gist would only repeat
+# them. At or above it, the renderer prefers the distilled view.
+DISTILL_MIN_WORDS = 120
+
+_SENTENCE_END = re.compile(r"(?<=[.!?\u2026])\s+")
+
+
+def _normalized(text: str) -> str:
+    """Text reduced to lowercase letters and digits, for comparison."""
+    return re.sub(r"[^a-z0-9\u00c0-\u024f]+", "", text.lower())
+
+
+def verify_moments(body: str, claimed) -> list[str]:
+    """Return the claimed quotes that the body really contains.
+
+    The model copies passages; this function checks them. A claimed
+    quote is accepted when it equals one sentence of the body, or a run
+    of consecutive sentences, compared without case and punctuation.
+    The returned text is the body's own text, not the model's copy, so
+    a quote on the page is an exact excerpt. Claims that match nothing
+    are dropped.
+    """
+    sentences = [x.strip() for x in _SENTENCE_END.split(body) if x.strip()]
+    norms = [_normalized(x) for x in sentences]
+    kept: list[str] = []
+    for claim in claimed or ():
+        want = _normalized(str(claim))
+        if not want:
+            continue
+        found = None
+        for i in range(len(norms)):
+            joined = ""
+            for j in range(i, len(norms)):
+                joined += norms[j]
+                if joined == want:
+                    found = " ".join(sentences[i:j + 1])
+                    break
+                if len(joined) > len(want):
+                    break
+            if found:
+                break
+        if found and found not in kept:
+            kept.append(found)
+        if len(kept) >= _MAX_MOMENTS:
+            break
+    return kept
 
 
 def _joined_body(group) -> str:
@@ -611,6 +677,16 @@ def _kind_label(entry: Entry) -> str:
     return f"{noun}, {length}" if length else noun
 
 
+def _distills(entry: Entry) -> bool:
+    """Whether the renderer shows the distilled view for this entry.
+
+    Requires a gist and a long body. Without a gist the full text is
+    the only faithful rendering. Short entries are already the right
+    amount of detail.
+    """
+    return bool(entry.gist) and len(entry.body.split()) >= DISTILL_MIN_WORDS
+
+
 def _permalink(room_id: str, event_id: str) -> str:
     return f"https://matrix.to/#/{room_id}/{event_id}"
 
@@ -639,7 +715,18 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
             "",
         ]
 
-    if entry.body.strip():
+    if entry.body.strip() and _distills(entry):
+        # The distilled view for long recordings: one narrative line,
+        # verified quotes, and the full transcript in a folded block.
+        # verify_moments() guarantees each quote is an exact excerpt.
+        lines += [entry.gist, ""]
+        for moment in entry.moments:
+            lines += [f"> [!quote] {moment}", ""]
+        lines += ["> [!note]- Full transcript"]
+        lines += [f"> {line}" if line.strip() else ">"
+                  for line in entry.body.strip().splitlines()]
+        lines += [""]
+    elif entry.body.strip():
         lines += [entry.body.strip(), ""]
     elif entry.kind == "voice" and not entry.comments:
         # A gated recording: the transcript was unusable and the words

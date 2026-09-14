@@ -293,7 +293,9 @@ _OVERLAP = 4
 # One small JSON object per message in the slice, plus the enclosing
 # structure. A model that loops instead of closing the array is capped
 # here rather than at the client timeout.
-_READ_TOKENS_PER_MESSAGE = 120
+# The budget covers the facts plus the distillation: a gist sentence
+# and up to three copied passages for long messages.
+_READ_TOKENS_PER_MESSAGE = 240
 _READ_TIMEOUT_S = 300.0
 
 # Two to four sentences.
@@ -303,8 +305,8 @@ _SUMMARY_TIMEOUT_S = 180.0
 
 _READ_PROMPT = """\
 You are reading a family's private memories room so their diary can be
-compiled. Report facts about these messages. Never rewrite one, never
-summarise one, never translate one.
+compiled. Report facts about these messages. Never translate one. When
+you quote, copy the words exactly.
 
 The messages are in the order the server received them, which is not
 always the order they were recorded: a phone that has been offline
@@ -352,6 +354,15 @@ message above, in the same order, each with these keys:
   recording from weeks ago and is still its own memory, not a footnote
   to it. Use this only when the message would make no sense on its own
   page. Otherwise null.
+
+"gist": for a message longer than about 100 words: one sentence, in
+  the language of the message, saying what it is about and for whom.
+  Plain and specific, no marketing words. For shorter messages null.
+
+"moments": for a message longer than about 100 words: up to three
+  short passages copied word-for-word from the message, the lines most
+  worth keeping. Copy them exactly as written, complete sentences
+  only, no edits. Otherwise an empty list.
 """
 
 
@@ -420,6 +431,8 @@ async def _read_room(messages, llm, cache=None):
             mode=str(row.get("mode") or "monologue"),
             spoken_date=row.get("spoken_date") or None,
             addressee=row.get("addressee") or None,
+            gist=row.get("gist") or None,
+            moments=tuple(row.get("moments") or ()),
         )
         if target := row.get("continues"):
             continues[event_id] = target
@@ -429,7 +442,10 @@ async def _read_room(messages, llm, cache=None):
 
     if cache is not None:
         for msg in messages:
-            if (stored := cache.get(msg.event_id, msg.body)) is not None:
+            stored = cache.get(msg.event_id, msg.body)
+            # Readings from before distillation carry no "moments" key.
+            # Treat them as absent so the message is read again once.
+            if stored is not None and "moments" in stored:
                 remember(msg.event_id, stored)
     if known:
         _err(f"  {len(known)} message(s) already read, "
@@ -470,6 +486,10 @@ async def _read_room(messages, llm, cache=None):
                 "addressee": row.get("addressee") or None,
                 "continues": _link(row.get("continues"), chunk),
                 "refers_to": _link(row.get("refers_to"), chunk),
+                "gist": (str(row.get("gist")).strip()
+                         if row.get("gist") else None),
+                "moments": [str(m) for m in row.get("moments") or []
+                            if str(m).strip()][:5],
             }
             remember(here.event_id, found)
             if cache is not None:

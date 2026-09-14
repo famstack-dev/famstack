@@ -659,6 +659,68 @@ class TestRendering:
 
         assert "This recording could not be transcribed." in page
 
+    def test_a_long_entry_renders_distilled_with_verified_quotes(self):
+        """Long recordings render as gist + quotes + folded transcript,
+        not as a wall of text."""
+        body = " ".join(f"wort{i}." for i in range(130)) + \
+            " Das ist der Satz der bleibt."
+        page = diary.render_month([diary.Entry(
+            on=date(2026, 9, 14), confidence="sent", basis="b",
+            kind="voice", sender="marge", body=body,
+            gist="Marge erzählt von einem langen Tag.",
+            moments=["Das ist der Satz der bleibt."])])
+
+        assert "Marge erzählt von einem langen Tag." in page
+        assert "> [!quote] Das ist der Satz der bleibt." in page
+        assert "> [!note]- Full transcript" in page
+        # The body appears only inside the folded block, quoted.
+        assert "\nwort0." not in page
+
+    def test_a_short_entry_stays_verbatim_even_with_a_gist(self):
+        page = diary.render_month([diary.Entry(
+            on=date(2026, 9, 14), confidence="sent", basis="b",
+            kind="voice", sender="marge", body="Kurz und wichtig.",
+            gist="A gist that must not replace the words.")])
+
+        assert "Kurz und wichtig." in page
+        assert "A gist that must not replace the words." not in page
+
+
+class TestVerifyMoments:
+    """A quote reaches the page only when the body really contains it.
+    The page shows the body's own text, not the model's copy."""
+
+    BODY = ("Hallo Bart, heute ist der sechzehnte März. Direktor "
+            "Skinner hat angerufen! Du hast der neuen Schülerin "
+            "geholfen. Das vergesse ich dir nicht.")
+
+    def test_an_exact_sentence_is_kept(self):
+        assert diary.verify_moments(
+            self.BODY, ["Direktor Skinner hat angerufen!"]) == \
+            ["Direktor Skinner hat angerufen!"]
+
+    def test_case_and_punctuation_differences_still_match_the_body(self):
+        got = diary.verify_moments(
+            self.BODY, ["direktor skinner hat angerufen"])
+        assert got == ["Direktor Skinner hat angerufen!"]
+
+    def test_a_run_of_sentences_matches_as_one_quote(self):
+        got = diary.verify_moments(
+            self.BODY,
+            ["Du hast der neuen Schülerin geholfen. "
+             "Das vergesse ich dir nicht."])
+        assert got == ["Du hast der neuen Schülerin geholfen. "
+                       "Das vergesse ich dir nicht."]
+
+    def test_an_invented_quote_is_dropped(self):
+        assert diary.verify_moments(
+            self.BODY, ["Bart hat die Schule angezündet."]) == []
+
+    def test_a_partial_sentence_is_dropped(self):
+        assert diary.verify_moments(
+            self.BODY, ["der neuen Schülerin"]) == []
+
+
     def test_a_speaker_is_not_addressed_to_themselves(self):
         """A misread addressee must not become a dedication."""
         page = diary.render_month([diary.Entry(
