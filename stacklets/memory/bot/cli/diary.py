@@ -267,7 +267,8 @@ async def _transcribe(message, *, session, homeserver, token,
         # better future model can run one pass again on the cached
         # raw text. Whisper does not run again.
         record = await transcripts.run_passes(
-            record, [transcripts.gate_pass(), transcripts.polish_pass(llm)])
+            record, [transcripts.gate_pass(), transcripts.polish_pass(llm),
+                     transcripts.structure_pass()])
         gate = next((p for p in record["passes"] if p["name"] == "gate"), {})
         if str(gate.get("outcome", "")).startswith("blocked"):
             _err(f"  transcript of {message.event_id} unusable "

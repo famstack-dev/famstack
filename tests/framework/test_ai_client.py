@@ -938,7 +938,8 @@ class TestTranscribeVerbose:
         assert q["segments"] == [{"start": 0.0, "end": 4.2,
                                   "avg_logprob": -0.2,
                                   "no_speech_prob": 0.01,
-                                  "temperature": 0.0}]
+                                  "temperature": 0.0,
+                                  "word_count": 2}]
         # Only the low-confidence word is kept, worst first.
         assert q["low_words"] == [
             {"word": "Panorana", "probability": 0.13, "start": 0.5}]

@@ -638,6 +638,11 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
 
     if entry.body.strip():
         lines += [entry.body.strip(), ""]
+    elif entry.kind == "voice" and not entry.comments:
+        # A gated recording: the transcript was unusable and the words
+        # stay off the page. The sentence tells the reader this is
+        # deliberate. The audio link below stays the way to hear it.
+        lines += ["This recording could not be transcribed.", ""]
     elif entry.kind in _UPLOADS and not entry.comments:
         lines += ["Nothing was written alongside this one.", ""]
 

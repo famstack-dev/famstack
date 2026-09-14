@@ -650,6 +650,15 @@ class TestRendering:
         assert "Nothing was written alongside this one." in page
         assert ".png" not in page
 
+    def test_an_untranscribable_recording_says_so(self):
+        """A gated voice entry keeps its place; the page states why the
+        words are missing instead of showing nothing."""
+        page = diary.render_month([diary.Entry(
+            on=date(2026, 9, 14), confidence="sent", basis="dated from when "
+            "it was sent", kind="voice", sender="homer", body="")])
+
+        assert "This recording could not be transcribed." in page
+
     def test_a_speaker_is_not_addressed_to_themselves(self):
         """A misread addressee must not become a dedication."""
         page = diary.render_month([diary.Entry(

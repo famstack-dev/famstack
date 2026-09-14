@@ -161,3 +161,44 @@ class TestPolishPass:
         assert outcome == "applied"
         # No model is configured in the test env; extra stays empty.
         assert extra == {}
+
+
+class TestStructurePass:
+    """Paragraph breaks come from segment pauses and word counts. No
+    model runs; a count mismatch skips the pass."""
+
+    @staticmethod
+    def _seg(start, end, n):
+        return {"start": start, "end": end, "word_count": n}
+
+    async def test_breaks_at_a_long_pause(self):
+        from stack.ai.transcripts import structure_pass
+        record = {
+            "text": "one two three four five six seven eight "
+                    "nine ten eleven twelve thirteen fourteen fifteen sixteen",
+            "quality": {"segments": [self._seg(0, 5, 8),
+                                     self._seg(7.5, 12, 8)]},
+        }
+        text, outcome, _ = await structure_pass().apply(record)
+        assert outcome == "applied"
+        assert text.split("\n\n") == [
+            "one two three four five six seven eight",
+            "nine ten eleven twelve thirteen fourteen fifteen sixteen"]
+
+    async def test_a_short_pause_does_not_break(self):
+        from stack.ai.transcripts import structure_pass
+        record = {
+            "text": "a b c d e f g h i j k l m n o p",
+            "quality": {"segments": [self._seg(0, 5, 8),
+                                     self._seg(5.2, 9, 8)]},
+        }
+        text, outcome, _ = await structure_pass().apply(record)
+        assert (outcome, "\n\n" in text) == ("unchanged", False)
+
+    async def test_count_mismatch_skips(self):
+        from stack.ai.transcripts import structure_pass
+        record = {"text": "only three words",
+                  "quality": {"segments": [self._seg(0, 5, 8)]}}
+        text, outcome, _ = await structure_pass().apply(record)
+        assert text == "only three words"
+        assert outcome.startswith("skipped")

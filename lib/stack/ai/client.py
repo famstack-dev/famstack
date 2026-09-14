@@ -564,9 +564,15 @@ class Transcriber:
             "detected_language_probability":
                 data.get("detected_language_probability"),
             "segments": [
-                {k: s.get(k) for k in
-                 ("start", "end", "avg_logprob", "no_speech_prob",
-                  "temperature")}
+                {**{k: s.get(k) for k in
+                    ("start", "end", "avg_logprob", "no_speech_prob",
+                     "temperature")},
+                 # The word count maps this segment to its part of the
+                 # text. Polish keeps the word sequence, so cumulative
+                 # counts let a later pass insert paragraph breaks at
+                 # segment boundaries without stored segment text.
+                 "word_count": (len(s["words"]) if s.get("words")
+                                else len((s.get("text") or "").split()))}
                 for s in segments],
             "low_words": sorted(
                 ({"word": (w.get("word") or "").strip(),

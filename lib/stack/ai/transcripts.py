@@ -222,6 +222,53 @@ def gate_pass() -> TranscriptPass:
     return TranscriptPass(name="gate", version=1, apply=apply)
 
 
+def structure_pass(min_pause_s: float = 1.5,
+                   min_words: int = 8) -> TranscriptPass:
+    """Insert paragraph breaks at long pauses between segments.
+
+    Whisper's segment boundaries fall on pauses in the speech. A pause
+    of ``min_pause_s`` or more starts a new paragraph. Paragraphs
+    shorter than ``min_words`` merge into the next one. The split uses
+    the per-segment word counts from the quality record; no model runs.
+
+    Polish can merge or split words (hyphenation), which shifts the
+    counts. When the counts do not match the text, the pass skips and
+    the text stays unchanged. Run this pass after polish.
+    """
+    async def apply(record: dict) -> tuple[str, str, dict]:
+        text = (record.get("text") or "").strip()
+        segments = (record.get("quality") or {}).get("segments") or []
+        counts = [s.get("word_count") for s in segments]
+        if not text or not segments or None in counts:
+            return record.get("text") or "", "skipped: no segment data", {}
+        words = text.split()
+        if sum(counts) != len(words):
+            return text, "skipped: word counts do not match", {}
+
+        paragraphs: list[str] = []
+        current: list[str] = []
+        cursor = 0
+        for i, segment in enumerate(segments):
+            current.extend(words[cursor:cursor + counts[i]])
+            cursor += counts[i]
+            following = segments[i + 1] if i + 1 < len(segments) else None
+            pause = 0.0
+            if (following and segment.get("end") is not None
+                    and following.get("start") is not None):
+                pause = following["start"] - segment["end"]
+            if following is None or (pause >= min_pause_s
+                                     and len(current) >= min_words):
+                paragraphs.append(" ".join(current))
+                current = []
+        if current:
+            paragraphs.append(" ".join(current))
+        structured = "\n\n".join(paragraphs)
+        outcome = "applied" if len(paragraphs) > 1 else "unchanged"
+        return structured, outcome, {}
+
+    return TranscriptPass(name="structure", version=1, apply=apply)
+
+
 def polish_pass(llm) -> TranscriptPass:
     """Restore punctuation. Do not change words (see Transcriber.polish).
 
