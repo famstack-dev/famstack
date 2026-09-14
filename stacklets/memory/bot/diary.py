@@ -86,7 +86,7 @@ _STRINGS = {
         "index_intro": (
             "Your memories, kept in a chronicle to read back. Voice "
             "notes, photos, conversations you recorded. Every entry "
-            "leads back to the original recording — there to be "
+            "leads back to the original recording, there to be "
             "listened to, today or in twenty years."),
         "nothing_compiled": "Nothing has been compiled yet.",
         "unrecovered_h": "Dates we could not recover",
@@ -1010,7 +1010,7 @@ def render_year(entries) -> str:
         label = _month_name(month[0].on)
         count = len(month)
         lines.append(
-            f"- [{label}]({key}) — "
+            f"- [{label}]({key}): "
             f"{_counted(count, 'entry_one', 'entry_many')}")
     lines.append("")
 
@@ -1034,7 +1034,7 @@ def render_index(entries) -> str:
         count = len(year)
         months = len(_by_month(year))
         lines.append(
-            f"- [{key}]({key}/about) — "
+            f"- [{key}]({key}/about): "
             f"{_counted(count, 'entry_one', 'entry_many')} "
             f"{_L['across']} "
             f"{_counted(months, 'month_one', 'month_many')}")

@@ -759,7 +759,7 @@ def _household_zone():
     name = os.environ.get("TIMEZONE", "").strip()
     if not name:
         _err("TIMEZONE not set, reading timestamps as UTC "
-             "— late-night entries may land on the wrong day")
+             "late-night entries may land on the wrong day")
         return timezone.utc
     try:
         return ZoneInfo(name)
@@ -827,7 +827,7 @@ async def run(llm, argv: list[str]) -> int:
         summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:
-        _err("MATRIX_HOMESERVER not set — is core up?")
+        _err("MATRIX_HOMESERVER not set; is core up?")
         return 1
     bucket = os.environ.get("SHARED_BUCKET", "family")
 
