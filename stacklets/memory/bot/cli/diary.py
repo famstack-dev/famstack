@@ -548,6 +548,15 @@ Rules:
   something one child did onto another child.
 - Keep the direction of what happened. If one person did something for,
   to, or about another, do not swap them round.
+- Prefer reported speech: write what people recorded, told and
+  described ("Marge erzählt, dass ..."), not bare statements of fact.
+  These entries are people telling things, and the diary recalls the
+  telling.
+- An entry marked as a conversation has no speaker labels in its text.
+  Name its participants and its topics. Never attribute a statement
+  inside it to a named person.
+- A word listed as "unclear" was not heard clearly. Do not use it, and
+  do not attribute anything to a person through it.
 - Name people as the entries name them.
 - Report what the entries report, and no more. Do not frame the month as
   an occasion, and do not describe an event the entries only mention in
@@ -576,6 +585,23 @@ def _household_language() -> str:
         code, "the language the entries are written in")
 
 
+def _unclear_words(entry) -> list[str]:
+    """Words whisper did not hear clearly, for this entry's recordings.
+
+    Read from the transcript records' quality data. The summariser is
+    told these words are unreliable, so it cannot hang an event or a
+    person on a misheard name.
+    """
+    words: list[str] = []
+    for eid in entry.event_ids:
+        record = voice.TRANSCRIPTS.read(eid) or {}
+        for w in (record.get("quality") or {}).get("low_words") or []:
+            token = (w.get("word") or "").strip()
+            if token and token not in words:
+                words.append(token)
+    return words[:5]
+
+
 def _evidence(entries) -> str:
     """A month's entries as the summariser sees them.
 
@@ -594,10 +620,24 @@ def _evidence(entries) -> str:
         # the prose. Whoever a memo is spoken to is named in its words
         # anyway, where the model can read it as evidence.
         who = entry.sender.title()
+        # The mode separates safe attribution from unsafe: a monologue
+        # has one speaker (the sender); a conversation carries no
+        # speaker labels inside its text.
+        if entry.kind == "voice" and entry.mode == "dialogue":
+            role = (f"{who} recorded a conversation "
+                    f"(who said which line is unknown)")
+        elif entry.kind == "voice":
+            role = f"{who} spoke"
+        else:
+            role = who
         body = entry.body.strip() or "(a photo, no caption)"
         for sender, text in entry.comments:
             body += f"\n  {sender.title()} replied: {text.strip()}"
-        out.append(f"- [{when}] {who}: {body}")
+        line = f"- [{when}] {role}: {body}"
+        if unclear := _unclear_words(entry):
+            line += ("\n  unclear words, not heard clearly: "
+                     + ", ".join(unclear))
+        out.append(line)
     return "\n".join(out)
 
 
