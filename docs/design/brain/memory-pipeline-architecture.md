@@ -181,6 +181,30 @@ model had ignored.
   affected entries).
 - Episode grouping: a vacation spanning many entries currently
   renders as independent entries plus one month summary.
+- Inline media on diary pages: images, and an audio player with a
+  play button per recording. Design: media export at compile time,
+  not a proxy. Matrix is capture transport and timeline anchor; the
+  archive is plain files, the same pattern the archivist uses for
+  documents (chat -> Paperless).
+  - The compiler writes each media original to
+    `{data_dir}/memory/media/<yyyy>/<mm>/<event-id>.<ext>`,
+    idempotent by event id. Audio gets an `.m4a` transcode beside
+    the original (Safari does not play Ogg/Opus reliably); images
+    get a page-weight thumbnail. ffmpeg is a compile-time
+    dependency.
+  - Serving is an open choice: a static mount in the wiki
+    container, or a thin proxy that serves from the same filesystem
+    and gives logical URLs independent of the on-disk layout. Either
+    way the renderer emits stable URLs and
+    `<audio controls preload="none">`, with no auth and no runtime
+    Synapse dependency.
+  - Long-term property: dated ordinary files beside Markdown pages,
+    readable without any famstack software. `data_dir/memory` is in
+    backup scope; the Synapse media copy becomes redundant.
+  - Rejected: serving from Synapse's authenticated media API
+    (1.160) at view time. It keeps the archive dependent on a
+    running homeserver, for no storage saving once transcode caches
+    exist. The export to plain files is the decided part.
 - Retranscription (`--retranscribe`) is manual; it is needed only
   when whisper's configuration or vocabulary changes. Pass and prompt
   changes regenerate automatically via fingerprints during any
