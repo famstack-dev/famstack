@@ -902,3 +902,87 @@ class TestDegenerateTranscriptsNeverReachTheModel:
 
         assert await Transcriber.polish(looping, llm) == looping
         assert llm.kwargs == []
+
+
+class TestTranscribeVerbose:
+    """The diary path keeps whisper's own confidence; the plain path
+    stays cheap. Same endpoint, different request shape."""
+
+    _VERBOSE = {
+        "text": " hallo bart heute ist der sechzehnte ",
+        "duration": 4.2,
+        "detected_language": "german",
+        "detected_language_probability": 0.98,
+        "segments": [{
+            "id": 0, "start": 0.0, "end": 4.2, "temperature": 0.0,
+            "avg_logprob": -0.2, "no_speech_prob": 0.01,
+            "text": "hallo bart",
+            "words": [
+                {"word": " hallo", "probability": 0.99, "start": 0.0, "end": 0.4},
+                {"word": " Panorana", "probability": 0.13, "start": 0.5, "end": 1.0},
+            ],
+        }],
+    }
+
+    async def test_quality_record_is_extracted(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json(self._VERBOSE)
+        tr = _make_transcriber(httpserver)
+
+        record = await tr.transcribe_verbose(b"a")
+
+        assert record["text"] == "hallo bart heute ist der sechzehnte"
+        q = record["quality"]
+        assert q["detected_language"] == "german"
+        assert q["segments"] == [{"start": 0.0, "end": 4.2,
+                                  "avg_logprob": -0.2,
+                                  "no_speech_prob": 0.01,
+                                  "temperature": 0.0}]
+        # Only the low-confidence word is kept, worst first.
+        assert q["low_words"] == [
+            {"word": "Panorana", "probability": 0.13, "start": 0.5}]
+        await tr.aclose()
+
+    async def test_plain_transcribe_stays_on_the_cheap_format(
+            self, httpserver: HTTPServer):
+        seen: dict = {}
+
+        def handler(request):
+            seen["format"] = request.form.get("response_format")
+            from werkzeug.wrappers import Response
+            return Response(json.dumps({"text": "hi"}),
+                            content_type="application/json")
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_handler(handler)
+        tr = _make_transcriber(httpserver)
+
+        assert await tr.transcribe(b"a") == "hi"
+        assert seen["format"] == "json"
+        await tr.aclose()
+
+
+class TestQualityVerdict:
+    """OpenAI's own segment thresholds, applied across the transcript:
+    most segments failed means the text never really happened."""
+
+    @staticmethod
+    def _seg(logprob=-0.2, no_speech=0.01):
+        return {"avg_logprob": logprob, "no_speech_prob": no_speech}
+
+    def test_mostly_failed_segments_is_poor(self):
+        q = {"segments": [self._seg(logprob=-1.4)] * 3 + [self._seg()]}
+        assert Transcriber.quality_verdict(q) is not None
+
+    def test_silence_counts_as_failure(self):
+        q = {"segments": [self._seg(no_speech=0.9)] * 3 + [self._seg()]}
+        assert Transcriber.quality_verdict(q) is not None
+
+    def test_one_bad_segment_in_a_good_recording_is_fine(self):
+        q = {"segments": [self._seg()] * 5 + [self._seg(logprob=-1.4)]}
+        assert Transcriber.quality_verdict(q) is None
+
+    def test_no_segments_is_no_verdict(self):
+        assert Transcriber.quality_verdict({"segments": []}) is None

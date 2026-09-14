@@ -160,6 +160,7 @@ class TranscriptStore:
 
     async def run(
         self, event_id: str, produce: Callable[[], Awaitable[dict]],
+        *, force: bool = False,
     ) -> dict:
         """Return the record for `event_id`, producing it at most once.
 
@@ -167,8 +168,13 @@ class TranscriptStore:
         first one's result. Failures are not retained: whisper outages
         are transient and the drain retries, so caching an error would
         make a message permanently undecodable.
+
+        ``force`` skips the stored record and re-produces it — the
+        `--retranscribe` path for when the whisper config or vocabulary
+        improved and old recordings deserve a second hearing. The new
+        record overwrites the old one; single-flight still applies.
         """
-        if (stored := self.read(event_id)) is not None:
+        if not force and (stored := self.read(event_id)) is not None:
             return stored
         if (pending := self._inflight.get(event_id)) is not None:
             return await pending

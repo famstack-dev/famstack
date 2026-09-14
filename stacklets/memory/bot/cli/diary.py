@@ -18,6 +18,9 @@ expensive half is cached rather than repeated: transcripts live in
     stack memory diary letters              a different room
     stack memory diary --burst-window 1     see below
     stack memory diary --force              re-read everything from scratch
+    stack memory diary --retranscribe       decode all recordings again
+                                            (after a whisper config or
+                                            vocabulary change)
 
 WHY THE BURST WINDOW IS A KNOB
     Messages that synced late carry arrival timestamps, not recording
@@ -239,7 +242,8 @@ def _frontmatter(path: Path) -> dict:
 
 
 async def _transcribe(message, *, session, homeserver, token,
-                      transcriber, llm, vocabulary: str = "") -> str:
+                      transcriber, llm, vocabulary: str = "",
+                      retranscribe: bool = False) -> str:
     """The words of a recording, transcribed once and remembered.
 
     Shares `TRANSCRIPT_DIR` with the bots, so a memo the archivist
@@ -251,27 +255,35 @@ async def _transcribe(message, *, session, homeserver, token,
         audio = await _download(session, homeserver, token, message.url or "")
         if not audio:
             raise LLMError(f"could not download {message.url}")
-        raw = await transcriber.transcribe(
+        verbose = await transcriber.transcribe_verbose(
             audio, filename=message.body or "voice.wav", vocabulary=vocabulary)
-        # A hallucinated transcript (whisper looping on noise, or its
-        # language detection landing in CJK on baby sounds) must not
-        # reach the page as words somebody said. The entry keeps its
-        # place and its audio; the words are simply not there. The raw
-        # text stays in the record so a rerun under a better whisper
-        # config can be compared against what this one heard.
-        if raw.strip() and (why := Transcriber.looks_degenerate(raw)):
-            _err(f"  transcript of {message.event_id} looks hallucinated "
-                 f"({why}); keeping the recording without words")
+        raw = verbose["text"]
+        # A transcript whisper itself rates as failed (most segments
+        # below its own decode/no-speech thresholds), or one that shows
+        # the hallucination signatures (a loop, CJK on a latin
+        # household), must not reach the page as words somebody said.
+        # The entry keeps its place and its audio; the words are simply
+        # not there. Raw text and quality metrics stay in the record —
+        # for comparison after a whisper config change, and for the
+        # planned confidence-restricted correction pass.
+        why = None
+        if raw.strip():
+            why = (Transcriber.quality_verdict(verbose["quality"])
+                   or Transcriber.looks_degenerate(raw))
+        if why:
+            _err(f"  transcript of {message.event_id} unusable ({why}); "
+                 f"keeping the recording without words")
             text = ""
         elif raw.strip():
             text = await Transcriber.polish(raw, llm)
         else:
             text = raw
-        return {"raw": raw, "text": text, "url": message.url,
-                "filename": message.body}
+        return {"raw": raw, "text": text, "quality": verbose["quality"],
+                "url": message.url, "filename": message.body}
 
     try:
-        return (await voice.TRANSCRIPTS.run(message.event_id, produce))["text"]
+        return (await voice.TRANSCRIPTS.run(
+            message.event_id, produce, force=retranscribe))["text"]
     except LLMError as e:
         _err(f"  could not transcribe {message.event_id}: {e}")
         return ""
@@ -639,6 +651,10 @@ async def run(llm, argv: list[str]) -> int:
     room_arg = _positional(argv, "memories")
     dry_run = "--dry-run" in argv
     rebuild = "--force" in argv
+    # --force re-reads and re-summarises but keeps transcripts: whisper
+    # costs minutes of GPU per recording and its output only changes
+    # when its config or vocabulary does. --retranscribe is that case.
+    retranscribe = "--retranscribe" in argv
     try:
         window = float(_opt(argv, "--burst-window",
                             str(diary.DEFAULT_BURST_WINDOW_S)))
@@ -704,9 +720,18 @@ async def run(llm, argv: list[str]) -> int:
                      f"{_length(msg.duration_ms)}")
             text = await _transcribe(
                 msg, session=session, homeserver=homeserver, token=token,
-                transcriber=transcriber, llm=llm, vocabulary=vocabulary)
+                transcriber=transcriber, llm=llm, vocabulary=vocabulary,
+                retranscribe=retranscribe)
             if not text.strip():
-                _err(f"  no speech in {msg.event_id}, skipped")
+                record = voice.TRANSCRIPTS.read(msg.event_id) or {}
+                if (record.get("raw") or "").strip():
+                    # Whisper heard something but the gate judged it
+                    # unusable (loop, CJK, failed segments). The memory
+                    # is not dropped: the entry keeps its place and its
+                    # audio, with no words attached.
+                    decoded.append(msg.__class__(**{**msg.__dict__, "body": ""}))
+                else:
+                    _err(f"  no speech in {msg.event_id}, skipped")
                 continue
             decoded.append(msg.__class__(**{**msg.__dict__, "body": text}))
 

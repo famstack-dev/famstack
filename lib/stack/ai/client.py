@@ -406,6 +406,16 @@ _CLEANUP_TOKEN_FLOOR = 256
 _DEGENERATE_REPEATS = 3
 _DEGENERATE_CJK_FRACTION = 0.3
 
+# Whisper's own quality signals (OpenAI reference thresholds). Kept
+# alongside the text-level checks above: loops are often HIGH-confidence
+# failures the logprob gate cannot see, and mumble is a low-confidence
+# failure the n-gram gate cannot see. Both gates stay.
+_QUALITY_LOGPROB_FLOOR = -1.0
+_QUALITY_NO_SPEECH = 0.6
+_QUALITY_POOR_FRACTION = 0.5
+_LOW_WORD_CONFIDENCE = 0.5
+_LOW_WORDS_KEPT = 50
+
 # Generation is slower than prefill, so a cap of N tokens still takes
 # time. This bounds one call to minutes rather than the client default,
 # which is sized for reading long documents.
@@ -503,11 +513,106 @@ class Transcriber:
         LLM errors :class:`LLM` uses so callers can ``except LLMError``
         once for both surfaces.
         """
+        resp = await self._stt(audio, filename=filename, model=model,
+                               vocabulary=vocabulary,
+                               response_format="json")
+        raw = (getattr(resp, "text", "") or "").strip()
+        if not raw or cleanup_with is None:
+            return raw
+        return await self.polish(raw, cleanup_with)
+
+    async def transcribe_verbose(self, audio: bytes, *,
+                                 filename: str = "voice.ogg",
+                                 model: str | None = None,
+                                 vocabulary: str = "") -> dict:
+        """Transcribe and keep whisper's own confidence about the result.
+
+        Returns ``{"text": str, "quality": dict}``. This is the diary
+        pipeline's path, deliberately separate from :meth:`transcribe`:
+        voice commands and chat voice notes want text fast and get the
+        plain-json call with no quality machinery; the diary compiles
+        an archive and wants whisper's own judgement kept. Whisper
+        computes per-segment decode quality and per-word probabilities
+        either way — plain ``json`` merely discards them. ``vocabulary``
+        primes the decoder exactly as in :meth:`transcribe` and is just
+        as optional. ``quality`` holds the small part worth keeping:
+
+            duration, detected_language, detected_language_probability
+            segments: [{start, end, avg_logprob, no_speech_prob,
+                        temperature}]
+            low_words: [{word, probability, start}] — only words below
+                       the confidence threshold, ranked worst first
+
+        Voice recordings only by design: text messages never pass
+        through here and are stored verbatim with no processing.
+        """
+        resp = await self._stt(audio, filename=filename, model=model,
+                               vocabulary=vocabulary,
+                               response_format="verbose_json",
+                               timestamp_granularities=["word"])
+        # Defensive extraction: the SDK parses verbose_json into a typed
+        # model, but whisper.cpp adds fields OpenAI's schema lacks
+        # (detected_language, per-segment words) and may omit others.
+        # model_dump keeps extras; every read below tolerates absence.
+        data = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
+        segments = data.get("segments") or []
+        words = data.get("words") or [
+            w for s in segments for w in (s.get("words") or [])]
+        quality = {
+            "duration": data.get("duration"),
+            "detected_language": data.get("detected_language"),
+            "detected_language_probability":
+                data.get("detected_language_probability"),
+            "segments": [
+                {k: s.get(k) for k in
+                 ("start", "end", "avg_logprob", "no_speech_prob",
+                  "temperature")}
+                for s in segments],
+            "low_words": sorted(
+                ({"word": (w.get("word") or "").strip(),
+                  "probability": w.get("probability"),
+                  "start": w.get("start")}
+                 for w in words
+                 if (w.get("probability") or 1.0) < _LOW_WORD_CONFIDENCE),
+                key=lambda w: w["probability"] or 0.0,
+            )[:_LOW_WORDS_KEPT],
+        }
+        return {"text": (data.get("text") or "").strip(), "quality": quality}
+
+    @staticmethod
+    def quality_verdict(quality: dict) -> str | None:
+        """Why whisper's own metrics call this transcript poor, or None.
+
+        The thresholds are OpenAI's reference values, not invented ones:
+        a segment with avg_logprob < -1.0 failed decoding, one with
+        no_speech_prob > 0.6 was probably not speech. A transcript
+        failing most of its segments is not text — the recording keeps
+        its place and its audio, the words do not reach the page.
+        """
+        segments = quality.get("segments") or []
+        if not segments:
+            return None
+        poor = sum(1 for s in segments
+                   if (s.get("avg_logprob") or 0.0) < _QUALITY_LOGPROB_FLOOR
+                   or (s.get("no_speech_prob") or 0.0) > _QUALITY_NO_SPEECH)
+        if poor / len(segments) > _QUALITY_POOR_FRACTION:
+            return (f"{poor} of {len(segments)} segments failed "
+                    f"whisper's own quality checks")
+        return None
+
+    async def _stt(self, audio: bytes, *, filename: str,
+                   model: str | None, vocabulary: str, **params):
+        """One STT call with famstack's error translation.
+
+        Both transcription paths (plain json and verbose_json) go
+        through here so a whisper failure means the same typed LLMError
+        to every caller. ``params`` carries the per-path request shape.
+        """
         try:
-            resp = await self._client.audio.transcriptions.create(
+            return await self._client.audio.transcriptions.create(
                 model=model or _DEFAULT_WHISPER_MODEL,
                 file=(filename, audio),
-                response_format="json",
+                **params,
                 **({"prompt": vocabulary} if vocabulary.strip() else {}),
             )
         except openai.APITimeoutError as e:
@@ -524,14 +629,6 @@ class Transcriber:
             ) from e
         except openai.APIStatusError as e:
             raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
-
-        # The SDK returns a Transcription object whose `.text` mirrors
-        # whisper-server's `{"text": ...}` response. Strip incidental
-        # whitespace so callers don't have to.
-        raw = (getattr(resp, "text", "") or "").strip()
-        if not raw or cleanup_with is None:
-            return raw
-        return await self.polish(raw, cleanup_with)
 
     @staticmethod
     def cleanup_budget(raw: str) -> int:
