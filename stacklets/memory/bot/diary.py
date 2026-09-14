@@ -15,10 +15,13 @@ the wiki -- lives in `cli/diary.py`. Splitting it this way is what lets
 the hard parts (which date wins, what is one recording and what is two)
 be tested against the corpus in `tools/family-memories` without a rig.
 
-The diary never paraphrases. The model is asked to *read* a transcript,
-never to rewrite one: what lands on the page is the words that were
-said. That is a promise to the reader in 2040, and it is also why the
-classification step returns a small record of facts rather than prose.
+The diary quotes, it does not invent. Words shown as someone's own —
+a quote, a transcript — come from the recording unchanged. Narrative
+text (summaries, chronicle paragraphs) is permitted and renders as
+narrative, never as quotation. Every entry links to its source events,
+and the audio stays the archival original. The classification step
+returns a small record of facts rather than prose for the same reason:
+generated text must never blend into quoted text.
 """
 
 from __future__ import annotations
@@ -733,10 +736,10 @@ def _recorded_by(entries) -> list[str]:
 def render_month(entries, *, room_id: str = "", summary: str = "") -> str:
     """A month of entries, grouped by the day they happened.
 
-    `summary` is an optional paragraph recalling the month, and the one
-    piece of writing here that is not the family's own. It opens the
-    page; everything under it is verbatim. That promise is made once, on
-    the diary's front page, rather than restated on every month.
+    `summary` is an optional paragraph recalling the month. It opens
+    the page as narrative. Material quoted below it is word-for-word
+    from the recordings. The full promise is stated once, on the
+    diary's front page, not on every month.
 
     Entries whose date could not be recovered are still shown on the day
     they surfaced, under a heading that says as much. Hiding them would
@@ -797,8 +800,10 @@ def render_index(entries) -> str:
         "# Family Diary",
         "",
         "Everything the family has put in the memories room: voice notes, "
-        "photos, conversations someone hit record on. Entries are quoted "
-        "exactly as they were said or written.",
+        "photos, conversations someone hit record on. Words shown as "
+        "someone's own are word-for-word from the recording. The text "
+        "around them is the chronicle, and every entry links back to the "
+        "original in the room.",
         "",
     ]
     if not entries:

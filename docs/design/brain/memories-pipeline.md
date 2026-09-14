@@ -68,6 +68,12 @@ room history (paginated, oldest-first)
   few recordings to touch.
 - **Goal is topics, not verbatim accuracy.** Whisper large-v3-turbo was
   rated clean on real German memos; good enough. No model change needed.
+- **Pages are a chronicle/diary hybrid, not transcript dumps.** Detail
+  scales with the source: short memos stay verbatim, long recordings
+  get a gist, a short narrative, selected word-for-word quotes, and
+  the audio link. Quoted words are verified against the transcript;
+  narrative renders as narrative. The full transcript stays in the
+  transcript store; audio in Matrix is the archival original.
 - **Privacy shape:** content flows machine-to-machine (Synapse →
   Whisper → oMLX → vault); only structure and compiled entries surface.
 
