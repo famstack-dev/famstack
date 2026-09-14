@@ -362,9 +362,9 @@ message above, in the same order, each with these keys:
   to it. Use this only when the message would make no sense on its own
   page. Otherwise null.
 
-"gist": for a message longer than about 100 words: one sentence, in
-  the language of the message, saying what it is about and for whom.
-  Plain and specific, no marketing words. For shorter messages null.
+"gist": for a message longer than about 100 words: one sentence in
+  {language}, saying what it is about and for whom. Plain and
+  specific, no marketing words. For shorter messages null.
 
 "moments": for a message longer than about 100 words: up to three
   short passages copied word-for-word from the message, the lines most
@@ -466,7 +466,8 @@ async def _read_room(messages, llm, cache=None):
             continue
         _err(f"  reading slice {n} of {len(slices)}")
 
-        prompt = _READ_PROMPT.format(messages=_as_prompt(chunk))
+        prompt = _READ_PROMPT.format(
+            language=_household_language(), messages=_as_prompt(chunk))
         try:
             raw = await llm.complete(
                 "classifier", prompt, json_mode=True, temperature=0,
@@ -741,6 +742,8 @@ async def run(llm, argv: list[str]) -> int:
         return 2
 
     zone = _household_zone()
+    # Pages render in the household language. Selected once per run.
+    diary.configure_language(os.environ.get("LANGUAGE", ""))
     readings_cache, summaries_cache = diary_store.open_stores()
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:

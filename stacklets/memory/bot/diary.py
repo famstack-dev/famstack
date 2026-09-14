@@ -40,6 +40,146 @@ from datetime import date, datetime, timezone, tzinfo
 DEFAULT_BURST_WINDOW_S = 120.0
 
 
+# ── Language ──────────────────────────────────────────────────────────
+#
+# Every string a family member reads on a page comes from this table.
+# The compiler selects the household language once, at startup, via
+# configure_language(). English is the default and the test baseline.
+
+_STRINGS = {
+    "en": {
+        "and": "and",
+        "months": ["January", "February", "March", "April", "May",
+                   "June", "July", "August", "September", "October",
+                   "November", "December"],
+        "days": ["Monday", "Tuesday", "Wednesday", "Thursday",
+                 "Friday", "Saturday", "Sunday"],
+        "day_heading": "{day}, {dom} {month}",
+        "vocab_people": "The people in this family are {names}.",
+        "vocab_topics": "They often talk about {topics}.",
+        "basis_spoken": "dated from the spoken opening",
+        "basis_sent": "dated from when it was sent",
+        "basis_burst": ("arrived in a sync burst with no spoken date, "
+                        "so this is the week it surfaced, not when it "
+                        "happened"),
+        "kind_image": "Photo", "kind_video": "Video",
+        "kind_file": "File", "kind_text": "Written note",
+        "kind_attachment": "Attachment",
+        "kind_voice": "Voice note", "kind_dialogue": "Conversation",
+        "for": "for",
+        "when_unknown": "When this happened is not recoverable",
+        "untranscribable": "This recording could not be transcribed.",
+        "nothing_written": "Nothing was written alongside this one.",
+        "full_transcript": "Full transcript",
+        "replied": "{who} replied",
+        "link_voice": "Listen in the room",
+        "link_image": "See it in the room",
+        "link_video": "Watch it in the room",
+        "link_other": "Open in the room",
+        "no_entries": "No entries yet.",
+        "entry_one": "entry", "entry_many": "entries",
+        "month_one": "month", "month_many": "months",
+        "year_opening": "{count} this year",
+        "recorded_by": "recorded by",
+        "months_h": "Months", "years_h": "Years",
+        "diary_title": "Family Diary",
+        "index_intro": (
+            "Everything the family has put in the memories room: voice "
+            "notes, photos, conversations someone hit record on. Words "
+            "shown as someone's own are word-for-word from the "
+            "recording. The text around them is the chronicle, and "
+            "every entry links back to the original in the room."),
+        "nothing_compiled": "Nothing has been compiled yet.",
+        "unrecovered_h": "Dates we could not recover",
+        "unrecovered_body": (
+            "{count} arrived in a sync burst without a spoken date. "
+            "They are filed under the week they surfaced and marked on "
+            "their page. Saying the date aloud at the start of a "
+            "recording is what prevents this."),
+        "across": "across",
+    },
+    "de": {
+        "and": "und",
+        "months": ["Januar", "Februar", "M\u00e4rz", "April", "Mai",
+                   "Juni", "Juli", "August", "September", "Oktober",
+                   "November", "Dezember"],
+        "days": ["Montag", "Dienstag", "Mittwoch", "Donnerstag",
+                 "Freitag", "Samstag", "Sonntag"],
+        "day_heading": "{day}, {dom}. {month}",
+        "vocab_people": "Die Personen in dieser Familie sind {names}.",
+        "vocab_topics": "Sie sprechen oft \u00fcber {topics}.",
+        "basis_spoken": "datiert nach dem gesprochenen Datum",
+        "basis_sent": "datiert nach dem Sendezeitpunkt",
+        "basis_burst": ("kam in einem Sync-Schub ohne gesprochenes "
+                        "Datum an; eingeordnet in der Woche des "
+                        "Auftauchens, nicht des Geschehens"),
+        "kind_image": "Foto", "kind_video": "Video",
+        "kind_file": "Datei", "kind_text": "Notiz",
+        "kind_attachment": "Anhang",
+        "kind_voice": "Sprachnotiz", "kind_dialogue": "Gespr\u00e4ch",
+        "for": "f\u00fcr",
+        "when_unknown": ("Wann dies geschah, l\u00e4sst sich nicht "
+                         "mehr feststellen"),
+        "untranscribable": ("Diese Aufnahme konnte nicht "
+                            "transkribiert werden."),
+        "nothing_written": "Hierzu wurde nichts geschrieben.",
+        "full_transcript": "Vollst\u00e4ndiges Transkript",
+        "replied": "{who} antwortete",
+        "link_voice": "Im Chat anh\u00f6ren",
+        "link_image": "Im Chat ansehen",
+        "link_video": "Im Chat ansehen",
+        "link_other": "Im Chat \u00f6ffnen",
+        "no_entries": "Noch keine Eintr\u00e4ge.",
+        "entry_one": "Eintrag", "entry_many": "Eintr\u00e4ge",
+        "month_one": "Monat", "month_many": "Monaten",
+        "year_opening": "{count} in diesem Jahr",
+        "recorded_by": "aufgenommen von",
+        "months_h": "Monate", "years_h": "Jahre",
+        "diary_title": "Familientagebuch",
+        "index_intro": (
+            "Alles, was die Familie im Erinnerungsraum festgehalten "
+            "hat: Sprachnotizen, Fotos, Gespr\u00e4che, die jemand "
+            "aufgenommen hat. W\u00f6rter, die als jemandes eigene "
+            "erscheinen, stammen Wort f\u00fcr Wort aus der Aufnahme. "
+            "Der Text darum herum ist die Chronik, und jeder Eintrag "
+            "verlinkt auf das Original im Chat."),
+        "nothing_compiled": "Noch nichts zusammengestellt.",
+        "unrecovered_h": "Nicht datierbare Eintr\u00e4ge",
+        "unrecovered_body": (
+            "{count} kamen in einem Sync-Schub ohne gesprochenes Datum "
+            "an. Sie sind in der Woche ihres Auftauchens eingeordnet "
+            "und auf ihrer Seite markiert. Das Datum am Anfang einer "
+            "Aufnahme laut zu sagen verhindert das."),
+        "across": "in",
+    },
+}
+
+_L = _STRINGS["en"]
+
+
+def configure_language(code: str) -> None:
+    """Select the render language. Unknown codes keep English."""
+    global _L
+    _L = _STRINGS.get((code or "").strip().lower()[:2], _STRINGS["en"])
+
+
+def _month_name(on: date) -> str:
+    return _L["months"][on.month - 1]
+
+
+def _month_year(on: date) -> str:
+    return f"{_month_name(on)} {on.year}"
+
+
+def _day_heading(on: date) -> str:
+    return _L["day_heading"].format(
+        day=_L["days"][on.weekday()], dom=on.day, month=_month_name(on))
+
+
+def _counted(n: int, one: str, many: str) -> str:
+    return f"{n} {_L[one] if n == 1 else _L[many]}"
+
+
 # ── What the room gives us ────────────────────────────────────────────
 
 
@@ -152,11 +292,11 @@ def spoken_vocabulary(people, topics=()) -> str:
     subjects = [t.strip() for t in topics if t and t.strip()]
     parts = []
     if names:
-        parts.append("The people in this family are "
-                     + _and_list(_unique(names)) + ".")
+        parts.append(_L["vocab_people"].format(
+            names=_and_list(_unique(names))))
     if subjects:
-        parts.append("They often talk about "
-                     + _and_list(_unique(subjects)) + ".")
+        parts.append(_L["vocab_topics"].format(
+            topics=_and_list(_unique(subjects))))
     return " ".join(parts)
 
 
@@ -448,13 +588,10 @@ def date_for(msg: Message, reading: Reading) -> tuple[date, str, str]:
     """
     spoken = parse_spoken_date(reading.spoken_date)
     if spoken is not None:
-        return spoken, "spoken", "dated from the spoken opening"
+        return spoken, "spoken", _L["basis_spoken"]
     if msg.burst:
-        return msg.sent_on, "uncertain", (
-            "arrived in a sync burst with no spoken date, "
-            "so this is the week it surfaced, not when it happened"
-        )
-    return msg.sent_on, "sent", "dated from when it was sent"
+        return msg.sent_on, "uncertain", _L["basis_burst"]
+    return msg.sent_on, "sent", _L["basis_sent"]
 
 
 # ── Step 4: compile ───────────────────────────────────────────────────
@@ -662,17 +799,12 @@ def _duration(ms: int | None) -> str:
 # What each kind of entry is called on the page. Every kind the
 # compiler accepts needs a name here: falling through to the internal
 # word prints "video" in a line of otherwise written English.
-_KIND_NOUNS = {
-    "image": "Photo", "video": "Video", "file": "File",
-    "text": "Written note",
-}
-
-
 def _kind_label(entry: Entry) -> str:
     if entry.kind == "voice":
-        noun = "Conversation" if entry.mode == "dialogue" else "Voice note"
+        noun = (_L["kind_dialogue"] if entry.mode == "dialogue"
+                else _L["kind_voice"])
     else:
-        noun = _KIND_NOUNS.get(entry.kind, "Attachment")
+        noun = _L.get(f"kind_{entry.kind}", _L["kind_attachment"])
     length = _duration(entry.duration_ms)
     return f"{noun}, {length}" if length else noun
 
@@ -699,7 +831,7 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
     # addressee resolves to its own sender is a misread, not a dedication.
     to = (entry.addressee or "").strip()
     if to and to.lower() != entry.sender.lower():
-        heading = f"### {who} — for {to}"
+        heading = f"### {who} — {_L['for']} {to}"
     else:
         heading = f"### {who}"
 
@@ -710,7 +842,7 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
 
     if entry.confidence == "uncertain":
         lines += [
-            "> [!warning] When this happened is not recoverable",
+            f"> [!warning] {_L['when_unknown']}",
             f"> {entry.basis.capitalize()}.",
             "",
         ]
@@ -722,7 +854,7 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
         lines += [entry.gist, ""]
         for moment in entry.moments:
             lines += [f"> [!quote] {moment}", ""]
-        lines += ["> [!note]- Full transcript"]
+        lines += [f"> [!note]- {_L['full_transcript']}"]
         lines += [f"> {line}" if line.strip() else ">"
                   for line in entry.body.strip().splitlines()]
         lines += [""]
@@ -732,20 +864,20 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
         # A gated recording: the transcript was unusable and the words
         # stay off the page. The sentence tells the reader this is
         # deliberate. The audio link below stays the way to hear it.
-        lines += ["This recording could not be transcribed.", ""]
+        lines += [_L["untranscribable"], ""]
     elif entry.kind in _UPLOADS and not entry.comments:
-        lines += ["Nothing was written alongside this one.", ""]
+        lines += [_L["nothing_written"], ""]
 
     for who_replied, text in entry.comments:
-        lines += [f"> [!quote] {who_replied.title()} replied", ]
+        lines += ['> [!quote] ' + _L['replied'].format(who=who_replied.title())]
         lines += [f"> {line}" for line in text.strip().splitlines()]
         lines.append("")
 
     if room_id and entry.event_ids:
-        label = {"voice": "Listen in the room", "image": "See it in the room",
-                 "video": "Watch it in the room"}
+        label = {"voice": _L["link_voice"], "image": _L["link_image"],
+                 "video": _L["link_video"]}
         lines.append(
-            f"[{label.get(entry.kind, 'Open in the room')}]"
+            f"[{label.get(entry.kind, _L['link_other'])}]"
             f"({_permalink(room_id, entry.event_ids[0])})"
         )
         lines.append("")
@@ -834,9 +966,9 @@ def render_month(entries, *, room_id: str = "", summary: str = "") -> str:
     a diary.
     """
     if not entries:
-        return "No entries yet."
+        return _L["no_entries"]
 
-    lines = [f"# {entries[0].on.strftime('%B %Y')}", ""]
+    lines = [f"# {_month_year(entries[0].on)}", ""]
     if summary.strip():
         lines += [summary.strip(), ""]
 
@@ -848,7 +980,7 @@ def render_month(entries, *, room_id: str = "", summary: str = "") -> str:
             # date says so in its own block -- putting "week of" in the
             # heading would cast that doubt over every other entry
             # filed the same day.
-            lines += [f"## {entry.on.strftime('%A, %-d %B')}", ""]
+            lines += [f"## {_day_heading(entry.on)}", ""]
         lines += [_entry_block(entry, room_id=room_id), ""]
 
     return "\n".join(lines).rstrip() + "\n"
@@ -866,16 +998,18 @@ def render_year(entries) -> str:
 
     n = len(entries)
     people = _recorded_by(entries)
-    opening = f"{n} {'entry' if n == 1 else 'entries'} this year"
+    opening = _L["year_opening"].format(
+        count=_counted(n, "entry_one", "entry_many"))
     if people:
-        opening += f", recorded by {_and_list(people)}"
-    lines += [opening + ".", "", "## Months", ""]
+        opening += f", {_L['recorded_by']} {_and_list(people)}"
+    lines += [opening + ".", "", f"## {_L['months_h']}", ""]
 
     for key, month in sorted(_by_month(entries).items()):
-        label = month[0].on.strftime("%B")
+        label = _month_name(month[0].on)
         count = len(month)
         lines.append(
-            f"- [{label}]({key}) — {count} {'entry' if count == 1 else 'entries'}")
+            f"- [{label}]({key}) — "
+            f"{_counted(count, 'entry_one', 'entry_many')}")
     lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -884,39 +1018,34 @@ def render_year(entries) -> str:
 def render_index(entries) -> str:
     """The diary's front door: what it is, and a way into every year."""
     lines = [
-        "# Family Diary",
+        f"# {_L['diary_title']}",
         "",
-        "Everything the family has put in the memories room: voice notes, "
-        "photos, conversations someone hit record on. Words shown as "
-        "someone's own are word-for-word from the recording. The text "
-        "around them is the chronicle, and every entry links back to the "
-        "original in the room.",
+        _L["index_intro"],
         "",
     ]
     if not entries:
-        lines += ["Nothing has been compiled yet.", ""]
+        lines += [_L["nothing_compiled"], ""]
         return "\n".join(lines)
 
-    lines += ["## Years", ""]
+    lines += [f"## {_L['years_h']}", ""]
     for key, year in sorted(_by_year(entries).items(), reverse=True):
         count = len(year)
         months = len(_by_month(year))
         lines.append(
-            f"- [{key}]({key}/about) — {count} "
-            f"{'entry' if count == 1 else 'entries'} across {months} "
-            f"{'month' if months == 1 else 'months'}")
+            f"- [{key}]({key}/about) — "
+            f"{_counted(count, 'entry_one', 'entry_many')} "
+            f"{_L['across']} "
+            f"{_counted(months, 'month_one', 'month_many')}")
     lines.append("")
 
     unsure = [e for e in entries if e.confidence == "uncertain"]
     if unsure:
         n = len(unsure)
         lines += [
-            "## Dates we could not recover",
+            f"## {_L['unrecovered_h']}",
             "",
-            f"{n} {'entry' if n == 1 else 'entries'} arrived in a sync burst "
-            "without a spoken date. They are filed under the week they "
-            "surfaced and marked on their page. Saying the date aloud at the "
-            "start of a recording is what prevents this.",
+            _L["unrecovered_body"].format(
+                count=_counted(n, "entry_one", "entry_many")),
             "",
         ]
 
@@ -926,7 +1055,7 @@ def render_index(entries) -> str:
 def _and_list(names: list[str]) -> str:
     if len(names) == 1:
         return names[0]
-    return ", ".join(names[:-1]) + f" and {names[-1]}"
+    return ", ".join(names[:-1]) + f" {_L['and']} {names[-1]}"
 
 
 def pages_for(entries, *, room_id: str = "",
@@ -948,7 +1077,7 @@ def pages_for(entries, *, room_id: str = "",
     -- the bucket is named in config (`family`, `office`, a surname)
     and this module has no business knowing which.
     """
-    out = [(f"{DIARY_DIR}/about.md", render_index(entries), "Family Diary")]
+    out = [(f"{DIARY_DIR}/about.md", render_index(entries), _L["diary_title"])]
     for year, in_year in sorted(_by_year(entries).items()):
         out.append((
             f"{DIARY_DIR}/{year}/about.md", render_year(in_year), year,
@@ -958,6 +1087,6 @@ def pages_for(entries, *, room_id: str = "",
                 f"{DIARY_DIR}/{year}/{month}.md",
                 render_month(in_month, room_id=room_id,
                              summary=(summaries or {}).get(f"{year}-{month}", "")),
-                in_month[0].on.strftime("%B %Y"),
+                _month_year(in_month[0].on),
             ))
     return out

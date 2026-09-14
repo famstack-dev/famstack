@@ -971,3 +971,39 @@ class TestSpokenVocabulary:
 
         assert hint.endswith(".")
         assert "The people in this family are Homer." in hint
+
+
+class TestGermanRendering:
+    """configure_language swaps every reader-facing string. English is
+    the module default; tests restore it."""
+
+    def test_a_german_page_has_no_english_strings(self):
+        diary.configure_language("de")
+        try:
+            page = diary.render_month([diary.Entry(
+                on=date(2026, 9, 14), confidence="sent",
+                basis=diary._L["basis_sent"], kind="voice",
+                sender="marge", body="", mode="dialogue",
+                event_ids=["$ev1"])],
+                room_id="!r:x")
+        finally:
+            diary.configure_language("en")
+        assert "# September 2026" in page
+        assert "Gespräch" in page
+        assert "Diese Aufnahme konnte nicht transkribiert werden." in page
+        assert "Im Chat anhören" in page
+        assert "datiert nach dem Sendezeitpunkt" in page
+        for english in ("Conversation", "Listen in the room",
+                        "could not be transcribed"):
+            assert english not in page
+
+    def test_german_month_names(self):
+        diary.configure_language("de")
+        try:
+            page = diary.render_month([diary.Entry(
+                on=date(2026, 3, 2), confidence="sent", basis="b",
+                kind="text", sender="lisa", body="Hallo.")])
+        finally:
+            diary.configure_language("en")
+        assert "# März 2026" in page
+        assert "Montag, 2. März" in page
