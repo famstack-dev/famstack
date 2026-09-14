@@ -202,3 +202,46 @@ class TestStructurePass:
         text, outcome, _ = await structure_pass().apply(record)
         assert text == "only three words"
         assert outcome.startswith("skipped")
+
+
+class TestCorrectPass:
+    """Misheard household names are repaired from a closed set. A word
+    whisper was sure of is never touched; a name outside the household
+    never enters the text."""
+
+    RECORD = {
+        "text": "Anka geht heute in die Schule.",
+        "quality": {"low_words": [{"word": "Anka", "probability": 0.19}]},
+    }
+
+    async def test_replaces_a_low_confidence_name(self):
+        from stack.ai.transcripts import correct_pass
+        llm = _StubLLM(result='{"Anka": "Anna"}')
+        text, outcome, extra = await correct_pass(
+            llm, ["Anna", "Jonas"]).apply(dict(self.RECORD))
+        assert text == "Anna geht heute in die Schule."
+        assert outcome == "applied"
+        assert extra == {"replacements": {"Anka": "Anna"}}
+
+    async def test_a_name_outside_the_household_is_refused(self):
+        from stack.ai.transcripts import correct_pass
+        llm = _StubLLM(result='{"Anka": "Godzilla"}')
+        text, outcome, _ = await correct_pass(
+            llm, ["Anna"]).apply(dict(self.RECORD))
+        assert text == self.RECORD["text"]
+        assert outcome == "unchanged"
+
+    async def test_a_sure_word_is_never_touched(self):
+        from stack.ai.transcripts import correct_pass
+        llm = _StubLLM(result='{"Schule": "Anna"}')
+        text, outcome, _ = await correct_pass(
+            llm, ["Anna"]).apply(dict(self.RECORD))
+        assert text == self.RECORD["text"]
+
+    async def test_no_candidates_means_no_model_call(self):
+        from stack.ai.transcripts import correct_pass
+        llm = _StubLLM(result="{}")
+        record = {"text": "Alles klar.", "quality": {"low_words": []}}
+        text, outcome, _ = await correct_pass(llm, ["Anna"]).apply(record)
+        assert outcome.startswith("skipped")
+        assert llm.calls == []

@@ -46,6 +46,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -186,17 +187,11 @@ def _length(ms: int | None) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-def _household_vocabulary() -> str:
-    """The names and subjects this family uses, for whisper to decode against.
+def _household_people() -> list[str]:
+    """The household's names, from the wiki's person pages.
 
-    People come from the wiki's person pages, which already carry the
-    household's own spelling of each name and any variants it uses. The
-    ontology's topics follow, because a family's proper nouns are not
-    only its people -- a campsite, a school, a pet -- and those mishear
-    just as readily.
-
-    Best-effort: a vault that has not been generated yet simply yields
-    nothing, and transcription proceeds exactly as it did before.
+    The pages carry the family's own spelling of each name and its
+    variants. Best-effort: no vault means an empty list.
     """
     people: list[str] = []
     brain = Path(os.environ.get("BRAIN_REPO_DIR", ""))
@@ -212,6 +207,20 @@ def _household_vocabulary() -> str:
             synonyms = front.get("synonyms")
             if isinstance(synonyms, list):
                 people.extend(str(x) for x in synonyms)
+    return people
+
+
+def _household_vocabulary() -> str:
+    """The names and subjects this family uses, for whisper to decode against.
+
+    People come from the wiki's person pages. The ontology's topics
+    follow, because a family's proper nouns are not only its people --
+    a campsite, a school, a pet -- and those mishear just as readily.
+
+    Best-effort: a vault that has not been generated yet simply yields
+    nothing, and transcription proceeds exactly as it did before.
+    """
+    people = _household_people()
 
     topics: list[str] = []
     vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
@@ -251,6 +260,7 @@ def _frontmatter(path: Path) -> dict:
 
 async def _transcribe(message, *, session, homeserver, token,
                       transcriber, llm, vocabulary: str = "",
+                      people: list | None = None,
                       retranscribe: bool = False) -> str:
     """The words of a recording, transcribed once and remembered.
 
@@ -275,6 +285,7 @@ async def _transcribe(message, *, session, homeserver, token,
         # raw text. Whisper does not run again.
         record = await transcripts.run_passes(
             record, [transcripts.gate_pass(), transcripts.polish_pass(llm),
+                     transcripts.correct_pass(llm, people or []),
                      transcripts.structure_pass()])
         gate = next((p for p in record["passes"] if p["name"] == "gate"), {})
         if str(gate.get("outcome", "")).startswith("blocked"):
@@ -551,8 +562,16 @@ _SUMMARY_PROMPT = """\
 Write the opening paragraph of a family's diary page for {month}. Below
 are that month's entries, quoted exactly as the family recorded them.
 
-Write two to four sentences recalling what happened that month, the way
-someone in the family would remember it later.
+The people in this family are: {people}. No other family members
+exist. A name in the entries that is not in this list is a mishearing:
+leave it out.
+
+Write two to four short sentences recalling that month, the way
+someone in the family would remember it later. One moment per
+sentence. Do not chain several events into one sentence with words
+like "bevor", "während" or "und dann". The summary is not a complete
+account: pick at most four moments and let the rest go -- the entries
+below the paragraph carry everything else.
 
 Rules:
 - Write in {language}. The diary belongs to a family that speaks it.
@@ -582,8 +601,8 @@ Rules:
 - An entry marked as a conversation has no speaker labels in its text.
   Name its participants and its topics. Never attribute a statement
   inside it to a named person.
-- A word listed as "unclear" was not heard clearly. Do not use it, and
-  do not attribute anything to a person through it.
+- [unclear] marks a word that was not heard clearly. Never guess what
+  it was, and never treat it as a person.
 - Name people as the entries name them.
 - Report what the entries report, and no more. Do not frame the month as
   an occasion, and do not describe an event the entries only mention in
@@ -660,11 +679,12 @@ def _evidence(entries) -> str:
         body = entry.body.strip() or "(a photo, no caption)"
         for sender, text in entry.comments:
             body += f"\n  {sender.title()} replied: {text.strip()}"
-        line = f"- [{when}] {role}: {body}"
-        if unclear := _unclear_words(entry):
-            line += ("\n  unclear words, not heard clearly: "
-                     + ", ".join(unclear))
-        out.append(line)
+        # Unclear words are removed from what the summariser sees.
+        # Telling the model a word is unreliable does not stop it from
+        # using it; a word it never sees cannot become a person.
+        for token in _unclear_words(entry):
+            body = re.sub(rf"\\b{re.escape(token)}\\b", "[unclear]", body)
+        out.append(f"- [{when}] {role}: {body}")
     return "\n".join(out)
 
 
@@ -677,7 +697,10 @@ async def _summarise(entries, llm) -> str:
     introduction changes wording every night is not.
     """
     month = entries[0].on.strftime("%B %Y")
-    prompt = _SUMMARY_PROMPT.format(language=_household_language(), month=month, evidence=_evidence(entries))
+    prompt = _SUMMARY_PROMPT.format(
+        language=_household_language(), month=month,
+        people=", ".join(_household_people()) or "unknown",
+        evidence=_evidence(entries))
     try:
         text = await llm.complete("writer", prompt, temperature=0,
                                   max_tokens=_SUMMARY_TOKENS,
@@ -805,6 +828,7 @@ async def run(llm, argv: list[str]) -> int:
         # words, and a recording that cannot be decoded should drop out
         # before the model is asked to interpret its filename.
         vocabulary = _household_vocabulary()
+        people = _household_people()
         if vocabulary:
             _err(f"  decoding against: {vocabulary[:90]}...")
 
@@ -829,7 +853,7 @@ async def run(llm, argv: list[str]) -> int:
             text = await _transcribe(
                 msg, session=session, homeserver=homeserver, token=token,
                 transcriber=transcriber, llm=llm, vocabulary=vocabulary,
-                retranscribe=retranscribe)
+                people=people, retranscribe=retranscribe)
             if not text.strip():
                 record = voice.TRANSCRIPTS.read(msg.event_id) or {}
                 if (record.get("raw") or "").strip():

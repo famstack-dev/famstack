@@ -22,9 +22,9 @@ one pass again on the cached raw text. Whisper does not run again.
 No pass modifies `raw`. It holds the words as transcribed.
 
 Each consumer selects its own pass chain. Voice commands use
-`Transcriber.transcribe` only. The diary uses gate and polish and
-keeps the quality metrics. Text messages do not enter this module:
-famstack stores them verbatim.
+`Transcriber.transcribe` only. The diary uses gate, polish, correct,
+and structure, and keeps the quality metrics. Text messages do not
+enter this module: famstack stores them verbatim.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -267,6 +268,70 @@ def structure_pass(min_pause_s: float = 1.5,
         return structured, outcome, {}
 
     return TranscriptPass(name="structure", version=1, apply=apply)
+
+
+_CORRECT_PROMPT = """\
+A speech transcript contains words the recognizer was not sure of.
+The people in this household are: {names}.
+
+Unsure words: {words}
+
+Transcript:
+{text}
+
+For each unsure word that is clearly a misheard household name in its
+context, give the correct name. Only names from the list above are
+allowed. When in doubt, omit the word. Reply with a JSON object that
+maps the misheard word to the correct name, or {{}} when nothing is
+clear.
+"""
+
+
+def correct_pass(llm, people: list[str]) -> TranscriptPass:
+    """Repair misheard household names, and only those.
+
+    Candidates are the low-confidence words from the quality record;
+    a word whisper was sure of is never touched. Replacements come
+    from a closed set: the household's known names. The model can map
+    a candidate to a name or stay silent; it cannot introduce a word
+    of its own. Each replacement is recorded in the pass metadata.
+
+    Measured basis: a misheard name in a real recording carried
+    probability 0.19 while clearly spoken words scored above 0.7.
+    """
+    allowed = {name.strip() for name in people if name.strip()}
+
+    async def apply(record: dict) -> tuple[str, str, dict]:
+        text = record.get("text") or ""
+        low = [w.get("word", "").strip()
+               for w in (record.get("quality") or {}).get("low_words") or []]
+        low = [w for w in low if w]
+        if not text.strip() or not low or not allowed:
+            return text, "skipped: no candidates", {}
+        raw = await llm.complete(
+            "transcript_cleanup",
+            _CORRECT_PROMPT.format(names=", ".join(sorted(allowed)),
+                                   words=", ".join(low),
+                                   text=text[:6000]),
+            json_mode=True, temperature=0, max_tokens=200, timeout=60.0)
+        try:
+            mapping = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return text, "failed: unparseable answer", {}
+        applied: dict[str, str] = {}
+        for wrong, right in (mapping or {}).items():
+            if (isinstance(wrong, str) and isinstance(right, str)
+                    and wrong.strip() in low and right.strip() in allowed):
+                pattern = r"\b" + re.escape(wrong.strip()) + r"\b"
+                new_text = re.sub(pattern, right.strip(), text)
+                if new_text != text:
+                    text = new_text
+                    applied[wrong.strip()] = right.strip()
+        if not applied:
+            return text, "unchanged", {}
+        return text, "applied", {"replacements": applied}
+
+    return TranscriptPass(name="correct", version=1, apply=apply)
 
 
 def polish_pass(llm) -> TranscriptPass:
