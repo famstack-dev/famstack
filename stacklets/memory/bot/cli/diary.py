@@ -67,6 +67,7 @@ import diary  # noqa: E402
 import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
+from stack.ai import transcripts  # noqa: E402
 
 from . import wiki  # noqa: E402
 
@@ -257,29 +258,21 @@ async def _transcribe(message, *, session, homeserver, token,
             raise LLMError(f"could not download {message.url}")
         verbose = await transcriber.transcribe_verbose(
             audio, filename=message.body or "voice.wav", vocabulary=vocabulary)
-        raw = verbose["text"]
-        # A transcript whisper itself rates as failed (most segments
-        # below its own decode/no-speech thresholds), or one that shows
-        # the hallucination signatures (a loop, CJK on a latin
-        # household), must not reach the page as words somebody said.
-        # The entry keeps its place and its audio; the words are simply
-        # not there. Raw text and quality metrics stay in the record —
-        # for comparison after a whisper config change, and for the
-        # planned confidence-restricted correction pass.
-        why = None
-        if raw.strip():
-            why = (Transcriber.quality_verdict(verbose["quality"])
-                   or Transcriber.looks_degenerate(raw))
-        if why:
-            _err(f"  transcript of {message.event_id} unusable ({why}); "
-                 f"keeping the recording without words")
-            text = ""
-        elif raw.strip():
-            text = await Transcriber.polish(raw, llm)
-        else:
-            text = raw
-        return {"raw": raw, "text": text, "quality": verbose["quality"],
-                "url": message.url, "filename": message.body}
+        record = {"raw": verbose["text"], "text": verbose["text"],
+                  "quality": verbose["quality"],
+                  "url": message.url, "filename": message.body}
+        # The diary's cleanup chain. The gate blocks hallucinated
+        # words; the entry keeps its place and its audio. Polish
+        # restores punctuation. The record lists each pass, so a
+        # better future model can run one pass again on the cached
+        # raw text. Whisper does not run again.
+        record = await transcripts.run_passes(
+            record, [transcripts.gate_pass(), transcripts.polish_pass(llm)])
+        gate = next((p for p in record["passes"] if p["name"] == "gate"), {})
+        if str(gate.get("outcome", "")).startswith("blocked"):
+            _err(f"  transcript of {message.event_id} unusable "
+                 f"({gate['outcome']}); keeping the recording without words")
+        return record
 
     try:
         return (await voice.TRANSCRIPTS.run(

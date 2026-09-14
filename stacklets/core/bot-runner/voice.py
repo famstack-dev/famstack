@@ -100,107 +100,11 @@ def transcribed_source(source: dict, transcript: str) -> dict:
     return out
 
 
-class TranscriptStore:
-    """Transcripts on disk, keyed by Matrix event id.
-
-    Transcription costs minutes of GPU for a long recording, and three
-    callers arrive at the same message independently: every bot in a room
-    drains the same timeline, the drain is at-least-once so a failed
-    handler brings its event back, and a backfill walks history in a
-    separate process. The store is therefore durable and shared, with one
-    file per message written atomically.
-
-    Each record holds the raw whisper output beside the polished text.
-    Polishing is cheap and improves with better models; transcription is
-    neither, so keeping both allows a later re-polish without returning
-    to the audio.
-    """
-
-    def __init__(self, path: str | Path | None = None):
-        self.path = Path(
-            path or os.environ.get("TRANSCRIPT_DIR", "/data/core/transcripts")
-        )
-        self._inflight: dict[str, asyncio.Future] = {}
-
-    # ── Durable half ─────────────────────────────────────────────────
-
-    def _file(self, event_id: str) -> Path:
-        # Event ids carry `$`, `/` and `+`; base64url keeps one file per
-        # id without inventing a collision-prone slug.
-        name = base64.urlsafe_b64encode(event_id.encode()).decode().rstrip("=")
-        return self.path / f"{name}.json"
-
-    def read(self, event_id: str) -> dict | None:
-        """The stored record for `event_id`, or None if we never ran it."""
-        try:
-            return json.loads(self._file(event_id).read_text())
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError) as e:
-            logger.warning("[voice] unreadable transcript for {}: {}", event_id, e)
-            return None
-
-    def write(self, event_id: str, record: dict) -> None:
-        """Write a record, replacing any existing one atomically.
-
-        A store that cannot be written is logged and ignored. The
-        transcript still reaches the handler; only the saving is lost, at
-        the cost of transcribing again later.
-        """
-        target = self._file(event_id)
-        try:
-            self.path.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_suffix(".tmp")
-            tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2))
-            os.replace(tmp, target)
-        except OSError as e:
-            logger.warning("[voice] could not store transcript {}: {}", event_id, e)
-
-    # ── Single-flight half ───────────────────────────────────────────
-
-    async def run(
-        self, event_id: str, produce: Callable[[], Awaitable[dict]],
-        *, force: bool = False,
-    ) -> dict:
-        """Return the record for `event_id`, producing it at most once.
-
-        A stored record short-circuits; concurrent callers await the
-        first one's result. Failures are not retained: whisper outages
-        are transient and the drain retries, so caching an error would
-        make a message permanently undecodable.
-
-        ``force`` skips the stored record and re-produces it — the
-        `--retranscribe` path for when the whisper config or vocabulary
-        improved and old recordings deserve a second hearing. The new
-        record overwrites the old one; single-flight still applies.
-        """
-        if not force and (stored := self.read(event_id)) is not None:
-            return stored
-        if (pending := self._inflight.get(event_id)) is not None:
-            return await pending
-
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
-        self._inflight[event_id] = future
-        try:
-            record = await produce()
-        except BaseException as e:
-            self._inflight.pop(event_id, None)
-            if not future.done():
-                future.set_exception(e)
-            # Retrieve it so an unawaited future does not warn.
-            future.exception()
-            raise
-        record.setdefault("at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        # Written and published before the in-flight slot is released, so
-        # a caller arriving in between finds the result rather than
-        # starting a second transcription.
-        self.write(event_id, record)
-        if not future.done():
-            future.set_result(record)
-        self._inflight.pop(event_id, None)
-        return record
-
+# The store class lives in the shared AI library. All consumers use
+# one implementation and one directory: the bots in this runner, the
+# diary backfill, and future services. This module keeps the
+# process-global instance that the bots import.
+from stack.ai.transcripts import TranscriptStore  # noqa: E402,F401
 
 # Process-global: the point is to share across the bots in this runner,
 # and with whatever process backfills history.
