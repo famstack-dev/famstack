@@ -84,9 +84,9 @@ _STRINGS = {
         "months_h": "Months", "years_h": "Years",
         "diary_title": "Family Memories",
         "index_intro": (
-            "The things this family wanted to keep: voice notes, "
-            "photos, conversations someone hit record on. Every entry "
-            "links back to the original recording — there to be "
+            "Your memories, kept in a chronicle to read back. Voice "
+            "notes, photos, conversations you recorded. Every entry "
+            "leads back to the original recording — there to be "
             "listened to, today or in twenty years."),
         "nothing_compiled": "Nothing has been compiled yet.",
         "unrecovered_h": "Dates we could not recover",
@@ -136,11 +136,11 @@ _STRINGS = {
         "months_h": "Monate", "years_h": "Jahre",
         "diary_title": "Familienerinnerungen",
         "index_intro": (
-            "Was diese Familie festhalten wollte: Sprachnotizen, "
-            "Fotos, Gespr\u00e4che, die jemand aufgenommen hat. Jeder "
-            "Eintrag f\u00fchrt zur\u00fcck zur Originalaufnahme "
-            "\u2014 zum Nachh\u00f6ren, heute oder in zwanzig "
-            "Jahren."),
+            "Eure Erinnerungen, festgehalten in einer Chronik zum "
+            "Nachlesen. Sprachnotizen, Fotos, Gespr\u00e4che, die ihr "
+            "aufgenommen habt. Jeder Eintrag f\u00fchrt zur\u00fcck "
+            "zur Originalaufnahme \u2014 zum Nachh\u00f6ren, heute "
+            "oder in zwanzig Jahren."),
         "nothing_compiled": "Noch nichts zusammengestellt.",
         "unrecovered_h": "Nicht datierbare Eintr\u00e4ge",
         "unrecovered_body": (
