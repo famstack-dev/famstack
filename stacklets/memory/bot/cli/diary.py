@@ -457,13 +457,28 @@ async def _read_room(messages, llm, cache=None):
     refers_to: dict[str, str] = {}
     known: set[str] = set()
 
+    def _sure_moments(event_id: str, moments) -> tuple:
+        """Drop claimed quotes that contain a word whisper was unsure
+        of. A quote is the most prominent text in an entry; it must
+        not showcase a word the recognizer flagged."""
+        record = voice.TRANSCRIPTS.read(event_id) or {}
+        unsure = {(w.get("word") or "").strip().lower()
+                  for w in (record.get("quality") or {}).get("low_words") or []}
+        unsure.discard("")
+        if not unsure:
+            return tuple(moments or ())
+        return tuple(
+            m for m in moments or ()
+            if not (set(re.findall(r"[\\w\\u00c0-\\u024f]+", str(m).lower()))
+                    & unsure))
+
     def remember(event_id: str, row: dict) -> None:
         readings[event_id] = diary.Reading(
             mode=str(row.get("mode") or "monologue"),
             spoken_date=row.get("spoken_date") or None,
             addressee=row.get("addressee") or None,
             gist=row.get("gist") or None,
-            moments=tuple(row.get("moments") or ()),
+            moments=_sure_moments(event_id, row.get("moments")),
         )
         if target := row.get("continues"):
             continues[event_id] = target
