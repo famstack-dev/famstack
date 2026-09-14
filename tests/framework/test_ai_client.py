@@ -736,6 +736,74 @@ class TestPolishKeepsTheWords:
         await tr.aclose()
 
 
+class TestPolishIsBounded:
+    """A polish may only add punctuation, so its output size is known in
+    advance. Without a cap, a model that repeats itself generates until
+    the client timeout, which on a local endpoint occupies the host for
+    that whole period."""
+
+    async def test_the_cap_scales_with_the_transcript(self, httpserver: HTTPServer):
+        # Long but not repetitive — a looping transcript would (rightly)
+        # be refused by the degeneracy gate before any cap applies.
+        long_transcript = " ".join(f"wort{i}" for i in range(1500))
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": long_transcript})
+        llm = _StubLLM(result=long_transcript)
+        tr = _make_transcriber(httpserver)
+
+        await tr.transcribe(b"a", cleanup_with=llm)
+
+        # `transcribe` strips the transcript before polishing it.
+        assert llm.kwargs[0]["max_tokens"] == \
+            Transcriber.cleanup_budget(long_transcript.strip())
+        await tr.aclose()
+
+    async def test_the_cap_allows_the_transcript_back_plus_a_margin(self):
+        """Polish restores punctuation and nothing else, so the answer is
+        the same size as the input. Measured growth is under 2%."""
+        raw = "book the campsite " * 500
+
+        cap = Transcriber.cleanup_budget(raw)
+
+        # Denser than any real tokenizer, so a correct answer always fits.
+        assert cap >= len(raw) / 3
+        # Far below a run that repeats itself.
+        assert cap < len(raw) / 2
+
+    def test_a_caller_may_set_its_own_cap(self):
+        """`polish` takes an override for a caller that knows better."""
+        import inspect
+        assert "max_tokens" in inspect.signature(Transcriber.polish).parameters
+
+    async def test_a_short_transcript_still_gets_room_to_work(
+            self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "hi"})
+        llm = _StubLLM(result="Hi.")
+        tr = _make_transcriber(httpserver)
+
+        await tr.transcribe(b"a", cleanup_with=llm)
+
+        assert llm.kwargs[0]["max_tokens"] >= 256
+        await tr.aclose()
+
+    async def test_the_call_does_not_use_the_document_reading_budget(
+            self, httpserver: HTTPServer):
+        """The client default is sized for reading long documents."""
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json({"text": "book the campsite"})
+        llm = _StubLLM(result="Book the campsite.")
+        tr = _make_transcriber(httpserver)
+
+        await tr.transcribe(b"a", cleanup_with=llm)
+
+        assert llm.kwargs[0]["timeout"] <= 300
+        await tr.aclose()
+
+
 class TestPolishIsDeterministic:
     """Polishing is a transformation, not a generation: the same words in
     should give the same punctuation out. Sampling only invites the model
@@ -796,3 +864,126 @@ class TestPolishMayAddPunctuationInsideWords:
             "theres decorations in the loft"
         )
         await tr.aclose()
+
+
+class TestDegenerateTranscriptsNeverReachTheModel:
+    """Polish is an echo task: handed a transcript that loops, the model
+    loops with it. The gate refuses the input instead of trusting the
+    output cap to contain it — the cap bounds the damage, the gate
+    removes the exposure. Thresholds come from the September 2026
+    incident: real hallucination loops repeated one phrase 5-147x,
+    legitimately repetitive speech (a child singing the same line)
+    stayed at 1-2x."""
+
+    def test_a_looping_transcript_is_flagged(self):
+        looping = "und dann sind wir los und dann sind wir " * 12
+        assert Transcriber.looks_degenerate(looping) is not None
+
+    def test_a_song_line_sung_twice_is_not(self):
+        song = ("die affen rasen durch den wald der eine macht den "
+                "andern kalt die affen rasen durch den wald wer hat "
+                "die kokosnuss geklaut")
+        assert Transcriber.looks_degenerate(song) is None
+
+    def test_cjk_on_a_latin_household_is_flagged(self):
+        """Whisper's language detection free-falls on non-speech (baby
+        sounds, music) and lands in CJK. famstack households write
+        German or English, so a mostly-CJK transcript was invented."""
+        assert Transcriber.looks_degenerate("嬰兒 咿呀 學語 的 聲音 嬰兒") is not None
+
+    def test_ordinary_german_is_not(self):
+        assert Transcriber.looks_degenerate(
+            "hallo bart heute ist der sechzehnte märz ich wollte dir "
+            "sagen dass ich stolz auf dich war") is None
+
+    async def test_polish_refuses_a_looping_transcript(self):
+        looping = "and then we went " * 40
+        llm = _StubLLM(result="should never be asked")
+
+        assert await Transcriber.polish(looping, llm) == looping
+        assert llm.kwargs == []
+
+
+class TestTranscribeVerbose:
+    """The diary path keeps whisper's own confidence; the plain path
+    stays cheap. Same endpoint, different request shape."""
+
+    _VERBOSE = {
+        "text": " hallo bart heute ist der sechzehnte ",
+        "duration": 4.2,
+        "detected_language": "german",
+        "detected_language_probability": 0.98,
+        "segments": [{
+            "id": 0, "start": 0.0, "end": 4.2, "temperature": 0.0,
+            "avg_logprob": -0.2, "no_speech_prob": 0.01,
+            "text": "hallo bart",
+            "words": [
+                {"word": " hallo", "probability": 0.99, "start": 0.0, "end": 0.4},
+                {"word": " Panorana", "probability": 0.13, "start": 0.5, "end": 1.0},
+            ],
+        }],
+    }
+
+    async def test_quality_record_is_extracted(self, httpserver: HTTPServer):
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_json(self._VERBOSE)
+        tr = _make_transcriber(httpserver)
+
+        record = await tr.transcribe_verbose(b"a")
+
+        assert record["text"] == "hallo bart heute ist der sechzehnte"
+        q = record["quality"]
+        assert q["detected_language"] == "german"
+        assert q["segments"] == [{"start": 0.0, "end": 4.2,
+                                  "avg_logprob": -0.2,
+                                  "no_speech_prob": 0.01,
+                                  "temperature": 0.0,
+                                  "word_count": 2}]
+        # Only the low-confidence word is kept, worst first.
+        assert q["low_words"] == [
+            {"word": "Panorana", "probability": 0.13, "start": 0.5}]
+        await tr.aclose()
+
+    async def test_plain_transcribe_stays_on_the_cheap_format(
+            self, httpserver: HTTPServer):
+        seen: dict = {}
+
+        def handler(request):
+            seen["format"] = request.form.get("response_format")
+            from werkzeug.wrappers import Response
+            return Response(json.dumps({"text": "hi"}),
+                            content_type="application/json")
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST",
+        ).respond_with_handler(handler)
+        tr = _make_transcriber(httpserver)
+
+        assert await tr.transcribe(b"a") == "hi"
+        assert seen["format"] == "json"
+        await tr.aclose()
+
+
+class TestQualityVerdict:
+    """OpenAI's own segment thresholds, applied across the transcript:
+    most segments failed means the text never really happened."""
+
+    @staticmethod
+    def _seg(logprob=-0.2, no_speech=0.01):
+        return {"avg_logprob": logprob, "no_speech_prob": no_speech}
+
+    def test_mostly_failed_segments_is_poor(self):
+        q = {"segments": [self._seg(logprob=-1.4)] * 3 + [self._seg()]}
+        assert Transcriber.quality_verdict(q) is not None
+
+    def test_silence_counts_as_failure(self):
+        q = {"segments": [self._seg(no_speech=0.9)] * 3 + [self._seg()]}
+        assert Transcriber.quality_verdict(q) is not None
+
+    def test_one_bad_segment_in_a_good_recording_is_fine(self):
+        q = {"segments": [self._seg()] * 5 + [self._seg(logprob=-1.4)]}
+        assert Transcriber.quality_verdict(q) is None
+
+    def test_no_segments_is_no_verdict(self):
+        assert Transcriber.quality_verdict({"segments": []}) is None

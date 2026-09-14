@@ -221,7 +221,9 @@ class LLM:
                        images: "list | None" = None,
                        json_mode: bool = False,
                        model_override: str | None = None,
-                       temperature: float | None = None) -> str:
+                       temperature: float | None = None,
+                       max_tokens: int | None = None,
+                       timeout: float | None = None) -> str:
         """Run a single chat completion and return the response text.
 
         ``role`` resolves to a concrete model via `resolve_model`. Pass
@@ -232,6 +234,14 @@ class LLM:
         evidence to yield the same page); None keeps the server
         default. SDK errors are translated to the typed LLM errors
         above.
+
+        ``max_tokens`` caps the generation. Set it whenever the size of
+        a valid answer is known in advance. Without a cap, a model that
+        enters a repetition loop generates until the client timeout,
+        which on a local endpoint means the host is busy for that whole
+        time. ``timeout`` overrides the client default for one call and
+        should accompany a cap that is much smaller than the default
+        budget allows for.
         """
         model = model_override or resolve_model(self._full_role(role))
         content = prompt if not images else _content_parts(prompt, images)
@@ -241,6 +251,10 @@ class LLM:
             kwargs["response_format"] = {"type": "json_object"}
         if temperature is not None:
             kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if timeout is not None:
+            kwargs["timeout"] = timeout
 
         try:
             resp = await self._client.chat.completions.create(
@@ -262,7 +276,18 @@ class LLM:
         except openai.APIStatusError as e:
             raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
 
-        return resp.choices[0].message.content or ""
+        # A capped call that stops on length rather than on a stop token
+        # did not finish its answer. Every caller treats a truncated
+        # reply as a failure of some kind, and without this line the only
+        # evidence is a short answer that looks deliberate.
+        choice = resp.choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            logger.warning(
+                "[llm] {} hit the {}-token cap and was cut off; "
+                "the answer is incomplete",
+                model, kwargs.get("max_tokens", "default"),
+            )
+        return choice.message.content or ""
 
     async def has_vision(self, *, role: str = "classifier",
                          model_override: str | None = None) -> bool:
@@ -360,6 +385,41 @@ _DEFAULT_WHISPER_MODEL = "whisper-1"
 # these constraints reliably when the rules are imperative and the
 # input is the last thing in the prompt.
 _CLEANUP_ROLE = "transcript_cleanup"
+
+# Polish may only add punctuation, so its output is the same size as its
+# input. Measured over real transcripts the character count lands
+# between 0.98 and 1.01 of the raw text, so 10% headroom covers it.
+#
+# The estimate is the loose part, not the ratio. Three characters per
+# token is deliberately pessimistic: English BPE averages about four,
+# but German compounds and accented characters tokenize denser, and a
+# cap set below a correct answer truncates every polish in that language
+# and silently returns the raw transcript instead.
+_CLEANUP_CHARS_PER_TOKEN = 3
+_CLEANUP_HEADROOM = 1.1
+_CLEANUP_TOKEN_FLOOR = 256
+
+# Hallucination signatures, thresholds measured on the recordings that
+# triggered the September 2026 runaway (see looks_degenerate). Real
+# loops repeated a phrase 5-147x; legitimately repetitive speech never
+# exceeded 2x. Three keeps a child singing the same line twice.
+_DEGENERATE_REPEATS = 3
+_DEGENERATE_CJK_FRACTION = 0.3
+
+# Whisper's own quality signals (OpenAI reference thresholds). Kept
+# alongside the text-level checks above: loops are often HIGH-confidence
+# failures the logprob gate cannot see, and mumble is a low-confidence
+# failure the n-gram gate cannot see. Both gates stay.
+_QUALITY_LOGPROB_FLOOR = -1.0
+_QUALITY_NO_SPEECH = 0.6
+_QUALITY_POOR_FRACTION = 0.5
+_LOW_WORD_CONFIDENCE = 0.5
+_LOW_WORDS_KEPT = 50
+
+# Generation is slower than prefill, so a cap of N tokens still takes
+# time. This bounds one call to minutes rather than the client default,
+# which is sized for reading long documents.
+_CLEANUP_TIMEOUT_S = 180.0
 _CLEANUP_PROMPT = """\
 You are cleaning up a raw speech-to-text transcript that has no \
 punctuation, capitalization, or sentence breaks. Restore them in the \
@@ -424,6 +484,7 @@ class Transcriber:
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
                          model: str | None = None,
+                         vocabulary: str = "",
                          cleanup_with: "LLM | None" = None) -> str:
         """Transcribe audio bytes to text, stripped of leading/trailing space.
 
@@ -431,6 +492,15 @@ class Transcriber:
         sniffs the container from the filename). ``model`` is forwarded to
         the SDK for OpenAI-compat servers that route by model name; the
         native whisper-server ignores it.
+
+        ``vocabulary`` primes the decoder with terms the audio is likely
+        to contain -- proper nouns, names, jargon. Whisper reads it as
+        speech preceding the clip and biases towards it, so a word it
+        would otherwise render as a commoner homophone comes back right.
+        The window is a couple of hundred tokens and overflow is dropped,
+        so put what matters first. Priming is the only place a misheard
+        word can be corrected: :meth:`polish` may not alter the word
+        sequence and verifies that it did not.
 
         ``cleanup_with`` is an optional :class:`LLM` to polish the raw STT
         output with punctuation and sentence breaks. When provided, the
@@ -443,11 +513,113 @@ class Transcriber:
         LLM errors :class:`LLM` uses so callers can ``except LLMError``
         once for both surfaces.
         """
+        resp = await self._stt(audio, filename=filename, model=model,
+                               vocabulary=vocabulary,
+                               response_format="json")
+        raw = (getattr(resp, "text", "") or "").strip()
+        if not raw or cleanup_with is None:
+            return raw
+        return await self.polish(raw, cleanup_with)
+
+    async def transcribe_verbose(self, audio: bytes, *,
+                                 filename: str = "voice.ogg",
+                                 model: str | None = None,
+                                 vocabulary: str = "") -> dict:
+        """Transcribe and keep whisper's own confidence about the result.
+
+        Returns ``{"text": str, "quality": dict}``. This is the diary
+        pipeline's path, deliberately separate from :meth:`transcribe`:
+        voice commands and chat voice notes want text fast and get the
+        plain-json call with no quality machinery; the diary compiles
+        an archive and wants whisper's own judgement kept. Whisper
+        computes per-segment decode quality and per-word probabilities
+        either way — plain ``json`` merely discards them. ``vocabulary``
+        primes the decoder exactly as in :meth:`transcribe` and is just
+        as optional. ``quality`` holds the small part worth keeping:
+
+            duration, detected_language, detected_language_probability
+            segments: [{start, end, avg_logprob, no_speech_prob,
+                        temperature}]
+            low_words: [{word, probability, start}] — only words below
+                       the confidence threshold, ranked worst first
+
+        Voice recordings only by design: text messages never pass
+        through here and are stored verbatim with no processing.
+        """
+        resp = await self._stt(audio, filename=filename, model=model,
+                               vocabulary=vocabulary,
+                               response_format="verbose_json",
+                               timestamp_granularities=["word"])
+        # Defensive extraction: the SDK parses verbose_json into a typed
+        # model, but whisper.cpp adds fields OpenAI's schema lacks
+        # (detected_language, per-segment words) and may omit others.
+        # model_dump keeps extras; every read below tolerates absence.
+        data = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
+        segments = data.get("segments") or []
+        words = data.get("words") or [
+            w for s in segments for w in (s.get("words") or [])]
+        quality = {
+            "duration": data.get("duration"),
+            "detected_language": data.get("detected_language"),
+            "detected_language_probability":
+                data.get("detected_language_probability"),
+            "segments": [
+                {**{k: s.get(k) for k in
+                    ("start", "end", "avg_logprob", "no_speech_prob",
+                     "temperature")},
+                 # The word count maps this segment to its part of the
+                 # text. Polish keeps the word sequence, so cumulative
+                 # counts let a later pass insert paragraph breaks at
+                 # segment boundaries without stored segment text.
+                 "word_count": (len(s["words"]) if s.get("words")
+                                else len((s.get("text") or "").split()))}
+                for s in segments],
+            "low_words": sorted(
+                ({"word": (w.get("word") or "").strip(),
+                  "probability": w.get("probability"),
+                  "start": w.get("start")}
+                 for w in words
+                 if (w.get("probability") or 1.0) < _LOW_WORD_CONFIDENCE),
+                key=lambda w: w["probability"] or 0.0,
+            )[:_LOW_WORDS_KEPT],
+        }
+        return {"text": (data.get("text") or "").strip(), "quality": quality}
+
+    @staticmethod
+    def quality_verdict(quality: dict) -> str | None:
+        """Why whisper's own metrics call this transcript poor, or None.
+
+        The thresholds are OpenAI's reference values, not invented ones:
+        a segment with avg_logprob < -1.0 failed decoding, one with
+        no_speech_prob > 0.6 was probably not speech. A transcript
+        failing most of its segments is not text — the recording keeps
+        its place and its audio, the words do not reach the page.
+        """
+        segments = quality.get("segments") or []
+        if not segments:
+            return None
+        poor = sum(1 for s in segments
+                   if (s.get("avg_logprob") or 0.0) < _QUALITY_LOGPROB_FLOOR
+                   or (s.get("no_speech_prob") or 0.0) > _QUALITY_NO_SPEECH)
+        if poor / len(segments) > _QUALITY_POOR_FRACTION:
+            return (f"{poor} of {len(segments)} segments failed "
+                    f"whisper's own quality checks")
+        return None
+
+    async def _stt(self, audio: bytes, *, filename: str,
+                   model: str | None, vocabulary: str, **params):
+        """One STT call with famstack's error translation.
+
+        Both transcription paths (plain json and verbose_json) go
+        through here so a whisper failure means the same typed LLMError
+        to every caller. ``params`` carries the per-path request shape.
+        """
         try:
-            resp = await self._client.audio.transcriptions.create(
+            return await self._client.audio.transcriptions.create(
                 model=model or _DEFAULT_WHISPER_MODEL,
                 file=(filename, audio),
-                response_format="json",
+                **params,
+                **({"prompt": vocabulary} if vocabulary.strip() else {}),
             )
         except openai.APITimeoutError as e:
             raise LLMTimeoutError(
@@ -464,13 +636,64 @@ class Transcriber:
         except openai.APIStatusError as e:
             raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
 
-        # The SDK returns a Transcription object whose `.text` mirrors
-        # whisper-server's `{"text": ...}` response. Strip incidental
-        # whitespace so callers don't have to.
-        raw = (getattr(resp, "text", "") or "").strip()
-        if not raw or cleanup_with is None:
-            return raw
-        return await self.polish(raw, cleanup_with)
+    @staticmethod
+    def cleanup_budget(raw: str) -> int:
+        """Token cap for polishing `raw`: its own size plus 10%.
+
+        Public so a caller can see the default before deciding to
+        override it.
+        """
+        estimated = len(raw) / _CLEANUP_CHARS_PER_TOKEN
+        return max(_CLEANUP_TOKEN_FLOOR, int(estimated * _CLEANUP_HEADROOM))
+
+    @staticmethod
+    def looks_degenerate(text: str) -> str | None:
+        """Why `text` looks hallucinated rather than heard, or None.
+
+        Whisper fails loudly in two measured ways when a recording has
+        no usable speech. It loops: over the recordings behind the
+        September runaway, one six-word phrase covered the transcript 5
+        to 147 times, while real speech — including a child repeating a
+        song line — stayed at 1 to 2. Or its language detection
+        free-falls and lands in CJK: famstack households write German or
+        English, so a transcript that is mostly CJK letters was never
+        heard, it was invented.
+
+        Public because two different decisions hang on it: `polish`
+        refuses to feed such text to a model (a loop is an unbounded
+        echo task), and the diary refuses to publish it as words a
+        person said.
+        """
+        words = text.split()
+        if len(words) >= 12:
+            counts: dict[tuple, int] = {}
+            for i in range(len(words) - 6):
+                gram = tuple(words[i:i + 6])
+                counts[gram] = counts.get(gram, 0) + 1
+            top = max(counts.values(), default=0)
+            if top >= _DEGENERATE_REPEATS:
+                return f"one phrase repeats {top}x"
+        letters = [c for c in text if c.isalpha()]
+        cjk = sum(1 for c in letters
+                  if "぀" <= c <= "鿿" or "가" <= c <= "힯")
+        if letters and cjk / len(letters) > _DEGENERATE_CJK_FRACTION:
+            return "mostly CJK letters"
+        return None
+
+    @staticmethod
+    def _divergence(expected: str, actual: str, window: int = 60) -> str:
+        """Where two word sequences first differ, with context.
+
+        A length comparison says a polish went wrong; this says where. A
+        model that loops repeats a phrase from the point it lost track,
+        and that point is what identifies the input that triggered it.
+        """
+        limit = min(len(expected), len(actual))
+        i = 0
+        while i < limit and expected[i] == actual[i]:
+            i += 1
+        return (f"char {i}: expected ...{expected[i:i + window]!r}, "
+                f"got ...{actual[i:i + window]!r}")
 
     @staticmethod
     def _comparable(text: str) -> str:
@@ -493,7 +716,8 @@ class Transcriber:
         return re.sub(r"[^a-z0-9]+", "", text.lower())
 
     @staticmethod
-    async def polish(raw: str, llm: "LLM") -> str:
+    async def polish(raw: str, llm: "LLM", *,
+                     max_tokens: int | None = None) -> str:
         """Restore punctuation and sentence breaks in a raw transcript.
 
         whisper.cpp emits one unbroken lowercase run of words. This pass
@@ -511,7 +735,25 @@ class Transcriber:
         still gets a usable transcript. We log a warning so the admin can
         see drift between raw and polished if they want to investigate
         model quality.
+
+        The call is capped in output tokens and in time. A repetition
+        loop therefore ends in a truncated answer, which fails the word
+        check below and yields the raw transcript, instead of occupying
+        the endpoint until the client timeout. ``max_tokens`` overrides
+        the derived cap for a caller that knows better; the derived one
+        is the input size plus 10%.
         """
+        # A degenerate transcript never reaches the model. Polish is an
+        # echo task, and echoing a loop is how the September runaway
+        # happened — the token cap below bounds the damage, this removes
+        # the exposure. The caller gets the raw text back and decides
+        # what a transcript that was never really heard is worth.
+        if (reason := Transcriber.looks_degenerate(raw)) is not None:
+            logger.warning(
+                "[transcriber] transcript looks hallucinated ({}), "
+                "not polishing", reason)
+            return raw
+        budget = max_tokens or Transcriber.cleanup_budget(raw)
         try:
             cleaned = await llm.complete(
                 _CLEANUP_ROLE, _CLEANUP_PROMPT.format(raw=raw),
@@ -520,6 +762,8 @@ class Transcriber:
                 # invites the rephrasing the word check below rejects,
                 # which turns a paid model call into a raw transcript.
                 temperature=0.0,
+                max_tokens=budget,
+                timeout=_CLEANUP_TIMEOUT_S,
             )
         except LLMError as e:
             logger.warning("[transcriber] cleanup failed, returning raw: {}", e)
@@ -540,8 +784,9 @@ class Transcriber:
         if raw_cmp != clean_cmp:
             logger.warning(
                 "[transcriber] polish changed the words, keeping raw "
-                "(raw={} chars, polished={} chars)",
+                "(raw={} chars, polished={} chars); diverges at {}",
                 len(raw_cmp), len(clean_cmp),
+                Transcriber._divergence(raw_cmp, clean_cmp),
             )
             return raw
         return cleaned

@@ -81,6 +81,15 @@ services:
       MEMORY_VAULT_DIR: /data/memory/vault
       BRAIN_REPO_DIR: /data/memory/brain
       CURATOR_STATE_DIR: /data/memory/curator
+      DIARY_STATE_DIR: /data/memory/diary
+      # The diary compiler reads the memories room and decodes its
+      # recordings, so the curator needs the homeserver, whisper, and
+      # the transcript cache the bots already fill.
+      MATRIX_HOMESERVER: ${MATRIX_HOMESERVER}
+      MATRIX_SERVER_NAME: ${MATRIX_SERVER_NAME}
+      WHISPER_URL: ${WHISPER_URL}
+      TRANSCRIPT_DIR: /data/core/transcripts
+      TIMEZONE: ${TIMEZONE:-UTC}
       # Forgejo, container-network address — memory's own CODE_URL in
       # .env is the host-side URL the install hooks use.
       CODE_URL: http://stack-code:3000
@@ -107,6 +116,10 @@ services:
       - ../../lib/stack:/app/stack:ro
       # Vault working copy (the curator pulls it) + state dir.
       - ${MEMORY_DATA_DIR}:/data/memory
+      # Transcripts, shared with the bot-runner. Writable: a diary
+      # backfill decodes recordings no bot has heard yet, and the next
+      # bot to meet one should not pay for it again.
+      - ${CORE_DATA_DIR}:/data/core
     restart: unless-stopped
 
 networks:

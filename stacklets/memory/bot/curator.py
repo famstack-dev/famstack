@@ -764,23 +764,40 @@ class Brain:
 
 # ── Rebuild ──────────────────────────────────────────────────────────────
 
+async def compile_diary() -> bool:
+    """One diary pass over the memories room, on the nightly sweep.
+
+    The compiler re-reads the whole room every time, because a reply or
+    an edit arriving tonight can belong to an entry from years back, and
+    anything that walked forward from a watermark would never attach it.
+    Re-reading is affordable because what each message cost is on file:
+    the nightly pays for recordings and readings that are genuinely new
+    and reuses the rest.
+    """
+    return await _run_command("diary", [], "compiling diary")
+
+
 async def rebuild(selection: list[str]) -> bool:
     """One wiki generation pass via the CLI entrypoint — the same code
     path `stack memory wiki` execs, in a subprocess so a wedged LLM
     call dies with the child instead of inside this loop."""
     label = " ".join(selection) if selection else "(full sweep)"
-    logger.info("[curator] rebuilding wiki: {}", label)
+    return await _run_command("wiki", selection, f"rebuilding wiki: {label}")
+
+
+async def _run_command(command: str, selection: list[str], what: str) -> bool:
+    logger.info("[curator] {}", what)
     # Starting the child and waiting on it are separate failure modes, and
     # only the second one has a child to kill. Keeping them in one block
     # left `proc.kill()` reachable on a path where `proc` was never bound.
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, ENTRYPOINT, "wiki", *selection,
+            sys.executable, ENTRYPOINT, command, *selection,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
     except Exception as e:
-        logger.warning("[curator] rebuild failed to start: {}", e)
+        logger.warning("[curator] {} failed to start: {}", command, e)
         return False
 
     try:
@@ -789,19 +806,20 @@ async def rebuild(selection: list[str]) -> bool:
         )
     except TimeoutError:
         proc.kill()
-        logger.warning("[curator] rebuild timed out after {}s", REBUILD_TIMEOUT_SECS)
+        logger.warning("[curator] {} timed out after {}s",
+                       command, REBUILD_TIMEOUT_SECS)
         return False
     except Exception as e:
-        logger.warning("[curator] rebuild failed: {}", e)
+        logger.warning("[curator] {} failed: {}", command, e)
         return False
 
     output = out_bytes.decode(errors="replace").strip()
     if proc.returncode != 0:
         tail = "\n".join(output.splitlines()[-5:])
-        logger.warning("[curator] wiki generation rc={}: {}", proc.returncode, tail)
+        logger.warning("[curator] {} rc={}: {}", command, proc.returncode, tail)
         return False
     published = sum(1 for ln in output.splitlines() if ln.startswith("published "))
-    logger.info("[curator] wiki refreshed — {} page(s) published", published)
+    logger.info("[curator] {} done — {} page(s) published", command, published)
     return True
 
 
@@ -963,6 +981,9 @@ async def main() -> None:
             _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
             if await mirror_reconcile():
                 mirror_sha = _write(mirror_file, head)
+            # Diary first: it writes pages into the same working tree,
+            # and the commit below should carry both nights' work.
+            await compile_diary()
             if await rebuild([]):
                 # Generation wrote pages into brain's working tree; commit
                 # and push them (one commit alongside the reconcile).

@@ -110,6 +110,11 @@ IMMICH_API_KEY = "{photos__API_KEY}"
 # Tools server port — Open WebUI connects here for tool calling
 TOOLS_PORT = "42000"
 
+# Local timezone, as an IANA name. Anything that turns a timestamp into
+# a calendar day needs it: read as UTC, something recorded shortly after
+# midnight is filed under the previous day.
+TIMEZONE         = "{timezone}"
+
 # Household language — drives bot-side i18n, ontology rendering, and
 # any prompt that should be in the family's primary language. Distinct
 # from `[ai].language` (`{ai_language}`), which controls AI subsystem

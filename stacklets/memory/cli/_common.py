@@ -53,6 +53,10 @@ def dispatch(command: str, *argv: str) -> dict:
         rc = subprocess.call(cmd)
     except FileNotFoundError:
         return {"error": "docker CLI not found on this host"}
+    except KeyboardInterrupt:
+        # The exec'd process received the same SIGINT and reported it.
+        # Exit 130 without adding a host-side traceback.
+        sys.exit(130)
 
     # Pass rc through to the shell without letting the harness print a
     # generic "command failed (exit N)" on top of the container's own

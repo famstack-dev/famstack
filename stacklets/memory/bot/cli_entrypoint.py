@@ -17,6 +17,19 @@ Commands:
         words. Exit 1 means no keywords, which the host treats as
         "search it literally" rather than as a failure.
 
+    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>]
+        Compile the memories room into the family diary. Walks the
+        room's full history, transcribes every recording, recovers the
+        date each one was made, and publishes month pages under the
+        shared bucket. The curator runs it on the nightly sweep.
+
+        Always a full pass, never an append: a reply or an edit
+        arriving tonight can belong to an entry from years back. It
+        stays cheap because transcripts, readings, and month summaries
+        are all kept against the thing they describe, so only what is
+        new costs anything. `--force` ignores those and reads
+        everything again, for when the model has improved.
+
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
         `--dry-run` previews to stdout. Bare invocation regenerates
@@ -37,10 +50,11 @@ sys.path.insert(0, "/app")  # stack.ai.client, stack.forgejo, stack.prompt
 
 from stack.ai.client import LLM, LLMUnavailableError
 
-from cli import rewrite, wiki
+from cli import diary, rewrite, wiki
 
 
 _HANDLERS = {
+    "diary": diary.run,
     "rewrite": rewrite.run,
     "wiki": wiki.run,
 }
@@ -79,4 +93,10 @@ def _usage() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(sys.argv[1:])))
+    try:
+        sys.exit(asyncio.run(main(sys.argv[1:])))
+    except KeyboardInterrupt:
+        # Exit 130 (128 + SIGINT) without the asyncio traceback.
+        # Completed transcripts and readings are already on disk.
+        _err("\ninterrupted; completed work is cached")
+        sys.exit(130)
