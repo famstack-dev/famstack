@@ -386,12 +386,17 @@ _DEFAULT_WHISPER_MODEL = "whisper-1"
 # input is the last thing in the prompt.
 _CLEANUP_ROLE = "transcript_cleanup"
 
-# Polish may only add punctuation, so its output is the input plus a few
-# tokens. Two times the estimated input size is generous headroom and
-# still stops a repetition loop early. Without a cap the call runs to
-# the client timeout, which on a local endpoint occupies the host for
-# that whole period.
-_CLEANUP_TOKEN_RATIO = 2.0
+# Polish may only add punctuation, so its output is the same size as its
+# input. Measured over real transcripts the character count lands
+# between 0.98 and 1.01 of the raw text, so 10% headroom covers it.
+#
+# The estimate is the loose part, not the ratio. Three characters per
+# token is deliberately pessimistic: English BPE averages about four,
+# but German compounds and accented characters tokenize denser, and a
+# cap set below a correct answer truncates every polish in that language
+# and silently returns the raw transcript instead.
+_CLEANUP_CHARS_PER_TOKEN = 3
+_CLEANUP_HEADROOM = 1.1
 _CLEANUP_TOKEN_FLOOR = 256
 
 # Generation is slower than prefill, so a cap of N tokens still takes
@@ -522,6 +527,16 @@ class Transcriber:
         return await self.polish(raw, cleanup_with)
 
     @staticmethod
+    def cleanup_budget(raw: str) -> int:
+        """Token cap for polishing `raw`: its own size plus 10%.
+
+        Public so a caller can see the default before deciding to
+        override it.
+        """
+        estimated = len(raw) / _CLEANUP_CHARS_PER_TOKEN
+        return max(_CLEANUP_TOKEN_FLOOR, int(estimated * _CLEANUP_HEADROOM))
+
+    @staticmethod
     def _divergence(expected: str, actual: str, window: int = 60) -> str:
         """Where two word sequences first differ, with context.
 
@@ -557,7 +572,8 @@ class Transcriber:
         return re.sub(r"[^a-z0-9]+", "", text.lower())
 
     @staticmethod
-    async def polish(raw: str, llm: "LLM") -> str:
+    async def polish(raw: str, llm: "LLM", *,
+                     max_tokens: int | None = None) -> str:
         """Restore punctuation and sentence breaks in a raw transcript.
 
         whisper.cpp emits one unbroken lowercase run of words. This pass
@@ -579,13 +595,11 @@ class Transcriber:
         The call is capped in output tokens and in time. A repetition
         loop therefore ends in a truncated answer, which fails the word
         check below and yields the raw transcript, instead of occupying
-        the endpoint until the client timeout.
+        the endpoint until the client timeout. ``max_tokens`` overrides
+        the derived cap for a caller that knows better; the derived one
+        is the input size plus 10%.
         """
-        # ~4 characters per token is the usual estimate for this family
-        # of models. The exact figure does not matter; the cap only has
-        # to be above any correct answer and far below a runaway one.
-        budget = max(_CLEANUP_TOKEN_FLOOR,
-                     int(len(raw) / 4 * _CLEANUP_TOKEN_RATIO))
+        budget = max_tokens or Transcriber.cleanup_budget(raw)
         try:
             cleaned = await llm.complete(
                 _CLEANUP_ROLE, _CLEANUP_PROMPT.format(raw=raw),

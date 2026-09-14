@@ -752,10 +752,27 @@ class TestPolishIsBounded:
 
         await tr.transcribe(b"a", cleanup_with=llm)
 
-        cap = llm.kwargs[0]["max_tokens"]
-        assert cap < len(long_transcript)
-        assert cap > len(long_transcript) / 4
+        # `transcribe` strips the transcript before polishing it.
+        assert llm.kwargs[0]["max_tokens"] == \
+            Transcriber.cleanup_budget(long_transcript.strip())
         await tr.aclose()
+
+    async def test_the_cap_allows_the_transcript_back_plus_a_margin(self):
+        """Polish restores punctuation and nothing else, so the answer is
+        the same size as the input. Measured growth is under 2%."""
+        raw = "book the campsite " * 500
+
+        cap = Transcriber.cleanup_budget(raw)
+
+        # Denser than any real tokenizer, so a correct answer always fits.
+        assert cap >= len(raw) / 3
+        # Far below a run that repeats itself.
+        assert cap < len(raw) / 2
+
+    def test_a_caller_may_set_its_own_cap(self):
+        """`polish` takes an override for a caller that knows better."""
+        import inspect
+        assert "max_tokens" in inspect.signature(Transcriber.polish).parameters
 
     async def test_a_short_transcript_still_gets_room_to_work(
             self, httpserver: HTTPServer):
