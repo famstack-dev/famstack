@@ -541,6 +541,7 @@ Write two to four sentences recalling what happened that month, the way
 someone in the family would remember it later.
 
 Rules:
+- Write in {language}. The diary belongs to a family that speaks it.
 - Use only what the entries say. Never add an event, a feeling, a place
   or an outcome that is not in them.
 - Keep every detail with the person the entry keeps it with. Do not move
@@ -562,6 +563,17 @@ Rules:
 Entries:
 {evidence}
 """
+
+
+# The prompt is English, so without a stated target language the model
+# answers in English. The household language comes from the core env.
+_LANGUAGE_NAMES = {"de": "German", "en": "English"}
+
+
+def _household_language() -> str:
+    code = (os.environ.get("LANGUAGE") or "").strip().lower()[:2]
+    return _LANGUAGE_NAMES.get(
+        code, "the language the entries are written in")
 
 
 def _evidence(entries) -> str:
@@ -598,7 +610,7 @@ async def _summarise(entries, llm) -> str:
     introduction changes wording every night is not.
     """
     month = entries[0].on.strftime("%B %Y")
-    prompt = _SUMMARY_PROMPT.format(month=month, evidence=_evidence(entries))
+    prompt = _SUMMARY_PROMPT.format(language=_household_language(), month=month, evidence=_evidence(entries))
     try:
         text = await llm.complete("writer", prompt, temperature=0,
                                   max_tokens=_SUMMARY_TOKENS,
