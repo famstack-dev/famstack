@@ -814,9 +814,13 @@ def _distills(entry: Entry) -> bool:
 
     Requires a gist and a long body. Without a gist the full text is
     the only faithful rendering. Short entries are already the right
-    amount of detail.
+    amount of detail. A message addressed to one person never
+    distills, whatever its length: it is a personal message, and the
+    diary posts it whole, framed by the addressee in its heading.
     """
-    return bool(entry.gist) and len(entry.body.split()) >= DISTILL_MIN_WORDS
+    return (bool(entry.gist)
+            and not (entry.addressee or "").strip()
+            and len(entry.body.split()) >= DISTILL_MIN_WORDS)
 
 
 def _permalink(room_id: str, event_id: str) -> str:

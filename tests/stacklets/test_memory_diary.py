@@ -1007,3 +1007,21 @@ class TestGermanRendering:
             diary.configure_language("en")
         assert "# März 2026" in page
         assert "Montag, 2. März" in page
+
+
+class TestPersonalMessagesPostWhole:
+    """A message addressed to one person is a letter. It renders in
+    full whatever its length; distillation never touches it."""
+
+    def test_a_long_addressed_memo_is_not_distilled(self):
+        body = " ".join(f"wort{i}" for i in range(150))
+        page = diary.render_month([diary.Entry(
+            on=date(2026, 9, 14), confidence="spoken", basis="b",
+            kind="voice", sender="marge", body=body, addressee="Bart",
+            gist="Should never render.", event_ids=["$ev1"])],
+            room_id="!r:x")
+
+        assert "wort0" in page
+        assert "Should never render." not in page
+        assert "Full transcript" not in page
+        assert "— for Bart" in page

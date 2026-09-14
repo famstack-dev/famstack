@@ -362,9 +362,22 @@ message above, in the same order, each with these keys:
   to it. Use this only when the message would make no sense on its own
   page. Otherwise null.
 
-"gist": for a message longer than about 100 words: one sentence in
-  {language}, saying what it is about and for whom. Plain and
-  specific, no marketing words. For shorter messages null.
+"gist": for a message longer than about 100 words: one or two short
+  sentences in {language} saying what the message is about. Write
+  with verbs, as things that happened, never as a list of topics.
+  Name at most two moments and let the rest go; the full text sits
+  below the gist on the page. You may name a conversation participant
+  only when the words address them by name. No marketing words. Use
+  null for shorter messages, and for a message spoken to one person
+  as a personal message -- those are posted whole.
+
+  Wanted register (invented examples, not this family):
+    "Anna erzählt mit einem der Kinder vom Tag am See und vom
+    Schuh, der im Wasser landete."
+    "Anna and one of the kids talk about the day at the lake and the
+    shoe that landed in the water."
+  Not wanted: "Anna und ein Kind berichten über einen Ausflug,
+  ein Picknick, einen verlorenen Schuh und das Wetter."
 
 "moments": for a message longer than about 100 words: up to three
   short passages copied word-for-word from the message, the lines most
@@ -549,10 +562,23 @@ Rules:
   something one child did onto another child.
 - Keep the direction of what happened. If one person did something for,
   to, or about another, do not swap them round.
-- Prefer reported speech: write what people recorded, told and
-  described ("Marge erzählt, dass ..."), not bare statements of fact.
-  These entries are people telling things, and the diary recalls the
-  telling.
+- Write a warm chronicle in the third person: what the month had to
+  tell. Prefer reported speech -- what people recorded, told and
+  described -- over bare statements of fact. Use verbs, not
+  nominalizations. Never a list of topics: pick the moments that
+  matter and let the rest go.
+
+  Wanted register (invented examples, not this family):
+    German: "Im September gab es viel zu erzählen: Anna hielt fest,
+    wie der erste Zahn endlich durchkam, und am Küchentisch wurde
+    der Sommer am See noch einmal lebendig -- samt dem Schuh, der im
+    Wasser blieb."
+    English: "September had a lot to tell: Anna recorded the first
+    tooth finally coming through, and around the kitchen table the
+    summer at the lake came back to life -- including the shoe that
+    stayed in the water."
+  Not wanted: "Im September berichteten Anna und Jonas über einen
+  Urlaub, einen ersten Zahn und ein Konzert."
 - An entry marked as a conversation has no speaker labels in its text.
   Name its participants and its topics. Never attribute a statement
   inside it to a named person.
