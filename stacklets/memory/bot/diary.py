@@ -76,6 +76,7 @@ _STRINGS = {
         "link_image": "See it in the room",
         "link_video": "Watch it in the room",
         "link_other": "Open in the room",
+        "kept_file": "The file itself",
         "no_entries": "No entries yet.",
         "entry_one": "entry", "entry_many": "entries",
         "month_one": "month", "month_many": "months",
@@ -135,6 +136,7 @@ There is no wrong way to use it. Press record.""",
         "link_image": "Im Chat ansehen",
         "link_video": "Im Chat ansehen",
         "link_other": "Im Chat \u00f6ffnen",
+        "kept_file": "Die Datei selbst",
         "no_entries": "Noch keine Eintr\u00e4ge.",
         "entry_one": "Eintrag", "entry_many": "Eintr\u00e4ge",
         "month_one": "Monat", "month_many": "Monaten",
@@ -853,8 +855,15 @@ def _permalink(room_id: str, event_id: str) -> str:
     return f"https://matrix.to/#/{room_id}/{event_id}"
 
 
-def _entry_block(entry: Entry, *, room_id: str) -> str:
-    """One entry: who, what it was, and then their words untouched."""
+def _entry_block(entry: Entry, *, room_id: str,
+                 media: "dict[str, str] | None" = None) -> str:
+    """One entry: who, what it was, and then their words untouched.
+
+    `media` maps an event id to the site path of the file that message
+    carried, for the entries whose file was archived. Resolving those
+    paths is the caller's job (see `pages_for`); this module states
+    where they go on the page and in what form.
+    """
     who = entry.sender.title()
     # An addressee is rendered as the message names them ("Bart", "kids"),
     # not title-cased, so a group reads as a group. A message whose
@@ -902,6 +911,21 @@ def _entry_block(entry: Entry, *, room_id: str) -> str:
         lines += ['> [!quote] ' + _L['replied'].format(who=who_replied.title())]
         lines += [f"> {line}" for line in text.strip().splitlines()]
         lines.append("")
+
+    # The archived file, shown the way its kind is worth showing. A
+    # recording, a photo and a clip are the memory itself and belong on
+    # the page; anything else is a download and gets a link, because an
+    # embedded document pushes the rest of the day off the screen. The
+    # embed syntax is Obsidian's, which the wiki turns into the right
+    # player by reading the extension off the path.
+    for event_id in entry.event_ids:
+        path = (media or {}).get(event_id)
+        if not path:
+            continue
+        if entry.kind in ("voice", "image", "video"):
+            lines += [f"![[{path}]]", ""]
+        else:
+            lines += [f"[{_L['kept_file']}]({path})", ""]
 
     if room_id and entry.event_ids:
         label = {"voice": _L["link_voice"], "image": _L["link_image"],
@@ -982,13 +1006,17 @@ def _recorded_by(entries) -> list[str]:
     return seen
 
 
-def render_month(entries, *, room_id: str = "", summary: str = "") -> str:
+def render_month(entries, *, room_id: str = "", summary: str = "",
+                 media: "dict[str, str] | None" = None) -> str:
     """A month of entries, grouped by the day they happened.
 
     `summary` is an optional paragraph recalling the month. It opens
     the page as narrative. Material quoted below it is word-for-word
     from the recordings. The full promise is stated once, on the
     diary's front page, not on every month.
+
+    `media` is the archived file for each event that has one, keyed by
+    event id, in the form a page addresses it by.
 
     Entries whose date could not be recovered are still shown on the day
     they surfaced, under a heading that says as much. Hiding them would
@@ -1011,7 +1039,7 @@ def render_month(entries, *, room_id: str = "", summary: str = "") -> str:
             # heading would cast that doubt over every other entry
             # filed the same day.
             lines += [f"## {_day_heading(entry.on)}", ""]
-        lines += [_entry_block(entry, room_id=room_id), ""]
+        lines += [_entry_block(entry, room_id=room_id, media=media), ""]
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1098,6 +1126,7 @@ def _and_list(names: list[str]) -> str:
 
 def pages_for(entries, *, room_id: str = "",
               summaries: "dict[str, str] | None" = None,
+              media: "dict[str, str] | None" = None,
               ) -> list[tuple[str, str, str]]:
     """Every page the diary publishes: (path, body, title).
 
@@ -1114,6 +1143,11 @@ def pages_for(entries, *, room_id: str = "",
     Paths are relative to the shared bucket, which the caller prefixes
     -- the bucket is named in config (`family`, `office`, a surname)
     and this module has no business knowing which.
+
+    `summaries` and `media` arrive the same way and for the same
+    reason: both are the result of work this module cannot do (a model
+    call; a download and a file write), handed in keyed by month and by
+    event id so rendering stays a pure function of its inputs.
     """
     out = [(f"{DIARY_DIR}/about.md", render_index(entries), _L["diary_title"])]
     for year, in_year in sorted(_by_year(entries).items()):
@@ -1124,7 +1158,8 @@ def pages_for(entries, *, room_id: str = "",
             out.append((
                 f"{DIARY_DIR}/{year}/{month}.md",
                 render_month(in_month, room_id=room_id,
-                             summary=(summaries or {}).get(f"{year}-{month}", "")),
+                             summary=(summaries or {}).get(f"{year}-{month}", ""),
+                             media=media),
                 _month_year(in_month[0].on),
             ))
     return out

@@ -33,8 +33,10 @@ WHY THE BURST WINDOW IS A KNOB
     that fits both, so the caller picks.
 
 A dry run publishes no pages but still writes the transcript, reading
-and summary caches. These are cost caches, not output: discarding them
-would make a preview run as expensive as the compile that follows.
+and summary caches, and still keeps the originals it reads. None of
+those are output: discarding them would make a preview run as expensive
+as the compile that follows, and a preview whose pages embed nothing
+would not be a preview of what publishing produces.
 
 Runs inside `stack-core-bot-runner`: it has the whisper client, the LLM
 client, the brain working copy, and the Matrix admin credentials. The
@@ -71,6 +73,7 @@ import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
+from stack import media  # noqa: E402
 
 from . import wiki  # noqa: E402
 
@@ -168,6 +171,86 @@ async def _download(session, homeserver, token, mxc: str) -> bytes | None:
         _err(f"  media {mxc}: HTTP {resp.status_code}")
         return None
     return resp.content
+
+
+# ── Keeping the originals ─────────────────────────────────────────────
+#
+# The room is the only copy of everything a family posts into it. The
+# pages compiled below describe those recordings and photographs and
+# link back to them, which is worth nothing on the day the homeserver's
+# media store is not there any more. So the compile keeps the file too,
+# in the archive the wiki serves, and the page embeds what it kept.
+
+# What `stack.media` calls each kind of message the compiler
+# recognises. `text` is absent on purpose: it carries no file.
+_ARCHIVE_KIND = {"voice": "audio", "image": "image",
+                 "video": "video", "file": "file"}
+
+
+async def _archive_media(messages, events, *, session, homeserver, token,
+                         room_id: str) -> "dict[str, str]":
+    """Keep the file behind every upload; return where each one landed.
+
+    Keyed by event id, in the site-rooted form a page embeds, which is
+    what `diary.pages_for` takes. The value is the copy meant to be
+    shown: the AAC version of a recording, the bounded version of a
+    photograph, the original for everything else.
+
+    Nothing here is allowed to stop a compile. An unreachable
+    homeserver, a full disk, a container without ffmpeg: each costs an
+    entry its file and nothing more. The entry is left out of the map
+    and its page renders the way it did before any of this existed.
+
+    Bytes already in the archive are not fetched again. A compile walks
+    the room's whole history every night, and re-downloading years of
+    photographs to write files that are already on disk would make
+    every night cost what the first one did.
+    """
+    try:
+        brain = wiki._brain_dir()
+    except RuntimeError as e:
+        _err(f"  {e}; keeping no originals")
+        return {}
+    media.ensure_ignored(brain)
+    root = media.archive_root(brain)
+
+    raw = {ev.get("event_id"): ev for ev in events}
+    paths: "dict[str, str]" = {}
+    fetched = 0
+    for msg in messages:
+        kind = _ARCHIVE_KIND.get(msg.kind, "")
+        if not kind or not msg.url:
+            continue
+        event = raw.get(msg.event_id) or {}
+        content = event.get("content") or {}
+        filename = content.get("filename") or content.get("body") or ""
+        mime = (content.get("info") or {}).get("mimetype") or ""
+        ext = media.extension_for(filename, mime)
+        # Filed under when it arrived rather than under the date its
+        # entry ends up carrying: the archive indexes events, and the
+        # record beside each file states that same moment. The page
+        # addresses the file by path, so the two need not agree.
+        when = datetime.fromtimestamp(msg.ts / 1000, timezone.utc)
+
+        link = media.kept(root, msg.event_id, ext=ext, when=when)
+        if not link:
+            data = await _download(session, homeserver, token, msg.url)
+            if not data:
+                continue
+            link = media.keep(
+                root, msg.event_id, data, ext=ext, when=when, kind=kind,
+                source="diary", mime=mime, filename=filename,
+                room_id=room_id, sender=event.get("sender") or "",
+            )
+            if not link:
+                continue
+            fetched += 1
+        paths[msg.event_id] = media.derive(
+            root, msg.event_id, ext=ext, when=when, kind=kind) or link
+
+    if fetched:
+        _err(f"  kept {fetched} original(s)")
+    return paths
 
 
 # ── Decoding and reading ──────────────────────────────────────────────
@@ -860,6 +943,11 @@ async def run(llm, argv: list[str]) -> int:
                                   bucket=bucket, dry_run=dry_run)
         _err(f"{len(messages)} message(s) in {room_arg}")
 
+        # Before anything is read or interpreted: the files themselves.
+        kept = await _archive_media(
+            messages, events, session=session, homeserver=homeserver,
+            token=token, room_id=room_id)
+
         # Transcription first and on its own: every later step reads
         # words, and a recording that cannot be decoded should drop out
         # before the model is asked to interpret its filename.
@@ -934,7 +1022,8 @@ async def run(llm, argv: list[str]) -> int:
     readings_cache.save()
     summaries_cache.save()
 
-    pages = diary.pages_for(entries, room_id=room_id, summaries=summaries)
+    pages = diary.pages_for(entries, room_id=room_id, summaries=summaries,
+                            media=kept)
     return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
 
 
