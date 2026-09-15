@@ -1014,9 +1014,9 @@ async def run(llm, argv: list[str]) -> int:
     summaries = {}
     for key, in_month in sorted(months.items()):
         digest = diary.month_digest(in_month)
-        kept = "" if rebuild else summaries_cache.get(key, digest)
-        if kept:
-            summaries[key] = kept
+        cached = "" if rebuild else summaries_cache.get(key, digest)
+        if cached:
+            summaries[key] = cached
             continue
         _err(f"  summarising {in_month[0].on.strftime('%B %Y')}")
         summaries[key] = await _summarise(in_month, llm)
