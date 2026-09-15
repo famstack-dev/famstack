@@ -56,6 +56,12 @@ def _unpinned(text: str) -> list[str]:
         # `registry:5000/img` is not mistaken for an `img:5000` tag.
         last_segment = ref.rsplit("/", 1)[-1]
         tag = last_segment.split(":", 1)[1] if ":" in last_segment else "latest"
+        # An inline default -- `image: repo/name:${VAR:-latest}` -- renders to
+        # `latest` whenever the variable is unset, which is the normal case.
+        # The literal tag text is not "latest", so comparing it alone lets the
+        # floating tag straight through while looking pinned.
+        if tag.startswith("${"):
+            tag = tag.partition(":-")[2].rstrip("}") or "latest"
         if tag == "latest" and ref not in KNOWN_UNPINNED:
             found.append(ref)
     return found
@@ -94,3 +100,36 @@ def test_no_floating_image_tags():
         "unpinned container images (an unpinned image is a scheduled outage):\n"
         + "\n".join(f"  {p}: {', '.join(refs)}" for p, refs in offenders.items())
     )
+
+
+def test_an_inline_latest_default_is_not_a_pin():
+    """`image: repo/name:${VAR:-latest}` is a floating tag wearing a
+    variable as a disguise.
+
+    The literal tag text is `${VAR:-latest}`, which is not the string
+    "latest", so a naive comparison reads it as pinned and waves it
+    through. It renders to `latest` every time the variable is unset,
+    which is the normal case -- nobody exports it.
+
+    This is a real escape that reached a shipped compose file, not a
+    hypothetical: the web stacklet used exactly this form. The audit is
+    only worth its milliseconds if it sees the shapes people actually
+    write.
+    """
+    floating = "services:\n  s:\n    image: searxng/searxng:${WEB_SEARCH_VERSION:-latest}"
+    assert _unpinned(floating) == ["searxng/searxng:${WEB_SEARCH_VERSION:-latest}"]
+
+
+def test_an_inline_default_naming_a_real_version_is_a_pin():
+    """The same form with a real default is the correct way to write an
+    overridable pin, and must not be flagged -- otherwise the fix for
+    the case above is to stop offering the override at all."""
+    pinned = "services:\n  s:\n    image: searxng/searxng:${WEB_SEARCH_VERSION:-2026.9.15-ca4965040}"
+    assert _unpinned(pinned) == []
+
+
+def test_a_whole_ref_variable_is_still_deferred():
+    """`image: ${SOME_IMAGE}` puts both name and tag elsewhere; the pin
+    lives wherever that variable is defined. Tightening the tag check
+    must not start flagging these."""
+    assert _unpinned("services:\n  s:\n    image: ${SOME_IMAGE}") == []
