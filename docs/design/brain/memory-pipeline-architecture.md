@@ -174,6 +174,107 @@ model had ignored.
 | undatable memories | Matrix has no compose-time field; offline recordings carry sync time | spoken-date extraction; honest "unrecoverable" state; recording habit: say the date aloud |
 | stale caches serving old wording | caches were keyed by content only; prompt changes did not change the keys | every cached artifact stores a fingerprint (hash) of the prompt or pass parameters that produced it; a prompt edit invalidates exactly the affected artifacts on the next compile |
 
+## Media archive
+
+Built September 2026. Classification and filing already worked; what
+was missing was that the original bytes were never retained. A page
+linked an `mxc://` URL and the only copy lived in Synapse's media
+store. One archive serves three consumers: note and bookmark captures,
+diary entries, and anything else that files an upload.
+
+### Location
+
+`{data_dir}/memory/brain/media/<yyyy>/<mm>/<event-id>.<ext>`, inside
+brain's working copy, excluded from git.
+
+Inside brain because the wiki container mounts that directory as its
+content root and Quartz's `Assets` emitter copies every non-markdown
+file under it into the built site. No extra container, no extra port,
+no Caddy route. The last of those decides it: port mode has no Caddy,
+so a separate origin would need an absolute URL that is wrong in one
+of the two deployment modes and is then baked into pages read for
+decades. Files under the content root take root-relative links
+(`/media/2026/03/<id>.jpg`), which Quartz and Obsidian resolve
+identically at any page depth.
+
+Excluded from git because redaction has to mean deletion. `resolve()`
+already drops redacted events, so removing a message removes its entry;
+a committed blob would stay reachable in history and make that a false
+promise. It also stops brain's clone growing without bound.
+
+### The exclusion goes in `.git/info/exclude`, not `.gitignore`
+
+Quartz globs its content directory through globby with
+`gitignore: true` (`quartz/util/glob.ts`), and the `Assets` emitter
+uses that same glob. A `media/` rule in the tracked `.gitignore`
+therefore removes the entire archive from the build, and every link
+into it answers 404 with nothing reporting it.
+
+Measured in the wiki container against the pinned globby:
+
+| Rule in | Assets emitter sees |
+|---|---|
+| `.gitignore` | `[]` |
+| `.git/info/exclude` | the files |
+
+Git honours both; globby reads only the first. `info/exclude` is also
+per-clone, so upgraded instances need no seed migration.
+
+### Derivatives
+
+ffmpeg, installed in both the bot-runner image and the curator image.
+Both are needed because `curator.py` runs the nightly diary as a
+subprocess inside its own container, while a manual `stack memory
+diary` runs in the bot-runner.
+
+- Audio gets an `.m4a` beside the original. This exists for exactly one
+  reason: Safari does not decode Opus in Ogg, and Matrix voice messages
+  are Ogg/Opus.
+- Images get a JPEG bounded to 1600px. JPEG rather than WebP because
+  mjpeg is built into ffmpeg itself while WebP needs libwebp linked in
+  at build time, and a build without it produces no derivative at all,
+  so the page falls back to embedding the full-size original. That is
+  the one outcome the derivative exists to prevent. WebP would be about
+  a quarter smaller, which does not buy that risk.
+- ffmpeg missing or failing is never fatal. The page shows the original,
+  or the room link.
+
+### The record beside the file
+
+Every stored artifact gets `<id>.json` next to it: event id, room,
+sender, original filename, mime, size, sha256, capture and store times,
+kind, which pipeline wrote it, and the derivatives it owns. JSON rather
+than TOML to match the transcript store, which already writes one JSON
+per Matrix event.
+
+The point is that the archive explains itself. Dated ordinary files
+beside Markdown pages, readable with no famstack installed. `derived`
+exists so a later re-encode replaces its own output instead of orphaning
+it.
+
+Sidecars are excluded from the published site through Quartz's
+`ignorePatterns` (`media/**/*.json`). They name the room and the
+sender's full mxid, which is worth having on disk and not worth
+serving.
+
+### Rendering
+
+`![[path]]` in the page, which Quartz v4.5.2 turns into real HTML by
+extension: `<audio controls>`, `<video controls>`, `<img>`, and an
+iframe for PDFs. The same syntax renders in Obsidian, so one file reads
+correctly in both. Images embed inline, PDFs link, and the `mxc://`
+room link stays in every case as the timeline anchor. It stops being
+the only copy.
+
+Paperless-filed documents are not archived here. Paperless already owns
+those bytes and the vault page carries `paperless_id`.
+
+### Rejected
+
+Serving from Synapse's authenticated media API at view time (1.160). It
+keeps the archive dependent on a running homeserver for no storage
+saving once derivative caches exist.
+
 ## Open items
 
 - Diarization for conversations (would upgrade attribution from
@@ -181,30 +282,13 @@ model had ignored.
   affected entries).
 - Episode grouping: a vacation spanning many entries currently
   renders as independent entries plus one month summary.
-- Inline media on diary pages: images, and an audio player with a
-  play button per recording. Design: media export at compile time,
-  not a proxy. Matrix is capture transport and timeline anchor; the
-  archive is plain files, the same pattern the archivist uses for
-  documents (chat -> Paperless).
-  - The compiler writes each media original to
-    `{data_dir}/memory/media/<yyyy>/<mm>/<event-id>.<ext>`,
-    idempotent by event id. Audio gets an `.m4a` transcode beside
-    the original (Safari does not play Ogg/Opus reliably); images
-    get a page-weight thumbnail. ffmpeg is a compile-time
-    dependency.
-  - Serving is an open choice: a static mount in the wiki
-    container, or a thin proxy that serves from the same filesystem
-    and gives logical URLs independent of the on-disk layout. Either
-    way the renderer emits stable URLs and
-    `<audio controls preload="none">`, with no auth and no runtime
-    Synapse dependency.
-  - Long-term property: dated ordinary files beside Markdown pages,
-    readable without any famstack software. `data_dir/memory` is in
-    backup scope; the Synapse media copy becomes redundant.
-  - Rejected: serving from Synapse's authenticated media API
-    (1.160) at view time. It keeps the archive dependent on a
-    running homeserver, for no storage saving once transcode caches
-    exist. The export to plain files is the decided part.
+- Nothing prunes the media archive. Acceptable for a household
+  corpus, but it is the one store that grows without a bound, and it
+  is in backup scope.
+- A new recording is fetched twice on its first compile, once to
+  archive and once to transcribe. Cached after that, so it costs only
+  the first pass; removing it means feeding archived bytes into the
+  transcriber, which changes that seam.
 - Retranscription (`--retranscribe`) is manual; it is needed only
   when whisper's configuration or vocabulary changes. Pass and prompt
   changes regenerate automatically via fingerprints during any
