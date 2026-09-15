@@ -100,6 +100,9 @@ BRAIN_SEED_GITIGNORE = (
     ".obsidian/\n"
     ".trash/\n"
     ".DS_Store\n"
+    "# Archived originals (stack.media). Deleting the message that carried\n"
+    "# one has to delete the file, and git history would keep it anyway.\n"
+    "media/\n"
 )
 BRAIN_SEED_README = (
     "# Family brain (projection)\n\n"
