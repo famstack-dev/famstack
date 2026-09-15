@@ -155,9 +155,9 @@ class GitMirror:
     data_dir: Path
     org_name: str = "family"
     # Slug for the shared/institutional bucket inside the vault. Default
-    # "family" matches famstack's stock layout; deskstack or non-family
-    # deployments override via stack.toml [core] shared_bucket → env
-    # var SHARED_BUCKET → archivist → here.
+    # "family" matches famstack's stock layout; non-family deployments
+    # override via stack.toml [core] shared_bucket → env var
+    # SHARED_BUCKET → archivist → here.
     shared_bucket: str = "family"
     paperless_version: str = ""
 

@@ -25,7 +25,7 @@ A Matrix room whose name starts with `Thema:` or `Topic:` is a topic room. The a
 
 Topic rooms compose with the existing capture pipeline. The classifier, mirror, search, deriver, ontology-canonicalizer — none of them special-case topic folders. They see a bucket like any other.
 
-**Topics always nest inside the bucket that owns them.** Shared topics live under the household's configured shared bucket (`family/<slug>/`, or `office/<slug>/` for deskstack); personal topics live under the originating person's bucket (`homer/<slug>/`). The top level of the vault stays pure access-scope: one folder per privacy boundary, never a topic folder. This makes a default sender-scoped search (`["family/", "<localpart>/"]`) automatically include shared-topic content — a family member asking "what did we note about camping?" in #documents finds it without knowing the topic room exists.
+**Topics always nest inside the bucket that owns them.** Shared topics live under the household's configured shared bucket (`family/<slug>/`, or `office/<slug>/` in a non-family deployment); personal topics live under the originating person's bucket (`homer/<slug>/`). The top level of the vault stays pure access-scope: one folder per privacy boundary, never a topic folder. This makes a default sender-scoped search (`["family/", "<localpart>/"]`) automatically include shared-topic content — a family member asking "what did we note about camping?" in #documents finds it without knowing the topic room exists.
 
 ## Naming convention
 
@@ -37,7 +37,7 @@ Topic rooms compose with the existing capture pipeline. The classifier, mirror, 
 | `Topic: 3D printing` | `3d-printing` | `family/3d-printing/` | `homer/3d-printing/` | `3d-printing` |
 | `Thema: Café Hopping` | `cafe-hopping` | `family/cafe-hopping/` | `homer/cafe-hopping/` | `cafe-hopping` |
 
-(Shared-bucket paths show `family/` because that is the default `[core] shared_bucket`. A deskstack household with `shared_bucket = "office"` gets `office/<slug>/`.)
+(Shared-bucket paths show `family/` because that is the default `[core] shared_bucket`. A deployment with `shared_bucket = "office"` gets `office/<slug>/`.)
 
 ### Parser rules
 

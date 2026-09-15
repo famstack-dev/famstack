@@ -222,16 +222,12 @@ Write-up: whitepaper round 6 + likely the strongest standalone post
 Decision 2026-06-12: no authored per-topic ontologies (insurance terms,
 medical specialties, ...) for famstack. Maintenance treadmill, prompt
 token bloat on the small models we optimize for, serves completeness the
-corpus doesn't need. Two variants stay alive:
+corpus doesn't need. One variant stays alive:
 
 - **Emergent topic depth** — the living loop accumulates confirmed
   correspondents, aliases, and doctype frequencies UNDER topics from the
   household's actual mail. A query over the entity pages + usage, zero
   authoring. Revisit after the extraction-proposal phase.
-- **Authored vertical packs for deskstack** — law firm / tax advisor
-  domain ontologies (court names, Mandant/Akte structures, deadline
-  doctypes) are authored once, shared by every firm, and a paid
-  differentiator. Product idea, parked under deskstack.
 
 Round 6 error analysis can reopen this: if 9B failures cluster in one
 domain, that's the data-driven case for depth in that topic.

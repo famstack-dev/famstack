@@ -991,8 +991,8 @@ shared_bucket = "family"              # slug for the shared/institutional
                                       # bucket inside the memory vault.
                                       # Personal entities (homer, marge, …)
                                       # live at <vault>/<localpart>/. Default
-                                      # "family" fits famstack; deskstack or
-                                      # non-family deployments override.
+                                      # "family" fits famstack; non-family
+                                      # deployments override.
 
 [updates]
 schedule = "0 0 3 * * *"        # Watchtower cron (3am nightly)

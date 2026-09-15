@@ -624,7 +624,7 @@ Net: the system errs on the side of writing, but it doesn't err on the side of *
 
 - `ontology-seed-self-employed.yaml` — adds `Mandant`, `Rechnungsnummer`, `Honorar`, `USt-Voranmeldung`
 - `ontology-seed-landlord.yaml` — adds `Mieter`, `Nebenkostenabrechnung`, `Mietvertrag`
-- `ontology-seed-deskstack.yaml` — office-oriented vocabulary for the deskstack product (clients, matters, billable hours)
+- `ontology-seed-office.yaml` — office-oriented vocabulary (clients, matters, billable hours)
 
 Starter packs are how we monetize tier specialization without bloating the default install. Each pack ships a curated baseline; auto-extension takes over from there.
 

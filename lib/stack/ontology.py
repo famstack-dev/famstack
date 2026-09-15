@@ -9,7 +9,7 @@ This module is product-agnostic by design. It defines the dataclasses
 and the loader; the *content* — the actual list of topics and types —
 lives outside the framework, in a seed file shipped by whichever
 stacklet owns the vocabulary (in famstack: `stacklets/memory/`).
-A different product (deskstack, studio, freelance) supplies different
+A different deployment (studio, freelance, an office) supplies different
 seeds against the same machinery.
 
 Two readers care about an ontology:

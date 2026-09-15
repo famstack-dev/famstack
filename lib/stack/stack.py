@@ -211,8 +211,8 @@ class Stack:
             # Name of the shared/family-level bucket inside the memory
             # vault. Personal entities (homer, marge, …) live at
             # <vault>/<slug>/, the shared bucket at <vault>/<shared_bucket>/.
-            # Default "family" fits famstack; deskstack or non-family
-            # deployments override to "office", "household", a surname, etc.
+            # Default "family" fits famstack; non-family deployments
+            # override to "office", "household", a surname, etc.
             "shared_bucket":         self._cfg("core", "shared_bucket", "family"),
             # Wiki freshness (the memory stacklet's curator sidecar).
             # Bool/int from stack.toml render as env-friendly strings.

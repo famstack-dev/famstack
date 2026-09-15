@@ -84,7 +84,7 @@ BRAIN_REPO_DIR = "/data/memory/brain"
 # Shared-bucket slug — the entity that owns institutional artifacts
 # (documents, correspondents) inside the memory vault. Personal
 # entities (homer, marge, …) live at <vault>/<slug>/. Defaults to
-# "family"; deskstack or non-family deployments override via
+# "family"; non-family deployments override via
 # stack.toml [core] shared_bucket.
 SHARED_BUCKET = "{shared_bucket}"
 

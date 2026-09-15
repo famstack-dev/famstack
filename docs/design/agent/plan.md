@@ -33,7 +33,7 @@ The famstack-product ships with self-contained defaults. Individual instances cu
 - **Grocery backend.** Default backend stores the list in `family/memory/lists/groceries.md`; the "phone access" path is "ask the bot in Matrix." Optional Trello backend (Homer's personal stack) bridges to an existing Trello board via REST API; family workflow unchanged, agent gains read/write through the same `GroceryStore` interface.
 - **Pattern.** Same shape as `taxonomy.toml` (default seed, instance overrides), `ontology.toml` (seed, evolved per instance), and the brain invariant "memory is instance data, not product policy." The agent defines the protocol; instances pick the backend.
 
-The v1 build ships the vault backend. The Trello backend ships in the same repo but disabled by default. Other instances (deskstack, future families) get to pick.
+The v1 build ships the vault backend. The Trello backend ships in the same repo but disabled by default. Other instances (future families, non-family deployments) get to pick.
 
 ### Long-term (not in v1, captured for direction)
 
