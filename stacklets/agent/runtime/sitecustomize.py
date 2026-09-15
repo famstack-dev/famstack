@@ -186,6 +186,9 @@ for _module_name, _what in (
     ("history_tool", "memory_history tool"),
     ("grep_tool", "vault grep -> memory_search routing"),
     ("vault_write", "write_file on a vault page -> stack memory write"),
+    ("list_tool", "list_edit item tool -> stack memory list-edit"),
+    ("tool_trim", "unused-tool trim (AGENT_TOOL_TRIM=0 to disable)"),
+    ("thread_session", "thread-scoped sessions (AGENT_THREAD_SESSIONS=0 to disable)"),
 ):
     try:
         importlib.import_module(_module_name).install()

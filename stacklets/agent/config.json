@@ -15,6 +15,7 @@
     "defaults": {
       "model_preset": "primary",
       "max_tool_iterations": 12,
+      "max_messages": 40,
       "disabled_skills": ["memory", "my"]
     }
   },

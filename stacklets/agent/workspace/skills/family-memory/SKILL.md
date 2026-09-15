@@ -3,67 +3,41 @@ name: family-memory
 description: How I look things up about the family and edit their lists.
 metadata: {"nanobot": {"always": true}}
 ---
-# Family memory
+# Family memory (rules as pseudocode)
 
-Everything about the family is in the vault. I look before I answer.
+Vault = all family knowledge. Look before answering.
 
-## Find, then read
-- My briefing names the page? `read_file` it directly. No search.
-- Otherwise: `memory_search` with 2-4 literal keywords (words that appear on
-  the page, not a question). `scope: family/<topic>` searches the current
-  topic first; widen only if that misses.
-- `memory_person` fetches a profile. `read_file` on `vault/<path>` reads a
-  full page (search prints paths relative to `vault/`).
-- One search, at most one keyword retry. Then I say what I looked for and ask.
-- Full source document behind a page: its `paperless_id` frontmatter +
-  `stack docs show <id> --content`, only when the page is not enough.
+```
+LOOKUP:
+  brief names the page        -> read_file(page)          # no search
+  else                        -> memory_search(2-4 literal keywords)
+     scope family/<topic> first; miss -> widen
+     independent lookups      -> ONE call, queries=[..]   # max 3
+     miss                     -> retry once, new keywords; then say tried + ask
+  profile                     -> memory_person(name)
+  "lately|since when|who did" -> memory_history           # search ranks NOW, not change
+  full source document        -> paperless_id frontmatter + `stack docs show <id> --content`
 
-## Sources
-Answers from the vault end with:
+PATHS:
+  person -> vault/<name>/about.md
+  topic  -> vault/family/<topic>/about.md ; items in .../todos.md
+  search prints vault-relative paths -> read as vault/<path>
 
-    Sources: [<page title>](<the link line search printed for it>)
+SOURCES (answer used a vault page, searched or read):
+  end answer with: Sources: [<page title>](<link line from search output, verbatim>)
+  only pages I read; never shorten|reuse|invent a link; no link line -> title only
+  max 3 sources; nothing from vault -> no Sources line
 
-- I paste each link character for character from the search output. Never
-  shortened, never reused, never invented from a file path.
-- I link only pages I actually read for this answer. A page without a link
-  line stays unlinked, named by title. More than three sources means I read
-  too much.
-- Nothing from the vault, nothing to cite.
-
-## Where things live
-A person: `vault/<name>/about.md`. A topic: `vault/family/<topic>/about.md`,
-open items in `vault/family/<topic>/todos.md`.
-
-## What changed, and when
-`memory_history` answers "lately / since when / who did that / what's new".
-Search only ranks what pages say now, so it answers change questions wrongly
-without looking wrong. "What has Homer been up to lately" = `memory_history`
-scoped to homer. I never guess a date; I say what the history shows.
-
-## Changing a list (add, tick off, split, tidy)
-A list is a page; I edit the page right away, every version is kept. Always
-`read_file` the page first.
-
-- Default: `apply_patch`. I name the exact line in `old_text`. It touches only
-  what I name.
-- Restructure only (split, reorder, tidy): `write_file` with the complete new
-  contents, carrying over every line I was not asked to change.
-
-No add or strike commands: adding is a new `- [ ] ` line, ticking off turns
-`- [ ]` into `- [x]`, splitting is `## ` headings.
-
-- A patch that does not fit means the page moved. I re-read and re-patch what
-  is there now. I never fall back to `write_file` over it.
-- I keep their order and their words ("Kühlbox" stays "Kühlbox"). New items go
-  at the end of their section.
-- "We did that" means tick, not delete. I delete only on request.
-- The edit's reply ("ticked off 2: ...") is the truth about what I did; I
-  relay it in one line. If it removed something unintended, I say so and put
-  it back.
-- No `apply_patch`/`write_file` call with its answer read means nothing
-  happened, however sure I feel.
-
-The change commits as the person I reply to. `stack memory topic <topic> todo`
-lists items read-only; my briefing says a list exists, not what is on it.
+LISTS:
+  item op add|tick|untick|remove -> list_edit, ONE item per call
+  "we did that"                  -> tick, never remove
+  answer "ambiguous|no item"     -> pick from named candidates, retry once
+  restructure ONLY               -> read_file then write_file(complete page)
+     keep: frontmatter verbatim at column one, every [x], their order, their words
+  write answer reports unintended unticked|REMOVED -> restore now, then say so
+  edit answer = the truth -> relay it in one line
+  no tool call + answer read -> nothing happened, whatever I believe
+  edits commit as the person I reply to
+```
 
 I answer only from what I read, and I keep it short.
