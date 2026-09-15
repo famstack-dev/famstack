@@ -19,7 +19,8 @@ from __future__ import annotations
 import datetime as _dt
 import io
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from urllib.parse import unquote, urlsplit
 
 from loguru import logger
 
@@ -103,11 +104,48 @@ class CaptureOutcome:
     envelope: dict | None = None
     transcript: str | None = None
     failure_reason: str | None = None
+    # Set when a URL capture filed as a *link card* rather than a summary:
+    # the gate's verdict name (`challenge`, `login`, `consent`, `paywall`,
+    # `empty`). The entry exists either way -- this is what the reply layer
+    # uses to say why there is a link but no summary. None on every other
+    # capture, including a URL that read cleanly.
+    blocked_reason: str | None = None
     # The vault bucket the capture filed under (`entity_slug`): a topic path
     # like `family/camping` or a bare personal bucket like `homer`. The reply
     # renderer uses it to build a `/go/topic/<scope>/todo` link, but only for
     # topic scopes (those carry a `/`) — a personal bucket has no todos page.
     scope: str | None = None
+
+
+def _link_card(url: str, user_hint: str | None) -> SourceContent:
+    """A `SourceContent` for a page we could not read.
+
+    The body is the sender's own words plus the link, and deliberately
+    nothing else. It is tempting to write "this page was blocked" into
+    it, but the body is the classifier's input: say that, and the entry
+    comes back titled "Blocked page" instead of "camping gear list".
+    Why it was blocked belongs in the chat reply, not in the vault.
+
+    The title hint falls back through the same reasoning -- the sender's
+    first line, then the URL's last path segment, then the host. Each is
+    a worse guess than the one before it, and all three beat a summary
+    of a cookie banner.
+    """
+    hint = (user_hint or "").strip()
+    split = urlsplit(url)
+    slug = [p for p in split.path.split("/") if p]
+    title = None
+    if hint:
+        title = hint.splitlines()[0].strip()[:120]
+    elif slug:
+        title = unquote(slug[-1]).replace("-", " ").replace("_", " ").strip() or None
+    if not title:
+        title = split.netloc
+
+    body = f"{hint}\n\n{url}" if hint else url
+    return SourceContent(
+        text=body, mime="text/markdown", title_hint=title, source_uri=url,
+    )
 
 
 class CapturePipeline:
@@ -175,17 +213,27 @@ class CapturePipeline:
         out. Empty/None leaves the prompt unchanged.
         """
         await notifier.acknowledge()
-        source = await self._url_extractor.extract(url)
+        outcome = await self._url_extractor.fetch(url)
+
+        # A page we could not read still files. Dropping it on the floor
+        # was the old behaviour and it lost two things worth keeping: the
+        # link itself, and whatever the sender wrote around it -- which is
+        # often the more useful half ("gear list for the camping trip").
+        # The gate's verdict rides along so the reply can name the
+        # obstacle instead of guessing.
+        blocked_reason = None
+        source = outcome.content
         if source is None:
-            return CaptureOutcome(
-                status="extract_failed", failure_reason="url",
-            )
-        return await self._publish(
+            source = _link_card(outcome.url or url, user_hint)
+            blocked_reason = outcome.verdict.name
+
+        result = await self._publish(
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, user_hint=user_hint,
         )
+        return replace(result, blocked_reason=blocked_reason) if blocked_reason else result
 
     async def capture_text(
         self, *, text: str, sender_mxid: str,

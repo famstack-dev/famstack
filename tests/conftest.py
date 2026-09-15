@@ -183,3 +183,43 @@ def git_unreachable_remote_clone(_git_states, tmp_path) -> GitPair:
     gone = tmp_path / "moved-away.git"
     _git("-C", str(pair.local), "remote", "set-url", "origin", str(gone))
     return GitPair(remote=gone, local=pair.local)
+
+
+# ── Web capture fixtures ──────────────────────────────────────────────
+#
+# Real pages, captured from the live sites the web plan measured, so a
+# detector cannot be tuned against HTML that was written to satisfy it.
+# `tests/fixtures/web/README.md` records where each came from and what
+# was stripped. Both test trees use these: the gate lives in the
+# framework, the extractor that calls it lives in a stacklet.
+
+_WEB_FIXTURES = Path(__file__).parent / "fixtures" / "web"
+
+
+@pytest.fixture(scope="session")
+def web_fixture():
+    """Load a captured page by name (no `.html` suffix)."""
+    def _load(name: str) -> str:
+        path = _WEB_FIXTURES / f"{name}.html"
+        if not path.exists():
+            available = ", ".join(sorted(p.stem for p in _WEB_FIXTURES.glob("*.html")))
+            raise FileNotFoundError(f"no web fixture {name!r}; have: {available}")
+        return path.read_text(encoding="utf-8")
+
+    return _load
+
+
+@pytest.fixture(scope="session")
+def extracted():
+    """Run the real tier-2 extraction over fixture HTML.
+
+    Tests assert on what trafilatura actually produces rather than on a
+    stand-in for it, so a library upgrade that changes extraction shows
+    up here instead of in production.
+    """
+    from stack.web.fetch import extract_body
+
+    def _extract(html: str, **kwargs) -> str:
+        return extract_body(html, **kwargs) or ""
+
+    return _extract
