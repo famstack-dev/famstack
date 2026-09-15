@@ -124,7 +124,8 @@ def extension_for(filename: str, mime: str = "") -> str:
     if from_name.lstrip("."):
         return _safe_ext(from_name)
     declared = str(mime or "").split(";")[0].strip()
-    return _safe_ext(mimetypes.guess_extension(declared) or "" if declared else "")
+    guessed = mimetypes.guess_extension(declared) if declared else ""
+    return _safe_ext(guessed or "")
 
 
 def kind_for(mime: str) -> str:

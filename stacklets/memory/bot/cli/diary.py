@@ -234,6 +234,11 @@ async def _archive_media(messages, events, *, session, homeserver, token,
 
         link = media.kept(root, msg.event_id, ext=ext, when=when)
         if not link:
+            # Logged before the fetch, not after. A first compile over a
+            # room with years of photographs in it is minutes of
+            # downloading, and a command that prints nothing for that
+            # long is indistinguishable from one that has hung.
+            _err(f"  keeping {filename or msg.event_id}")
             data = await _download(session, homeserver, token, msg.url)
             if not data:
                 continue

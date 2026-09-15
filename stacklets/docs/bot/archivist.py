@@ -2251,6 +2251,11 @@ class ArchivistBot(MicroBot):
     ) -> dict | None:
         """Archive the uploaded bytes; return how the entry shows them.
 
+        Blocking: it writes megabytes and may run a converter, so the
+        caller hands it to a thread. Every bot in the stack shares one
+        event loop, and a photograph being resized here would otherwise
+        be every other bot standing still.
+
         ``{"name", "original", "embed"}``, or None when nothing was
         kept. The archive lives inside the brain working copy, which is
         the tree the wiki serves, so the entry addresses the file by a
@@ -2270,10 +2275,8 @@ class ArchivistBot(MicroBot):
         if not brain or not event_id:
             return None
         import datetime as _dt
-        when = _dt.datetime.fromtimestamp(
-            ts_ms / 1000 if ts_ms else _dt.datetime.now(_dt.timezone.utc).timestamp(),
-            tz=_dt.timezone.utc,
-        )
+        when = (_dt.datetime.fromtimestamp(ts_ms / 1000, tz=_dt.timezone.utc)
+                if ts_ms else _dt.datetime.now(_dt.timezone.utc))
         media.ensure_ignored(brain)
         root = media.archive_root(brain)
         kind = media.kind_for(mime)
@@ -2342,7 +2345,8 @@ class ArchivistBot(MicroBot):
             seed_topics=seed_topics or None,
             bucket=bucket,
             default_person=default_person,
-            kept_media=self._keep_original(
+            kept_media=await asyncio.to_thread(
+                self._keep_original,
                 file_data=file_data, mime=mime, filename=filename,
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
