@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
+import re
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -274,6 +275,7 @@ class CapturePipeline:
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
         default_person: bool = True,
+        kept_media: dict | None = None,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -282,9 +284,15 @@ class CapturePipeline:
         PDFs (past the per-instance vision cap) bypass vision and
         ride the text layer through the existing text-capture path,
         so the household doesn't pay vision tokens for a 60-page
-        research paper. ``source_uri`` is the Matrix mxc URL so the
-        wiki entry links back to the original binary -- we don't
-        re-store the bytes; Matrix already has them.
+        research paper. ``source_uri`` is the Matrix mxc URL, so the
+        entry links back to the message the upload came in on.
+
+        ``kept_media`` is where the caller archived the bytes, when it
+        did. The mxc URL is a pointer into the homeserver's media store
+        and nothing promises that store outlives the entry; the archive
+        is the copy the wiki serves itself. The caller keeps it because
+        it is the one that has the room, the sender and the event this
+        upload arrived on, which is what the archive records.
         """
         source, images, kind = self._source_from_binary(
             file_data=file_data, mime=mime, filename=filename,
@@ -302,6 +310,7 @@ class CapturePipeline:
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, default_person=default_person,
+            kept_media=kept_media,
         )
 
     def _cap_pdf_body(self, source: SourceContent) -> SourceContent:
@@ -493,6 +502,10 @@ class CapturePipeline:
         work against the model's own paraphrase rather than the raw
         page. Pure text corrections (Homer's "It is a Mac Studio")
         compose cleanly under that constraint.
+
+        The archived file is the one thing that cannot be recovered
+        that way: the bytes are long gone from this path, so the
+        reference is read back off the entry being replaced.
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -537,6 +550,7 @@ class CapturePipeline:
             actor=sender_mxid,
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
+            kept_media=_kept_media_from(raw),
         )
 
     async def _publish(
@@ -554,6 +568,7 @@ class CapturePipeline:
         email_meta: dict | None = None,
         default_person: bool = True,
         transcribed: bool = False,
+        kept_media: dict | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -648,6 +663,7 @@ class CapturePipeline:
                 existing_path=existing_path,
                 capture_id=capture_id,
                 submitter=sender_mxid,
+                kept_media=kept_media,
             )
 
         # Feed topic tags (not the derived Person: X) back into the
@@ -848,6 +864,31 @@ def _parse_capture_markdown(raw: str) -> tuple[dict, str]:
     body = raw[fm_end + len("\n---\n"):]
     summary = _extract_summary_callout(body)
     return (meta, summary)
+
+
+# The two lines an entry uses to reach its archived file, as
+# `vault_entry.render_capture` writes them.
+_FILE_LINE = re.compile(r"^> \*\*File\*\* \[([^\]]*)\]\((/media/[^)]+)\)", re.M)
+_EMBED_LINE = re.compile(r"^!\[\[(/media/[^\]]+)\]\]", re.M)
+
+
+def _kept_media_from(raw: str) -> dict | None:
+    """The archived file an entry already names, read back off the page.
+
+    A correction re-renders the whole entry from the prior one and
+    never sees the original bytes again. Without reading the reference
+    back, replying to fix a tag would drop the file from an entry that
+    had one.
+    """
+    named = _FILE_LINE.search(raw)
+    if not named:
+        return None
+    shown = _EMBED_LINE.search(raw)
+    return {
+        "name": named.group(1),
+        "original": named.group(2),
+        "embed": shown.group(1) if shown else "",
+    }
 
 
 def _parse_yaml_frontmatter(text: str) -> dict:

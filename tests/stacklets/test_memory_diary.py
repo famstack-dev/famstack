@@ -686,6 +686,94 @@ class TestRendering:
         assert "A gist that must not replace the words." not in page
 
 
+class TestTheKeptFileOnThePage:
+    """A page that only links the room is worth nothing once the room's
+    media store is gone. The compiler keeps the file and hands the
+    renderer the path it landed on; this is what the page does with it.
+
+    The embed syntax is Obsidian's and the wiki turns it into a player
+    by reading the extension, which is why the extension in these
+    assertions is the load-bearing part.
+    """
+
+    ROOM = "!memories:example.org"
+
+    def _entry(self, kind: str, event_id: str = "$one") -> diary.Entry:
+        return diary.Entry(
+            on=date(2026, 3, 14), confidence="sent",
+            basis="dated from when it was sent", kind=kind, sender="marge",
+            body="", event_ids=[event_id])
+
+    def test_a_recording_is_played_from_the_copy_that_plays_everywhere(self):
+        """Safari does not decode Opus in Ogg, which is what a chat
+        client records. The page embeds the AAC copy; the Ogg original
+        stays in the archive."""
+        page = diary.render_month(
+            [self._entry("voice")], room_id=self.ROOM,
+            media={"$one": "/media/2026/03/one.m4a"})
+
+        assert "![[/media/2026/03/one.m4a]]" in page
+
+    def test_a_photograph_is_shown_on_the_page(self):
+        page = diary.render_month(
+            [self._entry("image")], room_id=self.ROOM,
+            media={"$one": "/media/2026/03/one.webp"})
+
+        assert "![[/media/2026/03/one.webp]]" in page
+
+    def test_a_document_is_offered_rather_than_embedded(self):
+        """An embedded PDF is a scrolling frame that pushes the rest of
+        the day off the screen."""
+        page = diary.render_month(
+            [self._entry("file")], room_id=self.ROOM,
+            media={"$one": "/media/2026/03/one.pdf"})
+
+        assert "[The file itself](/media/2026/03/one.pdf)" in page
+        assert "![[" not in page
+
+    def test_the_room_is_still_where_the_memory_lives(self):
+        """The archive is a second copy, not a replacement. Following
+        the entry back into the conversation it came from is the thing
+        a family actually does with it."""
+        page = diary.render_month(
+            [self._entry("voice")], room_id=self.ROOM,
+            media={"$one": "/media/2026/03/one.m4a"})
+
+        assert f"[Listen in the room](https://matrix.to/#/{self.ROOM}/$one)" in page
+
+    def test_each_half_of_a_split_recording_is_played(self):
+        """A memo that arrived as two uploads is one entry with two
+        files. Playing only the first would cut the memory in half."""
+        entry = self._entry("voice")
+        entry.event_ids = ["$first", "$second"]
+
+        page = diary.render_month(
+            [entry], room_id=self.ROOM,
+            media={"$first": "/media/2026/03/first.m4a",
+                   "$second": "/media/2026/03/second.m4a"})
+
+        assert "![[/media/2026/03/first.m4a]]" in page
+        assert "![[/media/2026/03/second.m4a]]" in page
+
+    def test_an_entry_whose_file_could_not_be_kept_reads_as_it_always_did(self):
+        """Every failure ends here: no homeserver, no disk, no ffmpeg.
+        The page has to be exactly the page famstack published before
+        the archive existed, or a bad night costs a family its diary."""
+        entries = [self._entry("voice", "$a"), self._entry("image", "$b")]
+
+        assert diary.render_month(entries, room_id=self.ROOM, media={}) == \
+            diary.render_month(entries, room_id=self.ROOM)
+
+    def test_only_the_events_that_were_kept_are_shown(self):
+        entries = [self._entry("image", "$kept"), self._entry("image", "$lost")]
+
+        page = diary.render_month(
+            entries, room_id=self.ROOM,
+            media={"$kept": "/media/2026/03/kept.webp"})
+
+        assert page.count("![[") == 1
+
+
 class TestVerifyMoments:
     """A quote reaches the page only when the body really contains it.
     The page shows the body's own text, not the model's copy."""

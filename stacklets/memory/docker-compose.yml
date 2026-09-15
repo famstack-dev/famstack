@@ -35,6 +35,16 @@ services:
     # back into brain via the curator's mirror.
     volumes:
       - ${BRAIN_REPO_DIR}:/vault:ro
+      # The media archive, mounted into the tree Quartz renders so the
+      # originals are served from the same site as the pages that embed
+      # them. Quartz only emits what is under its content root, and a
+      # separate origin would need an absolute URL that is wrong in one
+      # of the two deployment modes. The bytes still live outside brain.
+      #
+      # Docker cannot create this mountpoint itself: the parent is a
+      # read-only bind and mkdir fails there, taking the container down
+      # with it. The on_start hook makes the directory first.
+      - ${MEDIA_ARCHIVE_DIR}:/vault/media:ro
     environment:
       # Used by quartz.config.ts to build "edit on Forgejo" links and
       # absolute URLs. Resolved by the runtime from stack.toml.
@@ -80,6 +90,7 @@ services:
       # under the /data/memory mount below.
       MEMORY_VAULT_DIR: /data/memory/vault
       BRAIN_REPO_DIR: /data/memory/brain
+      MEDIA_ARCHIVE_DIR: /data/memory/media
       CURATOR_STATE_DIR: /data/memory/curator
       DIARY_STATE_DIR: /data/memory/diary
       # The diary compiler reads the memories room and decodes its

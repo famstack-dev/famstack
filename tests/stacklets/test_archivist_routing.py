@@ -16,7 +16,9 @@ mirror) is exercised by `test_extractors.py` and `test_git_mirror.py`.
 
 from __future__ import annotations
 
+import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1010,3 +1012,96 @@ class TestSpokenMessagesAreDeliberate:
         event.source["content"]["m.mentions"] = {"user_ids": [BOT_ID]}
         await bot._on_text(self._shared_room(), event)
         assert [c[0] for c in calls] == ["search"]
+
+
+class TestAnUploadKeepsItsFile:
+    """A capture entry pointed at an mxc URL and nothing else, which is
+    a pointer into the homeserver's media store and no promise that the
+    file is still there in ten years. An upload into a capture room now
+    also lands in the media archive the wiki serves, and the pipeline
+    is told where it went so the entry can name it.
+
+    The bytes are kept here rather than in the pipeline because this is
+    the layer that has the event: the room, the sender and the moment,
+    which is what the archive records beside the file.
+    """
+
+    # 2026-03-14 09:30 UTC, which is the folder the file lands in.
+    WHEN = int(datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def _bot(self, tmp_path):
+        bot = _build_bot(tmp_path)
+        calls: list[dict] = []
+
+        class _RecordingPipeline:
+            async def capture_binary(self, **kwargs):
+                calls.append(kwargs)
+                return SimpleNamespace(status="captured")
+
+        async def _binding(_room, _sender):
+            return None
+
+        async def _reply(*_a, **_kw):
+            return None
+
+        bot._capture = _RecordingPipeline()
+        bot._topic_binding = _binding
+        bot._reply_for_capture = _reply
+        bot._client = SimpleNamespace(rooms={"!r:server": _room()})
+        return bot, calls
+
+    async def _upload(self, bot, **over):
+        args = dict(
+            room_id="!r:server", file_data=b"%PDF-1.4 anmeldung",
+            mime="application/pdf", filename="Anmeldung Schwimmkurs.pdf",
+            source_uri="mxc://home.local/abcdef", sender_mxid="@marge:server",
+            capture_id="$upload", captured_ts=self.WHEN,
+        )
+        args.update(over)
+        await bot._handle_binary_capture(**args)
+
+    async def test_the_file_lands_where_the_wiki_will_serve_it(
+            self, tmp_path, monkeypatch):
+        store = tmp_path / "media"
+        monkeypatch.setenv("MEDIA_ARCHIVE_DIR", str(store))
+        bot, calls = self._bot(tmp_path)
+
+        await self._upload(bot)
+
+        # The link is site-rooted and the bytes are not under the site:
+        # the wiki container mounts the store at that same name.
+        assert calls[0]["kept_media"]["original"] == "/media/2026/03/upload.pdf"
+        assert (store / "2026" / "03" / "upload.pdf").read_bytes() == \
+            b"%PDF-1.4 anmeldung"
+
+    async def test_the_file_remembers_the_room_it_was_posted_in(
+            self, tmp_path, monkeypatch):
+        """The name in the archive is a scrubbed event id and the
+        folders are a date. Everything else about the upload is in the
+        record beside it or nowhere."""
+        store = tmp_path / "media"
+        monkeypatch.setenv("MEDIA_ARCHIVE_DIR", str(store))
+        bot, _ = self._bot(tmp_path)
+
+        await self._upload(bot)
+
+        record = json.loads(
+            (store / "2026" / "03" / "upload.json")
+            .read_text(encoding="utf-8"))
+        assert record["room_id"] == "!r:server"
+        assert record["sender"] == "@marge:server"
+        assert record["filename"] == "Anmeldung Schwimmkurs.pdf"
+        assert record["source"] == "capture"
+
+    async def test_a_capture_still_files_when_there_is_nowhere_to_keep_it(
+            self, tmp_path, monkeypatch):
+        """The docs stacklet runs without memory installed, so no
+        archive is configured. Filing is what the user asked for; the
+        copy is a bonus and never a precondition."""
+        monkeypatch.delenv("MEDIA_ARCHIVE_DIR", raising=False)
+        bot, calls = self._bot(tmp_path)
+
+        await self._upload(bot)
+
+        assert calls[0]["kept_media"] is None
+        assert calls[0]["file_data"] == b"%PDF-1.4 anmeldung"

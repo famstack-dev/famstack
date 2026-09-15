@@ -28,7 +28,7 @@ Pre-1.0 stance: we keep backwards compatibility only for critical parts. Everywh
 ```
 famstack/
 ├── stack                  4-line bash wrapper → lib/stack
-├── lib/stack/             CLI core (Python, stdlib only)
+├── lib/stack/             CLI core (Python; top level stdlib only)
 ├── stacklets/             one directory per stacklet (id == dirname)
 │   ├── core/              always-on (Caddy, Watchtower, bot-runner)
 │   ├── messages/          Matrix + Element
@@ -52,7 +52,7 @@ famstack/
 ## Five framework invariants
 
 1. **`.env` is a derived artifact.** Generated on every `stack up` from `stack.toml` + `[env.defaults]` + secrets. Never edit, never commit, never read as source of truth. (See [adr-006](../adr/adr-006-env-as-derived-artifact.md).)
-2. **The CLI is stdlib-only.** `lib/stack/` imports nothing from pip. Container code carries its own deps; host-side tooling (tests, hooks) gets deps via `pyproject.toml [project.optional-dependencies] test`.
+2. **The host CLI is stdlib-only.** `lib/stack/*.py` imports nothing from pip, because `./stack` runs on the host's system Python with no venv. A subpackage that only ever loads inside a container may use pip deps declared by the images that mount it: `lib/stack/ai/` imports `openai` and `loguru`. Container code carries its own deps; host-side tooling (tests, hooks) gets deps via `pyproject.toml [project.optional-dependencies] test`.
 3. **State is derived.** No "enabled stacklets" registry. `docker ps -a` + `~/famstack-data/<id>/` decide state.
 4. **Convention over configuration.** If a file exists with the documented name (`hooks/on_install.py`, `cli/foo.py`, `caddy.snippet`, `bot/bot.toml`), it is picked up. No registration step.
 5. **The `stack` CLI is the sanctioned agent interface.** Bots, hooks, and external automations call `./stack <id> <cmd>` - they do not import from `lib/`. Commands have stable exit codes, JSON output, and idempotent semantics.

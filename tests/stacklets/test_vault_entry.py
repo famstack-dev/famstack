@@ -651,7 +651,84 @@ class TestRenderCapture:
         assert "> [!quote]" not in content  # no body → no quote block
 
 
-# ── Email thread folding ───────────────────────────────────────────────
+class TestCaptureKeepsTheFileItDescribes:
+    """A capture entry used to be a summary and an mxc URL, which is a
+    pointer into the homeserver's media store and no promise at all.
+    The bytes are archived now, and the entry says where.
+
+    What the entry does with them depends on the file: a screenshot is
+    the entry and belongs on the page, a form is a download. The embed
+    syntax is Obsidian's, which the wiki renders by extension.
+    """
+
+    def _fm(self, title: str) -> dict:
+        return capture_frontmatter(
+            title=title, captured_at="2026-03-14", kind="bookmark",
+            source_uri="mxc://home.local/abcdef", persons=[], tags=[],
+            model=None,
+        )
+
+    def _render(self, kept: dict | None, **over) -> str:
+        args = dict(
+            from_path="marge/bookmarks/2026/03/entry.md",
+            shared_bucket="family", frontmatter=self._fm("Screenshot"),
+            body="", kind="bookmark", captured_at="2026-03-14",
+            source_uri="mxc://home.local/abcdef", persons=[],
+            summary="A screenshot of the school calendar.", facts=[],
+            kept_media=kept,
+        )
+        args.update(over)
+        return render_capture(**args)
+
+    def test_a_screenshot_is_shown_on_the_page(self):
+        content = self._render({
+            "name": "Bildschirmfoto.png",
+            "original": "/media/2026/03/evt.png",
+            "embed": "/media/2026/03/evt.webp",
+        })
+
+        assert "![[/media/2026/03/evt.webp]]" in content
+
+    def test_a_document_is_offered_rather_than_embedded(self):
+        """An embedded PDF is a scrolling frame where the summary should
+        be. The entry names the file and leaves opening it to the
+        reader."""
+        content = self._render({
+            "name": "Anmeldung Schwimmkurs.pdf",
+            "original": "/media/2026/03/evt.pdf",
+            "embed": "",
+        })
+
+        assert "**File** [Anmeldung Schwimmkurs.pdf](/media/2026/03/evt.pdf)" in content
+        assert "![[" not in content
+
+    def test_the_entry_names_the_file_as_it_was_posted(self):
+        """The name in the archive is a scrubbed event id. The name the
+        sender saw only survives on the page and in the record beside
+        the file."""
+        content = self._render({
+            "name": "Bildschirmfoto.png",
+            "original": "/media/2026/03/evt.png",
+            "embed": "/media/2026/03/evt.png",
+        })
+
+        assert "**File** [Bildschirmfoto.png](/media/2026/03/evt.png)" in content
+
+    def test_the_message_it_came_in_on_is_still_named(self):
+        """The archive is a second copy, not a replacement: the entry
+        still points back at the conversation."""
+        content = self._render({
+            "name": "x.png", "original": "/media/2026/03/evt.png",
+            "embed": "/media/2026/03/evt.png",
+        })
+
+        assert "**Source** <mxc://home.local/abcdef>" in content
+
+    def test_an_entry_whose_file_was_not_kept_reads_as_it_always_did(self):
+        """Nothing about the archive may be a precondition for filing.
+        A capture with no bytes of its own (a URL, a pasted note), a
+        vault with no brain, a full disk: same page as before."""
+        assert self._render(None) == self._render({})
 
 class TestRenderEmailMessageSection:
 

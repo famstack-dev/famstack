@@ -18,6 +18,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
+from vault_entry import capture_frontmatter, render_capture  # noqa: E402
 
 
 def _source(*, text="article body", source_uri=None, title_hint="A Title"):
@@ -1005,3 +1006,73 @@ class TestCaptureOrigin:
             sender_mxid="@homer:s",
         )
         assert out.display_link == "(pasted text)"
+
+
+class TestCorrectingAnEntryKeepsItsFile:
+    """A correction re-renders the whole entry from the prior one and
+    never sees the original bytes again. The archived file has to
+    survive that, or replying "this is about school, not work" would
+    quietly take the photograph off the page.
+
+    The entry fed in here is rendered by `vault_entry`, not hand-written,
+    so the read and the write cannot drift apart without this failing.
+    """
+
+    PATH = "marge/bookmarks/test-capture.md"
+
+    def _entry(self, **kept) -> str:
+        fm = capture_frontmatter(
+            title="Schulkalender", captured_at="2026-03-14", kind="bookmark",
+            source_uri="mxc://home.local/abc", persons=["Marge"],
+            tags=["schule"], model=None, capture_id="$shot:home.local",
+        )
+        return render_capture(
+            frontmatter=fm, body="", kind="bookmark",
+            captured_at="2026-03-14", source_uri="mxc://home.local/abc",
+            persons=["Marge"], from_path=self.PATH, shared_bucket="family",
+            summary="The school calendar for March.", facts=[],
+            kept_media=kept or None,
+        )
+
+    async def _reprocess(self, raw: str) -> dict:
+        mirror = FakeMirror()
+        mirror._stored = {self.PATH: raw}
+        pipe = _pipeline(mirror=mirror)
+        await pipe.reprocess(
+            vault_path=self.PATH, user_hint="das gehört zur Schule",
+            sender_mxid="@marge:s",
+        )
+        return mirror.captures[-1]
+
+    @pytest.mark.asyncio
+    async def test_the_corrected_entry_still_names_the_file(self):
+        published = await self._reprocess(self._entry(
+            name="Bildschirmfoto.png",
+            original="/media/2026/03/shot.png",
+            embed="/media/2026/03/shot.webp",
+        ))
+
+        assert published["kept_media"] == {
+            "name": "Bildschirmfoto.png",
+            "original": "/media/2026/03/shot.png",
+            "embed": "/media/2026/03/shot.webp",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_document_stays_a_document_through_a_correction(self):
+        """It had no embed before the correction and must not gain one:
+        a PDF in an iframe is what the entry deliberately does not do."""
+        published = await self._reprocess(self._entry(
+            name="Anmeldung.pdf",
+            original="/media/2026/03/form.pdf",
+            embed="",
+        ))
+
+        assert published["kept_media"]["embed"] == ""
+        assert published["kept_media"]["original"] == "/media/2026/03/form.pdf"
+
+    @pytest.mark.asyncio
+    async def test_an_entry_that_never_had_a_file_does_not_grow_one(self):
+        published = await self._reprocess(self._entry())
+
+        assert published["kept_media"] is None
