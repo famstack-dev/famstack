@@ -1,0 +1,30 @@
+# SearXNG instance settings — overlaid on the image's own defaults.
+#
+# `use_default_settings` means this file is a patch, not a replacement:
+# every engine, category and locale the image ships stays as it was, and
+# only the keys below change. Without it, upgrading SearXNG would
+# silently strip whatever the new version added.
+#
+# The secret key is NOT here. SearXNG reads `${SEARXNG_SECRET}` over
+# this file, and the stack generates one per install, so a key never
+# lands in the repo.
+
+use_default_settings: true
+
+search:
+  # The image ships `formats: [html]`, so the JSON API is off by
+  # default and every programmatic query returns a 403. `stack web
+  # search` and `stack web ask` are both JSON clients, which makes this
+  # single line load-bearing -- and a silent failure mode if it ever
+  # regresses, since the web UI keeps working perfectly. There is a
+  # stacktests lane that asserts it.
+  formats:
+    - html
+    - json
+
+server:
+  # Behind Caddy on the stack network, and on a LAN. The limiter exists
+  # to keep a public instance from being scraped; here it would only
+  # rate-limit the family.
+  limiter: false
+  public_instance: false
