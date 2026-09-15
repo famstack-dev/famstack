@@ -70,6 +70,13 @@ from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 
+# The diary compiler owns the diary's path and its reader-facing words;
+# the home page only places the pointer it renders. Imported by bare
+# name, the way `cli/diary.py` imports it, so the two commands share one
+# module object and therefore one selected language.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import diary  # noqa: E402
+
 HELP = "Regenerate the family wiki's home and member pages"
 
 # Subject prefix the curator's poll loop still filters on. Generation
@@ -249,6 +256,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
     shared_bucket = os.environ.get("SHARED_BUCKET", "family")
     lang = os.environ.get("LANGUAGE", "en")
 
+    # The diary renders its own pointer, so it needs the household
+    # language selected here too.
+    diary.configure_language(lang)
+
     # One walk feeds every surface. The home page reads the whole index;
     # each member page reads its slice. No re-walking per member.
     index = _index_vault(vault)
@@ -405,6 +416,10 @@ async def _generate_home(
     # the LLM cites reliably, but the citation→document mapping is ours
     # to render so links and dates can't be fabricated. Home page lives
     # at the vault root, so links are root-relative (page_dir="").
+    # Above the sections, because it is the one link on this page that
+    # leads somewhere a reader browses rather than looks something up.
+    page = _with_diary_link(page, shared_bucket=shared_bucket)
+
     page = _with_references(page, index, page_dir="")
 
     # Index pages for the shared bucket's own captures (notes dropped in the
@@ -959,6 +974,39 @@ def _load_facts(vault: Path, slug: str) -> list[tuple[str, str]]:
 
 
 # ── References ─────────────────────────────────────────────────────────────
+
+def _with_diary_link(page: str, *, shared_bucket: str) -> str:
+    """Put a pointer to the diary above the home page's first section.
+
+    Nothing else on the landing page leads there: the diary is two
+    folders down and the sidebar files it alphabetically between
+    unrelated entries, so a family that never ran the command has no
+    way to find out it exists.
+
+    Only linked once a compiled diary is on disk. The command that
+    writes those pages runs on its own schedule, and a landing page
+    that opens with a 404 is worse than one that says nothing.
+    """
+    try:
+        published = _brain_dir() / shared_bucket / diary.DIARY_DIR / "about.md"
+    except RuntimeError:
+        return page
+    if not published.exists():
+        return page
+
+    link = diary.home_link(shared_bucket)
+    lines = page.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            head = lines[:i]
+            # The address under the H1 is a blockquote, and a callout is
+            # one too: without the blank line between them markdown reads
+            # the pair as a single quote.
+            if head and head[-1].strip():
+                head.append("")
+            return "\n".join(head + [link, ""] + lines[i:])
+    return page.rstrip() + "\n\n" + link
+
 
 def _with_references(page: str, entries: list[dict], *, page_dir: str) -> str:
     """Append a `## References` block for the citations the page used."""

@@ -222,20 +222,32 @@ def _setup(client, users, config, secrets=None):
     if bot_created:
         results.append({"item": f"@{BOT_NAME}:{server_name}", "action": "ready"})
 
-        # Join bot to Server Room only — Family Room is for humans
+        # Server Room, and Memories so the welcome there can be posted.
+        # Family Room is for humans. Synapse rejects a message from a
+        # non-member, so a room the bot writes to is a room it joins.
         if "famstack" in room_ids:
             client.join_user(room_ids["famstack"], BOT_NAME)
+        if "memories" in room_ids:
+            client.join_user(room_ids["memories"], BOT_NAME)
 
         # Log in as stacker-bot to post welcome messages
         bot_client = MatrixClient(client.base_url, server_name, client.repo_root)
         if bot_client.login(BOT_NAME, bot_pass):
-            _post_welcome_messages(bot_client, room_ids, server_name, config)
+            _post_welcome_messages(bot_client, room_ids, server_name,
+                                   config, results)
 
     return {"ok": True, "results": results}
 
 
-def _post_welcome_messages(bot, room_ids, server_name, config=None):
-    """Post welcome messages from stacker-bot to Server Room."""
+def _post_welcome_messages(bot, room_ids, server_name, config=None,
+                           results=None):
+    """Post the welcome messages from stacker-bot.
+
+    `results` collects the same item/action rows the rest of setup
+    reports, so a welcome that does not land is visible in the
+    summary instead of vanishing into a discarded return value.
+    """
+    results = results if results is not None else []
 
     if "famstack" not in room_ids:
         return
@@ -316,7 +328,15 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None):
             "what the kids want to tell their future selves.</p>"
             "<p><em>There's no wrong way to use this. Just start recording.</em></p>"
         )
-        bot.send("memories", memories_plain, html=memories_html)
+        ok, detail = bot.send("memories", memories_plain, html=memories_html)
+        # Not fatal: the room and the accounts are already built. But a
+        # silent failure leaves a new family in an empty room with
+        # nothing saying what it is for, which is the one thing this
+        # message exists to prevent.
+        results.append({
+            "item": "#memories welcome",
+            "action": "posted" if ok else f"failed: {detail}",
+        })
 
 
 def _pretty(result):

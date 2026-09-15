@@ -1024,3 +1024,131 @@ class TestPersonalMessagesPostWhole:
         assert "Should never render." not in page
         assert "Full transcript" not in page
         assert "— for Bart" in page
+
+
+class TestHomeLink:
+    """The pointer the diary hands to pages that link to it.
+
+    The diary owns its own path and its own wording, so the wiki home
+    page renders this string verbatim. Both halves are pinned here.
+    """
+
+    def test_points_at_the_diary_front_page(self):
+        assert "(/family/diary/about)" in diary.home_link("family")
+
+    def test_the_bucket_is_the_callers(self):
+        """Diary paths are relative to the shared bucket, which is named
+        in config. The compiler never reads it."""
+        assert "(/office/diary/about)" in diary.home_link("office")
+
+    def test_is_a_callout_so_it_reads_as_a_signpost(self):
+        assert diary.home_link("family").startswith("> [!tip] ")
+
+    def test_carries_the_diary_title_and_a_line_of_its_own(self):
+        link = diary.home_link("family")
+        assert "Family Diary" in link
+        assert len(link.splitlines()) == 2
+
+    def test_renders_in_the_household_language(self):
+        diary.configure_language("de")
+        try:
+            link = diary.home_link("family")
+            assert "Familientagebuch" in link
+            assert "Recordings" not in link
+        finally:
+            diary.configure_language("en")
+
+
+class TestEmptyDiary:
+    """What the diary page says before anything has been recorded.
+
+    This page is where the wiki's diary link lands, so on a fresh
+    install it is the first thing a family reads about the feature. A
+    count of zero teaches nobody anything; these tests pin that it
+    explains how to record instead.
+    """
+
+    def test_it_says_how_to_record_something(self):
+        page = diary.render_index([])
+
+        assert "Memories" in page                 # names the room
+        assert "voice message" in page.lower()
+        assert "Press record." in page
+
+    def test_it_keeps_the_diary_title_and_opening(self):
+        """Not a separate error page: the same front door, with the
+        years replaced by the note on how to fill them."""
+        page = diary.render_index([])
+
+        assert page.startswith("# Family Diary")
+        assert "## Years" not in page
+
+    def test_it_explains_the_two_things_that_are_not_obvious(self):
+        """Speaking the date and replying to a message both change what
+        the compiler does with a recording, and neither is guessable
+        from the room."""
+        page = diary.render_index([])
+
+        assert "Today is the third of March" in page
+        assert "Reply to a message" in page
+
+    def test_it_is_written_in_the_household_language(self):
+        diary.configure_language("de")
+        try:
+            page = diary.render_index([])
+            assert "Noch nichts aufgenommen" in page
+            assert "Nothing recorded yet" not in page
+        finally:
+            diary.configure_language("en")
+
+    def test_a_compiled_diary_shows_years_instead(self):
+        """The note is for the empty case only. One entry and the page
+        goes back to being an index."""
+        page = diary.render_index(_compile())
+
+        assert "Press record." not in page
+        assert "## Years" in page
+
+
+class TestBotMessagesAreNotMemories:
+    """A bot writes in the room; none of it belongs in the diary.
+
+    `stack messages setup` posts a welcome into the memories room when
+    it creates it. Without this filter that welcome is the first entry
+    of every fresh install's diary, and the family's own diary opens
+    with someone else's words.
+    """
+
+    def _event(self, sender: str, body: str, ts: int = 1_700_000_000_000):
+        return {
+            "type": "m.room.message",
+            "event_id": f"${sender}-{ts}",
+            "sender": sender,
+            "origin_server_ts": ts,
+            "content": {"msgtype": "m.text", "body": body},
+        }
+
+    def test_a_bot_message_is_dropped(self):
+        messages = diary.resolve([
+            self._event("@stacker-bot:home.local", "This is your family's..."),
+        ])
+
+        assert messages == []
+
+    def test_the_family_still_comes_through(self):
+        messages = diary.resolve([
+            self._event("@stacker-bot:home.local", "welcome", ts=1),
+            self._event("@marge:home.local", "Bart lost a tooth", ts=2),
+        ])
+
+        assert [m.sender for m in messages] == ["marge"]
+
+    def test_a_person_whose_name_ends_in_bot_is_not_a_bot(self):
+        """The convention is a localpart suffix on the whole account, so
+        the check must not fire on a name that merely ends in it."""
+        messages = diary.resolve([
+            self._event("@abbot:home.local", "Bart lost a tooth"),
+        ])
+
+        assert [m.sender for m in messages] == ["abbot"]
+

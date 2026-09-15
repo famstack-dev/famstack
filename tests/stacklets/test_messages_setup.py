@@ -64,7 +64,10 @@ class FakeMatrixClient:
         return True
 
     def send(self, room_alias, plain, html=None):
-        pass
+        # Same shape as the real client: (ok, detail). Setup reports the
+        # welcome message's outcome, so a fake that returns None here
+        # would pass while the real call path raises.
+        return True, "ok"
 
 
 def test_stacker_bot_canonical_password(tmp_path):

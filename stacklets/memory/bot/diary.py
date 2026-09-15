@@ -83,12 +83,25 @@ _STRINGS = {
         "recorded_by": "recorded by",
         "months_h": "Months", "years_h": "Years",
         "diary_title": "Family Diary",
+        "home_teaser": "Recordings and notes, read back month by month.",
         "index_intro": (
             "Your memories, kept in a chronicle to read back. Voice "
             "notes, photos, conversations you recorded. Every entry "
             "leads back to the original recording, there to be "
             "listened to, today or in twenty years."),
-        "nothing_compiled": "Nothing has been compiled yet.",
+        "getting_started": """## Nothing recorded yet
+
+This diary is written from **Memories**, the room in your family chat.
+Whatever you send there becomes an entry here: a voice message, a photo,
+a video, or a few lines of writing.
+
+- Record a voice message. It is written out here in full, and the
+  recording stays one tap away.
+- Open with the date ("Today is the third of March") and the entry is
+  filed on that day. Without one, the day you sent it counts.
+- Reply to a message to add to that memory later.
+
+There is no wrong way to use it. Press record.""",
         "across": "across",
     },
     "de": {
@@ -129,13 +142,28 @@ _STRINGS = {
         "recorded_by": "aufgenommen von",
         "months_h": "Monate", "years_h": "Jahre",
         "diary_title": "Familientagebuch",
+        "home_teaser": ("Aufnahmen und Notizen, Monat f\u00fcr Monat "
+                        "zum Nachlesen."),
         "index_intro": (
             "Eure Erinnerungen, festgehalten in einer Chronik zum "
             "Nachlesen. Sprachnotizen, Fotos, Gespr\u00e4che, die ihr "
             "aufgenommen habt. Jeder Eintrag f\u00fchrt zur\u00fcck "
-            "zur Originalaufnahme \u2014 zum Nachh\u00f6ren, heute "
+            "zur Originalaufnahme, zum Nachh\u00f6ren, heute "
             "oder in zwanzig Jahren."),
-        "nothing_compiled": "Noch nichts zusammengestellt.",
+        "getting_started": """## Noch nichts aufgenommen
+
+Dieses Tagebuch entsteht aus **Memories**, dem Raum in eurem Familienchat.
+Alles, was ihr dort sendet, wird hier zu einem Eintrag: eine Sprachnachricht,
+ein Foto, ein Video oder ein paar Zeilen Text.
+
+- Nehmt eine Sprachnachricht auf. Sie wird hier vollst\u00e4ndig
+  ausgeschrieben, und die Aufnahme bleibt einen Fingertipp entfernt.
+- Beginnt mit dem Datum ("Heute ist der dritte M\u00e4rz"), dann wird der
+  Eintrag auf diesen Tag datiert. Ohne Datum z\u00e4hlt der Tag, an dem
+  ihr gesendet habt.
+- Antwortet auf eine Nachricht, um sp\u00e4ter etwas zu erg\u00e4nzen.
+
+Es gibt kein falsches Vorgehen. Dr\u00fcckt auf Aufnahme.""",
         "across": "in",
     },
 }
@@ -347,6 +375,15 @@ def _kind_of(msgtype: str) -> str | None:
     }.get(msgtype)
 
 
+# Bot accounts are named by convention: a localpart ending in `-bot`.
+# The framework owns that definition (`MicroBot.is_bot_user`), which we
+# cannot import here without pulling a Matrix client into a module that
+# is pure on purpose. What a bot posts in the room is instruction, not
+# memory, and a diary that opens with the welcome message opens with
+# someone else's words.
+_BOT_SUFFIX = "-bot"
+
+
 def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
             zone: tzinfo = timezone.utc):
     """Room events to messages: edits applied, replies linked, bursts marked.
@@ -361,6 +398,9 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
 
     for ev in events:
         if ev.get("type") != "m.room.message":
+            continue
+        sender = (ev.get("sender") or "").split(":")[0].lstrip("@")
+        if sender.endswith(_BOT_SUFFIX):
             continue
         content = ev.get("content") or {}
         kind = _kind_of(content.get("msgtype", ""))
@@ -396,7 +436,7 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
 
         plain.append(Message(
             event_id=ev.get("event_id", ""),
-            sender=(ev.get("sender") or "").split(":")[0].lstrip("@"),
+            sender=sender,
             ts=ts,
             kind=kind,
             body=body,
@@ -1014,8 +1054,12 @@ def render_index(entries) -> str:
         "",
     ]
     if not entries:
-        lines += [_L["nothing_compiled"], ""]
-        return "\n".join(lines)
+        # An empty diary is the one moment a family needs to be told
+        # how to fill one. This page is where the wiki's diary link
+        # lands, so it has to answer "what now" rather than report a
+        # count of zero.
+        lines += [_L["getting_started"], ""]
+        return "\n".join(lines).rstrip() + "\n"
 
     lines += [f"## {_L['years_h']}", ""]
     for key, year in sorted(_by_year(entries).items(), reverse=True):
@@ -1033,6 +1077,17 @@ def render_index(entries) -> str:
     # diary is the wrong place for it. Each affected entry already
     # carries the warning on the page where it is read.
     return "\n".join(lines).rstrip() + "\n"
+
+
+def home_link(bucket: str) -> str:
+    """The diary's pointer, for a page that wants to link to it.
+
+    Both the path and the wording live here, so the linking page needs
+    to know neither. `bucket` is the shared bucket the caller prefixes
+    every diary path with; see `pages_for`.
+    """
+    return (f"> [!tip] [{_L['diary_title']}](/{bucket}/{DIARY_DIR}/about)\n"
+            f"> {_L['home_teaser']}")
 
 
 def _and_list(names: list[str]) -> str:
