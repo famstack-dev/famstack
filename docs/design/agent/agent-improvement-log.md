@@ -502,3 +502,644 @@ Result table, same three scenarios, same questions:
   upgrades. Candidates: SQLite FTS5/BM25 index over the vault, and
   hybrid search with a small embedding model. oMLX already serves
   embedding models (Qwen3-Embedding-8B, bge-m3, LFM2.5-Embedding).
+
+## 2026-09-15 13:23 UTC - rig turn (topic:groceries)
+
+- message: `What is still open on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 47.07 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 7442 | 0 | 57 | 17.49 | 18.697 |
+| 2 | 4 | 7631 | 4096 | 58 | 8.9 | 10.023 |
+| 3 | 6 | 7842 | 4096 | 65 | 9.48 | 10.732 |
+
+- note: A/B: tool trim (6 schemas dropped) + Sources compliance fix
+
+## 2026-09-15 13:24 UTC - rig turn (dm:homer)
+
+- message: `What is still on my errands list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 45.8 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 7442 | 4096 | 66 | 9.34 | 10.616 |
+| 2 | 4 | 7647 | 4096 | 81 | 8.88 | 13.323 |
+| 3 | 6 | 7881 | 4096 | 95 | 9.56 | 14.437 |
+
+- note: A/B: tool trim (6 schemas dropped) + Sources compliance fix
+
+## 2026-09-15 13:24 UTC - rig turn (topic:camping)
+
+- message: `Bart: what is still open on the packing list for the camping trip?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 38.42 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 7449 | 4096 | 67 | 9.24 | 10.545 |
+| 2 | 4 | 7655 | 4096 | 45 | 8.95 | 9.813 |
+| 3 | 6 | 7863 | 4096 | 79 | 9.46 | 10.997 |
+
+- note: A/B: tool trim (6 schemas dropped) + Sources compliance fix
+
+## 2026-09-15 13:27 UTC - rig turn (topic:groceries)
+
+- message: `What is still open on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 17.5 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8364 | 8192 | 69 | 2.05 | 3.426 |
+| 2 | 4 | 8565 | 8192 | 59 | 1.74 | 2.889 |
+| 3 | 6 | 8777 | 8192 | 77 | 2.34 | 3.862 |
+
+- note: A/B: tool trim + cache-pad alignment (prefix ~8330, two stable blocks)
+
+## 2026-09-15 13:27 UTC - rig turn (dm:homer)
+
+- message: `What is still on my errands list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 33.8 s, 6 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8364 | 8192 | 90 | 2.09 | 3.86 |
+| 2 | 4 | 8474 | 8192 | 52 | 1.53 | 2.547 |
+| 3 | 6 | 8567 | 8192 | 52 | 1.74 | 2.756 |
+| 4 | 8 | 8772 | 8192 | 83 | 2.33 | 3.974 |
+| 5 | 10 | 8898 | 8192 | 56 | 2.65 | 3.754 |
+| 6 | 12 | 8993 | 8192 | 186 | 2.79 | 6.511 |
+
+- note: A/B: tool trim + cache-pad alignment (prefix ~8330, two stable blocks)
+
+## 2026-09-15 13:27 UTC - rig turn (topic:camping)
+
+- message: `Bart: what is still open on the packing list for the camping trip?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 16.73 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8371 | 8192 | 69 | 2.1 | 3.46 |
+| 2 | 4 | 8517 | 8192 | 46 | 1.66 | 2.555 |
+| 3 | 6 | 8726 | 8192 | 74 | 2.21 | 3.685 |
+
+- note: A/B: tool trim + cache-pad alignment (prefix ~8330, two stable blocks)
+
+## 2026-09-15 - Fix 4: tool trim, and the cache-block alignment finding
+
+Tool trim: a new runtime shim (tool_trim.py, AGENT_TOOL_TRIM=0 to
+disable) drops six unused tool schemas the config cannot disable:
+cron, long_task, complete_goal, spawn, write_stdin,
+list_exec_sessions. Prefix: 9,184 -> 7,442 tokens.
+
+Result: wall times got WORSE (47/46/38 s). The rows show why: with a
+7,442-token prefix only one 4096-token cache block lies fully inside
+the stable prefix, so every call re-prefilled ~3.4K tokens (~9 s).
+The 9,184-token prefix sat just past the 8,192 boundary and paid only
+a ~1K tail.
+
+Rule for this serving stack (4096-token snapshot blocks):
+per-call prefill cost ~= (prefix mod 4096) + new history tokens.
+A smaller prefix is only faster if it lands just ABOVE a block
+boundary. Blind token cutting can cross a boundary and double the
+per-call cost.
+
+Fix: a declarative alignment pad, workspace skill `zz-cache-pad`
+(inert text, always-on, sorts last among skills). Tuned in the rig to
+land the prefix at ~8,330 tokens, just past 8,192.
+
+Result table (same scenarios; baseline from this morning):
+
+| Scenario | Baseline | Diet (9,184) | Trim (7,442) | Trim+pad (~8,330) |
+|---|---|---|---|---|
+| topic:groceries | 59.8 s | 23.5 s | 47.1 s | 17.5 s |
+| dm:homer | 54.2 s | 24.3 s | 45.8 s | 33.8 s* |
+| topic:camping | 41.6 s | 23.8 s | 38.4 s | 16.7 s |
+
+Warm TTFT is now 1.5-2.8 s per call with both blocks cached.
+
+*The DM turn took 6 calls: a rig artifact. Without a Matrix sender
+the brief cannot name the speaker, so the model searched for who
+"my" refers to. Production supplies the speaker line per turn. Rig
+convention from now on: prefix the speaker in every message, DMs
+included.
+
+## 2026-09-15 - Retrieval research result (queued work)
+
+Research verdict for the search upgrade (full brief in the session,
+key sources: sqlite.org/fts5, arXiv 2605.15184 "Is Grep All You
+Need?", Liquid AI LFM2.5-Embedding):
+
+1. First iteration: SQLite FTS5 + BM25, one DB file next to the vault
+   clone, incremental upsert on git change, `unicode61
+   remove_diacritics 2` tokenizer (German umlauts), quoted prefix
+   queries from the model's 2-4 keywords, snippet() output. Stdlib
+   only, <10 ms per query. Optional trigram companion table for
+   German compound words.
+2. Stretch: hybrid via sqlite-vec + LFM2.5-Embedding-350M (already
+   served by oMLX), RRF fusion, whole-page embeddings. ~50-250 ms.
+   Evidence says hybrid mainly cuts search iterations on paraphrase
+   and cross-language queries; lexical-first is the 2026 consensus
+   for iterating agents.
+3. Skip: Meilisearch/Typesense (extra service), DuckDB FTS (no
+   incremental update), tantivy (unneeded below ~100K docs).
+
+Next work package (user priority): map the context build for threaded
+communication (nanobot session keys, max_messages replay, idle
+compaction), fold the thread root into the session key, and cap long
+threads.
+
+## 2026-09-15 - Fix 5: thread-scoped sessions and the context-build map
+
+How nanobot 0.2.2 builds context (mapped from the pinned source):
+
+1. Session key: `channel:chat_id` (the room id), unless the inbound
+   message carries `session_key_override` - a seam upstream added
+   exactly for thread-scoped sessions, unused by the Matrix channel.
+2. History replay: last `max_messages` (default 120) messages, then a
+   token-budget slice from the tail.
+3. Idle compaction: after `session_ttl_minutes` (default 15) idle,
+   the session is archived and an LLM summary replaces it on resume.
+   This is compaction at a natural boundary; it also resets the
+   cache at a moment nobody is waiting.
+
+Changes:
+
+1. New runtime shim thread_session.py (AGENT_THREAD_SESSIONS=0 to
+   disable): threaded messages get
+   `matrix:<room>#thread:<root>` as session key. Threads stop
+   sharing the room transcript; replies still route by room id.
+   Known v1 gap: a new thread session does not carry the root
+   message's text (it lives in the room session).
+2. `max_messages: 60` in config.json: a hard cap for long threads on
+   top of the idle compaction. When the cap engages, the history
+   window slides and costs a cache re-prefill; the 15-minute
+   compaction keeps that case rare.
+3. Verification: all four patch points confirmed in the built image
+   (handle_with_thread_session, register_trimmed,
+   _build_messages_lean, _runtime_lines).
+
+Validation gap: the rig cannot produce real Matrix thread events.
+Thread isolation needs a manual Matrix test (two parallel threads in
+one room, check that answers do not cross) or the e2e rig lane.
+
+## 2026-09-15 14:02 UTC - rig turn (topic:birthday)
+
+- message: `Marge: what is still open on the party checklist, and is the science kit gift wrapped yet?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 59.45 s, 5 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8469 | 0 | 132 | 20.5 | 23.141 |
+| 2 | 5 | 8702 | 8192 | 108 | 2.09 | 4.27 |
+| 3 | 8 | 8988 | 8192 | 134 | 2.85 | 5.534 |
+| 4 | 11 | 9185 | 8192 | 128 | 3.33 | 5.912 |
+| 5 | 14 | 10016 | 8192 | 187 | 5.46 | 9.224 |
+
+- note: batch-search test: two independent lookups in one turn via queries[]
+
+## 2026-09-15 - Fix 6: batched search, cap lowered to 40
+
+Question 1: is max_messages 60 too long? Grounded answer: the token
+budget in nanobot's history replay only activates when a context
+window is configured, and ours is not. So max_messages is the only
+cap. 60 messages of chat plus tool results is ~5-9K history tokens on
+top of the ~8.3K prefix; with lean_state on, that tail re-prefills
+every call (~11-20 s/call at the top). Thread-scoped sessions and the
+15-minute idle compaction keep typical sessions far below the cap, so
+the cap is a backstop. Lowered to 40: rare loss, bounded worst case.
+
+Question 2: multiple searches per tool call? nanobot executes ALL
+tool calls of one assistant message in one iteration, so parallel
+calls already collapse round trips. Added both levers:
+1. memory_search gains an optional `queries` array (up to three
+   keyword sets, run concurrently, labeled result blocks).
+2. One skill line instructs batching independent lookups.
+
+Rig test (two-part question, topic:birthday): the model emitted TWO
+parallel memory_search calls in iteration 1. Both question parts
+answered correctly with correct Sources. 5 iterations total, because
+part two lives in marge's personal bucket and the family/ scope
+guidance made the first probes miss.
+
+Two observations for the backlog:
+1. Scope-first guidance costs iterations when the answer is in a
+   personal bucket. The FTS5 upgrade with ranked global search will
+   remove most of this class.
+2. Privacy gap found by the gift-ideas trap: Marge asked in the
+   shared birthday room, and the reply named her private gift note
+   content and linked the page. No page-audience concept exists yet.
+   Needs a design (audience frontmatter or bucket rules) before
+   private notes and shared rooms mix in production.
+
+## 2026-09-15 14:07 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter to the shopping list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 30.26 s, 5 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8458 | 8192 | 72 | 2.18 | 3.606 |
+| 2 | 4 | 8642 | 8192 | 55 | 1.98 | 3.043 |
+| 3 | 6 | 8850 | 8192 | 101 | 2.5 | 4.526 |
+| 4 | 8 | 8975 | 8192 | 88 | 2.81 | 4.568 |
+| 5 | 10 | 9084 | 8192 | 37 | 3.07 | 3.788 |
+
+- note: write-path scenario 1: add an item
+
+## 2026-09-15 14:08 UTC - rig turn (topic:groceries)
+
+- message: `Homer: how many items are still open on the shopping list, and which ones?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 18.3 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 12 | 9258 | 8192 | 76 | 4.22 | 5.74 |
+| 2 | 14 | 9512 | 8192 | 105 | 4.19 | 6.259 |
+
+- note: staleness test, lean_state ON: list changed out of band after the agent's last read; correct answer is 6 open incl. eggs+flour, rye bread ticked
+
+## 2026-09-15 14:10 UTC - rig turn (stale:off)
+
+- message: `Homer: how many items are still open on the shopping list, and which ones?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 10.89 s, 1 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 9013 | 8192 | 77 | 3.77 | 5.313 |
+
+- note: staleness test, lean_state OFF: prior read still verbatim in context; correct answer excludes oat milk and includes jam
+
+## 2026-09-15 - Rig write path, and the staleness A/B
+
+Write path shipped in the rig: lab-api now implements
+`memory write <page> --by <actor> [--patch] [--dry-run]` with the
+production buffer-file contract, checkbox-aware diff sentences
+("added 1: butter"), and git commits authored as the actor.
+Scenario "Homer: please add butter to the shopping list": correct
+apply_patch, correct file state, correct commit, reply relays the
+store's sentence. 5 calls, 30.3 s.
+
+Staleness A/B (the question: what happens when the agent must rely
+on current data but stale data sits in its context). Setup: agent
+reads the list, another person edits the list out of band, agent is
+asked again.
+
+| Arm | Behavior | Answer |
+|---|---|---|
+| lean_state ON (production) | prior read decayed to a re-run pointer; model re-read the page (2 calls, 18.3 s) | CURRENT list: eggs+flour present, rye bread gone. Cosmetic slip: wrote "7" above a correct 6-item list. |
+| lean_state OFF (append-only) | one LLM call, no re-fetch | STALE list: oat milk still open, jam missing, and a Sources line citing the page it never re-read |
+
+Decision: lean_state STAYS. The review's removal recommendation is
+reversed. With the aligned prefix its rewrites land in the tail that
+re-prefills anyway, so it costs nothing until history crosses the
+next 4096 boundary, which the 40-message cap and idle compaction
+bound. The AGENT_LEAN_STATE switch remains for experiments.
+
+Open staleness risk noted: the idle-compaction summary is written by
+the consolidator LLM and could bake point-in-time facts ("the list
+has 5 items") into the resumed context with no pointer to decay.
+Check the consolidator prompt; if needed, shim a "state facts as
+of-then, not as current" instruction into it.
+
+## 2026-09-15 14:15 UTC - rig turn (topic:groceries)
+
+- message: `Homer: what is on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 17.58 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8458 | 8192 | 68 | 2.14 | 3.472 |
+| 2 | 4 | 8638 | 8192 | 45 | 1.93 | 2.811 |
+| 3 | 6 | 8836 | 8192 | 61 | 2.5 | 3.702 |
+
+- note: list-lifecycle test 1/4: read
+
+## 2026-09-15 14:15 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter, eggs and flour to the list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 21.25 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8776 | 8192 | 63 | 3.19 | 4.418 |
+| 2 | 10 | 8992 | 8192 | 127 | 2.83 | 5.359 |
+| 3 | 12 | 9144 | 8192 | 44 | 3.27 | 4.128 |
+
+- note: list-lifecycle test 2/4: add three items
+
+## 2026-09-15 14:16 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please restructure the list by grocery category (dairy, bakery, produce, household)`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 33.98 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 14 | 9273 | 8192 | 55 | 4.35 | 5.44 |
+| 2 | 16 | 9505 | 8192 | 500 | 4.09 | 14.273 |
+| 3 | 18 | 10028 | 8192 | 70 | 5.51 | 6.917 |
+
+- note: list-lifecycle test 3/4: restructure by category via write_file
+
+## 2026-09-15 14:17 UTC - rig turn (topic:groceries)
+
+- message: `Homer: show me the new list, and cross off the apples`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 45.54 s, 4 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 20 | 10193 | 8192 | 56 | 6.71 | 7.82 |
+| 2 | 22 | 10478 | 8192 | 127 | 6.73 | 9.285 |
+| 3 | 24 | 10661 | 8192 | 174 | 7.15 | 10.688 |
+| 4 | 26 | 10858 | 8192 | 119 | 7.78 | 10.213 |
+
+- note: list-lifecycle test 4/4: show restructured list and tick one item
+
+## 2026-09-15 14:21 UTC - rig turn (topic:groceries)
+
+- message: `Homer: what is on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 28.73 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8502 | 4096 | 70 | 11.97 | 13.468 |
+| 2 | 4 | 8684 | 8192 | 45 | 2.06 | 2.941 |
+| 3 | 6 | 8882 | 8192 | 64 | 2.59 | 3.856 |
+
+- note: list-lifecycle rerun after frontmatter guard + restore rule
+
+## 2026-09-15 14:21 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter, eggs and flour to the list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 22.07 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8822 | 8192 | 63 | 3.3 | 4.565 |
+| 2 | 10 | 9038 | 8192 | 121 | 3.0 | 5.4 |
+| 3 | 12 | 9184 | 8192 | 44 | 3.37 | 4.237 |
+
+- note: list-lifecycle rerun after frontmatter guard + restore rule
+
+## 2026-09-15 14:22 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please restructure the list by grocery category (dairy, bakery, produce, household)`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 77.29 s, 7 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 14 | 9313 | 8192 | 55 | 4.53 | 5.636 |
+| 2 | 16 | 9545 | 8192 | 614 | 4.29 | 16.957 |
+| 3 | 18 | 10182 | 8192 | 108 | 5.97 | 8.168 |
+| 4 | 20 | 10332 | 8192 | 88 | 6.32 | 8.075 |
+| 5 | 22 | 10476 | 8192 | 62 | 6.74 | 7.967 |
+| 6 | 24 | 10750 | 8192 | 169 | 7.44 | 10.871 |
+| 7 | 26 | 10943 | 8192 | 145 | 7.92 | 10.884 |
+
+- note: list-lifecycle rerun after frontmatter guard + restore rule
+
+## 2026-09-15 14:23 UTC - rig turn (topic:groceries)
+
+- message: `Homer: show me the new list, and cross off the apples`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 57.04 s, 4 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 28 | 11250 | 8192 | 56 | 9.7 | 10.837 |
+| 2 | 30 | 11519 | 8192 | 81 | 9.49 | 11.112 |
+| 3 | 32 | 11656 | 8192 | 174 | 9.97 | 13.546 |
+| 4 | 34 | 11853 | 8192 | 106 | 10.47 | 12.651 |
+
+- note: list-lifecycle rerun after frontmatter guard + restore rule
+
+## 2026-09-15 14:35 UTC - rig turn (topic:groceries)
+
+- message: `Homer: what is on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 25.78 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8252 | 4096 | 56 | 11.28 | 12.528 |
+| 2 | 4 | 8440 | 8192 | 55 | 1.37 | 2.459 |
+| 3 | 6 | 8648 | 8192 | 65 | 2.0 | 3.301 |
+
+- note: list_edit experiment, prose instructions
+
+## 2026-09-15 14:35 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter, eggs and flour to the list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 34.14 s, 4 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8559 | 4096 | 87 | 12.34 | 14.183 |
+| 2 | 10 | 8667 | 8192 | 69 | 2.0 | 3.382 |
+| 3 | 12 | 8757 | 8192 | 68 | 2.27 | 3.658 |
+| 4 | 14 | 8846 | 8192 | 26 | 2.47 | 2.967 |
+
+- note: list_edit experiment, prose instructions
+
+## 2026-09-15 14:36 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please restructure the list by grocery category (dairy, bakery, produce, household)`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 56.44 s, 6 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 16 | 9136 | 8192 | 64 | 4.15 | 5.418 |
+| 2 | 18 | 9377 | 8192 | 279 | 3.76 | 9.41 |
+| 3 | 20 | 9679 | 8192 | 97 | 4.66 | 6.609 |
+| 4 | 22 | 9988 | 8192 | 129 | 5.48 | 8.145 |
+| 5 | 24 | 10173 | 8192 | 174 | 6.01 | 9.629 |
+| 6 | 26 | 10371 | 8192 | 82 | 6.5 | 8.15 |
+
+- note: list_edit experiment, prose instructions
+
+## 2026-09-15 14:37 UTC - rig turn (topic:groceries)
+
+- message: `Homer: show me the new list, and cross off the apples`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 35.05 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 28 | 10483 | 8192 | 61 | 7.58 | 8.81 |
+| 2 | 30 | 10757 | 8192 | 78 | 7.45 | 9.02 |
+| 3 | 32 | 10858 | 8192 | 117 | 7.78 | 10.178 |
+
+- note: list_edit experiment, prose instructions
+
+## 2026-09-15 14:40 UTC - rig turn (topic:groceries)
+
+- message: `Homer: what is on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 25.41 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8222 | 4096 | 59 | 11.14 | 12.407 |
+| 2 | 4 | 8413 | 8192 | 55 | 1.29 | 2.368 |
+| 3 | 6 | 8621 | 8192 | 66 | 1.9 | 3.205 |
+
+- note: list_edit + pseudocode skill variant
+
+## 2026-09-15 14:40 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter, eggs and flour to the list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 34.21 s, 4 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8532 | 4096 | 91 | 12.3 | 14.225 |
+| 2 | 10 | 8644 | 8192 | 70 | 1.99 | 3.374 |
+| 3 | 12 | 8735 | 8192 | 69 | 2.18 | 3.538 |
+| 4 | 14 | 8825 | 8192 | 26 | 2.4 | 2.892 |
+
+- note: list_edit + pseudocode skill variant
+
+## 2026-09-15 14:41 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please restructure the list by grocery category (dairy, bakery, produce, household)`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 36.75 s, 4 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 16 | 9115 | 8192 | 61 | 4.06 | 5.273 |
+| 2 | 18 | 9353 | 8192 | 329 | 3.75 | 10.399 |
+| 3 | 20 | 9705 | 8192 | 88 | 4.68 | 6.459 |
+| 4 | 22 | 10021 | 8192 | 99 | 5.46 | 7.438 |
+
+- note: list_edit + pseudocode skill variant
+
+## 2026-09-15 14:42 UTC - rig turn (topic:groceries)
+
+- message: `Homer: show me the new list, and cross off the apples`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 31.08 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 24 | 10020 | 8192 | 77 | 6.41 | 7.962 |
+| 2 | 26 | 10120 | 8192 | 55 | 5.79 | 6.885 |
+| 3 | 28 | 10404 | 8192 | 112 | 6.52 | 8.781 |
+
+- note: list_edit + pseudocode skill variant
+
+## 2026-09-15 14:43 UTC - rig turn (topic:groceries)
+
+- message: `Homer: what is on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 26.47 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8222 | 4096 | 66 | 11.1 | 12.541 |
+| 2 | 4 | 8400 | 8192 | 55 | 1.3 | 2.389 |
+| 3 | 6 | 8608 | 8192 | 67 | 1.89 | 3.222 |
+
+- note: final validation: list_edit + pseudocode skill + untick guard
+
+## 2026-09-15 14:44 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter, eggs and flour to the list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 30.75 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8552 | 4096 | 212 | 12.32 | 16.697 |
+| 2 | 12 | 8805 | 8192 | 33 | 3.24 | 3.877 |
+
+- note: final validation: list_edit + pseudocode skill + untick guard
+
+## 2026-09-15 14:45 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please restructure the list by grocery category (dairy, bakery, produce, household)`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 48.85 s, 5 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 14 | 9102 | 8192 | 70 | 4.07 | 5.463 |
+| 2 | 16 | 9349 | 8192 | 237 | 3.73 | 8.499 |
+| 3 | 18 | 9644 | 8192 | 170 | 4.56 | 8.0 |
+| 4 | 20 | 9873 | 8192 | 213 | 5.09 | 9.449 |
+| 5 | 22 | 10110 | 8192 | 78 | 5.75 | 7.313 |
+
+- note: final validation: list_edit + pseudocode skill + untick guard
+
+## 2026-09-15 14:45 UTC - rig turn (topic:groceries)
+
+- message: `Homer: show me the new list, and cross off the apples`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 26.64 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 24 | 10445 | 8192 | 109 | 7.47 | 9.693 |
+| 2 | 27 | 10809 | 8192 | 105 | 7.54 | 9.696 |
+
+- note: final validation: list_edit + pseudocode skill + untick guard
+
+## 2026-09-15 - List-lifecycle experiments: verdict
+
+Test: one conversation - read the list, add three items, restructure
+by category, show and tick one item. Oracle: the file's end state.
+
+| Variant | Calls | Wall | End state |
+|---|---|---|---|
+| Free-form editing (baseline) | 17 | 185 s | WRONG first run (lost [x], broken frontmatter); correct after guards + repair rule, at 7-call restructures |
+| list_edit tool, prose skill | 16 | 151 s | correct (one untick + model repair) |
+| list_edit tool, pseudocode skill | 14 | 127 s | WRONG: restructure unticked an item, model did not repair |
+| list_edit + pseudocode + untick guard | 12 | 133 s | CORRECT, no repair needed |
+
+Shipped from this:
+1. list_edit tool (runtime/list_tool.py): add/tick/untick/remove, one
+   item per call; the store matches the item, refuses ambiguity with
+   candidates, preserves all other state by construction.
+2. Pseudocode skill: the family-memory skill rewritten as terse rule
+   constructs. ~300 tokens saved, fewer calls, Sources kept.
+3. Untick guard at the write seam (memory/cli/write.py, mirrored in
+   lab-api): a whole-page todos write that reopens or removes items
+   is refused with the items named. Lesson: routing rules compress
+   into pseudocode fine; safety rules move OUT of the prompt into
+   deterministic code. The pseudocode variant's one failure was a
+   safety rule; the guard closed it.
+4. Cache pad retuned twice (53 -> 80 lines); prefix at ~8,213.
+
+Production gap: `stack memory list-edit` exists only in the rig's
+lab-api. The memory stacklet needs the same verb (same contract,
+matching, sentences) plus a famstack-api allowlist entry before the
+agent image ships.
+
+On a dedicated list service (user question): recommendation is no.
+The fights were about model discipline on whole-page rewrites and
+missing item verbs, not about storage. Both are now solved at the
+write seam, and the end state is correct with service-grade
+semantics. A separate service would fork the source of truth away
+from the vault (files, git audit, wiki, human editing) and re-import
+a sync problem. The pragmatic endpoint of the current path delivers
+the same reliability: item ops via list-edit (done), and later a
+server-side list-restructure op (model sends {section: [items]} as
+data, the store rebuilds the page deterministically) so write_file
+disappears from list handling entirely.
+
+## 2026-09-15 - Prior-art research for the pseudocode post (material only)
+
+Archived for the separate blog session. Key points from the research
+brief (full sources in the session transcript):
+
+- Pseudocode prompting is established: Mishra et al., EMNLP 2023
+  (+7-16 F1 on non-instruction-tuned models); Puerto et al., EMNLP
+  2024 (code format helps conditional reasoning, +7 to +22 points);
+  arXiv:2411.10541 (format alone swings up to 40%, small models are
+  the format-sensitive ones). SudoLang (2023) is the practitioner
+  canon. Do not claim novelty for pseudocode prompts.
+- Guards-over-prompts is also established: 12-Factor Agents, NeMo
+  Guardrails, Claude Code hooks. Do not claim novelty there either.
+- The defensible novel angle is the interaction, with our measured
+  failure as the worked example: compressing prose to pseudocode
+  preferentially drops rare-firing conditionals, which is exactly the
+  rule class the guardrails literature says should not live in
+  prompts at all. Nearest published analogue: KV-cache compression
+  degrading a defense instruction first (arXiv:2510.00231). Nobody
+  has published this for prompt-style compression on small local
+  models. n=1, one model: state that up front.
+- pi's <1K-token prompt argues minimal prompts because frontier
+  models are strong; our result is the inversion for weak local
+  models: not less prompt, denser encoding plus code guards.
+- Candidate framing ranked first by the research: "Pseudocode is
+  lossy compression, and it drops exactly the rules you can least
+  afford to lose."

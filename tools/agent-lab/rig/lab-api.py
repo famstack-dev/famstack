@@ -124,6 +124,190 @@ def memory_history(argv: list[str]) -> tuple[str, int]:
     return (r.stdout or "no history\n"), (0 if r.returncode == 0 else 1)
 
 
+_BOX = re.compile(r"^\s*- \[([ xX])\]\s*(.+?)\s*$")
+
+
+def _boxes(text: str) -> dict[str, bool]:
+    """Map checkbox item text -> done state."""
+    out = {}
+    for ln in text.splitlines():
+        if m := _BOX.match(ln):
+            out[m.group(2)] = m.group(1).lower() == "x"
+    return out
+
+
+def _diff_sentence(old: str, new: str, page: str) -> str:
+    """Describe what a write actually changed, like the real store does."""
+    ob, nb = _boxes(old), _boxes(new)
+    ticked = [t for t in ob if t in nb and not ob[t] and nb[t]]
+    unticked = [t for t in ob if t in nb and ob[t] and not nb[t]]
+    added = [t for t in nb if t not in ob]
+    removed = [t for t in ob if t not in nb]
+    parts = []
+    if ticked:
+        parts.append(f"ticked off {len(ticked)}: " + "; ".join(ticked))
+    if unticked:
+        parts.append(f"unticked {len(unticked)}: " + "; ".join(unticked))
+    if added:
+        parts.append(f"added {len(added)}: " + "; ".join(added))
+    if removed:
+        parts.append(f"REMOVED {len(removed)}: " + "; ".join(removed))
+    return "; ".join(parts) if parts else f"updated {page}"
+
+
+def memory_write(argv: list[str]) -> tuple[str, int]:
+    parser = argparse.ArgumentParser(prog="stack memory write", add_help=False)
+    parser.add_argument("page")
+    parser.add_argument("--by", default="someone")
+    parser.add_argument("--patch", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    try:
+        ns = parser.parse_args(argv)
+    except SystemExit:
+        return parser.format_usage(), 2
+
+    buffer = Path(ARGS.buffer)
+    if not buffer.exists():
+        return "no write buffer\n", 3
+    payload = buffer.read_text()
+    path = Path(ARGS.vault) / ns.page
+    old = path.read_text() if path.exists() else ""
+
+    if ns.patch:
+        try:
+            edits = json.loads(payload)
+        except json.JSONDecodeError as e:
+            return f"patch is not valid JSON: {e}\n", 2
+        new = old
+        for edit in edits:
+            old_text = edit.get("old_text") or ""
+            if old_text and old_text not in new:
+                return (f"old_text was not found in {ns.page}; the page has "
+                        f"changed. Read it again and patch what is there "
+                        f"now.\n"), 1
+            if old_text:
+                new = new.replace(old_text, edit.get("new_text") or "", 1)
+            else:
+                new = new + (edit.get("new_text") or "")
+    else:
+        new = payload
+
+    # Same frontmatter guard as the production write seam.
+    if new.lstrip().startswith("---") and not new.startswith("---\n"):
+        return (f"{ns.page} must start with '---' at column one; the write "
+                "begins with whitespace before the frontmatter. Re-send the "
+                "page with the frontmatter block exactly as you read it.\n"), 1
+    if old.startswith("---\n") and not new.startswith("---\n"):
+        return (f"{ns.page} has frontmatter and this write drops it. Keep "
+                "the frontmatter block exactly as you read it.\n"), 1
+
+    # Same restructure guard as the production write seam: a whole-page
+    # rewrite of a list must not reopen or remove items.
+    if not ns.patch and ns.page.endswith("todos.md"):
+        ob, nb = _boxes(old), _boxes(new)
+        lost = [t for t in ob if (t in nb and ob[t] and not nb[t]) or t not in nb]
+        if lost:
+            return (f"this rewrite reopens or removes items: "
+                    f"{'; '.join(lost)}. A restructure keeps every item and "
+                    "every [x]. Resend the full page with them unchanged. To "
+                    "reopen or remove an item on purpose, use list_edit.\n"), 1
+
+    sentence = _diff_sentence(old, new, ns.page)
+    if ns.dry_run:
+        return f"dry run: {sentence}\n", 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new)
+    env = {"GIT_AUTHOR_NAME": ns.by, "GIT_AUTHOR_EMAIL": f"{ns.by}@demo.invalid",
+           "GIT_COMMITTER_NAME": ns.by, "GIT_COMMITTER_EMAIL": f"{ns.by}@demo.invalid"}
+    subprocess.run(["git", "add", ns.page], cwd=ARGS.vault, env=env, timeout=10)
+    subprocess.run(["git", "commit", "-q", "-m", f"docs(memory): {sentence[:60]}"],
+                   cwd=ARGS.vault, env=env, timeout=10)
+    return sentence + "\n", 0
+
+
+def _commit(page: str, actor: str, sentence: str) -> None:
+    env = {"GIT_AUTHOR_NAME": actor, "GIT_AUTHOR_EMAIL": f"{actor}@demo.invalid",
+           "GIT_COMMITTER_NAME": actor, "GIT_COMMITTER_EMAIL": f"{actor}@demo.invalid"}
+    subprocess.run(["git", "add", page], cwd=ARGS.vault, env=env, timeout=10)
+    subprocess.run(["git", "commit", "-q", "-m", f"docs(memory): {sentence[:60]}"],
+                   cwd=ARGS.vault, env=env, timeout=10)
+
+
+def memory_list_edit(argv: list[str]) -> tuple[str, int]:
+    """Item-level list operation. The store matches the item, so the
+    model cannot lose unrelated state. Ambiguity is an answer, not a
+    guess."""
+    parser = argparse.ArgumentParser(prog="stack memory list-edit", add_help=False)
+    parser.add_argument("page")
+    parser.add_argument("--op", required=True,
+                        choices=["add", "tick", "untick", "remove"])
+    parser.add_argument("--item", required=True)
+    parser.add_argument("--section", default=None)
+    parser.add_argument("--by", default="someone")
+    try:
+        ns = parser.parse_args(argv)
+    except SystemExit:
+        return parser.format_usage(), 2
+
+    path = Path(ARGS.vault) / ns.page
+    if not path.exists():
+        return f"no such page: {ns.page}\n", 1
+    lines = path.read_text().splitlines()
+    boxes = [(i, m.group(1).lower() == "x", m.group(2))
+             for i, ln in enumerate(lines) if (m := _BOX.match(ln))]
+
+    if ns.op == "add":
+        if any(ns.item.lower() == text.lower() for _, _, text in boxes):
+            return f"'{ns.item}' is already on the list\n", 0
+        new_line = f"- [ ] {ns.item}"
+        insert_at = len(lines)
+        if ns.section:
+            heads = [i for i, ln in enumerate(lines)
+                     if ln.lower().lstrip("# ").strip() == ns.section.lower()
+                     and ln.lstrip().startswith("#")]
+            if heads:
+                insert_at = heads[0] + 1
+                while insert_at < len(lines) and not lines[insert_at].lstrip().startswith("#"):
+                    insert_at += 1
+                while insert_at > heads[0] + 1 and not lines[insert_at - 1].strip():
+                    insert_at -= 1
+        lines.insert(insert_at, new_line)
+        path.write_text("\n".join(lines) + "\n")
+        sentence = f"added 1: {ns.item}"
+        _commit(ns.page, ns.by, sentence)
+        return sentence + "\n", 0
+
+    matches = [b for b in boxes if ns.item.lower() == b[2].lower()]
+    if not matches:
+        matches = [b for b in boxes if ns.item.lower() in b[2].lower()]
+    if not matches:
+        open_items = "; ".join(t for _, done, t in boxes if not done)
+        return (f"no item matching '{ns.item}' on {ns.page}. "
+                f"Open items: {open_items}\n"), 1
+    if len(matches) > 1:
+        return (f"'{ns.item}' is ambiguous, it matches: "
+                + "; ".join(t for _, _, t in matches)
+                + ". Name the item more exactly.\n"), 1
+
+    idx, done, text = matches[0]
+    if ns.op == "tick":
+        if done:
+            return f"'{text}' is already ticked\n", 0
+        lines[idx] = lines[idx].replace("- [ ]", "- [x]", 1)
+        sentence = f"ticked off 1: {text}"
+    elif ns.op == "untick":
+        if not done:
+            return f"'{text}' is already open\n", 0
+        lines[idx] = re.sub(r"- \[[xX]\]", "- [ ]", lines[idx], count=1)
+        sentence = f"unticked 1: {text}"
+    else:
+        del lines[idx]
+        sentence = f"REMOVED 1: {text}"
+    path.write_text("\n".join(lines) + "\n")
+    _commit(ns.page, ns.by, sentence)
+    return sentence + "\n", 0
+
+
 def dispatch(line: str) -> tuple[str, int]:
     try:
         argv = shlex.split(line)
@@ -131,7 +315,8 @@ def dispatch(line: str) -> tuple[str, int]:
         return f"parse error: {e}\n", 2
     if len(argv) >= 2 and argv[0] == "memory":
         handlers = {"search": memory_search, "person": memory_person,
-                    "history": memory_history}
+                    "history": memory_history, "write": memory_write,
+                    "list-edit": memory_list_edit}
         if argv[1] in handlers:
             return handlers[argv[1]](argv[2:])
     return f"lab-api: command not allowed in the rig: {' '.join(argv[:2])}\n", 126
@@ -152,6 +337,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--listen", type=int, default=42011)
     parser.add_argument("--vault", default=str(Path(__file__).parent / "state" / "vault"))
+    parser.add_argument("--buffer", default=str(
+        Path(__file__).parent / "state" / "nanobot" / ".write-buffer"))
     parser.add_argument("--llm", default="http://localhost:8888/v1")
     parser.add_argument("--key", default="none")
     parser.add_argument("--model", default=None)
