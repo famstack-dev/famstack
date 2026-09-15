@@ -15,9 +15,12 @@ from types import SimpleNamespace
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
+from stack.web import FetchOutcome  # noqa: E402
+from stack.web.quality import Verdict  # noqa: E402
 
 
 def _source(*, text="article body", source_uri=None, title_hint="A Title"):
@@ -25,11 +28,31 @@ def _source(*, text="article body", source_uri=None, title_hint="A Title"):
 
 
 class FakeExtractor:
-    def __init__(self, result):
+    """Stands in for the real extractor at the pipeline's seam.
+
+    The URL path asks for `fetch`, because it needs the gate's verdict
+    to explain a refusal; the text path still asks for `extract`. A
+    None result means the gate refused the page, and `verdict` says
+    which refusal, so a test can pin what the pipeline was told rather
+    than just that something went wrong.
+    """
+
+    def __init__(self, result, verdict="challenge"):
         self._result = result
+        self._verdict = verdict
 
     async def extract(self, _arg):
         return self._result
+
+    async def fetch(self, url):
+        if self._result is None:
+            return FetchOutcome(
+                verdict=Verdict(self._verdict, f"the site returned a {self._verdict}"),
+                url=url,
+            )
+        return FetchOutcome(
+            verdict=Verdict("ok", "extracted"), content=self._result, url=url,
+        )
 
 
 class FakeClassifier:
@@ -119,14 +142,17 @@ class FakeNotifier:
         self.acknowledged += 1
 
 
-def _pipeline(*, mirror, classifier=None, capture_keep_body=False,
-              llm=None, text_extractor=None):
+_UNSET = object()
+
+
+def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
+              llm=None, text_extractor=None, url_extractor=None):
     return CapturePipeline(
-        url_extractor=FakeExtractor(_source(source_uri="http://src")),
+        url_extractor=url_extractor or FakeExtractor(_source(source_uri="http://src")),
         text_extractor=text_extractor
         or FakeExtractor(_source(source_uri="http://embedded")),
         classifier=classifier or FakeClassifier(),
-        mirror=mirror,
+        mirror=FakeMirror() if mirror is _UNSET else mirror,
         capture_tags=FakeTags(),
         paperless=FakePaperless(),
         bot_name="archivist-bot",
@@ -156,25 +182,69 @@ class TestCaptureUrl:
         assert out.display_link == "http://example.com"
 
     @pytest.mark.asyncio
-    async def test_extract_failure(self):
-        pipe = CapturePipeline(
-            url_extractor=FakeExtractor(None),  # extraction fails
-            text_extractor=FakeExtractor(None),
-            classifier=FakeClassifier(),
-            mirror=FakeMirror(),
-            capture_tags=FakeTags(),
-            paperless=FakePaperless(),
-            bot_name="b", classify_max_chars=100,
-            capture_keep_body=False, capture_tag_prompt_size=50,
-        )
+    async def test_a_blocked_page_files_a_link_card_instead_of_nothing(self):
+        """A page we cannot read still files.
+
+        Dropping it was the old behaviour and it lost the two things
+        worth keeping -- the link, and whatever the sender wrote around
+        it. A shop that checks for bots is exactly when "gear list for
+        the camping trip" is the useful half of the message.
+        """
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror, url_extractor=FakeExtractor(None))
         notifier = FakeNotifier()
-        out = await pipe.capture_url(url="http://x", sender_mxid="@homer:s", notifier=notifier)
-        assert out.status == "extract_failed"
-        # URL-shaped failure -> the reply layer renders the link error
-        # message (`Couldn't read that link...`).
-        assert out.failure_reason == "url"
-        # The 👀 acknowledgement still fired before the failed extract.
+
+        out = await pipe.capture_url(
+            url="https://www.decathlon.de/", sender_mxid="@homer:s",
+            notifier=notifier, user_hint="Gear list for the camping trip",
+        )
+
+        assert out.status == "captured"
+        assert len(mirror.captures) == 1
+        # The 👀 acknowledgement still fires before the work.
         assert notifier.acknowledged == 1
+
+    @pytest.mark.asyncio
+    async def test_the_link_card_carries_the_gate_reason(self):
+        """The verdict rides out on the outcome so the reply layer can
+        name the obstacle. "Reddit wants you signed in" is actionable;
+        "couldn't read that link" is not."""
+        pipe = _pipeline(url_extractor=FakeExtractor(None, verdict="login"))
+
+        out = await pipe.capture_url(
+            url="https://old.reddit.com/r/x/", sender_mxid="@homer:s",
+            notifier=FakeNotifier(),
+        )
+
+        assert out.blocked_reason == "login"
+
+    @pytest.mark.asyncio
+    async def test_a_readable_page_is_not_marked_blocked(self):
+        """`blocked_reason` is the flag the reply layer keys on, so a
+        clean capture must leave it unset or every entry grows a
+        spurious "the site blocked us" line."""
+        out = await _pipeline().capture_url(
+            url="http://example.com", sender_mxid="@homer:s", notifier=FakeNotifier(),
+        )
+
+        assert out.status == "captured"
+        assert out.blocked_reason is None
+
+    @pytest.mark.asyncio
+    async def test_the_sender_words_become_the_link_card_body(self):
+        """The classifier's input is the sender's own text plus the
+        link -- and deliberately not "this page was blocked", which
+        would come back as an entry titled after the failure."""
+        mirror = FakeMirror()
+        pipe = _pipeline(mirror=mirror, url_extractor=FakeExtractor(None))
+
+        await pipe.capture_url(
+            url="https://www.decathlon.de/", sender_mxid="@homer:s",
+            notifier=FakeNotifier(), user_hint="Gear list for the camping trip",
+        )
+
+        filed = mirror.captures[0]
+        assert "blocked" not in str(filed).lower()
 
     @pytest.mark.asyncio
     async def test_no_mirror(self):

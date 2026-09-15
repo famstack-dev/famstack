@@ -32,6 +32,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 import yaml
@@ -2347,6 +2348,15 @@ class ArchivistBot(MicroBot):
                 transcript=o.transcript,
                 todo_link=self._todo_link(o),
             )
+        # A link card filed, but the family should hear why it has no
+        # summary -- and hear which obstacle it was. "Reddit wants you
+        # signed in" is something a person can act on; "couldn't read
+        # that link" is not.
+        if o.blocked_reason:
+            host = urlsplit(o.display_link or "").netloc or "the site"
+            note = self.t(f"capture_blocked_{o.blocked_reason}", host=host)
+            reply = f"{note}\n\n{reply}"
+
         metadata = (
             {"dev.famstack.event": o.envelope} if o.envelope else None
         )

@@ -85,6 +85,15 @@ en:
   # URL capture (knowledge rooms — links become summarized notes, not Paperless docs)
   capture_failed: "\u274C Couldn't read that link. Either the host is unreachable or there's no article body to extract."
   capture_failed_binary: "\u274C Couldn't read that file."
+  # A blocked page still files: the link and whatever the sender wrote
+  # around it become a link card, and one of these lines says why there
+  # is no summary. Naming the obstacle beats "couldn't read that link" —
+  # the family can decide whether to open it themselves.
+  capture_blocked_challenge: "\U0001F512 {host} checks for bots, so I couldn't read the page. Saved the link."
+  capture_blocked_login: "\U0001F512 {host} only shows this to people who are signed in. Saved the link."
+  capture_blocked_consent: "\U0001F512 {host} served a consent wall instead of the page. Saved the link."
+  capture_blocked_paywall: "\U0001F512 {host} is paywalled. Saved the link."
+  capture_blocked_empty: "\U0001F4C4 No article text on that page. Saved the link."
   capture_llm_failed: "\U0001F4DD Captured the page, but classification skipped: {error}"
   capture_no_mirror: "\u274C Captures need the `code` stacklet up so I can write to the memory vault. Run `stack up code`."
   captured: "\u2705 Captured: {title}"
@@ -288,6 +297,11 @@ de:
   # URL-Capture (Wissensräume — Links werden zu zusammengefassten Notizen, nicht zu Paperless-Dokumenten)
   capture_failed: "\u274C Konnte den Link nicht lesen. Entweder ist die Seite nicht erreichbar, oder es gibt keinen Artikel-Inhalt zum Extrahieren."
   capture_failed_binary: "\u274C Konnte diese Datei nicht lesen."
+  capture_blocked_challenge: "\U0001F512 {host} prüft auf Bots, deshalb konnte ich die Seite nicht lesen. Link gespeichert."
+  capture_blocked_login: "\U0001F512 {host} zeigt das nur angemeldeten Personen. Link gespeichert."
+  capture_blocked_consent: "\U0001F512 {host} hat statt der Seite eine Zustimmungs-Abfrage geliefert. Link gespeichert."
+  capture_blocked_paywall: "\U0001F512 {host} ist hinter einer Bezahlschranke. Link gespeichert."
+  capture_blocked_empty: "\U0001F4C4 Auf der Seite gab es keinen Artikeltext. Link gespeichert."
   capture_llm_failed: "\U0001F4DD Seite gespeichert, aber Klassifizierung übersprungen: {error}"
   capture_no_mirror: "\u274C Captures brauchen das `code`-Stacklet, damit ich in den Memory-Vault schreiben kann. Starte `stack up code`."
   captured: "\u2705 Gespeichert: {title}"
