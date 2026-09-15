@@ -198,7 +198,7 @@ facts:
   - "Coverage period: 2026-01-01 to 2026-12-31"
 action_items:
   - { action: "Compare prices before renewal", due: "2026-11-30" }
-source_link: https://paperless.merles.eu/documents/247/details
+source_link: https://paperless.home.local/documents/247/details
 processing: ai_formatted
 model: qwen3-32b
 ---
@@ -251,7 +251,7 @@ topics = ["medical"]
 **Machine-appended example** (`facts.jsonl`):
 
 ```json
-{"id":"f_2026-04-20T14:22Z_a7b3","kind":"fact","text":"Car insurance premium is EUR 340/year","persons":["Homer"],"topics":["insurance","vehicle"],"source":{"kind":"paperless","doc_id":247},"actor":"@homer:merles.eu","extracted_at":"2026-04-20T14:22:00Z","expires_at":"2026-07-19T00:00Z","confidence":0.85,"superseded_by":null}
+{"id":"f_2026-04-20T14:22Z_a7b3","kind":"fact","text":"Car insurance premium is EUR 340/year","persons":["Homer"],"topics":["insurance","vehicle"],"source":{"kind":"paperless","doc_id":247},"actor":"@homer:home.local","extracted_at":"2026-04-20T14:22:00Z","expires_at":"2026-07-19T00:00Z","confidence":0.85,"superseded_by":null}
 ```
 
 **Invariants:**

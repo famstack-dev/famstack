@@ -84,19 +84,19 @@ persons:
   homer:
     aliases: [Homer, Papa]
     services:
-      matrix: "@homer:merles.eu"
+      matrix: "@homer:home.local"
       paperless: "Person: Homer"
       immich: face-abc123
       forgejo: homer
-      calendar: homer@merles.eu
+      calendar: homer@home.local
 
   marge:
     aliases: [Marge, Mama]
     services:
-      matrix: "@marge:merles.eu"
+      matrix: "@marge:home.local"
       paperless: "Person: Marge"
       immich: face-def456
-      calendar: marge@merles.eu
+      calendar: marge@home.local
 
 organizations:
   duff-insurance:
@@ -275,10 +275,10 @@ The person entity in the ontology is the join key:
 
 ```markdown
 ## Homer
-- matrix: @homer:merles.eu
+- matrix: @homer:home.local
 - paperless: "Person: Homer"
 - immich: face-id-abc123
-- calendar: homer@merles.eu
+- calendar: homer@home.local
 ```
 
 When Kit Bot serves Homer, it can query "everything associated with Homer" across all services by resolving through the ontology. When Marge asks Kit something, the person filter scopes results to what's relevant to her.

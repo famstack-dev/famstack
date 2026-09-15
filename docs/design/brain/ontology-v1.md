@@ -224,14 +224,14 @@ persons:
     aliases: [Papa]
     services:
       paperless_tag: "Person: Homer"
-      matrix: "@homer:merles.eu"
+      matrix: "@homer:home.local"
 
   marge:
     label: Marge
     aliases: [Mama]
     services:
       paperless_tag: "Person: Marge"
-      matrix: "@marge:merles.eu"
+      matrix: "@marge:home.local"
 
 # ── Organizations ──────────────────────────────────────────────
 # Open set. Bootstrap with a small list of universally-useful orgs
@@ -586,7 +586,7 @@ Same handler, parsed by the LLM, written directly to ontology.yaml as a commit:
 ```
 update: organisation Duff Insurance categories +finance
 
-  Confirmed-By: @homer:merles.eu
+  Confirmed-By: @homer:home.local
 ```
 
 A correction always sets `confirmed: true` on the affected entries — that locks them against future auto-overrides from low-confidence learning.

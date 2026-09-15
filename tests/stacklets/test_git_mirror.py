@@ -32,7 +32,7 @@ class TestCommitAuthor:
     from their Matrix id; a missing/malformed id falls back to the bot."""
 
     def test_derives_name_and_email_from_mxid(self):
-        assert _commit_author("@marge:merles.eu") == ("marge", "marge@merles.eu")
+        assert _commit_author("@marge:home.local") == ("marge", "marge@home.local")
 
     def test_localpart_only_id_falls_back_to_local_domain(self):
         assert _commit_author("@homer") == ("homer", "homer@local")
@@ -41,7 +41,7 @@ class TestCommitAuthor:
         assert _commit_author(None) == (BOT_USERNAME, BOT_EMAIL)
 
     def test_filer_localpart(self):
-        assert _filer_localpart("@Marge:merles.eu") == "marge"
+        assert _filer_localpart("@Marge:home.local") == "marge"
         assert _filer_localpart(None) is None
 
 

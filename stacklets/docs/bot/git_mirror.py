@@ -108,7 +108,7 @@ def _commit_author(submitter: str | None) -> tuple[str, str]:
     """`(author_name, author_email)` for a capture commit.
 
     Attributes the commit to the family member who filed it, derived from
-    their Matrix id (`@marge:merles.eu` -> `marge`, `marge@merles.eu`), so
+    their Matrix id (`@marge:home.local` -> `marge`, `marge@home.local`), so
     `git log --author` answers "who added this". Falls back to the bot when
     there is no submitter or the id is malformed — the commit still lands.
     """
