@@ -274,6 +274,7 @@ class CapturePipeline:
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
         default_person: bool = True,
+        kept_media: dict | None = None,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -282,9 +283,15 @@ class CapturePipeline:
         PDFs (past the per-instance vision cap) bypass vision and
         ride the text layer through the existing text-capture path,
         so the household doesn't pay vision tokens for a 60-page
-        research paper. ``source_uri`` is the Matrix mxc URL so the
-        wiki entry links back to the original binary -- we don't
-        re-store the bytes; Matrix already has them.
+        research paper. ``source_uri`` is the Matrix mxc URL, so the
+        entry links back to the message the upload came in on.
+
+        ``kept_media`` is where the caller archived the bytes, when it
+        did. The mxc URL is a pointer into the homeserver's media store
+        and nothing promises that store outlives the entry; the archive
+        is the copy the wiki serves itself. The caller keeps it because
+        it is the one that has the room, the sender and the event this
+        upload arrived on, which is what the archive records.
         """
         source, images, kind = self._source_from_binary(
             file_data=file_data, mime=mime, filename=filename,
@@ -302,6 +309,7 @@ class CapturePipeline:
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, default_person=default_person,
+            kept_media=kept_media,
         )
 
     def _cap_pdf_body(self, source: SourceContent) -> SourceContent:
@@ -554,6 +562,7 @@ class CapturePipeline:
         email_meta: dict | None = None,
         default_person: bool = True,
         transcribed: bool = False,
+        kept_media: dict | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -648,6 +657,7 @@ class CapturePipeline:
                 existing_path=existing_path,
                 capture_id=capture_id,
                 submitter=sender_mxid,
+                kept_media=kept_media,
             )
 
         # Feed topic tags (not the derived Person: X) back into the

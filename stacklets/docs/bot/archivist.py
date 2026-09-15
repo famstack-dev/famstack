@@ -62,7 +62,7 @@ from pipeline import (
     PaperlessAPI,
     PaperlessDuplicateError,
 )
-from stack import resolve_model
+from stack import media, resolve_model
 from stack.email_message import defang_links
 from stack.links import go_docs, go_topic, public
 from stack.ai.client import (
@@ -1575,6 +1575,7 @@ class ArchivistBot(MicroBot):
                 reply_to=reply_to,
                 default_person=not bot_attachment,
                 extra_seed_topics=extra_seed_topics,
+                captured_ts=getattr(event, "server_timestamp", 0) or 0,
             )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
@@ -2244,6 +2245,56 @@ class ArchivistBot(MicroBot):
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
+    def _keep_original(
+        self, *, file_data: bytes, mime: str, filename: str,
+        event_id: str | None, room_id: str, sender_mxid: str, ts_ms: int,
+    ) -> dict | None:
+        """Archive the uploaded bytes; return how the entry shows them.
+
+        ``{"name", "original", "embed"}``, or None when nothing was
+        kept. The archive lives inside the brain working copy, which is
+        the tree the wiki serves, so the entry addresses the file by a
+        site path that resolves at any page depth and in either
+        deployment mode.
+
+        Best-effort by construction. No brain (memory not installed),
+        no event id, no writable disk: the capture files exactly as it
+        did before, pointing at the mxc URL alone.
+
+        Documents are not archived here. They go to Paperless, which
+        holds the bytes durably and is named on the entry; a second
+        copy would be two places to keep in step and two places to
+        delete from.
+        """
+        brain = os.environ.get("BRAIN_REPO_DIR", "")
+        if not brain or not event_id:
+            return None
+        import datetime as _dt
+        when = _dt.datetime.fromtimestamp(
+            ts_ms / 1000 if ts_ms else _dt.datetime.now(_dt.timezone.utc).timestamp(),
+            tz=_dt.timezone.utc,
+        )
+        media.ensure_ignored(brain)
+        root = media.archive_root(brain)
+        kind = media.kind_for(mime)
+        ext = media.extension_for(filename, mime)
+        link = media.keep(
+            root, event_id, file_data, ext=ext, when=when, kind=kind,
+            source="capture", mime=mime, filename=filename,
+            room_id=room_id, sender=sender_mxid,
+        )
+        if not link:
+            return None
+        # A screenshot is the entry and goes on the page; the bounded
+        # copy when there is one, because a phone photograph embedded
+        # at full size is a page nobody waits for.
+        shown = media.derive(root, event_id, ext=ext, when=when, kind=kind)
+        return {
+            "name": filename,
+            "original": link,
+            "embed": shown or (link if kind == "image" else ""),
+        }
+
     async def _handle_binary_capture(
         self, *, room_id: str, file_data: bytes, mime: str,
         filename: str, source_uri: str, sender_mxid: str,
@@ -2251,17 +2302,19 @@ class ArchivistBot(MicroBot):
         reply_to: str | None = None,
         default_person: bool = True,
         extra_seed_topics: list[str] | None = None,
+        captured_ts: int = 0,
     ) -> None:
         """Capture a PDF or image as a visual bookmark.
 
         Vision-driven by default (the classifier sees the rendered
-        page(s) + any extractable text layer). The mirror entry
-        points back at the Matrix mxc URL -- the binary stays where
-        the homeserver put it, the wiki just summarises and links.
-        ``capture_id`` is the Matrix event_id of the upload, stored
-        on the entry as a stable correlation key so a deriver (or
-        the reply-to-correct path) can find this capture later
-        without depending on the title-derived path.
+        page(s) + any extractable text layer). The entry points back at
+        the Matrix mxc URL and carries a copy of the bytes in the media
+        archive, so it still has the file when the homeserver's media
+        store does not. ``capture_id`` is the Matrix event_id of the
+        upload, stored on the entry as a stable correlation key so a
+        deriver (or the reply-to-correct path) can find this capture
+        later without depending on the title-derived path. It is also
+        what the archived file is named after.
 
         ``default_person`` is False for bot-posted content (an email
         attachment): the sender is a bot, not the owner, so don't fall
@@ -2289,6 +2342,11 @@ class ArchivistBot(MicroBot):
             seed_topics=seed_topics or None,
             bucket=bucket,
             default_person=default_person,
+            kept_media=self._keep_original(
+                file_data=file_data, mime=mime, filename=filename,
+                event_id=capture_id, room_id=room_id,
+                sender_mxid=sender_mxid, ts_ms=captured_ts,
+            ),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

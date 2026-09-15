@@ -442,6 +442,7 @@ def render_capture(
     summary: str | None = None,
     facts: list | None = None,
     action_items: list | None = None,
+    kept_media: dict | None = None,
 ) -> str:
     """Assemble the mirror file for a capture entry (kind=note|bookmark).
 
@@ -471,6 +472,11 @@ def render_capture(
         facts: List of fact strings for the briefing.
         action_items: Tasks the note records (notes only); [] / None for
             bookmarks. Rendered as `- [ ]` lines in the briefing callout.
+        kept_media: The archived copy of the uploaded file, as
+            ``{"name", "original", "embed"}``. ``original`` is where the
+            bytes live in the site; ``embed`` is the version worth
+            putting on the page and is empty for anything that should
+            be downloaded rather than displayed.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -496,6 +502,13 @@ def render_capture(
     meta_lines.append(" · ".join(line2_bits))
     if source_uri:
         meta_lines.append(f"**Source** <{source_uri}>")
+    kept = kept_media or {}
+    if kept.get("original"):
+        # The bytes themselves, kept where the wiki serves them. The
+        # Source line above points at the chat message, which is a
+        # pointer into a service that need not outlive this entry.
+        meta_lines.append(
+            f"**File** [{kept.get('name') or 'original'}]({kept['original']})")
     parts.extend(f"> {ln}" for ln in meta_lines)
     parts.append("")
 
@@ -506,6 +519,14 @@ def render_capture(
     )
     if briefing:
         parts.append(briefing)
+        parts.append("")
+
+    # A picture is the entry; a document is a download. Embedding a PDF
+    # puts a scrolling frame where a summary should be, so only what
+    # reads at a glance goes inline and the rest stays the File link
+    # above.
+    if kept.get("embed"):
+        parts.append(f"![[{kept['embed']}]]")
         parts.append("")
 
     # Notes: collapsible callout around the verbatim paste. The `-`
