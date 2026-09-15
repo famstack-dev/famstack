@@ -59,7 +59,7 @@ def slug(text: str) -> str:
 def slugify_person(name: str) -> str:
     """Map a person name to its vault bucket slug.
 
-    Buckets are the Matrix localpart lowercased; for the default family
+    Buckets are the Matrix localpart lowercased; with stock user seeding
     that is the first name lowercased ("Homer Simpson" -> "homer"). We
     take the first whitespace token so a full name still resolves to the
     bucket the captures landed in. The person's container entity page

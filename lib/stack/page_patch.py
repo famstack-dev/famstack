@@ -3,9 +3,9 @@
 `apply_patch` is the tool nanobot advertises to the model as the default way
 to change a file, and the model reaches for it accordingly. Its edits are
 ordinary text substitutions -- find this exact string, put that one there --
-which it normally performs against a file on disk. A family memory page is
-not on disk: the agent sees a read-only projection, and the real document
-lives in the family's git store behind `stack memory write`.
+which it normally performs against a file on disk. A memory page is not on
+disk: the agent sees a read-only projection, and the real document lives
+in the git-backed store behind `stack memory write`.
 
 So this is the same operation with the filesystem taken out: text in, edits
 in, text out. Pure, so the write path can run it wherever the *current*

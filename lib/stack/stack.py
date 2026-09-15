@@ -208,10 +208,9 @@ class Stack:
             "domain":                self._cfg("core", "domain"),
             "language":              self._cfg("core", "language", self._cfg("ai", "language", "en")),
             "timezone":              self._cfg("core", "timezone", "UTC"),
-            # Name of the shared/family-level bucket inside the memory
-            # vault. Personal entities (homer, marge, …) live at
-            # <vault>/<slug>/, the shared bucket at <vault>/<shared_bucket>/.
-            # Default "family" fits famstack; non-family deployments
+            # Name of the shared bucket inside the memory vault. Personal
+            # entities live at <vault>/<slug>/, the shared bucket at
+            # <vault>/<shared_bucket>/. Defaults to "family"; deployments
             # override to "office", "household", a surname, etc.
             "shared_bucket":         self._cfg("core", "shared_bucket", "family"),
             # Wiki freshness (the memory stacklet's curator sidecar).
@@ -285,9 +284,9 @@ class Stack:
         )
         template_vars["mail_poll_interval"] = str(mail_cfg.get("poll_interval", 120))
 
-        # The family agent's identity, one knob: `[agent] name` (default
+        # The agent's identity, one knob: `[agent] name` (default
         # "Stacky") drives its persona, Matrix display name, handle, and home
-        # room. A family renames it (e.g. "Merlin" -> @merlin-bot, #merlin)
+        # room. An instance renames it (e.g. "Merlin" -> @merlin-bot, #merlin)
         # with one stack.toml line and no code edits.
         agent_name = self._cfg("agent", "name", "Stacky")
         agent_slug = agent_name.strip().lower().replace(" ", "-")

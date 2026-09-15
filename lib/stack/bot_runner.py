@@ -1,7 +1,7 @@
 """The bot-runner container as the stack's tools runtime.
 
 The host-side `./stack` is stdlib-only by design: it starts fast and
-needs no pip install before a family can use it. But some commands are
+needs no pip install before it can be run. But some commands are
 thin wrappers over pipelines that want aiohttp, loguru, yaml and a
 rendered service env. Rather than break the stdlib invariant on the host
 or clone those pipelines in urllib, those commands `docker exec` into

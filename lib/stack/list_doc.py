@@ -1,6 +1,6 @@
 """A list page, and what changed between two versions of one.
 
-A family's list lives in `todos.md`, and more than one thing writes it: the
+A list lives in `todos.md`, and more than one thing writes it: the
 curator merging extracted action items, a person editing it in Forgejo's
 editor, and an agent asked to tidy it up. The interesting failure is not a
 malformed document. It is a quiet one: six of twenty-five items gone and a
@@ -17,7 +17,7 @@ made the edit; the same report is specific enough to serve as the commit line,
 so intent comes out of what changed rather than a sentence the caller invents.
 
 WHY REWORDING IS ITS OWN CATEGORY
-    A real family list went from thirteen items to twenty-seven because each
+    A real list went from thirteen items to twenty-seven because each
     pass through the classifier renamed things: "Alternative Dachbox" came back
     as "suchen", then "recherchieren", then "prüfen", then "besorgen". Nothing
     was lost and nothing was really added, but a report that called that four
@@ -95,7 +95,7 @@ class Change:
     def summary(self) -> str:
         """One line naming what happened, losses first and named in full.
 
-        Counts are not checkable by a family member -- "8 items became 7" tells
+        Counts are not checkable by a reader -- "8 items became 7" tells
         nobody which one went. So a removal always names every item, while the
         ordinary categories stay short.
         """

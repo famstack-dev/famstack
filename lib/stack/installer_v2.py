@@ -93,7 +93,7 @@ _TZ_LANGUAGE = {
 
 
 def detect_language(timezone: str) -> str:
-    """Guess the household language from timezone. Defaults to English."""
+    """Guess the instance language from timezone. Defaults to English."""
     return _TZ_LANGUAGE.get(timezone, "en")
 
 

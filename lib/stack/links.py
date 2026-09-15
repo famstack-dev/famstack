@@ -1,8 +1,8 @@
 """Logical link construction — the emitter half of the `/go` namespace.
 
 A link a bot posts into a Matrix room is there forever: the timeline is
-append-only, so whatever URL was in the message is the URL a family
-member clicks two years later. Point it straight at a service and it
+append-only, so whatever URL was in the message is the URL someone
+clicks two years later. Point it straight at a service and it
 dies the day the domain changes, the stack flips between port mode and
 domain mode, or Paperless moves. Point it at `home.<domain>/go/docs/247`
 and it re-resolves at click time.
@@ -50,7 +50,7 @@ from urllib.parse import quote
 #
 # A link posted into chat is permanent, so the cost of putting a kind in
 # the wrong family is paid forever. When in doubt, ask what changes when
-# a family renames a topic or corrects a title.
+# someone renames a topic or corrects a title.
 
 def go_docs(doc_id: int | str) -> str:
     """`/docs/<id>` — a document, wherever it is filed right now.
@@ -98,7 +98,7 @@ def go_capture(capture_id: str) -> str:
 
 
 def go_person(slug: str, leaf: str | None = None) -> str:
-    """`/person/<slug>` — a household member's page.
+    """`/person/<slug>` — a person's page.
 
     >>> go_person("homer")
     '/person/homer'
