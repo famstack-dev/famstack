@@ -222,7 +222,17 @@ def memory_write(argv: list[str]) -> tuple[str, int]:
     subprocess.run(["git", "add", ns.page], cwd=ARGS.vault, env=env, timeout=10)
     subprocess.run(["git", "commit", "-q", "-m", f"docs(memory): {sentence[:60]}"],
                    cwd=ARGS.vault, env=env, timeout=10)
-    return sentence + "\n", 0
+    return sentence + _link_line(ns.page) + "\n", 0
+
+
+def _link_line(page: str) -> str:
+    """Rig stand-in for the production wiki link line on touched pages."""
+    parts = page.strip("/").split("/")
+    if parts[-1] == "todos.md":
+        return f"\n  https://rig.invalid/go/topic/{'/'.join(parts[:-1])}/todo"
+    if parts[-1] == "about.md":
+        return f"\n  https://rig.invalid/go/topic/{'/'.join(parts[:-1])}"
+    return ""
 
 
 def _commit(page: str, actor: str, sentence: str) -> None:
@@ -240,8 +250,9 @@ def memory_list_edit(argv: list[str]) -> tuple[str, int]:
     parser = argparse.ArgumentParser(prog="stack memory list-edit", add_help=False)
     parser.add_argument("page")
     parser.add_argument("--op", required=True,
-                        choices=["add", "tick", "untick", "remove"])
-    parser.add_argument("--item", required=True)
+                        choices=["add", "tick", "untick", "remove",
+                                 "clear-done", "reset"])
+    parser.add_argument("--item", default="")
     parser.add_argument("--section", default=None)
     parser.add_argument("--by", default="someone")
     try:
@@ -255,6 +266,23 @@ def memory_list_edit(argv: list[str]) -> tuple[str, int]:
     lines = path.read_text().splitlines()
     boxes = [(i, m.group(1).lower() == "x", m.group(2))
              for i, ln in enumerate(lines) if (m := _BOX.match(ln))]
+
+    # Bulk operations, same contract as the production verb.
+    if ns.op in ("clear-done", "reset"):
+        done = [(i, t) for i, d, t in boxes if d]
+        if not done:
+            return "nothing is ticked; the list is already clear\n", 0
+        if ns.op == "clear-done":
+            for i, _ in reversed(done):
+                del lines[i]
+            sentence = f"REMOVED {len(done)}: " + "; ".join(t for _, t in done)
+        else:
+            for i, _ in done:
+                lines[i] = re.sub(r"- \[[xX]\]", "- [ ]", lines[i], count=1)
+            sentence = f"reopened {len(done)}: " + "; ".join(t for _, t in done)
+        path.write_text("\n".join(lines) + "\n")
+        _commit(ns.page, ns.by, sentence)
+        return sentence + _link_line(ns.page) + "\n", 0
 
     if ns.op == "add":
         if any(ns.item.lower() == text.lower() for _, _, text in boxes):
@@ -275,7 +303,7 @@ def memory_list_edit(argv: list[str]) -> tuple[str, int]:
         path.write_text("\n".join(lines) + "\n")
         sentence = f"added 1: {ns.item}"
         _commit(ns.page, ns.by, sentence)
-        return sentence + "\n", 0
+        return sentence + _link_line(ns.page) + "\n", 0
 
     matches = [b for b in boxes if ns.item.lower() == b[2].lower()]
     if not matches:
@@ -305,7 +333,7 @@ def memory_list_edit(argv: list[str]) -> tuple[str, int]:
         sentence = f"REMOVED 1: {text}"
     path.write_text("\n".join(lines) + "\n")
     _commit(ns.page, ns.by, sentence)
-    return sentence + "\n", 0
+    return sentence + _link_line(ns.page) + "\n", 0
 
 
 def dispatch(line: str) -> tuple[str, int]:

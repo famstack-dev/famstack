@@ -112,6 +112,29 @@ def test_remove_names_what_it_destroyed():
     assert "dish soap" not in new
 
 
+def test_clear_done_removes_only_ticked_items_and_names_them():
+    page = PAGE.replace("- [ ] dish soap", "- [x] dish soap")
+    new, sentence, kind = list_edit.apply_list_edit(page, "clear-done", "")
+    assert kind == "changed"
+    assert sentence == "REMOVED 2: coffee beans; dish soap"
+    assert "coffee beans" not in new and "dish soap" not in new
+    assert "- [ ] oat milk" in new
+
+
+def test_clear_done_on_a_clean_list_is_a_noop():
+    page = PAGE.replace("- [x] coffee beans", "- [ ] coffee beans")
+    new, sentence, kind = list_edit.apply_list_edit(page, "clear-done", "")
+    assert kind == "noop"
+    assert new == page
+
+
+def test_reset_reopens_every_ticked_item():
+    new, sentence, kind = list_edit.apply_list_edit(PAGE, "reset", "")
+    assert kind == "changed"
+    assert sentence == "reopened 1: coffee beans"
+    assert "- [x]" not in new
+
+
 def test_untick_reports_a_reopening():
     new, sentence, kind = list_edit.apply_list_edit(PAGE, "untick", "coffee")
     assert kind == "changed"

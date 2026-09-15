@@ -61,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_memory  # noqa: E402
 
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
+from stack.links import go_page, public  # noqa: E402
 from stack.list_doc import diff  # noqa: E402
 from stack.page_patch import apply_edits  # noqa: E402
 
@@ -205,7 +206,11 @@ def run(args, stacklet, config):
     # again, and the second write is a duplicate nobody asked for.
     mirrored = bool(result.get("mirrored"))
     lag = "" if mirrored else "\n  The wiki and the vault mount catch up shortly."
-    print(f"Wrote {repo_path} (by {actor})\n  {told}{lag}")
+    # The touched page's wiki link, so the reply can cite it.
+    home_url = (config or {}).get("home_url", "")
+    url = public(go_page(repo_path), f"{home_url}/go" if home_url else "")
+    link = f"\n  {url}" if url else ""
+    print(f"Wrote {repo_path} (by {actor})\n  {told}{link}{lag}")
     return {
         "ok": True, "committed": True, "path": repo_path, "by": actor,
         "summary": told, "mirrored": mirrored,

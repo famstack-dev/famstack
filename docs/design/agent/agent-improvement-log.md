@@ -1143,3 +1143,77 @@ brief (full sources in the session transcript):
 - Candidate framing ranked first by the research: "Pseudocode is
   lossy compression, and it drops exactly the rules you can least
   afford to lose."
+
+## 2026-09-15 15:53 UTC - rig turn (topic:groceries)
+
+- message: `Homer: was steht auf der Einkaufsliste?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 21.55 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8306 | 4096 | 61 | 11.4 | 12.721 |
+| 2 | 4 | 8520 | 8192 | 68 | 1.64 | 2.951 |
+
+- note: German test run incl. clear-done and link-on-touch
+
+## 2026-09-15 15:53 UTC - rig turn (topic:groceries)
+
+- message: `Homer: bitte setz noch Butter und Mehl auf die Liste`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 17.07 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 6 | 8525 | 8192 | 143 | 2.52 | 5.395 |
+| 2 | 9 | 8728 | 8192 | 24 | 2.67 | 3.121 |
+
+- note: German test run incl. clear-done and link-on-touch
+
+## 2026-09-15 15:53 UTC - rig turn (topic:groceries)
+
+- message: `Homer: hak die Äpfel ab`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 22.97 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 11 | 8911 | 8192 | 80 | 3.48 | 5.081 |
+| 2 | 13 | 9043 | 8192 | 84 | 2.96 | 4.668 |
+| 3 | 15 | 9164 | 8192 | 59 | 3.33 | 4.509 |
+
+- note: German test run incl. clear-done and link-on-touch
+
+## 2026-09-15 15:54 UTC - rig turn (topic:groceries)
+
+- message: `Homer: wir haben alles gekauft, bitte räum die Liste auf`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 18.59 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 17 | 9339 | 8192 | 80 | 4.68 | 6.325 |
+| 2 | 19 | 9458 | 8192 | 53 | 4.13 | 5.212 |
+
+- note: German test run incl. clear-done and link-on-touch
+
+## 2026-09-15 - Clear-list, link-on-touch, German run
+
+Two quality-of-life additions.
+
+1. Bulk list ops on the list-edit verb: `clear-done` (remove all
+   ticked items, named) and `reset` (reopen all). "Clear the list"
+   and "we bought everything" now cost one call, and the write guard
+   no longer blocks the flow.
+2. Link on touch: every edit verb (list-edit and write) prints the
+   touched page's wiki link. New helper stack.links.go_page maps a
+   vault path to a /topic or /person route, "" when no stable route
+   exists. The skill routes that link into the reply's Sources, so a
+   change is as citable as a read.
+
+German test run (4 turns, topic:groceries):
+- read, add two items, tick, clear-done: 2-3 calls each, 17-23 s.
+- Umlauts preserved ("Äpfel", "Mehl"). Replies fully in German.
+- clear-done tool result: "REMOVED 2: apples; coffee beans" plus the
+  link line, relayed correctly.
+- A follow-up add cited Sources with the wiki link.
+Note: the add kept the model's capitalization ("Butter", "Mehl")
+rather than lowercasing; harmless, matches the family's own words.
+
+Tests: 11 list-edit module tests, links doctests, test_links all green.

@@ -108,6 +108,38 @@ def go_person(slug: str, leaf: str | None = None) -> str:
     return _entity_path("person", slug, leaf)
 
 
+def go_page(repo_path: str) -> str:
+    """Logical link for a vault page path, or "" when no stable route exists.
+
+    Edit verbs answer with the page they touched. The reply carries this
+    link so the family can open the page in the wiki. Only pages with a
+    resolver route get a link; anything else returns "" rather than a
+    path-keyed link that breaks on the next rename.
+
+    >>> go_page("family/camping/todos.md")
+    '/topic/family/camping/todo'
+    >>> go_page("family/camping/about.md")
+    '/topic/family/camping'
+    >>> go_page("homer/about.md")
+    '/person/homer'
+    >>> go_page("homer/notes/2026/09/errands.md")
+    ''
+    """
+    parts = [p for p in repo_path.strip("/").split("/") if p]
+    if len(parts) < 2:
+        return ""
+    if parts[-1] == "todos.md":
+        leaf = "todo"
+    elif parts[-1] == "about.md":
+        leaf = None
+    else:
+        return ""
+    scope = "/".join(parts[:-1])
+    if len(parts) == 2 and parts[0] != "family":
+        return go_person(parts[0], leaf)
+    return go_topic(scope, leaf)
+
+
 def _entity_path(kind: str, scope: str, leaf: str | None) -> str:
     """Join `kind`, the scope segments, and an optional leaf into a path.
 

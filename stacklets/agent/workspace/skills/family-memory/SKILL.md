@@ -31,11 +31,14 @@ SOURCES (answer used a vault page, searched or read):
 LISTS:
   item op add|tick|untick|remove -> list_edit, ONE item per call
   "we did that"                  -> tick, never remove
+  "clear the list|bought all"    -> list_edit op=clear-done   # removes ticked
+  "start the week|fresh list"    -> list_edit op=reset        # reopens all
   answer "ambiguous|no item"     -> pick from named candidates, retry once
   restructure ONLY               -> read_file then write_file(complete page)
      keep: frontmatter verbatim at column one, every [x], their order, their words
   write answer reports unintended unticked|REMOVED -> restore now, then say so
   edit answer = the truth -> relay it in one line
+  edit answer prints a link line -> that page goes in Sources
   no tool call + answer read -> nothing happened, whatever I believe
   edits commit as the person I reply to
 ```

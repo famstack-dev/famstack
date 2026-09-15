@@ -31,16 +31,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import update_memory  # noqa: E402
 
+from stack.links import go_page, public  # noqa: E402
 from write import _commit_message  # noqa: E402
 
 _BOX = re.compile(r"^(\s*)- \[([ xX])\]\s*(.+?)\s*$")
 
-_OPS = ("add", "tick", "untick", "remove")
+_OPS = ("add", "tick", "untick", "remove", "clear-done", "reset")
 
 
 def apply_list_edit(text: str, op: str, item: str,
                     section: str | None = None) -> tuple[str, str, str]:
-    """Apply one item operation to a page's text.
+    """Apply one item operation, or one bulk operation, to a page's text.
 
     Pure transform, so the behavior is testable without the store.
     Returns (new_text, sentence, kind). kind is one of:
@@ -51,6 +52,28 @@ def apply_list_edit(text: str, op: str, item: str,
     lines = text.splitlines()
     boxes = [(i, m.group(2).lower() == "x", m.group(3))
              for i, ln in enumerate(lines) if (m := _BOX.match(ln))]
+
+    # Bulk operations: the everyday list flows. "We bought everything"
+    # is clear-done; a recurring list starts the week with reset. Both
+    # name every affected item, so the reply stays checkable.
+    if op == "clear-done":
+        done = [(i, t) for i, d, t in boxes if d]
+        if not done:
+            return text, "nothing is ticked; the list is already clear", "noop"
+        for i, _ in reversed(done):
+            del lines[i]
+        names = "; ".join(t for _, t in done)
+        return ("\n".join(lines) + "\n",
+                f"REMOVED {len(done)}: {names}", "changed")
+    if op == "reset":
+        done = [(i, t) for i, d, t in boxes if d]
+        if not done:
+            return text, "nothing is ticked; the list is already open", "noop"
+        for i, _ in done:
+            lines[i] = re.sub(r"- \[[xX]\]", "- [ ]", lines[i], count=1)
+        names = "; ".join(t for _, t in done)
+        return ("\n".join(lines) + "\n",
+                f"reopened {len(done)}: {names}", "changed")
 
     if op == "add":
         if any(item.casefold() == t.casefold() for _, _, t in boxes):
@@ -105,7 +128,7 @@ def run(args, stacklet, config):
                                      add_help=False)
     parser.add_argument("page")
     parser.add_argument("--op", required=True, choices=list(_OPS))
-    parser.add_argument("--item", required=True)
+    parser.add_argument("--item", default="")
     parser.add_argument("--section", default=None)
     parser.add_argument("--by", default="someone")
     try:
@@ -120,7 +143,7 @@ def run(args, stacklet, config):
         sys.exit(2)
     actor = ns.by.strip().split(":")[0].lstrip("@") or "someone"
     item = ns.item.strip()
-    if not item:
+    if not item and ns.op not in ("clear-done", "reset"):
         print("--item must name the item")
         sys.exit(2)
 
@@ -155,8 +178,12 @@ def run(args, stacklet, config):
         return {"ok": True, "committed": False, "path": repo_path}
 
     # Same phrasing as `memory write`: the mirror lag is a delay, never
-    # a doubt, or the model re-runs the edit and duplicates it.
+    # a doubt, or the model re-runs the edit and duplicates it. The link
+    # line names the touched page in the wiki, for the reply's Sources.
     lag = "" if result.get("mirrored") else "\n  The wiki and the vault mount catch up shortly."
-    print(f"{sentence} (by {actor}){lag}")
+    home_url = (config or {}).get("home_url", "")
+    url = public(go_page(repo_path), f"{home_url}/go" if home_url else "")
+    link = f"\n  {url}" if url else ""
+    print(f"{sentence} (by {actor}){link}{lag}")
     return {"ok": True, "committed": True, "path": repo_path,
             "by": actor, "summary": sentence}

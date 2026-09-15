@@ -25,13 +25,14 @@ from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
             min_length=1,
         ),
         op=StringSchema(
-            "The item operation.",
-            enum=("add", "tick", "untick", "remove"),
+            "Item operation, or bulk: clear-done removes all ticked "
+            "items, reset reopens them.",
+            enum=("add", "tick", "untick", "remove", "clear-done", "reset"),
         ),
         item=StringSchema(
             "The item text, as it appears on the list (for add: the new "
-            "item, in the family's words).",
-            min_length=1,
+            "item, in the family's words). Empty for bulk operations.",
+            nullable=True,
         ),
         section=StringSchema(
             "Optional section heading for add, such as Dairy.",
@@ -65,7 +66,7 @@ class ListEditTool(Tool):
         self,
         page: str,
         op: str,
-        item: str,
+        item: str | None = None,
         section: str | None = None,
     ) -> str:
         target = page.strip()
@@ -80,7 +81,7 @@ class ListEditTool(Tool):
             actor = "someone"
 
         args = ["stack", "memory", "list-edit", target,
-                "--op", op, "--item", item, "--by", actor]
+                "--op", op, "--item", item or "", "--by", actor]
         if section:
             args.extend(["--section", section])
 
