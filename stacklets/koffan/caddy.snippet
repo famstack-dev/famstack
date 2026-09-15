@@ -1,0 +1,10 @@
+# stacklets/koffan/caddy.snippet
+#
+# Assembled into the Caddyfile by 'stack up' in domain mode. Caddy runs
+# in Docker on the stack network, so the backend is referenced by
+# container name. reverse_proxy upgrades the WebSocket automatically, so
+# real-time sync works without extra directives.
+
+koffan.{$FAMSTACK_DOMAIN} {
+    reverse_proxy stack-koffan:8080
+}
