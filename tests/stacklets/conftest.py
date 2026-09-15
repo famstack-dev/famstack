@@ -73,6 +73,12 @@ def nanobot_stub():
             def discover(self):
                 return []
 
+        class ToolRegistry:
+            # The seam tool_trim patches: register() is where a tool
+            # enters the model's list, so the trim filters there.
+            def register(self, tool):
+                pass
+
         class GrepTool:
             async def execute(self, *args, **kwargs):
                 return "stock grep"
@@ -126,8 +132,16 @@ def nanobot_stub():
                 # Stock nanobot: join, say nothing.
                 self.joined.append(room.room_id)
 
-            async def _handle_message(self, **kwargs):
-                self.handled.append(kwargs)
+            async def _handle_message(self, sender_id=None, chat_id=None,
+                                      content=None, media=None, metadata=None,
+                                      session_key=None, is_dm=False):
+                # Real nanobot's positional signature (channels/base.py), so
+                # the thread_session shim can wrap it and forward the
+                # session_key it derives from the thread root.
+                self.handled.append(dict(
+                    sender_id=sender_id, chat_id=chat_id, content=content,
+                    media=media, metadata=metadata, session_key=session_key,
+                    is_dm=is_dm))
 
         mods: dict[str, types.ModuleType] = {}
 
@@ -145,9 +159,10 @@ def nanobot_stub():
         mod("nanobot.agent.tools")
         mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
         mod("nanobot.agent.tools.schema",
-            StringSchema=_Schema, IntegerSchema=_Schema,
+            StringSchema=_Schema, IntegerSchema=_Schema, ArraySchema=_Schema,
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
+        mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
         mod("nanobot.agent.tools.search", GrepTool=GrepTool)
         mod("nanobot.agent.tools.filesystem",
             WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)

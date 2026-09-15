@@ -60,6 +60,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_memory  # noqa: E402
 
+from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
+from stack.links import go_page, public  # noqa: E402
 from stack.list_doc import diff  # noqa: E402
 from stack.page_patch import apply_edits  # noqa: E402
 
@@ -71,6 +73,25 @@ _AGENT_BUFFER = "agent/.write-buffer"
 _USAGE = ("usage: stack memory write <vault-path> --by <person> "
           "[--from <file>] [--patch] [--dry-run]\n"
           "  e.g. stack memory write family/camping/todos.md --by marge")
+
+
+def _check_frontmatter(before: str, after: str, page: str) -> None:
+    """Reject a write that breaks or drops the page's frontmatter."""
+    if after.lstrip().startswith("---") and not after.startswith("---\n"):
+        raise ValueError(
+            f"{page} must start with '---' at column one; the write begins "
+            "with whitespace before the frontmatter. Re-send the page with "
+            "the frontmatter block exactly as you read it.")
+    if before.startswith("---\n") and not after.startswith("---\n"):
+        raise ValueError(
+            f"{page} has frontmatter and this write drops it. Keep the "
+            "frontmatter block exactly as you read it, then the body.")
+    try:
+        parse_frontmatter(after)
+    except FrontmatterError as e:
+        raise ValueError(
+            f"{page}: frontmatter does not parse ({e}). Keep the "
+            "frontmatter block exactly as you read it.") from e
 
 
 def run(args, stacklet, config):
@@ -123,6 +144,26 @@ def run(args, stacklet, config):
         seen["before"] = prior or ""
         after = apply_edits(prior or "", edits) if as_patch else content
         seen["after"] = after if after.endswith("\n") else after + "\n"
+        # The wiki refuses a page whose frontmatter does not parse, so a
+        # bad write silently drops the page from the family's view. This
+        # seam sees every mutation, so the check lives here. ValueError
+        # becomes the error message the caller relays to the model.
+        _check_frontmatter(seen["before"], seen["after"], repo_path)
+        # A whole-page rewrite of a list is a restructure. A restructure
+        # never legitimately reopens or removes an item (measured
+        # 2026-09-15: rewrites drop [x] marks, and prompt rules do not
+        # reliably repair them). Targeted edits go through --patch or
+        # the list-edit verb, which stay allowed.
+        if not as_patch and repo_path.endswith("todos.md"):
+            change = diff(seen["before"], seen["after"])
+            lost = list(change.reopened) + list(change.removed)
+            if lost:
+                raise ValueError(
+                    f"this rewrite reopens or removes items: "
+                    f"{'; '.join(lost)}. A restructure keeps every item "
+                    "and every [x]. Resend the full page with them "
+                    "unchanged. To reopen or remove an item on purpose, "
+                    "use list_edit.")
         # A preview still wants the *current* page to compare against, so it
         # takes the same trip and then hands back what was already there:
         # an unchanged file is a no-op, and a no-op does not commit.
@@ -165,7 +206,11 @@ def run(args, stacklet, config):
     # again, and the second write is a duplicate nobody asked for.
     mirrored = bool(result.get("mirrored"))
     lag = "" if mirrored else "\n  The wiki and the vault mount catch up shortly."
-    print(f"Wrote {repo_path} (by {actor})\n  {told}{lag}")
+    # The touched page's wiki link, so the reply can cite it.
+    home_url = (config or {}).get("home_url", "")
+    url = public(go_page(repo_path), f"{home_url}/go" if home_url else "")
+    link = f"\n  {url}" if url else ""
+    print(f"Wrote {repo_path} (by {actor})\n  {told}{link}{lag}")
     return {
         "ok": True, "committed": True, "path": repo_path, "by": actor,
         "summary": told, "mirrored": mirrored,

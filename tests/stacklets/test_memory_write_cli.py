@@ -120,19 +120,19 @@ def test_a_rewrite_replaces_the_page_and_says_what_it_did(store, tmp_path):
     assert store.page.count("- [x] Wetter checken") == 1
 
 
-def test_a_rewrite_that_drops_an_item_names_it_in_full(store, tmp_path):
-    """The failure this whole path exists to catch.
+def test_a_rewrite_that_drops_an_item_is_refused(store, tmp_path):
+    """A whole-page rewrite must never lose a list item.
 
-    An edit that loses items must never render as an ordinary success,
-    because the caller relays this sentence to the family verbatim.
+    Removals go through list_edit, so a write that would drop an item is
+    refused with the item named, rather than committed and reported. This
+    is the guard that makes a restructure safe to hand a model.
     """
     result = _run(store, "# Camping\n\n- [ ] Wetter checken\n", tmp=tmp_path)
 
-    assert result["destructive"] is True
-    assert result["removed"] == ["Kühlbox mitbringen"]
-    assert result["summary"].startswith("REMOVED"), (
-        "a loss has to lead the sentence, not trail it"
-    )
+    assert "error" in result
+    assert "Kühlbox mitbringen" in result["error"]
+    assert "list_edit" in result["error"]
+    assert store.commits == [], "a refused write commits nothing"
 
 
 # ── patching a page ──────────────────────────────────────────────────────
@@ -267,23 +267,20 @@ def test_a_page_that_is_not_a_list_still_says_something_true(store, tmp_path):
     )
 
 
-def test_a_long_description_moves_below_the_subject_intact(store, tmp_path):
+def test_a_long_description_moves_below_the_subject_intact():
     """A removal names every item, so it is the case that overflows.
 
     Truncating would drop exactly the detail worth keeping, so the long
     form moves into the commit body, which git and Forgejo both show.
     """
-    store.page = ("# Camping\n\n"
-                  + "".join(f"- [ ] Ausruestungsgegenstand Nummer {n}\n"
-                            for n in range(1, 6)))
-    result = _run(store, "# Camping\n\n- [ ] Ausruestungsgegenstand Nummer 1\n",
-                  tmp=tmp_path)
+    told = ("REMOVED 5: " + "; ".join(
+        f"Ausruestungsgegenstand Nummer {n}" for n in range(1, 6)))
+    message = write_cli._commit_message("marge", "family/camping/todos.md", told)
 
-    subject, _, body = store.last_subject.partition("\n\n")
+    subject, _, body = message.partition("\n\n")
     assert len(subject) <= 72, "the subject line stays readable"
     assert "family/camping/todos.md" in subject
-    for gone in result["removed"]:
-        assert gone in body, "every lost item survives in the body"
+    assert told in body, "every lost item survives in the body"
 
 
 def test_a_path_that_is_not_a_page_is_refused(store, tmp_path):

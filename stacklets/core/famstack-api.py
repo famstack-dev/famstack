@@ -52,6 +52,9 @@ DOMAIN_ALLOW = [
     # ... and the way it changes one. A page is handed over whole and the
     # reply names what the edit did, so a rewrite that drops items says so.
     ["memory", "write"],
+    # One item on a list, by name. The store matches the item and keeps
+    # the rest of the page intact, so a tick cannot lose other state.
+    ["memory", "list-edit"],
     # What changed, when, and who did it. The vault is a git repo and has
     # always known this; nothing read it back until now.
     ["memory", "history"],

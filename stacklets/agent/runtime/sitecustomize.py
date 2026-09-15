@@ -146,11 +146,19 @@ try:
     # readable on the host for analysis, one appended block per turn.
     _STATE_LOG = _os.path.expanduser("~/.nanobot/llm-state.log")
 
+    # Experiment switch: AGENT_LEAN_STATE=0 disables the history rewrite and
+    # keeps the message list append-only. The rewrite invalidates the oMLX
+    # prefix cache from the first rewritten message on (measured 2026-09-15,
+    # see docs/design/agent/agent-improvement-log.md). Default stays on.
+    _LEAN_ENABLED = _os.environ.get("AGENT_LEAN_STATE", "1") != "0"
+
     def _build_messages_lean(self, *args, **kwargs):
         # Post-process the assembled message list: stale prior-turn derived data
         # (tool results and tool-synthesized answers) become pointers; the
         # current turn stays intact.
-        messages = _lean_messages(_orig_build_messages(self, *args, **kwargs))
+        messages = _orig_build_messages(self, *args, **kwargs)
+        if _LEAN_ENABLED:
+            messages = _lean_messages(messages)
         try:  # a debug view; never worth breaking a turn over
             stamp = _dt.datetime.now().isoformat(timespec="seconds")
             with open(_STATE_LOG, "a", encoding="utf-8") as fh:
@@ -178,6 +186,9 @@ for _module_name, _what in (
     ("history_tool", "memory_history tool"),
     ("grep_tool", "vault grep -> memory_search routing"),
     ("vault_write", "write_file on a vault page -> stack memory write"),
+    ("list_tool", "list_edit item tool -> stack memory list-edit"),
+    ("tool_trim", "unused-tool trim (AGENT_TOOL_TRIM=0 to disable)"),
+    ("thread_session", "thread-scoped sessions (AGENT_THREAD_SESSIONS=0 to disable)"),
 ):
     try:
         importlib.import_module(_module_name).install()

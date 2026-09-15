@@ -1,0 +1,113 @@
+{
+  "at": "20260915T124303Z",
+  "cmd": "cache",
+  "endpoint": "http://localhost:8888/v1",
+  "model": "Qwen3.6-35B-A3B-UD-MLX-4bit",
+  "args": {
+    "url": "http://localhost:8888/v1",
+    "model": "Qwen3.6-35B-A3B-UD-MLX-4bit",
+    "timeout": 600.0,
+    "stream": true,
+    "log": true,
+    "note": "true cold measurement with fresh seed 99: prompts never seen, no SSD reuse possible; checks whether scheduler changes took effect",
+    "cmd": "cache",
+    "prefix_words": 3000,
+    "history_turns": 6,
+    "max_tokens": 48,
+    "seed": 99
+  },
+  "payload": {
+    "phases": [
+      {
+        "phase": "cold",
+        "ttft_s": 10.879,
+        "total_s": 11.32,
+        "usage": {
+          "prompt_tokens": 4416,
+          "completion_tokens": 28,
+          "total_tokens": 4444,
+          "input_tokens": 4416,
+          "output_tokens": 28,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "time_to_first_token": 10.82,
+          "total_time": 11.27,
+          "prompt_eval_duration": 10.82,
+          "generation_duration": 0.45,
+          "prompt_tokens_per_second": 408.08,
+          "generation_tokens_per_second": 62.69
+        },
+        "error": null
+      },
+      {
+        "phase": "warm",
+        "ttft_s": 1.593,
+        "total_s": 2.447,
+        "usage": {
+          "prompt_tokens": 4461,
+          "completion_tokens": 48,
+          "total_tokens": 4509,
+          "input_tokens": 4461,
+          "output_tokens": 48,
+          "prompt_tokens_details": {
+            "cached_tokens": 4096
+          },
+          "time_to_first_token": 1.57,
+          "total_time": 2.43,
+          "prompt_eval_duration": 1.57,
+          "generation_duration": 0.86,
+          "prompt_tokens_per_second": 2839.48,
+          "generation_tokens_per_second": 55.89
+        },
+        "error": null
+      },
+      {
+        "phase": "warm2",
+        "ttft_s": 1.678,
+        "total_s": 1.725,
+        "usage": {
+          "prompt_tokens": 4525,
+          "completion_tokens": 7,
+          "total_tokens": 4532,
+          "input_tokens": 4525,
+          "output_tokens": 7,
+          "prompt_tokens_details": {
+            "cached_tokens": 4096
+          },
+          "time_to_first_token": 1.66,
+          "total_time": 1.71,
+          "prompt_eval_duration": 1.66,
+          "generation_duration": 0.05,
+          "prompt_tokens_per_second": 2730.33,
+          "generation_tokens_per_second": 138.72
+        },
+        "error": null
+      },
+      {
+        "phase": "mutate",
+        "ttft_s": 10.206,
+        "total_s": 10.243,
+        "usage": {
+          "prompt_tokens": 4468,
+          "completion_tokens": 6,
+          "total_tokens": 4474,
+          "input_tokens": 4468,
+          "output_tokens": 6,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "time_to_first_token": 10.19,
+          "total_time": 10.23,
+          "prompt_eval_duration": 10.19,
+          "generation_duration": 0.04,
+          "prompt_tokens_per_second": 438.66,
+          "generation_tokens_per_second": 149.1
+        },
+        "error": null
+      }
+    ],
+    "prefix_words": 3000,
+    "history_turns": 6
+  }
+}

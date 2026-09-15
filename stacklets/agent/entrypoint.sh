@@ -19,6 +19,11 @@ for f in SOUL.md AGENTS.md; do
     [ -f "$NB/workspace/$f" ] || sed "s/__AGENT_NAME__/$NAME/g" "/app/workspace-seed/$f" > "$NB/workspace/$f"
 done
 
+# Seed a minimal USER.md so nanobot does not install its default profile
+# template. The template costs ~1K prompt characters per request and holds
+# no data: the runtime brief carries the per-turn speaker instead.
+[ -f "$NB/workspace/USER.md" ] || printf '# User Profile\n\nThe runtime brief names the current speaker each turn. No data here.\n' > "$NB/workspace/USER.md"
+
 # Product-defined skills always refresh from the image seed (not user-editable).
 if [ -d /app/workspace-seed/skills ]; then
     mkdir -p "$NB/workspace/skills"

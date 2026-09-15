@@ -25,7 +25,8 @@ import pytest
 
 SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
                    "memory_tool", "person_tool", "history_tool", "grep_tool",
-                   "name_trigger", "thread_trigger", "join_greeting", "vault_write")
+                   "name_trigger", "thread_trigger", "join_greeting", "vault_write",
+                   "list_tool", "tool_trim", "thread_session")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -72,7 +73,7 @@ def test_vault_tools_are_registered(nanobot):
     """
     mods = nanobot()
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
-                                 "MemoryHistoryTool"}
+                                 "MemoryHistoryTool", "ListEditTool"}
 
 
 def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
@@ -272,7 +273,7 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     mods = nanobot(drop="nanobot.agent.tools.search.GrepTool")
 
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
-                                 "MemoryHistoryTool"}
+                                 "MemoryHistoryTool", "ListEditTool"}
 
 
 def test_the_stub_can_actually_express_a_detached_shim(nanobot):

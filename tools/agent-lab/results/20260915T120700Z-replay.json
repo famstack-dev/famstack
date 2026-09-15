@@ -1,0 +1,205 @@
+{
+  "at": "20260915T120700Z",
+  "cmd": "replay",
+  "endpoint": "http://localhost:8888/v1",
+  "model": "Qwen3.6-35B-A3B-UD-MLX-4bit",
+  "args": {
+    "url": "http://localhost:8888/v1",
+    "model": "Qwen3.6-35B-A3B-UD-MLX-4bit",
+    "timeout": 600.0,
+    "stream": true,
+    "log": true,
+    "note": "replay with the real lean_messages transform vs append-only; same scripted tool conversation",
+    "cmd": "replay",
+    "prefix_words": 3000,
+    "turns": 4,
+    "max_tokens": 48,
+    "seed": 7
+  },
+  "payload": {
+    "arms": {
+      "lean_state (production)": [
+        {
+          "phase": "turn 1",
+          "ttft_s": 7.926,
+          "total_s": 8.758,
+          "usage": {
+            "prompt_tokens": 3390,
+            "completion_tokens": 48,
+            "total_tokens": 3438,
+            "input_tokens": 3390,
+            "output_tokens": 48,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 7.86,
+            "total_time": 8.7,
+            "prompt_eval_duration": 7.86,
+            "generation_duration": 0.83,
+            "prompt_tokens_per_second": 431.11,
+            "generation_tokens_per_second": 57.5
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 2",
+          "ttft_s": 7.656,
+          "total_s": 8.25,
+          "usage": {
+            "prompt_tokens": 3537,
+            "completion_tokens": 35,
+            "total_tokens": 3572,
+            "input_tokens": 3537,
+            "output_tokens": 35,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 7.62,
+            "total_time": 8.22,
+            "prompt_eval_duration": 7.62,
+            "generation_duration": 0.6,
+            "prompt_tokens_per_second": 464.02,
+            "generation_tokens_per_second": 58.48
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 3",
+          "ttft_s": 8.026,
+          "total_s": 8.554,
+          "usage": {
+            "prompt_tokens": 3684,
+            "completion_tokens": 32,
+            "total_tokens": 3716,
+            "input_tokens": 3684,
+            "output_tokens": 32,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 7.99,
+            "total_time": 8.53,
+            "prompt_eval_duration": 7.99,
+            "generation_duration": 0.53,
+            "prompt_tokens_per_second": 460.86,
+            "generation_tokens_per_second": 60.13
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 4",
+          "ttft_s": 8.26,
+          "total_s": 8.794,
+          "usage": {
+            "prompt_tokens": 3831,
+            "completion_tokens": 32,
+            "total_tokens": 3863,
+            "input_tokens": 3831,
+            "output_tokens": 32,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 8.23,
+            "total_time": 8.77,
+            "prompt_eval_duration": 8.23,
+            "generation_duration": 0.54,
+            "prompt_tokens_per_second": 465.6,
+            "generation_tokens_per_second": 59.51
+          },
+          "error": null
+        }
+      ],
+      "append-only": [
+        {
+          "phase": "turn 1",
+          "ttft_s": 7.276,
+          "total_s": 8.088,
+          "usage": {
+            "prompt_tokens": 3392,
+            "completion_tokens": 48,
+            "total_tokens": 3440,
+            "input_tokens": 3392,
+            "output_tokens": 48,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 7.25,
+            "total_time": 8.06,
+            "prompt_eval_duration": 7.25,
+            "generation_duration": 0.82,
+            "prompt_tokens_per_second": 467.99,
+            "generation_tokens_per_second": 58.83
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 2",
+          "ttft_s": 8.025,
+          "total_s": 8.653,
+          "usage": {
+            "prompt_tokens": 3728,
+            "completion_tokens": 37,
+            "total_tokens": 3765,
+            "input_tokens": 3728,
+            "output_tokens": 37,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 7.99,
+            "total_time": 8.63,
+            "prompt_eval_duration": 7.99,
+            "generation_duration": 0.63,
+            "prompt_tokens_per_second": 466.36,
+            "generation_tokens_per_second": 58.62
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 3",
+          "ttft_s": 8.805,
+          "total_s": 9.368,
+          "usage": {
+            "prompt_tokens": 4066,
+            "completion_tokens": 32,
+            "total_tokens": 4098,
+            "input_tokens": 4066,
+            "output_tokens": 32,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 8.77,
+            "total_time": 9.34,
+            "prompt_eval_duration": 8.77,
+            "generation_duration": 0.57,
+            "prompt_tokens_per_second": 463.58,
+            "generation_tokens_per_second": 56.41
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 4",
+          "ttft_s": 9.725,
+          "total_s": 10.298,
+          "usage": {
+            "prompt_tokens": 4403,
+            "completion_tokens": 34,
+            "total_tokens": 4437,
+            "input_tokens": 4403,
+            "output_tokens": 34,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 9.68,
+            "total_time": 10.26,
+            "prompt_eval_duration": 9.68,
+            "generation_duration": 0.58,
+            "prompt_tokens_per_second": 454.83,
+            "generation_tokens_per_second": 58.94
+          },
+          "error": null
+        }
+      ]
+    },
+    "prefix_words": 3000,
+    "turns": 4
+  }
+}

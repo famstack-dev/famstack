@@ -29,13 +29,7 @@
   },
   "channels": {
     "matrix": {
-      "enabled": true,
-      "homeserver": "${AGENT_MATRIX_HOMESERVER}",
-      "userId": "@${AGENT_BOT_ID}:${AGENT_MATRIX_SERVER_NAME}",
-      "password": "${AGENT_MATRIX_PASSWORD}",
-      "e2eeEnabled": true,
-      "allowFrom": ["*"],
-      "groupPolicy": "mention"
+      "enabled": false
     }
   }
 }

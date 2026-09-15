@@ -3,16 +3,30 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from nanobot.agent.tools.base import Tool, tool_parameters
-from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
+from nanobot.agent.tools.schema import (
+    ArraySchema,
+    IntegerSchema,
+    StringSchema,
+    tool_parameters_schema,
+)
 
 
 @tool_parameters(
     tool_parameters_schema(
         query=StringSchema(
-            "Natural-language question or keywords to search across the family vault.",
+            "Two to four literal keywords, words that appear on the page. "
+            "Not a full question.",
             min_length=1,
+        ),
+        queries=ArraySchema(
+            StringSchema("Keyword set for one search."),
+            description="Up to three independent keyword sets, searched in "
+                        "one call. Use instead of repeated search calls.",
+            max_items=3,
+            nullable=True,
         ),
         limit=IntegerSchema(
             5,
@@ -59,22 +73,48 @@ class MemorySearchTool(Tool):
     async def execute(
         self,
         query: str,
+        queries: list[str] | None = None,
         limit: int | None = None,
         scope: str | None = None,
         person: str | None = None,
         tag: str | None = None,
     ) -> str:
-        # `--nl` is what makes the parameter description above true. The
-        # CLI's default query language is a regex, so a question sent
-        # without it asks for those exact words, adjacent, and matches
-        # nothing. The CLI skips the model itself on a single word, so
-        # passing this always costs nothing on keyword lookups.
+        # `queries` batches independent lookups into one tool call, so
+        # one LLM iteration answers a question that needs two or three
+        # searches. Each iteration costs a prompt prefill; the searches
+        # themselves are cheap and run concurrently.
+        batch = [q for q in (queries or []) if q and q.strip()] or [query]
+        batch = batch[:3]
+        results = await asyncio.gather(
+            *(self._search_one(q, limit, scope, person, tag) for q in batch)
+        )
+        if len(batch) == 1:
+            return results[0]
+        return "\n\n".join(
+            f"## {q}\n{r}" for q, r in zip(batch, results)
+        )
+
+    async def _search_one(
+        self,
+        query: str,
+        limit: int | None,
+        scope: str | None,
+        person: str | None,
+        tag: str | None,
+    ) -> str:
+        # The CLI's query language is a regex, and adjacent words match
+        # nothing. Join the model's keywords with `|` so each keyword
+        # matches on its own. This replaces the CLI's `--nl` rewrite,
+        # which made a second LLM call inside every multi-word search
+        # (measured 2026-09-15: one full model call per search, on the
+        # same GPU as the turn). The model now supplies the keywords.
+        words = [re.escape(w) for w in query.split()]
+        pattern = "|".join(words) if len(words) > 1 else query
         args = [
             "stack",
             "memory",
             "search",
-            query,
-            "--nl",
+            pattern,
             "--limit",
             str(limit or 5),
         ]
