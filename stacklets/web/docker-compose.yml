@@ -1,0 +1,54 @@
+# stacklets/web/docker-compose.yml — the search half of web reading
+#
+# One service today. SearXNG is a metasearch engine: it forwards a
+# query to upstream engines and merges the results, so there is no
+# index to build and no crawl to run. Cold start is about a second.
+#
+# On privacy, the honest description: this stops Google and Bing
+# building a profile of the family, because the query arrives from the
+# instance rather than from a logged-in browser. It is not anonymity —
+# the query still reaches an upstream engine, and the plan says so
+# plainly rather than claiming otherwise.
+#
+# The stealth fetch service (tier 3, a real browser) lands here in
+# phase 4 as a second service. It is deliberately not bundled now:
+# search is a 60 MB image, a browser is 250 MB, and a family that only
+# wants search should not pay for Chromium.
+
+name: stack-web
+
+services:
+  stack-web-search:
+    container_name: stack-web-search
+    image: searxng/searxng:${WEB_SEARCH_VERSION:-latest}
+    networks:
+      - stack
+    environment:
+      # SEARXNG_BASE_URL is deliberately unset. The image's default
+      # derives the public URL from the request, which is right for
+      # both modes here: port mode is hit on the LAN IP, domain mode
+      # arrives through Caddy with forwarding headers. Pinning it would
+      # mean guessing which one this instance uses.
+      #
+      # Signs the session cookie. Generated per install and kept in the
+      # stack's secret store, never in the repo.
+      SEARXNG_SECRET: ${WEB_SECRET}
+      # The image binds 127.0.0.1 by default, which would be unreachable
+      # from Caddy and from the published port.
+      SEARXNG_BIND_ADDRESS: "0.0.0.0"
+      TZ: ${TZ:-UTC}
+    volumes:
+      # Read-only: the settings overlay is repo state, not instance
+      # state. Nothing SearXNG writes belongs in version control, and a
+      # writable mount invites drift between the file and the container.
+      - ./config/settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      # 8080 is the image's internal listener. PORT_BIND_IP is set by
+      # the runtime: 0.0.0.0 in port mode, 127.0.0.1 in domain mode so
+      # Caddy is the only way in.
+      - "${PORT_BIND_IP:-127.0.0.1}:42080:8080"
+    restart: unless-stopped
+
+networks:
+  stack:
+    external: true

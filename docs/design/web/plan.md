@@ -222,7 +222,7 @@ confirm neither produces a fabricated entry.
 loads a fixture and asserts a gate verdict, so adding a site profile later
 costs one fixture plus one line.
 
-### Phase 2 — The `web` stacklet, search half (about half a day)
+### Phase 2 — The `web` stacklet, search half — SHIPPED
 
 - `stacklets/web/` with `stacklet.toml`, compose, `config/settings.yml`
   (`use_default_settings`, generated `secret_key`, `formats: [html, json]`),
