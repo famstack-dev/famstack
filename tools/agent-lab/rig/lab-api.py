@@ -21,10 +21,25 @@ import re
 import shlex
 import socketserver
 import subprocess
+import importlib.util
+import sys
 import urllib.request
 from pathlib import Path
 
 ARGS = None
+
+# Run the real store transform, so the rig cannot drift from production.
+# The transforms are pure; the module also imports store deps at load
+# time, so put their paths on sys.path before executing it.
+_REPO = Path(__file__).resolve().parents[3]
+for _p in ("lib", "stacklets/memory", "stacklets/memory/cli"):
+    sys.path.insert(0, str(_REPO / _p))
+_spec = importlib.util.spec_from_file_location(
+    "prod_list_edit", _REPO / "stacklets" / "memory" / "cli" / "list-edit.py")
+_prod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_prod)
+_list_edit_transform = _prod.apply_list_edit
+_list_edit_batch = _prod.apply_list_edits
 
 
 def _body_only(text: str) -> str:
@@ -244,15 +259,17 @@ def _commit(page: str, actor: str, sentence: str) -> None:
 
 
 def memory_list_edit(argv: list[str]) -> tuple[str, int]:
-    """Item-level list operation. The store matches the item, so the
-    model cannot lose unrelated state. Ambiguity is an answer, not a
-    guess."""
+    """Item-level and bulk list operations.
+
+    Runs the production transform (stacklets/memory/cli/list-edit.py)
+    so the rig cannot drift from the real store contract.
+    """
     parser = argparse.ArgumentParser(prog="stack memory list-edit", add_help=False)
     parser.add_argument("page")
     parser.add_argument("--op", required=True,
                         choices=["add", "tick", "untick", "remove",
                                  "clear-done", "reset"])
-    parser.add_argument("--item", default="")
+    parser.add_argument("--item", action="append", default=[])
     parser.add_argument("--section", default=None)
     parser.add_argument("--by", default="someone")
     try:
@@ -263,75 +280,18 @@ def memory_list_edit(argv: list[str]) -> tuple[str, int]:
     path = Path(ARGS.vault) / ns.page
     if not path.exists():
         return f"no such page: {ns.page}\n", 1
-    lines = path.read_text().splitlines()
-    boxes = [(i, m.group(1).lower() == "x", m.group(2))
-             for i, ln in enumerate(lines) if (m := _BOX.match(ln))]
-
-    # Bulk operations, same contract as the production verb.
+    items = [i.strip() for i in ns.item if i.strip()]
+    text = path.read_text()
     if ns.op in ("clear-done", "reset"):
-        done = [(i, t) for i, d, t in boxes if d]
-        if not done:
-            return "nothing is ticked; the list is already clear\n", 0
-        if ns.op == "clear-done":
-            for i, _ in reversed(done):
-                del lines[i]
-            sentence = f"REMOVED {len(done)}: " + "; ".join(t for _, t in done)
-        else:
-            for i, _ in done:
-                lines[i] = re.sub(r"- \[[xX]\]", "- [ ]", lines[i], count=1)
-            sentence = f"reopened {len(done)}: " + "; ".join(t for _, t in done)
-        path.write_text("\n".join(lines) + "\n")
-        _commit(ns.page, ns.by, sentence)
-        return sentence + _link_line(ns.page) + "\n", 0
-
-    if ns.op == "add":
-        if any(ns.item.lower() == text.lower() for _, _, text in boxes):
-            return f"'{ns.item}' is already on the list\n", 0
-        new_line = f"- [ ] {ns.item}"
-        insert_at = len(lines)
-        if ns.section:
-            heads = [i for i, ln in enumerate(lines)
-                     if ln.lower().lstrip("# ").strip() == ns.section.lower()
-                     and ln.lstrip().startswith("#")]
-            if heads:
-                insert_at = heads[0] + 1
-                while insert_at < len(lines) and not lines[insert_at].lstrip().startswith("#"):
-                    insert_at += 1
-                while insert_at > heads[0] + 1 and not lines[insert_at - 1].strip():
-                    insert_at -= 1
-        lines.insert(insert_at, new_line)
-        path.write_text("\n".join(lines) + "\n")
-        sentence = f"added 1: {ns.item}"
-        _commit(ns.page, ns.by, sentence)
-        return sentence + _link_line(ns.page) + "\n", 0
-
-    matches = [b for b in boxes if ns.item.lower() == b[2].lower()]
-    if not matches:
-        matches = [b for b in boxes if ns.item.lower() in b[2].lower()]
-    if not matches:
-        open_items = "; ".join(t for _, done, t in boxes if not done)
-        return (f"no item matching '{ns.item}' on {ns.page}. "
-                f"Open items: {open_items}\n"), 1
-    if len(matches) > 1:
-        return (f"'{ns.item}' is ambiguous, it matches: "
-                + "; ".join(t for _, _, t in matches)
-                + ". Name the item more exactly.\n"), 1
-
-    idx, done, text = matches[0]
-    if ns.op == "tick":
-        if done:
-            return f"'{text}' is already ticked\n", 0
-        lines[idx] = lines[idx].replace("- [ ]", "- [x]", 1)
-        sentence = f"ticked off 1: {text}"
-    elif ns.op == "untick":
-        if not done:
-            return f"'{text}' is already open\n", 0
-        lines[idx] = re.sub(r"- \[[xX]\]", "- [ ]", lines[idx], count=1)
-        sentence = f"unticked 1: {text}"
+        new, sentence, kind = _list_edit_transform(text, ns.op, "", ns.section)
     else:
-        del lines[idx]
-        sentence = f"REMOVED 1: {text}"
-    path.write_text("\n".join(lines) + "\n")
+        new, sentence, kind = _list_edit_batch(text, ns.op, items, ns.section)
+
+    if kind == "refuse":
+        return sentence + "\n", 1
+    if kind == "noop":
+        return sentence + "\n", 0
+    path.write_text(new)
     _commit(ns.page, ns.by, sentence)
     return sentence + _link_line(ns.page) + "\n", 0
 

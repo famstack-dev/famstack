@@ -15,7 +15,11 @@ from __future__ import annotations
 import asyncio
 
 from nanobot.agent.tools.base import Tool, tool_parameters
-from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
+from nanobot.agent.tools.schema import (
+    ArraySchema,
+    StringSchema,
+    tool_parameters_schema,
+)
 
 
 @tool_parameters(
@@ -29,9 +33,11 @@ from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
             "items, reset reopens them.",
             enum=("add", "tick", "untick", "remove", "clear-done", "reset"),
         ),
-        item=StringSchema(
-            "The item text, as it appears on the list (for add: the new "
-            "item, in the family's words). Empty for bulk operations.",
+        items=ArraySchema(
+            StringSchema("One item's text, as it appears on the list."),
+            description="The item(s) for this op, one or more, in the "
+                        "family's words. Omit for bulk ops (clear-done, "
+                        "reset).",
             nullable=True,
         ),
         section=StringSchema(
@@ -66,7 +72,7 @@ class ListEditTool(Tool):
         self,
         page: str,
         op: str,
-        item: str | None = None,
+        items: list[str] | None = None,
         section: str | None = None,
     ) -> str:
         target = page.strip()
@@ -80,8 +86,10 @@ class ListEditTool(Tool):
         except Exception:
             actor = "someone"
 
-        args = ["stack", "memory", "list-edit", target,
-                "--op", op, "--item", item or "", "--by", actor]
+        names = [i for i in (items or []) if i and i.strip()]
+        args = ["stack", "memory", "list-edit", target, "--op", op, "--by", actor]
+        for name in names or [""]:
+            args.extend(["--item", name])
         if section:
             args.extend(["--section", section])
 

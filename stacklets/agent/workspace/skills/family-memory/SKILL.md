@@ -29,7 +29,7 @@ SOURCES (answer used a vault page, searched or read):
   max 3 sources; nothing from vault -> no Sources line
 
 LISTS:
-  item op add|tick|untick|remove -> list_edit, ONE item per call
+  item op add|tick|untick|remove -> list_edit, items=[one or more]
   "we did that"                  -> tick, never remove
   "clear the list|bought all"    -> list_edit op=clear-done   # removes ticked
   "start the week|fresh list"    -> list_edit op=reset        # reopens all

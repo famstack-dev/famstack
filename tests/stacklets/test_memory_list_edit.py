@@ -140,3 +140,34 @@ def test_untick_reports_a_reopening():
     assert kind == "changed"
     assert sentence == "reopened 1: coffee beans"
     assert "- [ ] coffee beans" in new
+
+
+def test_batch_add_is_one_change_naming_every_item():
+    new, sentence, kind = list_edit.apply_list_edits(
+        PAGE, "add", ["butter", "flour"])
+    assert kind == "changed"
+    assert sentence == "added 2: butter; flour"
+    assert "- [ ] butter" in new and "- [ ] flour" in new
+
+
+def test_batch_tick_across_the_page():
+    new, sentence, kind = list_edit.apply_list_edits(
+        PAGE, "tick", ["oat milk", "dish soap"])
+    assert kind == "changed"
+    assert sentence == "ticked off 2: oat milk; dish soap"
+    assert "- [x] oat milk" in new and "- [x] dish soap" in new
+
+
+def test_batch_reports_changed_and_misses_together():
+    new, sentence, kind = list_edit.apply_list_edits(
+        PAGE, "tick", ["oat milk", "bananas"])
+    assert kind == "changed"
+    assert "ticked off 1: oat milk" in sentence
+    assert "no item matching 'bananas'" in sentence
+    assert "- [x] oat milk" in new
+
+
+def test_batch_of_one_matches_the_single_form():
+    a = list_edit.apply_list_edits(PAGE, "tick", ["oat milk"])
+    b = list_edit.apply_list_edit(PAGE, "tick", "oat milk")
+    assert a == b

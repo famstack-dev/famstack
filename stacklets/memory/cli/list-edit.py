@@ -123,12 +123,49 @@ def apply_list_edit(text: str, op: str, item: str,
     return "\n".join(lines) + "\n", sentence, "changed"
 
 
+_VERB = {"add": "added", "tick": "ticked off", "untick": "reopened",
+         "remove": "REMOVED"}
+
+
+def apply_list_edits(text: str, op: str, items: list[str],
+                     section: str | None = None) -> tuple[str, str, str]:
+    """Apply one op to several items, in one page write.
+
+    Each item runs against the page as the previous item left it, so a
+    batch is exactly the same result as the calls run in order, at one
+    commit. The sentence groups the items that changed and appends the
+    ones that did not (already ticked, no match), so nothing is hidden.
+    kind is "changed" if any item changed, else "noop" if all were
+    no-ops, else "refuse".
+    """
+    if len(items) == 1:
+        return apply_list_edit(text, op, items[0], section)
+    changed: list[str] = []
+    notes: list[str] = []
+    kinds: set[str] = set()
+    cur = text
+    for it in items:
+        cur, sentence, kind = apply_list_edit(cur, op, it, section)
+        kinds.add(kind)
+        if kind == "changed":
+            changed.append(sentence.split(": ", 1)[1])
+        else:
+            notes.append(sentence)
+    parts: list[str] = []
+    if changed:
+        parts.append(f"{_VERB[op]} {len(changed)}: {'; '.join(changed)}")
+    parts.extend(notes)
+    sentence = "; ".join(parts)
+    kind = "changed" if changed else ("refuse" if "refuse" in kinds else "noop")
+    return cur, sentence, kind
+
+
 def run(args, stacklet, config):
     parser = argparse.ArgumentParser(prog="stack memory list-edit",
                                      add_help=False)
     parser.add_argument("page")
     parser.add_argument("--op", required=True, choices=list(_OPS))
-    parser.add_argument("--item", default="")
+    parser.add_argument("--item", action="append", default=[])
     parser.add_argument("--section", default=None)
     parser.add_argument("--by", default="someone")
     try:
@@ -142,8 +179,8 @@ def run(args, stacklet, config):
         print(f"{repo_path!r} is not a page (expected a .md path)")
         sys.exit(2)
     actor = ns.by.strip().split(":")[0].lstrip("@") or "someone"
-    item = ns.item.strip()
-    if not item and ns.op not in ("clear-done", "reset"):
+    items = [i.strip() for i in ns.item if i.strip()]
+    if not items and ns.op not in ("clear-done", "reset"):
         print("--item must name the item")
         sys.exit(2)
 
@@ -157,7 +194,10 @@ def run(args, stacklet, config):
         if not (prior or "").strip():
             outcome["sentence"], outcome["kind"] = f"no such page: {repo_path}", "refuse"
             return prior or ""
-        new, sentence, kind = apply_list_edit(prior, ns.op, item, ns.section)
+        if ns.op in ("clear-done", "reset"):
+            new, sentence, kind = apply_list_edit(prior, ns.op, "", ns.section)
+        else:
+            new, sentence, kind = apply_list_edits(prior, ns.op, items, ns.section)
         outcome["sentence"], outcome["kind"] = sentence, kind
         return new
 
