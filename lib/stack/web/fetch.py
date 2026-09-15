@@ -277,6 +277,55 @@ def _from_url_only(url: str, title: str, profile: Profile) -> FetchOutcome:
     )
 
 
+# ── Transports ────────────────────────────────────────────────────────
+#
+# Two, because the ladder has two callers with incompatible
+# environments. The bot runs inside a container that already has
+# aiohttp and an open session. The host CLI runs on a Mac with no
+# virtualenv and possibly nothing up at all, so it gets the standard
+# library. Neither is imported at module level.
+
+def urllib_transport(*, timeout: int = 30) -> Transport:
+    """A transport over the standard library, for the host CLI.
+
+    `stack web fetch` has to work with no containers running and no
+    third-party packages installed, which rules out aiohttp. urllib is
+    synchronous, so the request goes to a worker thread and the ladder
+    stays async for both callers.
+
+    An HTTP error is returned rather than raised. A 403 carrying a
+    Cloudflare challenge is not a transport failure — it is a page, and
+    it is exactly the page the gate needs to look at.
+    """
+    def _blocking(url: str, headers: dict) -> Response | None:
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                return Response(
+                    url=resp.url,
+                    status=resp.status,
+                    html=resp.read().decode("utf-8", errors="replace"),
+                    content_type=resp.headers.get_content_type(),
+                )
+        except urllib.error.HTTPError as err:
+            return Response(
+                url=err.url,
+                status=err.code,
+                html=err.read().decode("utf-8", errors="replace"),
+                content_type=err.headers.get_content_type() if err.headers else "text/html",
+            )
+
+    async def _fetch(url: str, headers: dict) -> Response | None:
+        import asyncio
+
+        return await asyncio.to_thread(_blocking, url, headers)
+
+    return _fetch
+
+
 # ── aiohttp transport ─────────────────────────────────────────────────
 
 def aiohttp_transport(session, *, timeout: int = 30) -> Transport:
