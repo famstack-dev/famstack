@@ -330,25 +330,9 @@ class TestNamingAnArtifact:
 
 # ── Second copies ────────────────────────────────────────────────────────
 
-def _encoders() -> str:
-    if shutil.which("ffmpeg") is None:
-        return ""
-    return subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
-                          capture_output=True, check=False).stdout.decode()
-
-
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None,
     reason="ffmpeg is a container dependency; absent here")
-
-# The container image installs a full ffmpeg; a developer machine may
-# carry a build without the WebP encoder, which is a property of that
-# build and not of this code. The width arithmetic below is ours and is
-# tested separately, through a format every build can write.
-needs_webp = pytest.mark.skipif(
-    "webp" not in _encoders(),
-    reason="this ffmpeg build has no WebP encoder")
-
 
 def _width(path: Path) -> int:
     out = subprocess.run(
@@ -408,7 +392,6 @@ class TestDerivatives:
               "sender": "@homer:example.org"}
 
     @needs_ffmpeg
-    @needs_webp
     def test_a_photograph_gets_a_bounded_copy_beside_it(self, archive, tmp_path):
         data = _an_image(tmp_path / "photo.png", 3000)
         media.keep(archive, "$photo", data, ext="png", when=MARCH,
@@ -417,8 +400,8 @@ class TestDerivatives:
 
         link = media.derive(archive, "$photo", ext="png", when=MARCH, kind="image")
 
-        assert link == "/media/2026/03/photo.webp"
-        assert _width(archive / "2026" / "03" / "photo.webp") == media.MAX_IMAGE_WIDTH
+        assert link == "/media/2026/03/photo.jpg"
+        assert _width(archive / "2026" / "03" / "photo.jpg") == media.MAX_IMAGE_WIDTH
         assert (archive / "2026" / "03" / "photo.png").read_bytes() == data
 
     def test_a_derivative_is_written_into_the_record_that_owns_it(self, archive):

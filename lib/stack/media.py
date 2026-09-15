@@ -80,9 +80,13 @@ _TRANSCODE_TIMEOUT_S = 300
 MAX_IMAGE_WIDTH = 1600
 
 # The forms a derivative takes, by the kind of artifact it came from.
-# AAC in MP4 because Safari does not decode Opus in Ogg; WebP because
-# it is the smallest of the formats every current browser renders.
-_DERIVED_EXT = {"audio": "m4a", "image": "webp"}
+# AAC in MP4 because Safari does not decode Opus in Ogg. JPEG because
+# mjpeg is built into ffmpeg itself, where WebP needs libwebp linked in
+# at build time: a build without it produces no derivative at all, so
+# the page falls back to embedding the full-size original, which is the
+# one outcome the derivative exists to prevent. WebP would be roughly a
+# quarter smaller, which does not buy that risk.
+_DERIVED_EXT = {"audio": "m4a", "image": "jpg"}
 
 _IGNORE_NOTE = (
     "# Original uploads, kept on disk only. Deleting the source event has\n"
@@ -308,7 +312,7 @@ def transcode_audio(src, dst) -> bool:
 
 
 def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH) -> bool:
-    """Convert an image to a WebP no wider than `max_width`. True when done.
+    """Convert an image to a JPEG no wider than `max_width`. True when done.
 
     A page that embeds originals makes a reader download originals, and
     twenty photographs off a phone are a hundred megabytes of them. The
@@ -327,6 +331,10 @@ def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH) -> bool:
         # One frame: the source may be an animation, and the point of
         # the derivative is a bounded still.
         "-frames:v", "1",
+        # ffmpeg's JPEG default is soft enough to show on a photograph.
+        # 3 is near the top of the quality scale and still a fraction of
+        # the original's size.
+        "-q:v", "3",
     ])
 
 
