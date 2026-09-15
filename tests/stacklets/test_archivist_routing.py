@@ -17,7 +17,6 @@ mirror) is exercised by `test_extractors.py` and `test_git_mirror.py`.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1063,56 +1062,31 @@ class TestAnUploadKeepsItsFile:
 
     async def test_the_file_lands_where_the_wiki_will_serve_it(
             self, tmp_path, monkeypatch):
-        brain = tmp_path / "brain"
-        brain.mkdir()
-        monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
+        store = tmp_path / "media"
+        monkeypatch.setenv("MEDIA_ARCHIVE_DIR", str(store))
         bot, calls = self._bot(tmp_path)
 
         await self._upload(bot)
 
+        # The link is site-rooted and the bytes are not under the site:
+        # the wiki container mounts the store at that same name.
         assert calls[0]["kept_media"]["original"] == "/media/2026/03/upload.pdf"
-        assert (brain / "media" / "2026" / "03" / "upload.pdf").read_bytes() == \
+        assert (store / "2026" / "03" / "upload.pdf").read_bytes() == \
             b"%PDF-1.4 anmeldung"
-
-    async def test_the_archive_is_never_committed(self, tmp_path, monkeypatch):
-        """Deleting the message has to be able to delete the file, and a
-        blob that was committed once stays reachable forever.
-
-        Asserted through git rather than by reading an ignore file: the
-        rule deliberately lives in `.git/info/exclude`, because Quartz
-        globs the content directory with `gitignore: true` and a
-        `.gitignore` entry would hide the archive from the site.
-        """
-        brain = tmp_path / "brain"
-        brain.mkdir()
-        subprocess.run(["git", "init", "-q", str(brain)], check=True)
-        (brain / ".gitignore").write_text(".obsidian/\n", encoding="utf-8")
-        monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
-        bot, _ = self._bot(tmp_path)
-
-        await self._upload(bot)
-
-        ignored = subprocess.run(
-            ["git", "-C", str(brain), "check-ignore", "-q",
-             "media/2026/03/upload.pdf"], check=False,
-        )
-        assert ignored.returncode == 0
-        assert "media" not in (brain / ".gitignore").read_text(encoding="utf-8")
 
     async def test_the_file_remembers_the_room_it_was_posted_in(
             self, tmp_path, monkeypatch):
         """The name in the archive is a scrubbed event id and the
         folders are a date. Everything else about the upload is in the
         record beside it or nowhere."""
-        brain = tmp_path / "brain"
-        brain.mkdir()
-        monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
+        store = tmp_path / "media"
+        monkeypatch.setenv("MEDIA_ARCHIVE_DIR", str(store))
         bot, _ = self._bot(tmp_path)
 
         await self._upload(bot)
 
         record = json.loads(
-            (brain / "media" / "2026" / "03" / "upload.json")
+            (store / "2026" / "03" / "upload.json")
             .read_text(encoding="utf-8"))
         assert record["room_id"] == "!r:server"
         assert record["sender"] == "@marge:server"
@@ -1121,10 +1095,10 @@ class TestAnUploadKeepsItsFile:
 
     async def test_a_capture_still_files_when_there_is_nowhere_to_keep_it(
             self, tmp_path, monkeypatch):
-        """The docs stacklet runs without memory installed, so there is
-        no brain to write into. Filing is what the user asked for; the
+        """The docs stacklet runs without memory installed, so no
+        archive is configured. Filing is what the user asked for; the
         copy is a bonus and never a precondition."""
-        monkeypatch.delenv("BRAIN_REPO_DIR", raising=False)
+        monkeypatch.delenv("MEDIA_ARCHIVE_DIR", raising=False)
         bot, calls = self._bot(tmp_path)
 
         await self._upload(bot)

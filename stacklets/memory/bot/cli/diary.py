@@ -206,13 +206,10 @@ async def _archive_media(messages, events, *, session, homeserver, token,
     photographs to write files that are already on disk would make
     every night cost what the first one did.
     """
-    try:
-        brain = wiki._brain_dir()
-    except RuntimeError as e:
-        _err(f"  {e}; keeping no originals")
+    root = media.open_archive()
+    if root is None:
+        _err("  no media archive configured, keeping no originals")
         return {}
-    media.ensure_ignored(brain)
-    root = media.archive_root(brain)
 
     raw = {ev.get("event_id"): ev for ev in events}
     paths: "dict[str, str]" = {}

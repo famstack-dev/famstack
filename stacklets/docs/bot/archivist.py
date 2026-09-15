@@ -2257,28 +2257,25 @@ class ArchivistBot(MicroBot):
         be every other bot standing still.
 
         ``{"name", "original", "embed"}``, or None when nothing was
-        kept. The archive lives inside the brain working copy, which is
-        the tree the wiki serves, so the entry addresses the file by a
-        site path that resolves at any page depth and in either
-        deployment mode.
+        kept. The store is its own directory; the wiki sees it through
+        a mount, so the entry addresses the file by a site path that
+        resolves at any page depth and in either deployment mode.
 
-        Best-effort by construction. No brain (memory not installed),
-        no event id, no writable disk: the capture files exactly as it
-        did before, pointing at the mxc URL alone.
+        Best-effort by construction. No archive configured (memory not
+        installed), no event id, no writable disk: the capture files
+        exactly as it did before, pointing at the mxc URL alone.
 
         Documents are not archived here. They go to Paperless, which
         holds the bytes durably and is named on the entry; a second
         copy would be two places to keep in step and two places to
         delete from.
         """
-        brain = os.environ.get("BRAIN_REPO_DIR", "")
-        if not brain or not event_id:
+        root = media.open_archive()
+        if root is None or not event_id:
             return None
         import datetime as _dt
         when = (_dt.datetime.fromtimestamp(ts_ms / 1000, tz=_dt.timezone.utc)
                 if ts_ms else _dt.datetime.now(_dt.timezone.utc))
-        media.ensure_ignored(brain)
-        root = media.archive_root(brain)
         kind = media.kind_for(mime)
         ext = media.extension_for(filename, mime)
         link = media.keep(

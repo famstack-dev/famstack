@@ -31,7 +31,7 @@ MARCH = date(2026, 3, 14)
 
 @pytest.fixture
 def archive(tmp_path) -> Path:
-    return media.archive_root(tmp_path)
+    return tmp_path / "media"
 
 
 # ── Keeping an original ──────────────────────────────────────────────────
@@ -141,78 +141,44 @@ class TestIdentifiersAreNotPaths:
 
 # ── Keeping the archive out of git ───────────────────────────────────────
 
-class TestEnsureIgnored:
-    """A committed blob survives every later deletion. The archive holds
-    the only copy of bytes a deletion upstream has to be able to remove,
-    so the repository that carries the tree must not track it."""
+class TestOpeningTheArchive:
+    """Where the bytes go, resolved once for every caller.
 
-    def _repo(self, tmp_path: Path) -> Path:
-        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-        return tmp_path
+    Two stacklets write here and they used to disagree about how to
+    find the directory, with different answers when it was missing.
+    One variable, one resolution, one failure mode.
+    """
 
-    def _ignored(self, repo: Path, rel: str) -> bool:
-        done = subprocess.run(
-            ["git", "-C", str(repo), "check-ignore", "-q", rel], check=False,
-        )
-        return done.returncode == 0
+    def test_the_directory_comes_from_the_environment(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(media.ARCHIVE_ENV, str(tmp_path / "store"))
 
-    def test_git_ignores_the_archive_afterwards(self, tmp_path):
-        repo = self._repo(tmp_path)
-        media.store(media.archive_root(repo), "$a", b"x", ext="png", when=MARCH)
+        assert media.open_archive() == tmp_path / "store"
 
-        media.ensure_ignored(repo)
+    def test_it_is_created_when_it_is_not_there(self, tmp_path, monkeypatch):
+        """A fresh install has the variable long before the directory."""
+        monkeypatch.setenv(media.ARCHIVE_ENV, str(tmp_path / "store"))
 
-        assert self._ignored(repo, "media/2026/03/a.png")
+        root = media.open_archive()
 
-    def test_calling_it_again_does_not_repeat_the_rule(self, tmp_path):
-        """It runs on every write, so a second call has to be a no-op.
-        A file that grows a line per upload is noise forever."""
-        repo = self._repo(tmp_path)
-        exclude = repo / ".git" / "info" / "exclude"
+        assert root is not None and root.is_dir()
 
-        media.ensure_ignored(repo)
-        once = exclude.read_text()
-        media.ensure_ignored(repo)
+    def test_no_configuration_means_no_archive(self, monkeypatch):
+        """A stacklet without memory installed keeps working: the caller
+        files the artifact and simply keeps no second copy."""
+        monkeypatch.delenv(media.ARCHIVE_ENV, raising=False)
 
-        assert exclude.read_text() == once
+        assert media.open_archive() is None
 
-    def test_the_rule_stays_out_of_the_tracked_ignore_file(self, tmp_path):
-        """The site generator globs the content directory with
-        `gitignore: true`, so a rule in `.gitignore` would hide the
-        archive from the build and every link into it would answer 404.
-        Git has to ignore these files; Quartz has to see them."""
-        repo = self._repo(tmp_path)
-        (repo / ".gitignore").write_text(".obsidian/\n")
+    def test_a_path_that_cannot_be_made_is_not_an_exception(
+        self, tmp_path, monkeypatch,
+    ):
+        """A read-only disk costs a capture its file, not the capture."""
+        blocker = tmp_path / "file"
+        blocker.write_text("not a directory")
+        monkeypatch.setenv(media.ARCHIVE_ENV, str(blocker / "store"))
 
-        media.ensure_ignored(repo)
+        assert media.open_archive() is None
 
-        assert "media" not in (repo / ".gitignore").read_text()
-        assert self._ignored(repo, "media/2026/03/a.png")
-
-    def test_rules_already_in_the_file_are_kept(self, tmp_path):
-        """The seeded projection repo ships its own ignore rules. Adding
-        one must not cost the others."""
-        repo = self._repo(tmp_path)
-        (repo / ".gitignore").write_text(".obsidian/\n.DS_Store\n")
-
-        media.ensure_ignored(repo)
-
-        assert self._ignored(repo, ".obsidian/workspace.json")
-        assert self._ignored(repo, "media/2026/03/a.png")
-
-    def test_a_file_without_a_trailing_newline_is_not_joined_onto(self, tmp_path):
-        """Appending to `.DS_Store` would produce `.DS_Storemedia/` and
-        silently ignore neither."""
-        repo = self._repo(tmp_path)
-        (repo / ".git" / "info" / "exclude").write_text(".DS_Store")
-
-        media.ensure_ignored(repo)
-
-        assert self._ignored(repo, ".DS_Store")
-        assert self._ignored(repo, "media/2026/03/a.png")
-
-
-# ── Playable audio ───────────────────────────────────────────────────────
 
 class TestTranscodeAudio:
 

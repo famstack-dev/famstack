@@ -70,6 +70,13 @@ MEMORY_VAULT_DIR = "{data_dir}/memory/vault"
 # memory at any time.
 BRAIN_REPO_DIR = "{data_dir}/memory/brain"
 
+# The media archive: the originals behind the pages, kept as plain
+# dated files. Its own store rather than a folder inside brain, because
+# brain is a projection that can be deleted and rebuilt at any time and
+# these bytes cannot be rebuilt from anything. The wiki container
+# mounts it into the rendered tree so pages can address it.
+MEDIA_ARCHIVE_DIR = "{data_dir}/memory/media"
+
 # Bind-mount source for the curator sidecar: the memory data dir as a
 # whole, so one mount covers the source clone, the brain working copy,
 # and the curator's state files at the same /data/memory paths the
@@ -132,3 +139,12 @@ WIKI_IP   = "{ip}"
 # existed, and the wiki falls back to a generic title rather than show a
 # half-written name.
 WIKI_TITLE = "{family_display_name}"
+
+# Backup source. Every other irreplaceable store in the stack declares
+# one of these; this one is the first in memory because everything else
+# here is a git repo with a copy in Forgejo. The archive is excluded
+# from git on purpose, so git is not its second copy and without this
+# entry it would have none.
+[[backup.archive]]
+name      = "media"
+path      = "{data_dir}/memory/media"

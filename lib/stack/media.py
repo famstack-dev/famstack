@@ -52,9 +52,15 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# The archive's directory name, and the first segment of every link into
-# it. Both are derived from here so the name is stated once.
+# The first segment of every link into the archive. The store itself
+# lives wherever MEDIA_ARCHIVE_DIR points, which need not be inside the
+# rendered site: the site sees it through a mount at this same name, so
+# the link is stable no matter where the bytes are kept.
 ARCHIVE_DIR = "media"
+
+# Where the bytes live. One variable, read in one place, so no caller
+# has to know the layout of somebody else's data directory.
+ARCHIVE_ENV = "MEDIA_ARCHIVE_DIR"
 
 # What survives into a filename. Everything else collapses to a hyphen:
 # identifiers come from event ids and user-supplied filenames, which
@@ -88,15 +94,27 @@ MAX_IMAGE_WIDTH = 1600
 # quarter smaller, which does not buy that risk.
 _DERIVED_EXT = {"audio": "m4a", "image": "jpg"}
 
-_IGNORE_NOTE = (
-    "# Original uploads, kept on disk only. Deleting the source event has\n"
-    "# to be able to delete the copy, and history would keep it anyway.\n"
-)
 
+def open_archive() -> "Path | None":
+    """The archive directory, created when it is not there yet.
 
-def archive_root(site_root) -> Path:
-    """The archive directory inside a rendered site's content root."""
-    return Path(site_root) / ARCHIVE_DIR
+    None when `MEDIA_ARCHIVE_DIR` is unset or the path cannot be
+    written. Callers treat that as "keep nothing": the artifact is
+    still filed, it just has no second copy and the page addresses it
+    the way it did before an archive existed. Somewhere between a
+    stacklet that does not configure one and a disk that has gone
+    read-only, this is not worth failing a capture over.
+    """
+    value = os.environ.get(ARCHIVE_ENV, "").strip()
+    if not value:
+        return None
+    root = Path(value)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log.warning("archive at %s is not usable: %s", root, e)
+        return None
+    return root
 
 
 def safe_name(artifact_id: str) -> str:
@@ -426,44 +444,3 @@ def derive(root, artifact_id: str, *, ext: str, when, kind: str) -> str:
     sidecar, _ = _located(root, artifact_id, _SIDECAR_EXT, when)
     _record_derived(sidecar, link, kind)
     return link
-
-
-def ensure_ignored(repo_root) -> None:
-    """Make the repository at `repo_root` ignore the archive.
-
-    Two reasons, and the first is the one that matters: deleting the
-    source event has to delete the copy, and a blob that was committed
-    once stays reachable in history no matter what happens to the working
-    tree, which would make the deletion a false promise. The second is
-    size - originals accumulate and every clone would carry all of them.
-
-    The rule goes in `.git/info/exclude`, not `.gitignore`, because the
-    site generator reads the tracked ignore file as well: Quartz globs
-    the content directory with `gitignore: true`, so a `.gitignore` entry
-    hides the archive from the build and every link into it answers 404.
-    `info/exclude` is git's local equivalent and nothing outside git
-    reads it, which is the only place the two requirements both hold.
-
-    Idempotent. A repository that already states the rule is left alone,
-    so this is safe to call on every write.
-    """
-    info = Path(repo_root) / ".git" / "info"
-    if not info.parent.is_dir():
-        # A linked worktree keeps its git directory elsewhere and points
-        # at it through a `.git` file. Deployed clones are not that
-        # shape, and resolving one would need git itself.
-        log.warning("no git directory at %s, archive not excluded", repo_root)
-        return
-    exclude = info / "exclude"
-    rule = f"{ARCHIVE_DIR}/"
-    try:
-        existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-        if rule in (line.strip() for line in existing.splitlines()):
-            return
-        info.mkdir(parents=True, exist_ok=True)
-        separator = "" if not existing or existing.endswith("\n") else "\n"
-        exclude.write_text(
-            f"{existing}{separator}{_IGNORE_NOTE}{rule}\n", encoding="utf-8",
-        )
-    except OSError as e:
-        log.warning("could not record the archive's ignore rule: %s", e)

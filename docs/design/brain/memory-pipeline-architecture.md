@@ -184,41 +184,54 @@ diary entries, and anything else that files an upload.
 
 ### Location
 
-`{data_dir}/memory/brain/media/<yyyy>/<mm>/<event-id>.<ext>`, inside
-brain's working copy, excluded from git.
+`{data_dir}/memory/media/<yyyy>/<mm>/<event-id>.<ext>`, its own store,
+named by `MEDIA_ARCHIVE_DIR`.
 
-Inside brain because the wiki container mounts that directory as its
-content root and Quartz's `Assets` emitter copies every non-markdown
-file under it into the built site. No extra container, no extra port,
-no Caddy route. The last of those decides it: port mode has no Caddy,
-so a separate origin would need an absolute URL that is wrong in one
-of the two deployment modes and is then baked into pages read for
-decades. Files under the content root take root-relative links
+It is deliberately not a folder inside brain. Brain is a projection:
+its README says it is generated and rebuilt from source, and it can be
+deleted and re-cloned at any time. These bytes cannot be rebuilt from
+anything, and they are excluded from git, so git is not their second
+copy either. Irreplaceable data does not belong inside a tree that is
+documented as disposable.
+
+The wiki container mounts the store into the rendered tree at
+`/vault/media`, so pages and the originals they embed are served from
+one site. That mount is what makes the link form work: Quartz emits
+only what is under its content root, and a separate origin would need
+an absolute URL that is wrong in one of the two deployment modes and is
+then baked into pages read for decades. Files keep root-relative links
 (`/media/2026/03/<id>.jpg`), which Quartz and Obsidian resolve
 identically at any page depth.
 
-Excluded from git because redaction has to mean deletion. `resolve()`
-already drops redacted events, so removing a message removes its entry;
-a committed blob would stay reachable in history and make that a false
-promise. It also stops brain's clone growing without bound.
+Two consequences worth stating, because neither is obvious from the
+compose file:
 
-### The exclusion goes in `.git/info/exclude`, not `.gitignore`
+- **Docker cannot create the mountpoint.** Its parent is a read-only
+  bind mount, `mkdir` fails there, and the container exits before
+  Quartz runs. `hooks/on_start.py` makes `brain/media/` first, on every
+  start rather than once at install, because a re-cloned brain carries
+  no empty directories: git does not track them.
+- **The mountpoint is excluded from brain's git**, in
+  `.git/info/exclude` rather than `.gitignore`. Nothing should write
+  there, but a stale call site that did must not have its bytes
+  committed into the projection. The local file is the right one
+  because Quartz globs its content directory with `gitignore: true`
+  (`quartz/util/glob.ts`), and the `Assets` emitter uses that same
+  glob, so a tracked rule removes the archive from the build and every
+  link into it answers 404. Measured in the wiki container against the
+  pinned globby:
 
-Quartz globs its content directory through globby with
-`gitignore: true` (`quartz/util/glob.ts`), and the `Assets` emitter
-uses that same glob. A `media/` rule in the tracked `.gitignore`
-therefore removes the entire archive from the build, and every link
-into it answers 404 with nothing reporting it.
+  | Rule in | Assets emitter sees |
+  |---|---|
+  | `.gitignore` | `[]` |
+  | `.git/info/exclude` | the files |
 
-Measured in the wiki container against the pinned globby:
+Git honours both; globby reads only the first.
 
-| Rule in | Assets emitter sees |
-|---|---|
-| `.gitignore` | `[]` |
-| `.git/info/exclude` | the files |
-
-Git honours both; globby reads only the first. `info/exclude` is also
-per-clone, so upgraded instances need no seed migration.
+The store is declared as a `[[backup.archive]]` source by the memory
+stacklet. Every other irreplaceable store in the stack does the same;
+this one needs it more, because everything else under `{data_dir}/memory`
+is a git repo with a copy in Forgejo and the archive is not.
 
 ### Derivatives
 

@@ -81,6 +81,12 @@ MEMORY_VAULT_DIR = "/data/memory/vault"
 # /data/memory/brain.
 BRAIN_REPO_DIR = "/data/memory/brain"
 
+# The media archive the archivist keeps uploads in. The memory
+# stacklet owns the directory under <data_dir>/memory/media; the
+# bot-runner mounts <data_dir> at /data, so the in-container path is
+# /data/memory/media.
+MEDIA_ARCHIVE_DIR = "/data/memory/media"
+
 # Shared-bucket slug — the entity that owns institutional artifacts
 # (documents, correspondents) inside the memory vault. Personal
 # entities (homer, marge, …) live at <vault>/<slug>/. Defaults to
