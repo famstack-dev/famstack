@@ -356,13 +356,25 @@ def _width(path: Path) -> int:
     return int(out.stdout.decode().strip())
 
 
-def _an_image(path: Path, width: int) -> bytes:
+def _render(path: Path, width: int, filters: "list[str]") -> bytes:
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
          "-i", f"testsrc=size={width}x{width // 2}:duration=1",
-         "-frames:v", "1", str(path)], check=True)
+         *filters, "-frames:v", "1", str(path)], check=True)
     return path.read_bytes()
+
+
+def _a_photo(path: Path, width: int) -> bytes:
+    """An image that behaves like a photograph: noise defeats PNG's
+    run-length compression, so the JPEG really is the smaller file."""
+    return _render(path, width, ["-vf", "noise=alls=70:allf=t+u"])
+
+
+def _a_flat_image(path: Path, width: int) -> bytes:
+    """An image that behaves like a screenshot: flat colour bars, which
+    PNG stores far more cheaply than JPEG can."""
+    return _render(path, width, [])
 
 
 @needs_ffmpeg
@@ -373,7 +385,7 @@ class TestBoundingAnImage:
     to be smaller."""
 
     def test_a_large_photograph_comes_out_at_the_bound(self, tmp_path):
-        _an_image(tmp_path / "big.png", 3000)
+        _a_photo(tmp_path / "big.png", 3000)
 
         assert media.transcode_image(
             tmp_path / "big.png", tmp_path / "out.png") is True
@@ -382,14 +394,14 @@ class TestBoundingAnImage:
     def test_a_small_photograph_is_not_blown_up_to_fill_it(self, tmp_path):
         """An old 400px photo enlarged to 1600 is a bigger file showing
         less. The bound is a ceiling, not a target."""
-        _an_image(tmp_path / "small.png", 400)
+        _a_photo(tmp_path / "small.png", 400)
 
         media.transcode_image(tmp_path / "small.png", tmp_path / "out.png")
 
         assert _width(tmp_path / "out.png") == 400
 
     def test_the_original_survives_being_derived_from(self, tmp_path):
-        before = _an_image(tmp_path / "photo.png", 800)
+        before = _a_photo(tmp_path / "photo.png", 800)
 
         media.transcode_image(tmp_path / "photo.png", tmp_path / "out.png")
 
@@ -406,7 +418,7 @@ class TestDerivatives:
 
     @needs_ffmpeg
     def test_a_photograph_gets_a_bounded_copy_beside_it(self, archive, tmp_path):
-        data = _an_image(tmp_path / "photo.png", 3000)
+        data = _a_photo(tmp_path / "photo.png", 3000)
         media.keep(archive, "$photo", data, ext="png", when=MARCH,
                    kind="image", mime="image/png", filename="photo.png",
                    **self.ORIGIN)
@@ -416,6 +428,24 @@ class TestDerivatives:
         assert link == "/media/2026/03/photo.jpg"
         assert _width(archive / "2026" / "03" / "photo.jpg") == media.MAX_IMAGE_WIDTH
         assert (archive / "2026" / "03" / "photo.png").read_bytes() == data
+
+    @needs_ffmpeg
+    def test_a_copy_that_is_not_smaller_is_thrown_away(self, archive, tmp_path):
+        """Flat colour and text compress better as PNG than as JPEG, so a
+        screenshot's "bounded" copy can be several times the original and
+        blur the text as well. The derivative exists to make the page
+        lighter; one that does not has no reason to be kept."""
+        flat = _a_flat_image(tmp_path / "shot.png", 3000)
+        media.keep(archive, "$shot", flat, ext="png", when=MARCH,
+                   kind="image", mime="image/png", filename="shot.png",
+                   **self.ORIGIN)
+
+        link = media.derive(archive, "$shot", ext="png", when=MARCH,
+                            kind="image")
+
+        assert link == ""
+        assert not (archive / "2026" / "03" / "shot.jpg").exists()
+        assert (archive / "2026" / "03" / "shot.png").read_bytes() == flat
 
     def test_a_derivative_is_written_into_the_record_that_owns_it(self, archive):
         """A re-encode has to be able to replace its own output. Without

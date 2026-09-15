@@ -398,8 +398,13 @@ def derive(root, artifact_id: str, *, ext: str, when, kind: str) -> str:
     what stops a conversion writing over its own input.
 
     Returns "" whenever the conversion cannot be made - ffmpeg absent,
-    a format it will not read, the original gone. The caller shows the
-    original instead.
+    a format it will not read, the original gone - and also when the
+    result is no smaller than what it came from. A screenshot is the
+    case that matters: flat colour and text compress better as PNG than
+    as JPEG, so the "bounded" copy can be several times the size of the
+    original and blur the text as well. The derivative exists to make a
+    page lighter, so one that does not is discarded and the caller
+    shows the original.
     """
     target_ext = _DERIVED_EXT.get(kind, "")
     if not target_ext or _safe_ext(ext) == target_ext:
@@ -411,6 +416,12 @@ def derive(root, artifact_id: str, *, ext: str, when, kind: str) -> str:
 
     convert = transcode_audio if kind == "audio" else transcode_image
     if not convert(src, dst):
+        return ""
+    # Audio is transcoded for a codec Safari can play, so its size is
+    # not the point and a larger file is still the only playable one.
+    # An image derivative has no purpose except being smaller.
+    if kind == "image" and dst.stat().st_size >= src.stat().st_size:
+        dst.unlink(missing_ok=True)
         return ""
     sidecar, _ = _located(root, artifact_id, _SIDECAR_EXT, when)
     _record_derived(sidecar, link, kind)
