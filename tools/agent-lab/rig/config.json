@@ -1,0 +1,34 @@
+{
+  "providers": {
+    "custom": {
+      "api_base": "${AGENT_OPENAI_URL}",
+      "api_key": "${AGENT_OPENAI_KEY}"
+    }
+  },
+  "model_presets": {
+    "primary": {
+      "provider": "custom",
+      "model": "${AGENT_MODEL}"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model_preset": "primary",
+      "max_tool_iterations": 12,
+      "disabled_skills": ["memory", "my"]
+    }
+  },
+  "tools": {
+    "exec": {"enable": true},
+    "web": {"enable": false},
+    "file": {"enable": true},
+    "cli_apps": {"enable": false},
+    "my": {"enable": false},
+    "image_generation": {"enable": false}
+  },
+  "channels": {
+    "matrix": {
+      "enabled": false
+    }
+  }
+}

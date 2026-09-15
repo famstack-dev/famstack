@@ -1,0 +1,205 @@
+{
+  "at": "20260915T120930Z",
+  "cmd": "replay",
+  "endpoint": "http://localhost:8888/v1",
+  "model": "Qwen3.6-35B-A3B-UD-MLX-4bit",
+  "args": {
+    "url": "http://localhost:8888/v1",
+    "model": "Qwen3.6-35B-A3B-UD-MLX-4bit",
+    "timeout": 600.0,
+    "stream": true,
+    "log": true,
+    "note": "block-size hypothesis: with a ~8K-token prefix the shared prefix spans 4096-token blocks; append-only should now hit, lean_state should hit only the system-prompt blocks",
+    "cmd": "replay",
+    "prefix_words": 6000,
+    "turns": 4,
+    "max_tokens": 48,
+    "seed": 21
+  },
+  "payload": {
+    "arms": {
+      "lean_state (production)": [
+        {
+          "phase": "turn 1",
+          "ttft_s": 15.955,
+          "total_s": 16.764,
+          "usage": {
+            "prompt_tokens": 6717,
+            "completion_tokens": 48,
+            "total_tokens": 6765,
+            "input_tokens": 6717,
+            "output_tokens": 48,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 15.86,
+            "total_time": 16.68,
+            "prompt_eval_duration": 15.86,
+            "generation_duration": 0.81,
+            "prompt_tokens_per_second": 423.4,
+            "generation_tokens_per_second": 59.03
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 2",
+          "ttft_s": 7.05,
+          "total_s": 7.532,
+          "usage": {
+            "prompt_tokens": 6864,
+            "completion_tokens": 29,
+            "total_tokens": 6893,
+            "input_tokens": 6864,
+            "output_tokens": 29,
+            "prompt_tokens_details": {
+              "cached_tokens": 4096
+            },
+            "time_to_first_token": 6.99,
+            "total_time": 7.47,
+            "prompt_eval_duration": 6.99,
+            "generation_duration": 0.49,
+            "prompt_tokens_per_second": 982.11,
+            "generation_tokens_per_second": 59.7
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 3",
+          "ttft_s": 7.427,
+          "total_s": 7.963,
+          "usage": {
+            "prompt_tokens": 7010,
+            "completion_tokens": 32,
+            "total_tokens": 7042,
+            "input_tokens": 7010,
+            "output_tokens": 32,
+            "prompt_tokens_details": {
+              "cached_tokens": 4096
+            },
+            "time_to_first_token": 7.37,
+            "total_time": 7.91,
+            "prompt_eval_duration": 7.37,
+            "generation_duration": 0.54,
+            "prompt_tokens_per_second": 950.82,
+            "generation_tokens_per_second": 59.23
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 4",
+          "ttft_s": 7.714,
+          "total_s": 8.235,
+          "usage": {
+            "prompt_tokens": 7157,
+            "completion_tokens": 31,
+            "total_tokens": 7188,
+            "input_tokens": 7157,
+            "output_tokens": 31,
+            "prompt_tokens_details": {
+              "cached_tokens": 4096
+            },
+            "time_to_first_token": 7.66,
+            "total_time": 8.19,
+            "prompt_eval_duration": 7.66,
+            "generation_duration": 0.53,
+            "prompt_tokens_per_second": 934.11,
+            "generation_tokens_per_second": 58.98
+          },
+          "error": null
+        }
+      ],
+      "append-only": [
+        {
+          "phase": "turn 1",
+          "ttft_s": 14.86,
+          "total_s": 15.694,
+          "usage": {
+            "prompt_tokens": 6709,
+            "completion_tokens": 48,
+            "total_tokens": 6757,
+            "input_tokens": 6709,
+            "output_tokens": 48,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "time_to_first_token": 14.81,
+            "total_time": 15.65,
+            "prompt_eval_duration": 14.81,
+            "generation_duration": 0.84,
+            "prompt_tokens_per_second": 453.09,
+            "generation_tokens_per_second": 57.14
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 2",
+          "ttft_s": 7.49,
+          "total_s": 8.147,
+          "usage": {
+            "prompt_tokens": 7044,
+            "completion_tokens": 38,
+            "total_tokens": 7082,
+            "input_tokens": 7044,
+            "output_tokens": 38,
+            "prompt_tokens_details": {
+              "cached_tokens": 4096
+            },
+            "time_to_first_token": 7.43,
+            "total_time": 8.09,
+            "prompt_eval_duration": 7.43,
+            "generation_duration": 0.66,
+            "prompt_tokens_per_second": 948.39,
+            "generation_tokens_per_second": 57.4
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 3",
+          "ttft_s": 8.251,
+          "total_s": 8.834,
+          "usage": {
+            "prompt_tokens": 7379,
+            "completion_tokens": 34,
+            "total_tokens": 7413,
+            "input_tokens": 7379,
+            "output_tokens": 34,
+            "prompt_tokens_details": {
+              "cached_tokens": 4096
+            },
+            "time_to_first_token": 8.2,
+            "total_time": 8.78,
+            "prompt_eval_duration": 8.2,
+            "generation_duration": 0.59,
+            "prompt_tokens_per_second": 900.25,
+            "generation_tokens_per_second": 57.96
+          },
+          "error": null
+        },
+        {
+          "phase": "turn 4",
+          "ttft_s": 9.116,
+          "total_s": 9.776,
+          "usage": {
+            "prompt_tokens": 7715,
+            "completion_tokens": 38,
+            "total_tokens": 7753,
+            "input_tokens": 7715,
+            "output_tokens": 38,
+            "prompt_tokens_details": {
+              "cached_tokens": 4096
+            },
+            "time_to_first_token": 9.05,
+            "total_time": 9.72,
+            "prompt_eval_duration": 9.05,
+            "generation_duration": 0.66,
+            "prompt_tokens_per_second": 852.03,
+            "generation_tokens_per_second": 57.21
+          },
+          "error": null
+        }
+      ]
+    },
+    "prefix_words": 6000,
+    "turns": 4
+  }
+}
