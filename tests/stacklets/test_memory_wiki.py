@@ -46,6 +46,7 @@ from wiki import (  # noqa: E402
     _topic_entries,
     _topic_locations,
     _topic_preamble,
+    _with_diary_link,
     _yaml_str,
 )
 
@@ -950,3 +951,86 @@ class TestCleanGeneratedOnDisk:
         (tmp_path / "n.md").write_text("---\ntype: note\n---\n\nx\n", encoding="utf-8")
         rc = _clean_generated(brain=tmp_path, dry_run=False, assume_yes=True)
         assert rc == 0
+
+
+class TestDiaryLink:
+    """The home page's one pointer into the diary.
+
+    The diary is not reachable from the landing page on its own: it
+    sits two folders down, and Quartz files it into the sidebar
+    alphabetically between unrelated entries. These tests pin where
+    the pointer lands and the case where it must not appear at all.
+    """
+
+    PAGE = (
+        "# The Simpsons\n"
+        "> 742 Evergreen Terrace\n"
+        "\n"
+        "## Members\n"
+        "- **[Homer Simpson](homer/about)** - safety inspector. [1]\n"
+    )
+
+    def _compile_diary(self, brain: Path, bucket: str = "family") -> None:
+        page = brain / bucket / "diary" / "about.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("---\ntitle: Family Diary\n---\n", encoding="utf-8")
+
+    def _link_line(self, page: str) -> int:
+        lines = page.splitlines()
+        return next(i for i, ln in enumerate(lines) if "/diary/about" in ln)
+
+    def test_pointer_sits_above_the_first_section(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        self._compile_diary(tmp_path)
+
+        out = _with_diary_link(self.PAGE, shared_bucket="family")
+
+        assert "/family/diary/about" in out
+        assert self._link_line(out) < out.splitlines().index("## Members")
+
+    def test_pointer_starts_its_own_blockquote(self, tmp_path, monkeypatch):
+        """The address under the H1 is a blockquote and the pointer is a
+        callout, which is one too. Run together with no blank line
+        between them, markdown reads the pair as a single quote."""
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        self._compile_diary(tmp_path)
+
+        out = _with_diary_link(self.PAGE, shared_bucket="family")
+
+        assert out.splitlines()[self._link_line(out) - 1] == ""
+
+    def test_nothing_is_added_until_the_diary_is_compiled(
+        self, tmp_path, monkeypatch,
+    ):
+        """A landing page that opens with a 404 is worse than one that
+        says nothing. The diary command runs on its own schedule, so a
+        fresh install has a home page before it has a diary."""
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+
+        assert _with_diary_link(self.PAGE, shared_bucket="family") == self.PAGE
+
+    def test_the_bucket_comes_from_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        self._compile_diary(tmp_path, bucket="office")
+
+        out = _with_diary_link(self.PAGE, shared_bucket="office")
+
+        assert "/office/diary/about" in out
+
+    def test_a_page_with_no_sections_still_gets_the_pointer(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        self._compile_diary(tmp_path)
+
+        out = _with_diary_link("# The Simpsons\n", shared_bucket="family")
+
+        assert "/family/diary/about" in out
+
+    def test_an_unset_brain_dir_is_not_fatal_here(self, monkeypatch):
+        """Generation already fails on a missing BRAIN_REPO_DIR at the
+        point it writes. A navigation line is not where that is
+        reported."""
+        monkeypatch.delenv("BRAIN_REPO_DIR", raising=False)
+
+        assert _with_diary_link(self.PAGE, shared_bucket="family") == self.PAGE

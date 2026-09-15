@@ -1024,3 +1024,37 @@ class TestPersonalMessagesPostWhole:
         assert "Should never render." not in page
         assert "Full transcript" not in page
         assert "— for Bart" in page
+
+
+class TestHomeLink:
+    """The pointer the diary hands to pages that link to it.
+
+    The diary owns its own path and its own wording, so the wiki home
+    page renders this string verbatim. Both halves are pinned here.
+    """
+
+    def test_points_at_the_diary_front_page(self):
+        assert "(/family/diary/about)" in diary.home_link("family")
+
+    def test_the_bucket_is_the_callers(self):
+        """Diary paths are relative to the shared bucket, which is named
+        in config. The compiler never reads it."""
+        assert "(/office/diary/about)" in diary.home_link("office")
+
+    def test_is_a_callout_so_it_reads_as_a_signpost(self):
+        assert diary.home_link("family").startswith("> [!tip] ")
+
+    def test_carries_the_diary_title_and_a_line_of_its_own(self):
+        link = diary.home_link("family")
+        assert "Family Diary" in link
+        assert len(link.splitlines()) == 2
+
+    def test_renders_in_the_household_language(self):
+        diary.configure_language("de")
+        try:
+            link = diary.home_link("family")
+            assert "Familientagebuch" in link
+            assert "Recordings" not in link
+        finally:
+            diary.configure_language("en")
+

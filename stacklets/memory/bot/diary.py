@@ -83,6 +83,7 @@ _STRINGS = {
         "recorded_by": "recorded by",
         "months_h": "Months", "years_h": "Years",
         "diary_title": "Family Diary",
+        "home_teaser": "Recordings and notes, read back month by month.",
         "index_intro": (
             "Your memories, kept in a chronicle to read back. Voice "
             "notes, photos, conversations you recorded. Every entry "
@@ -129,11 +130,13 @@ _STRINGS = {
         "recorded_by": "aufgenommen von",
         "months_h": "Monate", "years_h": "Jahre",
         "diary_title": "Familientagebuch",
+        "home_teaser": ("Aufnahmen und Notizen, Monat f\u00fcr Monat "
+                        "zum Nachlesen."),
         "index_intro": (
             "Eure Erinnerungen, festgehalten in einer Chronik zum "
             "Nachlesen. Sprachnotizen, Fotos, Gespr\u00e4che, die ihr "
             "aufgenommen habt. Jeder Eintrag f\u00fchrt zur\u00fcck "
-            "zur Originalaufnahme \u2014 zum Nachh\u00f6ren, heute "
+            "zur Originalaufnahme, zum Nachh\u00f6ren, heute "
             "oder in zwanzig Jahren."),
         "nothing_compiled": "Noch nichts zusammengestellt.",
         "across": "in",
@@ -1033,6 +1036,17 @@ def render_index(entries) -> str:
     # diary is the wrong place for it. Each affected entry already
     # carries the warning on the page where it is read.
     return "\n".join(lines).rstrip() + "\n"
+
+
+def home_link(bucket: str) -> str:
+    """The diary's pointer, for a page that wants to link to it.
+
+    Both the path and the wording live here, so the linking page needs
+    to know neither. `bucket` is the shared bucket the caller prefixes
+    every diary path with; see `pages_for`.
+    """
+    return (f"> [!tip] [{_L['diary_title']}](/{bucket}/{DIARY_DIR}/about)\n"
+            f"> {_L['home_teaser']}")
 
 
 def _and_list(names: list[str]) -> str:
