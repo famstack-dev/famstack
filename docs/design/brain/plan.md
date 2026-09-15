@@ -28,7 +28,7 @@ Non-goals for 0.3.0:
 - Active decay / supersede / promotion logic (wait for dream cycle in 0.4.0+).
 - Matrix conversation extraction beyond what Archivist already emits (Deriver bot — 0.4.0+).
 - Vector / semantic retrieval. Keyword + ontology expansion is enough at family scale.
-- Cross-product ontology sharing (famstack vs deskstack via published artifact). Same code path, different seeds.
+- Cross-product ontology sharing (famstack vs another deployment via published artifact). Same code path, different seeds.
 
 ## Invariants
 

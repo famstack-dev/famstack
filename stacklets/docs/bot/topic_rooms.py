@@ -263,7 +263,7 @@ def make_room_state(
     Same answer regardless of trigger: who put this topic on the map.
 
     ``shared_bucket`` is the household's configured shared-bucket slug
-    (`family` by default; deskstack uses `office`). The bucket field
+    (`family` by default; `office` in a non-family deployment). The bucket field
     becomes ``<shared_bucket>/<slug>`` for shared topics and
     ``<localpart>/<slug>`` for personal ones.
     """

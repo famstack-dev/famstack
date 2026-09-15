@@ -100,9 +100,9 @@ class TestDocumentFilepath:
 
     def test_custom_bucket(self):
         path = document_filepath(
-            "deskstack", "2025-03-27", 42, "Invoice", True,
+            "office", "2025-03-27", 42, "Invoice", True,
         )
-        assert path == "deskstack/documents/2025/03/2025-03-27-invoice-p42.md"
+        assert path == "office/documents/2025/03/2025-03-27-invoice-p42.md"
 
     def test_umlauts_in_slug(self):
         path = document_filepath(

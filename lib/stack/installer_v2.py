@@ -93,7 +93,7 @@ _TZ_LANGUAGE = {
 
 
 def detect_language(timezone: str) -> str:
-    """Guess the household language from timezone. Defaults to English."""
+    """Guess the instance language from timezone. Defaults to English."""
     return _TZ_LANGUAGE.get(timezone, "en")
 
 
@@ -268,7 +268,7 @@ language = "{language}"
 # Slug for the bucket inside the memory vault that holds institutional
 # artifacts (documents, correspondents). Personal entities live at
 # <vault>/<localpart>/; the shared bucket lives at <vault>/<slug>/.
-# Defaults to "family"; rename for deskstack ("office"), surname-based
+# Defaults to "family"; rename for a non-family deployment ("office"), surname-based
 # households, etc.
 shared_bucket = "family"
 

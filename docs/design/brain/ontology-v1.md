@@ -224,14 +224,14 @@ persons:
     aliases: [Papa]
     services:
       paperless_tag: "Person: Homer"
-      matrix: "@homer:merles.eu"
+      matrix: "@homer:home.local"
 
   marge:
     label: Marge
     aliases: [Mama]
     services:
       paperless_tag: "Person: Marge"
-      matrix: "@marge:merles.eu"
+      matrix: "@marge:home.local"
 
 # ── Organizations ──────────────────────────────────────────────
 # Open set. Bootstrap with a small list of universally-useful orgs
@@ -586,7 +586,7 @@ Same handler, parsed by the LLM, written directly to ontology.yaml as a commit:
 ```
 update: organisation Duff Insurance categories +finance
 
-  Confirmed-By: @homer:merles.eu
+  Confirmed-By: @homer:home.local
 ```
 
 A correction always sets `confirmed: true` on the affected entries — that locks them against future auto-overrides from low-confidence learning.
@@ -624,7 +624,7 @@ Net: the system errs on the side of writing, but it doesn't err on the side of *
 
 - `ontology-seed-self-employed.yaml` — adds `Mandant`, `Rechnungsnummer`, `Honorar`, `USt-Voranmeldung`
 - `ontology-seed-landlord.yaml` — adds `Mieter`, `Nebenkostenabrechnung`, `Mietvertrag`
-- `ontology-seed-deskstack.yaml` — office-oriented vocabulary for the deskstack product (clients, matters, billable hours)
+- `ontology-seed-office.yaml` — office-oriented vocabulary (clients, matters, billable hours)
 
 Starter packs are how we monetize tier specialization without bloating the default install. Each pack ships a curated baseline; auto-extension takes over from there.
 

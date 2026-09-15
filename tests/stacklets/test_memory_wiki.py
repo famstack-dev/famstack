@@ -191,8 +191,8 @@ class TestTopicLocations:
         assert ("family", "camping") in locs
         assert ("family", "photography") in locs
 
-    def test_deskstack_shared_bucket(self, tmp_path):
-        """A deskstack household's shared bucket is `office`. The
+    def test_office_shared_bucket(self, tmp_path):
+        """A non-family deployment's shared bucket is `office`. The
         discovery reads the configured slug, not a hard-coded `family`."""
         _make_topic_folder(tmp_path, "office", "client-x")
         locs = _topic_locations(

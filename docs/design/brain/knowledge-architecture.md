@@ -410,7 +410,7 @@ class FamstackEvent:
     summary: str         # one-line human-readable summary
     data: dict           # structured payload (varies by type)
     timestamp: datetime  # UTC
-    actor: str | None    # who/what caused it: "@homer:merles.eu", "archivist-bot"
+    actor: str | None    # who/what caused it: "@homer:home.local", "archivist-bot"
 
 class EventSink(ABC):
     """Where events go. First implementation: Matrix."""

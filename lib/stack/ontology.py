@@ -9,7 +9,7 @@ This module is product-agnostic by design. It defines the dataclasses
 and the loader; the *content* — the actual list of topics and types —
 lives outside the framework, in a seed file shipped by whichever
 stacklet owns the vocabulary (in famstack: `stacklets/memory/`).
-A different product (deskstack, studio, freelance) supplies different
+A different deployment (studio, freelance, an office) supplies different
 seeds against the same machinery.
 
 Two readers care about an ontology:
@@ -189,7 +189,7 @@ class Ontology:
     def languages(self) -> List[str]:
         """All language codes the ontology carries names in.
 
-        Derived dynamically from the entries so a household that adds a
+        Derived dynamically from the entries so an instance that adds a
         third language ('fr', 'es', …) on a topic doesn't need any code
         change to be cross-language-canonicalized.
         """
@@ -206,7 +206,7 @@ class Ontology:
     # may still emit a name in a different language (training-data
     # bias) or drop a doctype-shaped name into the topic field.
     # `canonicalize_topic` and `canonicalize_doctype` normalize the
-    # LLM's output back to a single canonical in the household language
+    # LLM's output back to a single canonical in the configured language
     # — by trying every language the ontology knows — and flag
     # cross-field hallucinations so the matcher can reject them
     # instead of silently growing the tag set with garbage.
@@ -215,9 +215,9 @@ class Ontology:
         """Resolve an LLM topic string to a canonical topic name.
 
         Tries `lang` first, then every other language the ontology
-        knows — a German household with `topic.travel.names.de = "Reise"`
+        knows — a German instance with `topic.travel.names.de = "Reise"`
         still recognizes the LLM's "Travel" as the same concept and
-        returns "Reise" (the household-language canonical).
+        returns "Reise" (the canonical in the configured language).
 
         When `text` resolves to a doctype instead of a topic, returns
         `Resolution(canonical=None, cross_field=True)` so the caller

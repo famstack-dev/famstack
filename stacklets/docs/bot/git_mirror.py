@@ -108,7 +108,7 @@ def _commit_author(submitter: str | None) -> tuple[str, str]:
     """`(author_name, author_email)` for a capture commit.
 
     Attributes the commit to the family member who filed it, derived from
-    their Matrix id (`@marge:merles.eu` -> `marge`, `marge@merles.eu`), so
+    their Matrix id (`@marge:home.local` -> `marge`, `marge@home.local`), so
     `git log --author` answers "who added this". Falls back to the bot when
     there is no submitter or the id is malformed — the commit still lands.
     """
@@ -155,9 +155,9 @@ class GitMirror:
     data_dir: Path
     org_name: str = "family"
     # Slug for the shared/institutional bucket inside the vault. Default
-    # "family" matches famstack's stock layout; deskstack or non-family
-    # deployments override via stack.toml [core] shared_bucket → env
-    # var SHARED_BUCKET → archivist → here.
+    # "family" matches famstack's stock layout; non-family deployments
+    # override via stack.toml [core] shared_bucket → env var
+    # SHARED_BUCKET → archivist → here.
     shared_bucket: str = "family"
     paperless_version: str = ""
 
