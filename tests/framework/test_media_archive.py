@@ -166,15 +166,28 @@ class TestEnsureIgnored:
 
     def test_calling_it_again_does_not_repeat_the_rule(self, tmp_path):
         """It runs on every write, so a second call has to be a no-op.
-        A .gitignore that grows a line per upload is a diff on every
-        curator commit."""
+        A file that grows a line per upload is noise forever."""
         repo = self._repo(tmp_path)
+        exclude = repo / ".git" / "info" / "exclude"
 
         media.ensure_ignored(repo)
-        once = (repo / ".gitignore").read_text()
+        once = exclude.read_text()
         media.ensure_ignored(repo)
 
-        assert (repo / ".gitignore").read_text() == once
+        assert exclude.read_text() == once
+
+    def test_the_rule_stays_out_of_the_tracked_ignore_file(self, tmp_path):
+        """The site generator globs the content directory with
+        `gitignore: true`, so a rule in `.gitignore` would hide the
+        archive from the build and every link into it would answer 404.
+        Git has to ignore these files; Quartz has to see them."""
+        repo = self._repo(tmp_path)
+        (repo / ".gitignore").write_text(".obsidian/\n")
+
+        media.ensure_ignored(repo)
+
+        assert "media" not in (repo / ".gitignore").read_text()
+        assert self._ignored(repo, "media/2026/03/a.png")
 
     def test_rules_already_in_the_file_are_kept(self, tmp_path):
         """The seeded projection repo ships its own ignore rules. Adding
@@ -191,7 +204,7 @@ class TestEnsureIgnored:
         """Appending to `.DS_Store` would produce `.DS_Storemedia/` and
         silently ignore neither."""
         repo = self._repo(tmp_path)
-        (repo / ".gitignore").write_text(".DS_Store")
+        (repo / ".git" / "info" / "exclude").write_text(".DS_Store")
 
         media.ensure_ignored(repo)
 

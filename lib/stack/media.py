@@ -426,17 +426,32 @@ def ensure_ignored(repo_root) -> None:
     tree, which would make the deletion a false promise. The second is
     size - originals accumulate and every clone would carry all of them.
 
+    The rule goes in `.git/info/exclude`, not `.gitignore`, because the
+    site generator reads the tracked ignore file as well: Quartz globs
+    the content directory with `gitignore: true`, so a `.gitignore` entry
+    hides the archive from the build and every link into it answers 404.
+    `info/exclude` is git's local equivalent and nothing outside git
+    reads it, which is the only place the two requirements both hold.
+
     Idempotent. A repository that already states the rule is left alone,
     so this is safe to call on every write.
     """
-    gitignore = Path(repo_root) / ".gitignore"
+    info = Path(repo_root) / ".git" / "info"
+    if not info.parent.is_dir():
+        # A linked worktree keeps its git directory elsewhere and points
+        # at it through a `.git` file. Deployed clones are not that
+        # shape, and resolving one would need git itself.
+        log.warning("no git directory at %s, archive not excluded", repo_root)
+        return
+    exclude = info / "exclude"
     rule = f"{ARCHIVE_DIR}/"
     try:
-        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+        existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
         if rule in (line.strip() for line in existing.splitlines()):
             return
+        info.mkdir(parents=True, exist_ok=True)
         separator = "" if not existing or existing.endswith("\n") else "\n"
-        gitignore.write_text(
+        exclude.write_text(
             f"{existing}{separator}{_IGNORE_NOTE}{rule}\n", encoding="utf-8",
         )
     except OSError as e:

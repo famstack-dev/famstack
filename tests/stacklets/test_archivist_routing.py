@@ -17,6 +17,7 @@ mirror) is exercised by `test_extractors.py` and `test_git_mirror.py`.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1075,15 +1076,28 @@ class TestAnUploadKeepsItsFile:
 
     async def test_the_archive_is_never_committed(self, tmp_path, monkeypatch):
         """Deleting the message has to be able to delete the file, and a
-        blob that was committed once stays reachable forever."""
+        blob that was committed once stays reachable forever.
+
+        Asserted through git rather than by reading an ignore file: the
+        rule deliberately lives in `.git/info/exclude`, because Quartz
+        globs the content directory with `gitignore: true` and a
+        `.gitignore` entry would hide the archive from the site.
+        """
         brain = tmp_path / "brain"
         brain.mkdir()
+        subprocess.run(["git", "init", "-q", str(brain)], check=True)
+        (brain / ".gitignore").write_text(".obsidian/\n", encoding="utf-8")
         monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
         bot, _ = self._bot(tmp_path)
 
         await self._upload(bot)
 
-        assert "media/" in (brain / ".gitignore").read_text(encoding="utf-8")
+        ignored = subprocess.run(
+            ["git", "-C", str(brain), "check-ignore", "-q",
+             "media/2026/03/upload.pdf"], check=False,
+        )
+        assert ignored.returncode == 0
+        assert "media" not in (brain / ".gitignore").read_text(encoding="utf-8")
 
     async def test_the_file_remembers_the_room_it_was_posted_in(
             self, tmp_path, monkeypatch):

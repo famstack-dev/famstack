@@ -44,7 +44,12 @@ const config: QuartzConfig = {
     baseUrl,
     // Skip git internals and Obsidian config dirs. The vault is a
     // real git clone, not a stripped checkout, so `.git` matters.
-    ignorePatterns: [".git", ".obsidian", "private", "templates"],
+    // `media/**/*.json` keeps the archive's sidecar records out of the
+    // published site. Each one names the room, the sender's full mxid and
+    // the original filename: useful beside the file on disk, not something
+    // to serve. The media itself is copied by the Assets emitter as usual.
+    ignorePatterns: [".git", ".obsidian", "private", "templates",
+                     "media/**/*.json"],
     defaultDateType: "modified",
     theme: {
       // Self-hosted. The comment above about analytics applies with more
