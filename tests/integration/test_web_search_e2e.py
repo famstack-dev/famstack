@@ -96,6 +96,63 @@ class TestTheJsonApiIsEnabled:
         assert engines, "no engine answered; the default engine set is gone"
 
 
+class TestSearchIsNotQuietlyDegraded:
+    """SearXNG has no index; it forwards to other engines and merges what
+    comes back. So "search got worse" does not look like an error, it
+    looks like fewer results -- and the failure is upstream, continuous,
+    and not ours to fix.
+
+    Measured on this instance: of the engines enabled by default, only
+    two actually answer. Google's web engine and Bing ship `disabled:
+    true` upstream, and Startpage is marked inactive behind a
+    proof-of-work captcha. Two engines is one bad week from one.
+
+    These assertions exist so that becomes a red test rather than a
+    family wondering why the answers got worse.
+    """
+
+    def test_more_than_one_engine_answers(self):
+        """A single surviving engine is a working search box and a
+        broken search. It is also the state that precedes zero."""
+        request = urllib.request.Request(
+            f"{SEARCH_BASE}/search?q=self+hosted+photos&format=json",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        engines = set()
+        for item in payload.get("results", []):
+            engines.update(item.get("engines") or [])
+
+        assert len(engines) >= 2, (
+            f"only {engines or 'no'} engine(s) answered. Upstream engines "
+            "break continuously; check searx.engines in the container log "
+            "and the enabled set in config/settings.yml."
+        )
+
+    def test_number_of_results_is_not_used_as_a_count(self):
+        """A trap worth pinning rather than remembering.
+
+        SearXNG reports `number_of_results` as 0 or null while the
+        `results` array holds a full page. Anything that gates on it
+        reports "no results" for a successful search, and the bug looks
+        like an upstream outage rather than a field misread.
+        """
+        request = urllib.request.Request(
+            f"{SEARCH_BASE}/search?q=immich&format=json",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        assert payload.get("results"), "no results to make the point with"
+        assert not payload.get("number_of_results"), (
+            "number_of_results became truthful -- if upstream fixed it, this "
+            "test can go, but until then nothing may branch on it"
+        )
+
+
 class TestTheCommandReturnsUsableResults:
     """Driving the CLI's own function, so the test cannot pass while the
     command is broken."""
