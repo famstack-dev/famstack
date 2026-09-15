@@ -1217,3 +1217,62 @@ Note: the add kept the model's capitalization ("Butter", "Mehl")
 rather than lowercasing; harmless, matches the family's own words.
 
 Tests: 11 list-edit module tests, links doctests, test_links all green.
+
+## 2026-09-15 16:18 UTC - rig turn (topic:groceries)
+
+- message: `Homer: what is on the shopping list?`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 35.54 s, 3 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 8333 | 0 | 66 | 20.3 | 21.599 |
+| 2 | 4 | 8511 | 8192 | 55 | 1.58 | 2.676 |
+| 3 | 6 | 8719 | 8192 | 66 | 2.19 | 3.504 |
+
+- note: complex lifecycle revalidation after single-tool items[] batch
+
+## 2026-09-15 16:18 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please add butter, eggs and flour to the list`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 14.66 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8663 | 8192 | 98 | 2.84 | 4.793 |
+| 2 | 10 | 8800 | 8192 | 27 | 2.34 | 2.845 |
+
+- note: complex lifecycle revalidation after single-tool items[] batch
+
+## 2026-09-15 16:19 UTC - rig turn (topic:groceries)
+
+- message: `Homer: please restructure the list by grocery category (dairy, bakery, produce, household)`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 36.74 s, 4 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 12 | 8957 | 8192 | 63 | 3.61 | 4.862 |
+| 2 | 14 | 9197 | 8192 | 228 | 3.39 | 8.002 |
+| 3 | 16 | 9484 | 8192 | 215 | 4.13 | 8.505 |
+| 4 | 18 | 9737 | 8192 | 81 | 4.73 | 6.339 |
+
+- note: complex lifecycle revalidation after single-tool items[] batch
+
+## 2026-09-15 16:19 UTC - rig turn (topic:groceries)
+
+- message: `Homer: show me the new list, and cross off the apples`
+- model: `Qwen3.6-35B-A3B-UD-MLX-4bit`, wall time 24.2 s, 2 LLM call(s), exit 0
+
+| call | messages | prompt_tokens | cached_tokens | completion_tokens | ttft_s | duration_s |
+|---|---|---|---|---|---|---|
+| 1 | 20 | 9999 | 8192 | 113 | 6.3 | 8.596 |
+| 2 | 23 | 10367 | 8192 | 94 | 6.36 | 8.268 |
+
+- note: complex lifecycle revalidation after single-tool items[] batch
+
+## 2026-09-15 - Batch list-edit validated end-to-end
+
+Single-tool items[] confirmed on the wire: the add turn was one call,
+list_edit(op=add, items=["butter","eggs","flour"]) -> "added 3" in one
+commit (was 3 calls, 3 commits). Full lifecycle correct: every item
+kept, [x] preserved, clean commit trail. Rig now runs the production
+transform, so this exercised the real store code.
