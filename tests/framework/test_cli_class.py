@@ -216,6 +216,43 @@ class TestCLIDown:
         result = cli.down("nope")
         assert "error" in result
 
+    def test_down_refreshes_env_even_when_env_exists(self, tmp_path, monkeypatch):
+        """A stale .env must be re-rendered before compose stop.
+
+        compose reads the whole file up front, so a .env missing a
+        variable a later merge added makes stop fail and the stacklet
+        unstoppable. up already refreshes; down must too. Refreshing only
+        when .env was absent was the gap that made memory unstoppable
+        after MEDIA_ARCHIVE_DIR was added to its compose mounts.
+        """
+        cli, _ = _make_cli(tmp_path, {"myapp": {}})
+        sdir = tmp_path / "stacklets" / "myapp"
+        (sdir / "docker-compose.yml").write_text("services: {}\n")
+        (sdir / ".env").write_text("STALE=1\n")  # exists, but out of date
+        refreshed = []
+        monkeypatch.setattr(cli.stack, "refresh_env",
+                            lambda sid: refreshed.append(sid) or {})
+        with patch("stack.docker.compose_stop", return_value=(0, "")):
+            result = cli.down("myapp")
+        assert result["success"]
+        assert refreshed == ["myapp"], "down must re-render .env before compose acts"
+
+    def test_down_surfaces_the_compose_error(self, tmp_path, monkeypatch):
+        """A failed stop reports the real cause, not "unknown error".
+
+        The result used to carry only `output`, which the caller dropped,
+        so the operator saw "unknown error" for a specific compose fault.
+        """
+        cli, _ = _make_cli(tmp_path, {"myapp": {}})
+        sdir = tmp_path / "stacklets" / "myapp"
+        (sdir / "docker-compose.yml").write_text("services: {}\n")
+        monkeypatch.setattr(cli.stack, "refresh_env", lambda sid: {})
+        fault = "invalid spec: :/vault/media:ro: empty section between colons"
+        with patch("stack.docker.compose_stop", return_value=(1, fault)):
+            result = cli.down("myapp")
+        assert not result["success"]
+        assert fault in result["error"]
+
 
 class TestCLIDownAll:
     """`stack down all` stops every currently-running stacklet in reverse
