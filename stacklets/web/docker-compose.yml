@@ -20,7 +20,12 @@ name: stack-web
 services:
   stack-web-search:
     container_name: stack-web-search
-    image: searxng/searxng:${WEB_SEARCH_VERSION:-latest}
+    # Pinned, and deliberately not to a moving tag. SearXNG ships several
+    # builds a day (three carried 2026-09-15 alone), and each one changes
+    # which upstream engines work -- the project's whole job is chasing
+    # other people's bot detection. `:latest` here would mean search
+    # quietly changing behaviour between two `stack up` runs.
+    image: searxng/searxng:${WEB_SEARCH_VERSION:-2026.9.15-ca4965040}
     networks:
       - stack
     environment:
