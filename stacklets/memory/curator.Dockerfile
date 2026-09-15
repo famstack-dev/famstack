@@ -9,11 +9,18 @@
 # bind mount (see docker-compose.yml), same as the bot-runner, so
 # code changes don't need an image rebuild; tzdata makes the
 # WIKI_NIGHTLY local time honest inside the container.
+#
+# ffmpeg is the one heavy addition. The nightly diary runs in THIS
+# container (curator.py subprocesses the compiler rather than exec-ing
+# into the bot-runner), and the diary archives the media it publishes:
+# voice notes need an AAC copy Safari can play, photographs need a
+# bounded one a page can carry. Without it here the nightly run files
+# originals and no page can show them.
 
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git tzdata \
+    git tzdata ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir "loguru>=0.7,<1.0" "openai>=1.50,<3.0" "pyyaml>=6,<7"
