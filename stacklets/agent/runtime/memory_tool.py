@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
@@ -11,7 +12,8 @@ from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_paramet
 @tool_parameters(
     tool_parameters_schema(
         query=StringSchema(
-            "Natural-language question or keywords to search across the family vault.",
+            "Two to four literal keywords, words that appear on the page. "
+            "Not a full question.",
             min_length=1,
         ),
         limit=IntegerSchema(
@@ -64,17 +66,19 @@ class MemorySearchTool(Tool):
         person: str | None = None,
         tag: str | None = None,
     ) -> str:
-        # `--nl` is what makes the parameter description above true. The
-        # CLI's default query language is a regex, so a question sent
-        # without it asks for those exact words, adjacent, and matches
-        # nothing. The CLI skips the model itself on a single word, so
-        # passing this always costs nothing on keyword lookups.
+        # The CLI's query language is a regex, and adjacent words match
+        # nothing. Join the model's keywords with `|` so each keyword
+        # matches on its own. This replaces the CLI's `--nl` rewrite,
+        # which made a second LLM call inside every multi-word search
+        # (measured 2026-09-15: one full model call per search, on the
+        # same GPU as the turn). The model now supplies the keywords.
+        words = [re.escape(w) for w in query.split()]
+        pattern = "|".join(words) if len(words) > 1 else query
         args = [
             "stack",
             "memory",
             "search",
-            query,
-            "--nl",
+            pattern,
             "--limit",
             str(limit or 5),
         ]
