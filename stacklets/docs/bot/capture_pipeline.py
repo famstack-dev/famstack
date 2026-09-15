@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
+import re
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -501,6 +502,10 @@ class CapturePipeline:
         work against the model's own paraphrase rather than the raw
         page. Pure text corrections (Homer's "It is a Mac Studio")
         compose cleanly under that constraint.
+
+        The archived file is the one thing that cannot be recovered
+        that way: the bytes are long gone from this path, so the
+        reference is read back off the entry being replaced.
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -545,6 +550,7 @@ class CapturePipeline:
             actor=sender_mxid,
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
+            kept_media=_kept_media_from(raw),
         )
 
     async def _publish(
@@ -858,6 +864,31 @@ def _parse_capture_markdown(raw: str) -> tuple[dict, str]:
     body = raw[fm_end + len("\n---\n"):]
     summary = _extract_summary_callout(body)
     return (meta, summary)
+
+
+# The two lines an entry uses to reach its archived file, as
+# `vault_entry.render_capture` writes them.
+_FILE_LINE = re.compile(r"^> \*\*File\*\* \[([^\]]*)\]\((/media/[^)]+)\)", re.M)
+_EMBED_LINE = re.compile(r"^!\[\[(/media/[^\]]+)\]\]", re.M)
+
+
+def _kept_media_from(raw: str) -> dict | None:
+    """The archived file an entry already names, read back off the page.
+
+    A correction re-renders the whole entry from the prior one and
+    never sees the original bytes again. Without reading the reference
+    back, replying to fix a tag would drop the file from an entry that
+    had one.
+    """
+    named = _FILE_LINE.search(raw)
+    if not named:
+        return None
+    shown = _EMBED_LINE.search(raw)
+    return {
+        "name": named.group(1),
+        "original": named.group(2),
+        "embed": shown.group(1) if shown else "",
+    }
 
 
 def _parse_yaml_frontmatter(text: str) -> dict:
