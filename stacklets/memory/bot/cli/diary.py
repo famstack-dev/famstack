@@ -851,8 +851,13 @@ async def run(llm, argv: list[str]) -> int:
 
         messages = diary.resolve(events, burst_window_s=window, zone=zone)
         if not messages:
-            _err(f"nothing in {room_arg} to compile")
-            return 0
+            # Still publish. The page is where the wiki's diary link
+            # lands, and with nothing recorded it carries the note that
+            # explains how to record something.
+            _err(f"nothing recorded in {room_arg} yet, publishing an empty diary")
+            await transcriber.aclose()
+            return _publish_pages(diary.pages_for([]),
+                                  bucket=bucket, dry_run=dry_run)
         _err(f"{len(messages)} message(s) in {room_arg}")
 
         # Transcription first and on its own: every later step reads
@@ -930,6 +935,16 @@ async def run(llm, argv: list[str]) -> int:
     summaries_cache.save()
 
     pages = diary.pages_for(entries, room_id=room_id, summaries=summaries)
+    return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
+
+
+def _publish_pages(pages, *, bucket: str, dry_run: bool) -> int:
+    """Write the compiled pages into the brain working copy.
+
+    One publisher for both exits: a full compile and the empty diary
+    reach the wiki the same way, so the page a family lands on has the
+    same frontmatter and the same splice contract either way.
+    """
     if dry_run:
         for path, body, _title in pages:
             print(f"\n{'=' * 70}\n{bucket}/{path}\n{'=' * 70}\n{body}")
