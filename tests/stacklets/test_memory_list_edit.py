@@ -1,0 +1,119 @@
+"""`stack memory list-edit` — one item changes, nothing else moves.
+
+The verb exists because whole-page rewrites lose state the caller never
+meant to touch: in the agent lab, a category restructure dropped an item's
+`[x]` mark, and prompt rules did not reliably repair it. The contract under
+test: the caller only names an item; the store finds it, changes exactly
+that line, and answers with what happened. Ambiguity and misses are
+instructive refusals, never guesses, because a wrong guess strikes a
+family member's item silently.
+
+These tests drive the pure transform through its public shape
+(text in, text out, sentence, kind) — the same calls the CLI makes.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+list_edit = _load(
+    "memory_cli_list_edit",
+    _REPO_ROOT / "stacklets" / "memory" / "cli" / "list-edit.py",
+)
+
+PAGE = """---
+type: note
+date: 2026-09-14
+---
+
+# Shopping list
+
+## Dairy
+
+- [ ] oat milk
+- [x] coffee beans
+
+## Household
+
+- [ ] dish soap
+"""
+
+
+def test_tick_by_partial_name_changes_only_that_line():
+    new, sentence, kind = list_edit.apply_list_edit(PAGE, "tick", "oat")
+    assert kind == "changed"
+    assert sentence == "ticked off 1: oat milk"
+    assert "- [x] oat milk" in new
+    # Everything else is untouched, byte for byte.
+    assert new.replace("- [x] oat milk", "- [ ] oat milk") == PAGE
+
+
+def test_ambiguous_name_is_refused_and_names_the_candidates():
+    page = PAGE + "- [ ] oat cookies\n"
+    new, sentence, kind = list_edit.apply_list_edit(page, "tick", "oat")
+    assert kind == "refuse"
+    assert new == page
+    assert "oat milk" in sentence and "oat cookies" in sentence
+
+
+def test_exact_match_wins_over_substring():
+    page = PAGE + "- [ ] milk\n"
+    new, sentence, kind = list_edit.apply_list_edit(page, "tick", "milk")
+    assert kind == "changed"
+    assert sentence == "ticked off 1: milk"
+    assert "- [ ] oat milk" in new
+
+
+def test_unknown_item_is_refused_and_lists_what_is_open():
+    new, sentence, kind = list_edit.apply_list_edit(PAGE, "tick", "bananas")
+    assert kind == "refuse"
+    assert new == PAGE
+    assert "oat milk" in sentence and "dish soap" in sentence
+    # Done items are not offered as candidates for a tick.
+    assert "coffee beans" not in sentence
+
+
+def test_add_lands_in_the_named_section():
+    new, sentence, kind = list_edit.apply_list_edit(
+        PAGE, "add", "butter", section="Dairy")
+    assert kind == "changed"
+    assert sentence == "added 1: butter"
+    dairy = new.split("## Dairy")[1].split("## Household")[0]
+    assert "- [ ] butter" in dairy
+
+
+def test_add_duplicate_is_an_honest_noop():
+    new, sentence, kind = list_edit.apply_list_edit(PAGE, "add", "Oat Milk")
+    assert kind == "noop"
+    assert new == PAGE
+    assert "already on the list" in sentence
+
+
+def test_remove_names_what_it_destroyed():
+    new, sentence, kind = list_edit.apply_list_edit(PAGE, "remove", "dish soap")
+    assert kind == "changed"
+    assert sentence == "REMOVED 1: dish soap"
+    assert "dish soap" not in new
+
+
+def test_untick_reports_a_reopening():
+    new, sentence, kind = list_edit.apply_list_edit(PAGE, "untick", "coffee")
+    assert kind == "changed"
+    assert sentence == "reopened 1: coffee beans"
+    assert "- [ ] coffee beans" in new
