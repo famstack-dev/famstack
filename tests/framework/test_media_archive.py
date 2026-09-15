@@ -15,6 +15,9 @@ not about how it was spelled.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
 import subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -221,3 +224,258 @@ class TestTranscodeAudio:
         assert media.transcode_audio(src, tmp_path / "voice.m4a") is False
         assert list(tmp_path.glob("*.m4a")) == []
         assert list(tmp_path.glob(".tmp-*")) == []
+
+
+# ── The record beside the file ───────────────────────────────────────────
+
+class TestKeep:
+    """An archive nobody can read back is a pile of anonymous files.
+    `keep` writes the file and the record of where it came from, and
+    that record is the only thing in the tree that still knows."""
+
+    ORIGIN = {
+        "kind": "image", "source": "capture", "mime": "image/png",
+        "filename": "Bildschirmfoto 2026-03-14.png",
+        "room_id": "!kitchen:example.org", "sender": "@marge:example.org",
+    }
+
+    def _record(self, archive: Path) -> dict:
+        return json.loads((archive / "2026" / "03" / "abc.json")
+                          .read_text(encoding="utf-8"))
+
+    def test_the_record_says_who_posted_it_where_and_under_what_name(self, archive):
+        """Everything needed to put the file back in its context, next
+        to the file. The name in the tree is a scrubbed identifier and
+        the folders are a date, so nothing else in the archive carries
+        any of this."""
+        media.keep(archive, "$abc", b"bytes", ext="png",
+                   when=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+                   **self.ORIGIN)
+
+        record = self._record(archive)
+        assert record["event_id"] == "$abc", "unscrubbed, or the timeline is lost"
+        assert record["room_id"] == "!kitchen:example.org"
+        assert record["sender"] == "@marge:example.org"
+        assert record["filename"] == "Bildschirmfoto 2026-03-14.png"
+        assert record["captured_at"].startswith("2026-03-14T09:30")
+        assert record["source"] == "capture"
+
+    def test_the_record_can_prove_the_bytes_are_the_bytes(self, archive):
+        media.keep(archive, "$abc", b"bytes", ext="png", when=MARCH, **self.ORIGIN)
+
+        record = self._record(archive)
+        assert record["size"] == 5
+        assert record["sha256"] == hashlib.sha256(b"bytes").hexdigest()
+
+    def test_a_second_compile_over_the_same_room_changes_nothing(self, archive):
+        """The diary recompiles the whole room every night. A run that
+        rewrote every file it had already kept would be a diff of the
+        entire archive, every night, forever."""
+        media.keep(archive, "$abc", b"bytes", ext="png", when=MARCH, **self.ORIGIN)
+        month = archive / "2026" / "03"
+        before = {p.name: p.stat().st_mtime_ns for p in month.iterdir()}
+
+        media.keep(archive, "$abc", b"bytes", ext="png", when=MARCH, **self.ORIGIN)
+
+        assert {p.name: p.stat().st_mtime_ns for p in month.iterdir()} == before
+
+    def test_bytes_that_cannot_be_written_leave_no_record_saying_they_were(
+            self, tmp_path):
+        blocked = tmp_path / "file-where-a-directory-should-be"
+        blocked.write_text("not a directory")
+
+        assert media.keep(blocked, "$abc", b"x", ext="png", when=MARCH,
+                          **self.ORIGIN) == ""
+
+
+class TestKnowingWhatIsAlreadyThere:
+
+    def test_an_artifact_in_the_archive_is_reported_without_its_bytes(self, archive):
+        """The compiler asks before it downloads. A room with years of
+        photographs in it would otherwise be re-fetched in full on every
+        run to write files that are already on disk."""
+        assert media.kept(archive, "$abc", ext="png", when=MARCH) == ""
+
+        media.store(archive, "$abc", b"bytes", ext="png", when=MARCH)
+
+        assert media.kept(archive, "$abc", ext="png", when=MARCH) == \
+            "/media/2026/03/abc.png"
+
+
+class TestNamingAnArtifact:
+    """The extension is not cosmetic: the wiki turns an embed into an
+    audio player, a video player or an image by reading it off the
+    path, so getting it wrong loses the player."""
+
+    @pytest.mark.parametrize("filename, mime, expected", [
+        ("voice-message.ogg", "audio/ogg", "ogg"),
+        ("IMG_4021.JPEG", "image/jpeg", "jpeg"),
+        ("Zeugnis Bart.pdf", "application/pdf", "pdf"),
+        ("", "image/png", "png"),
+        ("", "video/mp4", "mp4"),
+        ("", "", "bin"),
+        ("noextension", "", "bin"),
+    ])
+    def test_the_name_it_was_posted_as_decides(self, filename, mime, expected):
+        assert media.extension_for(filename, mime) == expected
+
+    @pytest.mark.parametrize("mime, expected", [
+        ("image/png", "image"), ("video/quicktime", "video"),
+        ("audio/ogg; codecs=opus", "audio"), ("application/pdf", "file"),
+        ("", "file"),
+    ])
+    def test_the_kind_follows_the_media_type(self, mime, expected):
+        assert media.kind_for(mime) == expected
+
+
+# ── Second copies ────────────────────────────────────────────────────────
+
+def _encoders() -> str:
+    if shutil.which("ffmpeg") is None:
+        return ""
+    return subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                          capture_output=True, check=False).stdout.decode()
+
+
+needs_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None,
+    reason="ffmpeg is a container dependency; absent here")
+
+# The container image installs a full ffmpeg; a developer machine may
+# carry a build without the WebP encoder, which is a property of that
+# build and not of this code. The width arithmetic below is ours and is
+# tested separately, through a format every build can write.
+needs_webp = pytest.mark.skipif(
+    "webp" not in _encoders(),
+    reason="this ffmpeg build has no WebP encoder")
+
+
+def _width(path: Path) -> int:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width", "-of", "csv=p=0", str(path)],
+        capture_output=True, check=True,
+    )
+    return int(out.stdout.decode().strip())
+
+
+def _an_image(path: Path, width: int) -> bytes:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
+         "-i", f"testsrc=size={width}x{width // 2}:duration=1",
+         "-frames:v", "1", str(path)], check=True)
+    return path.read_bytes()
+
+
+@needs_ffmpeg
+class TestBoundingAnImage:
+    """Twenty originals off a phone are a hundred megabytes on one month
+    page. The width alias a wikilink carries is a display attribute and
+    changes nothing about what crosses the wire, so the file itself has
+    to be smaller."""
+
+    def test_a_large_photograph_comes_out_at_the_bound(self, tmp_path):
+        _an_image(tmp_path / "big.png", 3000)
+
+        assert media.transcode_image(
+            tmp_path / "big.png", tmp_path / "out.png") is True
+        assert _width(tmp_path / "out.png") == media.MAX_IMAGE_WIDTH
+
+    def test_a_small_photograph_is_not_blown_up_to_fill_it(self, tmp_path):
+        """An old 400px photo enlarged to 1600 is a bigger file showing
+        less. The bound is a ceiling, not a target."""
+        _an_image(tmp_path / "small.png", 400)
+
+        media.transcode_image(tmp_path / "small.png", tmp_path / "out.png")
+
+        assert _width(tmp_path / "out.png") == 400
+
+    def test_the_original_survives_being_derived_from(self, tmp_path):
+        before = _an_image(tmp_path / "photo.png", 800)
+
+        media.transcode_image(tmp_path / "photo.png", tmp_path / "out.png")
+
+        assert (tmp_path / "photo.png").read_bytes() == before
+
+
+class TestDerivatives:
+    """A page embeds the derivative, so the derivative is what decides
+    whether a reader hears a recording, and how much of a photograph
+    they have to download to see it."""
+
+    ORIGIN = {"source": "diary", "room_id": "!memories:example.org",
+              "sender": "@homer:example.org"}
+
+    @needs_ffmpeg
+    @needs_webp
+    def test_a_photograph_gets_a_bounded_copy_beside_it(self, archive, tmp_path):
+        data = _an_image(tmp_path / "photo.png", 3000)
+        media.keep(archive, "$photo", data, ext="png", when=MARCH,
+                   kind="image", mime="image/png", filename="photo.png",
+                   **self.ORIGIN)
+
+        link = media.derive(archive, "$photo", ext="png", when=MARCH, kind="image")
+
+        assert link == "/media/2026/03/photo.webp"
+        assert _width(archive / "2026" / "03" / "photo.webp") == media.MAX_IMAGE_WIDTH
+        assert (archive / "2026" / "03" / "photo.png").read_bytes() == data
+
+    def test_a_derivative_is_written_into_the_record_that_owns_it(self, archive):
+        """A re-encode has to be able to replace its own output. Without
+        the list the previous file stays in the tree with nothing
+        pointing at it and nothing saying where it came from."""
+        media.keep(archive, "$voice", b"ogg bytes", ext="ogg", when=MARCH,
+                   kind="audio", mime="audio/ogg", filename="voice.ogg",
+                   **self.ORIGIN)
+        # As an earlier compile left it: the conversion is ffmpeg's, the
+        # bookkeeping is ours, and only the bookkeeping is under test.
+        (archive / "2026" / "03" / "voice.m4a").write_bytes(b"aac bytes")
+        payload = archive / "2026" / "03" / "voice.ogg"
+        before = payload.stat().st_mtime_ns
+
+        link = media.derive(archive, "$voice", ext="ogg", when=MARCH, kind="audio")
+        media.derive(archive, "$voice", ext="ogg", when=MARCH, kind="audio")
+
+        record = json.loads((archive / "2026" / "03" / "voice.json")
+                            .read_text(encoding="utf-8"))
+        assert record["derived"] == [{"path": link, "kind": "audio"}], \
+            "listed once, however often the compile runs"
+        assert payload.stat().st_mtime_ns == before, "the original is not rewritten"
+
+    def test_an_artifact_already_in_the_derived_form_gets_no_second_copy(self, archive):
+        """Deriving an .m4a to an .m4a would name the conversion's
+        output as its own input."""
+        media.keep(archive, "$voice", b"aac bytes", ext="m4a", when=MARCH,
+                   kind="audio", mime="audio/mp4", filename="voice.m4a",
+                   **self.ORIGIN)
+
+        assert media.derive(archive, "$voice", ext="m4a", when=MARCH,
+                            kind="audio") == ""
+        assert (archive / "2026" / "03" / "voice.m4a").read_bytes() == b"aac bytes"
+
+    def test_an_artifact_that_has_no_second_form_asks_for_none(self, archive):
+        media.keep(archive, "$doc", b"%PDF-", ext="pdf", when=MARCH,
+                   kind="file", mime="application/pdf", filename="form.pdf",
+                   **self.ORIGIN)
+
+        assert media.derive(archive, "$doc", ext="pdf", when=MARCH,
+                            kind="file") == ""
+
+    def test_without_a_converter_the_page_loses_the_player_not_the_entry(
+            self, archive, monkeypatch, tmp_path):
+        """ffmpeg is a container dependency and an instance can be
+        mid-upgrade. The compile keeps the original, skips the second
+        copy and publishes; it never dies on the way to a page."""
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        media.keep(archive, "$voice", b"ogg bytes", ext="ogg", when=MARCH,
+                   kind="audio", mime="audio/ogg", filename="voice.ogg",
+                   **self.ORIGIN)
+
+        assert media.derive(archive, "$voice", ext="ogg", when=MARCH,
+                            kind="audio") == ""
+
+        month = archive / "2026" / "03"
+        assert sorted(p.name for p in month.iterdir()) == ["voice.json", "voice.ogg"]
+        record = json.loads((month / "voice.json").read_text(encoding="utf-8"))
+        assert record["derived"] == []

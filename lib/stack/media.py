@@ -18,6 +18,17 @@ the reason the archive lives inside the published tree: it resolves at
 any page depth and in any deployment mode, where an absolute URL would
 be right in one mode and wrong in the other, and pages outlive both.
 
+Beside each file is `<artifact-id>.json`, written by `keep`: who sent
+the artifact, from where, under what name, and when. The archive is
+meant to be readable by someone who finds the tree with none of this
+software left, so everything needed to place a file back in its
+context is next to it rather than in a database.
+
+`derive` adds the second copies a page can actually show: audio a
+browser will play, an image bounded to a width a page can carry. The
+sidecar lists them, so a later conversion replaces its own output
+instead of leaving an orphan behind.
+
 Writes are idempotent and atomic. An identifier names one artifact
 permanently, so a file already at its path is the file that belongs
 there and is never rewritten.
@@ -28,11 +39,15 @@ The archive is deliberately excluded from version control; see
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import mimetypes
 import os
 import re
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -56,6 +71,18 @@ _MAX_EXT = 16
 # A conversion that has not finished by now is not going to. The caller
 # degrades to what it had rather than blocking the run behind it.
 _TRANSCODE_TIMEOUT_S = 300
+
+# How wide an image derivative may be. A page embedding a dozen
+# originals downloads a dozen originals: the width a wikilink alias
+# carries is a display attribute and changes nothing about what
+# crosses the wire. 1600px still fills a retina-width column, which is
+# where shrinking further starts costing the reader something.
+MAX_IMAGE_WIDTH = 1600
+
+# The forms a derivative takes, by the kind of artifact it came from.
+# AAC in MP4 because Safari does not decode Opus in Ogg; WebP because
+# it is the smallest of the formats every current browser renders.
+_DERIVED_EXT = {"audio": "m4a", "image": "webp"}
 
 _IGNORE_NOTE = (
     "# Original uploads, kept on disk only. Deleting the source event has\n"
@@ -85,6 +112,40 @@ def _safe_ext(ext: str) -> str:
     return cleaned[:_MAX_EXT] or "bin"
 
 
+def extension_for(filename: str, mime: str = "") -> str:
+    """The extension to file an artifact under.
+
+    The name it was posted as decides, because that is what the sender
+    saw and what a reader of the archive will recognise. A name without
+    one (a paste, a client that sends none) falls back to what the
+    declared type implies, and then to a neutral extension.
+    """
+    from_name = Path(str(filename or "")).suffix
+    if from_name.lstrip("."):
+        return _safe_ext(from_name)
+    declared = str(mime or "").split(";")[0].strip()
+    return _safe_ext(mimetypes.guess_extension(declared) or "" if declared else "")
+
+
+def kind_for(mime: str) -> str:
+    """The kind of artifact a media type describes.
+
+    One of image, video, audio, file. The kind is what decides whether
+    a page can show the thing inline and what a derivative of it would
+    be, so it is recorded rather than re-guessed at every reading.
+    """
+    top = str(mime or "").split("/")[0].strip().lower()
+    return top if top in ("image", "video", "audio") else "file"
+
+
+def _located(root, artifact_id: str, ext: str, when) -> "tuple[Path, str]":
+    """Where an artifact lives, and the link that addresses it."""
+    year, month = when.strftime("%Y"), when.strftime("%m")
+    name = f"{safe_name(artifact_id)}.{_safe_ext(ext)}"
+    return (Path(root) / year / month / name,
+            f"/{ARCHIVE_DIR}/{year}/{month}/{name}")
+
+
 def store(root, artifact_id: str, data: bytes, *, ext: str, when) -> str:
     """Keep `data` in the archive and return the link that addresses it.
 
@@ -100,11 +161,7 @@ def store(root, artifact_id: str, data: bytes, *, ext: str, when) -> str:
     artifact still has whatever it had before and should carry on with
     it; losing the page over a failed copy helps nobody.
     """
-    year, month = when.strftime("%Y"), when.strftime("%m")
-    name = f"{safe_name(artifact_id)}.{_safe_ext(ext)}"
-    target = Path(root) / year / month / name
-    link = f"/{ARCHIVE_DIR}/{year}/{month}/{name}"
-
+    target, link = _located(root, artifact_id, ext, when)
     if target.exists():
         return link
     try:
@@ -114,6 +171,108 @@ def store(root, artifact_id: str, data: bytes, *, ext: str, when) -> str:
         log.warning("could not archive %s: %s", artifact_id, e)
         return ""
     return link
+
+
+def kept(root, artifact_id: str, *, ext: str, when) -> str:
+    """The link to an artifact already in the archive, or "".
+
+    Lets a caller skip fetching bytes it would only throw away: the
+    archive is rebuilt from the same source on every run, and the
+    identifier already says whether this artifact is in it.
+    """
+    target, link = _located(root, artifact_id, ext, when)
+    return link if target.exists() else ""
+
+
+def keep(root, artifact_id: str, data: bytes, *, ext: str, when,
+         kind: str, source: str, mime: str = "", filename: str = "",
+         room_id: str = "", sender: str = "") -> str:
+    """Store an artifact together with the record of where it came from.
+
+    `store` with a sidecar: the same bytes, plus `<artifact-id>.json`
+    naming who sent it, from which room, under what name, and when.
+    Nothing else in the tree says any of that - the filename is a
+    scrubbed identifier and the directories are a date - so without the
+    sidecar the archive is a pile of anonymous files the moment it
+    outlives the software that wrote it.
+
+    `source` names the pipeline that filed the artifact. `kind` is the
+    caller's own classification (see `kind_for`), recorded rather than
+    inferred here because the caller knows what it handled.
+
+    Returns the link, or "" when the bytes could not be written.
+    """
+    link = store(root, artifact_id, data, ext=ext, when=when)
+    if not link:
+        return ""
+    sidecar, _ = _located(root, artifact_id, _SIDECAR_EXT, when)
+    if not sidecar.exists():
+        # Field order is the order a reader wants them in: identity,
+        # then the file, then the two timestamps, then our own notes.
+        _write_sidecar(sidecar, {
+            "event_id": artifact_id,
+            "room_id": room_id,
+            "sender": sender,
+            "filename": filename,
+            "mime": mime,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "captured_at": when.isoformat(),
+            "stored_at": datetime.now(timezone.utc).isoformat(),
+            "kind": kind,
+            "source": source,
+            "derived": [],
+        })
+    return link
+
+
+# ── The record beside the file ───────────────────────────────────────────
+
+_SIDECAR_EXT = "json"
+
+
+def _read_sidecar(path: Path) -> dict:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _write_sidecar(path: Path, record: dict) -> None:
+    """Write a sidecar the same way the payload is written.
+
+    Atomically, and never fatally: an archived file with no record
+    beside it is a loss worth a warning, and losing the file as well
+    because the record failed would be a worse one.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_atomically(
+            path, json.dumps(record, indent=2, ensure_ascii=False).encode("utf-8"),
+        )
+    except OSError as e:
+        log.warning("could not record %s: %s", path.name, e)
+
+
+def _record_derived(sidecar: Path, link: str, kind: str) -> None:
+    """Add a derivative to the sidecar's list, once.
+
+    The list is what lets a later conversion replace its own output:
+    without it a second format, a better encoder or a changed width
+    leaves the previous file in the tree with nothing pointing at it
+    and nothing saying where it came from.
+    """
+    record = _read_sidecar(sidecar)
+    if not record:
+        return
+    derived = record.get("derived")
+    if not isinstance(derived, list):
+        derived = []
+    if any(isinstance(d, dict) and d.get("path") == link for d in derived):
+        return
+    record["derived"] = [*derived, {"path": link, "kind": kind}]
+    _write_sidecar(sidecar, record)
 
 
 def _write_atomically(target: Path, data: bytes) -> None:
@@ -144,6 +303,45 @@ def transcode_audio(src, dst) -> bool:
     False when ffmpeg is absent or the conversion fails, with nothing
     left behind at `dst`. Callers fall back to the link they had.
     """
+    return _convert(src, dst, ["-vn", "-c:a", "aac", "-b:a", "96k"])
+
+
+def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH) -> bool:
+    """Convert an image to a WebP no wider than `max_width`. True when done.
+
+    A page that embeds originals makes a reader download originals, and
+    twenty photographs off a phone are a hundred megabytes of them. The
+    display width a wikilink carries does not change that; only a
+    smaller file does.
+
+    Aspect ratio is preserved and an image already narrower than the
+    bound keeps its dimensions - `min()` in the scale expression is
+    what stops an old small photo being blown up to fill the width.
+
+    False when ffmpeg is absent or the conversion fails, with nothing
+    left behind at `dst`. Callers fall back to the original.
+    """
+    return _convert(src, dst, [
+        "-vf", f"scale='min({int(max_width)},iw)':-1:flags=lanczos",
+        # One frame: the source may be an animation, and the point of
+        # the derivative is a bounded still.
+        "-frames:v", "1",
+    ])
+
+
+def _convert(src, dst, options: "list[str]") -> bool:
+    """Run ffmpeg from `src` to `dst` with `options`, atomically.
+
+    Shared by every derivative. The output is built under a temporary
+    name and renamed into place, because the site serves this tree
+    while a compile is running and a half-written file under the final
+    name would be both served and taken for finished work on the next
+    run.
+
+    Never raises. A missing converter, a codec the build lacks and a
+    file ffmpeg cannot read are all the same to the caller: no
+    derivative, and whatever it had before.
+    """
     src, dst = Path(src), Path(dst)
     if dst.exists():
         return True
@@ -153,11 +351,11 @@ def transcode_audio(src, dst) -> bool:
         dst.parent.mkdir(parents=True, exist_ok=True)
         done = subprocess.run(
             ["ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-             "-i", str(src), "-vn", "-c:a", "aac", "-b:a", "96k", str(tmp)],
+             "-i", str(src), *options, str(tmp)],
             capture_output=True, timeout=_TRANSCODE_TIMEOUT_S, check=False,
         )
     except (OSError, subprocess.SubprocessError) as e:
-        log.warning("no audio conversion for %s: %s", src.name, e)
+        log.warning("no conversion for %s: %s", src.name, e)
         tmp.unlink(missing_ok=True)
         return False
 
@@ -175,6 +373,39 @@ def transcode_audio(src, dst) -> bool:
         tmp.unlink(missing_ok=True)
         return False
     return True
+
+
+def derive(root, artifact_id: str, *, ext: str, when, kind: str) -> str:
+    """The copy of an archived artifact a page can show, or "".
+
+    Audio becomes playable, an image becomes bounded; everything else
+    has no derivative and says so by returning "". The result is
+    recorded in the artifact's sidecar, so the tree explains its own
+    extra files.
+
+    Idempotent and cheap to call again: an artifact whose derivative is
+    already there costs one stat. An artifact that is already in the
+    derived form is its own derivative and gets none, which is also
+    what stops a conversion writing over its own input.
+
+    Returns "" whenever the conversion cannot be made - ffmpeg absent,
+    a format it will not read, the original gone. The caller shows the
+    original instead.
+    """
+    target_ext = _DERIVED_EXT.get(kind, "")
+    if not target_ext or _safe_ext(ext) == target_ext:
+        return ""
+    src, _ = _located(root, artifact_id, ext, when)
+    if not src.exists():
+        return ""
+    dst, link = _located(root, artifact_id, target_ext, when)
+
+    convert = transcode_audio if kind == "audio" else transcode_image
+    if not convert(src, dst):
+        return ""
+    sidecar, _ = _located(root, artifact_id, _SIDECAR_EXT, when)
+    _record_derived(sidecar, link, kind)
+    return link
 
 
 def ensure_ignored(repo_root) -> None:
