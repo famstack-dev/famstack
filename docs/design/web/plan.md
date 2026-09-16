@@ -24,8 +24,28 @@ Two user-visible outcomes:
   say so plainly rather than claiming anonymity.
 - **The cheap path stays cheap.** A recipe or an article must not pay browser
   cost. Tier escalation is driven by failure, never by default.
-- **Host-native where possible.** `stack web fetch` works with nothing running,
-  same contract as `stack memory topic`.
+- **Hostile bytes are processed in a container, never on the host.** Every
+  page we read is attacker-controlled input going into an HTML or XML parser,
+  and lately into a browser. On the host a parser bug runs as the person who
+  owns the machine: their SSH keys, the family vault, the Docker socket. In a
+  container it runs against a filesystem we chose.
+
+  The host runs exactly one thing, and it is not this: the Apple-Silicon
+  inference that cannot be containerised without losing Metal (the model
+  endpoint, whisper). Everything else gets a container, because that is what
+  containers are for.
+
+  This replaces an earlier "host-native where possible" invariant, which
+  wanted `stack web fetch` to work with nothing running. That convenience is
+  not worth running an HTML parser over hostile input as the host user, and
+  it was arguing from the wrong premise anyway — see below.
+- **Being in a container means we are not limited to macOS arm64.** The
+  original plan treated "no Linux arm64 Google Chrome exists" as a hard stop.
+  It is not: Docker runs `linux/amd64` images here. Emulation costs latency
+  (the measured SeleniumBase path was 40s, and that cost *was* the emulation),
+  so it is a poor trade for a browser — but it is a fine one for a fast
+  CPU-bound library that only ships x86 wheels. Judge each candidate on
+  measured latency, not on whether an arm64 wheel exists.
 - **The gate is mandatory.** No extractor output reaches the vault without
   passing a quality check. This is the fix for the class of bug that started
   this work.
@@ -398,6 +418,26 @@ containing its SearXNG connector, which is BSL 1.1.
   price watch, never as a default.
 - **An MCP browser server for the agent.** Would put raw page content back in
   Stacky's context, which is the thing `stack web ask` exists to avoid.
+
+## Known violation of the containerisation invariant
+
+`stack web fetch` runs on the host today, and shipped that way in phase
+2 under the old "host-native where possible" rule. It parses
+attacker-controlled HTML with lxml as the host user, which is exactly
+what the rewritten invariant forbids. The planned feed tier would make
+it worse by adding hostile XML to the same process, and `xml.etree` has
+documented entity-expansion behaviour.
+
+Worth being precise about what is and is not exposed. The *production*
+capture path is already contained: the archivist imports
+`lib/stack/web` inside the bot-runner, so a family pasting a link never
+parses anything on the host. Only the operator CLI is outside, and only
+when an operator runs it.
+
+The fix is the same one `stack web ask` uses: route the command through
+`stack.bot_runner.dispatch` into the bot-runner. It costs the "works
+with nothing running" property, which the invariant already says is not
+worth its price.
 
 ## Open decisions
 
