@@ -168,8 +168,10 @@ The tempting version is a `web` stacklet that owns all web operations including
 link fetching. Rejected, but the opposite extreme is rejected too.
 
 **Scrapling must not go into `bot-runner`.** It pulls Playwright, Patchright and
-a Chromium build, roughly 250 MB. Putting it there taxes every bot image (docs,
-mail, memory) with a browser that most of them never invoke.
+a Chromium build. Putting it there taxes every bot image (docs, mail, memory)
+with a browser that most of them never invoke — not for the disk, which is
+cheap, but because a browser in the archivist's image is a browser competing
+for RAM with photo thumbnailing and OCR on a machine that has none spare.
 
 **Tiers 0 to 2 must not go into a container.** JSON-LD parsing, trafilatura and
 the gate are pure Python over bytes. Making them a network hop would break
@@ -182,7 +184,7 @@ So the split is by weight, not by topic:
 |---|---|---|
 | canonicalize, JSON-LD, HTTP, trafilatura, gate | `lib/stack/web/` | pure Python, shared by CLI and bots, no new deps |
 | search | `web` stacklet, searxng service | genuinely a service |
-| stealth fetch | `web` stacklet, fetch service | isolates the 250 MB browser payload |
+| stealth fetch | `web` stacklet, fetch service | isolates the browser, so its memory is opt-in |
 
 The stacklet is what *stops* this being heavy. It makes the browser opt-in by
 construction: a family that never pastes a shop link never downloads Chromium.
@@ -278,6 +280,10 @@ Two ceilings to write into the gate rather than discover in it:
   publishes no `linux-arm64` build. On arm64 Playwright falls back to a
   Chromium `headless_shell`. The weaker configuration is permanent, not a
   setup mistake.
+- **Measure memory, not image size.** The gate is what the service holds
+  resident while the family is also using photos and documents, not what it
+  weighs on disk. Per-request startup beating a warm browser is the outcome
+  to aim for.
 - **Tier 3 is a treadmill, not a milestone.** Cloudflare turned on default
   AI-crawler blocking for free plans on 2026-09-15, with Web Bot Auth
   (Ed25519-signed requests, a published JWKS, an application process) as the
@@ -292,10 +298,10 @@ exactly once and never loops between tier 2 and tier 3.
 
 ## Landscape check, 2026-09-15
 
-A survey of the agentic-browser and agent-web-access space, assessed against
-this stack's constraints (arm64 only, nothing hosted, AGPLv3-compatible,
-container weight, a local ~30B model). Three things changed a decision; the
-rest confirmed one.
+Full survey in [landscape.md](landscape.md). Assessed against this stack's
+real constraints: resident memory first, then arm64-only, nothing hosted,
+AGPLv3-compatible, and a local ~30B model. Three things changed a decision;
+the rest confirmed one.
 
 **Structured data is the right long bet, and the competing standard is not.**
 JSON-LD now appears on about 41% of mobile pages and is still growing, which
@@ -356,20 +362,23 @@ containing its SearXNG connector, which is BSL 1.1.
 
 ## Open decisions
 
-1. ~~**Image size budget for `stack-web-fetch`.**~~ **Resolved, and the
-   fallback was backwards.** Measured: the official `pyd4vinci/scrapling`
-   `linux/arm64` image is **644 MB compressed**, of which 441 MB is
-   `playwright install chromium` and 138 MB is `uv sync --all-extras`.
-   Installing only `[fetchers]` and `playwright install --only-shell chromium`
-   puts the floor around **400 MB**. Chromium's own apt dependencies rule out
-   250 MB, so the budget moves rather than the design.
+1. ~~**Image size budget for `stack-web-fetch`.**~~ **Withdrawn — it was
+   the wrong constraint.** Image size is cheap and the stacklet is opt-in by
+   construction, so a family that never pastes a shop link never pulls it. A
+   bigger image for a materially better fetcher is a fine trade.
 
-   Camoufox is no longer the escape hatch: **Scrapling dropped it entirely at
-   v0.3.13**, and `StealthyFetcher` is now patchright over Playwright Chromium
-   with a built-in Turnstile solver. Camoufox's `lin.arm64` asset is **623 MB
-   zipped on its own**, so "use Camoufox directly" is now a step backwards.
-   The arm64 story is patchright and Playwright shipping native aarch64
-   wheels, not Camoufox's builds.
+   **The real constraint is resident memory.** The Mac Mini is already
+   running Immich, Paperless, Postgres, Synapse and a local model; a browser
+   held resident competes with photo thumbnailing and OCR for RAM, and losing
+   that is visible to the family as everything getting slow. Replace this
+   decision with a measurement: what does the fetch service hold at rest and
+   at peak, and can it be started per-request rather than kept warm?
+
+   Related correction: **Scrapling dropped Camoufox entirely at v0.3.13**, so
+   "consider Camoufox directly" is no longer the fallback at all.
+   `StealthyFetcher` is now patchright over Playwright Chromium with a
+   built-in Turnstile solver, and Camoufox additionally wants Xvfb on Linux,
+   which costs a process and more RAM. See [landscape.md](landscape.md).
 2. **Does tier 3 stay synchronous?** At 3.4s to 19.8s it fits in a chat round
    trip behind the existing 👀 ack. If real-world pages cluster at the slow end,
    it becomes a background job and the reply becomes "fetching, will file it".
