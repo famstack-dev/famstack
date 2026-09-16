@@ -19,7 +19,11 @@ whether an answer is in the vault at all.
 
 from __future__ import annotations
 
+import sqlite3
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -282,6 +286,143 @@ def test_an_edited_page_is_reindexed_and_a_deleted_one_disappears(vault, index):
     ]
     assert fts_index.search(index, ["milk"]) == []
     assert rels(fts_index.search(index, ["skateboard"])) == [
+        "bart/notes/skateboard.md"
+    ]
+
+
+# ── staying current ─────────────────────────────────────────────────────
+
+@pytest.fixture
+def git_vault(vault: Path, git_commit) -> Path:
+    """The vault as what it actually is in production: a git checkout.
+
+    The memory stacklet keeps a clone of the Forgejo vault repo, and
+    every change to it arrives as a commit -- `update_memory` writes
+    through Forgejo and fast-forwards this copy. Nothing edits these
+    files in place, which is the fact the freshness check below leans
+    on.
+    """
+    subprocess.run(["git", "init", "-q", "-b", "main", str(vault)], check=True)
+    for key, value in (("user.email", "test@famstack.local"),
+                       ("user.name", "Test"), ("commit.gpgsign", "false")):
+        subprocess.run(["git", "-C", str(vault), "config", key, value],
+                       check=True)
+    git_commit(vault, "family/about.md",
+               "---\ntitle: Family\ndate: 2026-09-01\n---\n\nThe household.\n",
+               "seed")
+    return vault
+
+
+def test_a_page_that_arrives_in_a_commit_becomes_searchable(
+        git_vault, tmp_path, git_commit):
+    """The case that matters: somebody wrote something, and we can find it.
+
+    A pull is how every change reaches this checkout, so "the index is
+    current" means "the index has caught up with HEAD".
+    """
+    db = tmp_path / "index.sqlite3"
+    fts_index.build_index(git_vault, db)
+    assert fts_index.search(db, ["kayak"]) == []
+
+    git_commit(git_vault, "family/camping/kayak.md",
+               "---\ntitle: Kayak\ndate: 2026-09-14\n---\n\nThe kayak leaks.\n",
+               "add kayak note")
+    fts_index.build_index(git_vault, db)
+
+    assert rels(fts_index.search(db, ["kayak"])) == ["family/camping/kayak.md"]
+
+
+def test_an_unmoved_head_costs_nothing_to_confirm(git_vault, tmp_path):
+    """A search must not pay for a scan when nothing can have changed.
+
+    Statting every file to learn that none of them moved is work
+    proportional to the vault, on every single search. The checkout's
+    HEAD answers the same question in constant time, and it is a sound
+    substitute precisely because nothing writes into this tree outside
+    git: no commit, no change.
+
+    The edit below is therefore deliberately invisible. That is the
+    trade: a hand-edited working copy is not picked up until something
+    commits. In production nothing hand-edits it, and `--vault`
+    overrides are not checkouts at all, so they keep scanning.
+    """
+    db = tmp_path / "index.sqlite3"
+    fts_index.build_index(git_vault, db)
+
+    (git_vault / "family/camping/about.md").write_text(
+        "---\ntitle: Camping trip\ndate: 2026-09-01\n---\n\nA kayak now.\n",
+        encoding="utf-8")
+
+    stats = fts_index.build_index(git_vault, db)
+    assert (stats.added, stats.updated, stats.deleted) == (0, 0, 0)
+    assert fts_index.search(db, ["kayak"]) == []
+
+
+def test_a_vault_that_is_not_a_checkout_is_always_rescanned(vault, tmp_path):
+    """The fallback the lab and `--vault` overrides run on.
+
+    A directory that is not a clone has no HEAD to compare, so there is
+    nothing to short-circuit on and the scan is the only way to know.
+    """
+    db = tmp_path / "index.sqlite3"
+    fts_index.build_index(vault, db)
+
+    (vault / "family/camping/about.md").write_text(
+        "---\ntitle: Camping trip\ndate: 2026-09-01\n---\n\nA kayak now.\n",
+        encoding="utf-8")
+
+    stats = fts_index.build_index(vault, db)
+    assert stats.updated == 1
+    assert rels(fts_index.search(db, ["kayak"])) == ["family/camping/about.md"]
+
+
+def test_one_unreadable_path_does_not_cost_every_other_result(vault, tmp_path):
+    """The vault moves underneath a scan, so a bad path must not be fatal.
+
+    A sync can delete a file between the moment the walk lists it and
+    the moment it is read. One page that cannot be resolved is a page
+    missing from the results; it is not a reason for the family to get
+    an error instead of the other twelve.
+    """
+    (vault / "family/dangling.md").symlink_to(vault / "nowhere.md")
+
+    db = tmp_path / "index.sqlite3"
+    stats = fts_index.build_index(vault, db)
+
+    assert stats.total == 4
+    assert rels(fts_index.search(db, ["telescope"])) == [
+        "marge/notes/gift-ideas.md"
+    ]
+
+
+def test_a_second_process_indexing_does_not_fail_the_search(vault, tmp_path):
+    """The CLI and the archivist both reconcile, sometimes at once.
+
+    SQLite serialises writers, and its default is to give up the
+    instant the file is busy. Without a wait, one search landing while
+    the other is mid-reconcile is an error rather than a short pause.
+    """
+    db = tmp_path / "index.sqlite3"
+    fts_index.build_index(vault, db)
+
+    holder = sqlite3.connect(db)
+    holder.execute("BEGIN EXCLUSIVE")
+    done: list[object] = []
+
+    def reconcile() -> None:
+        page(vault, "bart/notes/skateboard.md",
+             title="Skateboard", body="The deck cracked.")
+        done.append(fts_index.build_index(vault, db))
+
+    worker = threading.Thread(target=reconcile)
+    worker.start()
+    time.sleep(0.2)
+    holder.rollback()
+    holder.close()
+    worker.join(timeout=10)
+
+    assert done, "the second indexer gave up instead of waiting"
+    assert rels(fts_index.search(db, ["skateboard"])) == [
         "bart/notes/skateboard.md"
     ]
 

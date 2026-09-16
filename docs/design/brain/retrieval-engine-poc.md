@@ -132,6 +132,67 @@ question gets longer. If the absent questions were wordier than the
 answerable ones, the AUC would be measuring question length. They are
 not: median 3.0 keywords either way, mean 2.94 against 3.08.
 
+## Keeping the index current
+
+An index is a cache, and a cache that quietly falls behind is worse
+than no cache: the family gets yesterday's answer with today's
+confidence. Two links in the chain, with different owners.
+
+**Forgejo to the clone** is `refresh_vault_if_stale`, which already
+exists and does not change. It compares local HEAD to remote HEAD and
+pulls only on a difference. When the remote is unreachable it says so
+and reads proceed against the stale clone -- the existing contract.
+
+**The clone to the index** is new, and leans on a fact that is already
+load-bearing elsewhere in this stacklet: *nothing writes into the vault
+working copy outside git*. `update_memory` reads the canonical file
+from Forgejo, commits there, and fast-forwards the clone;
+`propagate_write` already uses that clone's HEAD as its "has it landed"
+token. So a HEAD that has not moved is proof that no page has changed.
+
+The index stores the HEAD it was built from. Each search compares, and
+skips the reconcile entirely when they match:
+
+| Vault pages | HEAD gate | Scan every file | Cold rebuild |
+|---|---|---|---|
+| 177 | 14.4 ms | 8.2 ms | 64 ms |
+| 1000 | 15.7 ms | 42.5 ms | 252 ms |
+| 3000 | 15.0 ms | 124.7 ms | 651 ms |
+| 8000 | 14.9 ms | 337.5 ms | 1810 ms |
+
+Both columns are real `build_index` calls where nothing changed; the
+scan column is the same tree with `.git` hidden so the gate cannot
+fire. Reproduce with `tools/retrieval-lab/freshness.py`.
+
+Below roughly 400 pages the gate is the *slower* of the two, because a
+`git rev-parse` is a subprocess and statting 177 files is not. It is
+still the right choice: 15 ms is constant and 337 ms is not, and the
+number that matters is the one at the size a vault grows into. The
+obvious further saving is to pass HEAD in rather than re-read it --
+`refresh_vault_if_stale` already computed it moments earlier -- which
+is a one-line change when the CLI is wired up.
+
+Four properties make the staleness safe rather than merely fast:
+
+- **A vault that is not a checkout always scans.** `--vault` overrides,
+  fixtures and the lab have no HEAD to trust, so nothing
+  short-circuits and an edit is picked up.
+- **The HEAD is stored in the same transaction as the rows it
+  describes.** A reconcile that dies halfway rolls back both, and the
+  next search redoes it. The index is never half updated while
+  claiming to be current.
+- **An unreadable page is skipped, not fatal.** A sync can delete a
+  file between the walk listing it and the reconcile reading it.
+- **Concurrent indexers wait instead of failing.** The CLI on the host
+  and the archivist in its container both reconcile; SQLite's default
+  is to error the instant the file is busy, so the connection sets a
+  busy timeout.
+
+What this deliberately does *not* do is make a hand-edited working copy
+visible. In production nothing hand-edits it. That is the whole reason
+the gate is sound, and the cost of it is written into the test that
+pins the behaviour.
+
 ## What this changes in the plan
 
 1. **Build tier 1 as FTS5 + trigram, fused with RRF**, not FTS5 alone.

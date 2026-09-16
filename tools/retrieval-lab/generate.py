@@ -89,9 +89,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=str(HERE / "out" / "vault"),
                         help="directory to render the vault into")
+    parser.add_argument("--noise", type=int, default=None,
+                        help="override the distractor count, for scale tests")
     ns = parser.parse_args()
 
     spec = yaml.safe_load((HERE / "corpus.yaml").read_text(encoding="utf-8"))
+    if ns.noise is not None:
+        spec["noise"]["count"] = ns.noise
     out = Path(ns.out)
     if out.exists():
         for stale in sorted(out.rglob("*.md")):

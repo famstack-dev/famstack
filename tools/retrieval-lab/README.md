@@ -32,6 +32,7 @@ gitignored and disposable.
 | `generate.py` | renders `corpus.yaml` into `out/vault/` |
 | `evaluate.py` | runs every engine over every question, prints the tables |
 | `explain.py` | one question kind, side by side, for reading a regression |
+| `freshness.py` | what the "is the index current" check costs as a vault grows |
 
 ## The engines it compares
 
