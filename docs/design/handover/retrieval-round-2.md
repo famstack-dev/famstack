@@ -1,10 +1,17 @@
 # Handover: where retrieval stands, and what round two should do
 
 **Status:** round one measured and stopped. Nothing is blocked.
-**Branch:** `feature/improve-brain-retrieval2`, PR #99 (pushed, unmerged)
+**Where it lives:** branch `research/improve-brain-retrieval2`. Kept as
+research material, deliberately never merged; PR #99 was closed rather
+than abandoned, so its diff and discussion stay readable.
 **Numbers and method:** `docs/design/brain/retrieval-engine-poc.md`
 **Supersedes the plan in:** `docs/design/handover/memory-retrieval-upgrade.md`
 **Date:** 2026-09-16
+
+Nothing here is on `main`. That is the intended state: the experiment
+earned one small change and a set of negative results, and the negative
+results are worth more than the code that produced them. Read this file
+and the numbers doc before deciding to check the branch out.
 
 ## What round one was, in one paragraph
 
@@ -46,7 +53,11 @@ search handed it a near-miss.
 
 Round one produced 4371 lines. Most of it should not be carried.
 
-**Land (about 700 lines, all measured or explanatory):**
+None of it has landed, and the branch is not going to be merged as a
+whole. What follows is what a future round should *lift* from it if it
+wants any of this on `main`, not a pending merge.
+
+**Worth lifting (about 700 lines, all measured or explanatory):**
 
 - title and tag matching in `search_memory`, plus its tests
 - `docs/design/brain/retrieval-engine-poc.md`, whose job is to stop the
@@ -56,7 +67,7 @@ Round one produced 4371 lines. Most of it should not be carried.
   from the search log, and replay is what finally answered "did anything
   improve" honestly
 
-**Leave on PR #99:**
+**Leave on the branch:**
 
 - `stacklets/memory/fts_index.py` and its tests, 1013 lines with no
   callers. Dead code in main is code somebody eventually wires up
