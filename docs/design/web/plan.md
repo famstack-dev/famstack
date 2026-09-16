@@ -240,7 +240,7 @@ leaves no cron entry.
 **Harness improvement.** A `stacktests` lane that asserts the JSON API is
 enabled, since `formats` defaulting back to `[html]` is a silent failure mode.
 
-### Phase 3 — `stack web ask` (about half a day)
+### Phase 3 — `stack web ask` — SHIPPED
 
 Search snippets plus one local model call. No browser, no multi-step tool use,
 which is what makes this cheap and reliable.
@@ -295,6 +295,45 @@ Two ceilings to write into the gate rather than discover in it:
 
 **Harness improvement.** A `stacktests` case that asserts the gate escalates
 exactly once and never loops between tier 2 and tier 3.
+
+## Feeds: the tier we are missing, 2026-09-16
+
+Measured, anonymous, no browser:
+
+| URL | Result |
+|---|---|
+| `www.reddit.com/r/selfhosted/` | 8 KB JavaScript shell |
+| `www.reddit.com/r/selfhosted/.json` | HTTP 403, a 190 KB HTML block page |
+| `old.reddit.com/r/selfhosted/` | 302 to `/login?reason=lor2` |
+| **`www.reddit.com/r/selfhosted/.rss`** | **HTTP 200, `application/atom+xml`, 25 entries with full post bodies** |
+| **`<post permalink>/.rss`** | **HTTP 200, 21 entries — the post and its comments** |
+
+So reddit is fully readable without being signed in, and without a
+browser. The feed is the door that was never locked, because it is
+content the site publishes on purpose. That is the same reason tier 1
+works, and it puts feeds outside the bot-detection arms race entirely —
+which matters more now that Cloudflare blocks AI crawlers by default.
+
+**This makes our own reddit profile actively harmful.** The `old.reddit`
+rewrite shipped in phase 1 turns a working `www` feed URL into an
+`old.reddit` one, which redirects to the login wall. The rewrite was
+right when every option was an HTML variant and wrong the moment a feed
+was on the table. It has to go, or narrow to HTML only.
+
+Design notes for the tier, when it is built:
+
+- It belongs beside tier 1, not after tier 2. Both read what the site
+  chose to publish; neither should pay for a failed scrape first.
+- The mapping is per-profile, not autodiscovery. Reddit is unusual in
+  offering a feed for *any* page (`<url>.rss`); most sites publish one
+  site-wide feed of recent items, which answers a different question and
+  will not contain an older pasted article.
+- Rate limiting is the real constraint, not blocking. Reddit returned
+  429 after a handful of quick requests and recovered within seconds.
+  A family pastes a few links a day, so a small backoff is enough.
+- Parse with the stdlib, and cap the response first. `xml.etree` is
+  documented as vulnerable to entity-expansion blowup, and a size cap on
+  bytes we already control bounds that without adding a dependency.
 
 ## Landscape check, 2026-09-15
 
