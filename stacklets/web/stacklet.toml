@@ -1,11 +1,11 @@
 # stacklet.toml — web stacklet (reading the internet)
 #
-# The stacklet is what *stops* web reading being heavy. Fetching a
-# pasted link is not in here: canonicalization, structured data, plain
-# HTTP, extraction and the quality gate are pure Python in
-# `lib/stack/web/`, so `stack web fetch` works with nothing running and
-# the archivist never waits on a container for the case that never
-# needed one.
+# The stacklet is what *stops* web reading being heavy. Reading a pasted
+# link is not in here: canonicalization, structured data, plain HTTP,
+# extraction and the quality gate live in `lib/stack/web/`, which the
+# bot-runner already carries. A family that never installs this stacklet
+# still gets link capture, and the archivist never waits on a container
+# for the case that never needed one.
 #
 # What is in here is the part that genuinely needs a service. Search is
 # a search engine. The stealth fetch tier, when it lands, is a browser
@@ -25,7 +25,7 @@ port        = 42080
 hints = [
     "Search at {url}",
     "From the terminal: `stack web search \"immich vs photoprism\"`",
-    "Read a page: `stack web fetch <url>` (works with nothing running)",
+    "Read a page: `stack web fetch <url>` (does not need this stacklet)",
 ]
 
 [upstream]
@@ -39,8 +39,10 @@ channel = "patch"
 generate = ["WEB_SECRET"]
 
 [env.defaults]
-WEB_DATA_DIR = "{data_dir}/web"
-TZ           = "{timezone}"
+# No data dir. SearXNG keeps no index and no state: it forwards a query
+# to upstream engines and merges the replies. Declaring one would create
+# an empty directory for teardown to clean up again.
+TZ = "{timezone}"
 
 [health]
 url     = "http://localhost:42080/healthz"
