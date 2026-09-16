@@ -43,13 +43,14 @@ import hashlib
 import re
 import sqlite3
 import sys
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import _fm_list, _norm_tag, body_only, vault_local_head  # noqa: E402
+from lib import (  # noqa: E402
+    _fm_list, _norm_tag, body_only, strip_diacritics, vault_local_head,
+)
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 
 
@@ -96,12 +97,12 @@ def fold(text: str) -> str:
 
     The tokenizer folds the indexed side; this folds the Python side so
     that coverage (`Hit.matched`) agrees with what the index matched.
-    Decomposing first is what makes it work for both spellings of an
-    umlaut -- a precomposed "ü" and a "u" plus a combining diaeresis
-    are the same word to a family and must be the same token here.
+    The mark-stripping half is `lib.strip_diacritics`, shared with the
+    regex engine so both answer "Kase" and "Käse" the same way; the
+    case half is safe to add here because these are tokens rather than
+    a pattern.
     """
-    decomposed = unicodedata.normalize("NFD", text.lower())
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
+    return strip_diacritics(text).lower()
 
 
 def tokens(text: str) -> List[str]:

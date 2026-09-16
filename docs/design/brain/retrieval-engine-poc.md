@@ -221,9 +221,15 @@ counts.
    engine reaches "läuft ab" from a page saying "Kündigung muss drei
    Monate vorher raus". Paraphrase recall of 29% is the number to beat.
 
-The two cheap fixes still stand on their own, and neither needs an
-index: diacritic folding inside the existing regex walk, and keeping
-`Hit.matched`-style coverage as a signal rather than a gate.
+6. **The two cheap fixes are in**, and neither needs an index. See
+   "The cheap fixes, measured" below: recall@1 21% to 26%, recall@5
+   54% to 64%, no class worse, about fifteen lines.
+
+**Coverage as a displayed signal is not done, on purpose.** It was
+listed as a cheap fix, but the only thing measured about coverage is
+that *gating* on it hurt. Showing it to the model is untested, and it
+adds output the agent pays to read on its hot path. It needs a reason
+before it needs an implementation.
 
 ## The agentic test, and its kill criterion
 
@@ -354,6 +360,63 @@ counts are within noise and should not be read as a result. The one
 correctness difference is more trustworthy because the bench predicted
 that exact question would separate the engines, but a single run is a
 single run. Repeats would be the next thing, not more questions.
+
+## The cheap fixes, measured
+
+Two changes to the existing regex walk, about fifteen lines, no index,
+no new dependency: fold combining marks on both sides before matching,
+and match the title and tag *values* alongside the body.
+
+| | recall@1 | recall@5 | MRR | p50 |
+|---|---|---|---|---|
+| regex (before) | 21% | 54% | 0.33 | 10.5 ms |
+| regex + both fixes | **26%** | **64%** | **0.41** | 12.0 ms |
+| fts5 + trigram | 62% | 72% | 0.65 | 1.3 ms |
+
+By question kind, recall@1 / recall@5:
+
+| kind | regex | regex+cheap |
+|---|---|---|
+| keyword | 17% / 67% | **50% / 100%** |
+| compound_head | 75% / 75% | 75% / **100%** |
+| scope | 0% / 67% | 0% / **100%** |
+| everything else | unchanged | unchanged |
+
+No class got worse. Most of the gain is the title, not the folding.
+
+### Two corrections to this document's own gold set
+
+**The `fold` class was never testing folding.** Adding a `regex+fold`
+arm produced results byte-identical to plain regex, which is not what a
+working fix looks like. The reason: all three questions turned on words
+("TÜV", "Zählerstand", "Reisepässe") that appear *only in a page
+title*, and the body-only engine cannot see titles however they are
+spelled. Those are now filed as `frontmatter`, and four real
+body-level fold questions replace them. The 0% to 100% jump this
+document previously credited to diacritics belongs to indexing the
+title.
+
+**Folding works; the bench protocol hides it.** Directly on the corpus,
+`Nachprufung`, `Burgerburo` and `Uberweisung` go from **zero hits to
+the right page**. The bench misses that because it ORs every content
+word of a question into one pattern, so a common word like "stand"
+drags in dozens of pages and the date sort scatters the real hit. The
+agent does not query that way: the search log says its median query is
+**one keyword**, which is exactly the case folding rescues.
+
+### Matching is not ranking
+
+The pattern across every cheap fix: they improve what is *found*
+without improving what is *surfaced*. `frontmatter` questions still
+sit at 0% recall@1 even once titles are searchable, because the right
+page is now in the results and sorted by date along with everything
+else. Recall@5 moves; recall@1 mostly does not.
+
+An early version of the frontmatter change also matched person names,
+and that made things worse: one query went from four hits to twenty
+and its answer from rank two to rank nine. A name says who a page
+concerns, not what it says. `--person` already asks that question
+properly. Persons stay out of the haystack.
 
 ## What has not been measured
 

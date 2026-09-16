@@ -110,17 +110,24 @@ class Result:
 Backend = Callable[[Sequence[str]], Result]
 
 
-def regex_backend(vault: Path) -> Backend:
-    """Today's engine: OR the keywords into a regex, sort by date.
+def regex_backend(vault: Path, fold: bool = False,
+                  frontmatter: bool = False) -> Backend:
+    """The regex walk: OR the keywords into a pattern, sort by date.
 
     This is `search_memory` unchanged, driven exactly as `stack memory
     search --nl` drives it, so the baseline is the shipping behaviour
     and not a reconstruction of it.
+
+    `fold` is the one cheap change that needs no index: strip combining
+    marks from both sides before matching. Kept as a separate arm so
+    the gain from five lines can be read apart from the gain that costs
+    an index, a second table and a fusion step.
     """
     def run(keywords: Sequence[str]) -> Result:
         started = time.perf_counter()
         hits = search_memory(keywords_to_regex(list(keywords)), vault,
-                             limit=LIMIT)
+                             limit=LIMIT, fold_diacritics=fold,
+                             search_frontmatter=frontmatter)
         elapsed = time.perf_counter() - started
         return Result([h["rel"] for h in hits], [], elapsed)
     return run
@@ -372,6 +379,7 @@ def main() -> None:
 
     backends: dict[str, Backend] = {
         "regex": regex_backend(vault),
+        "regex+cheap": regex_backend(vault, fold=True, frontmatter=True),
         "fts5": fts5_backend(db),
         "fts5+tri": fts5_backend(db, substrings=True),
     }

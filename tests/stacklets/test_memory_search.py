@@ -193,6 +193,166 @@ class TestBodyOnly:
         assert len(results) == 1
 
 
+@pytest.fixture
+def titled_vault(tmp_path):
+    """A page whose subject is named only in its title.
+
+    The shared fixture repeats every title as a `# Heading`, so it
+    cannot tell "found via the title" from "found via the body". Real
+    archivist pages do the same most of the time, which is why this
+    gap went unnoticed: it only bites on pages where the title is the
+    only place the subject is named.
+    """
+    v = tmp_path / "vault"
+    _write(v / "family/health/termin.md", """
+        ---
+        title: Zahnarzttermin Lisa
+        date: 2026-09-04
+        persons:
+          - Lisa
+        tags:
+          - Topic:Health
+        ---
+
+        Dienstag um halb vier, Praxis am Marktplatz. Vorher noch anrufen.
+    """)
+    return v
+
+
+class TestFrontmatterValues:
+    """A page titled "Elternabend" is found by searching for Elternabend.
+
+    Frontmatter is stripped before matching so that field *names* do
+    not match every file in the vault: a query for "date" would
+    otherwise hit every page via its `date:` line. That rule threw the
+    *values* out with the keys, and the values are the most
+    descriptive text a page has. A title is what the archivist chose
+    to call the page; a tag is what it decided the page is about.
+    Neither is noise.
+
+    Measured in the retrieval lab: of the questions whose answer sits
+    in a page title, the body-only engine found none of them.
+    """
+
+    def test_a_word_only_in_the_title_finds_the_page(self, titled_vault):
+        results = search_memory("Zahnarzttermin", titled_vault)
+        assert len(results) == 1
+        assert results[0]["rel"].endswith("termin.md")
+
+    def test_a_tag_value_finds_the_page(self, vault):
+        """The shared fixture already has a tag that no body repeats."""
+        results = search_memory("Cooking", vault)
+        assert len(results) == 1
+        assert results[0]["rel"].endswith("quick-bread.md")
+
+    def test_field_names_still_do_not_match(self, vault):
+        """The rule this replaces is still enforced.
+
+        Promoting the values must not promote the keys with them, or
+        every page comes back for "date" exactly as before.
+        """
+        assert search_memory("date", vault) == []
+        assert search_memory("tags", vault) == []
+        assert search_memory("title", vault) == []
+        assert search_memory("persons", vault) == []
+
+    def test_a_title_only_hit_carries_no_invented_excerpt(self, titled_vault):
+        """The excerpt quotes the body, so a title hit has none to show.
+
+        Better an empty excerpt than a line lifted from somewhere the
+        query never matched.
+        """
+        results = search_memory("Zahnarzttermin", titled_vault)
+        assert results[0]["excerpt"] == ""
+
+    def test_the_body_only_behaviour_is_still_reachable(self, titled_vault):
+        assert search_memory(
+            "Zahnarzttermin", titled_vault, search_frontmatter=False) == []
+
+
+# ─── Diacritics ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def umlaut_vault(tmp_path):
+    """A vault written the way a German family writes: with umlauts."""
+    v = tmp_path / "vault"
+    _write(v / "family/groceries/einkauf.md", """
+        ---
+        title: Einkaufsliste
+        date: 2026-09-10
+        persons:
+          - Marge
+        ---
+
+        # Einkaufsliste
+
+        Käse und Öl nachkaufen, die Tür klemmt auch wieder.
+    """)
+    return v
+
+
+class TestDiacritics:
+    """An umlaut typed one way still finds it written the other.
+
+    The family writes "Käse"; somebody searching from a phone, an
+    English keyboard, or in a hurry types "Kase". Byte-literal matching
+    returns *nothing at all* for that, which is the worst kind of
+    search failure: not a bad result, an empty one that reads like the
+    vault has no such page.
+
+    Folding runs on both sides, so it does not matter which side
+    carries the umlaut. What it deliberately does not do is fold "ue"
+    into "ü" -- that is transliteration, not a diacritic, and it needs
+    a German-specific rule rather than a Unicode one.
+    """
+
+    def test_a_query_without_the_umlaut_finds_the_page_with_it(
+            self, umlaut_vault):
+        results = search_memory("Kase", umlaut_vault)
+        assert len(results) == 1
+        assert results[0]["rel"].endswith("einkauf.md")
+
+    def test_a_query_with_the_umlaut_finds_it_too(self, umlaut_vault):
+        assert len(search_memory("Käse", umlaut_vault)) == 1
+
+    def test_it_works_for_every_umlaut_not_just_a(self, umlaut_vault):
+        assert len(search_memory("Ol", umlaut_vault)) == 1
+        assert len(search_memory("Tur", umlaut_vault)) == 1
+
+    def test_the_excerpt_still_shows_the_line_that_matched(
+            self, umlaut_vault):
+        """A hit with no excerpt is a hit the reader cannot judge."""
+        results = search_memory("Kase", umlaut_vault)
+        assert "Käse" in results[0]["excerpt"]
+
+    def test_a_spelled_out_umlaut_is_not_folded(self, umlaut_vault):
+        """"Kaese" is a different word to Unicode, and stays one.
+
+        Worth pinning rather than leaving implicit: this is the gap
+        measured in the retrieval lab, and closing it would take a
+        German transliteration table, not a normalisation form.
+        """
+        assert search_memory("Kaese", umlaut_vault) == []
+
+    def test_regex_syntax_survives_folding(self, umlaut_vault):
+        """The query is a regex, so folding must not rewrite its operators.
+
+        Case-folding the pattern would turn `\\W` into `\\w` and invert
+        what it means. Here `\\W` has to keep matching the space after
+        "Käse"; if it had become `\\w` this finds nothing.
+        """
+        assert len(search_memory(r"Kase\Wund", umlaut_vault)) == 1
+        assert len(search_memory(r"K.se", umlaut_vault)) == 1
+
+    def test_the_old_byte_literal_behaviour_is_still_reachable(
+            self, umlaut_vault):
+        """So a before-and-after stays measurable, per the handover."""
+        assert search_memory(
+            "Kase", umlaut_vault, fold_diacritics=False) == []
+        assert len(search_memory(
+            "Käse", umlaut_vault, fold_diacritics=False)) == 1
+
+
 # ─── Filters ─────────────────────────────────────────────────────────────
 
 class TestFilters:

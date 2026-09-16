@@ -149,21 +149,50 @@ queries:
     class: compound_tail
     gold: [milk-brand]
 
-  # ── fold: the umlaut is dropped ──────────────────────────────────────
+  # ── frontmatter: the word is only in the title ───────────────────────
+  #
+  # These were filed as `fold` until the regex+fold arm came back
+  # byte-identical to plain regex and the reason turned out to be that
+  # none of the three words appears in a page body at all. "TÜV",
+  # "Zählerstand" and "Reisepässe" are titles. The regex engine strips
+  # frontmatter before matching, so it cannot see them however they are
+  # spelled, and the win here belongs to indexing the title rather than
+  # to folding anything.
   - q: Warum ist das Auto durch den TUV gefallen
     lang: de
-    class: fold
+    class: frontmatter
     gold: [car-inspection]
 
   - q: Wie hoch war der Zahlerstand im Januar
     lang: de
-    class: fold
+    class: frontmatter
     gold: [electricity-meter]
 
   - q: Wann laufen die Reisepasse ab
     lang: de
+    class: frontmatter
+    gold: [passport-expiry]
+
+  # ── fold: the umlaut is dropped, and the word is in the body ─────────
+  - q: Was stand in der Nachprufung
+    lang: de
+    class: fold
+    gold: [car-inspection]
+
+  - q: Wann kam die Uberweisung
+    lang: de
+    class: fold
+    gold: [rental-deposit]
+
+  - q: Wie lange dauert ein Termin im Burgerburo
+    lang: de
     class: fold
     gold: [passport-expiry]
+
+  - q: Wann kommt die Abrechnung im Marz
+    lang: de
+    class: fold
+    gold: [electricity-meter]
 
   # ── translit: the umlaut is spelled out ──────────────────────────────
   - q: Was war mit der Spuelmaschine

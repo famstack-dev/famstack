@@ -33,6 +33,7 @@ import json
 import re
 import subprocess
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Optional
@@ -1599,20 +1600,54 @@ def extract_summary_callout(text: str) -> str:
     return "\n".join(captured).strip()
 
 
-def _excerpt(text: str, query: str, max_len: int = 200) -> str:
+def strip_diacritics(text: str) -> str:
+    """Drop combining marks, so "Käse" and "Kase" are the same word.
+
+    The family writes German; somebody searching from a phone keyboard
+    or in a hurry types the bare vowel. Byte-literal matching answers
+    that with nothing at all, which reads like the vault has no such
+    page rather than like the query was spelled differently.
+
+    Case is deliberately left alone. The query is a regex, and
+    lower-casing one rewrites its operators: `\\W` becomes `\\w` and
+    stops meaning the opposite of what it said. Callers match
+    case-insensitively anyway.
+
+    Decomposing first is what makes both spellings of an umlaut agree:
+    a precomposed "ü" and a "u" followed by a combining diaeresis are
+    the same letter to a reader and have to be the same here.
+
+    What this is not is transliteration. "Kaese" stays a different word
+    from "Käse"; folding those together needs a German-specific table,
+    not a Unicode normalisation form.
+    """
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _excerpt(text: str, query: str, max_len: int = 200,
+             fold_diacritics: bool = True) -> str:
     """First non-empty body line that mentions `query` (case-insensitive).
 
     Body starts after the *closing* `---` of the frontmatter block --
     otherwise hits on `title:` or `persons:` lines would surface as
     excerpts, which is noisy and misleading.
+
+    Folds the same way the match did, so a page found through "Kase"
+    still shows the line saying "Käse". A hit whose excerpt came back
+    empty is a hit the reader cannot judge.
     """
-    needle = query.lower()
+    def norm(value: str) -> str:
+        return strip_diacritics(value).lower() if fold_diacritics \
+            else value.lower()
+
+    needle = norm(query)
     body = body_only(text)
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if needle in stripped.lower():
+        if needle in norm(stripped):
             if len(stripped) > max_len:
                 stripped = stripped[:max_len] + "…"
             return stripped
@@ -1626,6 +1661,8 @@ def search_memory(
     tags: Optional[List[str]] = None,
     scopes: Optional[List[str]] = None,
     limit: int = 20,
+    fold_diacritics: bool = True,
+    search_frontmatter: bool = True,
 ) -> List[dict]:
     """Walk the vault, return result dicts sorted newest-first.
 
@@ -1650,6 +1687,14 @@ def search_memory(
     `persons`, `tags`, `excerpt`. Sorted by frontmatter `date`
     descending; files without a date sort to the end.
 
+    `fold_diacritics` strips combining marks from both the query and
+    the text before matching, so "Kase" reaches "Käse" and the reverse.
+    `search_frontmatter` matches the title, tag and person *values*
+    alongside the body, so a page titled "Elternabend" is found by
+    searching for Elternabend. Both are on by default; passing False
+    restores the older behaviour, which is what the retrieval lab
+    measures against.
+
     On a missing vault directory or invalid regex, returns `[]`
     rather than raising -- callers decide how to surface the
     failure.
@@ -1658,7 +1703,9 @@ def search_memory(
         return []
 
     try:
-        pattern = re.compile(query, re.IGNORECASE)
+        pattern = re.compile(
+            strip_diacritics(query) if fold_diacritics else query,
+            re.IGNORECASE)
     except re.error:
         return []
 
@@ -1694,14 +1741,37 @@ def search_memory(
         # Match against body only -- frontmatter field names (`date:`,
         # `tags:`, `persons:`, ...) would otherwise trivially match
         # generic keywords and drown real hits.
-        if not pattern.search(body_only(text)):
-            continue
-
+        body = body_only(text)
         fm = _parse_frontmatter(text)
         doc_persons = _fm_list(fm, "persons")
+        doc_tags = _fm_list(fm, "tags")
+
+        # The values, never the keys. Stripping frontmatter kept a
+        # query for "date" from hitting every page through its `date:`
+        # line, and threw away the title and tags in the process --
+        # which are the most descriptive text a page has. Joining the
+        # values back in restores them without letting the field names
+        # back through.
+        #
+        # Persons stay out. A name says who a page concerns, not what
+        # it says, so matching it as prose makes any question
+        # mentioning Lisa match every page Lisa is on. Measured: it
+        # took one query from four hits to twenty and pushed the
+        # answer from rank two to rank nine. `--person` is the right
+        # way to ask that question and it already exists.
+        haystack = body
+        if search_frontmatter:
+            haystack = "\n".join((
+                str(fm.get("title") or ""),
+                " ".join(doc_tags),
+                body,
+            ))
+        if not pattern.search(
+                strip_diacritics(haystack) if fold_diacritics else haystack):
+            continue
+
         if persons and not any(p.lower() in want_persons for p in doc_persons):
             continue
-        doc_tags = _fm_list(fm, "tags")
         if tags:
             doc_norm = {_norm_tag(t) for t in doc_tags}
             if not (doc_norm & want_tags):
@@ -1714,7 +1784,8 @@ def search_memory(
             "date": fm.get("date") or "",
             "persons": doc_persons,
             "tags": doc_tags,
-            "excerpt": _excerpt(text, query),
+            "excerpt": _excerpt(text, query,
+                                fold_diacritics=fold_diacritics),
             # The `> [!summary]` callout, stripped of blockquote
             # prefixes. Drives the synthesis step: feeding summaries
             # to the LLM is cheaper than feeding bodies and usually
