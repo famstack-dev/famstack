@@ -1,18 +1,35 @@
 """Web CLI dispatcher — executed inside stack-core-bot-runner.
 
-`stack web ask` needs two things the host cannot give it: the LLM
-client (which wraps the OpenAI SDK) and the rendered AI environment.
-The host-side `./stack` is stdlib-only by design, so rather than
-install the SDK on the host or reimplement the client in urllib, the
-host command `docker exec`s into the bot-runner and runs this.
+Reasonable question on reading this: a chat completion is one POST with
+a JSON body, so why route it through a container at all instead of
+calling the endpoint from the host with urllib? It has been asked, and
+answered the hard way, so the answer lives here.
+
+**One LLM client, not two.** `stack.ai.client` carries knowledge that
+was expensive to acquire and is invisible until it is missing. The
+sharpest example is `chat_template_kwargs: {enable_thinking: False}`:
+without it a Qwen3 writes its deliberation into `content` and never
+reaches the answer, and every other way of switching that off
+(`reasoning_effort`, a top-level `enable_thinking`, a `reasoning`
+object, a `/no_think` suffix) was verified against oMLX and had no
+effect. A hand-rolled urllib version of this file was written, and lost
+exactly that knob, and produced "Here's a thinking process: 1. Analyze
+User Question" where an answer should have been. Timeouts tuned to
+measured prefill rates and the typed error mapping are the same kind of
+debt waiting to be re-incurred.
+
+**Hostile input belongs in a container.** Search snippets are
+attacker-influenced text: a page that ranks can say whatever it likes,
+and that text goes into a prompt here and out to whatever called us.
+The completion itself holds no tools, so the blast radius is content
+rather than execution — but this is the seam where hostile bytes meet
+our code, and the host is where the SSH keys and the vault live. A
+family server should not be parsing the internet as the person who owns
+the machine.
 
 Same arrangement as `stack docs` and `stack memory capture`; the
-mechanism itself is `stack.bot_runner`.
-
-`stack web fetch` and `stack web search` deliberately do *not* come
-through here. Fetch is stdlib all the way down and must keep working
-with nothing running at all, and search is a single HTTP GET. Only the
-model call needs the container.
+mechanism itself is `stack.bot_runner`, lifted there when the pattern
+found its second user.
 
 Commands:
     ask "<question>" [--json] [--sources N]
