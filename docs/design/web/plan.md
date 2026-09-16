@@ -399,9 +399,27 @@ containing its SearXNG connector, which is BSL 1.1.
 
 ## What we are explicitly NOT building
 
-- **lightpanda.** Solved the challenges on every blocked page and still returned
-  no content. Lost on Reddit too, where it rendered nav and footer with an empty
-  comments section.
+- **lightpanda, re-measured 2026-09-16.** It has grown real capability
+  since the spike (`fetch`, `serve`, `mcp`, `--dump markdown`), ships a
+  79 MB native aarch64 binary, and on raw character counts it looks like
+  a win: 34,040 characters on a chefkoch listing where our ladder
+  managed 106, and 55,992 on a reddit page where we get nothing.
+
+  Reading the output settles it. The reddit 56 KB is the JS challenge
+  page plus navigation and Sign Up links, on a URL carrying
+  `js_challenge=1&jsc_token=`. The decathlon 454 characters are
+  *"Performing security verification... Ray ID"*. It renders the
+  obstacle, not the content, exactly as the first spike found. Rendering
+  was never the barrier; bot detection and authentication were, and a
+  browser changes neither.
+
+  The one real gap it exposed was a listing page, and that is not a
+  rendering problem at all: the content was in the raw HTML the whole
+  time, and trafilatura discards listings by design because it hunts for
+  articles. The page publishes an `ItemList` of forty recipes with names
+  and links, which is cleaner than the browser's 34 KB of navigation and
+  star ratings and costs no dependency. Tier 1 now reads it.
+
 - **SeleniumBase UC Mode.** Same capability as Scrapling, 12x slower, and needs
   x86 emulation because Google ships no Linux arm64 Chrome.
 - **CloakBrowser.** The binary is proprietary and the free tier requires signing
