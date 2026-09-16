@@ -1,5 +1,23 @@
 # Handover: family-memory retrieval upgrade
 
+> **SUPERSEDED, 2026-09-16. Do not build tier 1 from this document.**
+>
+> It was built and measured. The FTS5 index roughly triples recall@1 on
+> a bench (23% to 60%) and makes no difference to what a family gets:
+> seven questions through the real agent, three repeats, two arms, no
+> change in answers, iterations or wall time beyond run-to-run spread.
+> The agent closes the gap by searching again and reading a page.
+>
+> The tier-2 reasoning below is also wrong about *why*. "BM25 Wins at
+> Scale" puts a file-system agent ahead of BM25 at the corpus size a
+> family vault actually is; BM25 wins on token cost (39x), not accuracy.
+>
+> What did help is much smaller and is already in `search_memory`:
+> matching title and tag values. Read
+> `docs/design/brain/retrieval-engine-poc.md` before acting on anything
+> here, and `docs/design/handover/retrieval-round-2.md` for what is
+> worth doing next.
+
 **Status:** research done, not built. Ready for a dev-rig implementation session.
 **Audience:** an agent session on a development rig, not production.
 **Seed context (read first):**

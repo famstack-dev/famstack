@@ -1,9 +1,20 @@
 # Retrieval engine PoC: what the numbers say
 
-**Status:** probe complete, nothing wired into the CLI yet.
-**Answers:** `docs/design/handover/memory-retrieval-upgrade.md`
-**Bench:** `tools/retrieval-lab/` (177-page fabricated vault, 47 questions)
+**Status:** measured and stopped. The index was built and is *not*
+adopted; one small change to the regex walk was.
+**Answers:** `docs/design/handover/memory-retrieval-upgrade.md` (now superseded)
+**Next round:** `docs/design/handover/retrieval-round-2.md`
+**Bench:** `tools/retrieval-lab/` (177-page fabricated vault, 51 questions)
 **Date:** 2026-09-16
+
+**The outcome, so nobody has to read 500 lines for it.** The FTS5 index
+roughly triples recall@1 on the bench and changes nothing a family
+would notice; the agent closes the gap by searching again. The only
+measured improvement is matching title and tag values, worth seven
+real queries rescued from returning nothing (31% to 24%). Four other
+findings in this document were reported and then retracted when
+measured a second time; each retraction is kept in place rather than
+edited away, because the pattern is the lesson.
 
 The handover proposed SQLite FTS5 + BM25 as tier 1 and named a trigram
 companion as the fallback if German compounds hurt. This measured both
