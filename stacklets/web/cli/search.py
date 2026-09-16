@@ -37,12 +37,19 @@ SEARCH_URL = "http://localhost:42080/search"
 DEFAULT_COUNT = 8
 
 
-def search(query: str, *, count: int = DEFAULT_COUNT, timeout: int = 20) -> list[dict]:
+def search(query: str, *, count: int = DEFAULT_COUNT, timeout: int = 20,
+           base_url: str = SEARCH_URL) -> list[dict]:
     """Results as a list of `{title, url, content, engine}`. Raises OSError
-    when the service cannot be reached."""
+    when the service cannot be reached.
+
+    `base_url` exists because this runs from two places. On the host it
+    is the published port; inside the bot-runner (where `stack web ask`
+    does its work, since the host CLI is stdlib-only and the LLM client
+    is not) it is the container name on the stack network.
+    """
     params = urllib.parse.urlencode({"q": query, "format": "json"})
     request = urllib.request.Request(
-        f"{SEARCH_URL}?{params}",
+        f"{base_url}?{params}",
         headers={"Accept": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
