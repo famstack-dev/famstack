@@ -14,34 +14,7 @@
   },
   "payload": {
     "served_models": [
-      "Gemma-4-31B-JANG_4M-CRACK",
-      "LFM2-24B-A2B-MLX-4bit",
-      "LFM2.5-Embedding-350M-4bit",
-      "Meta-Llama-3.1-8B-Instruct-4bit",
-      "Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
-      "Qwen3-30B-A3B-Instruct-2507-MLX-fp16",
-      "Qwen3-30B-A3B-MLX-4bit",
-      "Qwen3-Embedding-8B-4bit-DWQ",
-      "Qwen3-VL-8B-Instruct-MLX-4bit",
-      "Qwen3.5-27B-4bit",
-      "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx",
-      "Qwen3.5-27B-heretic-8bit",
-      "Qwen3.5-2B-bf16",
-      "Qwen3.5-35B-A3B-4bit",
-      "Qwen3.5-35B-A3B-4bit-fp16",
-      "Qwen3.5-9B-MLX-4bit",
-      "Qwen3.5-9B-MLX-8bit",
-      "Qwen3.6-35B-A3B-4bit",
-      "Qwen3.6-35B-A3B-4bit-fp16",
-      "Qwen3.6-35B-A3B-UD-MLX-4bit",
-      "Qwen3.6-35B-A3B-UD-MLX-4bit-fp16",
-      "bge-m3-mlx-8bit",
-      "gemma-3-12b-it-qat-4bit",
-      "gemma-3-12b-it-qat-fp16",
-      "gemma-4-26b-a4b-it-4bit",
-      "gemma-4-31b-it-MLX-8bit",
-      "mlx-community--Qwen3.5-35B-A3B-4bit",
-      "mlx-community--gemma-3-12b-it-qat-4bit"
+      "<redacted: the endpoint's model list fingerprints a specific machine; the probe only needed the count>"
     ],
     "first": {
       "phase": "first",
@@ -86,6 +59,7 @@
         "generation_tokens_per_second": 7650.61
       },
       "error": null
-    }
+    },
+    "served_model_count": 28
   }
 }

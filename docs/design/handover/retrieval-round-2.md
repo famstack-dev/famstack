@@ -81,9 +81,10 @@ not disproven.
   never reached for. It writes its own regex alternation instead. Either
   the agent contract should point at it or it should go.
 - **The oMLX prefill ceiling.** Five of six runs of the multi-search
-  question died on `predicted peak would exceed prefill safety cap
-  46.8GB, kv_len=8192`. That is a harder limit on complex questions than
-  retrieval quality is, and it has nothing to do with search.
+  question died on the prefill memory guard, which refused the prompt at
+  a context of 8192 tokens because its predicted peak would exceed the
+  endpoint's safety cap. That is a harder limit on complex questions
+  than retrieval quality is, and it has nothing to do with search.
 - **The unverified half of round one.** `unmatched_terms` makes an empty
   search say which words appear nowhere, so "wrong words" and "not
   written down" stop looking identical. Unit-tested and hand-checked;

@@ -335,9 +335,10 @@ convert into fewer iterations or better answers.
 ### An infrastructure limit, not a retrieval one
 
 `repair-total` hit an oMLX prefill guard rejection in **5 of 6 runs**,
-on both arms: `predicted peak would exceed prefill safety cap 46.8GB
-... kv_len=8192`. Questions that need several searches grow the
-context past what the endpoint will prefill. The earlier claim that
+on both arms: the guard refused the prompt because its predicted peak
+would exceed the endpoint's prefill safety cap, at a context of 8192
+tokens. Questions that need several searches grow the context past what
+the endpoint will prefill. The earlier claim that
 regex "saw three of four repair bills" was reading whichever arm got
 further before erroring. That question measures the endpoint, not the
 engine, until the guard is raised or the context trimmed.
