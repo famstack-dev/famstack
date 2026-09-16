@@ -56,7 +56,11 @@ def cmd_reset(_args):
     for name in ("SOUL.md", "AGENTS.md"):
         text = (seed / name).read_text().replace("__AGENT_NAME__", "Stacky")
         (ws / name).write_text(text)
-    shutil.copytree(seed / "skills", ws / "skills")
+    # `--skills` seeds from somewhere else, which is how two versions of
+    # a skill get compared: the prompt is the thing under test, so it
+    # has to be swappable without editing the tree between runs.
+    shutil.copytree(Path(_args.skills) if _args.skills else seed / "skills",
+                    ws / "skills")
     # Same minimal USER.md the production entrypoint seeds.
     (ws / "USER.md").write_text(
         "# User Profile\n\n"
@@ -169,6 +173,8 @@ def main() -> int:
     p_reset = sub.add_parser("reset")
     p_reset.add_argument("--corpus", default=None, metavar="DIR",
                          help="seed the vault from DIR instead of demo-vault")
+    p_reset.add_argument("--skills", default=None, metavar="DIR",
+                         help="seed skills from DIR instead of the repo's")
     p_turn = sub.add_parser("turn")
     p_turn.add_argument("message")
     p_turn.add_argument("--session", default="rig:main")

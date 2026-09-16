@@ -1974,6 +1974,46 @@ async def rewrite_query(
     return keywords
 
 
+def unmatched_terms(
+    query: str,
+    vault: Path,
+    scopes: Optional[List[str]] = None,
+    fold_diacritics: bool = True,
+    search_frontmatter: bool = True,
+) -> List[str]:
+    """Which alternatives of an OR-query appear nowhere in the vault.
+
+    An empty result means one of two things, and the caller has to act
+    differently on each: the fact is not written down, or the words
+    were wrong. "No results" cannot tell them apart, so a caller that
+    guessed badly either gives up on a fact that is there, or keeps
+    guessing at one that is not.
+
+    Measured in the agent rig: a quarter of searches came back empty,
+    and most were English words against German pages. Telling the agent
+    to search in the family's language did not move it, because when it
+    writes the first query nothing has told it what that language is.
+    Naming the words that matched nothing delivers the same fact at the
+    moment it can be used.
+
+    Splits on the unescaped `|` because that is the query the agent
+    actually writes -- it never passes `--nl`, it builds the alternation
+    itself. A query with no `|` is one term and is checked as one.
+
+    Only worth calling when a search returned nothing: it re-walks the
+    vault once per term, which is the right trade on a path that has
+    already failed and is wasted on one that has not.
+    """
+    terms = [t for t in re.split(r"(?<!\\)\|", query) if t.strip()]
+    missing = []
+    for term in terms:
+        if not search_memory(term, vault, scopes=scopes, limit=1,
+                             fold_diacritics=fold_diacritics,
+                             search_frontmatter=search_frontmatter):
+            missing.append(term)
+    return missing
+
+
 def keywords_to_regex(keywords: List[str]) -> str:
     """Render keywords as the alternation regex `search_memory` reads.
 

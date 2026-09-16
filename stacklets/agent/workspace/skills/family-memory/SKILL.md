@@ -10,10 +10,15 @@ Vault = all family knowledge. Look before answering.
 ```
 LOOKUP:
   brief names the page        -> read_file(page)          # no search
-  else                        -> memory_search(2-4 literal keywords)
+  else                        -> memory_search(2-4 keywords joined by |)
+     never escape the |
+     compound word -> search the stem (Camping), not the whole (Campingfahrt)
      scope family/<topic> first; miss -> widen
      independent lookups      -> ONE call, queries=[..]   # max 3
-     miss                     -> retry once, new keywords; then say tried + ask
+     "these words appear nowhere" -> MY words are wrong, not the vault.
+        retry those words in the language the found pages are written in
+     empty with no such line  -> the words are fine, the fact is absent.
+        say what I tried; do NOT keep rephrasing
   profile                     -> memory_person(name)
   "lately|since when|who did" -> memory_history           # search ranks NOW, not change
   full source document        -> paperless_id frontmatter + `stack docs show <id> --content`

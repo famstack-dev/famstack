@@ -105,6 +105,7 @@ from lib import (  # noqa: E402
     keywords_to_regex,
     refresh_vault_if_stale,
     search_memory,
+    unmatched_terms,
     vault_path_for,
 )
 
@@ -320,6 +321,13 @@ def run(args, stacklet, config) -> dict | None:
         print(f"Searched for: {', '.join(keywords)}\n")
 
     if not results:
+        # Empty means either "not written down" or "wrong words", and
+        # the caller acts differently on each. Naming the words that
+        # matched nothing anywhere is the difference, and it costs a
+        # second walk only on a search that already failed.
+        if missing := unmatched_terms(query, vault, scopes=ns.scope or None):
+            print("no results. These words appear nowhere in the vault: "
+                  + ", ".join(missing))
         sys.exit(1)
 
     if ns.count:

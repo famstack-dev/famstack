@@ -418,6 +418,65 @@ and its answer from rank two to rank nine. A name says who a page
 concerns, not what it says. `--person` already asks that question
 properly. Persons stay out of the haystack.
 
+## The query side
+
+The search log from the repeated run is the most useful artefact this
+work produced, because it says what the agent actually does rather than
+what the skill asks of it. 161 searches:
+
+- **The median query is 2-3 terms**, written as a regex alternation
+  (`subscription|license|domain`). An earlier claim in this document
+  that the agent "searches one keyword at a time" was an artefact of
+  counting whitespace-separated words in a query that has no spaces.
+- **`--nl` was used 0 times in 161 searches.** The keyword-rewrite
+  path, a full LLM round trip and a documented feature, is one the
+  agent has never reached for. It writes its own regex instead.
+- **27% of searches came back empty**, and the empty ones skew English:
+  German-ish queries dead-end around 16% of the time, non-German ones
+  around 35%. The agent is asked a German question, answers in German,
+  and searches a German vault in English.
+
+### Telling the agent to use the right language did not work
+
+Measured, three repeats per arm, dead-end rate straight from the search
+log:
+
+| | searches | dead ends | rate | calls |
+|---|---|---|---|---|
+| before | 83 | 27 | 33% | 115 |
+| after | 74 | 23 | 31% | 101 |
+
+German-ish queries moved 54% to 57%, and the same English dead ends
+recurred. The instruction was unfollowable rather than ignored: it
+asked the agent to search "in the language the family wrote the page
+in" at the moment it writes its *first* query, when nothing has yet
+told it what that language is.
+
+### Giving it the fact instead
+
+An empty result means one of two things and the caller must act
+differently on each: the words were wrong, or the fact is not written
+down. `no results` cannot tell them apart, so a bad guess either gives
+up on a fact that is there or keeps rephrasing at one that is not.
+
+`unmatched_terms` names the query words that appear nowhere in the
+vault, and the CLI prints them on the empty path only:
+
+```
+$ memory search "repair|expense"
+no results. These words appear nowhere in the vault: expense
+```
+
+`repair` is absent from that list because it matches the `repairs`
+tag, which is only visible thanks to the frontmatter change above. The
+two compound.
+
+**Status: unverified at agent level.** The rig run was killed partway
+through. The helper is unit-tested and checked by hand on both cases,
+and it costs a second vault walk only on a search that already
+returned nothing, so the successful path is unchanged. Whether it
+actually cuts the dead-end rate is the run that still has to happen.
+
 ## What has not been measured
 
 The agent has not run against this. Everything above is the engine in

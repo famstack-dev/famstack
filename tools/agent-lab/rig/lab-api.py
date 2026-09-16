@@ -45,6 +45,7 @@ _list_edit_batch = _prod.apply_list_edits
 # stacklet rather than reimplemented, for the same reason the list-edit
 # transform is: an A/B against a copy of the engine measures the copy.
 import fts_index  # noqa: E402
+from lib import unmatched_terms  # noqa: E402
 
 
 def _body_only(text: str) -> str:
@@ -120,9 +121,21 @@ def _search_regex(ns, vault: Path, pattern) -> tuple[str, int]:
             m = re.search(r"^date:\s*(\S+)", text, re.MULTILINE)
             hits.append((m.group(1) if m else "", _block(vault, str(rel), pattern)))
     if not hits:
-        return "no results\n", 1
+        return _no_results(ns, vault), 1
     hits.sort(key=lambda h: h[0], reverse=True)
     return "\n".join(h[1] for h in hits[: ns.limit]) + "\n", 0
+
+
+def _no_results(ns, vault: Path) -> str:
+    """Empty, and why. Runs the production helper, never a copy of it."""
+    if not ARGS.explain_misses:
+        return "no results\n"
+    missing = unmatched_terms(ns.query, vault,
+                              scopes=[ns.scope] if ns.scope else None)
+    if not missing:
+        return "no results\n"
+    return ("no results. These words appear nowhere in the vault: "
+            + ", ".join(missing) + "\n")
 
 
 def _search_ranked(ns, vault: Path, keywords, pattern,
@@ -416,6 +429,9 @@ def main():
     parser.add_argument("--llm", default="http://localhost:8888/v1")
     parser.add_argument("--key", default="none")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--explain-misses", action="store_true",
+                        help="on an empty result, name the query words that "
+                             "appear nowhere in the vault")
     parser.add_argument("--search-log", default=str(
         Path(__file__).parent / "state" / "search-log.jsonl"),
         help="append every search and its hits here, for run analysis")

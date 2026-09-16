@@ -31,7 +31,7 @@ import pytest
 # archivist bot consumes directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                        / "stacklets" / "memory"))
-from lib import search_memory  # noqa: E402
+from lib import search_memory, unmatched_terms  # noqa: E402
 
 
 # Probe that matches every fixture doc via body content (one keyword
@@ -268,6 +268,53 @@ class TestFrontmatterValues:
     def test_the_body_only_behaviour_is_still_reachable(self, titled_vault):
         assert search_memory(
             "Zahnarzttermin", titled_vault, search_frontmatter=False) == []
+
+
+class TestUnmatchedTerms:
+    """"No results" that says *why* there were none.
+
+    A search that comes back empty means one of two very different
+    things: the fact is not in the vault, or the words were wrong. The
+    caller has to act differently in each case -- say "I did not find
+    it" versus try different words -- and "no results" alone cannot
+    tell them apart.
+
+    Measured in the rig: a quarter of the agent's searches dead-ended,
+    and most of those were English words against German pages. Telling
+    it to search in the family's language did not help, because at the
+    moment it writes the first query it has no way to know what that
+    language is. This is the same fact, delivered where it is usable.
+    """
+
+    def test_a_word_that_appears_nowhere_is_named(self, vault):
+        assert unmatched_terms("Brummen|spaceship", vault) == ["spaceship"]
+
+    def test_words_that_do_appear_are_not_named(self, vault):
+        assert unmatched_terms("Brummen|Hoover", vault) == []
+
+    def test_every_missing_word_is_named(self, vault):
+        assert unmatched_terms("spaceship|submarine", vault) == [
+            "spaceship", "submarine"
+        ]
+
+    def test_it_reads_the_alternation_the_agent_actually_writes(self, vault):
+        """The agent passes `a|b|c`, not a keyword list.
+
+        It never uses `--nl`; it writes the regex itself. Recovering
+        the terms means splitting that query, which is the only shape
+        this needs to handle.
+        """
+        assert unmatched_terms("Brummen|spaceship|Hoover", vault) == [
+            "spaceship"
+        ]
+
+    def test_it_agrees_with_the_search_it_explains(self, vault):
+        """Folding is on, so "Kase" is not reported as a missing word
+        when the page says "Käse" and the search would have found it."""
+        assert unmatched_terms("Tierarzt", vault) == []
+
+    def test_a_query_with_no_alternation_still_works(self, vault):
+        assert unmatched_terms("spaceship", vault) == ["spaceship"]
 
 
 # ─── Diacritics ──────────────────────────────────────────────────────────
