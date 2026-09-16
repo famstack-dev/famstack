@@ -173,9 +173,39 @@ def memory_search(argv: list[str]) -> tuple[str, int]:
 
     vault = Path(ARGS.vault)
     if ARGS.backend == "regex":
-        return _search_regex(ns, vault, pattern)
-    return _search_ranked(ns, vault, keywords, pattern,
-                          gated=ARGS.backend == "fts5+gate")
+        text, code = _search_regex(ns, vault, pattern)
+    else:
+        text, code = _search_ranked(ns, vault, keywords, pattern,
+                                    gated=ARGS.backend == "fts5+gate")
+    _log_search(ns, keywords, text, code)
+    return text, code
+
+
+def _log_search(ns, keywords, text: str, code: int) -> None:
+    """Record what was asked and what came back, for reading a run after.
+
+    The agent picks its own query for each search, so two backends
+    never receive quite the same thing. Without this, a difference
+    between them cannot be told apart from the agent having asked
+    better questions of one of them, and the whole comparison rests on
+    trust. Appends rather than truncates, so an arm's whole run is in
+    one place.
+    """
+    record = {
+        "backend": ARGS.backend,
+        "query": ns.query,
+        "nl": ns.nl,
+        "keywords": keywords,
+        "scope": ns.scope,
+        "limit": ns.limit,
+        "exit": code,
+        "pages": [ln[len("— vault/"):] for ln in text.splitlines()
+                  if ln.startswith("— vault/")],
+    }
+    path = Path(ARGS.search_log)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def memory_person(argv: list[str]) -> tuple[str, int]:
@@ -386,6 +416,9 @@ def main():
     parser.add_argument("--llm", default="http://localhost:8888/v1")
     parser.add_argument("--key", default="none")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--search-log", default=str(
+        Path(__file__).parent / "state" / "search-log.jsonl"),
+        help="append every search and its hits here, for run analysis")
     parser.add_argument("--backend", default="regex",
                         choices=["regex", "fts5", "fts5+gate"],
                         help="search engine to serve: the shipping regex "

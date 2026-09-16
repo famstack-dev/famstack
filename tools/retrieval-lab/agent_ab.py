@@ -34,6 +34,7 @@ actually right. That part is a human reading them.
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -134,25 +135,49 @@ def run_turn(question: str, backend: str, port: int, session: str) -> dict:
 
 
 def main() -> None:
-    out: list[dict] = []
-    for scenario in SCENARIOS:
-        for backend, port in BACKENDS.items():
-            session = f"ab:{scenario['id']}:{backend.replace('+', '-')}"
-            print(f"[{backend:>9}] {scenario['id']}", flush=True)
-            turn = run_turn(scenario["q"], backend, port, session)
-            out.append({**scenario, **turn})
-            print(f"            {turn['llm_calls']} calls, "
-                  f"{turn['wall_s']}s", flush=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="runs per (question, backend); the model is "
+                             "not deterministic, so one is a dice roll")
+    parser.add_argument("--backends", default=",".join(BACKENDS),
+                        help="comma-separated subset to run")
+    parser.add_argument("--out", default=str(HERE / "out" / "agent-ab.json"))
+    ns = parser.parse_args()
 
-    target = HERE / "out" / "agent-ab.json"
+    arms = [(name, BACKENDS[name]) for name in ns.backends.split(",")
+            if name in BACKENDS]
+
+    out: list[dict] = []
+    for run in range(ns.repeat):
+        # Whichever arm goes first pays the cold prefix cache for that
+        # question. Alternating means neither arm always pays it, so a
+        # wall-time difference is about the engine rather than about
+        # the running order.
+        ordered = arms if run % 2 == 0 else list(reversed(arms))
+        for scenario in SCENARIOS:
+            for backend, port in ordered:
+                session = (f"ab{run}:{scenario['id']}:"
+                           f"{backend.replace('+', '-')}")
+                print(f"[run {run} {backend:>9}] {scenario['id']}", flush=True)
+                turn = run_turn(scenario["q"], backend, port, session)
+                out.append({**scenario, **turn, "run": run})
+                print(f"            {turn['llm_calls']} calls, "
+                      f"{turn['wall_s']}s", flush=True)
+
+    target = Path(ns.out)
     target.write_text(json.dumps(out, indent=2, ensure_ascii=False),
                       encoding="utf-8")
 
     print("\n" + "=" * 70)
-    print(f"{'question':<18} {'backend':>9}  {'calls':>5}  {'wall_s':>7}")
-    for row in out:
-        print(f"{row['id']:<18} {row['backend']:>9}  "
-              f"{str(row['llm_calls']):>5}  {row['wall_s']:>7}")
+    print(f"{'question':<18} {'backend':>9}  {'calls':>16}  {'wall_s':>16}")
+    for scenario in SCENARIOS:
+        for backend, _ in arms:
+            rows = [r for r in out
+                    if r["id"] == scenario["id"] and r["backend"] == backend]
+            calls = [r["llm_calls"] for r in rows if r["llm_calls"]]
+            walls = [r["wall_s"] for r in rows if r["wall_s"]]
+            print(f"{scenario['id']:<18} {backend:>9}  "
+                  f"{str(calls):>16}  {str(walls):>16}")
     print(f"\nreplies: {target}")
 
 

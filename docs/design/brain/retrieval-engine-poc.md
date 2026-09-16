@@ -195,28 +195,35 @@ pins the behaviour.
 
 ## What this changes in the plan
 
-Revised after the agentic run, which is the measurement that counts.
+Revised after the repeated agentic run, which is the measurement that
+counts.
 
-1. **Ranking earns its place, narrowly.** One correctness win out of
-   seven at agent level, on the question the bench predicted, and no
-   measured cost in iterations. Not the landslide the engine numbers
-   suggested, because the agent was already covering for a lot of what
-   the old engine got wrong.
+1. **Do not ship the index.** Three repeats, seven questions, two arms:
+   no difference in answers, iterations or wall time that survives the
+   run-to-run spread. The engine bench's 23% to 60% recall@1 is real
+   and does not reach the family, because the agent closes the gap by
+   iterating.
 2. **Drop the confidence gate.** Its engine-level case was the best
    number in this document and it bought nothing once a model was
-   reading the results. Keep `Hit.matched` as a signal on the
-   results; do not gate on it.
-3. **A fixed result limit is the wrong shape for aggregate questions.**
-   Ranking plus `--limit 5` cost the agent a repair bill it would have
-   seen from the unranked dump. Fix before shipping, or aggregate
-   questions get quietly worse.
-4. **Tier 2 (embeddings) stays open**, and the agentic run strengthens
-   its case rather than the index's: `expiring` failed on all three
-   backends because no engine reaches "läuft ab" from a page that says
-   "Kündigung muss drei Monate vorher raus". Paraphrase recall of 29%
-   is the number to beat.
-5. **Decide whether transliterated umlauts matter** before building for
-   them.
+   reading the results. The 92% figure was measuring a risk the
+   reasoning layer already absorbs.
+3. **The agent searches one word at a time.** Median search: one
+   keyword. Any ranking scheme that earns its keep by combining
+   evidence across terms has nothing to work with. Changing *how the
+   agent queries* is a bigger lever than changing what answers it, and
+   it is free.
+4. **Raise the prefill ceiling or trim the agent's context.** Five of
+   six runs of the multi-search question died on an oMLX memory guard.
+   That is a harder limit on complex questions than retrieval quality
+   is, and it is unrelated to any of this work.
+5. **Tier 2 (embeddings) is the remaining lever on quality.**
+   `expiring` failed on every arm and every run, because no lexical
+   engine reaches "läuft ab" from a page saying "Kündigung muss drei
+   Monate vorher raus". Paraphrase recall of 29% is the number to beat.
+
+The two cheap fixes still stand on their own, and neither needs an
+index: diacritic folding inside the existing regex walk, and keeping
+`Hit.matched`-style coverage as a signal rather than a gate.
 
 ## The agentic test, and its kill criterion
 
@@ -264,21 +271,59 @@ and needs no index at all.
 | absent-ticket | declined, 5 | **declined better, 4** | declined, 10 |
 | **total** | **38 calls, 274 s** | 39 calls, 324 s | 41 calls, 299 s |
 
+That first pass ran one turn per cell, and every conclusion drawn from
+it about individual questions was wrong. A second pass repeated each
+cell three times, alternated which arm went first so neither always
+paid the cold prefix cache, and logged every search both arms received.
+
+| | regex | fts5 |
+|---|---|---|
+| calls per run | 36 [35-41] | 37 [33-37] |
+| wall seconds per run | 244 [238-279] | 261 [238-332] |
+
 Against the criterion written before the run:
 
-1. **Answers a complex question correctly that regex gets wrong: yes,
-   once.** `feier`. Regex reported no guest count; both ranked arms
-   answered "vierzehn Leute, ab 15 Uhr" and cited the page, in fewer
-   calls. Diagnosis: the regex engine *can* find
-   `geburtstagsfeier.md`, because matching substrings is what it does.
-   Sorting by date then buried it below newer noise, outside the top
-   five. So this is a **ranking** win, not the compound-matching win
-   the engine bench predicted. Same symptom, different cause.
-2. **Cuts tool iterations: no.** 38 calls against 39 and 41. The
-   per-question spread is noise at one run each.
-3. **Stops an invented answer: no.** Nothing invented anything. All
-   three declined both absent facts correctly, and the regex arm
-   declined as cleanly as the gated one.
+1. **Answers a complex question correctly that regex gets wrong: no.**
+   `feier` was the claimed win. Over three runs the ranked arm is
+   correct 3 of 3 and the regex arm 2 of 3. The single run that
+   started all this was regex's one bad draw. At n=3 that is not a
+   difference, and the mechanism story built on top of it (date
+   sorting buries the page) was explaining noise.
+2. **Cuts tool iterations: no.** The totals overlap.
+3. **Stops an invented answer: no.** Nothing invented anything, on
+   either arm, in any run.
+
+### The comparison was weaker than it looked
+
+The agent writes its own query for each search, and the search logs
+show the two arms were barely asked the same things: **19% keyword
+vocabulary overlap**, 18 shared terms out of 96 distinct. A difference
+between the arms would have been as easily explained by the agent
+happening to ask one of them better questions.
+
+### Why the engine gains do not reach the agent
+
+The search log answers this. The **median search carries one keyword**.
+The agent does not hand over the 2-4 term queries the bench fed the
+engines; it sends a single word, looks, and sends another. BM25 ranks
+by combining evidence across terms, and there is almost nothing to
+combine. The agent harness turns search into grep no matter what is
+underneath it, which is the same effect "Is Grep All You Need?"
+reports.
+
+One mechanical difference did survive: the ranked arm dead-ends less
+often, 16 empty results of 79 searches against 27 of 82. It did not
+convert into fewer iterations or better answers.
+
+### An infrastructure limit, not a retrieval one
+
+`repair-total` hit an oMLX prefill guard rejection in **5 of 6 runs**,
+on both arms: `predicted peak would exceed prefill safety cap 46.8GB
+... kv_len=8192`. Questions that need several searches grow the
+context past what the endpoint will prefill. The earlier claim that
+regex "saw three of four repair bills" was reading whichever arm got
+further before erroring. That question measures the endpoint, not the
+engine, until the guard is raised or the context trimmed.
 
 ### The gate earned nothing here
 
