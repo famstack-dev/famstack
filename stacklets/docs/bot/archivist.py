@@ -66,7 +66,7 @@ from pipeline import (
 )
 from stack import media, resolve_model
 from stack.email_message import defang_links
-from stack.links import go_docs, go_topic, public
+from stack.links import go_capture, go_docs, go_topic, public
 from stack.ai.client import (
     ModelCapabilities,
 )
@@ -2444,7 +2444,7 @@ class ArchivistBot(MicroBot):
                 self.t,
                 source_title_hint=o.source_title_hint,
                 classification=o.classification,
-                link=o.display_link,
+                link=self._capture_link(o) or o.display_link,
                 transcript=o.transcript,
                 todo_link=self._todo_link(o),
             )
@@ -2461,6 +2461,30 @@ class ArchivistBot(MicroBot):
             {"dev.famstack.event": o.envelope} if o.envelope else None
         )
         await self._answer(room_id, reply, reply_to, metadata=metadata)
+
+    def _capture_link(self, o: CaptureOutcome) -> str:
+        """A `/go/capture/<id>` link to the page this capture became.
+
+        The footer used to carry the source: the URL that was pasted, or
+        a placeholder for typed text. That is the message directly above
+        the reply in the room, so it told the sender nothing they did not
+        have, while the one new thing -- where it was filed -- was not
+        there at all. The page itself carries the source, so nothing is
+        lost by pointing at the page instead.
+
+        Keyed by capture id rather than vault path because the path moves
+        on its own: a capture re-scopes when a second person joins the
+        room, a topic gets renamed, a correction rewrites the title. The
+        resolver looks the id up in the tree it serves.
+
+        "" when there is nothing to link -- no home base yet, or a
+        capture that never reached the mirror and so has no page. The
+        caller falls back to the source footer.
+        """
+        capture_id = ((o.envelope or {}).get("data") or {}).get("capture_id")
+        if not capture_id:
+            return ""
+        return public(go_capture(str(capture_id)), self.link_base_url)
 
     def _todo_link(self, o: CaptureOutcome) -> str:
         """A `/go/topic/<scope>/todo` link when a topic capture produced todos.
