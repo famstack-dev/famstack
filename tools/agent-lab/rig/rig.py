@@ -64,8 +64,14 @@ def cmd_reset(_args):
 
     # The brief reads git history from the vault. Make the demo vault a
     # real git repo, with the same shape as the production clone.
+    #
+    # `--corpus` seeds from somewhere else. Thirteen pages is enough to
+    # exercise the scenarios but not to tell two search engines apart:
+    # an agent that can read every page finds everything regardless of
+    # ranking. Comparing engines needs a vault the size of a real one.
     vault = STATE / "vault"
-    shutil.copytree(RIG / "demo-vault", vault)
+    shutil.copytree(Path(_args.corpus) if _args.corpus else RIG / "demo-vault",
+                    vault)
     env = {"GIT_AUTHOR_NAME": "homer", "GIT_AUTHOR_EMAIL": "homer@demo.invalid",
            "GIT_COMMITTER_NAME": "homer", "GIT_COMMITTER_EMAIL": "homer@demo.invalid"}
     for cmd in (["git", "init", "-q", "-b", "main"],
@@ -160,7 +166,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("build")
-    sub.add_parser("reset")
+    p_reset = sub.add_parser("reset")
+    p_reset.add_argument("--corpus", default=None, metavar="DIR",
+                         help="seed the vault from DIR instead of demo-vault")
     p_turn = sub.add_parser("turn")
     p_turn.add_argument("message")
     p_turn.add_argument("--session", default="rig:main")

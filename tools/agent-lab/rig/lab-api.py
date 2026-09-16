@@ -41,6 +41,11 @@ _spec.loader.exec_module(_prod)
 _list_edit_transform = _prod.apply_list_edit
 _list_edit_batch = _prod.apply_list_edits
 
+# The ranked engine, for the `--backend fts5` arm. Imported from the
+# stacklet rather than reimplemented, for the same reason the list-edit
+# transform is: an A/B against a copy of the engine measures the copy.
+import fts_index  # noqa: E402
+
 
 def _body_only(text: str) -> str:
     """Strip YAML frontmatter, so field names do not match every page."""
@@ -77,6 +82,70 @@ def _rewrite_keywords(query: str) -> list[str]:
         return query.split()
 
 
+# Coverage below this and the gated backend says it found nothing,
+# rather than handing over its best guess. Measured in
+# tools/retrieval-lab; see docs/design/brain/retrieval-engine-poc.md.
+GATE = 0.40
+
+
+def _block(vault: Path, rel: str, pattern) -> str:
+    """One result, in the shape the agent has always been shown.
+
+    Identical across backends on purpose. The A/B is about which pages
+    come back and in what order; changing how they are rendered would
+    change the model's reading of them too, and then the comparison
+    would be measuring two things at once.
+    """
+    body = _body_only((vault / rel).read_text())
+    lines = [ln for ln in body.splitlines() if pattern.search(ln)]
+    return f"— vault/{rel}\n" + "\n".join(f"  {ln}" for ln in lines[:3])
+
+
+def _keywords_for(ns) -> list[str]:
+    """The search terms, resolved the same way for every backend."""
+    if ns.nl and len(ns.query.split()) > 1:
+        return _rewrite_keywords(ns.query)
+    return ns.query.split()
+
+
+def _search_regex(ns, vault: Path, pattern) -> tuple[str, int]:
+    """Today's engine: every file matched, newest first."""
+    hits = []
+    for path in sorted(vault.rglob("*.md")):
+        rel = path.relative_to(vault)
+        if ns.scope and not str(rel).startswith(ns.scope):
+            continue
+        text = path.read_text()
+        if any(pattern.search(ln) for ln in _body_only(text).splitlines()):
+            m = re.search(r"^date:\s*(\S+)", text, re.MULTILINE)
+            hits.append((m.group(1) if m else "", _block(vault, str(rel), pattern)))
+    if not hits:
+        return "no results\n", 1
+    hits.sort(key=lambda h: h[0], reverse=True)
+    return "\n".join(h[1] for h in hits[: ns.limit]) + "\n", 0
+
+
+def _search_ranked(ns, vault: Path, keywords, pattern,
+                   gated: bool) -> tuple[str, int]:
+    """The ranked engine: best match first, optionally behind a gate."""
+    db = vault.parent / "vault-index.sqlite3"
+    fts_index.build_index(vault, db)
+    hits = fts_index.search(
+        db, keywords, scopes=[ns.scope] if ns.scope else None,
+        limit=ns.limit, substrings=True)
+    if not hits:
+        return "no results\n", 1
+    if gated:
+        covered = len(hits[0].matched) / max(len(keywords), 1)
+        if covered < GATE:
+            # The honest answer when the best page carries almost none
+            # of what was asked. Says so plainly rather than handing
+            # over a neighbour for the model to answer from.
+            return ("no confident match: the closest pages do not contain "
+                    "what you asked about\n"), 1
+    return "\n".join(_block(vault, h.rel, pattern) for h in hits) + "\n", 0
+
+
 def memory_search(argv: list[str]) -> tuple[str, int]:
     parser = argparse.ArgumentParser(prog="stack memory search", add_help=False)
     parser.add_argument("query")
@@ -90,9 +159,10 @@ def memory_search(argv: list[str]) -> tuple[str, int]:
     except SystemExit:
         return parser.format_usage(), 2
 
+    keywords = _keywords_for(ns)
     if ns.nl and len(ns.query.split()) > 1:
-        terms = _rewrite_keywords(ns.query)
-        pattern = re.compile("|".join(re.escape(t) for t in terms), re.IGNORECASE)
+        pattern = re.compile("|".join(re.escape(t) for t in keywords),
+                             re.IGNORECASE)
     else:
         # The real CLI treats the query as a regex (lib.py search engine).
         # Keep that contract; fall back to a literal match on a bad regex.
@@ -102,24 +172,10 @@ def memory_search(argv: list[str]) -> tuple[str, int]:
             pattern = re.compile(re.escape(ns.query), re.IGNORECASE)
 
     vault = Path(ARGS.vault)
-    hits = []
-    for path in sorted(vault.rglob("*.md")):
-        rel = path.relative_to(vault)
-        if ns.scope and not str(rel).startswith(ns.scope):
-            continue
-        text = path.read_text()
-        body = _body_only(text)
-        lines = [ln for ln in body.splitlines() if pattern.search(ln)]
-        if lines:
-            m = re.search(r"^date:\s*(\S+)", text, re.MULTILINE)
-            date = m.group(1) if m else ""
-            hits.append((date, f"— vault/{rel}\n"
-                         + "\n".join(f"  {ln}" for ln in lines[:3])))
-    if not hits:
-        return "no results\n", 1
-    # The real CLI sorts by frontmatter date, newest first, then limits.
-    hits.sort(key=lambda h: h[0], reverse=True)
-    return "\n".join(h[1] for h in hits[: ns.limit]) + "\n", 0
+    if ARGS.backend == "regex":
+        return _search_regex(ns, vault, pattern)
+    return _search_ranked(ns, vault, keywords, pattern,
+                          gated=ARGS.backend == "fts5+gate")
 
 
 def memory_person(argv: list[str]) -> tuple[str, int]:
@@ -330,6 +386,11 @@ def main():
     parser.add_argument("--llm", default="http://localhost:8888/v1")
     parser.add_argument("--key", default="none")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--backend", default="regex",
+                        choices=["regex", "fts5", "fts5+gate"],
+                        help="search engine to serve: the shipping regex "
+                             "walk, the ranked index, or the ranked index "
+                             "behind a confidence gate")
     ARGS = parser.parse_args()
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     server = socketserver.ThreadingTCPServer(("127.0.0.1", ARGS.listen), Handler)

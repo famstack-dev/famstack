@@ -188,6 +188,12 @@ root = "stacklets/photos"
 extraPaths = ["lib", "stacklets/photos", "stacklets/core/bot-runner", "stacklets"]
 
 [[tool.basedpyright.executionEnvironments]]
+root = "tools/agent-lab/rig"
+# lab-api serves the real search engines rather than copies, so it puts
+# the memory stacklet on its path the way the CLI plugins there do.
+extraPaths = ["lib", "stacklets/memory", "stacklets/memory/cli"]
+
+[[tool.basedpyright.executionEnvironments]]
 root = "tools/retrieval-lab"
 # The lab drives both search engines head to head, so it bootstraps the
 # memory stacklet's path the same way the CLI plugins there do.

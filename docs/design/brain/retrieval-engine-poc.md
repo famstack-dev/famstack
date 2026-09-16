@@ -195,15 +195,120 @@ pins the behaviour.
 
 ## What this changes in the plan
 
-1. **Build tier 1 as FTS5 + trigram, fused with RRF**, not FTS5 alone.
-   The trigram table moves from stretch goal to first slice, because
-   without it the change is a regression for German compounds.
-2. **Ship a confidence signal with the results, and make it coverage**,
-   not the score. `Hit.matched` already carries it.
-3. **Tier 2 (embeddings) stays open**, with paraphrase recall at 29% as
-   the number it has to beat.
-4. **Decide whether transliterated umlauts matter** before building for
+Revised after the agentic run, which is the measurement that counts.
+
+1. **Ranking earns its place, narrowly.** One correctness win out of
+   seven at agent level, on the question the bench predicted, and no
+   measured cost in iterations. Not the landslide the engine numbers
+   suggested, because the agent was already covering for a lot of what
+   the old engine got wrong.
+2. **Drop the confidence gate.** Its engine-level case was the best
+   number in this document and it bought nothing once a model was
+   reading the results. Keep `Hit.matched` as a signal on the
+   results; do not gate on it.
+3. **A fixed result limit is the wrong shape for aggregate questions.**
+   Ranking plus `--limit 5` cost the agent a repair bill it would have
+   seen from the unranked dump. Fix before shipping, or aggregate
+   questions get quietly worse.
+4. **Tier 2 (embeddings) stays open**, and the agentic run strengthens
+   its case rather than the index's: `expiring` failed on all three
+   backends because no engine reaches "läuft ab" from a page that says
+   "Kündigung muss drei Monate vorher raus". Paraphrase recall of 29%
+   is the number to beat.
+5. **Decide whether transliterated umlauts matter** before building for
    them.
+
+## The agentic test, and its kill criterion
+
+Everything above measures retrieval in isolation, which is an
+intermediate result. An agent that can search twice and read a page
+closes part of the gap without any of this. And at a vault of a few
+hundred pages we sit in the tier where "BM25 Wins at Scale" puts the
+file-system agent *ahead* of BM25; lexical retrieval wins there on cost
+(39x fewer query tokens), not on accuracy. On local inference that cost
+is the family's waiting time, so it still matters, but it is a
+different argument from the one the handover made.
+
+So the deciding test is the agent answering questions that one lookup
+cannot: several pages combined, arithmetic across them, or the
+discipline to say a thing is not written down. Three arms, same
+questions, 420-page vault: `regex`, `fts5`, `fts5+gate`.
+
+**Written before the run, so it cannot be adjusted to fit the result:**
+
+Ship the index if it does at least one of
+
+- answers a complex question correctly that `regex` gets wrong, or
+- cuts tool iterations (`llm_calls`) on questions both get right, or
+- stops an invented answer on an absent fact that `regex` invents.
+
+Otherwise drop the index, the trigram table and the RRF fusion, and
+keep only the two cheap fixes: diacritic folding inside the existing
+regex walk, and the coverage gate, which is a pure function over hits
+and needs no index at all.
+
+## What the agent actually did
+
+420-page vault, seven questions, three backends, one run each. Model
+`Qwen3.6-35B-A3B-UD-MLX-4bit` on the house oMLX. Replies in
+`tools/retrieval-lab/out/agent-ab.json`, readable with `replies.py`.
+
+| Question | regex | fts5 | fts5+gate |
+|---|---|---|---|
+| camping-todo (multi-page) | partial, 3 calls | partial, 4 | **best**, 3 |
+| repair-total (arithmetic) | **3 of 4 bills**, 7 | 2 of 4, 8 | 2 of 4, 6 |
+| nut-cake (constraint) | **correct, 2** | correct, 3 | correct, 3 |
+| expiring (temporal) | missed everything, 5 | noise, 9 | missed, 5 |
+| feier (compound) | **wrong**, 4 | **correct**, 3 | **correct**, 3 |
+| absent-birthday | declined, 12 | **declined, 8** | infra error, 11 |
+| absent-ticket | declined, 5 | **declined better, 4** | declined, 10 |
+| **total** | **38 calls, 274 s** | 39 calls, 324 s | 41 calls, 299 s |
+
+Against the criterion written before the run:
+
+1. **Answers a complex question correctly that regex gets wrong: yes,
+   once.** `feier`. Regex reported no guest count; both ranked arms
+   answered "vierzehn Leute, ab 15 Uhr" and cited the page, in fewer
+   calls. Diagnosis: the regex engine *can* find
+   `geburtstagsfeier.md`, because matching substrings is what it does.
+   Sorting by date then buried it below newer noise, outside the top
+   five. So this is a **ranking** win, not the compound-matching win
+   the engine bench predicted. Same symptom, different cause.
+2. **Cuts tool iterations: no.** 38 calls against 39 and 41. The
+   per-question spread is noise at one run each.
+3. **Stops an invented answer: no.** Nothing invented anything. All
+   three declined both absent facts correctly, and the regex arm
+   declined as cleanly as the gated one.
+
+### The gate earned nothing here
+
+Its engine-level case was strong: without it, 92% of unanswerable
+questions still return pages. At agent level that never became a wrong
+answer, because the model reads the pages and declines on its own. The
+gate cost three extra calls across the set and produced the run's only
+hard failure, an oMLX prefill guard rejection. **Drop it.** The
+engine-level number was measuring a risk the reasoning layer was
+already absorbing.
+
+### Ranking plus a hard limit loses aggregate questions
+
+`repair-total` is the one to keep. The regex engine returns everything
+that matched, so the agent saw three of the four repair bills. The
+ranked arms return the best five, and the fourth bill ranked sixth, so
+they saw two and confidently answered 230 Euro. None of the three got
+the right total.
+
+Ranking helps "which page answers this" and hurts "find every page
+like this". That is not an argument against ranking; it is an argument
+that a fixed `--limit 5` is the wrong shape for aggregate questions.
+
+### Honest limits on all of the above
+
+One run per cell, seven questions, a non-deterministic model. The call
+counts are within noise and should not be read as a result. The one
+correctness difference is more trustworthy because the bench predicted
+that exact question would separate the engines, but a single run is a
+single run. Repeats would be the next thing, not more questions.
 
 ## What has not been measured
 

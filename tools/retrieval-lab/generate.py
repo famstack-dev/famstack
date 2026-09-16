@@ -91,6 +91,10 @@ def main() -> None:
                         help="directory to render the vault into")
     parser.add_argument("--noise", type=int, default=None,
                         help="override the distractor count, for scale tests")
+    parser.add_argument("--include", default=None, metavar="DIR",
+                        help=("copy another vault's pages in first, so the "
+                              "agent rig keeps its own scenario pages while "
+                              "gaining a corpus big enough to rank over"))
     ns = parser.parse_args()
 
     spec = yaml.safe_load((HERE / "corpus.yaml").read_text(encoding="utf-8"))
@@ -102,13 +106,23 @@ def main() -> None:
             stale.unlink()
     out.mkdir(parents=True, exist_ok=True)
 
+    included = 0
+    if ns.include:
+        source = Path(ns.include)
+        for page in sorted(source.rglob("*.md")):
+            target = out / page.relative_to(source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(page.read_bytes())
+            included += 1
+
     facts = write_facts(spec, out)
     noise = write_noise(spec, out)
     (out.parent / "fact-paths.yaml").write_text(
         yaml.safe_dump(facts, allow_unicode=True, sort_keys=True),
         encoding="utf-8")
 
-    print(f"{len(facts)} fact pages + {noise} noise pages -> {out}")
+    carried = f"{included} carried + " if included else ""
+    print(f"{carried}{len(facts)} fact pages + {noise} noise pages -> {out}")
 
 
 if __name__ == "__main__":
