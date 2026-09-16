@@ -15,9 +15,17 @@ options, and it is not the one most write-ups optimise for.
    a browser resident is competing with photo thumbnailing and OCR for
    RAM, and losing that fight is visible to the family as everything
    getting slow.
-2. **Apple Silicon / `linux/arm64` only.** Anything needing x86
-   emulation is disqualified. Google ships no Linux arm64 *Chrome*
-   (Chromium is fine), which quietly rules out a lot.
+2. **Apple Silicon, but arm64 is a preference, not a wall.** This
+   survey was carried out treating `linux/arm64` as mandatory and x86 as
+   disqualifying. That was too strict: everything here runs in a
+   container, and Docker runs `linux/amd64` images on this hardware.
+   Emulation costs latency, so measure it rather than assume it. The
+   cost lands hardest exactly where it hurts most, on a browser (our
+   SeleniumBase measurement of 40s *was* the emulation), and barely at
+   all on a fast CPU-bound library that only ships x86 wheels.
+   **Anything rejected below purely for lacking arm64 wheels deserves
+   re-judging on measured latency** — `rs-trafilatura` is the clearest
+   case.
 3. **Nothing hosted.** No reader APIs, no scraper SaaS, no "free tier
    after you sign in with GitHub".
 4. **Licence compatible with AGPLv3, distributed freely.** Non-commercial
@@ -70,10 +78,16 @@ adds a process and more RAM, and it went dark for roughly ten months
 Two ceilings worth writing into the Phase 4 gate rather than
 discovering in it:
 
-- **`real_chrome` can never be true on arm64.** Patchright's own
+- **`real_chrome` is unavailable in an arm64 image.** Patchright's own
   guidance is to run real Chrome via `channel="chrome"`; Chrome for
   Testing publishes no `linux-arm64`, so Playwright falls back to a
-  Chromium `headless_shell`. The weaker configuration is permanent.
+  Chromium `headless_shell`. An `amd64` image under emulation *could*
+  run real Chrome, so this is a cost rather than an impossibility — but
+  it is the worst possible place to spend that cost, since a browser is
+  the one workload where emulation was measured at 40s. Treat the
+  weaker Chromium configuration as the working assumption, and if tier 3
+  ever proves insufficient, measure the emulated-Chrome path before
+  concluding it is closed.
 - **Every public stealth benchmark runs headed, on macOS, from a
   residential IP.** We ship headless in a container. Our own numbers are
   worth more than all of them, and the Phase 4 gate should assert
