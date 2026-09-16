@@ -329,7 +329,7 @@ personal (12 entries): school, dance class, preferences
 
 ## Home
 - [ctx] Bathroom renovation ongoing, Firma Bauer [g7h8i9j:household/home.md]
-- [fact] WiFi: network "merles", password in contacts.md [d4e5f6g:household/home.md]
+- [fact] WiFi: network "evergreen", password in contacts.md [d4e5f6g:household/home.md]
 ```
 
 **Full documents** (variable size, retrieved only when Kit needs details):
