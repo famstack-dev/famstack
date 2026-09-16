@@ -131,6 +131,37 @@ Other measurements:
   Camoufox publishes `lin.arm64`; Playwright's Chromium builds arm64. This is the
   single biggest reason Scrapling wins.
 
+## Re-validation, 2026-09-15
+
+Re-probed before building Phase 1, same two UAs, anonymous, German IP.
+Three findings held, one moved.
+
+| Claim | Still true? |
+|---|---|
+| decathlon.de blocks a plain fetch | yes — 403, Cloudflare `Just a moment...` |
+| Recipe JSON-LD on essen-und-trinken / einfachkochen | yes — full `Recipe`, yield, totalTime, 11 and 14 ingredients, steps, nutrition |
+| geizhals.de returns 403 | **no** — the *homepage* serves 200 and its real listing. The measured 403 was a product/listing URL; the row overstated it as the whole domain |
+| `old.reddit.com` + Chrome UA returns the post | **no — reversed** |
+
+**Reddit now walls anonymous readers.** `old.reddit.com` answers a 302 to
+`/login/?reason=lor2`, and `www.reddit.com` serves an 8 KB JavaScript
+shell. The `.json` endpoint is 403 with a 190 KB HTML block page.
+
+This is worth more than a corrected row, because of the *shape* of the
+failure. The login redirect ends on HTTP 200 with a 320 KB body and a
+friendly `<title>Welcome to Reddit</title>` — which is exactly what a
+"did the extractor return a string?" success check reads as an article.
+The drift did not break the gate's design, it validated it: `login` was
+already in the verdict set, and the landing URL is the only honest
+signal on that page. The gate reads the URL a fetch *ended* on for
+precisely this reason.
+
+The reddit profile keeps its `old.reddit` rewrite anyway. It no longer
+recovers the post, but it moves the reported reason from `empty` ("the
+page was blank") to `login` ("reddit wants you signed in"), which is the
+one a person can act on — and it starts working again unchanged if
+reddit relaxes.
+
 ## Decision: one stacklet, but not for everything
 
 The tempting version is a `web` stacklet that owns all web operations including
@@ -158,7 +189,7 @@ construction: a family that never pastes a shop link never downloads Chromium.
 
 ## Phases
 
-### Phase 1 — Framework module and the gate (about 1 day)
+### Phase 1 — Framework module and the gate — SHIPPED
 
 The whole fix for both reported bugs, with no new container.
 

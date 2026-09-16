@@ -17,16 +17,16 @@ The Paperless flow keeps its own ingest path inside the bot (upload →
 poll → OCR) because it's deeply Paperless-shaped; unifying it into a
 single backend would be churn without a real second consumer.
 
-trafilatura is imported lazily so a Python test environment that
-doesn't exercise URL extraction doesn't need the dep installed. In
-production the bot-runner image always carries it (declared in
-`stacklets/core/bot-runner/requirements.txt`).
+`SourceContent` and the whole URL-reading ladder now live in
+`lib/stack/web/`. They moved the moment a second consumer appeared:
+the host CLI reads a URL with no archivist running. `UrlExtractor`
+stays here as the bot's binding to it — an aiohttp session in, a
+`SourceContent` out — so nothing upstream had to change.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 import aiohttp
 from loguru import logger
@@ -35,28 +35,10 @@ from loguru import logger
 # here so existing `from extractors import parse_email, ParsedEmail`
 # callers and tests keep working after the move.
 from stack.email_message import ParsedEmail, parse_email  # noqa: F401
-
-
-# ── SourceContent ────────────────────────────────────────────────────────
-
-@dataclass
-class SourceContent:
-    """The classifier's input, normalized across source types.
-
-    `text` is the body the classifier reads — Markdown when the
-    extractor can produce it, plain text otherwise. `title_hint` is
-    whatever the source advertised as a title (HTML `<title>`, first
-    body line, filename); the classifier may overwrite it with
-    something more useful. `source_uri` is the canonical pointer
-    back to the origin (`https://...`, `paperless://42`,
-    `matrix:<event-id>` — caller decides the scheme), captured into
-    the mirror's frontmatter for round-tripping. None means the
-    capture has no upstream pointer (a pure pasted note).
-    """
-    text: str
-    mime: str = "text/plain"
-    title_hint: str | None = None
-    source_uri: str | None = None
+# Same arrangement for the capture types: the framework owns the shared
+# shape, this module owns the docs-side mapping into it.
+from stack.web import FetchOutcome, SourceContent  # noqa: F401
+from stack.web.fetch import aiohttp_transport, fetch_url
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────
@@ -96,82 +78,50 @@ def _first_url(text: str) -> str | None:
 # ── UrlExtractor ─────────────────────────────────────────────────────────
 
 class UrlExtractor:
-    """Fetch a URL and convert the HTML body to Markdown via trafilatura.
+    """The bot's binding to the framework's fetch ladder.
 
-    Failure paths return None, never raise — the caller renders a
-    single "couldn't capture this" reply regardless of whether the
-    server 500'd, the host was unreachable, or trafilatura couldn't
-    find a body. Logging surfaces the distinction for debugging.
+    The reading itself — canonicalize, structured data, HTTP,
+    extraction, and the quality gate — is `stack.web.fetch`. This
+    supplies the one thing the framework deliberately does not have: a
+    transport. The bot already keeps an aiohttp session open for its
+    lifetime, so it hands that in rather than opening a second one.
 
-    Non-HTML content types are rejected at the gate. PDFs reach the
-    archivist through a separate path (`_handle_url`) that uploads to
-    Paperless; this extractor's job is web articles only.
+    Two ways out, for two callers. `fetch` returns the full outcome
+    including the gate's verdict, which is what the capture pipeline
+    needs to explain a refusal to the family. `extract` keeps the older
+    "content or nothing" shape for callers that only care whether there
+    was something to file.
+
+    Tier 3 (a real browser, in the optional `web` stacklet) is not
+    wired up yet. Until it is, a challenge page is terminal and the
+    family is told the site blocked us — which is the honest answer,
+    and a better one than the fabricated entry they used to get.
     """
 
     def __init__(self, http: aiohttp.ClientSession, *, timeout: int = 30):
         self.http = http
         self.timeout = timeout
 
-    async def extract(self, url: str) -> SourceContent | None:
-        html = await self._fetch_html(url)
-        if html is None:
-            return None
-
-        try:
-            import trafilatura
-        except ImportError:
-            logger.error(
-                "[extractor] trafilatura not installed — "
-                "URL captures require the bot-runner image",
+    async def fetch(self, url: str) -> FetchOutcome:
+        """Read a URL and return a judged outcome. Never raises."""
+        outcome = await fetch_url(
+            url, transport=aiohttp_transport(self.http, timeout=self.timeout),
+        )
+        if outcome.ok:
+            logger.info(
+                "[extractor] {} → tier {} ({}), {} chars",
+                url, outcome.tier, outcome.profile, len(outcome.content.text),
             )
-            return None
+        else:
+            logger.info(
+                "[extractor] {} → {}: {}",
+                url, outcome.verdict.name, outcome.verdict.detail,
+            )
+        return outcome
 
-        body = trafilatura.extract(
-            html, output_format="markdown",
-            include_links=True, include_images=False,
-            include_tables=True,
-            favor_precision=True,
-        )
-        if not body or not body.strip():
-            logger.info("[extractor] {} → trafilatura returned no body", url)
-            return None
-
-        return SourceContent(
-            text=body.strip(),
-            mime="text/html",
-            title_hint=_html_title(html),
-            source_uri=url,
-        )
-
-    async def _fetch_html(self, url: str) -> str | None:
-        """GET the URL. Returns the body text on success, None on any
-        failure (non-200, non-HTML, transport error)."""
-        try:
-            async with self.http.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                allow_redirects=True,
-                headers={"User-Agent": "famstack-archivist/1.0"},
-            ) as resp:
-                if resp.status != 200:
-                    logger.info(
-                        "[extractor] {} → HTTP {}", url, resp.status,
-                    )
-                    return None
-                ctype = (resp.content_type or "").lower()
-                if not (
-                    ctype.startswith("text/html")
-                    or ctype.startswith("application/xhtml")
-                ):
-                    logger.info(
-                        "[extractor] {} → non-HTML content_type={}",
-                        url, ctype,
-                    )
-                    return None
-                return await resp.text()
-        except (aiohttp.ClientError, OSError) as e:
-            logger.warning("[extractor] {} → fetch failed: {}", url, e)
-            return None
+    async def extract(self, url: str) -> SourceContent | None:
+        """The fetched body, or None when there was nothing to file."""
+        return (await self.fetch(url)).content
 
 
 # ── TextExtractor ────────────────────────────────────────────────────────

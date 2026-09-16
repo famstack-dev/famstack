@@ -607,6 +607,21 @@ class TestOutcomeGlyph:
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="http://x", transcript=None, envelope=None, scope=None,
+            blocked_reason=None,
+        )
+        await bot._reply_for_capture("!r:server", o, "$tgt")
+        assert reacts == [self.CHECK]
+
+    async def test_blocked_capture_still_checks_because_it_filed(self, tmp_path, monkeypatch):
+        """A link card is a successful capture. The 🔒 line explains why
+        there is no summary, but the entry exists, so the glyph is ✅ --
+        ❌ would say nothing was kept, which is the old lie."""
+        bot, reacts = self._bot(tmp_path)
+        monkeypatch.setattr("archivist.render_capture_reply", lambda *a, **k: "x")
+        o = SimpleNamespace(
+            status="captured", source_title_hint="t", classification={},
+            display_link="https://www.decathlon.de/", transcript=None,
+            envelope=None, scope=None, blocked_reason="challenge",
         )
         await bot._reply_for_capture("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
