@@ -75,7 +75,8 @@ async def _ask(question: str, count: int, as_json: bool) -> int:
     try:
         results = search(question, count=count, base_url=SEARCH_URL)
     except OSError:
-        print("Search is not reachable. Is the web stacklet up?", file=sys.stderr)
+        print("Ask needs the web stacklet running. Run `stack up web`.",
+              file=sys.stderr)
         return 1
 
     sources = sources_from(results, limit=count)
