@@ -1,0 +1,12 @@
+# stacklets/web/caddy.snippet
+#
+# The family-facing search page. Caddy runs on the stack network, so
+# the backend is the container name and the in-container port (8080),
+# not the published host port.
+#
+# No auth, matching the other family-facing stacklets. The LAN is the
+# perimeter.
+
+search.{$FAMSTACK_DOMAIN} {
+    reverse_proxy stack-web-search:8080
+}

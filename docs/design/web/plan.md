@@ -222,7 +222,7 @@ confirm neither produces a fabricated entry.
 loads a fixture and asserts a gate verdict, so adding a site profile later
 costs one fixture plus one line.
 
-### Phase 2 — The `web` stacklet, search half (about half a day)
+### Phase 2 — The `web` stacklet, search half — SHIPPED
 
 - `stacklets/web/` with `stacklet.toml`, compose, `config/settings.yml`
   (`use_default_settings`, generated `secret_key`, `formats: [html, json]`),
@@ -266,13 +266,71 @@ Opt-in, off by default.
 - Pin `browserforge`. The spike hit an import-time failure without a pin.
 
 **Verification gate, and this gates the phase.** Must be proven inside a
-`linux/arm64` container, not on macOS. The spike ran on macOS arm64. If Chromium
-or Camoufox does not run natively in the container, this phase does not ship as
-designed, because x86 emulation is what made the SeleniumBase path cost 40s.
-Then: decathlon and geizhals both return real content through the service.
+`linux/arm64` container, **headless**, not on macOS. The spike ran on macOS
+arm64 and headed; every public stealth benchmark is also headed, so headless is
+the untested axis and the one we ship. Then: decathlon and geizhals both return
+real content through the service.
+
+Two ceilings to write into the gate rather than discover in it:
+
+- **`real_chrome` can never be true on arm64.** Patchright's own guidance is to
+  run real Google Chrome via `channel="chrome"`, and Chrome for Testing
+  publishes no `linux-arm64` build. On arm64 Playwright falls back to a
+  Chromium `headless_shell`. The weaker configuration is permanent, not a
+  setup mistake.
+- **Tier 3 is a treadmill, not a milestone.** Cloudflare turned on default
+  AI-crawler blocking for free plans on 2026-09-15, with Web Bot Auth
+  (Ed25519-signed requests, a published JWKS, an application process) as the
+  sanctioned alternative. A self-hosted family stack cannot join that
+  programme, so the web is splitting into "identify yourself cryptographically"
+  and "be indistinguishable from a browser", and famstack is structurally on
+  the second path. Keep tier 3 opt-in, behind the `Transport` seam, degrading
+  to an honest link card. Budget for it breaking.
 
 **Harness improvement.** A `stacktests` case that asserts the gate escalates
 exactly once and never loops between tier 2 and tier 3.
+
+## Landscape check, 2026-09-15
+
+A survey of the agentic-browser and agent-web-access space, assessed against
+this stack's constraints (arm64 only, nothing hosted, AGPLv3-compatible,
+container weight, a local ~30B model). Three things changed a decision; the
+rest confirmed one.
+
+**Structured data is the right long bet, and the competing standard is not.**
+JSON-LD now appears on about 41% of mobile pages and is still growing, which
+is why tier 1 reads a recipe deterministically and never asks a model. By
+contrast **`llms.txt` is a dud**: across 137,000 domains surveyed, 97% of
+`llms.txt` files received zero requests in a month, and most of the fetches
+that did happen were not AI tools. Not worth implementing. `NLWeb` (sites
+answering natural-language queries over their own schema.org data) is the one
+to watch, because it makes the JSON-LD reader more valuable rather than
+obsolete. `WebMCP` is a browser-side JavaScript API in a Chrome origin trial,
+so it does nothing for a server-side fetcher.
+
+**Nothing beats trafilatura inside these constraints.** Everything that
+measurably wins on extraction quality is a 0.6B transformer needing 1.5 GB of
+weights, or x86-only, or non-commercially licensed. Worth knowing that every
+benchmark in this space is published by someone shipping a competitor, and the
+same library scores 0.924 and 0.6402 depending on who counts. One adjacent
+finding: `html2text` (used by `stack.email_message`, not by this module) is the
+weakest dependency we have, and `html-to-markdown` replaces it at MIT, zero
+Python dependencies, native arm64 wheels, ~7 MB.
+
+**The capability bar for browser agents is far lower than the marketing.**
+ClawBench, 153 everyday tasks across 144 live sites: the best score ever
+recorded is 33.3%, and the same models score 65 to 75% on traditional web
+benchmarks. Princeton's cost-instrumented leaderboard puts real-web multi-step
+success at 40 to 42%, at hundreds of dollars per benchmark run. This is the
+evidence behind phase 3 being search snippets plus one model call rather than
+multi-step tool use: nobody has a reliable web agent, least of all on a local
+model.
+
+**Licence traps, in the PriceBuddy category.** `Notte` is SSPL. `DrissionPage`
+permits non-commercial use only, in Chinese, while GitHub reports it as
+`NOASSERTION` so an automated check will not catch it. `rebrowser-patches` has
+no licence file at all. `SurfSense` is Apache-2.0 except the directory
+containing its SearXNG connector, which is BSL 1.1.
 
 ## What we are explicitly NOT building
 
@@ -298,9 +356,20 @@ exactly once and never loops between tier 2 and tier 3.
 
 ## Open decisions
 
-1. **Image size budget for `stack-web-fetch`.** Roughly 250 MB estimated, not
-   measured. If it lands materially higher, consider Camoufox directly instead
-   of the full Scrapling browser set.
+1. ~~**Image size budget for `stack-web-fetch`.**~~ **Resolved, and the
+   fallback was backwards.** Measured: the official `pyd4vinci/scrapling`
+   `linux/arm64` image is **644 MB compressed**, of which 441 MB is
+   `playwright install chromium` and 138 MB is `uv sync --all-extras`.
+   Installing only `[fetchers]` and `playwright install --only-shell chromium`
+   puts the floor around **400 MB**. Chromium's own apt dependencies rule out
+   250 MB, so the budget moves rather than the design.
+
+   Camoufox is no longer the escape hatch: **Scrapling dropped it entirely at
+   v0.3.13**, and `StealthyFetcher` is now patchright over Playwright Chromium
+   with a built-in Turnstile solver. Camoufox's `lin.arm64` asset is **623 MB
+   zipped on its own**, so "use Camoufox directly" is now a step backwards.
+   The arm64 story is patchright and Playwright shipping native aarch64
+   wheels, not Camoufox's builds.
 2. **Does tier 3 stay synchronous?** At 3.4s to 19.8s it fits in a chat round
    trip behind the existing 👀 ack. If real-world pages cluster at the slow end,
    it becomes a background job and the reply becomes "fetching, will file it".
