@@ -170,3 +170,55 @@ class TestSourcesArePrintedEitherWay:
 
         for source in sources:
             assert source.url in rendered
+
+
+class TestThePromptGuardsAgainstMislabelledFigures:
+    """A number with the wrong noun on it is worse than no number.
+
+    The case that produced these rules: asked how many tonnes of meat
+    Germany consumes, the sources give 6.37 Mt *Verbrauch* (which counts
+    losses, industrial use and pet food) and 4.44 Mt *Verzehr* (what
+    people actually eat). Those are different measures for different
+    years, and an answer that picks one and calls it the other is
+    confidently wrong while looking well sourced.
+    """
+
+    def test_figures_must_carry_the_source_term_and_period(self, results):
+        prompt = build_prompt("how many tonnes?", sources_from(results))
+        lowered = prompt.lower()
+
+        assert "source's own term" in lowered
+        assert "never relabel" in lowered
+        assert "period" in lowered
+
+    def test_two_measures_must_both_be_given(self, results):
+        prompt = build_prompt("how many tonnes?", sources_from(results))
+        assert "two different things" in prompt.lower()
+
+    def test_the_answer_follows_the_question_language(self, results):
+        """A German question got a German answer before this was pinned,
+        but by luck: the instructions are English throughout."""
+        prompt = build_prompt("Wie viel?", sources_from(results))
+        assert "language the question was asked in" in prompt.lower()
+
+
+class TestTheModelIsToldTheDate:
+    """Search results are full of undated figures. Telling the model the
+    date beats the earlier approach of forbidding it to discuss recency,
+    which left it unable to say which of two years was the later one."""
+
+    def test_the_date_is_in_the_prompt(self, results):
+        import datetime as dt
+
+        prompt = build_prompt("anything", sources_from(results), today=dt.date(2026, 9, 16))
+        assert "2026-09-16" in prompt
+
+    def test_the_date_is_injected_not_read_inside(self, results):
+        """Passed in so the prompt is a pure function of its inputs and
+        these tests do not change meaning tomorrow."""
+        import datetime as dt
+
+        a = build_prompt("q", sources_from(results), today=dt.date(2020, 1, 1))
+        b = build_prompt("q", sources_from(results), today=dt.date(2026, 9, 16))
+        assert a != b
+        assert "2020-01-01" in a

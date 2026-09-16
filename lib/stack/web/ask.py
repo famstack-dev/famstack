@@ -25,6 +25,7 @@ Stdlib only: the host CLI runs this without a virtualenv.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 
 # Enough context to answer from, small enough that a local model reads
@@ -89,6 +90,7 @@ def sources_from(results: list[dict], *, limit: int = DEFAULT_SOURCES,
 
 _INSTRUCTIONS = """\
 Answer the question using only the numbered search results below.
+Today is {today}.
 
 Rules:
 - Use only what the results say. Do not add facts from your own knowledge.
@@ -96,16 +98,27 @@ Rules:
 That is a correct and useful response, not a failure.
 - Cite the results you used by number, like [1] or [2][3].
 - Be brief: a few sentences. No preamble, no restating the question.
-- Today's date is not in the results, so avoid claims about what is "current" \
-unless a result says when it was written."""
+- Answer in the language the question was asked in.
+- When the answer is a figure, name what it measures using the source's own \
+term, and the period it covers. Never relabel a number.
+- If the sources measure two different things the question treats as one, \
+give both, each with its own figure and term."""
 
 
-def build_prompt(question: str, sources: list[Source]) -> str:
+def build_prompt(question: str, sources: list[Source],
+                 *, today: "dt.date | None" = None) -> str:
     """The full prompt: instructions, the numbered results, the question.
 
     The question is repeated at the end because a local model reading a
     long block of snippets attends better to what came last, and the
     instructions at the top are what it needs first.
+
+    `today` is passed in rather than read here so the prompt stays a
+    pure function of its inputs and the tests are not time-dependent.
+    Telling the model the date beats forbidding it to discuss recency:
+    search results are full of undated figures, and "the 2025 figure,
+    the most recent published" is more useful than either a bare number
+    or a refusal to characterise it.
     """
     blocks = []
     for source in sources:
@@ -114,8 +127,11 @@ def build_prompt(question: str, sources: list[Source]) -> str:
             lines.append(f"    {source.snippet}")
         blocks.append("\n".join(lines))
 
+    instructions = _INSTRUCTIONS.format(
+        today=(today or dt.date.today()).isoformat(),
+    )
     return (
-        f"{_INSTRUCTIONS}\n\n"
+        f"{instructions}\n\n"
         f"Search results:\n\n"
         f"{chr(10).join(blocks)}\n\n"
         f"Question: {question.strip()}"
