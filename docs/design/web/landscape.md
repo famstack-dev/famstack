@@ -24,8 +24,9 @@ options, and it is not the one most write-ups optimise for.
    SeleniumBase measurement of 40s *was* the emulation), and barely at
    all on a fast CPU-bound library that only ships x86 wheels.
    **Anything rejected below purely for lacking arm64 wheels deserves
-   re-judging on measured latency** — `rs-trafilatura` is the clearest
-   case.
+   re-judging on measured latency.** `rs-trafilatura` was the obvious
+   candidate and has been re-judged; see its row. The answer was still
+   no, because arm64 was only one of three objections and the weakest.
 3. **Nothing hosted.** No reader APIs, no scraper SaaS, no "free tier
    after you sign in with GitHub".
 4. **Licence compatible with AGPLv3, distributed freely.** Non-commercial
@@ -173,13 +174,38 @@ and product pages sit at 0.41 to 0.81 for everyone.
 | resiliparse | Apache-2.0 | watch — ~10x faster, worse output |
 | readability-lxml | Apache-2.0 | watch — cheap fallback when trafilatura returns nothing |
 | MinerU-HTML / Dripper-0.6B | Apache-2.0 **incl. weights** | watch hard — see below |
-| rs-trafilatura | MIT/Apache-2.0 | watch — no aarch64 wheels, solo author, self-benchmarked |
+| rs-trafilatura | MIT/Apache-2.0 | **reject**, re-judged 2026-09-16; see below |
 | ReaderLM-v2 | **CC-BY-NC-4.0** | **reject on licence** |
 | Crawl4AI | Apache-2.0 | reject — pulls both playwright and patchright |
 | Firecrawl self-host | AGPL-3.0, verified clean | reject — six services, and self-host is explicitly crippled |
 | markitdown | MIT | reject — no main-content extraction at all |
 | goose3 / newspaper4k | Apache-2.0 / MIT | reject — dominated on quality and speed |
 | boilerpy3 | ambiguous | reject — unmaintained since 2023 |
+
+**rs-trafilatura, re-judged after the arm64 constraint was relaxed.**
+Still no. Only one of its three disqualifiers was about arm64, and it
+was the weakest. Verified 2026-09-16: **v0.1.1 published 2026-03-24,
+last push 2026-04-03**, five and a half months dormant, **24 commits
+from a single contributor**, 57 stars, and PyPI still ships only
+`manylinux_2_34_x86_64`. The benchmark it tops is written by its own
+author, who also sells a commercial product built on it.
+
+The deeper reason is that it would optimise the part that already
+works. Measured on our own URLs, trafilatura's output is byte-identical
+to what we ship for wikipedia, docs and long-form blogs. The one real
+extraction failure we found was a recipe whose quantities trafilatura
+silently dropped ("g g Tomaten"), and JSON-LD fixed that; a better
+heuristic extractor would not have. Everything else that fails is an
+access problem, not an extraction problem. Its own claimed gains
+concentrate in forum and product pages, where both libraries are
+mediocre, and our biggest forum case is reddit, which we cannot fetch
+as HTML at all and read through feeds instead.
+
+If extraction quality ever becomes a *measured* problem, start with
+**magic-html**: Apache-2.0, 0.05 MB, pure Python over lxml so there is
+no wheel question at all, second on trafilatura's own benchmark and
+ahead of it on OpenDataLab's. That is a two-hour A/B. Revisit
+rs-trafilatura if it gains a second contributor and aarch64 wheels.
 
 **MinerU-HTML** is the one that could displace trafilatura. It reframes
 extraction as constrained sequence labeling, so a small model is
