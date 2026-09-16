@@ -477,6 +477,41 @@ and it costs a second vault walk only on a search that already
 returned nothing, so the successful path is unchanged. Whether it
 actually cuts the dead-end rate is the run that still has to happen.
 
+## Replaying the agent's own queries
+
+Every number above rests on a gold set somebody wrote. This one does
+not: it replays the 104 distinct queries the agent actually sent,
+recovered from the lab-api search logs, against each version of the
+engine. Reproduce with `tools/retrieval-lab/replay.py`.
+
+Zero results is the right metric for these two fixes. Ranking decides
+which page comes first; these decide whether there is a page at all,
+and an agent can iterate past bad ordering but not past nothing.
+
+| engine | queries returning nothing |
+|---|---|
+| old (body only, byte literal) | 32 / 104 (31%) |
+| folding only | 32 / 104 (31%) |
+| title and tags only | **25 / 104 (24%)** |
+| both (shipped) | 25 / 104 (24%) |
+
+**Folding contributes nothing on real agent queries.** All seven
+rescues come from matching titles and tags. That is the fourth
+attribution in this document that did not survive being measured, and
+the pattern is always the same: a fix was credited by the class it was
+*designed* for rather than by what moved.
+
+Folding is not wrong, it is unexercised. The agent does not type German
+without umlauts; it types English. `Kase` for `Käse` is a phone
+keyboard and a human in a hurry, and no evidence here says a family
+does that often. It stays because it is correct, cheap and tested, not
+because it was shown to help.
+
+The rescues also explain themselves once read: `repairs|expenses`,
+`flight|travel|ticket` land on pages whose *tags* are English while
+their prose is German. Matching tags accidentally bridges the language
+gap that the skill instruction could not.
+
 ## What has not been measured
 
 The agent has not run against this. Everything above is the engine in
