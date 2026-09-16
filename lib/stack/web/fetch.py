@@ -51,6 +51,16 @@ BROWSER_HEADERS = {
 }
 
 
+class ExtractorUnavailable(RuntimeError):
+    """Tier 2 cannot run because its dependency is missing.
+
+    Deliberately not a `Verdict`. The gate judges pages, and this says
+    nothing about the page — it says our install is wrong. Collapsing
+    the two is what let a missing dependency masquerade as an empty
+    article.
+    """
+
+
 @dataclass
 class Response:
     """What a transport hands back. Deliberately minimal — the ladder
@@ -104,15 +114,25 @@ def extract_body(
     characters of sidebar and recall returned the 5513-character post.
     The per-domain profile decides; this function only applies it.
 
-    Returns None when trafilatura is unavailable or finds no body. The
-    caller treats both as "tier 2 produced nothing" and lets the gate
-    name it, so a missing dependency degrades to a link card rather
-    than an exception.
+    Returns None when there is no body to find. Raises
+    `ExtractorUnavailable` when trafilatura is not installed, which is a
+    different thing and must not be confused with it.
+
+    An earlier version returned None for both. The gate then reported a
+    perfectly good page as "empty — the page yielded nothing", because
+    from its side an absent extractor and an absent article look
+    identical. That shipped, and `stack web fetch` silently answered
+    "empty" for every page on the host, where trafilatura is not
+    installed; the only URLs that appeared to work were the ones served
+    by tier 0 and tier 1, which need no extractor. A broken install must
+    not be able to impersonate a verdict about somebody's web page.
     """
     try:
         import trafilatura
-    except ImportError:
-        return None
+    except ImportError as e:
+        raise ExtractorUnavailable(
+            "trafilatura is not installed, so page text cannot be extracted"
+        ) from e
 
     kwargs = {
         "output_format": "markdown",
@@ -220,6 +240,9 @@ def _judge(response: Response, profile: Profile, *, tier: str = "2") -> FetchOut
             content=structured, url=response.url, tier="1", profile=profile.name,
         )
 
+    # Deliberately not caught. A missing extractor is an install fault,
+    # and the honest response is to say so rather than to publish a
+    # judgement about the page that we are not equipped to make.
     body = extract_body(
         response.html,
         favor_recall=profile.favor_recall,

@@ -24,8 +24,28 @@ Two user-visible outcomes:
   say so plainly rather than claiming anonymity.
 - **The cheap path stays cheap.** A recipe or an article must not pay browser
   cost. Tier escalation is driven by failure, never by default.
-- **Host-native where possible.** `stack web fetch` works with nothing running,
-  same contract as `stack memory topic`.
+- **Hostile bytes are processed in a container, never on the host.** Every
+  page we read is attacker-controlled input going into an HTML or XML parser,
+  and lately into a browser. On the host a parser bug runs as the person who
+  owns the machine: their SSH keys, the family vault, the Docker socket. In a
+  container it runs against a filesystem we chose.
+
+  The host runs exactly one thing, and it is not this: the Apple-Silicon
+  inference that cannot be containerised without losing Metal (the model
+  endpoint, whisper). Everything else gets a container, because that is what
+  containers are for.
+
+  This replaces an earlier "host-native where possible" invariant, which
+  wanted `stack web fetch` to work with nothing running. That convenience is
+  not worth running an HTML parser over hostile input as the host user, and
+  it was arguing from the wrong premise anyway — see below.
+- **Being in a container means we are not limited to macOS arm64.** The
+  original plan treated "no Linux arm64 Google Chrome exists" as a hard stop.
+  It is not: Docker runs `linux/amd64` images here. Emulation costs latency
+  (the measured SeleniumBase path was 40s, and that cost *was* the emulation),
+  so it is a poor trade for a browser — but it is a fine one for a fast
+  CPU-bound library that only ships x86 wheels. Judge each candidate on
+  measured latency, not on whether an arm64 wheel exists.
 - **The gate is mandatory.** No extractor output reaches the vault without
   passing a quality check. This is the fix for the class of bug that started
   this work.
@@ -168,8 +188,10 @@ The tempting version is a `web` stacklet that owns all web operations including
 link fetching. Rejected, but the opposite extreme is rejected too.
 
 **Scrapling must not go into `bot-runner`.** It pulls Playwright, Patchright and
-a Chromium build, roughly 250 MB. Putting it there taxes every bot image (docs,
-mail, memory) with a browser that most of them never invoke.
+a Chromium build. Putting it there taxes every bot image (docs, mail, memory)
+with a browser that most of them never invoke — not for the disk, which is
+cheap, but because a browser in the archivist's image is a browser competing
+for RAM with photo thumbnailing and OCR on a machine that has none spare.
 
 **Tiers 0 to 2 must not go into a container.** JSON-LD parsing, trafilatura and
 the gate are pure Python over bytes. Making them a network hop would break
@@ -182,7 +204,7 @@ So the split is by weight, not by topic:
 |---|---|---|
 | canonicalize, JSON-LD, HTTP, trafilatura, gate | `lib/stack/web/` | pure Python, shared by CLI and bots, no new deps |
 | search | `web` stacklet, searxng service | genuinely a service |
-| stealth fetch | `web` stacklet, fetch service | isolates the 250 MB browser payload |
+| stealth fetch | `web` stacklet, fetch service | isolates the browser, so its memory is opt-in |
 
 The stacklet is what *stops* this being heavy. It makes the browser opt-in by
 construction: a family that never pastes a shop link never downloads Chromium.
@@ -238,7 +260,7 @@ leaves no cron entry.
 **Harness improvement.** A `stacktests` lane that asserts the JSON API is
 enabled, since `formats` defaulting back to `[html]` is a silent failure mode.
 
-### Phase 3 — `stack web ask` (about half a day)
+### Phase 3 — `stack web ask` — SHIPPED
 
 Search snippets plus one local model call. No browser, no multi-step tool use,
 which is what makes this cheap and reliable.
@@ -278,6 +300,10 @@ Two ceilings to write into the gate rather than discover in it:
   publishes no `linux-arm64` build. On arm64 Playwright falls back to a
   Chromium `headless_shell`. The weaker configuration is permanent, not a
   setup mistake.
+- **Measure memory, not image size.** The gate is what the service holds
+  resident while the family is also using photos and documents, not what it
+  weighs on disk. Per-request startup beating a warm browser is the outcome
+  to aim for.
 - **Tier 3 is a treadmill, not a milestone.** Cloudflare turned on default
   AI-crawler blocking for free plans on 2026-09-15, with Web Bot Auth
   (Ed25519-signed requests, a published JWKS, an application process) as the
@@ -290,12 +316,51 @@ Two ceilings to write into the gate rather than discover in it:
 **Harness improvement.** A `stacktests` case that asserts the gate escalates
 exactly once and never loops between tier 2 and tier 3.
 
+## Feeds: the tier we are missing, 2026-09-16
+
+Measured, anonymous, no browser:
+
+| URL | Result |
+|---|---|
+| `www.reddit.com/r/selfhosted/` | 8 KB JavaScript shell |
+| `www.reddit.com/r/selfhosted/.json` | HTTP 403, a 190 KB HTML block page |
+| `old.reddit.com/r/selfhosted/` | 302 to `/login?reason=lor2` |
+| **`www.reddit.com/r/selfhosted/.rss`** | **HTTP 200, `application/atom+xml`, 25 entries with full post bodies** |
+| **`<post permalink>/.rss`** | **HTTP 200, 21 entries — the post and its comments** |
+
+So reddit is fully readable without being signed in, and without a
+browser. The feed is the door that was never locked, because it is
+content the site publishes on purpose. That is the same reason tier 1
+works, and it puts feeds outside the bot-detection arms race entirely —
+which matters more now that Cloudflare blocks AI crawlers by default.
+
+**This makes our own reddit profile actively harmful.** The `old.reddit`
+rewrite shipped in phase 1 turns a working `www` feed URL into an
+`old.reddit` one, which redirects to the login wall. The rewrite was
+right when every option was an HTML variant and wrong the moment a feed
+was on the table. It has to go, or narrow to HTML only.
+
+Design notes for the tier, when it is built:
+
+- It belongs beside tier 1, not after tier 2. Both read what the site
+  chose to publish; neither should pay for a failed scrape first.
+- The mapping is per-profile, not autodiscovery. Reddit is unusual in
+  offering a feed for *any* page (`<url>.rss`); most sites publish one
+  site-wide feed of recent items, which answers a different question and
+  will not contain an older pasted article.
+- Rate limiting is the real constraint, not blocking. Reddit returned
+  429 after a handful of quick requests and recovered within seconds.
+  A family pastes a few links a day, so a small backoff is enough.
+- Parse with the stdlib, and cap the response first. `xml.etree` is
+  documented as vulnerable to entity-expansion blowup, and a size cap on
+  bytes we already control bounds that without adding a dependency.
+
 ## Landscape check, 2026-09-15
 
-A survey of the agentic-browser and agent-web-access space, assessed against
-this stack's constraints (arm64 only, nothing hosted, AGPLv3-compatible,
-container weight, a local ~30B model). Three things changed a decision; the
-rest confirmed one.
+Full survey in [landscape.md](landscape.md). Assessed against this stack's
+real constraints: resident memory first, then arm64-only, nothing hosted,
+AGPLv3-compatible, and a local ~30B model. Three things changed a decision;
+the rest confirmed one.
 
 **Structured data is the right long bet, and the competing standard is not.**
 JSON-LD now appears on about 41% of mobile pages and is still growing, which
@@ -334,9 +399,27 @@ containing its SearXNG connector, which is BSL 1.1.
 
 ## What we are explicitly NOT building
 
-- **lightpanda.** Solved the challenges on every blocked page and still returned
-  no content. Lost on Reddit too, where it rendered nav and footer with an empty
-  comments section.
+- **lightpanda, re-measured 2026-09-16.** It has grown real capability
+  since the spike (`fetch`, `serve`, `mcp`, `--dump markdown`), ships a
+  79 MB native aarch64 binary, and on raw character counts it looks like
+  a win: 34,040 characters on a chefkoch listing where our ladder
+  managed 106, and 55,992 on a reddit page where we get nothing.
+
+  Reading the output settles it. The reddit 56 KB is the JS challenge
+  page plus navigation and Sign Up links, on a URL carrying
+  `js_challenge=1&jsc_token=`. The decathlon 454 characters are
+  *"Performing security verification... Ray ID"*. It renders the
+  obstacle, not the content, exactly as the first spike found. Rendering
+  was never the barrier; bot detection and authentication were, and a
+  browser changes neither.
+
+  The one real gap it exposed was a listing page, and that is not a
+  rendering problem at all: the content was in the raw HTML the whole
+  time, and trafilatura discards listings by design because it hunts for
+  articles. The page publishes an `ItemList` of forty recipes with names
+  and links, which is cleaner than the browser's 34 KB of navigation and
+  star ratings and costs no dependency. Tier 1 now reads it.
+
 - **SeleniumBase UC Mode.** Same capability as Scrapling, 12x slower, and needs
   x86 emulation because Google ships no Linux arm64 Chrome.
 - **CloakBrowser.** The binary is proprietary and the free tier requires signing
@@ -354,22 +437,50 @@ containing its SearXNG connector, which is BSL 1.1.
 - **An MCP browser server for the agent.** Would put raw page content back in
   Stacky's context, which is the thing `stack web ask` exists to avoid.
 
+## Everything that reads a page now runs in a container
+
+Resolved 2026-09-16. `stack web fetch` and `stack web ask` both route
+through `stack.bot_runner.dispatch` into the bot-runner, which is where
+the archivist already reads pages. Nothing in the web feature parses
+hostile HTML as the host user any more.
+
+The bug that forced it was worse than the principle. The host has no
+trafilatura, and `extract_body` returned None both when the library was
+missing and when a page had no article, so the gate reported "empty —
+the page yielded nothing" for pages it had never read. `stack web fetch`
+looked healthy only because every URL used to demonstrate it was
+answered by tier 0 or tier 1, neither of which needs an extractor.
+`ExtractorUnavailable` now separates the two: a broken install cannot
+impersonate a verdict about somebody's web page.
+
+A second reason outlives that fix. A diagnostic command has to
+reproduce production, and library versions are part of production.
+Measured on one chefkoch listing page, trafilatura 2.0.0 returned 433
+characters and 2.2.0 returned 106, either side of the gate's
+250-character floor. The test environment was resolving 2.0.0 while the
+container ran 2.2.0, both from `>=1.12,<3.0`, so the suite was
+validating a version we do not ship. Both are now pinned to the same
+minor line.
+
 ## Open decisions
 
-1. ~~**Image size budget for `stack-web-fetch`.**~~ **Resolved, and the
-   fallback was backwards.** Measured: the official `pyd4vinci/scrapling`
-   `linux/arm64` image is **644 MB compressed**, of which 441 MB is
-   `playwright install chromium` and 138 MB is `uv sync --all-extras`.
-   Installing only `[fetchers]` and `playwright install --only-shell chromium`
-   puts the floor around **400 MB**. Chromium's own apt dependencies rule out
-   250 MB, so the budget moves rather than the design.
+1. ~~**Image size budget for `stack-web-fetch`.**~~ **Withdrawn — it was
+   the wrong constraint.** Image size is cheap and the stacklet is opt-in by
+   construction, so a family that never pastes a shop link never pulls it. A
+   bigger image for a materially better fetcher is a fine trade.
 
-   Camoufox is no longer the escape hatch: **Scrapling dropped it entirely at
-   v0.3.13**, and `StealthyFetcher` is now patchright over Playwright Chromium
-   with a built-in Turnstile solver. Camoufox's `lin.arm64` asset is **623 MB
-   zipped on its own**, so "use Camoufox directly" is now a step backwards.
-   The arm64 story is patchright and Playwright shipping native aarch64
-   wheels, not Camoufox's builds.
+   **The real constraint is resident memory.** The Mac Mini is already
+   running Immich, Paperless, Postgres, Synapse and a local model; a browser
+   held resident competes with photo thumbnailing and OCR for RAM, and losing
+   that is visible to the family as everything getting slow. Replace this
+   decision with a measurement: what does the fetch service hold at rest and
+   at peak, and can it be started per-request rather than kept warm?
+
+   Related correction: **Scrapling dropped Camoufox entirely at v0.3.13**, so
+   "consider Camoufox directly" is no longer the fallback at all.
+   `StealthyFetcher` is now patchright over Playwright Chromium with a
+   built-in Turnstile solver, and Camoufox additionally wants Xvfb on Linux,
+   which costs a process and more RAM. See [landscape.md](landscape.md).
 2. **Does tier 3 stay synchronous?** At 3.4s to 19.8s it fits in a chat round
    trip behind the existing 👀 ack. If real-world pages cluster at the slow end,
    it becomes a background job and the reply becomes "fetching, will file it".

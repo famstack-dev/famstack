@@ -190,3 +190,105 @@ class TestNoMarkup:
 
     def test_empty_input_is_handled(self):
         assert read_structured("") is None
+
+
+class TestListingPagesAreFiledAsLists:
+    """The other half of declining a listing: file the list itself.
+
+    A chefkoch recipe search yielded 106 characters to extraction, which
+    the gate called `empty`. True, and useless: the page carried forty
+    recipes with names and links, published as structured data for
+    exactly this purpose. A browser was measured on the same page and
+    returned 34,000 characters of navigation and star ratings, which is
+    worse than the list the site already hands us.
+    """
+
+    def test_a_real_listing_page_yields_its_entries(self, web_fixture):
+        content = read_structured(web_fixture("listing-itemlist"))
+
+        assert content is not None
+        assert "40 entries on this page" in content.text
+        assert "Rote Linsen mit Minzjoghurt" in content.text
+
+    def test_every_entry_carries_a_link(self, web_fixture):
+        """A list of names the family cannot open is a worse entry than
+        no entry, so an item without a URL is dropped rather than
+        listed."""
+        content = read_structured(web_fixture("listing-itemlist"))
+
+        assert content is not None
+        bullets = [ln for ln in content.text.splitlines() if ln.startswith("- ")]
+        assert len(bullets) == 40
+        assert all("](http" in ln for ln in bullets)
+
+    def test_the_page_title_becomes_the_entry_title(self, web_fixture):
+        """An `ItemList` has no name of its own. Without a fallback the
+        classifier is handed a titleless capture and invents one."""
+        content = read_structured(web_fixture("listing-itemlist"))
+
+        assert content is not None
+        assert "Minzjoghurt" in (content.title_hint or "")
+
+
+class TestAListingNeverOutranksTheRealSubject:
+    """Ordering is the correctness argument for the whole dispatch.
+
+    Recipe and article pages routinely carry a breadcrumb trail as
+    structured data too. Walking objects in document order and taking
+    the first that renders would file the breadcrumb and drop the
+    recipe, so each reader gets the whole document before the next one
+    is tried.
+    """
+
+    def test_a_recipe_page_is_still_read_as_a_recipe(self, web_fixture):
+        content = read_structured(web_fixture("recipe-jsonld"))
+
+        assert content is not None
+        assert "## Ingredients" in content.text
+        assert "entries on this page" not in content.text
+
+    def test_a_recipe_wins_even_when_the_list_comes_first(self):
+        """Document order deliberately puts the list ahead of the
+        recipe, which is the arrangement that used to lose."""
+        mixed = """
+        <html>
+        <script type="application/ld+json">
+        {"@type":"ItemList","itemListElement":[
+          {"@type":"ListItem","name":"Kuchen A","url":"https://e.com/a"},
+          {"@type":"ListItem","name":"Kuchen B","url":"https://e.com/b"},
+          {"@type":"ListItem","name":"Kuchen C","url":"https://e.com/c"},
+          {"@type":"ListItem","name":"Kuchen D","url":"https://e.com/d"}]}
+        </script>
+        <script type="application/ld+json">
+        {"@type":"Recipe","name":"Apfelkuchen","recipeIngredient":["2 Äpfel"],
+         "recipeInstructions":"Backen."}
+        </script></html>
+        """
+        content = read_structured(mixed)
+
+        assert content is not None
+        assert content.title_hint == "Apfelkuchen"
+        assert "## Ingredients" in content.text
+
+    def test_a_short_list_is_declined_as_a_breadcrumb(self):
+        """Sites mislabel breadcrumb trails as `ItemList`, and a
+        three-crumb trail is indistinguishable from a three-item list
+        except by size."""
+        crumbs = """
+        <html><script type="application/ld+json">
+        {"@type":"ItemList","itemListElement":[
+          {"@type":"ListItem","name":"Home","url":"https://e.com/"},
+          {"@type":"ListItem","name":"Rezepte","url":"https://e.com/r"},
+          {"@type":"ListItem","name":"Salat","url":"https://e.com/r/s"}]}
+        </script></html>
+        """
+        assert read_structured(crumbs) is None
+
+    def test_a_list_of_bare_names_is_declined(self):
+        assert read_structured("""
+        <html><script type="application/ld+json">
+        {"@type":"ItemList","itemListElement":[
+          {"@type":"ListItem","name":"A"},{"@type":"ListItem","name":"B"},
+          {"@type":"ListItem","name":"C"},{"@type":"ListItem","name":"D"}]}
+        </script></html>
+        """) is None
