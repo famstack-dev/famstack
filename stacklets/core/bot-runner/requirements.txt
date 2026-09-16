@@ -15,7 +15,13 @@ pypdfium2>=4.0,<6.0
 # Extract the main body of a web page and render it as Markdown.
 # Used by the archivist's URL-capture pipeline — pasted links to
 # articles get summarized + filed without going through Paperless.
-trafilatura>=1.12,<3.0
+# Pinned to a minor line, not a range. Extraction output shifts between
+# minor versions in ways that cross the quality gate's floor: on one
+# chefkoch listing page, 2.0.0 returned 433 characters and 2.2.0
+# returned 106, either side of the 250-character threshold. A wide range
+# let the test environment resolve 2.0.0 while the container ran 2.2.0,
+# so the suite was validating a version we do not ship.
+trafilatura>=2.2,<2.3
 # OpenAI SDK backs the framework LLM client (stack.ai.client). Works
 # against any /v1/chat/completions provider (oMLX, Ollama, BYO) via
 # base_url. Pulls httpx + pydantic.

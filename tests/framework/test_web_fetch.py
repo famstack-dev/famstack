@@ -19,7 +19,9 @@ fixture HTML with no network and no mocking of anything internal.
 
 from __future__ import annotations
 
-from stack.web.fetch import Response, fetch_url
+import pytest
+
+from stack.web.fetch import ExtractorUnavailable, Response, extract_body, fetch_url
 
 
 def serving(html: str, *, url: str = "https://example.com/article",
@@ -296,3 +298,56 @@ class TestShellPages:
 
         assert not outcome.ok
         assert outcome.verdict.name == "empty"
+
+
+class TestAMissingExtractorIsNotAnEmptyPage:
+    """The bug this class exists for shipped, and hid in plain sight.
+
+    `extract_body` used to return None both when trafilatura was absent
+    and when it found no article. From the gate's side those are
+    indistinguishable, so it reported "empty — the page yielded nothing"
+    for a 540 KB page it had never actually read.
+
+    That was the state of `stack web fetch` on the host, where
+    trafilatura is not installed. It looked healthy because every URL
+    demonstrated happened to be answered by tier 0 or tier 1, neither of
+    which needs an extractor. A broken install must not be able to
+    impersonate a verdict about somebody's web page.
+    """
+
+    def test_a_missing_extractor_raises_rather_than_returning_none(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_trafilatura(name, *args, **kwargs):
+            if name == "trafilatura":
+                raise ImportError("no module named trafilatura")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_trafilatura)
+
+        with pytest.raises(ExtractorUnavailable):
+            extract_body("<html><body><p>Real content here.</p></body></html>")
+
+    def test_the_error_names_the_missing_dependency(self, monkeypatch):
+        """Whoever reads this has to know what to install."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_trafilatura(name, *args, **kwargs):
+            if name == "trafilatura":
+                raise ImportError("no module named trafilatura")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_trafilatura)
+
+        with pytest.raises(ExtractorUnavailable, match="trafilatura"):
+            extract_body("<html><body><p>Real content.</p></body></html>")
+
+    def test_a_genuinely_empty_page_still_returns_none(self):
+        """The other half of the distinction: no article is not an
+        error, it is an answer, and the gate should still call it
+        `empty`."""
+        assert extract_body("<html><body></body></html>") is None
