@@ -1,0 +1,531 @@
+# The fabricated vault the retrieval lab measures against.
+#
+# Each entry under `facts` is one page the family wrote, plus a `truth`
+# line stating what actually happened. The page prose and the truth line
+# are written to disagree in wording on purpose: the truth is what a
+# family member remembers, the body is what somebody typed at the time.
+# `goldset.yaml` is written from the truth lines alone, never from the
+# bodies, so a query is not quietly reverse-engineered from the text it
+# is supposed to find.
+#
+# German pages carry real umlauts, because that is what a family types.
+# Queries in the gold set sometimes do not -- a phone keyboard, a hurry,
+# an English layout -- and whether the engine survives that is one of
+# the things being measured.
+#
+# Simpsons only, half German, as the rest of the demo data is. Nothing
+# here comes from a real household.
+
+persons: [homer, marge, bart, lisa, maggie]
+
+facts:
+  # ── camping ──────────────────────────────────────────────────────────
+  - id: mosquitoes
+    scope: family/camping
+    slug: lake-weekend
+    lang: en
+    date: 2026-07-14
+    persons: [marge, lisa]
+    tags: [camping, travel]
+    title: Lake weekend
+    truth: Lisa did not want to sleep outside because of the insects at the lake.
+    body: |
+      Two nights at Lake Springfield. Marge drove, we were there by four.
+
+      Lisa refused to sleep in the tent after dark. The mosquitoes near
+      the reeds were unbearable and she had bites on both arms by the
+      second evening. She slept in the car instead.
+
+      Next time: a net for the tent door, and a pitch away from the water.
+
+  - id: stove-broken
+    scope: family/camping
+    slug: gear-check
+    lang: en
+    date: 2026-06-02
+    persons: [homer, bart]
+    tags: [camping, todos]
+    title: Gear check before the trip
+    truth: The camping stove stopped working and Homer arranged to use the neighbour's.
+    body: |
+      Went through the boxes in the garage.
+
+      The stove will not light any more. The regulator is corroded and a
+      new one costs more than the thing is worth. Ned has a spare
+      two-burner he never uses, so we take his.
+
+      Tent, cooler box and both sleeping bags are fine.
+
+  - id: campsite-booking
+    scope: family/camping
+    slug: booking
+    lang: de
+    date: 2026-05-20
+    persons: [marge]
+    tags: [camping, travel]
+    title: Stellplatz reserviert
+    truth: The campsite is booked for the second week of August with a deposit already paid.
+    body: |
+      Der Platz am Waldrand ist für die zweite Augustwoche reserviert.
+
+      Anzahlung ist raus, 80 Euro, der Rest wird vor Ort bezahlt. Die
+      Bestätigung liegt im Ordner. Hunde sind erlaubt, Lagerfeuer nur
+      auf der Wiese hinten.
+
+  # ── birthday ─────────────────────────────────────────────────────────
+  - id: oma-party
+    scope: family/birthday
+    slug: geburtstagsfeier
+    lang: de
+    date: 2026-09-05
+    persons: [marge, lisa]
+    tags: [birthday, family]
+    title: Omas Geburtstagsfeier
+    truth: The grandmother's party is on a Sunday afternoon at home with fourteen guests.
+    body: |
+      Die Geburtstagsfeier steigt am Sonntagnachmittag bei uns.
+
+      Vierzehn Leute haben zugesagt. Marge bäckt den Kuchen, Lisa macht
+      die Deko. Anfang um drei, damit die Kinder nicht zu spät ins Bett
+      kommen.
+
+  - id: cake-allergy
+    scope: family/birthday
+    slug: kuchen
+    lang: de
+    date: 2026-09-06
+    persons: [marge]
+    tags: [birthday, health]
+    title: Kuchen für Tante Hilde
+    truth: One guest cannot eat nuts, so the cake has to be made without them.
+    body: |
+      Tante Hilde verträgt keine Haselnüsse, auch nicht in Spuren.
+
+      Also der Zitronenkuchen statt der Nusstorte. Rezept steht im roten
+      Heft. Marzipan geht auch nicht, da ist oft Nussmehl drin.
+
+  - id: gift-telescope
+    scope: marge/notes
+    slug: gift-ideas-autumn
+    lang: en
+    date: 2026-08-30
+    persons: [marge]
+    tags: [private, gifts]
+    title: Gift ideas
+    truth: Marge plans to buy Lisa a telescope and is keeping it secret from her.
+    body: |
+      For Lisa: the refractor from the shop on Elm Street, 120 dollars,
+      they hold it until the end of the month.
+
+      Do not leave this page open. She reads over my shoulder.
+
+  # ── groceries and household ──────────────────────────────────────────
+  - id: milk-brand
+    scope: family/groceries
+    slug: einkauf
+    lang: de
+    date: 2026-09-10
+    persons: [marge, homer]
+    tags: [groceries, todos]
+    title: Einkaufsliste
+    truth: The family buys lactose free milk because Bart gets stomach ache otherwise.
+    body: |
+      - [ ] Milch, die laktosefreie, Bart bekommt sonst Bauchweh
+      - [ ] Butter
+      - [x] Kaffee
+      - [ ] Spülmittel
+      - [ ] Batterien für die Campinglampe
+
+  - id: dishwasher
+    scope: family/house
+    slug: spuelmaschine
+    lang: de
+    date: 2026-04-18
+    persons: [homer]
+    tags: [house, repairs]
+    title: Spülmaschine läuft aus
+    truth: The dishwasher leaked and a repair man replaced a seal for ninety euro.
+    body: |
+      Wasser unter der Maschine, kam aus der Tür.
+
+      Der Monteur war Dienstag da, hat die Dichtung getauscht. 90 Euro
+      bar. Er meinte, das Ding hält noch zwei Jahre, dann lohnt sich die
+      Reparatur nicht mehr.
+
+  - id: boiler-service
+    scope: family/house
+    slug: heizung
+    lang: de
+    date: 2026-03-11
+    persons: [homer, marge]
+    tags: [house, repairs]
+    title: Heizung gewartet
+    truth: The heating was serviced in spring and the next service is due in a year.
+    body: |
+      Wartung erledigt. Der Techniker hat den Brenner gereinigt und den
+      Druck nachgefüllt.
+
+      Nächster Termin in zwölf Monaten, er meldet sich von selbst.
+      Rechnung 140 Euro, liegt bei den Hausunterlagen.
+
+  # ── school ───────────────────────────────────────────────────────────
+  - id: parent-evening
+    scope: family/school
+    slug: elternabend
+    lang: de
+    date: 2026-09-02
+    persons: [marge, bart]
+    tags: [school]
+    title: Elternabend
+    truth: The parents evening is on a Thursday at seven in Bart's classroom.
+    body: |
+      Donnerstag um neunzehn Uhr, Raum 2b.
+
+      Thema ist die Klassenfahrt im Frühjahr und der neue Mathelehrer.
+      Marge geht hin, Homer hat Schicht.
+
+  - id: bart-detention
+    scope: bart/notes
+    slug: school-trouble
+    lang: en
+    date: 2026-09-08
+    persons: [bart]
+    tags: [school]
+    title: After school
+    truth: Bart has to stay behind after school for a week for writing on the board.
+    body: |
+      Skinner kept me back. A week of it, every day until four, because
+      of what I wrote on the blackboard.
+
+      Do not tell dad before Friday.
+
+  - id: lisa-saxophone
+    scope: lisa/notes
+    slug: music
+    lang: en
+    date: 2026-08-22
+    persons: [lisa]
+    tags: [school, music]
+    title: Saxophone lessons
+    truth: Lisa's music lesson moved to Wednesday and the fee rises in September.
+    body: |
+      Mr Largo moved the slot. Wednesdays now, half past four, same room.
+
+      The fee goes up in September, 45 a month instead of 38. He says it
+      is the first rise in four years.
+
+  # ── health ───────────────────────────────────────────────────────────
+  - id: maggie-vaccination
+    scope: family/health
+    slug: impfung
+    lang: de
+    date: 2026-06-25
+    persons: [maggie, marge]
+    tags: [health]
+    title: Impftermin Maggie
+    truth: Maggie had a vaccination in June and the next one is due in October.
+    body: |
+      Zweite Impfung erledigt, Maggie hat kaum geweint.
+
+      Die nächste steht im Oktober an, die Praxis schickt eine
+      Erinnerung. Impfpass liegt wieder in der Schublade im Flur.
+
+  - id: homer-back
+    scope: homer/notes
+    slug: ruecken
+    lang: de
+    date: 2026-07-30
+    persons: [homer]
+    tags: [health]
+    title: Rücken
+    truth: Homer's back pain came from lifting and the doctor prescribed physiotherapy.
+    body: |
+      Seit dem Umräumen im Keller zieht es unten links.
+
+      Doktor Hibbert sagt nichts Ernstes, aber sechs Mal Krankengymnastik.
+      Rezept ist eingelöst, erster Termin nächsten Montag.
+
+  - id: dentist
+    scope: family/health
+    slug: zahnarzt
+    lang: de
+    date: 2026-05-14
+    persons: [bart, marge]
+    tags: [health]
+    title: Zahnarzt
+    truth: Bart needs a brace and the health insurance pays only about half of it.
+    body: |
+      Kontrolle war unauffällig, aber der Kiefer steht schief.
+
+      Die Spange kostet knapp 1900 Euro, die Kasse übernimmt etwa die
+      Hälfte. Zweitmeinung wäre gut, bevor wir unterschreiben.
+
+  # ── car ──────────────────────────────────────────────────────────────
+  - id: car-inspection
+    scope: family/car
+    slug: tuev
+    lang: de
+    date: 2026-02-09
+    persons: [homer]
+    tags: [car]
+    title: TÜV
+    truth: The car failed its inspection over the brakes and passed after the repair.
+    body: |
+      Durchgefallen. Bremsscheiben hinten waren unter dem Mindestmaß.
+
+      Werkstatt hat sie getauscht, 320 Euro, danach Nachprüfung ohne
+      Mängel. Plakette gilt jetzt bis Februar in zwei Jahren.
+
+  - id: winter-tyres
+    scope: family/car
+    slug: reifen
+    lang: de
+    date: 2026-04-02
+    persons: [homer]
+    tags: [car]
+    title: Reifen gewechselt
+    truth: The winter tyres are worn down and have to be replaced before next winter.
+    body: |
+      Sommerreifen sind drauf.
+
+      Die Winterreifen haben nur noch drei Millimeter Profil, das reicht
+      für eine Saison nicht mehr. Vor Oktober neue kaufen, sonst wird es
+      teuer wie immer im November.
+
+  # ── travel ───────────────────────────────────────────────────────────
+  - id: passport-expiry
+    scope: family/travel
+    slug: reisepaesse
+    lang: de
+    date: 2026-01-20
+    persons: [marge, homer, bart, lisa]
+    tags: [travel, documents]
+    title: Reisepässe
+    truth: Bart's passport expires in May and has to be renewed before the summer.
+    body: |
+      Durchgesehen: Homer und Marge laufen bis 2029, Lisa bis 2028.
+
+      Barts Pass läuft im Mai ab. Termin im Bürgerbüro dauert
+      erfahrungsgemäß sechs Wochen, also im Februar kümmern.
+
+  - id: flight-delay-refund
+    scope: family/travel
+    slug: flug
+    lang: de
+    date: 2026-08-11
+    persons: [homer]
+    tags: [travel, money]
+    title: Flug verspätet
+    truth: A delayed flight entitles the family to compensation nobody has claimed yet.
+    body: |
+      Vier Stunden später gelandet, Grund war die Crew.
+
+      Ab drei Stunden gibt es 400 Euro pro Person. Formular ist
+      ausgedruckt, noch nicht abgeschickt. Frist läuft drei Jahre, aber
+      liegen lassen hilft nicht.
+
+  # ── money ────────────────────────────────────────────────────────────
+  - id: insurance-switch
+    scope: family/money
+    slug: versicherung
+    lang: de
+    date: 2026-03-28
+    persons: [marge]
+    tags: [money, documents]
+    title: Hausratversicherung
+    truth: The contents insurance must be cancelled three months before the year ends.
+    body: |
+      Der Vertrag läuft zum Jahresende aus, Kündigung muss drei Monate
+      vorher raus.
+
+      Ein Angebot liegt vor, 60 Euro im Jahr günstiger bei gleicher
+      Deckung. Das Fahrrad ist dort mitversichert, im alten Vertrag nicht.
+
+  - id: savings-plan
+    scope: family/money
+    slug: sparen
+    lang: en
+    date: 2026-06-14
+    persons: [marge, homer]
+    tags: [money]
+    title: Savings for the children
+    truth: The family puts fifty a month aside for each child by standing order.
+    body: |
+      Two accounts opened at the branch on Main Street, one per child.
+
+      Fifty a month each, standing order from the joint account on the
+      first. Maggie gets hers when she starts school.
+
+  # ── pets ─────────────────────────────────────────────────────────────
+  - id: dog-food
+    scope: family/pets
+    slug: hund
+    lang: de
+    date: 2026-07-05
+    persons: [bart, lisa]
+    tags: [pets]
+    title: Futter für den Hund
+    truth: The dog gets different food because the old one upset his stomach.
+    body: |
+      Das Trockenfutter verträgt er nicht, seit Wochen Durchfall.
+
+      Der Tierarzt hat Schonkost empfohlen, Huhn und Reis, danach langsam
+      auf die Sorte mit Lamm umstellen. Keine Reste vom Tisch, auch nicht
+      heimlich, Bart.
+
+  # ── house and hobbies ────────────────────────────────────────────────
+  - id: garden-shed
+    scope: family/house
+    slug: gartenhaus
+    lang: de
+    date: 2026-05-02
+    persons: [homer]
+    tags: [house, garden]
+    title: Gartenhaus streichen
+    truth: The garden shed needs painting and the paint is already in the cellar.
+    body: |
+      Das Holz ist an der Wetterseite grau geworden.
+
+      Lasur steht im Keller, zwei Eimer, Farbton Nussbaum. Vorher
+      abschleifen, sonst hält es keine zwei Jahre. Braucht ein trockenes
+      Wochenende.
+
+  - id: bike-repair
+    scope: bart/notes
+    slug: fahrrad
+    lang: de
+    date: 2026-08-19
+    persons: [bart]
+    tags: [repairs]
+    title: Fahrrad
+    truth: Bart's bike has a snapped gear cable and the shop wants twenty euro for it.
+    body: |
+      Schaltung geht nicht mehr, der Zug ist gerissen.
+
+      Im Laden wollen sie zwanzig Euro. Homer sagt, das macht er selbst,
+      mal sehen wie lange das Rad dann in der Garage steht.
+
+  # ── documents ────────────────────────────────────────────────────────
+  - id: electricity-meter
+    scope: family/house
+    slug: stromzaehler
+    lang: de
+    date: 2026-01-03
+    persons: [homer]
+    tags: [house, documents]
+    title: Zählerstand
+    truth: The electricity reading at new year was noted for the annual bill.
+    body: |
+      Stand am 1. Januar: 48231 Kilowattstunden.
+
+      Letztes Jahr waren es 44980, also gut 3200 im Jahr. Abschlag bleibt
+      erst mal gleich, die Abrechnung kommt im März.
+
+  - id: rental-deposit
+    scope: family/money
+    slug: kaution
+    lang: de
+    date: 2026-02-27
+    persons: [marge]
+    tags: [money, documents]
+    title: Kaution alte Wohnung
+    truth: The old flat's deposit came back short, with a deduction for the floor.
+    body: |
+      Überweisung ist da, aber nicht vollständig.
+
+      Der Vermieter hat 350 Euro einbehalten für den Parkettschaden im
+      Wohnzimmer. Das Übergabeprotokoll liegt im Ordner, da steht der
+      Kratzer drin, also wohl berechtigt.
+
+  - id: library-card
+    scope: lisa/notes
+    slug: library
+    lang: en
+    date: 2026-09-01
+    persons: [lisa]
+    tags: [school]
+    title: Library
+    truth: Lisa owes a late fee and cannot borrow anything until it is paid.
+    body: |
+      Three books went back two weeks late. It is four dollars twenty and
+      they will not let me take anything out until it is settled.
+
+      The astronomy one was worth it.
+
+# Distractor pages. Same domains, same vocabulary, no gold answers --
+# they exist so that a query has plenty of plausible wrong pages to
+# outrank. `count` pages are generated by cycling the openers and
+# details with a fixed seed, so the corpus is reproducible.
+noise:
+  seed: 20260916
+  count: 150
+  topics:
+    - scope: family/camping
+      tags: [camping]
+      lang: de
+      openers: ["Kurz notiert vom Wochenende.", "Noch offen für die Fahrt.",
+                "Packliste durchgegangen.", "Wetterbericht angeschaut."]
+      details: ["Schlafsack muss gelüftet werden.", "Der Kocher ist voll.",
+                "Zeltplane hat einen Fleck.", "Karte liegt im Auto.",
+                "Taschenlampe braucht Batterien.", "Campingstuhl wackelt."]
+    - scope: family/house
+      tags: [house, repairs]
+      lang: de
+      openers: ["Im Haus zu erledigen.", "Notiz an die Kühlschranktür.",
+                "Nach dem Regen angeschaut.", "Kurz mit dem Nachbarn geredet."]
+      details: ["Der Wasserhahn tropft leicht.", "Fenster im Bad klemmt.",
+                "Rasen muss gemäht werden.", "Keller riecht muffig.",
+                "Glühbirne im Flur ist durch.", "Türklingel geht sporadisch."]
+    - scope: family/school
+      tags: [school]
+      lang: de
+      openers: ["Aus der Schule mitgebracht.", "Zettel im Ranzen gefunden.",
+                "Kurzer Anruf aus dem Sekretariat.", "Termin notiert."]
+      details: ["Sportzeug muss mit.", "Die Arbeit wird zurückgegeben.",
+                "Ausflug kostet acht Euro.", "Bücher einbinden.",
+                "Foto wird gemacht.", "Vertretung in Englisch."]
+    - scope: family/groceries
+      tags: [groceries, todos]
+      lang: de
+      openers: ["Für den Wocheneinkauf.", "Vorrat durchgesehen.",
+                "Schnell vor dem Laden notiert.", "Nach dem Kochen gemerkt."]
+      details: ["Mehl ist fast leer.", "Nudeln reichen noch.",
+                "Öl nachkaufen.", "Zwiebeln vergessen.",
+                "Käse war im Angebot.", "Brot beim Bäcker holen."]
+    - scope: family/health
+      tags: [health]
+      lang: de
+      openers: ["Nach dem Termin notiert.", "Aus der Praxis mitgenommen.",
+                "Am Telefon besprochen.", "Kurz aufgeschrieben."]
+      details: ["Blutdruck war in Ordnung.", "Rezept liegt im Auto.",
+                "Termin verschoben auf nächste Woche.",
+                "Salbe zweimal täglich.", "Krankmeldung ist raus.",
+                "Überweisung mitgenommen."]
+    - scope: family/car
+      tags: [car]
+      lang: de
+      openers: ["Nach der Fahrt notiert.", "In der Werkstatt gehört.",
+                "Beim Tanken gemerkt.", "Auf dem Parkplatz gesehen."]
+      details: ["Scheibenwischer schmiert.", "Ölstand kontrolliert.",
+                "Kofferraum ausgeräumt.", "Kennzeichen hinten lose.",
+                "Tank war fast leer.", "Innenraum ausgesaugt."]
+    - scope: family/travel
+      tags: [travel]
+      lang: en
+      openers: ["Noted after the call.", "From the confirmation mail.",
+                "Quick note before we forget.", "Checked this morning."]
+      details: ["The train leaves from platform four.",
+                "Breakfast is not included.", "Check in opens at two.",
+                "The rental desk closes at eight.",
+                "Bring the printed voucher.", "Parking is extra."]
+    - scope: family/money
+      tags: [money]
+      lang: en
+      openers: ["From the statement.", "After the phone call.",
+                "Filed for later.", "Checked the account."]
+      details: ["The standing order went out.",
+                "The invoice is due at the end of the month.",
+                "They refunded the difference.",
+                "The rate changes in January.",
+                "Keep the receipt for the warranty.",
+                "The fee was waived this time."]

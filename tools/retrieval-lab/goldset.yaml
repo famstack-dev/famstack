@@ -1,0 +1,283 @@
+# Questions, and the pages that answer them.
+#
+# Written from the `truth` lines in corpus.yaml, never from the page
+# bodies. That is the whole discipline here: if the queries were written
+# while looking at the text they have to find, they would share its
+# vocabulary and any lexical engine would look better than it is.
+#
+# `gold` lists the fact ids that genuinely answer the question. A query
+# with no `gold` is a negative control: the fact is not in the vault, and
+# the right behaviour is to find nothing convincing rather than to return
+# the nearest neighbour with a straight face.
+#
+# Classes, and what each one is for:
+#
+#   keyword         a word that is literally on the page. The floor --
+#                   both engines should get these.
+#   paraphrase      the question and the page share no content word.
+#                   What ranking is supposed to buy.
+#   compound_head   the query is the front of a German compound on the
+#                   page (Geburtstag -> Geburtstagsfeier). Prefix
+#                   matching should cover this.
+#   compound_tail   the query is the back of one (Nüsse -> Haselnüsse),
+#                   or the page has the back and the query the whole
+#                   word. Prefix matching cannot cover this; the
+#                   handover's trigram fallback is the answer if it hurts.
+#   fold            the query drops an umlaut (TUV for TÜV). The
+#                   tokenizer's remove_diacritics should cover this.
+#   translit        the query spells the umlaut out (Ruecken for Rücken).
+#                   Folding does not cover this. Measured to find out
+#                   whether it matters.
+#   vague           several pages could answer; the right ones must rank
+#                   above the rest.
+#   scope           the answer sits in a personal bucket while the
+#                   question is asked of the whole vault.
+#   absent          not in the vault at all.
+
+queries:
+  # ── keyword: the floor ───────────────────────────────────────────────
+  - q: Welche Bremsscheiben waren zu dünn
+    lang: de
+    class: keyword
+    gold: [car-inspection]
+
+  - q: Wie oft hat Homer Krankengymnastik verschrieben bekommen
+    lang: de
+    class: keyword
+    gold: [homer-back]
+
+  - q: Where is the telescope for Lisa from
+    lang: en
+    class: keyword
+    gold: [gift-telescope]
+
+  - q: Wo liegt der Impfpass
+    lang: de
+    class: keyword
+    gold: [maggie-vaccination]
+
+  - q: Wann ist der Elternabend
+    lang: de
+    class: keyword
+    gold: [parent-evening]
+
+  - q: When is the saxophone lesson
+    lang: en
+    class: keyword
+    gold: [lisa-saxophone]
+
+  # ── paraphrase: no shared content word ───────────────────────────────
+  - q: Who was worried about bugs on the trip
+    lang: en
+    class: paraphrase
+    gold: [mosquitoes]
+
+  - q: What did we arrange to use from next door for the camping trip
+    lang: en
+    class: paraphrase
+    gold: [stove-broken]
+
+  - q: Wer aus der Familie hat Probleme mit dem Magen
+    lang: de
+    class: paraphrase
+    gold: [milk-brand]
+
+  - q: What does Lisa owe money for
+    lang: en
+    class: paraphrase
+    gold: [library-card]
+
+  - q: Was hat Homer sich beim Tragen getan
+    lang: de
+    class: paraphrase
+    gold: [homer-back]
+
+  - q: Welches Tier hat Verdauungsprobleme
+    lang: de
+    class: paraphrase
+    gold: [dog-food]
+
+  - q: Wann müssen wir die Police kündigen
+    lang: de
+    class: paraphrase
+    gold: [insurance-switch]
+
+  # ── compound_head: prefix matching should carry these ────────────────
+  - q: Wann ist Omas Geburtstag
+    lang: de
+    class: compound_head
+    gold: [oma-party]
+
+  - q: Was ist am Sonntag geplant
+    lang: de
+    class: compound_head
+    gold: [oma-party]
+
+  - q: Wie ist der Zähler abgelesen worden
+    lang: de
+    class: compound_head
+    gold: [electricity-meter]
+
+  - q: Was ist am Parkett passiert
+    lang: de
+    class: compound_head
+    gold: [rental-deposit]
+
+  # ── compound_tail: prefix matching cannot ────────────────────────────
+  - q: Wer verträgt keine Nüsse
+    lang: de
+    class: compound_tail
+    gold: [cake-allergy]
+
+  - q: Was kostet die Zahnspange
+    lang: de
+    class: compound_tail
+    gold: [dentist]
+
+  - q: Wann ist die Feier
+    lang: de
+    class: compound_tail
+    gold: [oma-party]
+
+  - q: Für welchen Schaden wurde Geld einbehalten
+    lang: de
+    class: compound_tail
+    gold: [rental-deposit]
+
+  - q: Wofür brauchen wir Batterien für die Lampe
+    lang: de
+    class: compound_tail
+    gold: [milk-brand]
+
+  # ── fold: the umlaut is dropped ──────────────────────────────────────
+  - q: Warum ist das Auto durch den TUV gefallen
+    lang: de
+    class: fold
+    gold: [car-inspection]
+
+  - q: Wie hoch war der Zahlerstand im Januar
+    lang: de
+    class: fold
+    gold: [electricity-meter]
+
+  - q: Wann laufen die Reisepasse ab
+    lang: de
+    class: fold
+    gold: [passport-expiry]
+
+  # ── translit: the umlaut is spelled out ──────────────────────────────
+  - q: Was war mit der Spuelmaschine
+    lang: de
+    class: translit
+    gold: [dishwasher]
+
+  - q: Was hat Homer am Ruecken
+    lang: de
+    class: translit
+    gold: [homer-back]
+
+  - q: Wie viel Profil haben die Winterreifen im Fruehjahr
+    lang: de
+    class: translit
+    gold: [winter-tyres]
+
+  # ── vague: several candidates, the right ones must rank ──────────────
+  - q: Wie viel hat die letzte Reparatur gekostet
+    lang: de
+    class: vague
+    gold: [dishwasher, car-inspection, bike-repair, boiler-service]
+
+  - q: Was liegt im Ordner
+    lang: de
+    class: vague
+    gold: [campsite-booking, rental-deposit]
+
+  # German, like the pages that answer it. An English question against
+  # German prose measures translation, which no lexical engine does and
+  # which is not what this comparison is about.
+  - q: Was müssen wir noch kaufen
+    lang: de
+    class: vague
+    gold: [milk-brand, winter-tyres]
+
+  - q: Wann ist der nächste Termin beim Arzt
+    lang: de
+    class: vague
+    gold: [maggie-vaccination, homer-back]
+
+  # ── scope: the answer is in a personal bucket ────────────────────────
+  - q: What are we giving Lisa
+    lang: en
+    class: scope
+    gold: [gift-telescope]
+
+  - q: Why is Bart staying late at school
+    lang: en
+    class: scope
+    gold: [bart-detention]
+
+  - q: Warum steht Barts Rad in der Garage
+    lang: de
+    class: scope
+    gold: [bike-repair]
+
+  # ── absent: nothing in the vault answers these ───────────────────────
+  - q: Wann ist der Zahnarzttermin für Lisa
+    lang: de
+    class: absent
+    gold: []
+
+  - q: Bei welcher Gesellschaft ist das Auto versichert
+    lang: de
+    class: absent
+    gold: []
+
+  - q: Which hotel did we book in Italy
+    lang: en
+    class: absent
+    gold: []
+
+  - q: Wann hat Maggie Geburtstag
+    lang: de
+    class: absent
+    gold: []
+
+  - q: What is the wifi password
+    lang: en
+    class: absent
+    gold: []
+
+  - q: Wie viel wiegt der Hund
+    lang: de
+    class: absent
+    gold: []
+
+  - q: Wann hat Homer die nächste Schicht
+    lang: de
+    class: absent
+    gold: []
+
+  - q: How much did the flight ticket cost
+    lang: en
+    class: absent
+    gold: []
+
+  - q: Wann wurde das Auto gekauft
+    lang: de
+    class: absent
+    gold: []
+
+  - q: What is the neighbour's phone number
+    lang: en
+    class: absent
+    gold: []
+
+  - q: Wann läuft der Handyvertrag aus
+    lang: de
+    class: absent
+    gold: []
+
+  - q: Welche Schule besucht Lisa
+    lang: de
+    class: absent
+    gold: []
