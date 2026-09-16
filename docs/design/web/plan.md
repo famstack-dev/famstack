@@ -419,25 +419,30 @@ containing its SearXNG connector, which is BSL 1.1.
 - **An MCP browser server for the agent.** Would put raw page content back in
   Stacky's context, which is the thing `stack web ask` exists to avoid.
 
-## Known violation of the containerisation invariant
+## Everything that reads a page now runs in a container
 
-`stack web fetch` runs on the host today, and shipped that way in phase
-2 under the old "host-native where possible" rule. It parses
-attacker-controlled HTML with lxml as the host user, which is exactly
-what the rewritten invariant forbids. The planned feed tier would make
-it worse by adding hostile XML to the same process, and `xml.etree` has
-documented entity-expansion behaviour.
+Resolved 2026-09-16. `stack web fetch` and `stack web ask` both route
+through `stack.bot_runner.dispatch` into the bot-runner, which is where
+the archivist already reads pages. Nothing in the web feature parses
+hostile HTML as the host user any more.
 
-Worth being precise about what is and is not exposed. The *production*
-capture path is already contained: the archivist imports
-`lib/stack/web` inside the bot-runner, so a family pasting a link never
-parses anything on the host. Only the operator CLI is outside, and only
-when an operator runs it.
+The bug that forced it was worse than the principle. The host has no
+trafilatura, and `extract_body` returned None both when the library was
+missing and when a page had no article, so the gate reported "empty —
+the page yielded nothing" for pages it had never read. `stack web fetch`
+looked healthy only because every URL used to demonstrate it was
+answered by tier 0 or tier 1, neither of which needs an extractor.
+`ExtractorUnavailable` now separates the two: a broken install cannot
+impersonate a verdict about somebody's web page.
 
-The fix is the same one `stack web ask` uses: route the command through
-`stack.bot_runner.dispatch` into the bot-runner. It costs the "works
-with nothing running" property, which the invariant already says is not
-worth its price.
+A second reason outlives that fix. A diagnostic command has to
+reproduce production, and library versions are part of production.
+Measured on one chefkoch listing page, trafilatura 2.0.0 returned 433
+characters and 2.2.0 returned 106, either side of the gate's
+250-character floor. The test environment was resolving 2.0.0 while the
+container ran 2.2.0, both from `>=1.12,<3.0`, so the suite was
+validating a version we do not ship. Both are now pinned to the same
+minor line.
 
 ## Open decisions
 

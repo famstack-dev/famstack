@@ -31,8 +31,23 @@ Same arrangement as `stack docs` and `stack memory capture`; the
 mechanism itself is `stack.bot_runner`, lifted there when the pattern
 found its second user.
 
+`stack web fetch` runs here too, and for a sharper reason than ask:
+extraction needs trafilatura and lxml, which the host does not have.
+Before this it silently answered "empty" for every page that was not
+served by tier 0 or tier 1, because a missing extractor and an absent
+article were indistinguishable from the gate's side.
+
+There is a second reason that survives even after the dependency is
+present. A diagnostic command has to reproduce production. The archivist
+reads pages with this code, inside this container, against these library
+versions; a CLI that reads them with different ones answers a question
+nobody asked. Measured on one chefkoch listing page, two trafilatura
+versions returned 106 and 433 characters for identical bytes, which
+lands either side of the gate's floor.
+
 Commands:
-    ask "<question>" [--json] [--sources N]
+    ask   "<question>" [--json] [--sources N]
+    fetch <url> [--json] [--timeout N]
 """
 
 from __future__ import annotations
@@ -47,7 +62,9 @@ sys.path.insert(0, "/app")  # stack.* — the framework is mounted there
 
 from search import DEFAULT_COUNT, search  # noqa: E402
 from stack.ai.client import LLM, LLMError  # noqa: E402
+from stack.web import fetch_url  # noqa: E402
 from stack.web.ask import build_prompt, render_sources, sources_from  # noqa: E402
+from stack.web.fetch import urllib_transport  # noqa: E402
 
 # Container-side address. The published host port is not reachable from
 # in here; both containers sit on the external `stack` network.
@@ -102,10 +119,50 @@ async def _ask(question: str, count: int, as_json: bool) -> int:
     return 0
 
 
+async def _fetch(url: str, timeout: int, as_json: bool) -> int:
+    outcome = await fetch_url(url, transport=urllib_transport(timeout=timeout))
+
+    if as_json:
+        print(json.dumps({
+            "url": outcome.url,
+            "verdict": outcome.verdict.name,
+            "detail": outcome.verdict.detail,
+            "tier": outcome.tier,
+            "profile": outcome.profile,
+            "title": outcome.content.title_hint if outcome.content else None,
+            "text": outcome.content.text if outcome.content else None,
+        }, indent=2, ensure_ascii=False))
+        return 0 if outcome.ok else 1
+
+    # Two lines either way: what we ended up reading, and how we got
+    # there. A refusal is the same shape with no body under it.
+    print()
+    print(f"  {outcome.content.title_hint if outcome.content else outcome.url}")
+    if outcome.ok:
+        print(f"  tier {outcome.tier} ({outcome.profile}) — {outcome.verdict.detail}")
+        print()
+        print(outcome.content.text)
+    else:
+        print(f"  {outcome.verdict.name} — {outcome.verdict.detail}")
+    print()
+    return 0 if outcome.ok else 1
+
+
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] != "ask":
+    if not argv or argv[0] not in ("ask", "fetch"):
         print(__doc__.strip(), file=sys.stderr)
         return 2
+
+    if argv[0] == "fetch":
+        parser = argparse.ArgumentParser(prog="stack web fetch", add_help=False)
+        parser.add_argument("url", nargs="?")
+        parser.add_argument("--json", action="store_true")
+        parser.add_argument("--timeout", type=int, default=30)
+        opts = parser.parse_args(argv[1:])
+        if not opts.url:
+            print('usage: stack web fetch <url>', file=sys.stderr)
+            return 2
+        return asyncio.run(_fetch(opts.url, opts.timeout, opts.json))
 
     parser = argparse.ArgumentParser(prog="stack web ask", add_help=False)
     parser.add_argument("question", nargs="*")
