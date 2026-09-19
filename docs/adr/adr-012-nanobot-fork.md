@@ -210,5 +210,5 @@ Two shims removed; history size is left to nanobot's own settings.
 | `grep_tool` | removed; grep is literal again | ran a regex as a semantic query (lesson 7); the model retried the same grep |
 | `compact_tools` | added; patches `agent.runner._COMPACTABLE_TOOLS` | nanobot's microcompact now also shortens old vault tool results |
 
-`config.json` sets `context_window_tokens` to 32768, so nanobot's token
+`config.json` sets the primary preset's `context_window_tokens` to 32768, so nanobot's token
 consolidation and history snip act at a size that keeps prefill short.
