@@ -68,8 +68,9 @@ class TestLeanMessages:
         assert out[1]["tool_calls"][0]["id"] == "c1"       # assistant call kept
         assert len(out) == len(msgs)                       # nothing dropped
 
-    def test_tool_turn_answer_is_decayed(self):
-        # a previous turn that called a tool: its synthesized answer decays too
+    def test_tool_turn_answer_is_kept(self):
+        # a previous turn that called a tool: only the tool result is pointered,
+        # the answer stays verbatim
         msgs = [
             {"role": "user", "content": "was ist offen?"},
             _asst_call("c1", "exec", '{"command": "stack memory topic x todo"}'),
@@ -78,9 +79,26 @@ class TestLeanMessages:
             {"role": "user", "content": "und jetzt?"},     # current turn
         ]
         out = lean_messages(msgs)
-        assert "Noch 8 offen" not in out[3]["content"]
-        assert "earlier answer from" in out[3]["content"]
-        assert "exec(" in out[3]["content"]
+        assert out[3]["content"] == "Noch 8 offen: a, b, c"
+        assert "8 open" not in out[2]["content"]
+
+    def test_no_assistant_message_holds_a_placeholder(self):
+        # Regression: with every prior answer replaced by
+        # "[earlier answer from grep(...)]" the model sent that format as
+        # its reply. No assistant content may carry a placeholder.
+        msgs = []
+        for n in range(10):
+            msgs += [
+                {"role": "user", "content": f"frage {n}"},
+                _asst_call(f"c{n}", "grep", '{"pattern": "Lauf"}'),
+                _tool_result(f"c{n}", f"treffer {n}"),
+                {"role": "assistant", "content": f"antwort {n}"},
+            ]
+        msgs.append({"role": "user", "content": "neue frage"})
+        out = lean_messages(msgs)
+        answers = [m["content"] for m in out
+                   if m["role"] == "assistant" and not m.get("tool_calls")]
+        assert answers == [f"antwort {n}" for n in range(10)]
 
     def test_conversational_answer_is_kept(self):
         # a previous turn with NO tool: its answer is conversation, kept verbatim

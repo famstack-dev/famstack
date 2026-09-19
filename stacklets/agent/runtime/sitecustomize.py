@@ -153,9 +153,8 @@ try:
     _LEAN_ENABLED = _os.environ.get("AGENT_LEAN_STATE", "1") != "0"
 
     def _build_messages_lean(self, *args, **kwargs):
-        # Post-process the assembled message list: stale prior-turn derived data
-        # (tool results and tool-synthesized answers) become pointers; the
-        # current turn stays intact.
+        # Post-process the assembled message list: stale prior-turn tool results
+        # become pointers; answers and the current turn stay intact.
         messages = _orig_build_messages(self, *args, **kwargs)
         if _LEAN_ENABLED:
             messages = _lean_messages(messages)
