@@ -1,0 +1,7 @@
+# stacklets/id/caddy.snippet
+#
+# The login page must be reachable under the same name from the LAN and
+# through the tunnel: every OIDC redirect from a service lands here.
+id.{$FAMSTACK_DOMAIN} {
+    reverse_proxy stack-id-server:1411
+}

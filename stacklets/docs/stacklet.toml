@@ -46,6 +46,19 @@ ADMIN_USER           = "{admin_username}"
 ADMIN_PASSWORD       = "{admin_password}"
 PAPERLESS_URL        = "{url}"
 LANGUAGE             = "{language}"
+# Single sign-on through the id stacklet (Pocket ID). The id stacklet
+# creates the client and stores its credentials; without id these
+# render empty and the compose file leaves Paperless's login untouched.
+OIDC_ISSUER          = "{id_url}"
+OIDC_CLIENT_ID       = "{id__CLIENT_DOCS_ID}"
+OIDC_CLIENT_SECRET   = "{id__CLIENT_DOCS_SECRET}"
+
+# Declares this stacklet as an OpenID Connect client. 'stack up id'
+# creates the client in Pocket ID with these callbacks ({url} is this
+# stacklet's public URL) and stores id__CLIENT_DOCS_ID / _SECRET.
+[oidc]
+name      = "Documents"
+callbacks = ["{url}/accounts/oidc/pocketid/login/callback/"]
 
 [health]
 url    = "http://localhost:42020/api/"

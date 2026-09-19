@@ -1,0 +1,63 @@
+# stacklet.toml — id stacklet (Pocket ID)
+#
+# One login for the family intranet. Pocket ID is a passkey-only OpenID
+# Connect provider: people log in with Face ID, Touch ID or a QR scan
+# from their phone, never with a password. Every other stacklet that
+# speaks OIDC (photos, drive, docs, code, messages, chatai) delegates
+# its login here. This replaces the per-service account seeding that
+# ADR-001 flagged as temporary. See ADR-014.
+#
+# One container, SQLite, data under {data_dir}/identity.
+
+id          = "id"
+name        = "Identity"
+description = "Passkey login for all family services (Pocket ID)"
+version     = "0.1.0"
+category    = "infrastructure"
+port        = 42100
+
+login_field = "passkey"
+
+hints = [
+    "Each person's one-time login link is in your data dir under id/onboarding/",
+    "Open yours, register a passkey, then hand the others out (QR from Users in {url})",
+]
+
+[upstream]
+image   = "ghcr.io/pocket-id/pocket-id"
+channel = "patch"
+
+[env]
+# ENCRYPTION_KEY protects the OIDC signing keys at rest. Losing it means
+# re-creating every OIDC client. It is in secrets.toml, which the backup
+# stacklet already covers.
+# STATIC_API_KEY makes Pocket ID create a service admin user at first
+# start, which removes the /setup page. That is intended: provision.py
+# creates the family from users.toml through the API and writes a
+# one-time login link per person, so nobody needs /setup.
+generate = ["ENCRYPTION_KEY", "STATIC_API_KEY"]
+
+[env.defaults]
+ID_DATA_DIR       = "{data_dir}/id/data"
+# One-time login links written by provision.py, one file per person, 600
+ID_ONBOARDING_DIR = "{data_dir}/id/onboarding"
+TZ                = "{timezone}"
+ID_URL      = "{url}"
+ID_APP_NAME = "{family_display_name} ID"
+# Caddy connects from the shared 'stack' network; trust it so the client
+# IP in the audit log is the device, not the proxy
+TRUSTED_PROXIES   = "192.168.156.0/24"
+# 30 days. A passkey login is cheap, but nobody wants it daily.
+SESSION_MINUTES   = "43200"
+
+[health]
+url     = "http://localhost:42100/healthz"
+timeout = 60
+
+# The SQLite database (users, passkey public keys, OIDC clients) and
+# uploaded logos. Small, and irreplaceable: without it every family
+# member re-registers and every service re-links.
+[[backup.archive]]
+name      = "data"
+path      = "{data_dir}/id/data"
+min_files = 1

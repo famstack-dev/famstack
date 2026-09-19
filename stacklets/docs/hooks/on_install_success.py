@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import ensure_api_token
 from seed import seed_person_tags, seed_taxonomy
+from permissions import ensure_group, share_archive
 
 def run(ctx):
     token = ensure_api_token(ctx)
@@ -85,3 +86,12 @@ def _seed_taxonomy(ctx, token):
     seed_person_tags(url, token, ctx.users, step=ctx.step)
     language = ctx.env.get("LANGUAGE", "en")
     seed_taxonomy(url, token, language, step=ctx.step)
+
+    # Document access groups exist only for single sign-on installs: the
+    # passkey login (id stacklet) creates accounts that need a group.
+    # Installs without id keep Paperless's permissions untouched.
+    if ctx.env.get("OIDC_CLIENT_ID"):
+        if ensure_group(url, token, step=ctx.step):
+            # first enablement: existing documents become visible to
+            # the group once; later documents come through the workflow
+            share_archive(url, token, step=ctx.step)

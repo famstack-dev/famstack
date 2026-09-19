@@ -55,6 +55,17 @@ services:
       PAPERLESS_ADMIN_USER: ${ADMIN_USER}
       PAPERLESS_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       PAPERLESS_URL: ${PAPERLESS_URL}
+      # Passkey login via Pocket ID (id stacklet). PAPERLESS_APPS is set
+      # only when a client id exists, so without the id stacklet none of
+      # this is active. Pocket ID decides who exists, so a first passkey
+      # login may create the Paperless account (auto signup). Existing
+      # local users are linked by verified email (EMAIL_AUTHENTICATION).
+      PAPERLESS_APPS: ${OIDC_CLIENT_ID:+allauth.socialaccount.providers.openid_connect}
+      PAPERLESS_SOCIALACCOUNT_PROVIDERS: '{"openid_connect":{"EMAIL_AUTHENTICATION":true,"EMAIL_AUTHENTICATION_AUTO_CONNECT":true,"APPS":[{"provider_id":"pocketid","name":"Pocket ID","client_id":"${OIDC_CLIENT_ID}","secret":"${OIDC_CLIENT_SECRET}","settings":{"server_url":"${OIDC_ISSUER}/.well-known/openid-configuration"}}]}}'
+      PAPERLESS_SOCIAL_AUTO_SIGNUP: "true"
+      PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS: "true"
+      # New accounts join 'all_documents' (permissions.py keeps the group)
+      PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS: all_documents
       PAPERLESS_OCR_MODE: skip
       # 2.x always rejected a re-uploaded identical file. 3.0 made that
       # conditional on this flag: with it unset the duplicate is consumed

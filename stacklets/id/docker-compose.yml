@@ -1,0 +1,51 @@
+# stacklets/id/docker-compose.yml — Pocket ID
+#
+# Passkey-only OpenID Connect provider for the family intranet.
+# One container:
+#   stack-id-server — Pocket ID (Go binary + embedded UI, SQLite)
+
+name: stack-id
+
+services:
+  stack-id-server:
+    container_name: stack-id-server
+    # Pinned to the v2 line, never `:latest`. Watchtower follows v2.x
+    # patches; the next major is a deliberate bump with a backup first.
+    # Verify at first pull that the registry publishes the `v2` moving
+    # tag; if not, pin `v2.14` and let Watchtower track that.
+    image: ghcr.io/pocket-id/pocket-id:v2
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - stack
+    volumes:
+      - ${ID_DATA_DIR}:/app/data
+    environment:
+      APP_URL: ${ID_URL}
+      APP_NAME: ${ID_APP_NAME}
+      TRUST_PROXY: ${TRUSTED_PROXIES}
+      # Framework secrets are 32-char urlsafe strings. Pocket ID documents
+      # `openssl rand -base64 32`; if it rejects the framework format at
+      # first start, switch to ENCRYPTION_KEY_FILE with a generated file.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Admin API access for provision.py (users, OIDC clients)
+      STATIC_API_KEY: ${STATIC_API_KEY}
+      SESSION_DURATION: ${SESSION_MINUTES}
+      # Family members are created by an admin, never self-signup
+      ALLOW_USER_SIGNUPS: disabled
+      # No phone-home: no heartbeat, no version check against GitHub
+      ANALYTICS_DISABLED: "true"
+      VERSION_CHECK_DISABLED: "true"
+      TZ: ${TZ}
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42100:1411"
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  stack:
+    external: true
