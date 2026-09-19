@@ -32,6 +32,9 @@ from nanobot.agent.tools.schema import (
 )
 
 
+MAX_CHANGES = 10
+
+
 @tool_parameters(
     tool_parameters_schema(
         scope=StringSchema(
@@ -54,7 +57,7 @@ from nanobot.agent.tools.schema import (
             nullable=True,
         ),
         limit=IntegerSchema(
-            "Optional. How many changes to return (default 10).",
+            "Optional. How many changes to return (default and at most 10).",
             nullable=True,
         ),
     )
@@ -87,6 +90,10 @@ class MemoryHistoryTool(Tool):
                       since: str | None = None, item: str | None = None,
                       limit: int | None = None) -> str:
         argv = ["stack", "memory", "history"]
+        # Each entry is prompt the model reads; more than ten rarely
+        # changes an answer and costs seconds of local prefill.
+        if limit:
+            limit = min(int(limit), MAX_CHANGES)
         if scope:
             argv.append(str(scope))
         for flag, value in (("--item", item), ("--by", by),

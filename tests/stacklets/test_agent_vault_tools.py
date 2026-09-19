@@ -36,7 +36,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MEMORY_DIR = REPO_ROOT / "stacklets" / "memory"
 
-TOOL_MODULES = ("memory_tool", "person_tool", "sitecustomize")
+TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "sitecustomize")
 
 
 # ── loading the real components under test ───────────────────────────
@@ -87,6 +87,7 @@ def vault_tools(monkeypatch, nanobot_stub):
     tools = {
         "memory_search": importlib.import_module("memory_tool").MemorySearchTool,
         "memory_person": importlib.import_module("person_tool").MemoryPersonTool,
+        "memory_history": importlib.import_module("history_tool").MemoryHistoryTool,
     }
     yield tools
     for name in TOOL_MODULES:
@@ -341,6 +342,30 @@ class TestEverySearchIsLogged:
                   stderr=b"unrecognized arguments", query="school run")
 
         assert "-> error exit 2" in capsys.readouterr().err
+
+
+class TestResultsAreCapped:
+    """A tool result is prompt the model has to read before its next step.
+
+    On the local model each 1k tokens of tool output costs 5-7 s of
+    prefill. The model asked for 20 search hits and 30 history entries;
+    the hits past the first handful matched only a year and were noise.
+    """
+
+    def test_search_asks_for_at_most_eight_hits(self, vault_tools):
+        argv = argv_of(vault_tools["memory_search"], query="Bart Seepferdchen", limit=20)
+
+        assert argv[argv.index("--limit") + 1] == "8"
+
+    def test_a_smaller_search_limit_is_kept(self, vault_tools):
+        argv = argv_of(vault_tools["memory_search"], query="Bart Seepferdchen", limit=3)
+
+        assert argv[argv.index("--limit") + 1] == "3"
+
+    def test_history_asks_for_at_most_ten_changes(self, vault_tools):
+        argv = argv_of(vault_tools["memory_history"], since="2026-04-01", limit=30)
+
+        assert argv[argv.index("--limit") + 1] == "10"
 
 
 def test_naming_a_person_does_not_hide_pages_that_do_not_list_them(

@@ -15,6 +15,10 @@ from nanobot.agent.tools.schema import (
 )
 
 
+# Hits past the first handful rarely hold the answer and cost prefill.
+MAX_HITS = 8
+
+
 @tool_parameters(
     tool_parameters_schema(
         query=StringSchema(
@@ -31,9 +35,9 @@ from nanobot.agent.tools.schema import (
         ),
         limit=IntegerSchema(
             5,
-            description="Maximum number of results to return.",
+            description="Maximum number of results to return (at most 8).",
             minimum=1,
-            maximum=20,
+            maximum=8,
             nullable=True,
         ),
         scope=StringSchema(
@@ -91,6 +95,9 @@ class MemorySearchTool(Tool):
         # themselves are cheap and run concurrently.
         batch = [q for q in (queries or []) if q and q.strip()] or [query]
         batch = batch[:3]
+        # Every hit is prompt the model reads before its next step: about
+        # 150 tokens each, and 5-7 s of local prefill per 1k tokens.
+        limit = min(limit or 5, MAX_HITS)
         results = await asyncio.gather(
             *(self._search_one(q, limit, scope, person, tag) for q in batch)
         )
