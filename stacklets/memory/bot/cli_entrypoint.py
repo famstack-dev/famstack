@@ -50,10 +50,11 @@ sys.path.insert(0, "/app")  # stack.ai.client, stack.forgejo, stack.prompt
 
 from stack.ai.client import LLM, LLMUnavailableError
 
-from cli import diary, rewrite, wiki
+from cli import answer, diary, rewrite, wiki
 
 
 _HANDLERS = {
+    "answer": answer.run,
     "diary": diary.run,
     "rewrite": rewrite.run,
     "wiki": wiki.run,

@@ -67,7 +67,8 @@ def dispatch(command: str, *argv: str) -> dict:
 
 
 def dispatch_capture(command: str, *argv: str,
-                     timeout: int = 60) -> tuple[int, str, str]:
+                     timeout: int = 60,
+                     input_text: str | None = None) -> tuple[int, str, str]:
     """The same hop, for a caller that wants the output as a value.
 
     `dispatch` is right when the container's output *is* the result:
@@ -88,6 +89,9 @@ def dispatch_capture(command: str, *argv: str,
     version-skewed host (updated code, bot-runner not restarted yet)
     would dump that over a family's search results. One line stays
     diagnostic without ever becoming a wall.
+
+    `input_text` goes to the command's stdin, for a payload too large or
+    too structured for argv (the evidence `answer` reads).
     """
     if not _bot_runner_running():
         return 1, "", f"{BOT_RUNNER_CONTAINER} is not running"
@@ -100,6 +104,7 @@ def dispatch_capture(command: str, *argv: str,
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
+            input=input_text,
         )
     except FileNotFoundError:
         return 1, "", "docker CLI not found on this host"
