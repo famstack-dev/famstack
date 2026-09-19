@@ -288,6 +288,87 @@ class TestNothingFoundIsAnAnswer:
         assert answer == block.decode().strip()
 
 
+class TestEverySearchIsLogged:
+    """Each search leaves its query and ranked result paths in the log.
+
+    The agent log records the tool call but not what came back, so a
+    search that missed the page could not be told apart from a model
+    that ignored it. The log names paths and matched keywords only,
+    never the excerpt, so page text stays out of it.
+    """
+
+    RESULTS = (
+        b"2026-06-30 [Homer] family/diary/2026/06.md\n"
+        b"  Tagebuch Juni\n"
+        b"  \xe2\x80\xa6Bart hat heute sein Seepferdchen geschafft.\xe2\x80\xa6\n"
+        b"  matches: Seepferdchen, Bart\n"
+        b"\n"
+        b"2026-09-17 [Homer] family/notes/garten.md\n"
+        b"  Garten\n"
+        b"  \xe2\x80\xa6Bart war heute im Garten.\xe2\x80\xa6\n"
+        b"  matches: Bart\n"
+    )
+
+    def test_the_query_and_ranked_paths_are_logged(self, vault_tools, capsys):
+        result_of(vault_tools["memory_search"], returncode=0,
+                  stdout=self.RESULTS, query="Bart Seepferdchen")
+        log = capsys.readouterr().err
+
+        assert "query='Bart Seepferdchen'" in log
+        assert "pattern='Bart|Seepferdchen'" in log
+        assert "-> 2 results" in log
+        first = log.index("1. family/diary/2026/06.md")
+        second = log.index("2. family/notes/garten.md")
+        assert first < second
+        assert "matches: Seepferdchen, Bart" in log
+
+    def test_page_text_stays_out_of_the_log(self, vault_tools, capsys):
+        result_of(vault_tools["memory_search"], returncode=0,
+                  stdout=self.RESULTS, query="Bart Seepferdchen")
+        log = capsys.readouterr().err
+
+        assert "Seepferdchen geschafft" not in log
+        assert "Tagebuch Juni" not in log
+
+    def test_no_results_are_logged_as_such(self, vault_tools, capsys):
+        result_of(vault_tools["memory_search"], returncode=1,
+                  stdout=b"", query="school run")
+
+        assert "-> 0 results" in capsys.readouterr().err
+
+    def test_a_failure_is_logged_with_its_exit_code(self, vault_tools, capsys):
+        result_of(vault_tools["memory_search"], returncode=2,
+                  stderr=b"unrecognized arguments", query="school run")
+
+        assert "-> error exit 2" in capsys.readouterr().err
+
+
+def test_naming_a_person_does_not_hide_pages_that_do_not_list_them(
+        memory_cli, vault_tools, tmp_path, capsys):
+    """The model passes the person a question is about; that must not
+    filter out the answer.
+
+    A diary entry about a child is written by a parent, so its
+    `persons:` lists the parent. Sent as `--person`, the child's name
+    hides that entry from a question about the child.
+    """
+    vault = tmp_path / "vault"
+    page = vault / "family" / "diary" / "2026" / "06.md"
+    page.parent.mkdir(parents=True)
+    page.write_text(
+        "---\ntitle: Tagebuch Juni\ndate: 2026-06-30\npersons:\n  - Homer\n---\n\n"
+        "Bart hat heute sein Seepferdchen geschafft.\n", encoding="utf-8")
+
+    argv = argv_of(vault_tools["memory_search"], query="Seepferdchen", person="bart")
+    try:
+        memory_cli["search"].run(
+            argv[3:] + ["--vault", str(vault), "--no-refresh"], None, None)
+    except SystemExit as exit_:
+        pytest.fail(f"search found nothing (exit {exit_.code}) for `{' '.join(argv)}`")
+
+    assert "family/diary/2026/06.md" in capsys.readouterr().out
+
+
 # ── gate 3: the transport between the tool and the CLI ───────────────
 #
 # The two gates above both read argv straight out of the tool. Nothing
