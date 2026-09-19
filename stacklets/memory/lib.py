@@ -30,9 +30,11 @@ Forgejo was unreachable on install).
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Optional
@@ -1599,24 +1601,95 @@ def extract_summary_callout(text: str) -> str:
     return "\n".join(captured).strip()
 
 
-def _excerpt(text: str, query: str, max_len: int = 200) -> str:
-    """First non-empty body line that mentions `query` (case-insensitive).
+def strip_diacritics(text: str) -> str:
+    """Drop combining marks, so "Käse" and "Kase" are the same word.
+
+    The family writes German; somebody searching from a phone keyboard
+    or in a hurry types the bare vowel. Byte-literal matching answers
+    that with nothing at all, which reads like the vault has no such
+    page rather than like the query was spelled differently.
+
+    Case is deliberately left alone. The query is a regex, and
+    lower-casing one rewrites its operators: `\\W` becomes `\\w` and
+    stops meaning the opposite of what it said. Callers match
+    case-insensitively anyway.
+
+    Decomposing first is what makes both spellings of an umlaut agree:
+    a precomposed "ü" and a "u" followed by a combining diaeresis are
+    the same letter to a reader and have to be the same here.
+
+    What this is not is transliteration. "Kaese" stays a different word
+    from "Käse"; folding those together needs a German-specific table,
+    not a Unicode normalisation form.
+    """
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _excerpt(text: str, patterns: List["re.Pattern[str]"], max_len: int = 200,
+             fold_diacritics: bool = True) -> str:
+    """First non-empty body line that matches a pattern, tried in order.
+
+    `patterns` are the query's alternatives, rarest first, compiled
+    against folded text. A page found through "Bart|Seepferdchen" shows
+    the line that says "Seepferdchen": the rare word is the one that tells the
+    reader why this page came back. The query itself is a regex, so
+    matching it as a substring (the old way) found nothing for any
+    query with a `|` in it.
 
     Body starts after the *closing* `---` of the frontmatter block --
     otherwise hits on `title:` or `persons:` lines would surface as
     excerpts, which is noisy and misleading.
+
+    Folds the same way the match did, so a page found through "Kase"
+    still shows the line saying "Käse". A hit whose excerpt came back
+    empty is a hit the reader cannot judge.
     """
-    needle = query.lower()
-    body = body_only(text)
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if needle in stripped.lower():
-            if len(stripped) > max_len:
-                stripped = stripped[:max_len] + "…"
-            return stripped
+    lines = [line.strip() for line in body_only(text).splitlines()]
+    lines = [line for line in lines if line]
+    for pattern in patterns:
+        for line in lines:
+            if pattern.search(strip_diacritics(line) if fold_diacritics else line):
+                if len(line) > max_len:
+                    line = line[:max_len] + "…"
+                return line
     return ""
+
+
+def split_alternatives(query: str) -> List[str]:
+    """The top-level alternatives of a regex, e.g. `a|b(c|d)` -> `a`, `b(c|d)`.
+
+    Splits on `|` outside groups and character classes, and never on an
+    escaped one. A query without a top-level `|` is one alternative.
+    """
+    parts: List[str] = []
+    current: List[str] = []
+    depth, in_class, escaped = 0, False, False
+    for ch in query:
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif in_class:
+            in_class = ch != "]"
+        elif ch == "[":
+            in_class = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "|" and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+    return [part for part in parts if part.strip()]
+
+
+def _idf(doc_count: int, doc_freq: int) -> float:
+    """BM25's inverse document frequency: rare words weigh more."""
+    return math.log(1 + (doc_count - doc_freq + 0.5) / (doc_freq + 0.5))
 
 
 def search_memory(
@@ -1626,8 +1699,10 @@ def search_memory(
     tags: Optional[List[str]] = None,
     scopes: Optional[List[str]] = None,
     limit: int = 20,
+    fold_diacritics: bool = True,
+    search_frontmatter: bool = True,
 ) -> List[dict]:
-    """Walk the vault, return result dicts sorted newest-first.
+    """Walk the vault, return result dicts, most relevant first.
 
     `query` is a Python regex matched case-insensitively against the
     *body* of each file -- frontmatter is stripped before matching so
@@ -1647,8 +1722,26 @@ def search_memory(
     can't read personal notes by accident.
 
     Returns dicts with keys `path`, `rel`, `title`, `date`,
-    `persons`, `tags`, `excerpt`. Sorted by frontmatter `date`
-    descending; files without a date sort to the end.
+    `persons`, `tags`, `excerpt`, `matched_terms`. Sorted by relevance,
+    then by frontmatter `date` descending; files without a date sort to
+    the end.
+
+    Relevance: each top-level alternative of the query (`Bart|Seepferdchen` has
+    two) scores its inverse document frequency on every page it
+    matches, summed. A word that is on every page about a child adds
+    almost nothing; a word on one page decides the order. Before this,
+    results were sorted by date alone, so the newest pages naming the
+    child filled the limit and the one page with the rare word never
+    came back. A query with one alternative scores every hit the same
+    and keeps the date order.
+
+    `fold_diacritics` strips combining marks from both the query and
+    the text before matching, so "Kase" reaches "Käse" and the reverse.
+    `search_frontmatter` matches the title, tag and person *values*
+    alongside the body, so a page titled "Elternabend" is found by
+    searching for Elternabend. Both are on by default; passing False
+    restores the older behaviour, which is what the retrieval lab
+    measures against.
 
     On a missing vault directory or invalid regex, returns `[]`
     rather than raising -- callers decide how to surface the
@@ -1657,10 +1750,19 @@ def search_memory(
     if not vault.exists():
         return []
 
+    folded_query = strip_diacritics(query) if fold_diacritics else query
     try:
-        pattern = re.compile(query, re.IGNORECASE)
+        pattern = re.compile(folded_query, re.IGNORECASE)
     except re.error:
         return []
+    try:
+        term_patterns = [re.compile(term, re.IGNORECASE)
+                         for term in split_alternatives(folded_query)]
+    except re.error:
+        # An alternative that is not a regex on its own, e.g. a split
+        # the splitter got wrong. Rank the whole query as one term.
+        term_patterns = []
+    term_patterns = term_patterns or [pattern]
 
     persons = persons or []
     tags = tags or []
@@ -1676,6 +1778,11 @@ def search_memory(
         scope_prefixes = [s if s.endswith("/") else f"{s}/" for s in scopes]
 
     results: List[dict] = []
+    # Corpus statistics for the ranking: pages in scope, and how many
+    # of them contain each alternative. Counted before the person and
+    # tag filters, because rarity is a property of the vault.
+    doc_count = 0
+    doc_freq = [0] * len(term_patterns)
     for md_path in vault.rglob("*.md"):
         if not md_path.is_file():
             continue
@@ -1691,17 +1798,46 @@ def search_memory(
             text = md_path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        doc_count += 1
         # Match against body only -- frontmatter field names (`date:`,
         # `tags:`, `persons:`, ...) would otherwise trivially match
         # generic keywords and drown real hits.
-        if not pattern.search(body_only(text)):
-            continue
-
+        body = body_only(text)
         fm = _parse_frontmatter(text)
         doc_persons = _fm_list(fm, "persons")
+        doc_tags = _fm_list(fm, "tags")
+
+        # The values, never the keys. Stripping frontmatter kept a
+        # query for "date" from hitting every page through its `date:`
+        # line, and threw away the title and tags in the process --
+        # which are the most descriptive text a page has. Joining the
+        # values back in restores them without letting the field names
+        # back through.
+        #
+        # Persons stay out. A name says who a page concerns, not what
+        # it says, so matching it as prose makes any question
+        # mentioning Lisa match every page Lisa is on. Measured: it
+        # took one query from four hits to twenty and pushed the
+        # answer from rank two to rank nine. `--person` is the right
+        # way to ask that question and it already exists.
+        haystack = body
+        if search_frontmatter:
+            haystack = "\n".join((
+                str(fm.get("title") or ""),
+                " ".join(doc_tags),
+                body,
+            ))
+        if fold_diacritics:
+            haystack = strip_diacritics(haystack)
+        if not pattern.search(haystack):
+            continue
+        matched = [i for i, term in enumerate(term_patterns)
+                   if term.search(haystack)]
+        for i in matched:
+            doc_freq[i] += 1
+
         if persons and not any(p.lower() in want_persons for p in doc_persons):
             continue
-        doc_tags = _fm_list(fm, "tags")
         if tags:
             doc_norm = {_norm_tag(t) for t in doc_tags}
             if not (doc_norm & want_tags):
@@ -1714,7 +1850,10 @@ def search_memory(
             "date": fm.get("date") or "",
             "persons": doc_persons,
             "tags": doc_tags,
-            "excerpt": _excerpt(text, query),
+            # Filled in after ranking, for the returned hits only.
+            "excerpt": "",
+            "_text": text,
+            "_matched": matched,
             # The `> [!summary]` callout, stripped of blockquote
             # prefixes. Drives the synthesis step: feeding summaries
             # to the LLM is cheaper than feeding bodies and usually
@@ -1737,11 +1876,25 @@ def search_memory(
             "capture_id": fm.get("capture_id") or "",
         })
 
+    idf = [_idf(doc_count, df) for df in doc_freq]
+    for r in results:
+        r["_score"] = round(sum(idf[i] for i in r["_matched"]), 6)
     results.sort(
-        key=lambda r: (str(r.get("date") or ""), r["rel"]),
+        key=lambda r: (r["_score"], str(r.get("date") or ""), r["rel"]),
         reverse=True,
     )
-    return results[:limit]
+    results = results[:limit]
+
+    terms = split_alternatives(query) if len(term_patterns) > 1 else [query]
+    for r in results:
+        rarest_first = sorted(r.pop("_matched"), key=lambda i: -idf[i])
+        r["matched_terms"] = [terms[i] for i in rarest_first
+                              if i < len(terms)]
+        r["excerpt"] = _excerpt(r.pop("_text"),
+                                [term_patterns[i] for i in rarest_first],
+                                fold_diacritics=fold_diacritics)
+        del r["_score"]
+    return results
 
 
 # ─── Natural-language query rewrite ──────────────────────────────────────

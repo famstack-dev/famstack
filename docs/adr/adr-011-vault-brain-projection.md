@@ -85,3 +85,21 @@ Consequences of the rule:
   trailer on brain commits), and a rebase of the prototype branch onto
   the todo work. Implementation is tracked in
   `docs/todos/brain-projection-plan.md`.
+
+## Update 2026-09-19: search reads the brain
+
+`stack memory search` reads the brain, not the vault. The rule above
+("search and todos read memory") left search blind to generated pages.
+The diary is compiled from the diary room, so its text exists only in
+the brain, and a diary question could not be answered by search. The
+agent fell back to grep on its `vault/` mount, which is the brain.
+
+| Reader | Tree | Reason |
+|---|---|---|
+| `stack memory search` | brain (vault before the first curator run) | brain holds every vault page plus the compiled pages |
+| todos, writes | vault | read-your-writes stays a vault promise |
+
+Cost: a page filed seconds ago is findable after the next mirror tick,
+not at once. Read-your-writes is tested for todos only
+(`tests/integration/test_demo_rig_e2e.py`), so no stated invariant changes.
+

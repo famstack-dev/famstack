@@ -1,10 +1,13 @@
-"""stack memory search — full-text query over the curated memory vault.
+"""stack memory search — full-text query over the family brain.
 
-The memory vault is the local checkout the memory stacklet maintains
-at `<data_dir>/memory/vault/`. It holds the *derived intelligence* layer:
-doc briefings, entity notes, bookmarks, correspondent profiles, and
-(soon) periodic summaries. Search is the agent-facing read surface
-over that layer.
+Without `--vault`, search reads the brain working copy at
+`<data_dir>/memory/brain/`: every page of the memory vault, mirrored,
+plus the pages compiled from it (diary, profiles, topic pages). The
+diary is compiled from the diary room, so its text exists only in the
+brain. It is also the tree the agent reads as `vault/`. Before the
+curator's first run there is no brain, and search reads the memory
+vault at `<data_dir>/memory/vault/` instead. A page filed seconds ago
+is findable after the curator mirrors it (ADR-011, updated 2026-09-19).
 
 This file is a thin argparse + formatter wrapper around
 `memory.lib.search_memory` — the engine lives in the lib so the
@@ -82,9 +85,10 @@ Output (default) — one block per result, blank line between:
 `--count` prints just the integer total. Agents read the default text
 output directly — JSON would cost tokens for no readable gain.
 
-Before walking the vault, the command compares the local `HEAD` to
-the remote `HEAD` via `git ls-remote` and pulls only when they
-differ. The fast path (no upstream changes) costs one round-trip;
+When it reads the memory vault (a `--vault` override, or no brain
+yet), the command first compares the local `HEAD` to the remote `HEAD`
+via `git ls-remote` and pulls only when they differ. The brain is
+never pulled: the curator commits into that working copy. The fast path (no upstream changes) costs one round-trip;
 the slow path adds a full fast-forward pull. Pass `--no-refresh` to
 skip the check entirely — useful for scripting, offline use, or
 when running against a `--vault` override that isn't a clone.
@@ -102,9 +106,11 @@ from pathlib import Path
 # from `lib` rather than relying on a package install.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
+    brain_path_for,
     keywords_to_regex,
     refresh_vault_if_stale,
     search_memory,
+    split_alternatives,
     vault_path_for,
 )
 
@@ -229,7 +235,7 @@ def _looks_like_a_sentence(query: str) -> bool:
 
 # ── output ──────────────────────────────────────────────────────────────
 
-def _format_block(r: dict, link_base: str = "") -> str:
+def _format_block(r: dict, link_base: str = "", show_matches: bool = False) -> str:
     """Render one result as the default human/agent block.
 
     `date` is shown as a 10-char placeholder when missing so the
@@ -243,6 +249,10 @@ def _format_block(r: dict, link_base: str = "") -> str:
     corrected title moves it. A page with no capture id (a
     hand-written wiki entry) gets no line rather than a link that
     would break quietly.
+
+    `show_matches` adds which of several keywords the page contains,
+    rarest first. A page that matched only a person's name is rarely
+    the answer, and the reader should see that without opening it.
     """
     persons = (
         "[" + ",".join(r["persons"]) + "]" if r["persons"] else "[]"
@@ -254,10 +264,44 @@ def _format_block(r: dict, link_base: str = "") -> str:
     ]
     if r["excerpt"]:
         lines.append(f"  …{r['excerpt']}…")
+    if show_matches and r.get("matched_terms"):
+        lines.append(f"  matches: {', '.join(r['matched_terms'])}")
     if capture_id := (r.get("capture_id") or "").strip():
         if url := public(go_capture(capture_id), link_base):
             lines.append(f"  {url}")
     return "\n".join(lines)
+
+
+def resolve_vault(vault_arg: str | None, config) -> "tuple[Path, bool] | dict":
+    """The tree to search, and whether it is the brain.
+
+    Returns an `{"error": ...}` dict when there is nothing to search.
+    Shared with `stack memory ask`, which reads the same tree.
+    """
+    searching_brain = False
+    if vault_arg:
+        vault = Path(vault_arg).expanduser().resolve()
+    else:
+        data_dir = (config or {}).get("data_dir")
+        if not data_dir:
+            return {
+                "error": (
+                    "no vault available — pass --vault or run inside a "
+                    "configured stack"
+                ),
+            }
+        # The brain is the compiled view: every source page mirrored,
+        # plus the pages generated from it (diary, profiles, topic
+        # pages). The diary's text exists nowhere in source, so a
+        # search of source cannot answer a question the diary answers.
+        # It is also the tree the agent reads as `vault/`, so a printed
+        # path is one it can open. Before the curator's first run there
+        # is no brain yet, and source is all there is.
+        brain = brain_path_for(Path(data_dir))
+        searching_brain = brain.exists()
+        vault = brain if searching_brain else vault_path_for(Path(data_dir))
+
+    return vault, searching_brain
 
 
 # ── entry point ─────────────────────────────────────────────────────────
@@ -273,24 +317,19 @@ def run(args, stacklet, config) -> dict | None:
     parser = _parser()
     ns = parser.parse_args(args)
 
-    if ns.vault:
-        vault = Path(ns.vault).expanduser().resolve()
-    else:
-        data_dir = (config or {}).get("data_dir")
-        if not data_dir:
-            return {
-                "error": (
-                    "no vault available — pass --vault or run inside a "
-                    "configured stack"
-                ),
-            }
-        vault = vault_path_for(Path(data_dir))
+    resolved = resolve_vault(ns.vault, config)
+    if isinstance(resolved, dict):
+        return resolved
+    vault, searching_brain = resolved
 
     if not vault.exists():
         print(f"error: vault not found at {vault}", file=sys.stderr)
         sys.exit(3)
 
-    if not ns.no_refresh:
+    # The refresh pulls the source clone from Forgejo. The brain working
+    # copy belongs to the curator, which commits into it; a pull here
+    # would race its writes.
+    if not ns.no_refresh and not searching_brain:
         status = refresh_vault_if_stale(vault)
         if status == "pulled":
             print("[memory] vault updated from Forgejo", file=sys.stderr)
@@ -336,5 +375,6 @@ def run(args, stacklet, config) -> dict | None:
     # the same way rather than reading a container's env.
     home_url = (config or {}).get("home_url", "")
     link_base = f"{home_url}/go" if home_url else ""
-    print("\n\n".join(_format_block(r, link_base) for r in results))
+    show_matches = len(split_alternatives(query)) > 1
+    print("\n\n".join(_format_block(r, link_base, show_matches) for r in results))
     return None
