@@ -605,6 +605,60 @@ class TestRanking:
         assert search_memory(r"ls\|xx", v) == []
 
 
+class TestExcerptCarriesItsHeading:
+    """A diary month is one page; the day is the heading above the entry.
+
+    The excerpt showed the matching line alone, so the model read the
+    page again to learn which day it was. With the nearest heading in
+    front, the result answers "when" by itself.
+    """
+
+    @pytest.fixture
+    def diary(self, tmp_path):
+        v = tmp_path / "vault"
+        _write(v / "family/diary/2026/06.md", """
+            ---
+            title: Juni
+            ---
+
+            # Juni 2026
+
+            ## 3. Juni
+            Bart war heute im Zoo.
+
+            ## 12. Juni
+            Bart hat heute sein Seepferdchen geschafft.
+        """)
+        return v
+
+    def test_the_nearest_heading_comes_before_the_line(self, diary):
+        results = search_memory("Seepferdchen", diary)
+
+        assert results[0]["excerpt"] == "12. Juni › Bart hat heute sein Seepferdchen geschafft."
+
+    def test_an_earlier_section_gets_its_own_heading(self, diary):
+        results = search_memory("Zoo", diary)
+
+        assert results[0]["excerpt"] == "3. Juni › Bart war heute im Zoo."
+
+    def test_a_match_in_a_heading_is_the_heading_alone(self, diary):
+        results = search_memory("12\\. Juni", diary)
+
+        assert results[0]["excerpt"] == "12. Juni"
+
+    def test_a_line_with_no_heading_above_stays_plain(self, tmp_path):
+        v = tmp_path / "vault"
+        _write(v / "family/notes/zettel.md", """
+            ---
+            title: Zettel
+            ---
+
+            Bart braucht eine neue Badehose.
+        """)
+
+        assert search_memory("Badehose", v)[0]["excerpt"] == "Bart braucht eine neue Badehose."
+
+
 class TestMatchesLine:
     def test_multi_keyword_output_names_the_matches(self, stack_cli, child_vault):
         code, out, _ = stack_cli(

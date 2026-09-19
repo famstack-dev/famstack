@@ -1626,9 +1626,16 @@ def strip_diacritics(text: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
+_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+
+
 def _excerpt(text: str, patterns: List["re.Pattern[str]"], max_len: int = 200,
              fold_diacritics: bool = True) -> str:
-    """First non-empty body line that matches a pattern, tried in order.
+    """First body line that matches a pattern, with its section heading.
+
+    The result is `<nearest heading> › <line>`, or the line alone when
+    no heading comes before it, or the heading alone when the heading
+    itself matched.
 
     `patterns` are the query's alternatives, rarest first, compiled
     against folded text. A page found through "Bart|Seepferdchen" shows
@@ -1645,14 +1652,28 @@ def _excerpt(text: str, patterns: List["re.Pattern[str]"], max_len: int = 200,
     still shows the line saying "Käse". A hit whose excerpt came back
     empty is a hit the reader cannot judge.
     """
-    lines = [line.strip() for line in body_only(text).splitlines()]
-    lines = [line for line in lines if line]
+    # Each line with the nearest Markdown heading above it. A diary
+    # month is one page and the day is its heading, so a line without
+    # its heading does not say when it happened.
+    sections: List[tuple] = []
+    heading = ""
+    for raw in body_only(text).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if m := _HEADING.match(line):
+            heading = m.group(1).strip()
+            sections.append((heading, ""))
+        else:
+            sections.append((heading, line))
+
     for pattern in patterns:
-        for line in lines:
-            if pattern.search(strip_diacritics(line) if fold_diacritics else line):
-                if len(line) > max_len:
-                    line = line[:max_len] + "…"
-                return line
+        for heading, line in sections:
+            candidate = line or heading
+            if pattern.search(strip_diacritics(candidate) if fold_diacritics else candidate):
+                if len(candidate) > max_len:
+                    candidate = candidate[:max_len] + "…"
+                return f"{heading} › {candidate}" if line and heading else candidate
     return ""
 
 
