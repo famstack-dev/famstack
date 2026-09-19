@@ -199,3 +199,16 @@ diff keeps growing.
 * Where the fork lives. Arthur refers to reactivating an existing one; it is
   not visible under `famstack-dev` or `arthware-dev` from this machine.
 * Whether the vault tools move in or stay on the discovery seam.
+
+## Update 2026-09-19
+
+Two shims removed; history size is left to nanobot's own settings.
+
+| Shim | Change | Reason |
+|---|---|---|
+| `lean_state` | removed; `state_log` keeps the debug log, opt-in (`AGENT_STATE_LOG=1`) | duplicated nanobot's microcompact, broke the prefix cache, and its "re-run" placeholders made the model repeat tool calls |
+| `grep_tool` | removed; grep is literal again | ran a regex as a semantic query (lesson 7); the model retried the same grep |
+| `compact_tools` | added; patches `agent.runner._COMPACTABLE_TOOLS` | nanobot's microcompact now also shortens old vault tool results |
+
+`config.json` sets `context_window_tokens` to 32768, so nanobot's token
+consolidation and history snip act at a size that keeps prefill short.

@@ -7,7 +7,9 @@ alike — with no fork.
 
 Two kinds of patch live here, each a thin monkeypatch over a pure module.
 
-First, two context shims that reshape what the model sees per turn:
+First, the context shims. History length and old tool results are left to
+nanobot's own mechanisms (replay window, idle autocompact, microcompact, token
+consolidation); see config.json and compact_tools.py.
 
 1. brief (brief.py) — prepends a per-turn family briefing (who is speaking, the
    topic) to nanobot's runtime lines. Injected late (after the stable prompt and
@@ -15,12 +17,11 @@ First, two context shims that reshape what the model sees per turn:
    tokens cached with late injection vs 0 injecting the same content early via
    USER.md.
 
-2. lean_state (lean_state.py) — replaces previous-turn tool results with the
-   call that produced them (`name(args)`), so the agent re-fetches instead of
-   reciting stale data. The transcript (Matrix) keeps the full result; the state
-   we feed the model keeps only a cheap pointer.
+2. state_log (state_log.py) — with AGENT_STATE_LOG=1, writes the message list
+   of each turn to ~/.nanobot/llm-state.log. Off by default. It does not change
+   the message list.
 
-Second, four vault tools, which add capability rather than reshaping context.
+Second, the vault tools, which add capability rather than reshaping context.
 They are *tools* and not lines in a skill because that is the difference
 between a capability the model chooses and one it has to remember: told in
 prose to run `stack memory history`, it called `memory_search` four times
@@ -31,9 +32,8 @@ instead and never ran it once.
 5. history_tool (history_tool.py) — a `memory_history` tool for questions with
    time in them. Search ranks pages by what they say now, so "lately", "since
    when" and "who changed this" are unanswerable by it, silently.
-6. grep_tool (grep_tool.py) — routes greps under `vault/` into memory_search, so
-   the agent gets semantic hits instead of literal matches on a corpus where the
-   words it greps for are rarely the words on disk.
+6. compact_tools (compact_tools.py) — adds the vault read tools to nanobot's
+   microcompact set, so their old results are shortened like nanobot's own.
 
 Third, one shim that widens when the agent is allowed to answer at all:
 
@@ -63,13 +63,13 @@ TO REMOVE
 
 PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
     brief:       `nanobot.agent.context.runtime_lines(state, msg, workspace, *, skip=False) -> list[str]`
-    lean_state:  `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
+    state_log:   `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
     memory_tool: `nanobot.agent.tools.loader.ToolLoader.discover(self) -> list[type[Tool]]`
                  `nanobot.agent.tools.base.Tool`, `nanobot.agent.tools.base.tool_parameters`
                  `nanobot.agent.tools.schema.{StringSchema, IntegerSchema, tool_parameters_schema}`
     person_tool: same symbols as memory_tool
     history_tool: same symbols as memory_tool
-    grep_tool:   `nanobot.agent.tools.search.GrepTool.execute(...) -> str`
+    compact_tools: `nanobot.agent.runner._COMPACTABLE_TOOLS` (frozenset of tool names)
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
                  `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
                  `nanobot.agent.tools.apply_patch.ApplyPatchTool.execute(self, edits, ...) -> str`
@@ -129,64 +129,54 @@ except Exception:
     _log.exception("brief shim could not attach (nanobot internals changed?)")
 
 
-# ── lean_state: previous-turn tool results -> a pointer naming the call ──────
-# Also the single place to see the *state* (what the model receives) next to the
-# *transcript* (the Matrix room): every turn logs the leaned message list, one
-# line per message, greppable by "[llm-state]" in `docker logs stack-agent`.
+# ── state_log: the message list per turn, for debugging (opt-in) ─────────────
+# AGENT_STATE_LOG=1 writes what nanobot built for each call to llm-state.log,
+# one line per message, to compare against the Matrix chat. Off by default:
+# nanobot also calls build_messages to estimate tokens, so the file grows by
+# several blocks per turn.
 try:
-    import datetime as _dt
     import os as _os
 
-    import nanobot.agent.context as _ctx_ls
-    from lean_state import format_state_for_log as _format_state
-    from lean_state import lean_messages as _lean_messages
+    if _os.environ.get("AGENT_STATE_LOG", "0") == "1":
+        import datetime as _dt
 
-    _orig_build_messages = _ctx_ls.ContextBuilder.build_messages
-    # Bind-mounted home (~/.nanobot -> famstack-data/agent), so this file is
-    # readable on the host for analysis, one appended block per turn.
-    _STATE_LOG = _os.path.expanduser("~/.nanobot/llm-state.log")
+        import nanobot.agent.context as _ctx_ls
+        from state_log import format_state_for_log as _format_state
 
-    # Experiment switch: AGENT_LEAN_STATE=0 disables the history rewrite and
-    # keeps the message list append-only. The rewrite invalidates the oMLX
-    # prefix cache from the first rewritten message on (measured 2026-09-15,
-    # see docs/design/agent/agent-improvement-log.md). Default stays on.
-    _LEAN_ENABLED = _os.environ.get("AGENT_LEAN_STATE", "1") != "0"
+        _orig_build_messages = _ctx_ls.ContextBuilder.build_messages
+        # Bind-mounted home (~/.nanobot -> famstack-data/agent), so this file
+        # is readable on the host for analysis.
+        _STATE_LOG = _os.path.expanduser("~/.nanobot/llm-state.log")
 
-    def _build_messages_lean(self, *args, **kwargs):
-        # Post-process the assembled message list: stale prior-turn tool results
-        # become pointers; answers and the current turn stay intact.
-        messages = _orig_build_messages(self, *args, **kwargs)
-        if _LEAN_ENABLED:
-            messages = _lean_messages(messages)
-        try:  # a debug view; never worth breaking a turn over
-            stamp = _dt.datetime.now().isoformat(timespec="seconds")
-            with open(_STATE_LOG, "a", encoding="utf-8") as fh:
-                fh.write(f"\n===== {stamp}  {len(messages)} messages =====\n"
-                         + _format_state(messages) + "\n")
-            print(f"[llm-state] {len(messages)} msgs -> llm-state.log", flush=True)
-        except Exception:
-            pass
-        return messages
+        def _build_messages_logged(self, *args, **kwargs):
+            messages = _orig_build_messages(self, *args, **kwargs)
+            try:  # a debug view; never worth breaking a turn over
+                stamp = _dt.datetime.now().isoformat(timespec="seconds")
+                with open(_STATE_LOG, "a", encoding="utf-8") as fh:
+                    fh.write(f"\n===== {stamp}  {len(messages)} messages =====\n"
+                             + _format_state(messages) + "\n")
+            except Exception:
+                pass
+            return messages
 
-    _ctx_ls.ContextBuilder.build_messages = _build_messages_lean
-    _log.info("lean-state message shim active")
+        _ctx_ls.ContextBuilder.build_messages = _build_messages_logged
+        _log.info("state-log shim active")
 except Exception:
-    _log.exception("lean-state shim could not attach (nanobot internals changed?)")
+    _log.exception("state-log shim could not attach (nanobot internals changed?)")
 
 
-# ── vault tools: memory_search, memory_person, and grep routed through them ──
+# ── vault tools: memory_search, memory_person, memory_history, writes ────────
 # These add capability rather than reshaping context, but attach the same way.
 # Each is installed in its own try so one tool failing costs only itself; a
-# single shared block would let a moved GrepTool symbol take memory_search down
-# with it. memory_tool goes first because grep_tool routes into it.
+# single shared block would let one moved nanobot symbol take the others down.
 for _module_name, _what in (
     ("memory_tool", "memory_search tool"),
     ("person_tool", "memory_person tool"),
     ("history_tool", "memory_history tool"),
-    ("grep_tool", "vault grep -> memory_search routing"),
     ("vault_write", "write_file on a vault page -> stack memory write"),
     ("list_tool", "list_edit item tool -> stack memory list-edit"),
     ("tool_trim", "unused-tool trim (AGENT_TOOL_TRIM=0 to disable)"),
+    ("compact_tools", "vault tools in nanobot's microcompact set"),
     ("thread_session", "thread-scoped sessions (AGENT_THREAD_SESSIONS=0 to disable)"),
 ):
     try:
@@ -292,7 +282,7 @@ try:
     from brief import topic_for_room_label as _topic_for_room_label
     from join_greeting import greeting_prompt as _greeting_prompt
 
-    # Same workspace nanobot mounts the projection into; `lean_state`
+    # Same workspace nanobot mounts the projection into; `state_log`
     # above resolves its log the same way.
     _WORKSPACE = _Path(_ospath.expanduser("~/.nanobot/workspace"))
 

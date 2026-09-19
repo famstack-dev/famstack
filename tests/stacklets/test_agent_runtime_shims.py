@@ -23,10 +23,10 @@ import sys
 
 import pytest
 
-SHIMMED_MODULES = ("sitecustomize", "brief", "lean_state",
-                   "memory_tool", "person_tool", "history_tool", "grep_tool",
+SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
+                   "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
-                   "list_tool", "tool_trim", "thread_session")
+                   "list_tool", "tool_trim", "thread_session", "compact_tools")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -90,23 +90,31 @@ def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
     assert "MemoryHistoryTool" in _discovered(mods)
 
 
-def test_vault_greps_are_routed_through_memory_search(nanobot):
-    """A grep under `vault/` must no longer hit the stock literal matcher.
+def test_vault_tool_results_are_microcompacted(nanobot):
+    """nanobot shortens old results of the tools in this set only.
 
-    The vault is prose. Literal grep over it answers almost nothing, which
-    is why this routing exists.
+    Without our names in it, every memory_search result stays in the
+    context in full for as long as the session replays it.
     """
     mods = nanobot()
-    grep = mods["nanobot.agent.tools.search"].GrepTool
-    assert grep.execute.__name__ == "execute_with_memory"
+    tools = mods["nanobot.agent.runner"]._COMPACTABLE_TOOLS
+    assert {"memory_search", "memory_person", "memory_history"} <= tools
+    assert {"read_file", "exec", "grep"} <= tools, "nanobot's own set must stay"
 
 
 def test_context_shims_are_attached(nanobot):
-    """The two older shims, pinned the same way as the new tools."""
+    """The briefing attaches; the message list is nanobot's own."""
     mods = nanobot()
     ctx = mods["nanobot.agent.context"]
     assert ctx.runtime_lines.__name__ == "_runtime_lines"
-    assert ctx.ContextBuilder.build_messages.__name__ == "_build_messages_lean"
+    assert ctx.ContextBuilder.build_messages.__name__ == "build_messages"
+
+
+def test_state_log_is_opt_in(nanobot, monkeypatch):
+    monkeypatch.setenv("AGENT_STATE_LOG", "1")
+    mods = nanobot()
+    ctx = mods["nanobot.agent.context"]
+    assert ctx.ContextBuilder.build_messages.__name__ == "_build_messages_logged"
 
 
 def test_being_named_counts_as_a_mention(nanobot, monkeypatch):
@@ -267,10 +275,10 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     """One missing nanobot symbol must cost only its own tool.
 
     This is why each install runs in its own try. Sharing one block would
-    mean a renamed GrepTool silently removed memory_search too, and the
-    agent would lose vault access over an unrelated upgrade.
+    mean a renamed runner constant silently removed memory_search too, and
+    the agent would lose vault access over an unrelated upgrade.
     """
-    mods = nanobot(drop="nanobot.agent.tools.search.GrepTool")
+    mods = nanobot(drop="nanobot.agent.runner._COMPACTABLE_TOOLS")
 
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
                                  "MemoryHistoryTool", "ListEditTool"}
@@ -289,9 +297,9 @@ def test_the_stub_can_actually_express_a_detached_shim(nanobot):
     assert not hasattr(tools, "ToolLoader"), "the drop hook must really remove it"
 
     # Nothing to append to, so neither tool can have registered anywhere.
-    grep = mods["nanobot.agent.tools.search"].GrepTool
-    assert grep.execute.__name__ == "execute_with_memory", (
-        "grep routing is independent of the loader and should still attach"
+    tools = mods["nanobot.agent.runner"]._COMPACTABLE_TOOLS
+    assert "memory_search" in tools, (
+        "compact_tools is independent of the loader and should still attach"
     )
 
 

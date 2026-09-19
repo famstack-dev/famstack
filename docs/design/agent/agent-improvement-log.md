@@ -1296,3 +1296,20 @@ context were placeholders, and the model copied the format.
 Trade-off: a prior answer that recites a list is in the context again.
 The tool result behind it is still a pointer. Regression test:
 `test_no_assistant_message_holds_a_placeholder`.
+
+## 2026-09-19 - Context size left to nanobot
+
+The shims that rewrote context worked against nanobot's own mechanisms.
+
+| Item | Before | After |
+|---|---|---|
+| Prior tool results | `lean_state` placeholder, all of them, every turn | nanobot microcompact: 10 newest kept, older >= 500 chars omitted |
+| Vault tool results | not compactable (names missing from `_COMPACTABLE_TOOLS`) | compactable (`compact_tools.py`) |
+| Vault grep | semantic query via `grep_tool` | literal grep |
+| `context_window_tokens` | 200000 (default; consolidation never ran) | 32768 (budget 23.5k, consolidation target 11.7k) |
+| `llm-state.log` | every `build_messages` call | only with `AGENT_STATE_LOG=1` |
+
+Why autocompact did not shrink the room: it keeps the last 8 messages,
+extended back to the start of that turn. A turn with 11 tool calls has
+24 messages, so the whole turn stayed.
+

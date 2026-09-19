@@ -79,10 +79,6 @@ def nanobot_stub():
             def register(self, tool):
                 pass
 
-        class GrepTool:
-            async def execute(self, *args, **kwargs):
-                return "stock grep"
-
         # The three write tools, `async def` exactly as upstream declares them.
         # That detail is the contract, not decoration: nanobot's tool loop
         # awaits the result, so a shim that replaces one with a sync function
@@ -156,6 +152,10 @@ def nanobot_stub():
         mod("nanobot.agent")
         mod("nanobot.agent.context",
             runtime_lines=runtime_lines, ContextBuilder=ContextBuilder)
+        # AgentRunner's microcompact reads this set at call time;
+        # compact_tools extends it.
+        mod("nanobot.agent.runner",
+            _COMPACTABLE_TOOLS=frozenset({"read_file", "exec", "grep"}))
         mod("nanobot.agent.tools")
         mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
         mod("nanobot.agent.tools.schema",
@@ -163,7 +163,6 @@ def nanobot_stub():
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
         mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
-        mod("nanobot.agent.tools.search", GrepTool=GrepTool)
         mod("nanobot.agent.tools.filesystem",
             WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)
         mod("nanobot.agent.tools.apply_patch", ApplyPatchTool=ApplyPatchTool)

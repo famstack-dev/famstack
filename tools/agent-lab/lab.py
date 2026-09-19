@@ -212,7 +212,7 @@ def cmd_cache(ep: Endpoint, args) -> dict:
     warm:    the same conversation plus the real reply and one new turn.
     warm2:   one more append-only turn.
     mutate:  the warm2 conversation with one early message rewritten,
-             plus one new turn. This simulates the lean_state rewrite.
+             plus one new turn. This simulates any mid-history rewrite.
     Expected result: warm and warm2 have a low TTFT. mutate has a TTFT
     near the cold value, because the prefix diverges early.
     """
@@ -232,8 +232,8 @@ def cmd_cache(ep: Endpoint, args) -> dict:
     print("phase warm2 ...")
     rows.append(_phase_row("warm2", turn("Give a final short sentence.")))
 
-    # Rewrite one early assistant message in place. This is the same
-    # operation lean_state applies to prior tool results.
+    # Rewrite one early assistant message in place, as a history
+    # rewrite (placeholder for an old tool result) would.
     msgs[2]["content"] = "[prior result of tool(args); re-run for the current value]"
     print("phase mutate ...")
     rows.append(_phase_row("mutate", turn("Give one more short sentence.")))
@@ -241,62 +241,6 @@ def cmd_cache(ep: Endpoint, args) -> dict:
     for row in rows:
         print(json.dumps(row))
     return {"phases": rows, "prefix_words": args.prefix_words, "history_turns": args.history_turns}
-
-
-def build_scripted_history(seed: int, prefix_words: int, turns: int) -> list[list[dict]]:
-    """Build a scripted tool-using conversation, one block list per turn.
-
-    Each turn has the shape nanobot produces: user question, assistant
-    tool call, tool result, assistant answer. All content is synthetic.
-    The script is deterministic, so both replay arms see identical bytes.
-    """
-    blocks = [[{"role": "system", "content": filler_text(prefix_words, seed)}]]
-    for t in range(turns):
-        call_id = f"call_{t}"
-        args = json.dumps({"query": f"topic {t} " + " ".join(filler_text(4, seed + t).split())})
-        blocks.append([
-            {"role": "user", "content": f"Question {t}: " + filler_text(30, seed + 10 + t)},
-            {"role": "assistant", "content": "", "tool_calls": [{
-                "id": call_id, "type": "function",
-                "function": {"name": "memory_search", "arguments": args},
-            }]},
-            {"role": "tool", "tool_call_id": call_id,
-             "content": f"Result {t}: " + filler_text(150, seed + 100 + t)},
-            {"role": "assistant", "content": f"Answer {t}: " + filler_text(60, seed + 200 + t)},
-        ])
-    return blocks
-
-
-def cmd_replay(ep: Endpoint, args) -> dict:
-    """Replay the real lean_state transform against an append-only arm.
-
-    Arm A builds each turn's payload with lean_messages() from the agent
-    runtime, as production does. Arm B sends the same history verbatim.
-    The two arms use different seeds, so they do not share cache blocks.
-    Expected result: arm B hits the prefix cache from turn 2 on. Arm A
-    misses it on every turn after the first tool result.
-    """
-    sys.path.insert(0, str(REPO_ROOT / "stacklets" / "agent" / "runtime"))
-    from lean_state import lean_messages
-
-    arms = {}
-    for arm, (transform, seed) in {
-        "lean_state (production)": (lean_messages, args.seed),
-        "append-only": (lambda m: m, args.seed + 1000),
-    }.items():
-        blocks = build_scripted_history(seed, args.prefix_words, args.turns)
-        rows = []
-        print(f"arm: {arm}")
-        for t in range(1, args.turns + 1):
-            # The payload at turn t: system + t-1 full turns + this turn's
-            # user message. This is the state at the start of a turn.
-            history = [m for block in blocks[:t] for m in block]
-            payload = transform(history + [blocks[t][0]])
-            r = ep.chat(payload, max_tokens=args.max_tokens, stream=args.stream)
-            rows.append(_phase_row(f"turn {t}", r))
-            print(json.dumps(rows[-1]))
-        arms[arm] = rows
-    return {"arms": arms, "prefix_words": args.prefix_words, "turns": args.turns}
 
 
 def append_log(entry_title: str, ep: Endpoint, payload: dict, note: str, result_file: Path):
@@ -351,19 +295,13 @@ def main() -> int:
     p_cache.add_argument("--max-tokens", type=int, default=48)
     p_cache.add_argument("--seed", type=int, default=42)
 
-    p_replay = sub.add_parser("replay", help="replay real lean_state vs append-only")
-    p_replay.add_argument("--prefix-words", type=int, default=3000)
-    p_replay.add_argument("--turns", type=int, default=4)
-    p_replay.add_argument("--max-tokens", type=int, default=48)
-    p_replay.add_argument("--seed", type=int, default=7)
-
     args = parser.parse_args()
     if not args.url or not args.model:
         print("error: no endpoint or model. Set --url/--model or stack.toml [ai].", file=sys.stderr)
         return 2
 
     ep = Endpoint(args.url, args.key, args.model, args.timeout)
-    payload = {"probe": cmd_probe, "cache": cmd_cache, "replay": cmd_replay}[args.cmd](ep, args)
+    payload = {"probe": cmd_probe, "cache": cmd_cache}[args.cmd](ep, args)
 
     RESULTS_DIR.mkdir(exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
