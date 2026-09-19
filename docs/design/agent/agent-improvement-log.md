@@ -1276,3 +1276,23 @@ list_edit(op=add, items=["butter","eggs","flour"]) -> "added 3" in one
 commit (was 3 calls, 3 commits). Full lifecycle correct: every item
 kept, [x] preserved, clean commit trail. Rig now runs the production
 transform, so this exercised the real store code.
+
+## 2026-09-19 - Answer decay removed from lean_state
+
+Failure: in a room with a long history, a vault question ran 11
+iterations, sent the same grep 4 times, then replied with the placeholder
+text `[earlier answer from grep({...}); re-run for the current value]`
+instead of an answer.
+
+Cause: commit 6b80a08 replaced each prior answer of a tool-using turn
+with that placeholder. In a long room most assistant turns in the
+context were placeholders, and the model copied the format.
+
+| Rewrite | Role | Result |
+|---|---|---|
+| prior tool result -> `[prior result of ...]` | tool | kept, not copied |
+| prior tool-turn answer -> `[earlier answer from ...]` | assistant | removed, copied into replies |
+
+Trade-off: a prior answer that recites a list is in the context again.
+The tool result behind it is still a pointer. Regression test:
+`test_no_assistant_message_holds_a_placeholder`.
