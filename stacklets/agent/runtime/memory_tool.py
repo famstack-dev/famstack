@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import (
@@ -40,7 +41,9 @@ from nanobot.agent.tools.schema import (
             nullable=True,
         ),
         person=StringSchema(
-            "Optional person filter, such as lisa or homer.",
+            "Optional person the question is about, such as lisa. Added as "
+            "a keyword: it ranks pages naming them higher, it does not "
+            "hide pages that do not list them.",
             nullable=True,
         ),
         tag=StringSchema(
@@ -61,9 +64,12 @@ class MemorySearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search the family memory vault. Results include rank, score, vault path, "
-            "snippet, and source links when available. Use before answering factual "
-            "questions about family people, plans, documents, notes, bookmarks, or topics."
+            "Search the family memory vault by keywords. Most relevant first: a page "
+            "with a rare keyword ranks above pages with only common ones. Each result "
+            "has date, persons, vault path, title, the matching line, which keywords "
+            "matched, and a source link for captured notes. Use before answering "
+            "factual questions about family people, plans, documents, notes, "
+            "bookmarks, or topics."
         )
 
     @property
@@ -108,7 +114,15 @@ class MemorySearchTool(Tool):
         # which made a second LLM call inside every multi-word search
         # (measured 2026-09-15: one full model call per search, on the
         # same GPU as the turn). The model now supplies the keywords.
-        words = [re.escape(w) for w in query.split()]
+        words = query.split()
+        # The person is a keyword, not a filter. `--person` drops every
+        # page whose frontmatter does not list them, and a diary entry
+        # written by a parent about a child usually lists the parent.
+        # As a keyword, the name ranks their pages up, and the ranking
+        # weighs it low because it is on many pages.
+        if person and person.lower() not in {w.lower() for w in words}:
+            words.append(person)
+        words = [re.escape(w) for w in words]
         pattern = "|".join(words) if len(words) > 1 else query
         args = [
             "stack",
@@ -118,7 +132,7 @@ class MemorySearchTool(Tool):
             "--limit",
             str(limit or 5),
         ]
-        for flag, value in (("--scope", scope), ("--person", person), ("--tag", tag)):
+        for flag, value in (("--scope", scope), ("--tag", tag)):
             if value:
                 args.extend([flag, value])
 
@@ -134,6 +148,7 @@ class MemorySearchTool(Tool):
         # answer. Only 2 and up (bad arguments, unreadable vault) are
         # failures. Reporting an empty result as a failure tells the model
         # to try again when the honest reply is that there is nothing there.
+        _log_search(query, pattern, proc.returncode, out)
         if proc.returncode not in (0, 1):
             return f"Error: memory search failed with exit {proc.returncode}: {err or out}"
         # The status decides, not the text. A search that matched nothing
@@ -143,6 +158,31 @@ class MemorySearchTool(Tool):
         if proc.returncode == 1:
             return "(no memory results)"
         return out or "(no memory results)"
+
+
+def _log_search(query: str, pattern: str, returncode: int, out: str) -> None:
+    """Write the query and the ranked result paths to the container log.
+
+    nanobot logs the tool call but not its result, so a search that
+    missed the page looked the same as a model that ignored it. Paths
+    and matched keywords only: the excerpt is page text and stays out.
+    """
+    if returncode not in (0, 1):
+        outcome, hits = f"error exit {returncode}", []
+    else:
+        # One block per result; its first line ends with the vault path.
+        blocks = [b for b in out.split("\n\n") if b.strip()] if returncode == 0 else []
+        hits = []
+        for block in blocks:
+            lines = block.strip().splitlines()
+            path = lines[0].split()[-1]
+            matches = next((ln.strip() for ln in lines[1:]
+                            if ln.strip().startswith("matches:")), "")
+            hits.append(f"{path}  {matches}".rstrip())
+        outcome = f"{len(hits)} results"
+    lines = [f"[memory_search] query={query!r} pattern={pattern!r} -> {outcome}"]
+    lines += [f"  {i}. {hit}" for i, hit in enumerate(hits, 1)]
+    print("\n".join(lines), file=sys.stderr, flush=True)
 
 
 def install() -> None:
