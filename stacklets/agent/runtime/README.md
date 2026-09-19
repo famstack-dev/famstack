@@ -11,7 +11,7 @@ size is left to nanobot's own settings in `config.json`:
 | Mechanism | Setting | Value | Effect |
 |---|---|---|---|
 | Replay window | `max_messages` | 40 | Older messages move to `history.jsonl` and the `# Recent History` section |
-| Token budget | `context_window_tokens` | 32768 | Budget = window - 8192 output - 1024 = 23.5k; consolidation trims to 50% of it, history snip cuts at it |
+| Token budget | `model_presets.primary.context_window_tokens` | 32768 | Budget = window - 8192 output - 1024 = 23.5k; consolidation trims to 50% of it, history snip cuts at it |
 | Idle autocompact | `idleCompactAfterMinutes` | 15 (default) | Idle session: summary plus the last turn |
 | Microcompact | `_COMPACTABLE_TOOLS` | nanobot's read tools + vault tools (`compact_tools.py`) | Keeps the 10 newest tool results, older ones (>= 500 chars) become `[<tool> result omitted from context]` |
 
