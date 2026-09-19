@@ -36,7 +36,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MEMORY_DIR = REPO_ROOT / "stacklets" / "memory"
 
-TOOL_MODULES = ("memory_tool", "person_tool", "grep_tool", "sitecustomize")
+TOOL_MODULES = ("memory_tool", "person_tool", "sitecustomize")
 
 
 # ── loading the real components under test ───────────────────────────

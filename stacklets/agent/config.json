@@ -16,6 +16,7 @@
       "model_preset": "primary",
       "max_tool_iterations": 12,
       "max_messages": 40,
+      "context_window_tokens": 32768,
       "disabled_skills": ["memory", "my"]
     }
   },

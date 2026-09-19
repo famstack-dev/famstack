@@ -18,7 +18,8 @@ python3 tools/agent-lab/lab.py cache --prefix-words 3000 --history-turns 6
   object. Use it to find the cache fields that oMLX reports.
 - `cache`: measures prefix-cache behavior in four phases: cold, warm,
   warm2, mutate. The mutate phase rewrites one early message in place.
-  This simulates the `lean_state` rewrite in the agent runtime.
+  This simulates a rewrite of the history, for example an old tool
+  result replaced by a placeholder.
   Expected result: warm turns have a low TTFT. The mutate turn has a
   TTFT near the cold value.
 

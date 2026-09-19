@@ -112,7 +112,7 @@ Full detail: `docs/design/agent/agent-improvement-log.md`.
 
 Change one thing, keep the same question and session name, compare the log
 tables. For an isolated behavior toggle, pass it as env, for example
-`--env AGENT_LEAN_STATE=0` or `--env AGENT_TOOL_TRIM=0`. Always keep a
+`--env AGENT_TOOL_TRIM=0` or `--env AGENT_THREAD_SESSIONS=0`. Always keep a
 baseline run so a result is a comparison, not a vibe check. For search-engine
 work, keep a `--backend regex` baseline (see the retrieval handover).
 

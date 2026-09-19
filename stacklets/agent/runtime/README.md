@@ -1,13 +1,22 @@
-# Agent runtime shims — per-turn briefing + lean state
+# Agent runtime shims — per-turn briefing
 
 This directory is a **contained modification of nanobot**, loaded into the agent
 container. It exists because nanobot has no plugin seam for shaping per-turn
 context, and we did not want to fork nanobot for a couple of hooks. Everything
 here lives in the stacklet; upstream `nanobot-ai` is installed unchanged.
 
-Two independent shims live here, each a thin monkeypatch over a pure module:
-**brief** (what the agent knows going in) and **lean_state** (keeping what it
-carries forward small and fresh).
+The main context shim is **brief** (what the agent knows going in). History
+size is left to nanobot's own settings in `config.json`:
+
+| Mechanism | Setting | Value | Effect |
+|---|---|---|---|
+| Replay window | `max_messages` | 40 | Older messages move to `history.jsonl` and the `# Recent History` section |
+| Token budget | `context_window_tokens` | 32768 | Budget = window - 8192 output - 1024 = 23.5k; consolidation trims to 50% of it, history snip cuts at it |
+| Idle autocompact | `idleCompactAfterMinutes` | 15 (default) | Idle session: summary plus the last turn |
+| Microcompact | `_COMPACTABLE_TOOLS` | nanobot's read tools + vault tools (`compact_tools.py`) | Keeps the 10 newest tool results, older ones (>= 500 chars) become `[<tool> result omitted from context]` |
+
+A small window keeps prefill short on the local model. `AGENT_STATE_LOG=1`
+writes the message list of each turn to `~/.nanobot/llm-state.log`.
 
 ## What it does
 
