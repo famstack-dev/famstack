@@ -902,12 +902,21 @@ def handle_doctor(stck, args):
         required = manifests.get(stacklet_id, {}).get("required_secrets", [])
         return [name for name in required if not stck.secret(stacklet_id, name)]
 
+    # What compose would give each service now, keyed by container name.
+    # Comparing a container against this, rather than against the
+    # stacklet's rendered env, is what keeps a deliberate compose
+    # override from reading as drift forever.
+    expected = {}
+    for s in discovered:
+        compose_file = docker.find_compose_file(Path(s["path"]))
+        if compose_file:
+            expected.update(docker.compose_service_env(compose_file))
+
     findings = doctor.diagnose(
         stacklets,
-        stck.env,
+        lambda container: expected.get(container, {}),
         docker.containers_for,
         docker.container_env,
-        docker.image_env,
         missing_secrets=missing_secrets,
         stale=stck.list().get("stale", []),
     )
