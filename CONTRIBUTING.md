@@ -10,8 +10,12 @@ One entry point, [Homebrew](https://brew.sh), which brings the rest:
 
 ```bash
 brew install uv
-uv sync --extra test
+tools/init-repo
 ```
+
+`tools/init-repo` is the one-time setup for a clone, and is safe to re-run. It checks the two things that otherwise fail confusingly hours later (an old Python, a missing `uv`), creates the test virtualenv, points git at the repo's hooks, and installs the language server binary. Everything it does is local to your clone.
+
+The hooks are the part git cannot do for you: a fresh clone must not be able to run code, so no repo can enable its own hooks on clone. `make test-unit` and `make typecheck` also enable them, so in practice they are on before your first commit either way.
 
 `uv sync` creates `.venv` in the repo root. Nothing needs activating: `uv run` and `uvx` find it, and the type checker is pointed at it by `pyproject.toml`. The `test` extra declares every dependency the test suite needs, including the bot runtime libraries that tests import directly.
 
@@ -31,7 +35,7 @@ Neither is a merge gate, and the type checker is not clean today. Run it on what
 
 ## Language server
 
-Agents working in this repo get a language server, so they can ask for a definition or every reference to a symbol instead of grepping for a name and hoping it is unique. Install the binary once:
+Agents working in this repo get a language server, so they can ask for a definition or every reference to a symbol instead of grepping for a name and hoping it is unique. `tools/init-repo` installs the binary; by hand it is:
 
 ```bash
 uv tool install basedpyright
@@ -71,8 +75,10 @@ A bare `make typecheck` reports on `lib`, `stacklets`, `tools` and `hooks`. `tes
 
 All three live in [docs/agent/dev.md](docs/agent/dev.md), which is the canonical reference and stays shorter than a duplicate here would. The short version: `make test-unit` before every commit, module tests over unit tests, feature branches only, never push without asking. Commit subjects are the changelog famstack.dev renders, so they follow `<type>(<scope>): <what the product does now>` and every one has to parse.
 
-Enable the hooks once per clone so lint and the commit convention are checked before a commit exists rather than in CI:
+The hooks check ruff on staged files and the commit subject before a commit exists, rather than in CI. `tools/init-repo` turns them on, as do `make test-unit` and `make typecheck`. To do only that:
 
 ```bash
-git config core.hooksPath hooks
+make hooks                  # or: git config core.hooksPath hooks
 ```
+
+An explicit `core.hooksPath` is never overwritten, so pointing it elsewhere, or nowhere, is respected.

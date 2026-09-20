@@ -4,11 +4,21 @@ PYTEST = uv run --extra test pytest
 
 # Type check the shipped code. Not a gate: read what it says about the files
 # you touched. `uvx basedpyright <paths>` narrows it further.
-typecheck types:
+typecheck types: hooks
 	-uvx basedpyright
 
+# Point git at the repo's own hooks. Git will not do this on clone, by
+# design: a fresh clone must not be able to run code. The nearest honest
+# thing is to do it the first time someone uses the repo's tooling, which
+# is what every target below depends on.
+#
+# Only when unset, so an explicit choice (an absolute path, a different
+# directory, deliberately no hooks) is never overwritten.
+hooks:
+	@tools/init-repo --hooks-only
+
 # Fast unit tests: no Docker. Run before every commit.
-test-unit unit fast test:
+test-unit unit fast test: hooks
 	$(PYTEST) tests/framework tests/stacklets -v --ignore=tests/framework/test_config_to_container.py
 
 # Live demo-rig tests: uses the already-running Simpsons demo instance.
@@ -31,4 +41,4 @@ test-smoke smoke:
 test-all: test-lifecycle
 test-integration: test-e2e
 
-.PHONY: typecheck types test-unit unit fast test test-demo demo-rig demo test-lifecycle container-lifecycle lifecycle test-e2e container-e2e e2e test-smoke smoke test-all test-integration
+.PHONY: hooks typecheck types test-unit unit fast test test-demo demo-rig demo test-lifecycle container-lifecycle lifecycle test-e2e container-e2e e2e test-smoke smoke test-all test-integration

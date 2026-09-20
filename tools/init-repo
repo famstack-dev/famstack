@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Set a clone of this repo up for development.
+
+Everything here is one-time, idempotent and local to the clone: the test
+virtualenv, the git hooks, and the checks that catch the two things that
+otherwise fail confusingly hours later, an old Python and a missing uv.
+
+    tools/init-repo                 the lot, with a report
+    tools/init-repo --hooks-only    just the hooks, silent if already set
+
+Deliberately 3.9-compatible so that on Apple's system Python it reports
+the version problem instead of failing to parse.
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MINIMUM_PYTHON = (3, 11)
+
+OK = "  ✓ "
+WARN = "  ⚠ "
+FAIL = "  ✗ "
+
+
+def say(message: str = "") -> None:
+    """Print in step with the subprocesses this script runs.
+
+    They write straight to the terminal while Python buffers when its
+    output is piped, so without flushing the report arrives after the
+    output of the commands it is describing.
+    """
+    print(message, flush=True)
+
+
+def run(*args, **kwargs):
+    return subprocess.run(args, cwd=str(REPO_ROOT), **kwargs)
+
+
+def enable_hooks(quiet: bool = False) -> bool:
+    """Point git at the repo's hooks, unless a choice was already made.
+
+    Git will not do this on clone, by design: a fresh clone must not be
+    able to run code. An explicit value is never overwritten, so someone
+    who pointed it elsewhere, or nowhere, keeps what they chose.
+    """
+    inside = run("git", "rev-parse", "--git-dir",
+                 capture_output=True, text=True).returncode == 0
+    if not inside:
+        if not quiet:
+            say(f"{WARN}not a git checkout, skipping hooks")
+        return False
+
+    current = run("git", "config", "core.hooksPath",
+                  capture_output=True, text=True).stdout.strip()
+    if current:
+        if not quiet:
+            say(f"{OK}hooks already configured: {current}")
+        return True
+
+    run("git", "config", "core.hooksPath", "hooks")
+    say("  hooks enabled: ruff on staged files, commit subjects checked")
+    return True
+
+
+def check_python() -> bool:
+    version = sys.version_info[:2]
+    if version >= MINIMUM_PYTHON:
+        say(f"{OK}python {version[0]}.{version[1]}")
+        return True
+    say(f"{FAIL}python {version[0]}.{version[1]}, need "
+          f"{MINIMUM_PYTHON[0]}.{MINIMUM_PYTHON[1]}+")
+    say("      Apple's Command Line Tools ship 3.9. Install a newer one:")
+    say("      brew install python")
+    return False
+
+
+def check_uv() -> bool:
+    if shutil.which("uv"):
+        say(f"{OK}uv")
+        return True
+    say(f"{FAIL}uv is missing. It is the only dependency to install by hand:")
+    say("      brew install uv")
+    return False
+
+
+def sync_venv() -> bool:
+    """Create .venv with the test extra, which is what the suite imports."""
+    say("  syncing .venv (uv sync --extra test)...")
+    if run("uv", "sync", "--extra", "test").returncode != 0:
+        say(f"{FAIL}uv sync failed")
+        return False
+    say(f"{OK}.venv ready")
+    return True
+
+
+def install_language_server() -> None:
+    """Optional: the binary the editor LSP points at. `uvx basedpyright`
+    works without it, so a failure here is not worth stopping for."""
+    if run("uv", "tool", "install", "basedpyright",
+           capture_output=True, text=True).returncode == 0:
+        say(f"{OK}basedpyright (language server)")
+    else:
+        say(f"{WARN}basedpyright not installed; `uvx basedpyright` still works")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--hooks-only", action="store_true",
+                        help="Only configure git hooks, quietly")
+    args = parser.parse_args()
+
+    if args.hooks_only:
+        enable_hooks(quiet=True)
+        return 0
+
+    say("\n  Setting up this clone\n")
+    ready = check_python() and check_uv()
+    if not ready:
+        say("\n  Fix the above and run tools/init-repo again.\n")
+        return 1
+
+    ready = sync_venv()
+    enable_hooks()
+    install_language_server()
+
+    say("\n  Next:")
+    say("    make test-unit      the fast suite, before every commit")
+    say("    make typecheck      types across the shipped code")
+    say("    docs/agent/dev.md   how to write code here\n")
+    return 0 if ready else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
