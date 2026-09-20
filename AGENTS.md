@@ -83,7 +83,7 @@ Apply to every role, every session.
 3. **Never `git push` without explicit human approval.** Every push, every branch, every time.
 4. **Never commit to `main`.** Feature branches only.
 5. **No `Co-Authored-By:` trailers** in commit messages.
-6. **Semantic commit prefixes:** `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`, `ci:`, `style:`.
+6. **Commit subjects are the changelog.** `<type>(<scope>): <imperative summary>`, then a body that says what and why, in plain technical English. Types, scopes and the `Upgrade:` footer are in [docs/agent/dev.md](docs/agent/dev.md#commits-the-subject-is-the-changelog).
 7. **Never read or copy a user's production family vault.** Reference paths only; fabricate test data.
 8. **Destructive ops need confirmation.** `stack destroy`, `stack uninstall`, `rm -rf`, `git reset --hard`, force-push.
 9. **Announce actions before running them.** No silent long running or integration test runs, scripts, or background commands.

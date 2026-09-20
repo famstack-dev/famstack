@@ -247,21 +247,140 @@ Testing rules:
 - **Re-read the full error line before calling a failure a duplicate.** Check sender, target, specific IDs. Two errors that look similar at a glance often differ in the load-bearing field.
 - **No backwards-compatibility shims** in pre-1.0 code. Change the code, update callers, ship.
 
-## Commit & branch rules
+## Commits: the subject is the changelog
+
+The release log is the changelog. `stack update` prints it, the GitHub release
+quotes it, famstack.dev renders it. A subject that does not parse is missing
+from the release notes.
+
+Messages follow Conventional Commits and the Git and Linux kernel
+guidelines, in plain technical English.
+
+```
+<type>(<scope>)!: <subject>
+
+<body>
+
+<footer>
+```
+
+`!` marks a change that needs the admin to do something.
+
+| Type | Section | Shown |
+|---|---|---|
+| `feat` | Added | yes |
+| `fix` | Fixed | yes |
+| `security` | Security | yes, near the top |
+| `perf` | Performance | yes |
+| `docs` | Documentation | yes, last |
+| `refactor` `test` `chore` `ci` `style` `build` | | no |
+
+Nothing outside that list. A change that fits none of them is usually two changes.
+
+The scope is what a reader recognises, never a file or a module:
+
+| Scope | Renders as |
+|---|---|
+| `photos` | Photos |
+| `docs`, `archivist` | Documents |
+| `messages` | Messages |
+| `memory`, `wiki`, `curator` | Memory |
+| `agent` | Stacky |
+| `ai` | AI |
+| `chatai` | Chat AI |
+| `code` | Code |
+| `mail` | Email |
+| `backup` | Backup |
+| `core` | Core |
+| `infra` | Networking |
+| `web` | Web |
+| `stack`, `cli`, `doctor`, `update`, `install` | The stack CLI |
+| *(none)* | General |
+
+For type `docs` the scope names the document instead (`docs(readme)`,
+`docs(admin-guide)`, `docs(dev-guide)`), which is why those do not appear
+above. Scoping documentation with a stacklet's name renders it under that
+stacklet, which is how a README fix ends up filed under Documents.
+
+`docs` is both a type and a scope and they mean different things. Type `docs`
+is documentation; scope `docs` is the Documents stacklet. `fix(docs):` changes
+Paperless behaviour; a README fix is `docs(readme):`. A scope outside the
+table still commits and lands under General, so drift surfaces at release time
+rather than on the website.
+
+**Subject rules.** Describe the**Subject.** Imperative mood: it completes "If applied, this commit will
+...". Lowercase after the colon, no full stop, at most 72 characters
+including the prefix. Describe the change as an admin sees it: no class,
+file or function names unless an admin types them. A subject that needs
+"and" is two commits.
+
+**Body.** Blank line after the subject, wrapped at 72. Why the change is
+needed and what it changes; the diff shows how. It must make sense without
+the PR. Bullets for sets of changes. No debugging history, test narrative
+or rhetoric; those go in the PR.
+
+| Type | Body states |
+|---|---|
+| `feat` | what is now possible, how to use it, limits |
+| `fix` | symptom and trigger, cause, fix; `Fixes: <sha> ("<subject>")` if a commit caused it |
+| `perf` | cause, change, before/after numbers and how measured (the only type with measurements) |
+| `refactor` | why, and "No behaviour change." |
+| `docs` `test` `ci` `build` `chore` `style` | what changes and why |
+
+```
+fix(doctor): compare container env with the compose config
+
+`stack doctor` compared a container's environment with the stacklet's
+rendered `.env`, so services that set a different value in compose were
+reported as drifted after every recreate.
+
+Compare with the environment `docker compose config` resolves for the
+service.
+```
+
+he 54 commits in `v0.3.0-beta.2..v0.3.0-beta.3`
+already parse. Both that do not are instructive.
+
+```
+Move the docs stacklet to Paperless-ngx 3.0.4
+```
+
+No type, so it cannot be classified, and it was the most important entry in
+the release: it needed a backup before restarting, and 2.x cannot read the
+database once 3.x has migrated it. Written properly it cannot be lost:
+
+```
+feat(docs)!: move Paperless to 3.0.4
+
+Upgrade: back up ~/famstack-data/docs before restarting the stacklet.
+Paperless migrates the database on first start and 2.x will not read it
+afterwards. There is no downgrade.
+```
+
+| Footer | What it does |
+|---|---|
+| `Upgrade: <what the admin must do>` | Renders as **Action required** at the top of the release. Any update needing a human step: a backup, a config edit, a one-way migration. |
+| `BREAKING CHANGE: <what breaks>` | Same section, for something that breaks an existing setup rather than asking for a step. |
+| `Refs: FAM-12` | Links the tracker card. |
+| `Co-Authored-By:` | Never. Project rule. |
+
+A generator reads the header as
+`^(type)(\((scope)\))?(!)?: (subject)( \(#(pr)\))?$` and groups into **Action
+required** (any `!` or `Upgrade:`), Security, Added, Fixed, Performance,
+Documentation, by rendered scope within each.
+
+## Branch rules
 
 - **Check branch state before major work.** `git fetch origin` and see how the working branch relates to `origin/main` (`git log --oneline origin/main..HEAD` and `HEAD..origin/main`) before starting anything substantial, new branch or existing one alike. The branch may be older than you think: `main` advances, and a local `main` can itself be stale. Branch off (or rebase/merge onto) the latest `origin/main`; a branch left behind silently diverges and lands the PR in merge conflicts.
 - **Feature branches only.** Never commit to `main`.
-- **Semantic prefix required:** `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`, `ci:`, `style:`.
-- **Message style:** short, end-user POV, present tense. *What changed and why a user cares* - not the internal refactor narrative.
-- **No `Co-Authored-By:` trailers.** Project rule.
 - **Commit after every non-trivial fix.** Don't batch at session end. Each commit stands alone for review/revert.
 - **Cascade rule:** if fix N triggers fix N+1 triggers N+2, stop. Name the cascade and propose continue / revert / defer.
 - **Scope drift:** declare it out loud. Silent expansion is forbidden.
 
 ## Pull requests
 
-- PR title: short, semantic-prefix, under 70 chars.
-- PR body: `## Summary` with 1-3 bullets. **No "Test plan" section** - project preference.
+- **One PR is one changelog entry.** Squash merge; the PR title is the commit subject, in the format above, under 70 chars. A PR that needs two changelog lines is two PRs.
+- PR body: `## Summary` with 1-3 bullets, plus any `Upgrade:` / `BREAKING CHANGE:` footer, which lands in the squashed commit where a reviewer can argue with it. **No "Test plan" section** - project preference.
 - **Never `git push` without explicit human approval.** Every push, every branch, every time.
 
 ## Releases
@@ -271,6 +390,7 @@ Pre-tag gate, in order. A published tag is never moved; anything missed here shi
 1. Working tree clean - `git status` shows nothing modified, no stale `uv.lock` (the version bump touches `pyproject.toml` AND the lock; commit them together).
 2. Version bumped in `lib/stack/cli.py` (`VERSION`) and `pyproject.toml`.
 3. Full test round green: framework, stacklets, integration.
+3b. Every commit since the previous tag parses as a changelog entry. An unclassified subject blocks the tag: it would be missing from the release notes and from the website. Reword it if it has not shipped, add the entry by hand if it has.
 4. Fresh-instance install verified.
 5. Stale references updated: README version callouts, docs links, blog "Try it" instructions.
 6. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with Highlights and an "Upgrading from" section.
