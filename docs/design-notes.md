@@ -169,3 +169,54 @@ This is not specific to extensions. Every bind mount built from a variable has
 had it since the first one. The fix, if it is worth one, is for the down path
 to re-render env the way the up path does, which is a change to every
 stacklet's teardown and wants its own commit.
+
+## Customising a shipped stacklet without fighting the updater (2026-09-20)
+
+Writing the update docs made the gap obvious. An admin who wants a different
+Paperless setting, an extra volume, or a second service beside one of ours has
+exactly one move today: edit the file in `stacklets/`. Every update then stops
+on that edit, and they resolve the same conflict again on the next one.
+`~/famstack-extensions/` does not help, because an extension adds a stacklet
+and never replaces one the repo ships. So the only paths we offer are "carry a
+patch forever" or "fork", and both are worse than what the admin wanted.
+
+**Compose already has the answer, and we turned it off.** `docker compose` has
+loaded `docker-compose.override.yml` beside the main file since forever, but
+only when it resolves files itself. `docker.compose()` passes `-f <file>`
+explicitly, which disables that discovery. So the feature exists, is
+understood by every Docker user, and is one argument away:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.override.yml ...
+```
+
+A stacklet's override would live at `stacklets/<id>/docker-compose.override.yml`,
+gitignored like `.env`, hand-written by the admin, and merged by compose with
+its own documented rules. `stack up` picks it up, an update never touches it,
+and `stack doctor` can report that a stacklet is running with one so a
+surprising container is traceable.
+
+**The same `-f` plumbing is what mounting several extension dirs needs.** That
+was left open in [adr-013](adr/adr-013-stacklet-locations-and-stages.md): a
+compose file cannot iterate a list, so only the first extension dir is
+bind-mounted into the bot runner. A framework-generated overlay, written next
+to the base file on every `stack up`, would carry one mount line per configured
+directory. One mechanism, two problems, which is the argument for building it
+properly rather than special-casing either.
+
+Open, and the reason this is a note and not a card yet:
+
+- Compose overrides cover services, volumes, env and ports. They do not cover
+  `stacklet.toml`: `[env.defaults]`, ports the framework renders, health
+  checks, hints. An admin who wants a different `PAPERLESS_OCR_LANGUAGE` is
+  editing an env default, not a compose file. Either the override grows a
+  manifest half (`stacklet.override.toml`), or `stack.toml` grows per-stacklet
+  env overrides, which is arguably where it belongs.
+- Two writers to one path. If the framework generates an overlay for extension
+  mounts and the admin hand-writes one, they collide. Separate names
+  (`docker-compose.override.yml` for the admin, a generated file the framework
+  owns) or a single generated file that includes the admin's, but it has to be
+  decided before either exists.
+- An override is unversioned local state that changes what runs. `stack doctor`
+  should say so out loud, the way it reports env drift, or the next
+  "why is this container different" takes an hour.

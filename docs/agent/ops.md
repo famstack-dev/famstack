@@ -33,6 +33,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack restart <id>` | yes | no | `down` + `up` |
 | `./stack destroy <id>` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets |
 | `./stack uninstall` | yes | **YES, EVERYTHING** | destroys every stacklet, network, all data, config |
+| `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
 | `./stack list` | yes | no | reports state |
 | `./stack status` | yes | no | runs health checks |
 | `./stack logs <id>` | yes | no | tail container logs |
@@ -111,14 +112,12 @@ For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste ou
 
 ## Updating
 
-A release is a git tag. There is no `stack update`; the admin moves the checkout.
+A release is a git tag. `./stack update` moves the checkout to one and restarts what that staled. `--dry-run` shows the plan, `--yes` skips the confirmation, a tag argument picks a release other than the newest.
 
-```bash
-git fetch --tags && git checkout <tag> && ./stack doctor
-```
-
-- **What to restart:** `git diff --name-only <old> <new> -- stacklets/ | cut -d/ -f2 | sort -u`. Anything in that list that is running. If the same command against `lib/` prints anything, the framework changed: `./stack down all && ./stack up all`.
-- **Local edits block the switch.** `git stash` → checkout → `git stash pop`. A conflicting pop keeps the stash, so nothing is lost: `git checkout HEAD -- <file> && git stash drop` takes the release's version.
+- **It never restarts anything.** New code on disk is not new code running; recreating containers is the admin's decision. The command names what the release staled: stacklets it changed *and* that are running, or every running stacklet when anything under `lib/` changed.
+- **Local edits are set aside and put back.** If they collide with the release the whole update winds back: same release as before, edits in place, stash empty. Never leave a tree carrying conflict markers, a compose file with them in it does not parse.
+- **Before v0.3.0-beta.4 there is no `update`.** By hand: `git fetch --tags && git checkout <tag> && ./stack doctor`, then restart what `git diff --name-only <old> <new> -- stacklets/` names.
+- **Works from a branch or a fork.** On `main` it moves to the tag and says the branch is left behind (`git switch main` returns). Tags are fetched from every remote, so a fork needs the project added as a remote or there is nothing to update to.
 - **A tag checkout is a detached HEAD.** `git pull` fails there. Never suggest `git pull origin main` as the fix: it succeeds and silently moves the instance onto unreleased code while `./stack version` still reports the last release.
 - **`./stack version` is a constant in the tree,** not the running state. `git describe --tags` is the truth.
 - **The instance survives a tag switch.** Config, secrets, data and `~/<product>-extensions/` are all outside git.
