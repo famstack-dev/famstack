@@ -628,6 +628,18 @@ def print_up_success(result: dict, stck: Stack) -> None:
     print()
 
 
+def running_version_of(stck) -> str:
+    """The version to show a human: the tag, plus how far past it we are.
+
+    Every surface that prints a version goes through here, so `version`,
+    `doctor`, `update` and `list` cannot disagree about what is running.
+    """
+    from .updater import Checkout, running_version
+
+    checkout = Checkout(stck.root)
+    return running_version(checkout.describe() if checkout.is_git() else "", VERSION)
+
+
 def _short_path(path) -> str:
     """Home-relative path for display."""
     home = str(Path.home())
@@ -668,8 +680,7 @@ def print_list(result: dict, stck=None) -> None:
     shipped, extensions = _split_by_origin(stacklets)
     status_list(shipped)
     print_extensions_section(extensions, result.get("extension_dirs", []))
-    sha = stck._git_commit() if stck else ""
-    version_info = f"  {DIM}{VERSION} ({sha}){RESET}" if sha else ""
+    version_info = f"  {DIM}{running_version_of(stck)}{RESET}" if stck else ""
     print(f"  {result.get('online', 0)}/{result.get('total', 0)} online{version_info}")
     stale = result.get("stale", [])
     if stale:
@@ -698,7 +709,10 @@ def print_status(result: dict) -> None:
 
     col = 14
     print()
-    print(f"  {ORANGE}{BOLD}{name}{RESET} {DIM}{version} ({commit}){RESET}")
+    # The version already carries the commit when the checkout is past a
+    # tag, so repeating it would read as two different answers.
+    suffix = "" if commit and commit in version else f" ({commit})"
+    print(f"  {ORANGE}{BOLD}{name}{RESET} {DIM}{version}{suffix}{RESET}")
     print()
 
     print(f"  {BOLD}System{RESET}")
@@ -921,7 +935,23 @@ def handle_doctor(stck, args):
         stale=stck.list().get("stale", []),
     )
 
+    # What this instance is running, and whether a release has passed it.
+    # No fetch: doctor is run often, and often when something is
+    # unreachable, so it answers from the tags this clone already has.
+    from .updater import Checkout, latest_tag
+
+    checkout = Checkout(stck.root)
+    position = checkout.describe() if checkout.is_git() else ""
+    latest = latest_tag(checkout.tags()) if position else ""
+    release = doctor.check_release(
+        position, latest, up_to_date=bool(latest) and checkout.contains(latest))
+    if release:
+        findings.insert(0, release)
+
     print()
+    if position:
+        print(f"  {ORANGE}{BOLD}{stck.product_name()}{RESET} "
+              f"{DIM}{running_version_of(stck)}{RESET}\n")
     if not findings:
         print(f"  {GREEN}✓{RESET}  {doctor.summarise(findings)}\n")
         return
@@ -1368,7 +1398,14 @@ def handle_update(stck, args):
                      "hint": "git clone https://github.com/famstack-dev/famstack.git"})
         sys.exit(1)
 
-    print("\n  Fetching releases...", file=sys.stderr)
+    # The same line doctor opens with, so both commands answer "what am I
+    # running" identically. The positions themselves are in the plan below.
+    # flush: the progress lines below go to stderr unbuffered, and this
+    # one would otherwise arrive after them whenever output is piped.
+    print(f"\n  {ORANGE}{BOLD}{stck.product_name()}{RESET} "
+          f"{DIM}{running_version_of(stck)}{RESET}", flush=True)
+
+    print("  Fetching releases...", file=sys.stderr)
     fetched, fetch_err = checkout.fetch_tags()
     if not fetched:
         print(f"  {ORANGE}\u26a0{RESET}  Could not reach the remote. Working from the tags already here.",
@@ -1403,9 +1440,12 @@ def handle_update(stck, args):
     # and stash whatever is in progress to do it.
     branch = checkout.branch()
     if not args.tag and checkout.contains(target):
-        where = f"{branch}, which is development," if branch else checkout.describe()
-        print(f"\n  {GREEN}\u2713{RESET}  {TEAL}{where}{RESET} "
-              f"is already past {target}, the newest release.")
+        ahead = checkout.commits_ahead_of(target)
+        distance = f"{ahead} commit" + ("s" if ahead != 1 else "")
+        print(f"\n  {GREEN}\u2713{RESET}  Your checkout is {TEAL}{distance} "
+              f"ahead{RESET} of {target}, the newest release.")
+        if branch:
+            print(f"  {DIM}You are on {branch}, which is development.{RESET}")
         print(f"  {DIM}To move onto that release anyway: "
               f"stack update {target}{RESET}")
         if len(checkout.remotes()) > 1:
@@ -1566,8 +1606,7 @@ def _restore_edits(checkout, was, target, collisions) -> bool:
 
 
 def handle_version(stck, args):
-    sha = stck._git_commit()
-    print(f"{stck.product_name()} {VERSION} ({sha})")
+    print(f"{stck.product_name()} {running_version_of(stck)}")
 
 
 # ── Plugin loader ─────────────────────────────────────────────────────────
@@ -1753,7 +1792,9 @@ def main():
     p = sub.add_parser("update")
     p.add_argument("tag", nargs="?", default=None,
                    help="Release to move to (default: the newest)")
-    p.add_argument("--dry-run", action="store_true", help="Show what would change")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show the plan and stop. Still fetches tags, "
+                        "or the answer would be as stale as your last fetch")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("setup"); p.add_argument("stacklet")
     p = sub.add_parser("env"); p.add_argument("stacklet")

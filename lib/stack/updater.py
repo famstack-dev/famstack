@@ -63,6 +63,31 @@ def latest_tag(tags) -> str | None:
     return max(releases, key=version_key) if releases else None
 
 
+def running_version(describe: str, constant: str) -> str:
+    """What this checkout is, rather than what the source says it is.
+
+    `VERSION` in `lib/stack/cli.py` is the last number a human typed, and
+    between tags it names every tree since: a checkout 102 commits past
+    beta.3 still calls itself beta.3. `git describe --tags --dirty`
+    answers exactly the right question, comparing the working tree
+    against the commit a tag points at, so the distance, the commit and
+    an unclean tree all come out in one string.
+
+    Three cases. Sitting on the tag, the tag is the whole answer. Past
+    it, git's own string is. And in the window where the release gate has
+    bumped the constant but not yet tagged, the two disagree and both are
+    reported, because hiding either one is a lie.
+    """
+    if not describe:
+        return constant
+    position = describe.lstrip("v")
+    if position == constant:
+        return constant
+    if position.startswith(constant):
+        return position
+    return f"{constant} (checkout at {describe})"
+
+
 # ── What a jump makes stale ──────────────────────────────────────────────
 
 def _is_framework(path: str) -> bool:
@@ -156,9 +181,19 @@ class Checkout:
         return out if code == 0 else None
 
     def describe(self) -> str:
-        """Human position: a tag, a tag plus commits, or a bare SHA."""
-        code, out, _ = self._run("describe", "--tags", "--always")
+        """Human position: a tag, a tag plus commits, or a bare SHA.
+
+        `--dirty` because uncommitted work is part of the answer: a tree
+        one edit away from a tag is not that tag, and the difference is
+        exactly what someone comparing an instance to a release needs.
+        """
+        code, out, _ = self._run("describe", "--tags", "--always", "--dirty")
         return out if code == 0 else ""
+
+    def commits_ahead_of(self, ref: str) -> int:
+        """How many commits HEAD carries that `ref` does not."""
+        code, out, _ = self._run("rev-list", "--count", f"{ref}..HEAD")
+        return int(out) if code == 0 and out.isdigit() else 0
 
     def contains(self, ref: str) -> bool:
         """Whether HEAD already includes that ref.

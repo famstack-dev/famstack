@@ -13,6 +13,7 @@ from stack.doctor import (
     check_env_drift,
     check_exited,
     check_missing_secrets,
+    check_release,
     check_stale_code,
     diagnose,
     env_drift,
@@ -195,6 +196,43 @@ def test_an_unanswerable_question_reports_nothing():
         lambda n: {"ANYTHING": "at all"},
     )
     assert findings == []
+
+
+# ── the release this instance is on ──────────────────────────────────────
+
+class TestRelease:
+    """Doctor answers "what am I running, and is there something newer".
+
+    Both halves matter to an operator deciding whether tonight is an
+    update night, and neither was reported anywhere before: `stack
+    version` prints a constant from the working tree, which names a
+    hundred different trees between tags.
+    """
+
+    def test_a_newer_release_is_worth_saying(self):
+        finding = check_release("v0.3.0-beta.2", "v0.3.0-beta.3", up_to_date=False)
+
+        assert "v0.3.0-beta.3" in finding.title
+        assert finding.fix == "stack update"
+
+    def test_being_behind_is_not_an_error(self):
+        """Nothing is broken, and doctor's exit code gates scripts."""
+        finding = check_release("v0.3.0-beta.2", "v0.3.0-beta.3", up_to_date=False)
+        assert finding.is_error is False
+
+    def test_nothing_to_say_when_current(self):
+        assert check_release("v0.3.0-beta.3", "v0.3.0-beta.3", up_to_date=True) is None
+
+    def test_nothing_to_say_without_tags(self):
+        """A shallow clone, or a checkout with no releases fetched, cannot
+        answer the question. Silence beats a wrong answer."""
+        assert check_release("abc1234", "", up_to_date=False) is None
+
+    def test_says_the_answer_is_only_as_fresh_as_the_clone(self):
+        """Doctor does not reach the network, so the newest release it
+        knows is the newest this clone has fetched."""
+        finding = check_release("v0.3.0-beta.2", "v0.3.0-beta.3", up_to_date=False)
+        assert "clone" in finding.detail
 
 
 # ── findings ─────────────────────────────────────────────────────────────
