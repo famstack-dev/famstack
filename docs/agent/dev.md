@@ -209,14 +209,21 @@ Keep that file outside the repo. A committed baseline would quietly turn the typ
 Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
 
 ```bash
-make test-unit       # fast offline framework + stacklet tests
-make test-demo       # live Simpsons demo instance tests
-make test-lifecycle  # Docker lifecycle/container environment tests
-make test-smoke      # quick managed-rig e2e subset
-make test-e2e        # full managed-rig e2e suite
+make                 # the lane table: cost, what each needs, when to run it
+make lint            # <1s, the whole tree. The hook already covers staged files.
+make test-unit       # ~75s, offline, no Docker. Before a push, or when a
+                     #   piece of work is done. Not per commit.
+make test-lifecycle  # ~6m, Docker. Lifecycle, env rendering, compose, health.
+make test-demo       # against the running demo instance.
+make test-smoke      # quick managed-rig e2e subset.
+make test-e2e        # full managed-rig e2e suite.
 ```
 
-Profile details live in [../../tests/README.md](../../tests/README.md).
+Run the cheapest lane that proves what you changed. Every lane but
+`test-unit` owns fixed container names and ports, so exactly one runs at a
+time on a Mac: check nothing else is mid-run first. One name per lane, no
+aliases. Details, and the timings nobody has measured yet, live in
+[../../tests/README.md](../../tests/README.md).
 
 Testing rules:
 

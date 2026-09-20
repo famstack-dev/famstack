@@ -24,16 +24,34 @@ them.
 
 ## Choosing a lane
 
-Use the shortest command that proves the behavior you changed. The profiles
-below are ordered from cheapest to most disruptive.
+Run the cheapest lane that proves what you changed. One name per lane; the
+aliases are gone.
 
-| Profile | Alias | Command | What belongs here |
-|---|---|---|---|
-| `unit` | `fast`, `test` | `make test-unit` | Offline framework and stacklet tests. No Docker daemon, no live services, no production data. |
-| `demo-rig` | `demo` | `make test-demo` | Tests against the already-running Simpsons demo instance in this checkout. Tests must create unique data and clean up after themselves. |
-| `container-lifecycle` | `lifecycle` | `make test-lifecycle` | Docker lifecycle tests for stack orchestration: config rendering, `.env`, `stack up`, `stack down`, `stack destroy`, and container environment behavior. |
-| `container-e2e` | `e2e` | `make test-e2e` | Full managed integration rig tests with real stacklets and Docker. Use this for cross-container behavior and release confidence. |
-| `smoke` | none | `make test-smoke` | Small managed-rig e2e subset for quick checks inside the container e2e lane. |
+Nothing here is per commit. The hooks already run `ruff` on staged files and
+check the commit subject, which costs about a second; a lane that takes a
+minute and a quarter would only teach people to skip it.
+
+| Lane | Time | Needs | Exclusive | Run it when |
+|---|---|---|---|---|
+| `make lint` | <1s | nothing | no | The whole tree, when you want more than the staged files the hook checks. What CI runs. |
+| `make test-unit` | ~75s | nothing | no | Before a push, or when a coherent piece of work is done. Offline framework and stacklet tests: no Docker, no live services, no production data. |
+| `make test-lifecycle` | ~6m | Docker | yes | You changed lifecycle, config rendering, `.env`, compose, container names, ports, volumes or health wiring. Owns a throwaway instance on fixed names. |
+| `make test-demo` | ~4m | the demo instance running | yes | The behaviour has to work against the already-running bots and real service wiring. Tests create unique data and clean up after themselves; they never reset the instance. |
+| `make test-smoke` | ? | a test-owned rig | yes | A quick answer on a cross-service path. Seeds secrets and brings the required stacklets up first, so it is not read-only. |
+| `make test-e2e` | 20-30m | an uninstalled instance | yes | End of a branch, or before asking for review, when the change crosses container boundaries. Uninstall first: it seeds and owns the instance it runs against. |
+
+**Exclusive** means the lane owns fixed container names and ports, so exactly
+one run at a time on this Mac. Check nothing else is mid-run before starting
+one, and see [RFC-003](../docs/adr/rfc-003-agentic-development-harness.md) for
+why that is courtesy rather than enforcement today.
+
+**?** means nobody has timed it. If you run one, put the number here.
+
+`make` on its own prints a short version of this table.
+
+Do not run managed integration cleanup or reset commands against a production
+instance. `stacktests` guards this with a test-instance sentinel, but
+destructive test-rig commands still require care.
 
 ## Structure
 
@@ -58,22 +76,3 @@ starts required stacklets, and keeps the rig reusable between runs.
 `tests/integration/eval/` is opt-in prompt and model evaluation. It is excluded
 from normal pytest collection and is run with `tests/integration/stacktests eval`.
 
-## Choosing A Profile
-
-Run `make test-unit` while coding. It is the default pre-commit check.
-
-Run `make test-demo` when the behavior must work in the already-running demo
-instance and the test can be written to clean up after itself.
-
-Run `make test-lifecycle` when changing framework lifecycle, compose generation,
-environment rendering, container names, ports, volumes, or health wiring.
-
-Run `make test-smoke` for a quick managed-rig e2e check after changing a
-cross-service path.
-
-Run `make test-e2e` at the end of a branch or before asking for review when the
-change crosses container boundaries.
-
-Do not run managed integration cleanup/reset commands against a production
-instance. `stacktests` guards this with a test-instance sentinel, but destructive
-test-rig commands still require care.
