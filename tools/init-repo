@@ -130,7 +130,8 @@ def main() -> int:
     install_language_server()
 
     say("\n  Next:")
-    say("    make test-unit      the fast suite, before every commit")
+    say("    make                the test lanes, what each costs, when to run it")
+    say("    make test-unit      the fast suite, before a push")
     say("    make typecheck      types across the shipped code")
     say("    docs/agent/dev.md   how to write code here\n")
     return 0 if ready else 1

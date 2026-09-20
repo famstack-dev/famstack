@@ -73,7 +73,7 @@ A bare `make typecheck` reports on `lib`, `stacklets`, `tools` and `hooks`. `tes
 
 ## Tests, style, commits
 
-All three live in [docs/agent/dev.md](docs/agent/dev.md), which is the canonical reference and stays shorter than a duplicate here would. The short version: `make test-unit` before every commit, module tests over unit tests, feature branches only, never push without asking. Commit subjects are the changelog famstack.dev renders, so they follow `<type>(<scope>): <what the product does now>` and every one has to parse.
+All three live in [docs/agent/dev.md](docs/agent/dev.md), which is the canonical reference and stays shorter than a duplicate here would. The short version: the hooks lint every commit for you, `make test-unit` before a push or when a piece of work is done, module tests over unit tests, feature branches only, never push without asking. Commit subjects are the changelog famstack.dev renders, so they follow `<type>(<scope>): <what the product does now>` and every one has to parse.
 
 The hooks check ruff on staged files and the commit subject before a commit exists, rather than in CI. `tools/init-repo` turns them on, as do `make test-unit` and `make typecheck`. To do only that:
 
