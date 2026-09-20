@@ -14,7 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from stack.updater import Checkout, latest_tag, restart_targets, version_key
+from stack.updater import (
+    Checkout, latest_tag, restart_targets, stale_stacklets, version_key,
+)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -113,6 +115,54 @@ class TestRestartTargets:
     def test_a_docs_only_release_restarts_nothing(self):
         changed = ["README.md", "docs/adr/adr-013.md"]
         assert restart_targets(changed, running={"docs", "core"}) == []
+
+
+# ── Running code versus code on disk ─────────────────────────────────────
+
+class TestStaleStacklets:
+    """After an update the sources have moved and the containers have not.
+
+    Same rule as a release: a stacklet is stale when commits since the one
+    its containers were built from changed files inside it, or the
+    framework every stacklet shares. Anything else would nag about a
+    release that had nothing to do with it.
+    """
+
+    def _changes(self, mapping):
+        return lambda commit: mapping.get(commit, [])
+
+    def test_a_stacklet_the_commits_since_did_not_touch_is_fine(self):
+        changes = self._changes({"old": ["stacklets/photos/stacklet.toml"]})
+        assert stale_stacklets({"docs": "old"}, {"docs"}, changes) == []
+
+    def test_a_stacklet_whose_files_moved_is_stale(self):
+        changes = self._changes({"old": ["stacklets/docs/docker-compose.yml"]})
+        assert stale_stacklets({"docs": "old"}, {"docs"}, changes) == ["docs"]
+
+    def test_a_framework_change_stales_every_running_stacklet(self):
+        changes = self._changes({"old": ["lib/stack/stack.py"]})
+        stamps = {"docs": "old", "core": "old"}
+        assert stale_stacklets(stamps, {"docs", "core"}, changes) == ["core", "docs"]
+
+    def test_a_stacklet_with_no_stamp_is_not_guessed_about(self):
+        """Containers from before stamping existed, or a lost marker. An
+        unknown answer is reported as unknown, not as a problem."""
+        changes = self._changes({"old": ["lib/stack/stack.py"]})
+        assert stale_stacklets({}, {"docs"}, changes) == []
+
+    def test_only_running_stacklets_are_considered(self):
+        changes = self._changes({"old": ["lib/stack/stack.py"]})
+        assert stale_stacklets({"docs": "old"}, set(), changes) == []
+
+    def test_containers_started_at_different_commits(self):
+        """Restarting one stacklet and not another is the normal state
+        halfway through applying an update."""
+        changes = self._changes({
+            "old": ["stacklets/docs/docker-compose.yml"],
+            "new": [],
+        })
+        stamps = {"docs": "old", "memory": "new"}
+        assert stale_stacklets(stamps, {"docs", "memory"}, changes) == ["docs"]
 
 
 # ── The checkout itself ──────────────────────────────────────────────────

@@ -30,6 +30,7 @@ services:
     container_name: stack-core-bot-runner
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     extra_hosts:
@@ -69,6 +70,7 @@ services:
     container_name: stack-core-tools
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     extra_hosts:

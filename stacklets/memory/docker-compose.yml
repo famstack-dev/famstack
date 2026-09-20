@@ -26,6 +26,7 @@ services:
     # version is pinned in the Dockerfile and bumped by hand.
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     # Read-only: the wiki is a pure view. Quartz renders the brain
@@ -78,6 +79,7 @@ services:
     # Locally-built image — nothing for Watchtower to pull.
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     extra_hosts:

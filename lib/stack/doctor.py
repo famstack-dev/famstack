@@ -30,6 +30,9 @@ INFO = "info"
 _RUNTIME_KEYS = frozenset({
     "PATH", "HOSTNAME", "HOME", "TERM", "LANG", "LC_ALL",
     "PYTHON_VERSION", "PYTHONUNBUFFERED", "GPG_KEY",
+    # Stamped per container so staleness can be detected. It differs by
+    # design after any commit, and check_stale_code reports that.
+    "STACK_COMMIT",
 })
 
 
@@ -158,6 +161,25 @@ def check_missing_secrets(stacklet: str, missing: list[str]) -> Finding | None:
     )
 
 
+def check_stale_code(stacklet: str) -> Finding:
+    """A stacklet whose containers predate the code on disk.
+
+    Not a fault, a gap: someone updated the sources and the containers
+    still run what they were started with. Nothing else reports it,
+    because from Docker's side nothing is wrong.
+    """
+    return Finding(
+        title=f"{stacklet} is running code from before the last update",
+        detail=(
+            "Its containers were started from an earlier commit than the one "
+            "checked out. New code on disk is not new code running until the "
+            "containers are recreated."
+        ),
+        fix=f"stack restart {stacklet}",
+        level=WARN,
+    )
+
+
 def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     """A configured endpoint that does not answer.
 
@@ -176,14 +198,16 @@ def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
 
 
 def diagnose(stacklets, rendered_env, containers_for, container_env,
-             image_env, *, missing_secrets=None) -> list[Finding]:
+             image_env, *, missing_secrets=None, stale=()) -> list[Finding]:
     """Run every check across the given stacklets.
 
     The collaborators are injected rather than imported so the whole walk
     is testable with plain dicts - no Docker, no instance. Each is a
     callable taking a stacklet id (or container name) and returning facts.
     `missing_secrets` is optional so a caller that has no secret store to
-    consult still gets the container checks.
+    consult still gets the container checks. `stale` names the stacklets
+    whose containers predate the code on disk, which only a caller with a
+    git checkout can work out.
 
     A stacklet whose env cannot be rendered is skipped rather than fatal:
     one misconfigured stacklet should not stop the others being diagnosed,
@@ -196,6 +220,9 @@ def diagnose(stacklets, rendered_env, containers_for, container_env,
             # Nothing running means the stacklet is not part of this
             # instance, so its missing credentials are not yet a problem.
             continue
+
+        if stacklet in stale:
+            findings.append(check_stale_code(stacklet))
 
         if missing_secrets:
             found = check_missing_secrets(stacklet, missing_secrets(stacklet))

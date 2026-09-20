@@ -15,6 +15,7 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     extra_hosts:

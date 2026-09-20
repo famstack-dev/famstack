@@ -671,7 +671,12 @@ def print_list(result: dict, stck=None) -> None:
     sha = stck._git_commit() if stck else ""
     version_info = f"  {DIM}{VERSION} ({sha}){RESET}" if sha else ""
     print(f"  {result.get('online', 0)}/{result.get('total', 0)} online{version_info}")
-    print(f"  {DIM}stack up <id> to start a stacklet{RESET}\n")
+    stale = result.get("stale", [])
+    if stale:
+        print_restart_call_to_action(stale)
+        print()
+    else:
+        print(f"  {DIM}stack up <id> to start a stacklet{RESET}\n")
 
 
 def print_status(result: dict) -> None:
@@ -904,6 +909,7 @@ def handle_doctor(stck, args):
         docker.container_env,
         docker.image_env,
         missing_secrets=missing_secrets,
+        stale=stck.list().get("stale", []),
     )
 
     print()
@@ -1044,6 +1050,12 @@ def handle_logs(stck, args):
 def handle_restart(stck, args):
     cli = CLI(stck)
 
+    # No argument: restart exactly what is running code the checkout has
+    # moved past. `all` stays the sledgehammer for when you want the lot.
+    if not args.stacklet:
+        _restart_stale(stck, cli, yes=getattr(args, "yes", False))
+        return
+
     if args.stacklet == "all":
         # Whole-stack restart: stop everything running, then bring up
         # every installed stacklet. The two phases use their own
@@ -1072,6 +1084,57 @@ def handle_restart(stck, args):
         print_error(result); sys.exit(1)
     else:
         print_up_success(result, stck)
+
+
+def _restart_stale(stck, cli, yes=False):
+    """Restart the stacklets whose containers predate the code on disk.
+
+    Only the ones it can prove: a container stamped with the commit it
+    was started from. A stacklet whose containers carry no stamp is left
+    running and named, because silently skipping it is how someone
+    concludes the update was applied when it was not.
+    """
+    from .prompt import TEAL, confirm
+
+    listing = stck.list()
+    stale = listing.get("stale", [])
+    running = {s["id"] for s in listing["stacklets"] if s.get("online") or s.get("starting")}
+    unknown = sorted(running - set(stale) - set(docker.container_commits()))
+
+    if not stale:
+        print(f"\n  {GREEN}\u2713{RESET}  Everything running is on the current code.")
+        if unknown:
+            print(f"  {DIM}Cannot tell for: {', '.join(unknown)}. "
+                  f"Run stack up <id> if you changed its config.{RESET}")
+        print()
+        return
+
+    print(f"\n  {BOLD}Restarting{RESET} {TEAL}{', '.join(stale)}{RESET} "
+          f"{DIM}(running code the checkout has moved past){RESET}")
+    if unknown:
+        print(f"  {DIM}Not touched, no commit stamp to compare: "
+              f"{', '.join(unknown)}{RESET}")
+    print()
+
+    if not yes and sys.stdin.isatty():
+        if not confirm(f"Restart {len(stale)} stacklet(s)?"):
+            print(f"  {DIM}Aborted{RESET}\n")
+            return
+
+    failed = []
+    for sid in stale:
+        print(f"  Restarting {TEAL}{sid}{RESET}...", file=sys.stderr)
+        cli.down(sid)
+        result = cli.up(sid)
+        if "error" in result:
+            failed.append(sid)
+            print(f"  {RED}\u2717{RESET} {sid}: {result['error']}")
+        else:
+            print(f"  {GREEN}\u2713{RESET} {sid}: restarted")
+
+    print()
+    if failed:
+        sys.exit(1)
 
 
 def handle_setup(stck, args):
@@ -1414,6 +1477,25 @@ def handle_update(stck, args):
     _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
 
 
+def print_restart_call_to_action(targets, framework=False) -> None:
+    """The one loud line that says the code moved and nothing applied it.
+
+    Printed wherever the gap is visible: after an update, under a list
+    that shows stale stacklets. Same wording every time, because an
+    operator should recognise it rather than read it twice.
+    """
+    from .prompt import TEAL
+
+    print(f"\n  {ORANGE}{BOLD}\u26a0  Code updated. A RESTART is required "
+          f"to apply it.{RESET}")
+    if framework:
+        print(f"     {DIM}The framework changed, so this is everything running.{RESET}")
+        print(f"     {TEAL}./stack restart{RESET}")
+        return
+    print(f"     {TEAL}./stack restart{RESET}  "
+          f"{DIM}or: {', '.join('./stack restart ' + t for t in targets[:3])}{RESET}")
+
+
 def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
     """What the admin has to run for the new code to be the running code.
 
@@ -1430,14 +1512,8 @@ def _print_restart_advice(targets, changed, running, touches_framework, touched_
             print(f"\n  {DIM}Nothing running was changed by this release.{RESET}\n")
         return
 
-    print(f"\n  {BOLD}Restart to pick it up{RESET}")
-    if touches_framework(changed):
-        print(f"  {DIM}The framework changed, so this is every running stacklet.{RESET}")
-        print(f"    {TEAL}./stack restart all{RESET}")
-    else:
-        for sid in targets:
-            print(f"    {TEAL}./stack restart {sid}{RESET}")
-    print(f"    {TEAL}./stack doctor{RESET}\n")
+    print_restart_call_to_action(targets, framework=touches_framework(changed))
+    print(f"     {TEAL}./stack doctor{RESET}\n")
 
 
 def _restore_edits(checkout, was, target, collisions) -> bool:
@@ -1554,7 +1630,7 @@ _HELP_COMMANDS = [
     ("Lifecycle", [
         ("up <stacklet>|all",      "Start a stacklet (or 'all' to bring up every installed stacklet)"),
         ("down <stacklet>|all",    "Stop a running stacklet (or 'all' to stop everything running)"),
-        ("restart <stacklet>|all", "Restart stacklet (includes env update; 'all' restarts the whole stack)"),
+        ("restart [<stacklet>]",   "Restart what is running stale code (or one stacklet, or 'all')"),
         ("setup <stacklet>",   "Re-run first-time setup (backend detection, accounts, etc.)"),
         ("destroy <stacklet>", "Remove containers, data, and secrets (Destructive operation)"),
     ]),
@@ -1567,7 +1643,7 @@ _HELP_COMMANDS = [
         ("logs <stacklet>",    "Tail container logs"),
     ]),
     ("Setup", [
-        ("update [<tag>]",     "Move to a release and restart what it changed"),
+        ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
         ("install",            "Interactive setup wizard"),
         ("uninstall",          "Remove all services, config, and data"),
         ("init",               "Create Docker network and data directories"),
@@ -1660,7 +1736,11 @@ def main():
                    help="(ai) start without the voice container (TTS + Whisper); sets STACK_AI_NO_VOICE=1")
     p = sub.add_parser("down"); p.add_argument("stacklet")
     p = sub.add_parser("destroy"); p.add_argument("stacklet"); p.add_argument("--yes", action="store_true")
-    p = sub.add_parser("restart"); p.add_argument("stacklet")
+    p = sub.add_parser("restart")
+    p.add_argument("stacklet", nargs="?", default=None,
+                   help="Stacklet to restart, 'all', or nothing for whatever "
+                        "is running stale code")
+    p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("update")
     p.add_argument("tag", nargs="?", default=None,
                    help="Release to move to (default: the newest)")

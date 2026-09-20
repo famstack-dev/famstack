@@ -30,7 +30,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack up <id>` | yes | no | starts containers, renders `.env`, runs hooks |
 | `./stack down <id>` | yes | no | stops containers; data preserved |
 | `./stack down all` | yes | no | stops every running stacklet in reverse dep order |
-| `./stack restart <id>` | yes | no | `down` + `up` |
+| `./stack restart [<id>]` | yes | no | `down` + `up`; with no argument, only the stacklets running stale code |
 | `./stack destroy <id>` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets |
 | `./stack uninstall` | yes | **YES, EVERYTHING** | destroys every stacklet, network, all data, config |
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
@@ -45,7 +45,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 
 **Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success.
 
-**Applying config/compose changes to a running stacklet:** `stack up <id>` is the apply command — it re-renders `.env` and `compose up` creates new services and recreates changed ones, leaving the rest running. `restart` (= `down` + `up`) also works but takes the whole stacklet down first. Plain `docker compose restart` does neither: it won't re-render env or create new services.
+**Applying config/compose changes to a running stacklet:** `stack up <id>` is the apply command — it re-renders `.env` and recreates that stacklet's containers. It force-recreates unconditionally (`docker.py compose_up`), because compose's config hash does not cover `env_file` *contents*, so a plain `up -d` would leave a container on stale env. That makes `up` and `restart` (= `down` + `up`) similar in cost; `restart` stops everything first and runs the stop hooks. Plain `docker compose restart` does neither: it won't re-render env or create new services.
 
 ## Invariants
 
@@ -112,9 +112,10 @@ For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste ou
 
 ## Updating
 
-A release is a git tag. `./stack update` moves the checkout to one and restarts what that staled. `--dry-run` shows the plan, `--yes` skips the confirmation, a tag argument picks a release other than the newest.
+A release is a git tag. `./stack update` moves the checkout to one and names what that staled; `./stack restart` with no argument then restarts exactly those. `--dry-run` shows the plan, `--yes` skips the confirmation, a tag argument picks a release other than the newest.
 
 - **It never restarts anything.** New code on disk is not new code running; recreating containers is the admin's decision. The command names what the release staled: stacklets it changed *and* that are running, or every running stacklet when anything under `lib/` changed.
+- **`./stack restart` with no argument applies it.** Every container is stamped at `stack up` with the commit it started from (`stack.commit`), so `stack list` and `stack doctor` report a stacklet running code the checkout has moved past, and a bare `restart` restarts those. A container with no stamp is reported as unknown, never guessed about.
 - **Local edits are set aside and put back.** If they collide with the release the whole update winds back: same release as before, edits in place, stash empty. Never leave a tree carrying conflict markers, a compose file with them in it does not parse.
 - **Before v0.3.0-beta.4 there is no `update`.** By hand: `git fetch --tags && git checkout <tag> && ./stack doctor`, then restart what `git diff --name-only <old> <new> -- stacklets/` names.
 - **Works from a branch or a fork.** On `main` it moves to the tag and says the branch is left behind (`git switch main` returns). Tags are fetched from every remote, so a fork needs the project added as a remote or there is nothing to update to.

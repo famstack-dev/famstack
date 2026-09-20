@@ -23,6 +23,7 @@ services:
     image: ghcr.io/paperless-ngx/paperless-ngx:3.0.4
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     depends_on:
@@ -72,6 +73,7 @@ services:
     image: postgres:16-alpine
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     environment:
@@ -92,6 +94,7 @@ services:
     image: docker.io/valkey/valkey:8-alpine
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     healthcheck:
@@ -106,6 +109,7 @@ services:
     image: gotenberg/gotenberg:8
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     command:
@@ -119,6 +123,7 @@ services:
     image: apache/tika:latest
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     restart: unless-stopped
