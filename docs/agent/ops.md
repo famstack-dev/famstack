@@ -38,7 +38,6 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack logs <id>` | yes | no | tail container logs |
 | `./stack errors` | yes | no | recent error logs (24h) |
 | `./stack host` | yes | no | disk / memory / uptime |
-| `./stack updates` | yes | no | checks for newer Docker images |
 | `./stack config [--secrets]` | yes | no | prints resolved config |
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
@@ -109,6 +108,22 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | Curator logs "waiting for vault" | `./stack status` → memory, code | Vault not cloned yet — the memory install hooks own the initial clone. |
 
 For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste output to the user. **Do not invent fixes.**
+
+## Updating
+
+A release is a git tag. There is no `stack update`; the admin moves the checkout.
+
+```bash
+git fetch --tags && git checkout <tag> && ./stack doctor
+```
+
+- **What to restart:** `git diff --name-only <old> <new> -- stacklets/ | cut -d/ -f2 | sort -u`. Anything in that list that is running. If the same command against `lib/` prints anything, the framework changed: `./stack down all && ./stack up all`.
+- **Local edits block the switch.** `git stash` → checkout → `git stash pop`. A conflicting pop keeps the stash, so nothing is lost: `git checkout HEAD -- <file> && git stash drop` takes the release's version.
+- **A tag checkout is a detached HEAD.** `git pull` fails there. Never suggest `git pull origin main` as the fix: it succeeds and silently moves the instance onto unreleased code while `./stack version` still reports the last release.
+- **`./stack version` is a constant in the tree,** not the running state. `git describe --tags` is the truth.
+- **The instance survives a tag switch.** Config, secrets, data and `~/<product>-extensions/` are all outside git.
+
+Full prose: [../admin-guide.md](../admin-guide.md) § Updating.
 
 ## Backups
 
