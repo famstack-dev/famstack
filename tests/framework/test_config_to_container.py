@@ -136,6 +136,7 @@ def test_stack(tmp_path_factory):
 name = "teststack"
 domain = ""
 data_dir = "{data_dir}"
+extension_dirs = ["{stack_root / "extensions"}"]
 timezone = "Europe/Berlin"
 
 [ai]
@@ -404,3 +405,141 @@ class TestConfigPropagation:
         env_after = docker_env("stack-test")
         assert env_after.get("TEST_SECRET") == "changed-value-123", \
             f"Expected 'changed-value-123' after restart, got: {env_after.get('TEST_SECRET')}"
+
+
+# ── Stacklets outside the repo ───────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def guest_stacklet(test_stack):
+    """A stacklet installed the way a user installs one: outside the repo.
+
+    Copied into the instance's extensions dir rather than `stacklets/`,
+    so everything below runs through the same discovery a private or
+    third-party stacklet gets. Torn down like the module's own stacklet,
+    plus the directory the user would have created by hand.
+    """
+    target = test_stack.root / "extensions" / "guest"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(FIXTURES_DIR / "guest", target)
+
+    yield target
+
+    test_stack.run("destroy", "guest", "--yes")
+    subprocess.run(["docker", "rm", "-f", "stack-guest"],
+                   capture_output=True, timeout=10)
+    shutil.rmtree(target.parent, ignore_errors=True)
+
+
+class TestExtensionStackletLifecycle:
+    """A stacklet in the extensions dir gets the whole lifecycle.
+
+    These assertions are deliberately about internal state rather than
+    output: which tree the runtime resolved the stacklet from, where the
+    derived `.env` landed, where the secret and the setup marker went,
+    what reached the container, and what `destroy` takes with it. A
+    stacklet outside the repo that only *looks* installed is the failure
+    this class exists to catch.
+    """
+
+    def test_up_starts_a_container_from_the_extensions_dir(self, test_stack, guest_stacklet):
+        test_stack.run_ok("up", "guest")
+
+        assert container_running("stack-guest")
+        assert not (test_stack.root / "stacklets" / "guest").exists(), \
+            "the stacklet ran without ever being in the repo"
+
+    def test_env_is_derived_next_to_the_compose_file_it_feeds(self, test_stack, guest_stacklet):
+        """`.env` is a derived artifact, written beside the compose file
+        that reads it. For an extension that is the user's directory, not
+        anything in the repo."""
+        test_stack.run_ok("up", "guest")
+
+        rendered = {}
+        for line in (guest_stacklet / ".env").read_text().splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                rendered[key] = value.strip('"')
+        assert rendered["GUEST_DATA_DIR"] == str(test_stack.data / "guest")
+        assert rendered["TZ"] == "Europe/Berlin"
+
+    def test_first_run_state_is_keyed_by_id_not_location(self, test_stack, guest_stacklet):
+        """Hooks, secrets and the setup marker all resolve by id, so an
+        extension is installed in exactly the same places as a shipped
+        stacklet: data under the data dir, state under .stack/."""
+        test_stack.run_ok("up", "guest")
+
+        assert (test_stack.data / "guest" / ".install-marker").read_text() == "installed"
+        assert (test_stack.root / ".stack" / "guest.setup-done").exists()
+        assert "guest__GUEST_SECRET" in (
+            test_stack.root / ".stack" / "secrets.toml").read_text()
+
+    def test_the_rendered_env_reaches_the_container(self, test_stack, guest_stacklet):
+        """The whole pipeline, for a stacklet the release never saw:
+        stack.toml and users.toml to template vars to .env to compose."""
+        test_stack.run_ok("up", "guest")
+
+        env = docker_env("stack-guest")
+        assert env.get("TZ") == "Europe/Berlin"
+        assert env.get("GUEST_ADMIN") == "stackadmin"
+        assert env.get("GUEST_SECRET"), "generated secret should reach the container"
+
+    def test_list_reports_where_it_came_from(self, test_stack, guest_stacklet):
+        test_stack.run_ok("up", "guest")
+
+        listing = test_stack.run("list", "--json")
+        guest = next(s for s in listing["stacklets"] if s["id"] == "guest")
+        assert guest["source"] == "extension"
+        assert guest["stage"] == "incubating"
+        assert Path(guest["path"]) == guest_stacklet
+        assert guest["online"] is True
+        assert listing["extension_dirs"] == [str(test_stack.root / "extensions")]
+
+    def test_every_up_repeats_the_stage_warning(self, test_stack, guest_stacklet):
+        """Not a first-run notice. Whoever runs it, whenever, is told."""
+        test_stack.run_ok("up", "guest")
+        stdout, stderr = test_stack.run_pretty_ok("up", "guest")
+
+        combined = stdout + stderr
+        assert "incubating" in combined
+        assert "Not for production" in combined
+
+    def test_the_repo_wins_a_name_clash(self, test_stack, guest_stacklet):
+        """An extension cannot shadow a stacklet the instance ships, and
+        the proof is the path the runtime resolved, not the name."""
+        impostor = test_stack.root / "extensions" / "test"
+        shutil.copytree(FIXTURES_DIR / "test", impostor)
+        try:
+            listing = test_stack.run("list", "--json")
+            entries = [s for s in listing["stacklets"] if s["id"] == "test"]
+
+            assert len(entries) == 1
+            assert entries[0]["source"] == "repo"
+            assert Path(entries[0]["path"]) == test_stack.root / "stacklets" / "test"
+        finally:
+            shutil.rmtree(impostor)
+
+    def test_down_keeps_everything_but_the_container(self, test_stack, guest_stacklet):
+        test_stack.run_ok("up", "guest")
+        test_stack.run_ok("down", "guest")
+
+        assert wait_for_stop("stack-guest"), "Container did not stop in time"
+        assert (test_stack.data / "guest").exists()
+        assert (test_stack.root / ".stack" / "guest.setup-done").exists()
+
+    def test_destroy_removes_the_state_and_leaves_the_stacklet(self, test_stack, guest_stacklet):
+        """The source is the user's, not ours. Destroy clears what the
+        runtime created and leaves the stacklet where they put it, so it
+        goes back to available rather than disappearing."""
+        test_stack.run_ok("up", "guest")
+        test_stack.run_ok("destroy", "guest", "--yes")
+
+        assert wait_for_stop("stack-guest"), "Container did not stop in time"
+        assert not (test_stack.data / "guest").exists()
+        assert not (test_stack.root / ".stack" / "guest.setup-done").exists()
+        assert "guest__GUEST_SECRET" not in (
+            test_stack.root / ".stack" / "secrets.toml").read_text()
+
+        assert (guest_stacklet / "stacklet.toml").exists()
+        listing = test_stack.run("list", "--json")
+        guest = next(s for s in listing["stacklets"] if s["id"] == "guest")
+        assert guest["enabled"] is False

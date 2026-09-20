@@ -39,6 +39,10 @@ services:
     volumes:
       # Bot discovery — scans enabled stacklets for bot/ dirs
       - ../../stacklets:/stacklets:ro
+      # The same, for stacklets that live outside the repo. The host path
+      # comes from the framework, so a bot in an extension stacklet is
+      # discovered exactly like one the release ships.
+      - ${EXTENSIONS_DIR}:/extensions:ro
       # Setup state — knows which stacklets are enabled, holds secrets
       - ../../.stack:/setup-state:ro
       # Shared library — resolve_model, compat shims

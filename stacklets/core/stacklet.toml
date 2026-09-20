@@ -30,6 +30,12 @@ WATCHTOWER_SCHEDULE = "0 0 3 * * *"
 # Data dir — bot runner mounts this for per-stacklet bot data
 DATA_DIR = "{data_dir}"
 
+# Extension stacklets — the second tree the bot runner scans, so a bot
+# shipped by a stacklet outside the repo runs like any other. Renders the
+# first entry in [core] extension_dirs, or an empty stand-in while that
+# directory does not exist.
+EXTENSIONS_DIR = "{extension_mount}"
+
 # Matrix — bot runner connects to Synapse for all bots
 MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
 MATRIX_SERVER_NAME = "{messages_server_name}"

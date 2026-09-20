@@ -13,6 +13,13 @@ API_PORT = 42001
 
 
 def run(ctx):
+    # The bot runner bind-mounts the extension tree, so the source has to
+    # exist before compose starts. Created here rather than left to the
+    # Docker daemon, which would make it root-owned on some runtimes. On
+    # an instance with no extensions this is the empty stand-in, not a
+    # directory in the admin's home.
+    ctx.stack.extension_mount_source.mkdir(parents=True, exist_ok=True)
+
     repo_root = Path(ctx.stack.root)
     api_script = repo_root / "stacklets" / "core" / "famstack-api.py"
     log_dir = Path(ctx.stack.data) / "core" / "logs"

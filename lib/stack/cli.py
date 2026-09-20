@@ -612,8 +612,9 @@ def print_up_success(result: dict, stck: Stack) -> None:
     print(f"  {'Your data':<14}  {DIM}{display}{RESET}")
     print()
 
-    for w_msg in result.get("warnings", []):
-        print(f"  {ORANGE}\u26a0{RESET}  {w_msg}")
+    # Warnings are streamed by the output adapter as they happen, which
+    # is before the containers start and also covers `up all`, where no
+    # banner is printed. The result still carries them for API callers.
 
     # Next steps — rendered from manifest hints with credentials
     hints = result.get("hints", [])
@@ -627,6 +628,36 @@ def print_up_success(result: dict, stck: Stack) -> None:
     print()
 
 
+def _short_path(path) -> str:
+    """Home-relative path for display."""
+    home = str(Path.home())
+    text = str(path)
+    return text.replace(home, "~", 1) if text.startswith(home) else text
+
+
+def _split_by_origin(stacklets: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Stacklets the release ships, then the ones loaded from elsewhere.
+
+    Two lists rather than one, because where a stacklet came from decides
+    who supports it. Mixing them into a single column asks the reader to
+    remember which of eleven names is not ours.
+    """
+    shipped = [s for s in stacklets if s.get("source") != "extension"]
+    extensions = [s for s in stacklets if s.get("source") == "extension"]
+    return shipped, extensions
+
+
+def print_extensions_section(extensions: list[dict], dirs: list) -> None:
+    """The extensions half of `list` and `status`. Silent when empty."""
+    from .prompt import status_list
+    if not extensions:
+        return
+    where = ", ".join(_short_path(d) for d in dirs)
+    print(f"  {BOLD}Extensions{RESET}  {DIM}{where}{RESET}" if where
+          else f"  {BOLD}Extensions{RESET}")
+    status_list(extensions)
+
+
 def print_list(result: dict, stck=None) -> None:
     """Stacklet list with status colors."""
     from .prompt import DIM, RESET, status_list
@@ -634,7 +665,9 @@ def print_list(result: dict, stck=None) -> None:
     if not stacklets:
         print("\n  No stacklets found.\n")
         return
-    status_list(stacklets)
+    shipped, extensions = _split_by_origin(stacklets)
+    status_list(shipped)
+    print_extensions_section(extensions, result.get("extension_dirs", []))
     sha = stck._git_commit() if stck else ""
     version_info = f"  {DIM}{VERSION} ({sha}){RESET}" if sha else ""
     print(f"  {result.get('online', 0)}/{result.get('total', 0)} online{version_info}")
@@ -684,8 +717,10 @@ def print_status(result: dict) -> None:
     # Stacklet list
     stacklets = result.get("stacklets", [])
     if stacklets:
+        shipped, extensions = _split_by_origin(stacklets)
         print(f"  {BOLD}Stacklets{RESET}")
-        status_list(stacklets)
+        status_list(shipped)
+        print_extensions_section(extensions, result.get("extension_dirs", []))
         online = result.get("online", 0)
         total = result.get("total", 0)
         print(f"  {online}/{total} online")
@@ -1203,6 +1238,13 @@ def handle_uninstall(stck, args):
         display = str(stck.data).replace(home, "~", 1)
         print(f"\n  {RED}Data directory: {display}{RESET}")
         print(f"  {RED}This contains all your photos, messages, documents, etc.{RESET}")
+        # Extension stacklets are source code, not data, and they live in
+        # the data dir by default. Say so before the wipe, not after.
+        doomed = [d for d in stck.extension_dirs
+                  if d.exists() and d.is_relative_to(stck.data)]
+        for d in doomed:
+            print(f"  {RED}It also contains your extension stacklets "
+                  f"({_short_path(d)}).{RESET}")
         print(f"  {RED}This action is irreversible.{RESET}\n")
         try:
             rm_data = input("  Type 'delete' to remove all data: ").strip()

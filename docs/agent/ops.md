@@ -10,7 +10,7 @@ the compact decision layer; the admin guide is the manual.
 ## Mental model in 3 lines
 
 1. `stack.toml` (per-host config) + each stacklet's `stacklet.toml` → render `.env` on every `stack up`. `.env` is **derived**, never edit it.
-2. Every stacklet lives under `stacklets/<id>/`. All persistent data lives under `~/famstack-data/<id>/`. No exceptions.
+2. Every stacklet lives under `stacklets/<id>/`, or under `~/famstack-extensions/<id>/` if it does not ship with famstack. All persistent data lives under `~/famstack-data/<id>/`. No exceptions.
 3. State is **derived**, not stored. Container existence == "running"; container absence + data dir absence == "available". There is no enabled-list.
 
 ## Hardware preconditions
@@ -54,6 +54,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 - `.stack/secrets.toml` is **gitignored** and contains generated passwords + tokens. Treat as a password export.
 - Data lives **outside the repo** at `~/famstack-data/<id>/`. That's the only mandatory backup.
 - `~/.omlx/models/` holds LLM model files. Re-downloadable; not in `data_dir`.
+- **Extension stacklets are source code, and nothing backs them up.** `~/famstack-extensions/<id>/` holds stacklets famstack does not ship. Nothing creates it, nothing deletes it, and it is outside the data dir the backup rule covers. Push it to a remote. `[core] extension_dirs` (a list, first entry wins a clash and is the one mounted into the bot runner) adds or moves search paths.
+- **A stage is a claim, not a fault.** `stack list` and `stack status` group extensions in their own section and show a stage that is not stable. The warning on `stack up` means the stacklet can change or disappear between releases. Do not put anything irreplaceable in it.
 - **Two famstack instances cannot run on the same Mac at the same time** - container names collide (`stack-<id>`). `stack down` the active one first.
 
 ## Danger zones
@@ -115,6 +117,7 @@ For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste ou
   ```bash
   tar czf famstack-config-$(date +%F).tgz stack.toml users.toml .stack/
   ```
+- **`~/famstack-extensions/`** - only if the instance has one. Source code for stacklets famstack does not ship; a git remote counts.
 - **`~/.omlx/models/`** - re-downloadable; skip.
 
 ## Boundaries

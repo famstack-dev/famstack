@@ -1,0 +1,27 @@
+# stacklet.toml — guest stacklet
+#
+# The same shape as the `test` fixture, but installed into the instance's
+# extensions dir instead of stacklets/: a stacklet the release does not
+# ship. It carries a stage so the lifecycle lane sees the warning path
+# too, which is the realistic pairing — a stacklet usually lives outside
+# the repo because it is not finished.
+
+id          = "guest"
+name        = "Guest"
+description = "Extension stacklet for lifecycle testing (Alpine)"
+version     = "0.1.0"
+category    = "test"
+stage       = "incubating"
+port        = 42098
+
+[env]
+generate = ["GUEST_SECRET"]
+
+[env.defaults]
+GUEST_DATA_DIR = "{data_dir}/guest"
+TZ             = "{timezone}"
+GUEST_ADMIN    = "{admin_username}"
+
+[health]
+url    = "http://localhost:42098/"
+expect = "200"

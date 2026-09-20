@@ -1,0 +1,13 @@
+# A stacklet that declares itself not ready for production.
+# Tests: stage warnings on `stack up`, the {extension_mount} template var.
+
+id          = "incubating"
+name        = "Incubating"
+description = "Tests the stage contract"
+version     = "0.1.0"
+category    = "test"
+stage       = "incubating"
+
+[env.defaults]
+EXT_DIR = "{extension_mount}"
+TZ      = "{timezone}"

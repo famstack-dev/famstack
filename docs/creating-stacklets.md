@@ -1,6 +1,6 @@
 # Creating a Stacklet
 
-A stacklet is a self-contained service unit. It's a directory under `stacklets/` with a manifest, a Docker Compose file, and optional hooks.
+A stacklet is a self-contained service unit. It's a directory with a manifest, a Docker Compose file, and optional hooks.
 
 ## Minimal stacklet
 
@@ -11,6 +11,46 @@ stacklets/myapp/
 ```
 
 That's it. Two files and `stack up myapp` works.
+
+## Where it lives
+
+`stacklets/` holds the stacklets famstack ships. Everything else goes in
+`~/famstack-extensions/`, or wherever `[core] extension_dirs` points:
+
+```
+~/famstack-extensions/myapp/
+  stacklet.toml
+  docker-compose.yml
+```
+
+Nothing creates that directory. Make it when you have something to put
+in it, then `stack up myapp`.
+
+Discovery, ids, hooks, CLI plugins, secrets and template variables are
+the same code path in both places, so `stack up myapp` does not care
+which you picked. Being outside the repo means an upgrade cannot take
+your stacklet with it, `git status` never mentions it, and it can be its
+own git repo. Nothing famstack does backs it up, though: it is source
+code, so push it somewhere or include it in your own backup.
+
+`extension_dirs` is a list, so you can keep a dev checkout beside the
+default directory. It is searched in order and the first tree to claim an
+id keeps it, so the repo wins a clash with an extension and an earlier
+directory wins a clash with a later one.
+
+A stacklet here can ship a bot, because the bot runner mounts the first
+extension directory next to the repo one. It mounts only that one, so a
+bot in a later directory is not discovered and `stack up` tells you.
+
+## Saying it isn't finished
+
+```toml
+stage = "incubating"     # or "beta"
+```
+
+`stack list` marks the stacklet and every `stack up` warns that it can
+change or disappear and is not for production. Delete the line (or set
+`"stable"`) when that stops being true.
 
 ## The manifest: stacklet.toml
 

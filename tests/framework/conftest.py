@@ -34,12 +34,13 @@ def make_stack(tmp_path):
     from stack import Stack
     from stack.output import CollectorOutput
 
-    def _factory(stacklets=None, config_extra="", output=None):
+    def _factory(stacklets=None, extensions=None, config_extra="", output=None):
         # Write test config
         (tmp_path / "stack.toml").write_text(f"""
 [core]
 domain = ""
 data_dir = "{tmp_path / 'data'}"
+extension_dirs = ["{tmp_path / 'extensions'}"]
 timezone = "Europe/Berlin"
 
 [ai]
@@ -75,6 +76,13 @@ role     = "admin"
             src = FIXTURES_DIR / name
             if src.exists():
                 shutil.copytree(src, stacklets_dir / name)
+
+        # Copy fixture stacklets into the extensions dir — the second search
+        # path, for stacklets the release does not ship.
+        for name in (extensions or []):
+            src = FIXTURES_DIR / name
+            if src.exists():
+                shutil.copytree(src, tmp_path / "extensions" / name)
 
         out = output or CollectorOutput()
         return Stack(root=tmp_path, data=tmp_path / "data", output=out)

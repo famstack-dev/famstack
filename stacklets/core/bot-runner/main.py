@@ -1,7 +1,8 @@
 """Bot runner — discovers and runs bots from across all enabled stacklets.
 
 Convention-based discovery:
-  1. Scans /stacklets/*/bot/bot.toml for enabled stacklets
+  1. Scans /stacklets/*/bot/bot.toml (and /extensions/*, for stacklets
+     that live outside the repo) for enabled stacklets
   2. Waits for Matrix to be available
   3. Creates Matrix accounts and rooms
   4. Launches all bots concurrently in one async process
@@ -39,6 +40,11 @@ MATRIX_HOMESERVER = os.environ.get("MATRIX_HOMESERVER", "http://stack-messages-s
 MATRIX_SERVER_NAME = os.environ.get("MATRIX_SERVER_NAME", "")
 DATA_DIR = Path("/data")
 STACKLETS_DIR = Path("/stacklets")
+# Stacklets that do not ship with the repo are mounted from the framework's
+# extensions dir. Both trees have the same shape, so the runner searches
+# them in the order the CLI discovers them: repo first, extensions second.
+EXTENSIONS_DIR = Path("/extensions")
+STACKLET_ROOTS = (STACKLETS_DIR, EXTENSIONS_DIR)
 SETUP_STATE_DIR = Path("/setup-state")
 
 
@@ -93,7 +99,7 @@ def discover_bots():
     bots = []
 
     for stacklet_id in sorted(enabled):
-        bot_dir = STACKLETS_DIR / stacklet_id / "bot"
+        bot_dir = bot_dir_for(stacklet_id)
         for bot_toml in _bot_toml_files(bot_dir):
             logger.info("Found bot declaration: {}", bot_toml)
 
@@ -156,6 +162,20 @@ def discover_bots():
             })
 
     return bots
+
+
+def bot_dir_for(stacklet_id, roots=STACKLET_ROOTS):
+    """Where a stacklet's bot/ dir is mounted.
+
+    The repo tree wins, matching the CLI: an extension can add a stacklet,
+    never replace one the release ships. Falls back to the repo path when
+    neither exists, so a missing bot logs a path an operator recognises.
+    """
+    for root in roots:
+        candidate = root / stacklet_id / "bot"
+        if candidate.is_dir():
+            return candidate
+    return STACKLETS_DIR / stacklet_id / "bot"
 
 
 def _bot_toml_files(bot_dir):
