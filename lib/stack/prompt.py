@@ -96,16 +96,20 @@ def bullet(text):
 # ── Status list ───────────────────────────────────────────────────────────────
 
 def stage_badge(s):
-    """Trailing marker for a stacklet line: the stage it claims.
+    """Trailing markers for a stacklet line: stage, and stale code.
 
-    A stable stacklet carries none, so a normal list reads exactly as it
-    did. Anything else is the stacklet saying it is unfinished, which an
-    operator needs before reading anything into its state.
+    A stable, current stacklet carries none, so a normal list reads
+    exactly as it did. The two that show are what an operator needs
+    before reading anything into the state: a stacklet saying it is
+    unfinished, and one running code the checkout has moved past.
     """
+    parts = []
     stage = s.get("stage", "stable")
-    if not stage or stage == "stable":
-        return ""
-    return f"  {ORANGE}{stage}{RESET}"
+    if stage and stage != "stable":
+        parts.append(f"{ORANGE}{stage}{RESET}")
+    if s.get("stale"):
+        parts.append(f"{ORANGE}restart pending{RESET}")
+    return "  " + " ".join(parts) if parts else ""
 
 
 def status_list(stacklets):

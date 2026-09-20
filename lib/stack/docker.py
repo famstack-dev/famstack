@@ -400,6 +400,42 @@ def running_project_ids() -> set[str]:
     return {sid for sid, state in states.items() if state in ("running", "starting")}
 
 
+def container_commits() -> dict[str, str]:
+    """The commit each stacklet's running containers were started from.
+
+    Read from the `stack.commit` label the framework stamps at `stack up`.
+    The key names the framework rather than any product built on it, the
+    same way `STACK_*` env vars and the "stacklet" vocabulary do.
+
+    A container without the label is left out rather than guessed about:
+    it predates the label, or belongs to a service with no labels block,
+    and an unknown answer is not a finding.
+
+    One label per stacklet. Containers of the same stacklet are created
+    together, so they agree in every state except a restart in progress.
+    """
+    try:
+        r = _docker(
+            "ps", "--filter", "label=stack.commit",
+            "--format", '{{.Names}}\t{{.Label "stack.commit"}}',
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return {}
+    except Exception:
+        return {}
+
+    commits: dict[str, str] = {}
+    for line in r.stdout.strip().splitlines():
+        name, _, commit = line.partition("\t")
+        commit = commit.strip()
+        parts = name.split("-")
+        if not commit or commit == "unknown" or len(parts) < 2 or parts[0] != "stack":
+            continue
+        commits.setdefault(parts[1], commit)
+    return commits
+
+
 def all_project_ids() -> set[str]:
     """Convenience wrapper — all stacklet IDs with any container state."""
     return set(project_states().keys())

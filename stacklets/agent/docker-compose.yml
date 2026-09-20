@@ -17,6 +17,7 @@ services:
     image: stack-agent:local
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     extra_hosts:

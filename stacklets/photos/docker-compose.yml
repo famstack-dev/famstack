@@ -15,6 +15,7 @@ services:
     image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     volumes:
@@ -38,6 +39,7 @@ services:
     image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     # Apple Silicon note: Immich ML runs on CPU here — GPU acceleration via
     # Metal is not yet supported in the Docker image. Still fast enough for
     # face recognition and CLIP search on M-series chips.
@@ -58,6 +60,7 @@ services:
     image: docker.io/valkey/valkey:8-alpine
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     healthcheck:
@@ -69,6 +72,7 @@ services:
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     environment:

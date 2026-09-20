@@ -417,6 +417,10 @@ Pre-tag gate, in order. A published tag is never moved; anything missed here shi
 5. Stale references updated: README version callouts, docs links, blog "Try it" instructions.
 6. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with Highlights and an "Upgrading from" section.
 
+**The tag format is load-bearing.** `stack update` parses `v?MAJOR.MINOR.PATCH[-label.N]` and ignores anything else, so a tag spelled `v0.3.0.beta1` is invisible: `stack update` would keep offering the previous release and never mention it. Hyphen before the label, dot before its number, as SemVer has it. The prerelease sorts below the release it leads to, and label numbers compare as numbers, so `beta.10` is newer than `beta.9`.
+
+Two spellings of the same version exist by necessity: the tag and `lib/stack/cli.py VERSION` are SemVer (`0.3.0-beta.3`), while `pyproject.toml` is PEP 440 (`0.3.0b3`), because Python packaging requires it. Step 2 bumps both.
+
 ## Pre-1.0 conventions
 
 - Invariant changes (marker semantics, field renames, contract shifts) get coherent commits - each stands alone for revert.

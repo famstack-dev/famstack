@@ -192,11 +192,11 @@ class Stack:
 
         `[core] extension_dirs` takes a list, searched in the order given
         (a bare string is read as a one-entry list). The default is a
-        single directory in the admin's home, named after the product:
-        `~/famstack-extensions`. It is deliberately outside both the repo
-        and the data dir. The repo is replaced on upgrade and would take
-        the admin's code with it; the data dir is what running services
-        write, not where source belongs.
+        single directory in the admin's home named after the product,
+        `~/<[core] name>-extensions`. It is deliberately outside both the
+        repo and the data dir. The repo is replaced on upgrade and would
+        take the admin's code with it; the data dir is what running
+        services write, not where source belongs.
 
         Nothing creates it. An instance with no extensions simply has no
         such directory, and discovery skips what is not there.
@@ -542,6 +542,12 @@ class Stack:
         channel = manifest.get("upstream", {}).get("channel", "patch")
         rendered["WATCHTOWER_ENABLE"] = "true" if channel == "patch" else "false"
 
+        # Stamped onto every container as the `stack.commit` label, so what a
+        # container was started from can be compared with the code on
+        # disk. Containers keep their labels from creation time, which is
+        # what makes the comparison mean anything.
+        rendered["STACK_COMMIT"] = self._git_commit()
+
         # Port bind IP — 0.0.0.0 in port mode (LAN-reachable),
         # 127.0.0.1 in domain mode (only Caddy reaches containers)
         rendered["PORT_BIND_IP"] = "127.0.0.1" if self._cfg("core", "domain") else "0.0.0.0"
@@ -594,6 +600,8 @@ class Stack:
                     s["degraded"] = True
                     s["health_issues"].append(check.get("hint") or f"{check['url']} not reachable")
 
+        self._mark_stale(stacklets)
+
         online = [s for s in stacklets if s["online"] and not s["degraded"]]
         set_up = [s for s in stacklets if s["enabled"]]
 
@@ -602,11 +610,47 @@ class Stack:
             "total": len(stacklets),
             "enabled": len(set_up),
             "online": len(online),
+            "stale": sorted(s["id"] for s in stacklets if s.get("stale")),
             # Every entry carries its own `source` and `path`; these are
             # the directories the extension ones were loaded from, for a
             # caller that wants to name them without deriving them.
             "extension_dirs": [str(d) for d in self.extension_dirs],
         }
+
+    def _mark_stale(self, stacklets: list[dict]) -> None:
+        """Flag the running stacklets whose code the checkout has moved past.
+
+        The comparison is between the commit a container was started from
+        and the commits since, using the same rule a release uses to
+        decide what it staled. A container with no stamp, or a checkout
+        that is not a git tree, simply answers nothing.
+        """
+        from .updater import Checkout, stale_stacklets
+
+        for s in stacklets:
+            s["stale"] = False
+
+        running = {s["id"] for s in stacklets if s["online"] or s["starting"]}
+        if not running:
+            return
+
+        checkout = Checkout(self.root)
+        if not checkout.is_git():
+            return
+
+        seen: dict[str, list[str]] = {}
+
+        def changes_since(commit: str) -> list[str]:
+            """One git call per distinct commit, not per stacklet."""
+            if commit not in seen:
+                seen[commit] = checkout.changed_paths(commit, "HEAD")
+            return seen[commit]
+
+        from .docker import container_commits
+
+        stale = set(stale_stacklets(container_commits(), running, changes_since))
+        for s in stacklets:
+            s["stale"] = s["id"] in stale
 
     def status(self) -> dict:
         """Full system status: version, runtime, host, stacklets."""

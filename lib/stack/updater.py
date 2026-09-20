@@ -97,6 +97,30 @@ def restart_targets(changed_paths, running) -> list[str]:
     return sorted(touched_stacklets(changed_paths) & set(running))
 
 
+def stale_stacklets(revisions, running, changes_since) -> list[str]:
+    """Running stacklets whose code the checkout has moved past.
+
+    `revisions` maps a stacklet id to the commit its containers were
+    built from, read from the OCI `org.opencontainers.image.revision`
+    label. A stacklet is stale when commits since then changed files
+    inside it or under `lib/`, which is the same rule a release uses:
+    anything looser nags about a release that never touched it.
+
+    A stacklet with no revision is left alone. Containers built before
+    the label existed, or from an upstream image that carries someone
+    else's revision, cannot answer the question, and an unknown answer
+    is not a problem to report.
+    """
+    stale = []
+    for stacklet_id in sorted(running):
+        revision = revisions.get(stacklet_id)
+        if not revision:
+            continue
+        if restart_targets(changes_since(revision), {stacklet_id}):
+            stale.append(stacklet_id)
+    return stale
+
+
 # ── The checkout ─────────────────────────────────────────────────────────
 
 class Checkout:

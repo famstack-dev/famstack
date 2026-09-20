@@ -15,6 +15,7 @@ services:
     image: codeberg.org/forgejo/forgejo:14
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+      - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
     ports:

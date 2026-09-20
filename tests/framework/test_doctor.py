@@ -13,6 +13,7 @@ from stack.doctor import (
     check_env_drift,
     check_exited,
     check_missing_secrets,
+    check_stale_code,
     compose_supplied,
     diagnose,
     env_drift,
@@ -44,6 +45,42 @@ def _fixture_instance():
 
 
 # ── env_drift ────────────────────────────────────────────────────────────
+
+class TestStaleCode:
+    """A stacklet whose containers predate the code on disk.
+
+    Doctor's findings are built by hand, so a Finding whose fields do not
+    match the dataclass only fails when a real instance has that problem.
+    This one did: it shipped with `is_error=` instead of `level=` and blew
+    up on the rig the first time a stacklet went stale.
+    """
+
+    def test_reports_the_stacklet_and_how_to_apply_it(self):
+        finding = check_stale_code("core")
+
+        assert "core" in finding.title
+        assert finding.fix == "stack restart core"
+
+    def test_is_a_warning_not_an_error(self):
+        """Nothing is broken. The code on disk just is not running yet,
+        so doctor should not exit non-zero over it."""
+        assert check_stale_code("core").is_error is False
+
+    def test_diagnose_raises_one_per_stale_stacklet(self):
+        findings = diagnose(
+            ["docs", "photos"],
+            lambda s: {},
+            lambda s: [{"name": f"stack-{s}", "state": "running",
+                        "exit_code": 0, "since": ""}],
+            lambda n: {},
+            lambda n: {},
+            stale=["docs"],
+        )
+
+        titles = [f.title for f in findings]
+        assert any("docs is running code" in t for t in titles)
+        assert not any("photos is running code" in t for t in titles)
+
 
 def test_detects_the_realm_drift_that_broke_the_bots():
     # The real incident: stack.toml re-seeded to a new realm, container still
