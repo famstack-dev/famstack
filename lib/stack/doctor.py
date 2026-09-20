@@ -50,47 +50,36 @@ class Finding:
         return self.level == ERROR
 
 
-def env_drift(rendered: dict, actual: dict, ignore: frozenset = _RUNTIME_KEYS) -> list[str]:
-    """Config keys whose live value no longer matches what stack.toml renders.
+def env_drift(expected: dict, actual: dict, ignore: frozenset = _RUNTIME_KEYS) -> list[str]:
+    """Config keys whose live value is not what compose would set today.
+
+    `expected` is what `docker compose config` resolves for that service:
+    its `env_file` and its `environment:` block, interpolated. That is the
+    only honest expectation, because it is literally what a fresh
+    container would receive.
+
+    Comparing against the stacklet's rendered env instead produced false
+    positives that no `stack up` could ever clear, in three flavours. The
+    rendered env is the whole set for the project, so every variable a
+    service was never given looked missing, and watchtower appeared to
+    have 36 problems. An image's own defaults are not ours to change, so
+    gotenberg reported a TZ error whose suggested fix provably did
+    nothing. And a compose file that deliberately overrides a value, a
+    container path where the host has a host path, a service name where
+    the host has a LAN URL, reported that override as drift forever.
 
     Returns key names only, never values - this environment carries admin
-    passwords, API tokens, and database credentials, and a diagnostic that
+    passwords, API tokens and database credentials, and a diagnostic that
     prints them turns a config warning into a credential leak in whatever
     log or issue tracker the output gets pasted into.
-
-    Only keys the container actually carries are compared. A stacklet's
-    rendered env is the whole set for the compose project, while each
-    service receives its own subset - so "missing" overwhelmingly means
-    "this service was never given that variable", not "config drifted".
-    Reporting those made watchtower look like it had 36 problems and
-    buried the one setting that had genuinely changed.
     """
     drifted = []
-    for key, expected in rendered.items():
+    for key, value in expected.items():
         if key in ignore or key not in actual:
             continue
-        if actual[key] != str(expected):
+        if actual[key] != str(value):
             drifted.append(key)
     return sorted(drifted)
-
-
-def compose_supplied(actual: dict, baked: dict) -> dict:
-    """The part of a container's environment that compose actually set.
-
-    A container's environment is the image's own defaults plus whatever
-    compose passed in. Only the second half can drift from stack.toml; the
-    first half belongs to the image author and no famstack command can
-    change it. Comparing it produces a finding that is permanently true and
-    whose suggested fix provably does nothing, which is how gotenberg came
-    to report a TZ error that survived every `stack up docs`.
-
-    A value equal to the image's default is treated as not-ours. That is
-    deliberately conservative: if compose sets a key to exactly what the
-    image already baked, real drift on that key goes unreported. Missing a
-    finding costs one debugging session; a permanent false positive teaches
-    the reader to skim past every finding, including the true ones.
-    """
-    return {k: v for k, v in actual.items() if baked.get(k) != v}
 
 
 def check_env_drift(stacklet: str, container: str, drifted: list[str]) -> Finding | None:
@@ -197,22 +186,22 @@ def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     )
 
 
-def diagnose(stacklets, rendered_env, containers_for, container_env,
-             image_env, *, missing_secrets=None, stale=()) -> list[Finding]:
+def diagnose(stacklets, expected_env, containers_for, container_env,
+             *, missing_secrets=None, stale=()) -> list[Finding]:
     """Run every check across the given stacklets.
 
     The collaborators are injected rather than imported so the whole walk
     is testable with plain dicts - no Docker, no instance. Each is a
     callable taking a stacklet id (or container name) and returning facts.
+    `expected_env` takes a *container* name and returns what compose would
+    give that service now; an empty answer means the question could not be
+    asked, and no drift is reported rather than a guess.
     `missing_secrets` is optional so a caller that has no secret store to
     consult still gets the container checks. `stale` names the stacklets
     whose containers predate the code on disk, which only a caller with a
     git checkout can work out.
 
-    A stacklet whose env cannot be rendered is skipped rather than fatal:
-    one misconfigured stacklet should not stop the others being diagnosed,
-    which is the moment a doctor is most needed.
-    """
+"""
     findings: list[Finding] = []
     for stacklet in stacklets:
         containers = containers_for(stacklet)
@@ -229,11 +218,6 @@ def diagnose(stacklets, rendered_env, containers_for, container_env,
             if found:
                 findings.append(found)
 
-        try:
-            rendered = rendered_env(stacklet)
-        except Exception:
-            rendered = None
-
         for container in containers:
             name = container["name"]
             if container["state"] != "running":
@@ -242,9 +226,10 @@ def diagnose(stacklets, rendered_env, containers_for, container_env,
                     findings.append(found)
                 # A stopped container's environment says nothing useful.
                 continue
-            if rendered:
-                ours = compose_supplied(container_env(name), image_env(name))
-                drifted = env_drift(rendered, ours)
+
+            expected = expected_env(name)
+            if expected:
+                drifted = env_drift(expected, container_env(name))
                 found = check_env_drift(stacklet, name, drifted)
                 if found:
                     findings.append(found)

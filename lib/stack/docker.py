@@ -366,32 +366,35 @@ def container_env(name: str) -> dict:
         return {}
 
 
-def image_env(name: str) -> dict:
-    """The environment baked into the image a container was started from.
+def compose_service_env(compose_file: str | Path) -> dict[str, dict[str, str]]:
+    """What compose would give each service, resolved the way it resolves it.
 
-    `container_env` returns the image's defaults *plus* whatever compose
-    passed in, and the two are indistinguishable once the container exists.
-    Reading the image separately is what lets a caller tell them apart, so
-    an image author's own setting is never mistaken for our config drifting.
+    `docker compose config` applies the project's `.env`, each service's
+    `env_file` and its `environment:` block, with interpolation, and
+    reports the result. That is the only honest thing to compare a running
+    container against, because it is literally what a fresh container
+    would receive.
+
+    An unreadable compose file returns nothing, and the caller reports no
+    drift rather than guessing at one.
     """
     try:
         r = _docker(
-            "inspect", name, "--format", "{{.Config.Image}}",
-            capture_output=True, text=True, timeout=10,
-        )
-        image = r.stdout.strip() if r.returncode == 0 else ""
-        if not image:
-            return {}
-        r = _docker(
-            "inspect", image, "--format",
-            "{{range .Config.Env}}{{println .}}{{end}}",
-            capture_output=True, text=True, timeout=10,
+            "compose", "-f", str(compose_file), "config", "--format", "json",
+            capture_output=True, text=True, timeout=60,
         )
         if r.returncode != 0:
             return {}
-        return _parse_env(r.stdout)
+        parsed = json.loads(r.stdout)
     except Exception:
         return {}
+
+    services = parsed.get("services") or {}
+    return {
+        name: {k: "" if v is None else str(v)
+               for k, v in (service.get("environment") or {}).items()}
+        for name, service in services.items()
+    }
 
 
 def running_project_ids() -> set[str]:
