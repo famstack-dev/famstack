@@ -148,3 +148,24 @@ different from an empty vault.
 
 Both current callers should keep working unchanged through the move. That is
 the test.
+
+## A new compose variable and the .env that predates it (2026-09-20)
+
+Adding `${EXTENSIONS_DIR}:/extensions:ro` to core's compose file exposed
+something older than the mount. `compose_down` and `_refresh_core`'s
+`compose_up` pass no env dict, so Docker resolves `${VAR}` from the `.env`
+sitting beside the compose file. That file is a derived artifact
+([adr-006](adr/adr-006-env-as-derived-artifact.md)), and after an upgrade
+it is one release out of date until something re-renders it.
+
+`stack up <id>` is safe: it renders first and passes the env explicitly, and
+`_refresh_core` calls `refresh_env("core")` before it recreates core. `stack
+down` is not: it never re-renders, so on an instance that has pulled a release
+adding a new variable and has not run any `up` since, the variable resolves
+empty and compose rejects the volume spec. Loud, and fixed by `stack up core`,
+but the user has to know that.
+
+This is not specific to extensions. Every bind mount built from a variable has
+had it since the first one. The fix, if it is worth one, is for the down path
+to re-render env the way the up path does, which is a change to every
+stacklet's teardown and wants its own commit.

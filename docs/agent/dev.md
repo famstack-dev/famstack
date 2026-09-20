@@ -89,6 +89,8 @@ Optional, all convention-named:
 
 ### Stacklet rules
 
+- **Location.** `stacklets/<id>/` is for what the release ships. A private, incubating or third-party stacklet goes in `~/<product>-extensions/` (`[core] extension_dirs` adds more search paths) and is discovered the same way, bot included. Searched in order, first claim on an id wins, and only the first dir is mounted into the bot runner.
+- **`stage`.** Anything not finished declares `stage = "beta"` or `"incubating"`. `stack list` marks it, `stack up` warns.
 - **`id` == directory name.** Lowercase, no hyphens, no spaces. Used in container names, env namespacing, secret keys.
 - **Container name:** `stack-<id>` (single-service) or `stack-<id>-<service>` (multi). Set both `services.<key>` and `container_name`.
 - **Network:** every container joins the `stack` network, declared `external: true`. Cross-stacklet refs go by container name (`http://stack-docs-paperless:8000`).
@@ -446,3 +448,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-007](../adr/adr-007-port-convention.md) | 42xxx port convention |
 | [adr-008](../adr/adr-008-convention-based-bot-runner.md) | Convention-based bot runner |
 | [adr-009](../adr/adr-009-managed-ai-provider.md) | Managed AI provider |
+| [adr-013](../adr/adr-013-stacklet-locations-and-stages.md) | Stacklet locations and stages |

@@ -56,6 +56,11 @@ tests/integration/eval/runs/
 .claude/skills/*
 !.claude/skills/famstack-lsp/
 
+# Extension stacklets live in ~/<product>-extensions, not here. This is
+# the obvious place to try anyway, so keep anything dropped here out of
+# git rather than in someone's next commit.
+/extensions/
+
 # Internal development notes
 impl/
 

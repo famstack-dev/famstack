@@ -95,6 +95,19 @@ def bullet(text):
 
 # ── Status list ───────────────────────────────────────────────────────────────
 
+def stage_badge(s):
+    """Trailing marker for a stacklet line: the stage it claims.
+
+    A stable stacklet carries none, so a normal list reads exactly as it
+    did. Anything else is the stacklet saying it is unfinished, which an
+    operator needs before reading anything into its state.
+    """
+    stage = s.get("stage", "stable")
+    if not stage or stage == "stable":
+        return ""
+    return f"  {ORANGE}{stage}{RESET}"
+
+
 def status_list(stacklets):
     """Render a compact stacklet status table.
 
@@ -117,22 +130,23 @@ def status_list(stacklets):
         visible_len = len(name) + len(f" ({sid})") if sid and sid != name else len(name)
         col = 28
         pad = max(1, col - visible_len)
+        badges = stage_badge(s)
         if s.get("degraded"):
-            out(f"  {ORANGE}\u26a0{RESET} {label}{' ' * pad} {ORANGE}degraded{RESET}")
+            out(f"  {ORANGE}\u26a0{RESET} {label}{' ' * pad} {ORANGE}degraded{RESET}{badges}")
             for issue in s.get("health_issues", []):
                 out(f"      {ORANGE}{issue}{RESET}")
         elif s.get("online"):
             port = s.get("port")
             url = f"  {DIM}localhost:{port}{RESET}" if port else ""
-            out(f"  {GREEN}\u2713{RESET} {label}{' ' * pad} {GREEN}online{RESET}{url}")
+            out(f"  {GREEN}\u2713{RESET} {label}{' ' * pad} {GREEN}online{RESET}{url}{badges}")
         elif s.get("starting"):
-            out(f"  {TEAL}\u25cb{RESET} {label}{' ' * pad} {TEAL}starting{RESET}")
+            out(f"  {TEAL}\u25cb{RESET} {label}{' ' * pad} {TEAL}starting{RESET}{badges}")
         elif s.get("failing"):
-            out(f"  {RED}\u2717{RESET} {label}{' ' * pad} {RED}failing{RESET}")
+            out(f"  {RED}\u2717{RESET} {label}{' ' * pad} {RED}failing{RESET}{badges}")
         elif s.get("enabled"):
-            out(f"  {ORANGE}\u25cb{RESET} {label}{' ' * pad} {ORANGE}stopped{RESET}")
+            out(f"  {ORANGE}\u25cb{RESET} {label}{' ' * pad} {ORANGE}stopped{RESET}{badges}")
         else:
-            out(f"  {DIM}\u2022{RESET} {label}{' ' * pad} {DIM}available{RESET}")
+            out(f"  {DIM}\u2022{RESET} {label}{' ' * pad} {DIM}available{RESET}{badges}")
     nl()
 
 

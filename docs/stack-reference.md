@@ -25,9 +25,34 @@ photos and docs, consumed by the `backup` stacklet).
 
 ## Directory Structure
 
-A stacklet is a directory under `stacklets/` containing at minimum a
-`stacklet.toml` manifest. Everything else is optional — include only what
-you need.
+A stacklet is a directory containing at minimum a `stacklet.toml`
+manifest. Everything else is optional — include only what you need.
+
+Two directories are searched, in this order:
+
+| Location | What belongs there |
+|---|---|
+| `stacklets/` in the repo | The stacklets a release ships and supports. |
+| an extension dir (`[core] extension_dirs`, default `["~/<product>-extensions"]`) | Everything else: a private stacklet, a community one, one still being designed. Outside the repo, so an upgrade cannot take it, and each can be its own git repo. |
+
+`extension_dirs` is a list, searched in the order given. The first tree
+to claim an `id` keeps it, so the repo wins a clash with an extension and
+an earlier extension dir wins a clash with a later one. Nothing creates
+these directories; one that is not there is skipped.
+
+The runtime resolves a stacklet by `id`, never by path, so `stack up <id>`,
+hooks, CLI plugins, secrets and template variables like `{photos_url}`
+behave identically wherever it lives. `stack list` and `stack status`
+group extensions in their own section, and every stacklet in the JSON
+output carries `source` (`repo` or `extension`) and `path`.
+
+One asymmetry: a compose file cannot iterate a list, so the bot runner
+bind-mounts the **first** extension dir only. A stacklet that ships a bot
+belongs there, and `stack up` says so when it is somewhere else. While
+that directory does not exist, the mount gets an empty stand-in under
+`.stack/`, because a bind mount needs a source and an instance without
+extensions should not grow a directory in the admin's home. Any
+`stack up` re-renders core's env, so the real one takes over by itself.
 
 ```
 stacklets/photos/
@@ -96,6 +121,7 @@ port        = 42010
 always_on   = true
 type        = "host"
 requires    = ["core", "messages"]
+stage       = "incubating"
 ```
 
 | Field | Type | Default | Description |
@@ -106,6 +132,7 @@ requires    = ["core", "messages"]
 | `type` | string | `"docker"` | `"docker"` (default) or `"host"`. Host stacklets install native macOS software (brew, compiled binaries) alongside optional Docker containers. |
 | `requires` | list | `[]` | Stacklet IDs that must be enabled before this one. The runtime enforces ordering on `stack up` and prevents destroying dependencies. |
 | `build` | bool | false | If true, the stacklet has a local Dockerfile. `stack up` rebuilds the image on every run instead of pulling from a registry. Use for stacklets with custom code (bots, agents). |
+| `stage` | string | `"stable"` | How finished the stacklet is. `"stable"` is silent. Any other value (`"beta"`, `"incubating"`, or your own) is shown in `stack list` and warned about on every `stack up`. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream

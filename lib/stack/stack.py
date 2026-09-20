@@ -60,6 +60,43 @@ def _mail_accounts_env(mail_cfg: dict, secret_lookup) -> str:
     return json.dumps(accounts) if accounts else ""
 
 
+# ── Stages ────────────────────────────────────────────────────────────────
+
+STABLE = "stable"
+
+_STAGE_WARNINGS = {
+    "incubating": (
+        "{name} is incubating: experimental, it can change or disappear in "
+        "any release, and its data may not survive an upgrade. "
+        "Not for production."
+    ),
+    "beta": (
+        "{name} is beta: it works, but config and data layout can still "
+        "change between releases. Back up before you upgrade. "
+        "Not for production."
+    ),
+}
+
+_UNKNOWN_STAGE_WARNING = (
+    "{name} is marked '{stage}': it is not a finished stacklet and can "
+    "change or disappear in any release. Not for production."
+)
+
+
+def stage_warning(stage: str, name: str) -> str:
+    """What to tell someone starting a stacklet at this stage.
+
+    Empty for a stable stacklet, which is the default and the silent
+    case. Every other value is a claim of unfinishedness, so an
+    unrecognised one warns too: the runtime repeats what the manifest
+    says instead of policing a list of allowed words.
+    """
+    if not stage or stage == STABLE:
+        return ""
+    template = _STAGE_WARNINGS.get(stage, _UNKNOWN_STAGE_WARNING)
+    return template.format(name=name, stage=stage)
+
+
 class StackletNotHealthyError(RuntimeError):
     """wait_for_healthy timed out waiting for the declared [health] probe."""
 
@@ -144,38 +181,124 @@ class Stack:
 
     # ── Discovery ─────────────────────────────────────────────────────
 
+    @property
+    def extension_dirs(self) -> list[Path]:
+        """Every directory searched for stacklets the repo does not ship.
+
+        The repo carries the stacklets a release supports. Anything else
+        lives here: a stacklet written for one household, a community
+        one, one still being designed. Keeping them out of the repo means
+        no ignore rules and no long-lived branch to rebase.
+
+        `[core] extension_dirs` takes a list, searched in the order given
+        (a bare string is read as a one-entry list). The default is a
+        single directory in the admin's home, named after the product:
+        `~/famstack-extensions`. It is deliberately outside both the repo
+        and the data dir. The repo is replaced on upgrade and would take
+        the admin's code with it; the data dir is what running services
+        write, not where source belongs.
+
+        Nothing creates it. An instance with no extensions simply has no
+        such directory, and discovery skips what is not there.
+        """
+        configured = self.config.get("core", {}).get("extension_dirs")
+        if isinstance(configured, str):
+            configured = [configured]
+        if not configured:
+            return [Path.home() / f"{self.product_name()}-extensions"]
+        return [Path(d).expanduser() for d in configured]
+
+    @property
+    def mounted_extension_dir(self) -> Path:
+        """The extension dir containers see, which is the first one.
+
+        A compose file cannot iterate a list, so exactly one directory is
+        bind-mounted into the bot runner. It is also where a new
+        extension belongs unless the admin says otherwise.
+        """
+        return self.extension_dirs[0]
+
+    @property
+    def extension_mount_source(self) -> Path:
+        """The host path the bot runner bind-mounts at /extensions.
+
+        The mounted extension dir, once it exists. A bind mount needs its
+        source to exist, and an instance with no extensions should not
+        grow a directory in someone's home it never asked for, so until
+        then the mount gets an empty stand-in in the runtime state dir.
+
+        Rendering is pure; core's on_start creates whichever path this
+        returns. The switch costs nothing to miss: any `stack up` re-
+        renders core's env, so the real directory takes over as soon as
+        there is one.
+        """
+        mounted = self.mounted_extension_dir
+        if mounted.is_dir():
+            return mounted
+        return self.instance_dir / ".stack" / "no-extensions"
+
     def discover(self) -> list[dict]:
-        """Find all stacklets under root/stacklets/.
+        """Find every stacklet, in the repo and in the extensions dir.
 
         Walks the filesystem — no registry needed. A directory with a
-        stacklet.toml is a stacklet.
+        stacklet.toml is a stacklet, wherever it sits.
+
+        The repo is searched first, then each extension dir in the order
+        configured. The first tree to claim an id keeps it: an extension
+        can add a stacklet, never replace one the release ships, and two
+        extension dirs resolve the way a PATH does. The loser is reported
+        at debug level, because discovery runs on every command and a
+        permanent warning would be noise.
         """
-        stacklets_dir = self.root / "stacklets"
-        if not stacklets_dir.exists():
-            return []
+        roots = [(self.root / "stacklets", "repo")]
+        roots += [(d, "extension") for d in self.extension_dirs]
 
         result = []
-        for manifest_path in sorted(stacklets_dir.glob("*/stacklet.toml")):
-            try:
-                with open(manifest_path, "rb") as f:
-                    raw = tomllib.load(f)
-            except (tomllib.TOMLDecodeError, OSError):
+        seen = set()
+        for root, source in roots:
+            if not root.is_dir():
                 continue
-
-            sid = raw.get("id", manifest_path.parent.name)
-            result.append({
-                "id":          sid,
-                "name":        raw.get("name", sid),
-                "description": raw.get("description", ""),
-                "version":     raw.get("version", ""),
-                "port":        raw.get("port"),
-                "category":    raw.get("category", ""),
-                "always_on":   raw.get("always_on", False),
-                "enabled":     self._is_set_up(sid),
-                "path":        str(manifest_path.parent),
-                "manifest":    raw,
-            })
+            for manifest_path in sorted(root.glob("*/stacklet.toml")):
+                entry = self._read_manifest(manifest_path, source)
+                if entry is None:
+                    continue
+                if entry["id"] in seen:
+                    self.output.debug(
+                        f"Ignoring {source} stacklet {manifest_path.parent}: "
+                        f"id '{entry['id']}' is already taken")
+                    continue
+                seen.add(entry["id"])
+                result.append(entry)
         return result
+
+    def _read_manifest(self, manifest_path: Path, source: str) -> dict | None:
+        """One stacklet.toml as the dict the rest of the runtime speaks.
+
+        Returns None for a manifest that cannot be read or parsed: a
+        broken stacklet drops out of the list instead of breaking every
+        command that lists stacklets.
+        """
+        try:
+            with open(manifest_path, "rb") as f:
+                raw = tomllib.load(f)
+        except (tomllib.TOMLDecodeError, OSError):
+            return None
+
+        sid = raw.get("id", manifest_path.parent.name)
+        return {
+            "id":          sid,
+            "name":        raw.get("name", sid),
+            "description": raw.get("description", ""),
+            "version":     raw.get("version", ""),
+            "port":        raw.get("port"),
+            "category":    raw.get("category", ""),
+            "always_on":   raw.get("always_on", False),
+            "stage":       raw.get("stage", STABLE),
+            "source":      source,
+            "enabled":     self._is_set_up(sid),
+            "path":        str(manifest_path.parent),
+            "manifest":    raw,
+        }
 
     def _find_stacklet(self, stacklet_id: str) -> dict | None:
         """Find a stacklet by ID. Returns the stacklet dict or None."""
@@ -205,6 +328,7 @@ class Stack:
         template_vars = {
             # Core config
             "data_dir":              str(self.data),
+            "extension_mount":       str(self.extension_mount_source),
             "domain":                self._cfg("core", "domain"),
             "language":              self._cfg("core", "language", self._cfg("ai", "language", "en")),
             "timezone":              self._cfg("core", "timezone", "UTC"),
@@ -478,6 +602,10 @@ class Stack:
             "total": len(stacklets),
             "enabled": len(set_up),
             "online": len(online),
+            # Every entry carries its own `source` and `path`; these are
+            # the directories the extension ones were loaded from, for a
+            # caller that wants to name them without deriving them.
+            "extension_dirs": [str(d) for d in self.extension_dirs],
         }
 
     def status(self) -> dict:
@@ -786,6 +914,31 @@ class Stack:
         first_run = self._is_first_run(stacklet_id)
         stacklet_dir = Path(s["path"])
 
+        # ── What to say before anything starts ────────────────────
+        # Whoever runs this should know what they are getting before the
+        # containers are up, not after.
+        name = s.get("name", stacklet_id)
+        stage = s.get("stage", STABLE)
+        warnings = []
+        warning = stage_warning(stage, name)
+        if warning:
+            self.output.warn(warning)
+            warnings.append(warning)
+
+        # Only one extension dir is mounted into the bot runner, because a
+        # compose file cannot iterate a list. A bot in any other one is
+        # never discovered, and nothing else would ever say so.
+        if (s.get("source") == "extension"
+                and (stacklet_dir / "bot").is_dir()
+                and stacklet_dir.parent != self.mounted_extension_dir):
+            unmounted = (
+                f"{name} ships a bot, but the bot runner only mounts "
+                f"{self.mounted_extension_dir}. Move the stacklet there, or "
+                f"put that directory first in [core] extension_dirs."
+            )
+            self.output.warn(unmounted)
+            warnings.append(unmounted)
+
         # ── Check dependencies ────────────────────────────────────
         for dep in manifest.get("requires", []):
             if not self._is_set_up(dep):
@@ -871,6 +1024,10 @@ class Stack:
             "description": s.get("description", ""),
             "port": s.get("port"),
             "hints": hints,
+            "stage": stage,
+            "source": s.get("source", "repo"),
+            "path": s["path"],
+            "warnings": warnings,
         }
 
     def run_on_install_success(self, stacklet_id: str, step_fn=None) -> bool:

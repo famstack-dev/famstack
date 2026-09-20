@@ -1,0 +1,31 @@
+# Minimal container for lifecycle testing, mirroring the `test` fixture
+# on its own port so both can run side by side.
+
+name: stack-guest
+
+services:
+  stack-guest:
+    container_name: stack-guest
+    image: alpine:latest
+    command: >
+      sh -c "while true; do
+        echo -e 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok' |
+        nc -l -p 8080;
+      done"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - stack
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42098:8080"
+    volumes:
+      - ${GUEST_DATA_DIR}:/data
+    environment:
+      TZ: ${TZ}
+      GUEST_SECRET: ${GUEST_SECRET}
+      GUEST_ADMIN: ${GUEST_ADMIN}
+    restart: unless-stopped
+
+networks:
+  stack:
+    external: true

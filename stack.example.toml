@@ -21,6 +21,25 @@ domain = ""
 # The ~ shorthand is expanded by the stack CLI.
 data_dir = "~/famstack-data"
 
+# Where stacklets that don't ship with famstack live: one you wrote, one
+# you cloned, one that isn't finished yet. Any subdirectory with a
+# stacklet.toml is discovered exactly like the built-in ones, so
+# `stack up <id>` works the same.
+#
+# Defaults to ~/famstack-extensions, which nothing creates: make it when
+# you have a stacklet to put in it. Deliberately outside both this repo
+# (an upgrade replaces it) and the data dir (that is what running services
+# write, not where source belongs).
+#
+# A list if you want more than one, searched in order, so the first entry
+# wins a name clash. It is also the one mounted into the bot runner, so a
+# stacklet that ships a bot belongs there.
+#
+# Spelled out rather than left to the default, so the path is greppable
+# and does not move if you rename the stack. Add a second entry for a
+# working copy: ["~/famstack-extensions", "~/dev/my-stacklets"].
+extension_dirs = ["~/famstack-extensions"]
+
 # Timezone for containers that need one (Immich, Paperless, cron jobs, etc.)
 # Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 timezone = "UTC"
