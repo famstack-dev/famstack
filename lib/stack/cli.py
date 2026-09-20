@@ -960,7 +960,13 @@ def handle_doctor(stck, args):
         mark = f"{RED}✗{RESET}" if finding.is_error else f"{ORANGE}⚠{RESET}"
         print(f"  {mark}  {BOLD}{finding.title}{RESET}")
         print(f"     {DIM}{finding.detail}{RESET}")
-        print(f"     {TEAL}{finding.fix}{RESET}\n")
+        # Labelled and copy-pasteable. The `./` goes on here rather than
+        # in the finding, so the data stays a bare command for anything
+        # reading the JSON, and a fix that is not a stack command (the
+        # stacktests path) is left exactly as written.
+        command = (f"./{finding.fix}" if finding.fix.startswith("stack ")
+                   else finding.fix)
+        print(f"     {DIM}to fix:{RESET} {TEAL}{command}{RESET}\n")
 
     print(f"  {doctor.summarise(findings)}\n")
     # Exit non-zero on errors so an agent or script can gate on it.
