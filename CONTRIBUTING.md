@@ -70,3 +70,9 @@ A bare `make typecheck` reports on `lib`, `stacklets`, `tools` and `hooks`. `tes
 ## Tests, style, commits
 
 All three live in [docs/agent/dev.md](docs/agent/dev.md), which is the canonical reference and stays shorter than a duplicate here would. The short version: `make test-unit` before every commit, module tests over unit tests, feature branches only, never push without asking. Commit subjects are the changelog famstack.dev renders, so they follow `<type>(<scope>): <what the product does now>` and every one has to parse.
+
+Enable the hooks once per clone so lint and the commit convention are checked before a commit exists rather than in CI:
+
+```bash
+git config core.hooksPath hooks
+```

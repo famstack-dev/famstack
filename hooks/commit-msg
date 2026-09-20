@@ -1,0 +1,14 @@
+#!/bin/sh
+# Block commit subjects that would not parse as a changelog entry.
+#
+# Enable once per clone (same switch as the pre-commit hook):
+#     git config core.hooksPath hooks
+#
+# The release log is the changelog, so a subject that does not parse is
+# an entry missing from what the world reads. Same rules as CI, so a
+# commit that passes here passes there.
+
+if ! python3 tools/commit-lint --message "$1"; then
+    echo "  Fix the subject, or commit with --no-verify to bypass." >&2
+    exit 1
+fi
