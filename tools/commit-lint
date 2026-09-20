@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""Check that commit subjects parse as changelog entries.
+
+The release log is the changelog (docs/agent/dev.md, "Commits: the
+subject is the changelog"), which only works if every subject parses.
+This is the deterministic half of that: the same rules, applied the same
+way, by a hook before the commit exists and by CI before it merges.
+
+Three ways in, one rule set:
+
+    tools/commit-lint --message .git/COMMIT_EDITMSG   one message, for the hook
+    tools/commit-lint --range origin/main..HEAD       a range, for CI and releases
+    tools/commit-lint --title "feat(photos): ..."     a PR title, which squash
+                                                      merging turns into a subject
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+
+# Types, and where each one lands in the changelog. The empty string
+# means it is not shown; internal work is still committed, just not
+# announced.
+TYPES = {
+    "feat": "Added",
+    "fix": "Fixed",
+    "security": "Security",
+    "perf": "Performance",
+    "docs": "Documentation",
+    "refactor": "",
+    "test": "",
+    "chore": "",
+    "ci": "",
+    "style": "",
+    "build": "",
+}
+
+# Scopes, and what a reader sees. Keep in step with the table in
+# docs/agent/dev.md; a test asserts the two agree.
+SCOPES = {
+    # Stacklets, by the id the directory and the CLI use.
+    "agent": "Agent Stacklet",
+    "ai": "AI Stacklet",
+    "backup": "Backup Stacklet",
+    "chatai": "ChatAI Stacklet",
+    "code": "Code Stacklet",
+    "core": "Core Stacklet",
+    "docs": "Docs Stacklet",
+    "infra": "Infra Stacklet",
+    "memory": "Memory Stacklet",
+    "messages": "Messages Stacklet",
+    "photos": "Photos Stacklet",
+    # Bots, by the name in their bot.toml with the -bot suffix dropped.
+    "archivist": "Archivist Bot",
+    "mail": "Mail Bot",
+    "scribe": "Scribe Bot",
+    "stacker": "Stacker Bot",
+    # Components that are neither: the stacklet that owns them.
+    "curator": "Memory Stacklet",
+    "wiki": "Memory Stacklet",
+    # The framework itself.
+    "stack": "stack CLI",
+    "cli": "stack CLI",
+    "doctor": "stack CLI",
+    "update": "stack CLI",
+    "install": "stack CLI",
+    "web": "web fetch",
+}
+
+
+SUBJECT_LIMIT = 72
+
+HEADER = re.compile(
+    r"^(?P<type>[a-z]+)"
+    r"(?:\((?P<scope>[a-z0-9-]+)\))?"
+    r"(?P<breaking>!)?"
+    r": (?P<subject>.+?)"
+    r"(?: \(#(?P<pr>\d+)\))?$"
+)
+
+# Git writes these itself, or they are machine-made and never reach a
+# changelog. Linting them would only teach people to pass --no-verify.
+EXEMPT = re.compile(r"^(Merge |Revert \"|fixup! |squash! |Bumps )")
+
+
+def check(header: str) -> list[str]:
+    """Every rule this subject breaks, in the order a reader would fix them."""
+    header = header.rstrip()
+    if not header or EXEMPT.match(header):
+        return []
+
+    match = HEADER.match(header)
+    if not match:
+        return [
+            "does not parse as <type>(<scope>): <subject>",
+            f"  types: {', '.join(sorted(TYPES))}",
+            "  example: fix(photos): stop the upload stalling on a slow phone",
+        ]
+
+    problems = []
+    kind, scope, subject = match["type"], match["scope"], match["subject"]
+
+    if kind not in TYPES:
+        problems.append(
+            f"'{kind}' is not a type. Use one of: {', '.join(sorted(TYPES))}")
+
+    # A scope exists to group entries in the changelog, so it is only
+    # checked for types that appear there. `chore(release)` and
+    # `test(stack)` name something useful to a developer and nothing to a
+    # reader, and policing them would be bureaucracy.
+    #
+    # Documentation is shown but scoped by document rather than by
+    # stacklet, so docs(readme) and docs(admin-guide) are fine.
+    groups_by_scope = bool(TYPES.get(kind)) and kind != "docs"
+    if scope and groups_by_scope and scope not in SCOPES:
+        problems.append(
+            f"'{scope}' is not a scope. Use one of: {', '.join(sorted(SCOPES))}"
+            " (or no scope at all)")
+
+    if len(header) > SUBJECT_LIMIT:
+        problems.append(
+            f"{len(header)} characters, limit is {SUBJECT_LIMIT}")
+
+    if subject[:1].isupper():
+        problems.append("starts with a capital; the subject is a sentence "
+                        "fragment, not a title")
+
+    if subject.endswith("."):
+        problems.append("ends with a full stop")
+
+    return problems
+
+
+def say(message: str, err: bool = False) -> None:
+    print(message, file=sys.stderr if err else sys.stdout, flush=True)
+
+
+def report(header: str, problems: list[str], where: str = "") -> None:
+    location = f"{where}  " if where else ""
+    print(f"\n  ✗ {location}{header}", file=sys.stderr)
+    for problem in problems:
+        print(f"      {problem}", file=sys.stderr)
+
+
+def subjects_in(rev_range: str) -> list[tuple[str, str]]:
+    """Subjects in a range, read from the repository you are standing in.
+
+    Not from the repository this script lives in: those are the same
+    thing in normal use, and letting the caller choose means a release
+    script, or a test, can point it at another checkout.
+    """
+    result = subprocess.run(
+        ["git", "log", "--no-merges", "--format=%h%x00%s", rev_range],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(result.stderr.strip(), file=sys.stderr)
+        sys.exit(2)
+    pairs = []
+    for line in result.stdout.splitlines():
+        if line.strip():
+            sha, _, subject = line.partition("\0")
+            pairs.append((sha, subject))
+    return pairs
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--message", help="File holding one commit message")
+    source.add_argument("--range", help="Revision range, e.g. origin/main..HEAD")
+    source.add_argument("--title", help="A pull request title")
+    args = parser.parse_args()
+
+    failures = 0
+
+    if args.message:
+        with open(args.message, encoding="utf-8") as f:
+            header = f.readline()
+        problems = check(header)
+        if problems:
+            report(header.rstrip(), problems)
+            failures = 1
+
+    elif args.title:
+        problems = check(args.title)
+        if problems:
+            report(args.title, problems)
+            failures = 1
+
+    else:
+        # An empty range is how this guard dies quietly: a shallow clone
+        # or a bad base leaves nothing to check and the step goes green
+        # having read nothing. Say what was checked, and refuse to pass
+        # on nothing.
+        pairs = subjects_in(args.range)
+        if not pairs:
+            say(f"\n  \u2717 no commits in {args.range}", err=True)
+            say("      Nothing was checked. A shallow checkout or a wrong "
+                "base makes this guard pass blind.", err=True)
+            return 1
+        for sha, subject in pairs:
+            problems = check(subject)
+            if problems:
+                report(subject, problems, where=sha)
+                failures += 1
+        if not failures:
+            say(f"  {len(pairs)} subject(s) checked, all parse")
+
+    if failures:
+        print(f"\n  {failures} subject(s) to fix. The rules and the reasoning:"
+              f"\n  docs/agent/dev.md, \"Commits: the subject is the changelog\"\n",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

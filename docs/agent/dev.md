@@ -281,26 +281,34 @@ The scope is what a reader recognises, never a file or a module:
 
 | Scope | Renders as |
 |---|---|
-| `photos` | Photos |
-| `docs`, `archivist` | Documents |
-| `messages` | Messages |
-| `memory`, `wiki`, `curator` | Memory |
-| `agent` | Stacky |
-| `ai` | AI |
-| `chatai` | Chat AI |
-| `code` | Code |
-| `mail` | Email |
-| `backup` | Backup |
-| `core` | Core |
-| `infra` | Networking |
-| `web` | Web |
-| `stack`, `cli`, `doctor`, `update`, `install` | The stack CLI |
+| `agent` | Agent Stacklet |
+| `ai` | AI Stacklet |
+| `backup` | Backup Stacklet |
+| `chatai` | ChatAI Stacklet |
+| `code` | Code Stacklet |
+| `core` | Core Stacklet |
+| `docs` | Docs Stacklet |
+| `infra` | Infra Stacklet |
+| `memory` | Memory Stacklet |
+| `messages` | Messages Stacklet |
+| `photos` | Photos Stacklet |
+| `archivist` | Archivist Bot |
+| `mail` | Mail Bot |
+| `scribe` | Scribe Bot |
+| `stacker` | Stacker Bot |
+| `curator`, `wiki` | Memory Stacklet |
+| `stack`, `cli`, `doctor`, `update`, `install` | stack CLI |
+| `web` | web fetch |
 | *(none)* | General |
 
-For type `docs` the scope names the document instead (`docs(readme)`,
-`docs(admin-guide)`, `docs(dev-guide)`), which is why those do not appear
-above. Scoping documentation with a stacklet's name renders it under that
-stacklet, which is how a README fix ends up filed under Documents.
+The scope is a stacklet id or a bot name, written the way the code writes
+it, so a reader can go from a changelog line to the directory it came from.
+A stacklet renders as "<id> Stacklet" and a bot as "<name> Bot": one release
+line saying "Archivist Bot" and the next saying "Docs Stacklet" tells you
+which one changed without opening anything.
+
+Anything that is neither, a component like the wiki or the curator, renders
+as the stacklet that owns it.
 
 `docs` is both a type and a scope and they mean different things. Type `docs`
 is documentation; scope `docs` is the Documents stacklet. `fix(docs):` changes
@@ -352,10 +360,16 @@ database once 3.x has migrated it. Written properly it cannot be lost:
 ```
 feat(docs)!: move Paperless to 3.0.4
 
-Upgrade: back up ~/famstack-data/docs before restarting the stacklet.
-Paperless migrates the database on first start and 2.x will not read it
-afterwards. There is no downgrade.
+Upgrade: back up `~/famstack-data/docs` before restarting the stacklet
+with `./stack restart docs`. Paperless migrates the database on first
+start and 2.x will not read it afterwards. There is no downgrade.
 ```
+
+**The body is markdown.** It is quoted verbatim into the GitHub release
+and rendered on famstack.dev, so commands and paths in it are written as
+code: `` `./stack restart docs` ``, `` `~/famstack-data/docs` ``. The
+subject is not: it appears in plain-text contexts too, including
+`./stack update` output, where backticks would be literal clutter.
 
 | Footer | What it does |
 |---|---|
@@ -363,6 +377,12 @@ afterwards. There is no downgrade.
 | `BREAKING CHANGE: <what breaks>` | Same section, for something that breaks an existing setup rather than asking for a step. |
 | `Refs: FAM-12` | Links the tracker card. |
 | `Co-Authored-By:` | Never. Project rule. |
+
+`tools/commit-lint` enforces the header, and is the same check in every
+place that matters: the `commit-msg` hook rejects it before the commit
+exists, CI rejects the PR title and every commit in the PR, and the
+release gate runs it over the range being tagged. Enable the hooks once
+per clone with `git config core.hooksPath hooks`.
 
 A generator reads the header as
 `^(type)(\((scope)\))?(!)?: (subject)( \(#(pr)\))?$` and groups into **Action
