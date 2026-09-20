@@ -1271,6 +1271,215 @@ def handle_uninstall(stck, args):
     print(f"  {DIM}Run 'stack install' to start fresh.{RESET}\n")
 
 
+def handle_update(stck, args):
+    """Move the checkout to a release. Restarting stays the admin's call.
+
+    Sources only: nothing here stops or starts a service. A family is
+    using these, so when they go down is a decision for the person at the
+    keyboard, not a side effect of updating. The command works out which
+    restarts the release actually earns and prints them.
+
+    The move is a transaction. Local edits are set aside and put back,
+    and if they collide with the release the whole thing winds back to
+    where it started, because a half-applied update leaves conflict
+    markers inside files that have to parse.
+    """
+    from .prompt import TEAL, confirm
+    from .updater import (
+        Checkout, latest_tag, restart_targets, touches_framework,
+        touched_stacklets, version_key,
+    )
+
+    checkout = Checkout(stck.root)
+    if not checkout.is_git():
+        print_error({"error": "This is not a git checkout, so there is no release to move to",
+                     "hint": "git clone https://github.com/famstack-dev/famstack.git"})
+        sys.exit(1)
+
+    print("\n  Fetching releases...", file=sys.stderr)
+    fetched, fetch_err = checkout.fetch_tags()
+    if not fetched:
+        print(f"  {ORANGE}\u26a0{RESET}  Could not reach the remote. Working from the tags already here.",
+              file=sys.stderr)
+        if fetch_err:
+            print(f"      {DIM}{fetch_err.splitlines()[-1]}{RESET}", file=sys.stderr)
+
+    tags = checkout.tags()
+    target = args.tag or latest_tag(tags)
+    if not target:
+        print_error({
+            "error": "No releases found in this checkout",
+            "problems": [
+                f"tags come from: {', '.join(checkout.remotes()) or 'no remotes'}",
+                "on a fork, add the project as a remote: "
+                "git remote add upstream <url>",
+            ],
+        })
+        sys.exit(1)
+    if target not in tags:
+        print_error({"error": f"No such release: {target}",
+                     "problems": [f"latest is {latest_tag(tags)}"]})
+        sys.exit(1)
+
+    current = checkout.current_tag()
+    if current == target:
+        print(f"\n  {GREEN}\u2713{RESET}  Already on {TEAL}{target}{RESET}\n")
+        return
+
+    # Working past the newest release: a branch, main, or a tag with
+    # commits after it. Moving "up" to that release would move backwards
+    # and stash whatever is in progress to do it.
+    branch = checkout.branch()
+    if not args.tag and checkout.contains(target):
+        where = f"{branch}, which is development," if branch else checkout.describe()
+        print(f"\n  {GREEN}\u2713{RESET}  {TEAL}{where}{RESET} "
+              f"is already past {target}, the newest release.")
+        print(f"  {DIM}To move onto that release anyway: "
+              f"stack update {target}{RESET}")
+        if len(checkout.remotes()) > 1:
+            print(f"  {DIM}Tags came from: {', '.join(checkout.remotes())}{RESET}")
+        print()
+        return
+
+    # ── What this jump would do ───────────────────────────────────
+    base = current or "HEAD"
+    changed = checkout.changed_paths(base, target)
+    subjects = checkout.log_subjects(base, target)
+    running = docker.running_project_ids()
+    targets = restart_targets(changed, running)
+    dirty = checkout.dirty_paths()
+    collisions = sorted(set(dirty) & set(changed))
+
+    print(f"\n  {BOLD}Update{RESET}  {DIM}{checkout.describe()}{RESET} \u2192 {TEAL}{target}{RESET}\n")
+    if current and version_key(target) < version_key(current):
+        print(f"  {ORANGE}\u26a0{RESET}  {target} is older than {current}. Data does not downgrade.")
+    if subjects:
+        commits = f"{len(subjects)} commit" + ("s" if len(subjects) != 1 else "")
+        files = f"{len(changed)} file" + ("s" if len(changed) != 1 else "")
+        print(f"  {commits}, {files}")
+        for line in subjects[:5]:
+            print(f"  {DIM}\u2022 {line}{RESET}")
+        if len(subjects) > 5:
+            print(f"  {DIM}  ... and {len(subjects) - 5} more{RESET}")
+    if dirty:
+        count = f"{len(dirty)} file" + ("s" if len(dirty) != 1 else "")
+        print(f"\n  Your edits to {count} are set aside for the move, then put back:")
+        for path in dirty[:5]:
+            print(f"  {DIM}\u2022 {path}{RESET}")
+        for path in collisions:
+            print(f"  {ORANGE}\u26a0{RESET}  {path} is also changed by this release. "
+                  f"If they collide, the update winds back and changes nothing.")
+    if branch:
+        print(f"\n  {DIM}This leaves {branch} for the tag, which detaches HEAD. "
+              f"Your work stays on {branch}; git switch {branch} goes back.{RESET}")
+    if targets:
+        scope = ("every running stacklet" if touches_framework(changed)
+                 else ", ".join(targets))
+        print(f"\n  Needs a restart afterwards: {scope}")
+    print(f"  {DIM}Release notes: "
+          f"https://github.com/famstack-dev/famstack/releases/tag/{target}{RESET}")
+
+    if getattr(args, "dry_run", False):
+        _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
+        return
+    if not getattr(args, "yes", False):
+        if not sys.stdin.isatty():
+            print_error({"error": "Pass --yes to confirm (non-interactive)"})
+            sys.exit(1)
+        if not confirm(f"Update to {target}?"):
+            print(f"  {DIM}Aborted{RESET}\n")
+            return
+
+    # ── Move ──────────────────────────────────────────────────────
+    was = checkout.position()
+    stashed = checkout.stash() if dirty else False
+    if stashed:
+        print(f"  {GREEN}\u2713{RESET}  Your edits set aside")
+
+    moved, err = checkout.checkout(target)
+    if not moved:
+        if stashed:
+            checkout.stash_pop()
+        print_error({"error": f"Could not move to {target}",
+                     "problems": err.splitlines()[:4]})
+        sys.exit(1)
+
+    # Announced only once the edits are back, because a failed restore
+    # winds the move back and "now on <tag>" would be a lie by then.
+    if stashed and not _restore_edits(checkout, was, target, collisions):
+        sys.exit(1)
+    print(f"  {GREEN}\u2713{RESET}  Now on {target}")
+
+    print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")
+    _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
+
+
+def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
+    """What the admin has to run for the new code to be the running code.
+
+    Deliberately advice and not action: a stacklet only picks up a
+    release when its containers are recreated, and that is a decision
+    about when the family loses the service.
+    """
+    if not targets:
+        idle = sorted(touched_stacklets(changed) - set(running))
+        if idle:
+            print(f"\n  {DIM}Nothing to restart. {', '.join(idle)} changed but "
+                  f"is not running, and will pick this up on the next stack up.{RESET}\n")
+        else:
+            print(f"\n  {DIM}Nothing running was changed by this release.{RESET}\n")
+        return
+
+    print(f"\n  {BOLD}Restart to pick it up{RESET}")
+    if touches_framework(changed):
+        print(f"  {DIM}The framework changed, so this is every running stacklet.{RESET}")
+        print(f"    {TEAL}./stack restart all{RESET}")
+    else:
+        for sid in targets:
+            print(f"    {TEAL}./stack restart {sid}{RESET}")
+    print(f"    {TEAL}./stack doctor{RESET}\n")
+
+
+def _restore_edits(checkout, was, target, collisions) -> bool:
+    """Put the admin's edits back, or wind the whole update back.
+
+    git keeps the stash entry when a pop conflicts, so both sides of the
+    collision still exist: the release is the tag, the edits are the
+    stash. That makes undoing safe, and undoing is the right default. A
+    tree carrying conflict markers in a compose file is not something to
+    hand back to someone who typed one command.
+    """
+    from .prompt import TEAL
+
+    restored, _ = checkout.stash_pop()
+    if restored:
+        print(f"  {GREEN}\u2713{RESET}  Your edits put back")
+        return True
+
+    checkout.force_checkout(was)
+    recovered, err = checkout.stash_pop()
+    print(f"\n  {ORANGE}\u26a0{RESET}  Your edits collide with {target}. Nothing changed.")
+
+    if not recovered:
+        print(f"      {RED}The wind-back did not finish.{RESET} Your edits are still "
+              f"in the stash:")
+        print(f"      {DIM}git stash list && git stash pop{RESET}")
+        if err:
+            print(f"      {DIM}{err.splitlines()[-1]}{RESET}\n")
+        return False
+
+    print(f"      Back on {TEAL}{checkout.describe()}{RESET} with your edits where they were.")
+    if collisions:
+        print("      The collision is in:")
+        for path in collisions:
+            print(f"      {DIM}\u2022 {path}{RESET}")
+    print("      To take the release anyway, deal with that file first:")
+    print(f"      {DIM}git checkout -- <file>   drop your version for the release's{RESET}")
+    print(f"      {DIM}git stash                keep it, then pop and merge by hand{RESET}")
+    print(f"      then run {TEAL}./stack update{RESET} again.\n")
+    return False
+
+
 def handle_version(stck, args):
     sha = stck._git_commit()
     print(f"{stck.product_name()} {VERSION} ({sha})")
@@ -1336,6 +1545,7 @@ DISPATCH = {
     "setup": handle_setup,
     "logs": handle_logs,
     "version": handle_version,
+    "update": handle_update,
 }
 
 # ── Help ─────────────────────────────────────────────────────────────────
@@ -1357,6 +1567,7 @@ _HELP_COMMANDS = [
         ("logs <stacklet>",    "Tail container logs"),
     ]),
     ("Setup", [
+        ("update [<tag>]",     "Move to a release and restart what it changed"),
         ("install",            "Interactive setup wizard"),
         ("uninstall",          "Remove all services, config, and data"),
         ("init",               "Create Docker network and data directories"),
@@ -1450,6 +1661,11 @@ def main():
     p = sub.add_parser("down"); p.add_argument("stacklet")
     p = sub.add_parser("destroy"); p.add_argument("stacklet"); p.add_argument("--yes", action="store_true")
     p = sub.add_parser("restart"); p.add_argument("stacklet")
+    p = sub.add_parser("update")
+    p.add_argument("tag", nargs="?", default=None,
+                   help="Release to move to (default: the newest)")
+    p.add_argument("--dry-run", action="store_true", help="Show what would change")
+    p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("setup"); p.add_argument("stacklet")
     p = sub.add_parser("env"); p.add_argument("stacklet")
     p = sub.add_parser("logs")

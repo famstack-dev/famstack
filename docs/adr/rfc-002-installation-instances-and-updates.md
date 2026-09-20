@@ -185,12 +185,13 @@ Each phase stands alone and ships on its own. Gates are what proves it.
 
 ### Phase 0: make a release installable (days)
 
-- Install instructions clone and check out the latest tag.
-- `stack update`: fetch tags, print the delta's release notes, stash a dirty
-  tree or refuse, check out, restart stacklets whose files changed, run
-  doctor, and put the stash back with the conflict path spelled out.
+- Install instructions clone and check out the latest tag. *(open)*
+- ~~`stack update`: fetch tags, print the delta, stash a dirty tree, check
+  out, restart stacklets whose files changed, run doctor.~~ Shipped. It
+  refuses to restart anything when the stash conflicts, and prints the
+  recovery commands instead.
 - `stack version` reports the checkout's tag, the SHA, and whether the tree is
-  dirty or behind.
+  dirty or behind. *(open: the version is still a constant in the tree)*
 - ~~Delete `./stack updates` from ops.md or implement it.~~ Done: the row is
   removed and the manual procedure is documented, which is what `stack update`
   has to automate.

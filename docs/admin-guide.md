@@ -831,17 +831,45 @@ Container images update themselves nightly at 3am via Watchtower. You do nothing
 The famstack code is a git checkout, and a release is a tag. Updating means moving your checkout to a newer tag.
 
 ```bash
+./stack update
+```
+
+That is the whole thing from v0.3.0-beta.4 onward. It fetches the releases, shows what the jump changes, moves the checkout, and sets your local edits aside and puts them back.
+
+It does not restart anything. New code on disk is not new code running: a stacklet picks up a release when its containers are recreated, and when your family loses a service for thirty seconds is your call, not a side effect of updating. So the command works out which restarts the release actually earns and prints them:
+
+```
+  ✓  Updated to v0.3.0-beta.4
+
+  Restart to pick it up
+    ./stack restart docs
+    ./stack doctor
+```
+
+```bash
+./stack update --dry-run         # show the plan, change nothing
+./stack update v0.3.0-beta.4     # a specific release instead of the newest
+./stack update --yes             # skip the confirmation
+```
+
+A stacklet is named only if the release changed files inside it and it is running, so a documentation release asks for nothing. If the release changed anything under `lib/`, every running stacklet is named, because that is the code they all share.
+
+### Updating by hand
+
+`stack update` ships in v0.3.0-beta.4. Moving *to* that release, or moving between older ones, is the same steps typed out:
+
+```bash
 cd ~/famstack
 git fetch --tags
 git tag | tail -5              # what is available
-git checkout v0.3.0-beta.3     # the one you want
+git checkout v0.3.0-beta.4     # the one you want
 ./stack doctor
 ```
 
 Then restart what the release touched. This prints the list:
 
 ```bash
-git diff --name-only v0.3.0-beta.2 v0.3.0-beta.3 -- stacklets/ | cut -d/ -f2 | sort -u
+git diff --name-only v0.3.0-beta.3 v0.3.0-beta.4 -- stacklets/ | cut -d/ -f2 | sort -u
 ```
 
 Restart any of those you run. If the same command against `lib/` prints anything, the framework itself changed and everything wants a restart:
@@ -853,6 +881,23 @@ Restart any of those you run. If the same command against `lib/` prints anything
 Nothing in the update touches your instance. `stack.toml`, `users.toml`, `.stack/`, `~/famstack-data/` and `~/famstack-extensions/` are all outside git's reach, so your config, secrets, data and your own stacklets come through a tag switch untouched.
 
 ### If you have edited files in the checkout
+
+`stack update` handles this for you. It lists the files it is about to set aside, warns in advance when one of them is a file the release also changes, and puts them back afterwards.
+
+If they collide, it winds the whole update back: you end up on the release you started from, with your edits exactly where they were and nothing left in the stash. Then it tells you how to go ahead deliberately:
+
+```
+  ⚠  Your edits collide with v0.3.0-beta.4. Nothing changed.
+      Back on v0.3.0-beta.3 with your edits where they were.
+      The collision is in:
+      • stacklets/docs/docker-compose.yml
+      To take the release anyway, deal with that file first:
+      git checkout -- <file>   drop your version for the release's
+      git stash                keep it, then pop and merge by hand
+      then run ./stack update again.
+```
+
+A half-applied update is worse than no update: a compose file with conflict markers in it does not parse, so the services you restart next fail for a reason that has nothing to do with the release. What follows is the same work done by hand, which is what an older release needs.
 
 git refuses to move while one of your edits is in the way:
 
@@ -910,7 +955,16 @@ Please specify which branch you want to merge with.
 
 Do not take git's suggestion to run `git pull origin main`. It succeeds, and it quietly moves you off releases onto unreleased development code while `./stack version` carries on reporting the last release number. Use `git fetch --tags` and `git checkout <tag>`.
 
-If you cloned and never checked out a tag, you are on `main`, which is development. `git pull` there gives you unreleased work rather than the next release. `git fetch --tags && git checkout <tag>` moves you onto releases.
+If you cloned and never checked out a tag, you are on `main`, which is development. `git pull` there gives you unreleased work rather than the next release. `./stack update` moves you onto the newest release and says so before it does: your branch is left where it is, and `git switch main` goes back to it. If `main` already contains the newest release, which it will if you pulled recently, it tells you that instead of moving you backwards.
+
+**On a fork**, `origin` is your copy and has none of the project's releases in it. `./stack update` fetches tags from every remote, so add the project as one:
+
+```bash
+git remote add upstream https://github.com/famstack-dev/famstack.git
+./stack update
+```
+
+Without it there is nothing to update to, and the command says which remotes it looked at.
 
 Pre-1.0 caveat: occasionally a release changes a config schema or env var. Release notes say so. Read them before updating.
 
