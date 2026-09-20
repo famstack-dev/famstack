@@ -852,6 +852,17 @@ It does not restart anything. New code on disk is not new code running: a stackl
 ./stack update --yes             # skip the confirmation
 ```
 
+Every form fetches tags first, including `--dry-run`: without it the answer
+would only be as fresh as your last fetch. It opens with the version and,
+once it knows, the move it is proposing:
+
+```
+  famstack 0.3.0-beta.3
+  Fetching releases...
+
+  Update  v0.3.0-beta.3 → v0.3.0-beta.4
+```
+
 A stacklet is named only if the release changed files inside it and it is running, so a documentation release asks for nothing. If the release changed anything under `lib/`, every running stacklet is named, because that is the code they all share.
 
 ### Updating by hand

@@ -169,6 +169,31 @@ def check_stale_code(stacklet: str) -> Finding:
     )
 
 
+def check_release(position: str, latest: str, up_to_date: bool) -> Finding | None:
+    """Whether a newer release exists than the one this checkout is on.
+
+    Read from the tags this clone already has, because doctor does not
+    reach the network: it is run often, and often on an instance whose
+    problem is that something is unreachable. So the answer is only as
+    fresh as the last fetch, and the detail says so rather than implying
+    authority it does not have.
+
+    A warning, not an error. Being a release behind breaks nothing, and
+    doctor's exit code gates scripts.
+    """
+    if not latest or up_to_date:
+        return None
+    return Finding(
+        level=WARN,
+        title=f"a newer release is available: {latest}",
+        detail=(
+            f"This checkout is at {position}. Tags are read from this clone, "
+            f"so the newest release may be newer still."
+        ),
+        fix="stack update",
+    )
+
+
 def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     """A configured endpoint that does not answer.
 

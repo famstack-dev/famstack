@@ -655,10 +655,16 @@ class Stack:
     def status(self) -> dict:
         """Full system status: version, runtime, host, stacklets."""
         from .cli import VERSION
+        from .updater import Checkout, running_version
 
+        checkout = Checkout(self.root)
         info = {
             "name": self.product_name(),
-            "version": VERSION,
+            # What is running, not the constant in the source: the tag,
+            # plus how far past it this checkout sits.
+            "version": running_version(
+                checkout.describe() if checkout.is_git() else "", VERSION),
+            "release": VERSION,
             "commit": self._git_commit(),
             "python": platform.python_version(),
             "os": platform.system(),

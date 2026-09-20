@@ -37,11 +37,11 @@ which detaches HEAD, after which `git pull` no longer does what the admin
 guide says it does. There is no `stack update`. Five tags exist and nothing in
 the product knows about them.
 
-**P2. The version string is a constant in the working tree.**
-`VERSION = "0.3.0-beta.3"` (`lib/stack/cli.py:197`) is what `stack version`
-and `stack status` report, next to a short SHA. On a `main` checkout between
-tags that number is simply the last one someone typed, so it names a hundred
-different trees.
+**P2. The version string was a constant in the working tree.** *(fixed)*
+`VERSION = "0.3.0-beta.3"` was what `stack version` and `stack status`
+reported, so on a checkout between tags it named a hundred different trees.
+Every surface now derives it from `git describe --tags --dirty`, which
+answers by comparing the tree against the commit a tag points at.
 
 **P3. A release does not describe what runs.** Across the stacklets there are
 19 image references. Exactly one is pinned to an exact upstream version
@@ -190,8 +190,11 @@ Each phase stands alone and ships on its own. Gates are what proves it.
   out, restart stacklets whose files changed, run doctor.~~ Shipped. It
   refuses to restart anything when the stash conflicts, and prints the
   recovery commands instead.
-- `stack version` reports the checkout's tag, the SHA, and whether the tree is
-  dirty or behind. *(open: the version is still a constant in the tree)*
+- ~~`stack version` reports the checkout's tag, the SHA, and whether the tree
+  is dirty.~~ Shipped. `git describe --tags --dirty` compares the tree against
+  the commit a tag points at, and every surface prints the same derived
+  string. The constant stays in `cli.py` for the release gate to check
+  against the tag; it is no longer what anyone is shown.
 - ~~Delete `./stack updates` from ops.md or implement it.~~ Done: the row is
   removed and the manual procedure is documented, which is what `stack update`
   has to automate.

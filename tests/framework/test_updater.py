@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 
 from stack.updater import (
-    Checkout, latest_tag, restart_targets, stale_stacklets, version_key,
+    Checkout, latest_tag, restart_targets, running_version, stale_stacklets,
+    version_key,
 )
 
 
@@ -89,6 +90,41 @@ class TestLatestRelease:
         """Sorting by the key must agree with the intended release order."""
         ordered = ["v0.2.1", "v0.2.2", "v0.3.0-beta.1", "v0.3.0-beta.2", "v0.3.0"]
         assert sorted(reversed(ordered), key=version_key) == ordered
+
+
+# ── What this checkout actually is ───────────────────────────────────────
+
+class TestRunningVersion:
+    """`VERSION` in the source is the last number someone typed.
+
+    Between tags it names a hundred different trees, which is how a
+    checkout 102 commits past beta.3 reports itself as beta.3. git
+    already answers this exactly: the nearest tag, the distance from it,
+    and the commit.
+    """
+
+    def test_on_a_release_it_is_the_release(self):
+        assert running_version("v0.3.0-beta.3", "0.3.0-beta.3") == "0.3.0-beta.3"
+
+    def test_past_a_release_it_says_how_far(self):
+        assert running_version("v0.3.0-beta.3-102-ge861bd5",
+                               "0.3.0-beta.3") == "0.3.0-beta.3-102-ge861bd5"
+
+    def test_uncommitted_work_is_part_of_the_answer(self):
+        """A dirty tree is not the tag, however close it sits."""
+        assert "dirty" in running_version("v0.3.0-beta.3-1-gabc123-dirty",
+                                          "0.3.0-beta.3")
+
+    def test_a_bumped_but_untagged_version_shows_both(self):
+        """The release gate bumps the constant before the tag exists, and
+        for that window the two disagree. Hiding either one is a lie."""
+        answer = running_version("v0.3.0-beta.3-4-gabc123", "0.3.0-beta.4")
+
+        assert "0.3.0-beta.4" in answer
+        assert "v0.3.0-beta.3-4-gabc123" in answer
+
+    def test_without_git_the_constant_is_all_there_is(self):
+        assert running_version("", "0.3.0-beta.3") == "0.3.0-beta.3"
 
 
 # ── What has to be restarted ─────────────────────────────────────────────
@@ -196,6 +232,15 @@ class TestCheckout:
         co.checkout("v0.2.0")
         assert co.contains("v0.1.0") is True
         assert co.contains("v0.2.0") is True
+
+    def test_counts_how_far_ahead_of_a_release_it_is(self, repo):
+        """"Already past v0.3.0-beta.3" tells you the direction and not
+        the distance, which is the part that decides whether you care."""
+        co = Checkout(repo)
+        assert co.commits_ahead_of("v0.1.0") == 0
+
+        co.checkout("v0.2.0")
+        assert co.commits_ahead_of("v0.1.0") == 1
 
     def test_reports_what_a_jump_changes(self, repo):
         co = Checkout(repo)
