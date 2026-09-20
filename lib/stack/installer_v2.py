@@ -255,6 +255,9 @@ def write_stack_toml(family_name, server_name, timezone, language="en"):
 # Run 'stack up <stacklet>' after changes to apply them.
 
 [core]
+# Product name. Drives CLI branding and the default paths derived from it
+# (~/<name>-extensions). Without it the instance calls itself "stack".
+name = "famstack"
 stack_owner = "{family_name}"
 domain = ""
 # Hostname used in port-mode URLs and the `{{ip}}` template var. Empty

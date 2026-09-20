@@ -828,16 +828,91 @@ Stash the tarball on a USB stick or in 1Password.
 
 Container images update themselves nightly at 3am via Watchtower. You do nothing for that.
 
-For the famstack code itself:
+The famstack code is a git checkout, and a release is a tag. Updating means moving your checkout to a newer tag.
 
 ```bash
-git pull
-./stack restart <stacklet>    # for any stacklet whose code changed
+cd ~/famstack
+git fetch --tags
+git tag | tail -5              # what is available
+git checkout v0.3.0-beta.3     # the one you want
+./stack doctor
 ```
 
-If `git pull` shows changes to `lib/stack/` or to a stacklet you are running, restart that stacklet. If in doubt, restart everything.
+Then restart what the release touched. This prints the list:
 
-Pre-1.0 caveat: occasionally a release changes a config schema or env var. Release notes will say so. Read them before pulling.
+```bash
+git diff --name-only v0.3.0-beta.2 v0.3.0-beta.3 -- stacklets/ | cut -d/ -f2 | sort -u
+```
+
+Restart any of those you run. If the same command against `lib/` prints anything, the framework itself changed and everything wants a restart:
+
+```bash
+./stack down all && ./stack up all
+```
+
+Nothing in the update touches your instance. `stack.toml`, `users.toml`, `.stack/`, `~/famstack-data/` and `~/famstack-extensions/` are all outside git's reach, so your config, secrets, data and your own stacklets come through a tag switch untouched.
+
+### If you have edited files in the checkout
+
+git refuses to move while one of your edits is in the way:
+
+```
+error: Your local changes to the following files would be overwritten by checkout:
+	stacklets/docs/docker-compose.yml
+Please commit your changes or stash them before you switch branches.
+Aborting
+```
+
+Set them aside, switch, put them back:
+
+```bash
+git stash
+git checkout v0.3.0-beta.3
+git stash pop
+```
+
+If the release did not touch the same file, `git stash pop` re-applies your edit and you are done.
+
+If the release changed the same lines, it reports a conflict and **keeps your stash**, so nothing is lost:
+
+```
+CONFLICT (content): Merge conflict in stacklets/docs/docker-compose.yml
+The stash entry is kept in case you need it again.
+```
+
+From there, look at what your edit was, then keep it or drop it:
+
+```bash
+git stash show -p                    # your change
+
+# keep it: edit the file to merge both sides, then
+git add stacklets/docs/docker-compose.yml && git stash drop
+
+# or take the release's version and give up your edit
+git checkout HEAD -- stacklets/docs/docker-compose.yml && git stash drop
+```
+
+Editing a shipped stacklet means doing this on every update. There is no override mechanism: a stacklet in `~/famstack-extensions/` can add to what famstack ships, not replace it. If your change is one other families would want, an issue or a pull request costs you less in the long run.
+
+### Knowing where you are
+
+```bash
+git describe --tags        # v0.3.0-beta.3, or a tag plus commits past it
+```
+
+Checking out a tag leaves you in "detached HEAD". That is normal and nothing to repair, but it does mean `git pull` no longer works:
+
+```
+$ git pull
+You are not currently on a branch.
+Please specify which branch you want to merge with.
+```
+
+Do not take git's suggestion to run `git pull origin main`. It succeeds, and it quietly moves you off releases onto unreleased development code while `./stack version` carries on reporting the last release number. Use `git fetch --tags` and `git checkout <tag>`.
+
+If you cloned and never checked out a tag, you are on `main`, which is development. `git pull` there gives you unreleased work rather than the next release. `git fetch --tags && git checkout <tag>` moves you onto releases.
+
+Pre-1.0 caveat: occasionally a release changes a config schema or env var. Release notes say so. Read them before updating.
 
 ### Paperless-ngx 3.x (docs stacklet)
 
@@ -848,7 +923,7 @@ This release moves the `docs` stacklet from Paperless-ngx 2.20.15 to 3.0.4.
 ```bash
 ./stack down docs
 tar -czf ~/docs-pre-3x-backup.tar.gz -C ~/famstack-data docs
-git pull
+git fetch --tags && git checkout v0.3.0-beta.3
 ./stack up docs
 ```
 

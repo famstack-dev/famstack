@@ -21,4 +21,9 @@
 - [ADR-007](adr/adr-007-port-convention.md) 42xxx port convention
 - [ADR-008](adr/adr-008-convention-based-bot-runner.md) Convention-based bot runner
 - [ADR-009](adr/adr-009-managed-ai-provider.md) Managed AI with oMLX as default
+- [ADR-010](adr/adr-010-event-pipeline.md) Event pipeline
+- [ADR-011](adr/adr-011-vault-brain-projection.md) Vault to brain projection
+- [ADR-012](adr/adr-012-nanobot-fork.md) nanobot fork
+- [ADR-013](adr/adr-013-stacklet-locations-and-stages.md) Stacklet locations and stages
 - [RFC-001](adr/rfc-001-dashboard-and-companion-apps.md) Dashboard and companion apps
+- [RFC-002](adr/rfc-002-installation-instances-and-updates.md) Installation, instances and updates
