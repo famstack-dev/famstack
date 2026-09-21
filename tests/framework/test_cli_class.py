@@ -290,6 +290,86 @@ class TestCLIDownAll:
         assert result["stopped"] == ["c", "b", "a"]
 
 
+class TestCLIManyStacklets:
+    """`stack down a b c` and `stack restart a,b` act on every id named.
+
+    The parser used to take one id and drop the rest without a word, so
+    `stack down memory code docs` stopped memory and reported success.
+    Several ids are ordered the way `all` is: dependents stop first,
+    dependencies start first.
+    """
+
+    def test_ids_split_on_spaces_and_commas(self):
+        from stack.cli import _stacklet_ids
+        assert _stacklet_ids(["a,b", "c", "b,", " d "]) == ["a", "b", "c", "d"]
+
+    def test_down_many_stops_each_named_stacklet_dependents_first(self, tmp_path):
+        cli, _ = _make_cli(tmp_path, {
+            "a": {},
+            "b": {"requires": ["a"]},
+            "c": {"requires": ["b"]},
+            "other": {},
+        })
+        for sid in ("a", "b", "c", "other"):
+            cli.up(sid)
+        result = cli.down_many(["a", "c", "b"])
+        assert result["ok"]
+        assert result["stopped"] == ["c", "b", "a"]
+
+    def test_up_many_starts_dependencies_first(self, tmp_path):
+        cli, _ = _make_cli(tmp_path, {
+            "a": {},
+            "b": {"requires": ["a"]},
+        })
+        result = cli.up_many(["b", "a"])
+        assert result["ok"]
+        assert result["started"] == ["a", "b"]
+
+    def test_unknown_id_stops_nothing(self, tmp_path, monkeypatch):
+        """A typo in one id must not leave the others half stopped."""
+        cli, _ = _make_cli(tmp_path, {"a": {}})
+        cli.up("a")
+        stopped = []
+        monkeypatch.setattr(cli, "down", lambda sid: stopped.append(sid) or {"success": True})
+        result = cli.down_many(["a", "nope"])
+        assert not result["ok"]
+        assert "nope" in result["error"]
+        assert stopped == []
+
+
+class TestHandlersTakeManyIds:
+    """The command handlers read several ids off the command line."""
+
+    def test_up_starts_every_named_stacklet(self, tmp_path, monkeypatch):
+        from argparse import Namespace
+        from stack.cli import handle_up
+        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
+        cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}})
+        handle_up(cli.stack, Namespace(stacklet=["b,a"], no_voice=False))
+        assert cli.stack.is_installed("a") and cli.stack.is_installed("b")
+
+    def test_destroy_removes_every_named_stacklet(self, tmp_path, monkeypatch):
+        from argparse import Namespace
+        from stack.cli import handle_destroy
+        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
+        cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}, "c": {}})
+        for sid in ("a", "b", "c"):
+            cli.up(sid)
+        handle_destroy(cli.stack, Namespace(stacklet=["a", "b"], yes=True))
+        assert not cli.stack.is_installed("a")
+        assert not cli.stack.is_installed("b")
+        assert cli.stack.is_installed("c")
+
+    def test_destroy_with_an_unknown_id_destroys_nothing(self, tmp_path, monkeypatch):
+        from argparse import Namespace
+        from stack.cli import handle_destroy
+        cli, _ = _make_cli(tmp_path, {"a": {}})
+        cli.up("a")
+        with pytest.raises(SystemExit):
+            handle_destroy(cli.stack, Namespace(stacklet=["a", "nope"], yes=True))
+        assert cli.stack.is_installed("a")
+
+
 class TestCLIDestroy:
     """CLI.destroy() runs Docker compose down then Stack.destroy()."""
 

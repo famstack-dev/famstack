@@ -27,11 +27,11 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | Command | Idempotent | Destructive | Touches |
 |---|---|---|---|
 | `./stack` | yes | no | interactive installer (first-run path) |
-| `./stack up <id>` | yes | no | starts containers, renders `.env`, runs hooks |
-| `./stack down <id>` | yes | no | stops containers; data preserved |
+| `./stack up <id>...` | yes | no | starts containers, renders `.env`, runs hooks |
+| `./stack down <id>...` | yes | no | stops containers; data preserved. Several ids: spaces or commas |
 | `./stack down all` | yes | no | stops every running stacklet in reverse dep order |
-| `./stack restart [<id>]` | yes | no | `down` + `up`; with no argument, only the stacklets running stale code |
-| `./stack destroy <id>` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets |
+| `./stack restart [<id>...]` | yes | no | `down` + `up`; several ids as for `down`; with no argument, only the stacklets running stale code |
+| `./stack destroy <id>...` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets |
 | `./stack uninstall` | yes | **YES, EVERYTHING** | destroys every stacklet, network, all data, config |
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
 | `./stack list` | yes | no | reports state |

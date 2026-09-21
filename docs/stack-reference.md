@@ -526,10 +526,18 @@ effect.
 means first run. Created after `on_install` completes. Deleted by
 destroy.
 
-### `stack down <id>`
+### `stack down <id>...`
 
 Transitions from **running** to **stopped**. Data and containers are
 preserved — `stack up` brings it back without re-running setup.
+
+Several ids stop together, separated by spaces or commas
+(`stack down memory code docs` or `stack down memory,code,docs`), in
+reverse dependency order. Every id is checked first, so an unknown one
+stops nothing. `stack up` and `stack destroy` take ids the same way (up
+in dependency order, destroy in reverse, each destroy confirmed on its
+own unless `--yes`). `stack restart` stops them all, then starts them in
+dependency order.
 
 Use `stack down all` to stop every currently-running stacklet in reverse
 dependency order (dependents first, deps last).
