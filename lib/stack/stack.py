@@ -339,8 +339,8 @@ class Stack:
             "shared_bucket":         self._cfg("core", "shared_bucket", "family"),
             # Wiki freshness (the memory stacklet's curator sidecar).
             # Bool/int from stack.toml render as env-friendly strings.
-            "wiki_auto_rebuild":     str(self._cfg("memory", "wiki_auto_rebuild", True)).lower(),
-            "wiki_rebuild_quiet_secs": str(self._cfg("memory", "wiki_rebuild_quiet_secs", 180)),
+            "wiki_auto_rebuild":     self._cfg("memory", "wiki_auto_rebuild", "true").lower(),
+            "wiki_rebuild_quiet_secs": self._cfg("memory", "wiki_rebuild_quiet_secs", "180"),
             "wiki_nightly":          self._cfg("memory", "wiki_nightly", "03:30"),
             # AI service URLs — host-side for CLI, docker-side for containers
             "ai_openai_url":         ai_openai_url,

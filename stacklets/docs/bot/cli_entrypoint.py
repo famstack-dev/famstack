@@ -110,7 +110,7 @@ async def main(argv: list[str]) -> int:
 
 
 def _usage() -> None:
-    err(__doc__.rstrip())
+    err((__doc__ or "").rstrip())
 
 
 if __name__ == "__main__":

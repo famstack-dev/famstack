@@ -189,10 +189,11 @@ _BRAILLE = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
 class Spinner:
     """Minimal braille spinner for long operations."""
 
+    thread: threading.Thread  # started by __enter__
+
     def __init__(self, msg):
         self.msg = msg
         self.running = False
-        self.thread = None
         self.ok = True
 
     def __enter__(self):
