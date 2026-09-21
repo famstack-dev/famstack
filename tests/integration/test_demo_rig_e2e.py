@@ -385,7 +385,13 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     topic = f"demo-rig-todo-{scope.uid}"
     item = f"verify B2 todo memory write {scope.uid}"
     fresh_item = f"verify B4 read-your-writes todo {scope.uid}"
-    captured_item = f"verify B2 capture todo fold {scope.uid}"
+    # An errand, not a QA step: the extraction prompt is told to return
+    # nothing unless the writer is plainly keeping a list, and a note that
+    # read like a test ticket was filed as information about half the time.
+    # The model words the item itself, so the check is on the one phrase it
+    # keeps; todos.md is under this run's own topic, which makes it unique.
+    captured_item = "pick up the dry cleaning"
+    captured_phrase = "dry cleaning"
     token = f"demo-rig-capture-todo-{scope.uid}"
     path = f"{MEMORY_OWNER}/{topic}/todos.md"
     about_path = f"{MEMORY_OWNER}/{topic}/about.md"
@@ -469,11 +475,9 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
                 content={
                     "msgtype": "m.text",
                     "body": (
-                        "Todo:\n"
-                        f"{captured_item}\n\n"
-                        f"{token}\n"
-                        "This is a deliberate household action list for the "
-                        "demo-rig todo projection check."
+                        "Before Saturday:\n"
+                        f"- {captured_item}\n\n"
+                        f"{token}"
                     ),
                 },
             ),
@@ -499,9 +503,9 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
 
         bdd.then("The capture action item is folded into memory todos.md")
         memory_todos = await _wait_for_repo_file_containing(
-            demo_code, MEMORY_REPO, path, captured_item, timeout=120,
+            demo_code, MEMORY_REPO, path, captured_phrase, timeout=120,
         )
-        assert memory_todos, f"{captured_item!r} did not appear in {path}"
+        assert memory_todos, f"{captured_phrase!r} did not appear in {path}"
 
         # `stack memory sync` triggers the curator to mirror source AND
         # rebuild the wiki now, bypassing its 180s batching debounce.
@@ -512,9 +516,9 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
         assert synced.returncode == 0, synced.stderr or synced.stdout
 
         brain_todos = await _wait_for_repo_file_containing(
-            demo_code, BRAIN_REPO, path, captured_item, timeout=60,
+            demo_code, BRAIN_REPO, path, captured_phrase, timeout=60,
         )
-        assert brain_todos, f"{captured_item!r} did not appear in brain:{path}"
+        assert brain_todos, f"{captured_phrase!r} did not appear in brain:{path}"
 
         bdd.and_("The curator publishes the topic about page into brain")
         brain_about = await _wait_for_repo_file(
