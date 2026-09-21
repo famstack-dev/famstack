@@ -26,7 +26,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
-ARGS = None
+# Parsed command line, set by main() before the server takes a request.
+ARGS: argparse.Namespace
 
 # Run the real store transform, so the rig cannot drift from production.
 # The transforms are pure; the module also imports store deps at load

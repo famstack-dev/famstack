@@ -656,12 +656,17 @@ class TestTheAnswerStaysInTheThread:
     """
 
     @pytest.fixture
-    def bot(self, tmp_path):
+    def pipeline(self):
+        """The document pipeline stub; each test gives it a `reprocess`."""
+        return SimpleNamespace()
+
+    @pytest.fixture
+    def bot(self, tmp_path, pipeline):
         """An archivist with the REAL reprocess handler and a stub
         pipeline, recording every send with its relation."""
         bot = ArchivistBot(
             homeserver="http://homeserver", user_id=BOT_ID, password="x",
-            session_dir=tmp_path,
+            session_dir=tmp_path, services=SimpleNamespace(pipeline=pipeline),
         )
         bot._client = FakeMatrix()
         bot.sent: list[dict] = []
@@ -671,7 +676,6 @@ class TestTheAnswerStaysInTheThread:
             return SimpleNamespace(event_id="$answer")
 
         bot._client.room_send = _room_send
-        bot._pipeline = SimpleNamespace()
         return bot
 
     def _outcome(self, status="reclassified"):
@@ -684,7 +688,7 @@ class TestTheAnswerStaysInTheThread:
         )
 
     @pytest.mark.asyncio
-    async def test_reclassified_confirmation_joins_the_correction_thread(self, bot):
+    async def test_reclassified_confirmation_joins_the_correction_thread(self, bot, pipeline):
         """The confirmation carries an `m.thread` relation rooted where
         the correction was, so the next correction can find it."""
         bot._client.add(_message("$upload", HOMER, "policy.pdf"))
@@ -697,7 +701,7 @@ class TestTheAnswerStaysInTheThread:
         async def _reprocess(**kw):
             return self._outcome()
 
-        bot._pipeline.reprocess = _reprocess
+        pipeline.reprocess = _reprocess
         await bot._handle_reply_reprocess(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
         )
@@ -711,7 +715,7 @@ class TestTheAnswerStaysInTheThread:
         assert relation.get("event_id") == "$upload"
 
     @pytest.mark.asyncio
-    async def test_a_failed_reprocess_answers_in_the_thread_too(self, bot):
+    async def test_a_failed_reprocess_answers_in_the_thread_too(self, bot, pipeline):
         """An error is a reply to what the user just typed, so it belongs
         where they typed it. Otherwise a correction that failed looks
         like nothing happened."""
@@ -725,7 +729,7 @@ class TestTheAnswerStaysInTheThread:
         async def _reprocess(**kw):
             return self._outcome(status="llm_error")
 
-        bot._pipeline.reprocess = _reprocess
+        pipeline.reprocess = _reprocess
         await bot._handle_reply_reprocess(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
         )

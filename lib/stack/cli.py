@@ -942,7 +942,7 @@ def handle_doctor(stck, args):
 
     checkout = Checkout(stck.root)
     position = checkout.describe() if checkout.is_git() else ""
-    latest = latest_tag(checkout.tags()) if position else ""
+    latest = (latest_tag(checkout.tags()) or "") if position else ""
     release = doctor.check_release(
         position, latest, up_to_date=bool(latest) and checkout.contains(latest))
     if release:

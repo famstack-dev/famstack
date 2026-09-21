@@ -18,6 +18,10 @@ def is_qwen3(model_id: str) -> bool:
     return "qwen3" in lower or "qwen-3" in lower
 
 
+def _quiet(msg: str) -> None:
+    return None
+
+
 def disable_thinking(client, model_id: str, log=None) -> bool:
     """Disable thinking for a Qwen3-family model via oMLX admin API.
 
@@ -29,8 +33,7 @@ def disable_thinking(client, model_id: str, log=None) -> bool:
     Returns True if thinking is now disabled, False on failure.
     """
     if log is None:
-        def log(msg):
-            return None
+        log = _quiet
 
     if not is_qwen3(model_id):
         log(f"Not a Qwen3 model ({model_id}), skipping")

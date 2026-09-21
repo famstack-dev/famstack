@@ -428,7 +428,7 @@ def render_certificate(spec: dict) -> bytes:
                      ("SPRINGFIELD COUNTY", 178)):
         w = sd.textlength(text, font=sf)
         sd.text((125 - w / 2, yy), text, font=sf, fill=ink_a)
-    seal = seal.rotate(-13, expand=True, resample=Image.BICUBIC)
+    seal = seal.rotate(-13, expand=True, resample=Image.Resampling.BICUBIC)
     img.paste(seal, (150, H - 360), seal)
 
     # Cursive registrar signature over a ruled line.

@@ -31,6 +31,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -242,11 +243,38 @@ def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
 
 # ── ArchivistBot ─────────────────────────────────────────────────────────────
 
+@dataclass(frozen=True)
+class ArchivistServices:
+    """Everything the archivist delegates work to.
+
+    Built once by `ArchivistBot.start()`, or handed to the constructor by
+    a caller that never starts the bot (a test driving one handler).
+    `classifier` is None without an AI endpoint and `mirror` is None
+    without Forgejo; every other service is always present.
+    """
+
+    paperless: PaperlessAPI
+    classifier: Classifier | None
+    url_extractor: UrlExtractor
+    text_extractor: TextExtractor
+    capture_tags: CaptureTagCache
+    mirror: GitMirror | None
+    vault: VaultContext
+    pipeline: DocumentPipeline
+    search: SearchService
+    capture: CapturePipeline
+
+
 class ArchivistBot(MicroBot):
     """Document filing bot — watches a Matrix room for uploads, classifies
     them with an LLM, and files them in Paperless-ngx."""
 
     name = "archivist-bot"
+
+    # Assigned by the constructor or by start(), never None. Reading it
+    # before either ran is a bug, and an AttributeError here names it
+    # where a None would travel on into a handler.
+    _services: ArchivistServices
 
     # Filing is the slowest thing any famstack bot does, and the framework
     # default (180s) is a chat-bot budget, not a document-pipeline one. One
@@ -268,8 +296,13 @@ class ArchivistBot(MicroBot):
     # fails visibly (❌ + a threaded notice) and can be retried with 🔁.
     HANDLER_TIMEOUT_SECONDS = 1800
 
-    def __init__(self, homeserver, user_id, password, session_dir, **settings):
+    def __init__(
+        self, homeserver, user_id, password, session_dir, *,
+        services: ArchivistServices | None = None, **settings,
+    ):
         super().__init__(homeserver, user_id, password, session_dir, **settings)
+        if services is not None:
+            self._services = services
         # Shared config from env vars — rendered by the CLI from stack.toml
         # URL contract: `*_url` is container-internal (compose service
         # hostname like `stack-paperless:8000` / `stack-code:3000`) and
@@ -353,7 +386,6 @@ class ArchivistBot(MicroBot):
         self.capture_tag_prompt_size = int(
             settings.get("capture_tag_prompt_size", 50),
         )
-        self._capture_tags: CaptureTagCache | None = None
         self._scan_sessions: dict[str, dict] = {}
         # Rooms known to be welcomed this session — caches the
         # own-messages history query in `_send_room_welcome_if_needed`
@@ -362,16 +394,6 @@ class ArchivistBot(MicroBot):
         # Topic bindings resolved this session — caches the
         # own-messages history query in `_topic_binding` the same way.
         self._topic_bindings: dict[str, TopicBinding] = {}
-        self._http: aiohttp.ClientSession | None = None
-        self._paperless: PaperlessAPI | None = None
-        self._classifier: Classifier | None = None
-        self._url_extractor: UrlExtractor | None = None
-        self._text_extractor: TextExtractor | None = None
-        self._mirror: GitMirror | None = None
-        self._pipeline: DocumentPipeline | None = None
-        self._search: SearchService | None = None
-        self._capture: CapturePipeline | None = None
-        self._vault: VaultContext | None = None
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
@@ -397,19 +419,40 @@ class ArchivistBot(MicroBot):
         except ValueError as e:
             logger.warning("[archivist] {}", e)
 
-        # Reuse the framework-owned aiohttp session (created here, before
-        # super().start() blocks in the sync loop) — one pool, closed by
+        if not hasattr(self, "_services"):
+            self._services = self._build_services()
+        # Warm the vision-capability cache on every boot. Previously
+        # this was kicked from on_first_sync, but MicroBot only runs
+        # that hook once across the lifetime of the welcome marker,
+        # so a restart never re-probed. Probe results are cached to
+        # disk inside Classifier, so this is a no-op if the cache
+        # is already populated.
+        classifier = self._services.classifier
+        if self.classify_enabled and classifier is not None:
+            asyncio.create_task(classifier.has_vision())
+        # The framework's start() owns the session loop and closes the
+        # http session (via _aclose) on shutdown.
+        await super().start()
+
+    def _build_services(self) -> ArchivistServices:
+        """Wire every service from the bot's config.
+
+        Runs inside the event loop, before super().start() blocks in the
+        sync loop, because the HTTP session has to be created there.
+        """
+        # Reuse the framework-owned aiohttp session — one pool, closed by
         # MicroBot on shutdown. Paperless / OpenAI / extractors share it.
-        self._http = self._ensure_http()
-        self._paperless = PaperlessAPI(self._http, self.paperless_url, self.paperless_token)
+        http = self._ensure_http()
+        paperless = PaperlessAPI(http, self.paperless_url, self.paperless_token)
         # Vision-capability cache lives in the bot's data dir so a probe
         # done in one container restart isn't repeated by the next one.
         # When OPENAI_URL is empty, leave the classifier unconfigured —
         # the bot still does filing / search / URL archiving, and the
         # framework refuses to construct against a missing endpoint so
         # we don't silently leak documents to api.openai.com.
+        classifier: Classifier | None = None
         if self.openai_url:
-            self._classifier = Classifier.from_endpoint(
+            classifier = Classifier.from_endpoint(
                 self.openai_url, self.openai_key, bot_name=self.name,
                 language=self.language,
                 capabilities=ModelCapabilities(
@@ -423,27 +466,26 @@ class ArchivistBot(MicroBot):
             )
             self.classify_enabled = False
             self.reformat_enabled = False
-        self._url_extractor = UrlExtractor(self._http)
-        self._text_extractor = TextExtractor()
-        self._capture_tags = CaptureTagCache(
+        url_extractor = UrlExtractor(http)
+        text_extractor = TextExtractor()
+        capture_tags = CaptureTagCache(
             self._session_dir / "capture-tags.json",
         )
-        self._capture_tags.load()
+        capture_tags.load()
         logger.info(
             "[archivist] capture tag cache: {} tags (keep_body={})",
-            len(self._capture_tags.top(10_000)),
+            len(capture_tags.top(10_000)),
             self.capture_keep_body,
         )
         # Always attempt to wire the memory vault writer. If
-        # CODE_URL / admin creds aren't present, `_init_mirror`
-        # leaves `self._mirror = None` and logs the reason; writes
-        # become silent skips.
-        self._init_mirror()
-        self._vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
-        self._pipeline = DocumentPipeline(
-            paperless=self._paperless,
-            classifier=self._classifier,
-            mirror=self._mirror,
+        # CODE_URL / admin creds aren't present, `_build_mirror`
+        # returns None and logs the reason; writes become silent skips.
+        mirror = self._build_mirror()
+        vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
+        pipeline = DocumentPipeline(
+            paperless=paperless,
+            classifier=classifier,
+            mirror=mirror,
             bot_name=self.name,
             language=self.language,
             classify_enabled=self.classify_enabled,
@@ -454,47 +496,47 @@ class ArchivistBot(MicroBot):
             paperless_public_url=self.paperless_public_url,
             link_base_url=self.link_base_url,
             actor=self.user_id,
-            vault=self._vault,
+            vault=vault,
         )
-        self._search = SearchService(
-            classifier=self._classifier,
-            paperless=self._paperless,
+        search = SearchService(
+            classifier=classifier,
+            paperless=paperless,
             t=self.t,
             language=self.language,
             code_public_url=self.code_public_url,
             mirror_org=self.mirror_org,
             link_base_url=self.link_base_url,
             shared_bucket=self.shared_bucket,
-            vault=self._vault,
+            vault=vault,
         )
-        capture_llm = self._classifier.llm if self._classifier is not None else None
-        self._capture = CapturePipeline(
-            url_extractor=self._url_extractor,
-            text_extractor=self._text_extractor,
-            classifier=self._classifier,
-            mirror=self._mirror,
-            capture_tags=self._capture_tags,
-            paperless=self._paperless,
+        capture = CapturePipeline(
+            url_extractor=url_extractor,
+            text_extractor=text_extractor,
+            classifier=classifier,
+            mirror=mirror,
+            capture_tags=capture_tags,
+            paperless=paperless,
             bot_name=self.name,
             classify_max_chars=self.classify_max_chars,
             capture_keep_body=self.capture_keep_body,
             capture_tag_prompt_size=self.capture_tag_prompt_size,
             vision_max_pdf_pages=self.vision_max_pdf_pages,
-            llm=capture_llm,
+            llm=classifier.llm if classifier is not None else None,
         )
-        # Warm the vision-capability cache on every boot. Previously
-        # this was kicked from on_first_sync, but MicroBot only runs
-        # that hook once across the lifetime of the welcome marker,
-        # so a restart never re-probed. Probe results are cached to
-        # disk inside Classifier, so this is a no-op if the cache
-        # is already populated.
-        if self.classify_enabled and self.openai_url:
-            asyncio.create_task(self._classifier.has_vision())
-        # The framework's start() owns the session loop and closes the
-        # http session (via _aclose) on shutdown.
-        await super().start()
+        return ArchivistServices(
+            paperless=paperless,
+            classifier=classifier,
+            url_extractor=url_extractor,
+            text_extractor=text_extractor,
+            capture_tags=capture_tags,
+            mirror=mirror,
+            vault=vault,
+            pipeline=pipeline,
+            search=search,
+            capture=capture,
+        )
 
-    def _init_mirror(self) -> None:
+    def _build_mirror(self) -> GitMirror | None:
         """Build a GitMirror if all required env is present.
 
         Soft-fails: missing env just disables the mirror for this run.
@@ -511,7 +553,7 @@ class ArchivistBot(MicroBot):
                 "[archivist] Memory vault writer offline — "
                 "CODE_URL or admin creds missing. Bring up `code` to enable."
             )
-            return
+            return None
 
         # @homer:homestead.me → homer
         admin_usernames = []
@@ -527,7 +569,7 @@ class ArchivistBot(MicroBot):
         # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
         # that env var carries the host path and would dump mirror state
         # outside the container's volume mount.
-        self._mirror = GitMirror(
+        mirror = GitMirror(
             code_url=code_url,
             admin_user=admin_user,
             admin_password=admin_password,
@@ -538,6 +580,7 @@ class ArchivistBot(MicroBot):
         )
         logger.info("[archivist] Memory vault writer: {} org={} (admins: {})",
                     code_url, self.mirror_org, ", ".join(admin_usernames) or "-")
+        return mirror
 
     def _ai_status(self) -> str:
         if self.openai_url:
@@ -901,8 +944,8 @@ class ArchivistBot(MicroBot):
         """
 
         kind = self._welcome_kind_for(room, ctx)
-        if kind == "topic":
-            parsed = parse_topic_name(self._room_display_name(room))
+        parsed = parse_topic_name(self._room_display_name(room))
+        if kind == "topic" and parsed is not None:
             scope = scope_from_members(self._count_humans_in_room(room))
             if scope == "shared":
                 bucket = f"{self.shared_bucket}/{parsed.slug}"
@@ -1294,7 +1337,7 @@ class ArchivistBot(MicroBot):
         confirmation posted outside the thread would leave every later
         correction anchored to the original filing.
         """
-        o = await self._pipeline.reprocess(
+        o = await self._services.pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
         )
@@ -1336,7 +1379,7 @@ class ArchivistBot(MicroBot):
         attach the fresh `capture.reclassified` envelope so the user
         can chain another correction by replying to THIS message.
         """
-        outcome = await self._capture.reprocess(
+        outcome = await self._services.capture.reprocess(
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
@@ -1366,16 +1409,16 @@ class ArchivistBot(MicroBot):
         pass the source type and header). Applied best-effort: an enrichment
         failure never fails a filing that otherwise succeeded.
         """
-        outcome = await self._pipeline.process(
+        outcome = await self._services.pipeline.process(
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
             user_hint=user_hint,
         )
-        if outcome.doc_id and self._paperless is not None:
+        if outcome.doc_id:
             for tag in extra_tags or []:
-                await self._paperless.ensure_doc_tag(outcome.doc_id, tag)
+                await self._services.paperless.ensure_doc_tag(outcome.doc_id, tag)
             if note_prefix:
-                await self._paperless.add_note(outcome.doc_id, note_prefix)
+                await self._services.paperless.add_note(outcome.doc_id, note_prefix)
         await self._reply_for_outcome(room_id, outcome, reply_to)
         if outcome.status == "enriched":
             processed_parts = [*outcome.resolved_topics, *outcome.resolved_persons]
@@ -2029,8 +2072,6 @@ class ArchivistBot(MicroBot):
                 event.sender,
             )
             return
-        if self._capture is None:
-            return
         raw = source.get("raw_content") or ""
         if not raw.strip():
             return
@@ -2065,7 +2106,7 @@ class ArchivistBot(MicroBot):
             # No topic: scope by room membership (a DM/private room → its
             # human; the shared family room → the shared bucket).
             bucket = self._scope_bucket(room)
-        outcome = await self._capture.capture_email(
+        outcome = await self._services.capture.capture_email(
             subject=source.get("subject"),
             body=body,
             message_id=source.get("message_id"),
@@ -2211,7 +2252,7 @@ class ArchivistBot(MicroBot):
         binding = await self._topic_binding(
             self._room_by_id(room_id), sender_mxid,
         )
-        outcome = await self._capture.capture_url(
+        outcome = await self._services.capture.capture_url(
             url=url, sender_mxid=sender_mxid,
             notifier=self._notifier(room_id, reply_to),
             capture_id=capture_id,
@@ -2237,7 +2278,7 @@ class ArchivistBot(MicroBot):
         binding = await self._topic_binding(
             self._room_by_id(room_id), sender_mxid,
         )
-        outcome = await self._capture.capture_text(
+        outcome = await self._services.capture.capture_text(
             text=text, sender_mxid=sender_mxid,
             capture_id=capture_id,
             seed_topics=binding.seed_topics if binding else None,
@@ -2336,7 +2377,7 @@ class ArchivistBot(MicroBot):
             bucket = self._scope_bucket(room)
         else:
             bucket = None
-        outcome = await self._capture.capture_binary(
+        outcome = await self._services.capture.capture_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri, sender_mxid=sender_mxid,
             capture_id=capture_id,
@@ -2455,7 +2496,7 @@ class ArchivistBot(MicroBot):
             await self._send(room_id, self.t("downloading_url"), reply_to)
 
         try:
-            async with self._http.get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
+            async with self._ensure_http().get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
                 if resp.status != 200:
                     await self._send(room_id, self.t("url_http_error", status=resp.status), reply_to)
                     return
@@ -2523,7 +2564,7 @@ class ArchivistBot(MicroBot):
             if binding is not None:
                 topic_bucket = binding.bucket
 
-        reply = await self._search.run(
+        reply = await self._services.search.run(
             query=query, sender=sender,
             notifier=self._notifier(room_id, reply_to),
             topic_bucket=topic_bucket,
@@ -2534,7 +2575,7 @@ class ArchivistBot(MicroBot):
 
     async def _handle_show(self, room_id: str, doc_id: int, reply_to: str | None = None):
         """Fetch a document's content from Paperless and return it as Markdown."""
-        doc = await self._paperless.get_doc(doc_id)
+        doc = await self._services.paperless.get_doc(doc_id)
         if not doc:
             await self._send(room_id, f"Document #{doc_id} not found.", reply_to)
             return

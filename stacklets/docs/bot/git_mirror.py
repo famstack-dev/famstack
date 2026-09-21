@@ -285,8 +285,20 @@ class GitMirror:
         self._save_creds(creds)
         return creds
 
+    @property
+    def _setup_creds(self) -> MirrorCreds:
+        """The credentials `ensure_setup()` loaded.
+
+        Every caller runs after `ensure_setup()` returned True, which is
+        what sets them. Reaching this without it is a bug, and it says so
+        here instead of failing later on a None.
+        """
+        if self._creds is None:
+            raise RuntimeError("GitMirror used before ensure_setup() succeeded")
+        return self._creds
+
     def _save_creds(self, creds: MirrorCreds | None = None) -> None:
-        creds = creds or self._creds
+        creds = creds or self._setup_creds
         self.creds_path.parent.mkdir(parents=True, exist_ok=True)
         self.creds_path.write_text(json.dumps({
             "password": creds.password,
@@ -626,7 +638,7 @@ class GitMirror:
         if not await self.ensure_setup():
             return False
 
-        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
 
         # Title comes from AI classification first, then caller's fallback
         # (usually the original filename), and only then the generic
@@ -826,7 +838,7 @@ class GitMirror:
         """
         if not await self.ensure_setup():
             return None
-        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
         try:
             data = await asyncio.to_thread(
                 client.get_file, self.repo_owner, REPO_NAME, path,
@@ -890,7 +902,7 @@ class GitMirror:
         if not await self.ensure_setup():
             return None
 
-        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
 
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Capture"
@@ -1084,7 +1096,7 @@ class GitMirror:
         if not await self.ensure_setup():
             return None
 
-        client = ForgejoClient(url=self.code_url, token=self._creds.token)
+        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
 
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Email thread"

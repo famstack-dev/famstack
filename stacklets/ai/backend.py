@@ -265,7 +265,7 @@ def _render_progress(percent: float, downloaded: int, total: int):
           end="", flush=True)
 
 
-def _format_size(size: int) -> str:
+def _format_size(size: float) -> str:
     """Format bytes as human-readable size."""
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024:

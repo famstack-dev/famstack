@@ -21,6 +21,7 @@ import platform
 import ssl
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -50,7 +51,7 @@ def compose(compose_file: str | Path, *args) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
-def compose_up(compose_file: str | Path, env: dict = None) -> tuple[int, str]:
+def compose_up(compose_file: str | Path, env: dict | None = None) -> tuple[int, str]:
     """Start containers, always force-recreating. Returns (exit_code, error_output).
 
     `--force-recreate` is unconditional because compose's service-config
@@ -90,7 +91,7 @@ def compose_down(compose_file: str | Path) -> tuple[int, str]:
     return code, (stdout + stderr).strip()
 
 
-def compose_pull(compose_file: str | Path, env: dict = None) -> None:
+def compose_pull(compose_file: str | Path, env: dict | None = None) -> None:
     """Pull images for a compose file. Streams output."""
     full_env = {**__import__("os").environ, **(env or {})}
     _docker(
@@ -99,7 +100,7 @@ def compose_pull(compose_file: str | Path, env: dict = None) -> None:
     )
 
 
-def compose_build(compose_file: str | Path, env: dict = None) -> None:
+def compose_build(compose_file: str | Path, env: dict | None = None) -> None:
     """Build images for a compose file. Streams output."""
     full_env = {**__import__("os").environ, **(env or {})}
     _docker(
@@ -206,7 +207,7 @@ def check_docker() -> tuple[str | None, str | None]:
         return None, "Docker is not installed"
 
 
-def check_health(url: str, headers: dict = None) -> bool:
+def check_health(url: str, headers: dict | None = None) -> bool:
     """Quick probe — returns True if URL responds with 2xx."""
     try:
         req = urllib.request.Request(url, headers=headers or {})
@@ -216,7 +217,7 @@ def check_health(url: str, headers: dict = None) -> bool:
         return False
 
 
-def probe_health(url: str, headers: dict = None, timeout: float = 3) -> str:
+def probe_health(url: str, headers: dict | None = None, timeout: float = 3) -> str:
     """Single-shot health probe. Returns 'ready', 'auth', or 'down'.
 
     No retries — the caller loops if they want a wait. Used by both
@@ -236,7 +237,7 @@ def probe_health(url: str, headers: dict = None, timeout: float = 3) -> str:
 
 
 def wait_for_health(url: str, timeout: int = 120, interval: int = 3,
-                    headers: dict = None) -> str:
+                    headers: dict | None = None) -> str:
     """Poll a URL until it responds. Returns 'ready', 'auth', or 'timeout'.
 
     Used after compose up to wait for a service to actually be ready,

@@ -147,10 +147,11 @@ class _StaticSpinner:
 class _TerminalSpinner:
     """Animated braille spinner. Use as context manager."""
 
+    _thread: threading.Thread  # started by __enter__
+
     def __init__(self, msg):
         self.msg = msg
         self._running = False
-        self._thread = None
         self._ok = True
         self._hint = None
 
