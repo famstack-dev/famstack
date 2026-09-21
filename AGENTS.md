@@ -24,6 +24,8 @@ If you might do both, load both. They are short on purpose.
 
 The type checker is worth one look before you start, whatever your harness: the tree carries a standing error count, so a bare run tells you nothing about your own change. The "Static checks" section of the engineer file has the two commands that separate the two, and works from any agent that can run a shell.
 
+If your harness gives you a language server, questions about a symbol (where it is defined, who calls it, what type it is) go to it rather than to grep. Warm it with one throwaway query first: a cold server answers from a partial index instead of waiting, and a first find-references on `compose_up` returned only its definition where the warm answer was five. Before a rename, grep for the name as well. String references such as `monkeypatch.setattr("stack.docker.compose_up", ...)` are text, and the server does not count them. The engineer file covers reading its answers.
+
 ## Approach (universal)
 
 Six principles. The first four are distilled from [Andrej Karpathy's observations on LLM coding pitfalls](https://github.com/multica-ai/andrej-karpathy-skills); the fifth is classic separation of concerns; the sixth is what we test and why. Apply to every change, every role. **Tradeoff:** these bias toward caution over speed. For trivial tasks (typos, obvious one-liners), use judgment.
