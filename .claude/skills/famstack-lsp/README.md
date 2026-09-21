@@ -2,7 +2,9 @@
 
 A skills-directory plugin: Claude Code discovers it in place as `famstack-lsp@skills-dir` on the next session, with no marketplace and no install step. It only starts once you have accepted the workspace trust dialog for this repo.
 
-It wires one thing: `basedpyright-langserver` over stdio for `.py` and `.pyi`. That gives an agent working in this repo live diagnostics after each edit, plus go-to-definition and find-references, instead of grepping for a symbol and hoping.
+It wires `basedpyright-langserver` over stdio for `.py` and `.pyi`. That gives an agent working in this repo live diagnostics after each edit, plus go-to-definition and find-references, instead of grepping for a symbol and hoping.
+
+It also carries a SessionStart hook (`hooks/`). A hook cannot reach the server Claude Code spawned, so it does not warm the index itself: it tells the agent to load the deferred `LSP` tool and run one throwaway query, or reports that the binary is missing. Changes to the hook take effect after `/reload-plugins`.
 
 ## Requirement
 
