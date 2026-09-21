@@ -18,6 +18,7 @@ import ssl
 import time
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -201,7 +202,7 @@ class MatrixClient:
     def resolve_room(self, alias):
         """Resolve a room alias to a room ID."""
         full = self._full_room(alias)
-        encoded = urllib.request.quote(full)
+        encoded = urllib.parse.quote(full)
         status, resp = _get(
             self._url(f"/_matrix/client/v3/directory/room/{encoded}"),
             token=self.token,
@@ -479,7 +480,7 @@ class MatrixClient:
         """Join a room by alias or ID as the logged-in user. Idempotent —
         Synapse returns 200 if you are already a member."""
         target = room if room.startswith("!") else self._full_room(room)
-        encoded = urllib.request.quote(target)
+        encoded = urllib.parse.quote(target)
         status, _ = _post(
             self._url(f"/_matrix/client/v3/join/{encoded}"), {}, token=self.token,
         )
@@ -493,7 +494,7 @@ class MatrixClient:
         content type. Returns None on failure.
         """
         url = self._url(
-            f"/_matrix/media/v3/upload?filename={urllib.request.quote(filename)}"
+            f"/_matrix/media/v3/upload?filename={urllib.parse.quote(filename)}"
         )
         req = urllib.request.Request(
             url, data=data, method="POST",

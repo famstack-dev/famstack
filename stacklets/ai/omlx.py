@@ -12,6 +12,7 @@ is in backend.py which calls this for oMLX backends.
 import http.cookiejar
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -91,7 +92,7 @@ class OMLXClient:
 
     def get_model_info(self, repo_id: str) -> ModelInfo | None:
         """Get model info from HuggingFace. Returns None if not found."""
-        encoded = urllib.request.quote(repo_id, safe="")
+        encoded = urllib.parse.quote(repo_id, safe="")
         result = self._request("GET", f"/admin/api/hf/model-info?repo_id={encoded}")
         if result is None or "error" in result:
             return None
@@ -148,13 +149,13 @@ class OMLXClient:
         model_id is the folder name (e.g. "Qwen3.5-9B-MLX-8bit"),
         not the full repo_id.
         """
-        encoded = urllib.request.quote(model_id, safe="")
+        encoded = urllib.parse.quote(model_id, safe="")
         result = self._request("POST", f"/admin/api/models/{encoded}/load")
         return result is not None and result.get("success", False)
 
     def get_model_settings(self, model_id: str) -> dict | None:
         """Get per-model settings. Returns the settings dict or None."""
-        encoded = urllib.request.quote(model_id, safe="")
+        encoded = urllib.parse.quote(model_id, safe="")
         result = self._request("PUT", f"/admin/api/models/{encoded}/settings", {})
         if result is None:
             return None
@@ -162,7 +163,7 @@ class OMLXClient:
 
     def update_model_settings(self, model_id: str, **settings) -> bool:
         """Update per-model settings (chat_template_kwargs, context size, etc.)."""
-        encoded = urllib.request.quote(model_id, safe="")
+        encoded = urllib.parse.quote(model_id, safe="")
         result = self._request("PUT", f"/admin/api/models/{encoded}/settings", settings)
         return result is not None and result.get("success", False)
 

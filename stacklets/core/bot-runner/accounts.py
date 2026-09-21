@@ -8,6 +8,7 @@ declared rooms. Idempotent — safe to run on every restart.
 import json
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from loguru import logger
@@ -52,7 +53,7 @@ def _admin_login(base, admin_user, admin_password):
 def _resolve_space(base, token, server_name):
     """Resolve the Family Space room ID, or None."""
     space_alias = f"#family:{server_name}"
-    encoded_alias = urllib.request.quote(space_alias)
+    encoded_alias = urllib.parse.quote(space_alias)
     status, resp = _api("GET", f"{base}/_matrix/client/v3/directory/room/{encoded_alias}", token=token)
     return resp.get("room_id") if status == 200 else None
 
@@ -133,7 +134,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
 def _ensure_room(base, token, server_name, alias, topic, space_id):
     """Create a room or resolve an existing one."""
     full_alias = f"#{alias}:{server_name}"
-    encoded = urllib.request.quote(full_alias)
+    encoded = urllib.parse.quote(full_alias)
 
     # Check if room exists
     status, resp = _api("GET", f"{base}/_matrix/client/v3/directory/room/{encoded}", token=token)
