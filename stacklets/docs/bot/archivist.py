@@ -944,8 +944,8 @@ class ArchivistBot(MicroBot):
         """
 
         kind = self._welcome_kind_for(room, ctx)
-        if kind == "topic":
-            parsed = parse_topic_name(self._room_display_name(room))
+        parsed = parse_topic_name(self._room_display_name(room))
+        if kind == "topic" and parsed is not None:
             scope = scope_from_members(self._count_humans_in_room(room))
             if scope == "shared":
                 bucket = f"{self.shared_bucket}/{parsed.slug}"

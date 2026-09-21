@@ -638,7 +638,7 @@ class MicroBot:
             room_id=room_id, message_type=message_type, content=content,
         )
 
-    async def _react(self, room_id: str, event_id: str, emoji: str) -> None:
+    async def _react(self, room_id: str, event_id: str | None, emoji: str) -> None:
         """Annotate an event with an emoji reaction (MSC2677).
 
         The bot's way to signal state on a specific message without a

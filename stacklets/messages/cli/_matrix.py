@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 # ── TLS ──────────────────────────────────────────────────────────────────────
 # Synapse is on the LAN — skip certificate verification.
@@ -53,7 +54,7 @@ def resolve_login(sender, secrets):
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 
-def _api(method, url, body=None, token=None):
+def _api(method, url, body=None, token=None) -> tuple[int, dict[str, Any]]:
     """Make an HTTP request to the Matrix API.
 
     Returns (status_code, parsed_json). On HTTP errors the status code
