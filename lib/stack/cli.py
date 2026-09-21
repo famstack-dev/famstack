@@ -346,8 +346,22 @@ class CLI:
         untouched. Dependents shut down before their deps so services
         making outbound calls don't error on a disappearing backend.
         """
-        running = docker.running_project_ids()
-        order = _reverse_dependency_order(self.stack.discover(), running)
+        return self._down_ordered(docker.running_project_ids())
+
+    def down_many(self, stacklet_ids: list[str]) -> dict:
+        """Stop the named stacklets, dependents first.
+
+        Every id is checked before anything stops, so a typo in one
+        leaves the rest running rather than half the list stopped.
+        """
+        unknown = self._unknown(stacklet_ids)
+        if unknown:
+            return {"ok": False, "error": f"Unknown stacklet: {', '.join(unknown)}",
+                    "stopped": [], "errors": []}
+        return self._down_ordered(set(stacklet_ids))
+
+    def _down_ordered(self, include: set[str]) -> dict:
+        order = _reverse_dependency_order(self.stack.discover(), include)
 
         stopped: list[str] = []
         errors: list[dict] = []
@@ -375,7 +389,21 @@ class CLI:
             s["id"] for s in self.stack.discover()
             if self.stack.is_installed(s["id"])
         }
-        order = _dependency_order(self.stack.discover(), installed)
+        return self._up_ordered(installed)
+
+    def up_many(self, stacklet_ids: list[str]) -> dict:
+        """Bring up the named stacklets, dependencies first.
+
+        Checked the same way as `down_many`: an unknown id starts nothing.
+        """
+        unknown = self._unknown(stacklet_ids)
+        if unknown:
+            return {"ok": False, "error": f"Unknown stacklet: {', '.join(unknown)}",
+                    "started": [], "errors": []}
+        return self._up_ordered(set(stacklet_ids))
+
+    def _up_ordered(self, include: set[str]) -> dict:
+        order = _dependency_order(self.stack.discover(), include)
 
         started: list[str] = []
         errors: list[dict] = []
@@ -387,6 +415,10 @@ class CLI:
                 started.append(sid)
 
         return {"ok": not errors, "started": started, "errors": errors}
+
+    def _unknown(self, stacklet_ids: list[str]) -> list[str]:
+        known = {s["id"] for s in self.stack.discover()}
+        return [sid for sid in stacklet_ids if sid not in known]
 
     def destroy(self, stacklet_id: str) -> dict:
         """Destroy: Docker compose down + Stack.destroy()."""
@@ -409,6 +441,22 @@ class CLI:
             self.stack.output.step("Containers removed")
 
         return self.stack.destroy(stacklet_id)
+
+
+# ── Stacklet id arguments ─────────────────────────────────────────────────
+
+def _stacklet_ids(values: list[str]) -> list[str]:
+    """Flatten `a b`, `a,b` and any mix of the two into one id list.
+
+    Order is kept and repeats are dropped, so `down a,b a` stops a once.
+    """
+    ids: list[str] = []
+    for value in values:
+        for sid in value.split(","):
+            sid = sid.strip()
+            if sid and sid not in ids:
+                ids.append(sid)
+    return ids
 
 
 # ── Topological helpers ───────────────────────────────────────────────────
@@ -772,6 +820,19 @@ def handle_up(stck, args):
     if getattr(args, "no_voice", False):
         os.environ["STACK_AI_NO_VOICE"] = "1"
 
+    ids = _many_ids(args)
+    if ids:
+        result = cli.up_many(ids)
+        if not result.get("ok"):
+            print_error({"error": result.get("error") or "Some stacklets failed to start",
+                         "problems": [e["stacklet"] for e in result.get("errors", [])]})
+            sys.exit(1)
+        for sid in result["started"]:
+            print(f"  {GREEN}✓{RESET} {sid}: started")
+        if "core" not in ids:
+            _refresh_core(stck, ids[0])
+        return
+
     if args.stacklet == "all":
         print(f"\n  Bringing up {TEAL}all installed stacklets{RESET}...\n",
               file=sys.stderr)
@@ -804,8 +865,37 @@ def handle_up(stck, args):
         sys.exit(1)
 
 
+def _many_ids(args):
+    """The ids named on the command line, or None for one id or `all`.
+
+    One id keeps the single-stacklet path and its output. `all` cannot
+    be combined with other ids, since it already names every one.
+    """
+    ids = _stacklet_ids(args.stacklet)
+    if len(ids) == 1:
+        args.stacklet = ids[0]
+        return None
+    if "all" in ids:
+        print_error({"error": "'all' already names every stacklet; pass it alone"})
+        sys.exit(1)
+    return ids
+
+
 def handle_down(stck, args):
     cli = CLI(stck)
+
+    ids = _many_ids(args)
+    if ids:
+        result = cli.down_many(ids)
+        if not result.get("ok"):
+            print_error({"error": result.get("error") or "Some stacklets failed to stop",
+                         "problems": [e["stacklet"] for e in result.get("errors", [])]})
+            sys.exit(1)
+        for sid in result["stopped"]:
+            print(f"  {GREEN}✓{RESET} {sid}: stopped")
+        if "core" not in ids:
+            _refresh_core(stck, ids[0])
+        return
 
     if args.stacklet == "all":
         result = cli.down("all")
@@ -836,6 +926,22 @@ def handle_down(stck, args):
 
 
 def handle_destroy(stck, args):
+    ids = _many_ids(args)
+    if not ids:
+        _destroy_one(stck, args)
+        return
+
+    unknown = [sid for sid in ids if not stck._find_stacklet(sid)]
+    if unknown:
+        print_error({"error": f"Unknown stacklet: {', '.join(unknown)}"})
+        sys.exit(1)
+    # Dependents first, as down does. Each one keeps its own confirmation.
+    for sid in _reverse_dependency_order(stck.discover(), set(ids)):
+        args.stacklet = sid
+        _destroy_one(stck, args)
+
+
+def _destroy_one(stck, args):
     stacklet = stck._find_stacklet(args.stacklet)
     if not stacklet:
         print_error({"error": f"Stacklet '{args.stacklet}' not found"})
@@ -1099,6 +1205,24 @@ def handle_restart(stck, args):
     # moved past. `all` stays the sledgehammer for when you want the lot.
     if not args.stacklet:
         _restart_stale(stck, cli, yes=getattr(args, "yes", False))
+        return
+
+    ids = _many_ids(args)
+    if ids:
+        # Stop the lot before starting any, as `all` does, so nothing comes
+        # back up against a dependency that is about to go down.
+        down_result = cli.down_many(ids)
+        if not down_result.get("ok"):
+            print_error({"error": down_result.get("error") or "Some stacklets failed to stop",
+                         "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+            sys.exit(1)
+        up_result = cli.up_many(ids)
+        if not up_result.get("ok"):
+            print_error({"error": "Some stacklets failed to start",
+                         "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
+            sys.exit(1)
+        for sid in up_result["started"]:
+            print(f"  {GREEN}✓{RESET} {sid}: restarted")
         return
 
     if args.stacklet == "all":
@@ -1785,15 +1909,21 @@ def main():
     sub.add_parser("help")
     sub.add_parser("version")
 
-    p = sub.add_parser("up"); p.add_argument("stacklet")
+    p = sub.add_parser("up")
+    p.add_argument("stacklet", nargs="+",
+                   help="Stacklets to start, space or comma separated, or 'all'")
     p.add_argument("--no-voice", action="store_true",
                    help="(ai) start without the voice container (TTS + Whisper); sets STACK_AI_NO_VOICE=1")
-    p = sub.add_parser("down"); p.add_argument("stacklet")
-    p = sub.add_parser("destroy"); p.add_argument("stacklet"); p.add_argument("--yes", action="store_true")
+    p = sub.add_parser("down")
+    p.add_argument("stacklet", nargs="+",
+                   help="Stacklets to stop, space or comma separated, or 'all'")
+    p = sub.add_parser("destroy")
+    p.add_argument("stacklet", nargs="+", help="Stacklets to destroy, space or comma separated")
+    p.add_argument("--yes", action="store_true")
     p = sub.add_parser("restart")
-    p.add_argument("stacklet", nargs="?", default=None,
-                   help="Stacklet to restart, 'all', or nothing for whatever "
-                        "is running stale code")
+    p.add_argument("stacklet", nargs="*", default=None,
+                   help="Stacklets to restart (space or comma separated), "
+                        "'all', or nothing for whatever is running stale code")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("update")
     p.add_argument("tag", nargs="?", default=None,
