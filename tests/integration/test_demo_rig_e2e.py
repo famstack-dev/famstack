@@ -22,7 +22,7 @@ import sys
 import pytest
 from nio import AsyncClient
 from nio.api import RoomVisibility
-from nio.responses import JoinedMembersResponse, RoomInviteResponse
+from nio.responses import JoinedMembersResponse, RoomInviteResponse, RoomSendResponse
 
 from tests.integration.conftest import REPO_ROOT
 from tests.integration.forgejo import ForgejoError
@@ -434,7 +434,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
         assert listed_all.returncode == 0, listed_all.stderr or listed_all.stdout
         assert f"- [x] {item}" in listed_all.stdout
 
-        bdd.when("Homer files a note with action items in a shared topic room")
+        bdd.when("Homer posts a note with action items in a shared topic room")
         create = await matrix_call(
             f"create topic room {topic}",
             demo_homer.room_create(
@@ -461,7 +461,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
         )
         await _wait_for_bot_membership(demo_homer, room_id, bot_mxid)
 
-        await matrix_call(
+        note = await matrix_call(
             f"send topic todo capture to {room_id}",
             demo_homer.room_send(
                 room_id=room_id,
@@ -476,6 +476,24 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
                         "demo-rig todo projection check."
                     ),
                 },
+            ),
+        )
+        assert isinstance(note, RoomSendResponse), note
+
+        # Two humans make the room a conversation, so the archivist files
+        # no plain message here; 📌 is how anyone in it keeps one. Marge
+        # pins, and the capture is still Homer's: it belongs to the author.
+        bdd.and_("Marge pins the note with 📌")
+        await matrix_call(
+            f"pin {note.event_id} in {room_id}",
+            marge.room_send(
+                room_id=room_id,
+                message_type="m.reaction",
+                content={"m.relates_to": {
+                    "rel_type": "m.annotation",
+                    "event_id": note.event_id,
+                    "key": "📌",
+                }},
             ),
         )
 
