@@ -436,7 +436,6 @@ class TestPinnedNoteCapture:
         What this class asserts is what happens *before* the reply --
         the acknowledgement and the routing.
         """
-        bot = _build_bot(tmp_path)
         captures, reactions = [], []
 
         class _RecordingPipeline:
@@ -453,7 +452,9 @@ class TestPinnedNoteCapture:
         async def _reply(*_a, **_kw):
             return None
 
-        bot._capture = _RecordingPipeline()
+        bot = _build_bot(
+            tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
+        )
         bot._react = _react
         bot._topic_binding = _binding
         bot._reply_for_capture = _reply
@@ -1045,7 +1046,6 @@ class TestAnUploadKeepsItsFile:
     WHEN = int(datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc).timestamp() * 1000)
 
     def _bot(self, tmp_path):
-        bot = _build_bot(tmp_path)
         calls: list[dict] = []
 
         class _RecordingPipeline:
@@ -1059,7 +1059,9 @@ class TestAnUploadKeepsItsFile:
         async def _reply(*_a, **_kw):
             return None
 
-        bot._capture = _RecordingPipeline()
+        bot = _build_bot(
+            tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
+        )
         bot._topic_binding = _binding
         bot._reply_for_capture = _reply
         bot._client = SimpleNamespace(rooms={"!r:server": _room()})

@@ -24,9 +24,15 @@ from archivist import ArchivistBot  # noqa: E402
 BOT_ID = "@archivist-bot:server"
 
 
-def _bot(tmp_path):
+def _bot(tmp_path, capture=None):
+    """An archivist whose only service is the given capture pipeline.
+
+    Anything else the handler under test reaches for raises, so a test
+    cannot pass by accident on a service it did not mean to exercise.
+    """
     return ArchivistBot(
         homeserver="http://hs", user_id=BOT_ID, password="x", session_dir=tmp_path,
+        services=SimpleNamespace(capture=capture),
     )
 
 
@@ -91,9 +97,8 @@ async def _true():
 
 @pytest.mark.asyncio
 async def test_email_source_folds_through_capture(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     sends = _wire(bot)
 
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
@@ -151,9 +156,8 @@ async def test_email_routes_to_topic_room_bucket(tmp_path):
     # A topic-bound room scopes the email to that bucket (and seeds its tag),
     # instead of always the shared bucket — co-located with the room's
     # attachments. The default (no binding) path is covered above.
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
 
     async def _binding(room, sender):
@@ -173,9 +177,8 @@ async def test_email_routes_to_topic_room_bucket(tmp_path):
 
 @pytest.mark.asyncio
 async def test_email_defaults_to_shared_bucket_without_binding(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
 
     async def _no_binding(room, sender):
@@ -190,9 +193,8 @@ async def test_email_defaults_to_shared_bucket_without_binding(tmp_path):
 async def test_email_in_dm_files_under_the_sole_human(tmp_path):
     # A DM is just a room with one human + the bots. Email there scopes to
     # that person's bucket, not the shared one — the bot sender is ignored.
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
 
     async def _no_binding(room, sender):
@@ -208,9 +210,8 @@ async def test_email_in_dm_files_under_the_sole_human(tmp_path):
 
 @pytest.mark.asyncio
 async def test_email_in_multi_human_room_is_shared(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
 
     async def _no_binding(room, sender):
@@ -226,9 +227,8 @@ async def test_email_in_multi_human_room_is_shared(tmp_path):
 
 @pytest.mark.asyncio
 async def test_non_bot_sender_is_rejected(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
     # A family member cannot spoof an ingest event.
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK, sender="@homer:server"))
@@ -239,9 +239,8 @@ async def test_non_bot_sender_is_rejected(tmp_path):
 async def test_plain_bot_chatter_is_ignored(tmp_path):
     # The mail bot's join welcome (a plain message from a -bot sender, no
     # source block) must not be treated as a capture or query.
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     sends = _wire(bot)
     welcome = SimpleNamespace(
         body="mail bot here. I'll deliver new email into this room",
@@ -255,9 +254,8 @@ async def test_plain_bot_chatter_is_ignored(tmp_path):
 
 @pytest.mark.asyncio
 async def test_non_email_source_ignored(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
     block = {"source": "webhook", "raw_content": "x"}
     await bot._on_text(_room(), _source_event(block))
@@ -266,9 +264,8 @@ async def test_non_email_source_ignored(tmp_path):
 
 @pytest.mark.asyncio
 async def test_empty_raw_content_skipped(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture()
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     _wire(bot)
     block = {**_EMAIL_BLOCK, "raw_content": "   "}
     await bot._on_text(_room(), _source_event(block))
@@ -277,9 +274,8 @@ async def test_empty_raw_content_skipped(tmp_path):
 
 @pytest.mark.asyncio
 async def test_no_envelope_skips_timeline_post(tmp_path):
-    bot = _bot(tmp_path)
     cap = _FakeCapture(envelope=False)
-    bot._capture = cap
+    bot = _bot(tmp_path, capture=cap)
     sends = _wire(bot)
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
     assert len(cap.calls) == 1  # still filed
