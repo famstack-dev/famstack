@@ -135,14 +135,8 @@ config = {
     ],
     "turn_allow_guests": False,
 
-    # Relaxed rate limits for a LAN-only family server.
-    "rc_login": {
-        "address": {"per_second": 1, "burst_count": 20},
-        "account": {"per_second": 1, "burst_count": 20},
-        "failed_attempts": {"per_second": 0.5, "burst_count": 20},
-    },
-    "rc_message": {"per_second": 5, "burst_count": 30},
-    "rc_admin_redaction": {"per_second": 5, "burst_count": 30},
+    # Rate limits are not set here: hooks/on_start.py adds them on every
+    # start, so a limit added later reaches servers installed before it.
 }
 
 with open(conf_path, 'w') as f:
