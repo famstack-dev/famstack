@@ -39,11 +39,13 @@ chmod 700 "$DB_DIR"
 
 if [ ! -f "$SYNAPSE_DIR/homeserver.yaml" ]; then
     echo "messages: generating Synapse configuration for '$SERVER_NAME'..."
+    # Same tag as docker-compose.yml, so the config comes from the Synapse
+    # version that will run it.
     docker run --rm \
         -v "$SYNAPSE_DIR:/data" \
         -e SYNAPSE_SERVER_NAME="$SERVER_NAME" \
         -e SYNAPSE_REPORT_STATS=no \
-        matrixdotorg/synapse:latest generate
+        matrixdotorg/synapse:v1.161.0 generate
 
     # ── Patch homeserver.yaml ────────────────────────────────────────────
     #

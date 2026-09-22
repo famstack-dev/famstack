@@ -12,7 +12,7 @@ name: stack-photos
 services:
   stack-photos-server:
     container_name: stack-photos-server
-    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3}
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"
@@ -36,7 +36,7 @@ services:
 
   stack-photos-ml:
     container_name: stack-photos-ml
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3}
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"
@@ -57,7 +57,7 @@ services:
 
   stack-photos-redis:
     container_name: stack-photos-redis
-    image: docker.io/valkey/valkey:8-alpine
+    image: docker.io/valkey/valkey:8.1-alpine
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"

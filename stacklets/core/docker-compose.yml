@@ -15,7 +15,7 @@ services:
     # containrrr/watchtower was archived in 2024 and ships an old Docker
     # SDK pinned to API v1.25, which modern daemons (incl. OrbStack)
     # reject — the container crashlooped and poisoned core's health.
-    image: nickfedor/watchtower:latest
+    image: nickfedor/watchtower:1.16
     container_name: stack-core-watchtower
     restart: unless-stopped
     environment:

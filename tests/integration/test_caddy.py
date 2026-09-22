@@ -34,7 +34,7 @@ except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpi
 
 pytestmark = pytest.mark.skipif(not HAS_DOCKER, reason="Docker not available")
 
-STOCK_CADDY = "caddy:2"
+STOCK_CADDY = "caddy:2.10"
 DOMAIN = "home.example.family"
 
 

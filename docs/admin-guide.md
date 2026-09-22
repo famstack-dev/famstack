@@ -857,7 +857,7 @@ Stash the tarball on a USB stick or in 1Password.
 
 ## Updating
 
-Container images update themselves nightly at 3am via Watchtower. You do nothing for that.
+Container images update themselves nightly at 3am via Watchtower. You do nothing for that. Each famstack release pins every service to a version line, so Watchtower brings in bug-fix releases, and a new minor or major version of Immich, Paperless or Synapse arrives with a famstack update, not overnight.
 
 The famstack code is a git checkout, and a release is a tag. Updating means moving your checkout to a newer tag.
 
