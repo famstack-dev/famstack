@@ -16,6 +16,21 @@ from pathlib import Path
 from stack.ai.probe import probe as _probe
 
 
+def normalize_url(url: str) -> str:
+    """What people type, as the OpenAI clients expect it.
+
+    `192.168.1.20:11434` and `https://api.example.com` are both how an
+    address gets written down; the clients need a scheme and the `/v1`
+    base path.
+    """
+    url = url.strip().rstrip("/")
+    if not url.startswith("http"):
+        url = f"http://{url}"
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    return url
+
+
 def _load_ai_config(repo_root: Path) -> dict:
     """Read [ai] section from stack.toml."""
     toml_path = repo_root / "stack.toml"

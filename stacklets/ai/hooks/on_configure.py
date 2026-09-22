@@ -36,11 +36,9 @@ def _ask_external_endpoint(ctx) -> bool:
     url = ask("Endpoint URL")
     if not url:
         return False
-    url = url.strip().rstrip("/")
-    if not url.startswith("http"):
-        url = f"http://{url}"
-    if not url.endswith("/v1"):
-        url = f"{url}/v1"
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from backend import normalize_url
+    url = normalize_url(url)
 
     key = ask("API key (leave empty if none)")
     key = key.strip() if key else ""
@@ -119,8 +117,8 @@ def run(ctx):
 
     # ── External endpoint (advanced) ────────────────────────────────
     nl()
-    warn("Bring your own endpoint is for advanced users.")
-    dim("This is unsupported. Your mileage may vary.")
+    out("Whisper and TTS still get installed on this Mac.")
+    dim("To install nothing here, cancel and run './stack ai connect <url>'.")
     nl()
 
     if _ask_external_endpoint(ctx):

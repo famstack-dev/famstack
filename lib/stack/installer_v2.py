@@ -549,6 +549,7 @@ def wizard():
     out(f"  {TEAL}stack up photos{RESET}     Private photo library")
     out(f"  {TEAL}stack up docs{RESET}       Document archive with OCR")
     out(f"  {TEAL}stack up ai{RESET}         Local AI engine")
+    out(f"  {TEAL}stack ai connect{RESET}    AI on another machine or a hosted provider")
     out(f"  {TEAL}stack up code{RESET}       Private git server")
     out(f"  {TEAL}stack up memory{RESET}     Family wiki and curated knowledge")
     nl()

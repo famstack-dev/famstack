@@ -8,9 +8,12 @@ endpoint is up, whether it needs auth, and which model ids it lists.
 from __future__ import annotations
 
 import dataclasses
+import ipaddress
 import json
+import socket
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # LAN endpoints often serve self-signed TLS; the AI endpoint is trusted by
@@ -68,3 +71,29 @@ def transcribes(url: str, key: str = "", *, timeout: float = 3.0) -> bool:
         return e.code in (400, 415, 422)
     except Exception:
         return False
+
+
+# Tailscale hands out addresses from the carrier-grade NAT range, which
+# Python does not count as private.
+_TAILNET = ipaddress.ip_network("100.64.0.0/10")
+
+
+def stays_home(url: str) -> bool:
+    """Whether every address the host of ``url`` resolves to is on the
+    home network: loopback, private, link-local or a Tailscale tailnet.
+
+    Anything else is a server run by someone else, and what the stack
+    sends it (document text, notes, voice) leaves the house. A name
+    that does not resolve is not assumed to be at home.
+    """
+    host = urllib.parse.urlsplit(url).hostname or ""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not (ip.is_loopback or ip.is_private or ip.is_link_local
+                or ip in _TAILNET):
+            return False
+    return bool(infos)
