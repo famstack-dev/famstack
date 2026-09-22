@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# script/cibuild — everything CI checks, runnable on a laptop.
+#
+# Tier 1 of the release gate (docs/agent/dev.md, "Releases"): the checks
+# that need no Docker and no macOS. The workflow calls this and nothing
+# else, so a green run here means what a green run there means.
+#
+# Environment the workflow passes through, all optional locally:
+#   GITHUB_REF          on a version tag, the tag must match the versions
+#   PR_TITLE BASE HEAD  on a pull request, the title and every commit
+#                       subject in BASE..HEAD must parse as a changelog entry
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> lint"
+uvx ruff check .
+
+echo "==> lockfile in sync with pyproject.toml"
+uv lock --check
+
+echo "==> version consistency"
+uv run python - <<'EOF'
+import os, re, sys, tomllib
+
+def normalize(v: str) -> str:
+    """PEP-440-ish: v0.3.0-beta.1 / 0.3.0b1 -> 0.3.0b1"""
+    v = v.strip().lstrip("v").lower()
+    v = re.sub(r"[-.]?beta[-.]?", "b", v)
+    v = re.sub(r"[-.]?alpha[-.]?", "a", v)
+    v = re.sub(r"[-.]?rc[-.]?", "rc", v)
+    return v
+
+cli = re.search(
+    r'^VERSION = "([^"]+)"',
+    open("lib/stack/cli.py").read(), re.M,
+).group(1)
+pyproject = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+
+versions = {"lib/stack/cli.py": cli, "pyproject.toml": pyproject}
+ref = os.environ.get("GITHUB_REF", "")
+if ref.startswith("refs/tags/v"):
+    versions["tag"] = ref.removeprefix("refs/tags/")
+
+normalized = {src: normalize(v) for src, v in versions.items()}
+if len(set(normalized.values())) != 1:
+    print("Version mismatch:")
+    for src, v in versions.items():
+        print(f"  {src}: {v} (normalized: {normalized[src]})")
+    sys.exit(1)
+print("Versions agree:", ", ".join(f"{s}={v}" for s, v in versions.items()))
+EOF
+
+# The changelog is generated from these subjects, so one that does not
+# parse is an entry missing from the release notes. The PR title is
+# checked too, since a squash merge makes it the subject that lands.
+if [[ -n "${PR_TITLE:-}" ]]; then
+  echo "==> commit convention"
+  git fetch --no-tags --depth=50 origin "$BASE" "$HEAD" 2>/dev/null || true
+  python3 tools/commit-lint --title "$PR_TITLE"
+  python3 tools/commit-lint --range "$BASE..$HEAD"
+fi
+
+echo "==> unit tests"
+script/test unit -q

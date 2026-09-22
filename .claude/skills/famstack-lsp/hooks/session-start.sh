@@ -7,7 +7,7 @@
 # server answers from a partial index instead of waiting.
 
 if ! command -v basedpyright-langserver >/dev/null 2>&1; then
-    echo "famstack-lsp: basedpyright-langserver is not on PATH, so there is no language server this session. Install it with 'uv tool install basedpyright' (or run tools/init-repo), then /reload-plugins. Until then, use 'uvx basedpyright <paths>' for diagnostics and grep for navigation."
+    echo "famstack-lsp: basedpyright-langserver is not on PATH, so there is no language server this session. Install it with 'uv tool install basedpyright' (or run script/setup), then /reload-plugins. Until then, use 'uvx basedpyright <paths>' for diagnostics and grep for navigation."
     exit 0
 fi
 
