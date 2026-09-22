@@ -115,14 +115,15 @@ def stage_badge(s):
 def status_list(stacklets):
     """Render a compact stacklet status table.
 
-    Six states: online, starting, degraded, failing, stopped, available.
+    Seven states: online, remote, starting, degraded, failing, stopped,
+    available. Remote means another machine serves it.
     Degraded stacklets show health issue hints.
     """
     if not stacklets:
         return
 
     ordered = sorted(stacklets, key=lambda s: (
-        not s.get("online"), not s.get("starting"), not s.get("degraded"),
+        not (s.get("online") or s.get("remote")), not s.get("starting"), not s.get("degraded"),
         not s.get("failing"), not s.get("enabled"), s.get("id", "")))
 
     nl()
@@ -139,6 +140,10 @@ def status_list(stacklets):
             out(f"  {ORANGE}\u26a0{RESET} {label}{' ' * pad} {ORANGE}degraded{RESET}{badges}")
             for issue in s.get("health_issues", []):
                 out(f"      {ORANGE}{issue}{RESET}")
+        elif s.get("remote"):
+            from urllib.parse import urlsplit
+            host = urlsplit(s["remote"]).netloc or s["remote"]
+            out(f"  {GREEN}\u2713{RESET} {label}{' ' * pad} {TEAL}remote{RESET}  {DIM}{host}{RESET}{badges}")
         elif s.get("online"):
             port = s.get("port")
             url = f"  {DIM}localhost:{port}{RESET}" if port else ""

@@ -367,6 +367,10 @@ class Stack:
             "ai_whisper_url":        ai_whisper_url,
             "ai_whisper_url_docker": ai_whisper_url.replace("://localhost", "://host.docker.internal"),
             "ai_whisper_key":        ai_whisper_key,
+            # The AI address when it is served elsewhere, empty when the
+            # local engine serves it. Drives the ai stacklet's `remote`.
+            "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == "external"
+                                      else ""),
             # OpenAI's name. Other servers name their speech models and
             # refuse any other; whisper.cpp ignores it.
             "ai_whisper_model":      self._cfg("ai", "whisper_model") or "whisper-1",
@@ -607,14 +611,24 @@ class Stack:
             s["degraded"] = False
             s["health_issues"] = []
 
-            # Only check health for fully running stacklets — stopped or
-            # starting services will obviously fail their health checks
-            if not is_set_up or not s["online"]:
+            # A stacklet whose manifest renders a `remote` address is
+            # served by another machine. Its row reports that server,
+            # whether or not anything of it runs here, and only the checks
+            # marked `remote` apply: the rest probe this Mac.
+            remote = self._render_template(
+                s.get("manifest", {}).get("remote", ""), template_vars)
+            if remote and not remote.startswith("{"):
+                s["remote"] = remote
+                checks = [c for c in self._resolve_health_checks(
+                    s.get("manifest", {}), template_vars) if c.get("remote")]
+            elif not is_set_up or not s["online"]:
+                # Only check health for fully running stacklets — stopped or
+                # starting services will obviously fail their health checks
                 continue
+            else:
+                checks = self._resolve_health_checks(
+                    s.get("manifest", {}), template_vars)
 
-            # Resolve health checks from manifest
-            checks = self._resolve_health_checks(
-                s.get("manifest", {}), template_vars)
             for check in checks:
                 if not check.get("url"):
                     continue
@@ -786,6 +800,7 @@ class Stack:
           name = "..."
           hint = "..."
           skip_when_env = "STACK_AI_NO_VOICE"  # drop when that var is "1"
+          remote = true                        # also runs when served remotely
           [health.checks.headers]
           Authorization = "Bearer {api_key}"
 
@@ -807,7 +822,7 @@ class Stack:
                     continue
                 url_tpl = c.get("url", "")
                 name = c.get("name", "")
-                hint = c.get("hint", "")
+                hint = self._render_template(c.get("hint", ""), template_vars)
                 raw_headers = c.get("headers", {})
                 url = self._render_template(url_tpl, template_vars)
                 headers = {
@@ -817,10 +832,13 @@ class Stack:
                 # Drop headers with unresolved templates
                 headers = {k: v for k, v in headers.items()
                            if v and not v.startswith("Bearer {")}
+                remote = bool(c.get("remote"))
                 if url and not url.startswith("{"):
-                    result.append({"url": url, "name": name, "hint": hint, "headers": headers})
+                    result.append({"url": url, "name": name, "hint": hint,
+                                   "headers": headers, "remote": remote})
                 elif hint:
-                    result.append({"url": "", "name": name, "hint": hint, "headers": {}})
+                    result.append({"url": "", "name": name, "hint": hint,
+                                   "headers": {}, "remote": remote})
             return result
 
         # Fallback: urls[] or url
