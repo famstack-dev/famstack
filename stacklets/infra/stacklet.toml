@@ -13,6 +13,8 @@ description = "DNS + reverse proxy for domain mode"
 version     = "0.2.1"
 category    = "infrastructure"
 always_on   = true
+# Caddy is built locally with the DNS provider plugins (Dockerfile).
+build       = true
 
 [ports]
 dns         = 53

@@ -9,6 +9,7 @@ JSON config it adapts them to.
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
-from stack.caddy import assemble  # noqa: E402
+from stack.caddy import DNS_PROVIDERS, assemble  # noqa: E402
 
 try:
     subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=True)
@@ -35,11 +36,18 @@ def _shipped_snippets() -> list[tuple[str, str]]:
             for path in sorted(REPO_ROOT.glob("stacklets/*/caddy.snippet"))]
 
 
+# Never a real credential: nothing here reaches a DNS provider. Shaped
+# like a Cloudflare token, because its plugin refuses to load a config
+# whose token does not look like one.
+FAKE_TOKEN = "fake" + "0" * 36
+
+
 def _caddy(image: str, caddyfile: Path, *args: str) -> subprocess.CompletedProcess:
     """Run `caddy <args>` against this Caddyfile, as the proxy container would."""
     return subprocess.run(
         ["docker", "run", "--rm",
          "-e", f"STACK_DOMAIN={DOMAIN}",
+         "-e", f"DNS_API_TOKEN={FAKE_TOKEN}",
          "-v", f"{caddyfile}:/etc/caddy/Caddyfile:ro",
          image, "caddy", *args, "--config", "/etc/caddy/Caddyfile"],
         capture_output=True, text=True, timeout=180,
@@ -93,3 +101,86 @@ def test_without_tls_every_site_is_plain_http_on_port_80(plain_caddyfile):
     config = _adapt(STOCK_CADDY, plain_caddyfile)
     assert _listen(config) == {":80"}
     assert "tls" not in config.get("apps", {})
+
+
+# ── The infra image: TLS through each DNS provider ────────────────────────
+
+INFRA_IMAGE = "stack-infra-caddy:local"
+
+
+@pytest.fixture(scope="module")
+def infra_image() -> str:
+    """The image `stack up infra` builds, under the tag its compose file uses."""
+    result = subprocess.run(
+        ["docker", "build", "-q", "-t", INFRA_IMAGE, str(REPO_ROOT / "stacklets" / "infra")],
+        capture_output=True, text=True, timeout=900,
+    )
+    assert result.returncode == 0, result.stderr
+    return INFRA_IMAGE
+
+
+def _tls_caddyfile(tmp_path: Path, provider: str) -> Path:
+    path = tmp_path / "Caddyfile"
+    path.write_text(assemble(_shipped_snippets(), dns_provider=provider))
+    return path
+
+
+@pytest.mark.parametrize("provider", sorted(DNS_PROVIDERS))
+def test_the_image_has_a_plugin_for_every_supported_provider(infra_image, tmp_path, provider):
+    result = _caddy(infra_image, _tls_caddyfile(tmp_path, provider), "validate")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("provider", sorted(DNS_PROVIDERS))
+def test_every_certificate_is_requested_through_the_providers_dns(infra_image, tmp_path, provider):
+    config = _adapt(infra_image, _tls_caddyfile(tmp_path, provider))
+    challenges = [issuer["challenges"]["dns"]
+                  for policy in config["apps"]["tls"]["automation"]["policies"]
+                  for issuer in policy["issuers"]]
+    assert challenges
+    assert {c["provider"]["name"] for c in challenges} == {provider}
+    # Still the placeholder: the token is read from the environment at
+    # request time, so it is not in the config Caddy's admin endpoint serves.
+    assert FAKE_TOKEN not in json.dumps(config)
+
+
+def test_caddy_asks_for_the_wildcard_and_the_bare_domain_and_nothing_else(infra_image, tmp_path):
+    """Two certificates cover every site: subdomain sites reuse the
+    wildcard, and the bare domain, which the wildcard does not cover, gets
+    its own. Anything more would put every subdomain in public
+    Certificate Transparency logs and spend Let's Encrypt's rate limit.
+
+    The ACME directory is pointed at a closed local port, so the requests
+    Caddy starts fail at once and nothing leaves this machine.
+    """
+    caddyfile = _tls_caddyfile(tmp_path, "cloudflare")
+    caddyfile.write_text(caddyfile.read_text().replace(
+        "cert_issuer acme {", "cert_issuer acme http://127.0.0.1:9/directory {"))
+
+    name = "stack-test-caddy-certs"
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+    subprocess.run(
+        ["docker", "run", "-d", "--name", name,
+         "-e", f"STACK_DOMAIN={DOMAIN}", "-e", f"DNS_API_TOKEN={FAKE_TOKEN}",
+         "-v", f"{caddyfile}:/etc/caddy/Caddyfile:ro", infra_image],
+        check=True, capture_output=True, timeout=60,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while len(_certificates_requested(name)) < 2 and time.monotonic() < deadline:
+            time.sleep(1)
+        time.sleep(2)  # room for a third request, if Caddy were to make one
+        requested = _certificates_requested(name)
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+    assert requested == {DOMAIN, f"*.{DOMAIN}"}
+
+
+def _certificates_requested(container: str) -> set[str]:
+    """Names Caddy has started obtaining a certificate for, from its log."""
+    logs = subprocess.run(["docker", "logs", container],
+                          capture_output=True, text=True, timeout=30).stderr
+    entries = [json.loads(line) for line in logs.splitlines() if line.startswith("{")]
+    return {e["identifier"] for e in entries if e.get("msg") == "obtaining certificate"}
+
