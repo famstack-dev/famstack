@@ -727,6 +727,12 @@ The convention:
 Files starting with `_` are private helpers (e.g., `_matrix.py`), not
 exposed as commands.
 
+A command that records a choice in `stack.toml` calls
+`config["set_cfg"](section, key, value)`, the plugin-side twin of a
+hook's `ctx.cfg(key, value)`. It changes that one line in that section
+and leaves the admin's comments and other sections as they are.
+`stack ai connect` uses it to write `[ai]`.
+
 ---
 
 ## Docker Compose Conventions
