@@ -996,6 +996,16 @@ Around the snippets the assembler (`lib/stack/caddy.py`) emits:
 Snippets describe routes only. Anything that applies to every site belongs
 in the assembler, not in a snippet.
 
+Sites for services that are not stacklets go in
+`{data_dir}/infra/Caddyfile.local`. The admin writes it and the runtime
+only reads it, appending it after the snippets every time it writes the
+Caddyfile; `stack up infra` applies an edit. Only one proxy can own ports
+80 and 443, so a hand-written Caddyfile cannot run beside this one. A local
+site gets the wildcard certificate like any other subdomain. A host that a
+running stacklet also serves makes Caddy reject the reload, and the
+command prints the warning. `stack destroy infra` deletes the file with
+the rest of infra's data.
+
 ### TLS
 
 `[core] dns_provider` (`"hetzner"` or `"cloudflare"`) turns on HTTPS. The

@@ -285,6 +285,23 @@ class TestLifecycle:
 
         assert "docs.{$STACK_DOMAIN}" in _site_addresses(_caddyfile(tmp_path).read_text())
 
+    def test_the_admins_own_routes_come_after_the_stacklets(self, tmp_path, docker):
+        """Services that are not stacklets (a dashboard, a Docker UI) get
+        their sites from `Caddyfile.local` next to the assembled file. Only
+        one proxy can own ports 80 and 443, so they have to live in this
+        one, and the file is the admin's: it is read, never written."""
+        cli, _ = _make_cli(tmp_path)
+        docker.states = {"infra": "running"}
+        local = tmp_path / "data" / "infra" / "Caddyfile.local"
+        local.parent.mkdir(parents=True)
+        local.write_text("status.{$STACK_DOMAIN} {\n\treverse_proxy homepage:3000\n}\n")
+
+        cli.up("photos")
+
+        sites = _site_addresses(_caddyfile(tmp_path).read_text())
+        assert sites.index("photos.{$STACK_DOMAIN}") < sites.index("status.{$STACK_DOMAIN}")
+        assert local.read_text() == "status.{$STACK_DOMAIN} {\n\treverse_proxy homepage:3000\n}\n"
+
     def test_without_infra_up_nothing_is_written_or_reloaded(self, tmp_path, docker):
         """With no proxy running there is nobody to read the file, and
         writing it would create infra's data directory for a stacklet that

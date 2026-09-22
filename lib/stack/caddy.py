@@ -34,10 +34,15 @@ CONFIG_IN_CONTAINER = "/etc/caddy/Caddyfile"
 
 RELOAD_COMMAND = ("caddy", "reload", "--config", CONFIG_IN_CONTAINER)
 
+# The admin's own sites, next to the assembled Caddyfile, appended after
+# the stacklets' snippets.
+LOCAL_FILE = "Caddyfile.local"
+
 _HEADER = """\
 # Assembled by the stack CLI from the caddy.snippet of every stacklet that
-# is up. It is rewritten whenever a stacklet starts or stops, so an edit
-# here does not survive: change the stacklet's snippet instead.
+# is up, and Caddyfile.local next to this file. It is rewritten whenever a
+# stacklet starts or stops, so an edit here does not survive: put your own
+# sites in Caddyfile.local, or change the stacklet's snippet.
 """
 
 # Sites without a scheme listen on the HTTPS port, TLS or not. With no
@@ -86,11 +91,13 @@ def _global_options(dns_provider: str) -> str:
 
 
 def assemble(snippets: list[tuple[str, str]], dns_provider: str = "") -> str:
-    """The Caddyfile for these `(stacklet_id, snippet)` pairs, in order.
+    """The Caddyfile for these `(source, snippet)` pairs, in order.
+
+    A source is the stacklet a snippet came from, or `LOCAL_FILE`.
 
     Raises ValueError for a DNS provider the infra image has no plugin for.
     """
     parts = [_HEADER, _global_options(dns_provider), _UNKNOWN_HOSTS]
-    for stacklet_id, snippet in snippets:
-        parts.append(f"# ── {stacklet_id} ──\n\n{snippet.strip()}\n")
+    for source, snippet in snippets:
+        parts.append(f"# ── {source} ──\n\n{snippet.strip()}\n")
     return "\n".join(parts)

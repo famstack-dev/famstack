@@ -911,13 +911,21 @@ class Stack:
             snippet = Path(s["path"]) / "caddy.snippet"
             if s["id"] in up and snippet.is_file():
                 snippets.append((s["id"], snippet.read_text()))
+
+        # Sites for services that are not stacklets. Only one proxy can own
+        # ports 80 and 443, so they go in this Caddyfile too. The file is
+        # the admin's, read and never written.
+        path = self.data / caddy.STACKLET / "Caddyfile"
+        local = path.with_name(caddy.LOCAL_FILE)
+        if local.is_file():
+            snippets.append((caddy.LOCAL_FILE, local.read_text()))
+
         try:
             caddyfile = caddy.assemble(snippets, self._cfg("core", "dns_provider"))
         except ValueError as e:
             self.output.warn(f"Caddyfile not updated: {e}")
             return None
 
-        path = self.data / caddy.STACKLET / "Caddyfile"
         path.parent.mkdir(parents=True, exist_ok=True)
         # Written in place. The file is bind-mounted into the proxy
         # container, and a single-file bind mount follows the inode, so a
