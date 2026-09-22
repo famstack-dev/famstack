@@ -31,12 +31,25 @@ _spec.loader.exec_module(on_start)
 
 
 class FakeCtx:
+    """The hook context: config in, shell commands recorded rather than
+    run, since they would start and stop services on this Mac."""
+
     def __init__(self, **cfg):
         self._cfg = cfg
         self.env: dict = {}
+        self.shell_calls: list[str] = []
 
-    def cfg(self, key, default=None):
+    def cfg(self, key, value=None, default=None):
+        if value is not None:
+            self._cfg[key] = value
+            return value
         return self._cfg.get(key, default)
+
+    def step(self, msg):
+        pass
+
+    def shell(self, cmd):
+        self.shell_calls.append(cmd)
 
 
 class TestManagedProviderNeedsItsEngine:
@@ -71,3 +84,37 @@ class TestExistingGuardsStillHold:
                             lambda _cmd: "/opt/homebrew/bin/omlx")
         with pytest.raises(RuntimeError, match="Missing openai_url"):
             on_start.run(FakeCtx(provider="external"))
+
+
+class TestTheLocalEngineIsStarted:
+    """oMLX runs as a Homebrew service. Once it stopped, nothing started
+    it again: `stack up ai` checked the configured address, found the
+    service down or found another server there, and still reported the
+    AI as running."""
+
+    @pytest.fixture(autouse=True)
+    def installed(self, monkeypatch):
+        monkeypatch.setattr(on_start.shutil, "which",
+                            lambda _cmd: "/opt/homebrew/bin/omlx")
+
+    def test_a_stopped_engine_is_started(self):
+        ctx = FakeCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
+
+        on_start.run(ctx)
+
+        assert ctx.shell_calls == ["brew services start omlx"]
+
+    def test_a_running_engine_is_left_alone(self, httpserver):
+        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
+        ctx = FakeCtx(provider="managed", openai_url=httpserver.url_for("/v1"))
+
+        on_start.run(ctx)
+
+        assert ctx.shell_calls == []
+
+    def test_a_remote_endpoint_starts_nothing_here(self):
+        ctx = FakeCtx(provider="external", openai_url="http://127.0.0.1:9/v1")
+
+        on_start.run(ctx)
+
+        assert ctx.shell_calls == []
