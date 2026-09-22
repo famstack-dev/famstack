@@ -2,7 +2,7 @@
 #
 # The same shape as the `test` fixture, but installed into the instance's
 # extensions dir instead of stacklets/: a stacklet the release does not
-# ship. It carries a stage so the lifecycle lane sees the warning path
+# ship. It carries a stage so the integration lane sees the warning path
 # too, which is the realistic pairing — a stacklet usually lives outside
 # the repo because it is not finished.
 

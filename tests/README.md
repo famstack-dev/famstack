@@ -35,7 +35,7 @@ minute and a quarter would only teach people to skip it.
 |---|---|---|---|---|
 | `make lint` | <1s | nothing | no | The whole tree, when you want more than the staged files the hook checks. What CI runs. |
 | `make test-unit` | ~50s | nothing | no | Before a push, or when a coherent piece of work is done. Offline framework and stacklet tests: no Docker, no live services, no production data. |
-| `make test-lifecycle` | ~6m | Docker, APFS | yes | You changed lifecycle, config rendering, `.env`, compose, container names, ports, volumes, health wiring or the backup engine. Owns a throwaway instance on fixed names, and mounts an APFS disk image per backup test. |
+| `make test-integration` | ~6m | Docker, APFS | yes | You changed lifecycle, config rendering, `.env`, compose, container names, ports, volumes, health wiring or the backup engine. Owns a throwaway instance on fixed names, and mounts an APFS disk image per backup test. |
 | `make test-demo` | ~4m | the demo instance running | yes | The behaviour has to work against the already-running bots and real service wiring. Tests create unique data and clean up after themselves; they never reset the instance. |
 | `make test-smoke` | ? | the test rig or the Simpsons demo | yes | A quick answer on a cross-service path. Seeds secrets and brings the required stacklets up first, so it is not read-only. |
 | `make test-e2e` | ? | the test rig or the Simpsons demo | yes | End of a branch, or before asking for review, when the change crosses container boundaries. On the demo it stashes the instance for the run and brings it back afterwards, pass or fail; any other instance is refused. |
@@ -58,7 +58,7 @@ destructive test-rig commands still require care.
 `tests/framework/` contains framework-level tests. Most are offline unit tests.
 `tests/framework/test_config_to_container.py` is intentionally separate because
 it talks to Docker and dominates runtime. `tests/stacklets/test_backup_e2e.py`
-joins it in the lifecycle lane: it creates and mounts an APFS disk image per
+joins it in the integration lane: it creates and mounts an APFS disk image per
 test, about a second each, which was a third of the unit lane. The list lives
 in `script/test` as `SLOW_FILES`.
 

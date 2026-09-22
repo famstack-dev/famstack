@@ -213,7 +213,7 @@ make                 # the lane table: cost, what each needs, when to run it
 make lint            # <1s, the whole tree. The hook already covers staged files.
 make test-unit       # ~50s, offline, no Docker. Before a push, or when a
                      #   piece of work is done. Not per commit.
-make test-lifecycle  # ~6m, Docker, APFS. Lifecycle, env rendering, compose,
+make test-integration # ~6m, Docker, APFS. Lifecycle, env rendering, compose,
                      #   health, and the backup engine on real disk images.
 make test-demo       # against the running demo instance.
 make test-smoke      # quick managed-rig e2e subset.
