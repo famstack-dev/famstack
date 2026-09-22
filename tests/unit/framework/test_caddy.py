@@ -87,6 +87,76 @@ class TestAssemble:
         assert PHOTOS.strip() in caddyfile
 
 
+# ── TLS through a DNS provider ────────────────────────────────────────────
+
+
+class TestDnsProvider:
+    """`[core] dns_provider` turns on HTTPS. Caddy obtains every certificate
+    through a DNS-01 challenge at that provider, so nothing on the LAN has
+    to be reachable from the internet. The provider's plugin is compiled
+    into the infra image; the token reaches Caddy as an environment
+    variable and never appears in the file."""
+
+    @pytest.mark.parametrize("provider", ["hetzner", "cloudflare"])
+    def test_every_certificate_comes_through_the_providers_dns(self, provider):
+        caddyfile = assemble([("photos", PHOTOS)], dns_provider=provider)
+        assert f"dns {provider} {{env.DNS_API_TOKEN}}" in caddyfile
+        assert "auto_https off" not in caddyfile
+
+    def test_hetzner_waits_before_checking_propagation(self):
+        """The Hetzner plugin's README asks for a 30 second delay before
+        Caddy starts checking for the TXT record."""
+        caddyfile = assemble([], dns_provider="hetzner")
+        assert "propagation_delay 30s" in caddyfile
+
+    def test_without_a_provider_no_certificate_is_requested(self):
+        assert "cert_issuer" not in assemble([("photos", PHOTOS)])
+
+    def test_an_unknown_provider_is_refused_by_name(self):
+        """Caddy would reject a provider it has no plugin for, and only
+        once the file is already in place."""
+        with pytest.raises(ValueError, match="hetzner.*cloudflare"):
+            assemble([], dns_provider="route53")
+
+
+def _stack(tmp_path, core: str, stacklets: dict[str, str] | None = None):
+    """A Stack over throwaway stacklets whose manifests are given in full."""
+    from stack import Stack
+    from stack.output import CollectorOutput
+
+    (tmp_path / "stack.toml").write_text(
+        f'[core]\n{core}\nextension_dirs = ["{tmp_path / "ext"}"]\n')
+    (tmp_path / ".stack").mkdir(exist_ok=True)
+    (tmp_path / ".stack" / "secrets.toml").write_text('global__ADMIN_PASSWORD = "test"\n')
+    for sid, manifest in (stacklets or {}).items():
+        sdir = tmp_path / "stacklets" / sid
+        sdir.mkdir(parents=True)
+        (sdir / "stacklet.toml").write_text(f'id = "{sid}"\n{manifest}')
+    return Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
+
+
+class TestPublicUrls:
+    """Browsers, phones and Element are handed the URLs the stack renders
+    (`{url}`, `{photos_url}`, `{home_url}`). Once the proxy has
+    certificates those have to be https: Element loaded over https refuses
+    to call an http homeserver."""
+
+    PHOTOS = 'port = 42010\n[env.defaults]\nURL = "{url}"\nHOME = "{home_url}"\n'
+
+    def test_with_a_dns_provider_urls_are_https(self, tmp_path):
+        stck = _stack(tmp_path, 'domain = "home.example.family"\ndns_provider = "hetzner"',
+                      {"photos": self.PHOTOS})
+        env = stck.env("photos")
+        assert env["URL"] == "https://photos.home.example.family"
+        assert env["HOME"] == "https://home.example.family"
+
+    def test_without_one_they_stay_http(self, tmp_path):
+        stck = _stack(tmp_path, 'domain = "home.example.family"', {"photos": self.PHOTOS})
+        env = stck.env("photos")
+        assert env["URL"] == "http://photos.home.example.family"
+        assert env["HOME"] == "http://home.example.family"
+
+
 # ── Lifecycle ─────────────────────────────────────────────────────────────
 
 
@@ -248,3 +318,19 @@ class TestLifecycle:
 
         assert cli.up("photos")["ok"]
         assert any("bad directive" in w for w in output.warnings)
+
+    def test_an_unknown_dns_provider_leaves_the_caddyfile_as_it_was(self, tmp_path, docker):
+        """A typo in stack.toml must not replace a working proxy config
+        with one Caddy cannot load. Infra's own start refuses the value
+        outright; for every other stacklet the routes stay as they were."""
+        cli, output = _make_cli(tmp_path)
+        docker.states = {"infra": "running", "docs": "running"}
+        cli.up("photos")
+        before = _caddyfile(tmp_path).read_text()
+
+        config = tmp_path / "stack.toml"
+        config.write_text(config.read_text() + 'dns_provider = "route53"\n')
+        cli.down("docs")
+
+        assert _caddyfile(tmp_path).read_text() == before
+        assert any("route53" in w for w in output.warnings)

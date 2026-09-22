@@ -202,6 +202,8 @@ Available template variables:
 | `{ai_default_model}` | `stack.toml` → `[ai].default` |
 | `{ai_tts_voice}` | Derived from `[ai].language` |
 | `{messages_server_name}` | `stack.toml` → `[messages].server_name` |
+| `{url}`, `{<id>_url}`, `{home_url}` | Public URLs: `http://<ip>:<port>` in port mode; `https://<id>.<domain>` in domain mode once `[core].dns_provider` is set, `http://` before that |
+| `{<id>__<NAME>}` | A secret from `secrets.toml`, e.g. `{docs__API_TOKEN}`, `{infra__DNS_API_TOKEN}` |
 
 ### Hints
 
@@ -948,7 +950,8 @@ The runtime operates in one of two modes based on `stack.toml`:
 
 **Domain mode** (`domain = "home.internal"`):
 - Services bind to `127.0.0.1:<port>` (only Caddy reaches them)
-- URLs are `http://photos.home.internal`
+- URLs are `http://photos.home.internal`, or `https://` once
+  `dns_provider` is set (see TLS below)
 - The runtime assembles the Caddyfile from `caddy.snippet` files
 - Requires wildcard DNS on router
 
@@ -985,13 +988,46 @@ Nothing is written in port mode, or while infra is not up.
 
 Around the snippets the assembler (`lib/stack/caddy.py`) emits:
 
-- A global options block. Without TLS it serves every site as plain HTTP
-  on port 80.
+- A global options block: how certificates are obtained, or, without TLS,
+  every site served as plain HTTP on port 80.
 - A `*.{$STACK_DOMAIN}` site that answers 404 for any host no running
   stacklet claims, a stopped stacklet's included.
 
 Snippets describe routes only. Anything that applies to every site belongs
 in the assembler, not in a snippet.
+
+### TLS
+
+`[core] dns_provider` (`"hetzner"` or `"cloudflare"`) turns on HTTPS. The
+global block then makes Let's Encrypt the issuer for every certificate,
+through a DNS-01 challenge at that provider:
+
+```
+{
+	cert_issuer acme {
+		dns hetzner {env.DNS_API_TOKEN}
+		propagation_delay 30s
+		propagation_timeout 5m
+	}
+}
+```
+
+Cloudflare's block has the `dns` line only. DNS-01 needs nothing on the
+LAN to be reachable from the internet, and it is the only challenge that
+issues a wildcard. Caddy obtains two certificates: `*.<domain>`, for the
+catch-all site, which every subdomain site then uses, and `<domain>`
+itself, which a wildcard does not cover.
+
+The token is the infra stacklet's secret `DNS_API_TOKEN`. `stack infra
+dns-token` stores or replaces it, and the first `stack up infra` asks for
+it in a terminal. It reaches Caddy as an environment variable and is read
+when a certificate is requested, so it appears neither in the Caddyfile
+nor in the config Caddy serves on its admin endpoint. infra's `on_start`
+refuses a provider the image has no plugin for, or a missing token.
+
+With `dns_provider` set, the URLs the runtime renders (`{url}`,
+`{<id>_url}`, `{home_url}`) are `https://`. `[core] https = true` does the
+same for a reverse proxy in front of the stack that is not this one.
 
 ---
 
@@ -1064,6 +1100,12 @@ One file, committed to the repo. User edits it directly.
 ```toml
 [core]
 domain        = ""                    # empty = port mode
+dns_provider  = ""                    # domain mode: "hetzner" or
+                                      # "cloudflare" serves HTTPS with
+                                      # certificates via DNS-01; empty
+                                      # serves plain HTTP. The API token
+                                      # is a secret (`stack infra
+                                      # dns-token`), never in this file.
 host          = ""                    # port-mode host override.
                                       # Empty = auto-detect LAN IP.
                                       # Set to "localhost" for

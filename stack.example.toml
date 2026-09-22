@@ -16,6 +16,14 @@ name = "famstack"
 #   Requires wildcard DNS on your router: *.home.internal → server IP
 domain = ""
 
+# With a domain, HTTPS for every service: one wildcard certificate plus one
+# for the bare domain, from Let's Encrypt. Caddy proves you own the domain by
+# writing a DNS record through your DNS provider's API, so nothing has to be
+# reachable from the internet. The domain must be one you own at the provider.
+#   "hetzner" or "cloudflare". Empty serves plain HTTP.
+# `stack up infra` asks for the API token; `stack infra dns-token` replaces it.
+dns_provider = ""
+
 # Absolute path where all persistent data lives: databases, uploads, config.
 # This directory is NOT managed by git — back it up separately.
 # The ~ shorthand is expanded by the stack CLI.

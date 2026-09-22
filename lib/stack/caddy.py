@@ -7,8 +7,18 @@ this module joins the snippets of the stacklets that are up into the one
 Caddyfile that container mounts.
 
 Snippets describe routes only. Everything that applies to the proxy as a
-whole, which today is the catch-all for hosts no stacklet claims, is
-emitted here, so a snippet never has to know about any other.
+whole, the catch-all for hosts no stacklet claims and how certificates
+are obtained, is emitted here, so a snippet never has to know about any
+other.
+
+With `[core] dns_provider` set, every certificate comes from Let's
+Encrypt through a DNS-01 challenge at that provider: Caddy writes a TXT
+record through the provider's API, so nothing on the LAN has to be
+reachable from the internet. That is also the only challenge that can
+issue the wildcard certificate. The `*.<domain>` site makes Caddy manage
+one, and every subdomain site uses it rather than getting its own. The
+bare domain is not covered by the wildcard, and gets a second
+certificate the same way.
 
 The domain is left as the `{$STACK_DOMAIN}` placeholder, in snippets and
 here alike. Caddy fills it in from its own environment when it loads the
@@ -40,6 +50,19 @@ _PLAIN_HTTP = """\
 }
 """
 
+# The DNS providers whose Caddy plugin is compiled into the infra image,
+# and the settings each one's plugin asks for beyond the token. Hetzner's
+# README asks for a delay before Caddy starts checking for the record.
+DNS_PROVIDERS = {
+    "hetzner": ("propagation_delay 30s", "propagation_timeout 5m"),
+    "cloudflare": (),
+}
+
+# The token is read from Caddy's environment when a certificate is
+# requested, so it never appears in this file or in the config Caddy
+# serves on its admin endpoint.
+_TOKEN = "{env.DNS_API_TOKEN}"
+
 # A host that no running stacklet claims, including one whose stacklet is
 # stopped, gets an answer instead of a connection error.
 _UNKNOWN_HOSTS = """\
@@ -49,9 +72,25 @@ _UNKNOWN_HOSTS = """\
 """
 
 
-def assemble(snippets: list[tuple[str, str]]) -> str:
-    """The Caddyfile for these `(stacklet_id, snippet)` pairs, in order."""
-    parts = [_HEADER, _PLAIN_HTTP, _UNKNOWN_HOSTS]
+def _global_options(dns_provider: str) -> str:
+    """Global options: certificates through the DNS provider, or none."""
+    if not dns_provider:
+        return _PLAIN_HTTP
+    if dns_provider not in DNS_PROVIDERS:
+        raise ValueError(
+            f"dns_provider '{dns_provider}' is not supported; "
+            f"use {' or '.join(DNS_PROVIDERS)}, or leave it empty for plain HTTP")
+    lines = [f"dns {dns_provider} {_TOKEN}", *DNS_PROVIDERS[dns_provider]]
+    body = "".join(f"\t\t{line}\n" for line in lines)
+    return f"{{\n\tcert_issuer acme {{\n{body}\t}}\n}}\n"
+
+
+def assemble(snippets: list[tuple[str, str]], dns_provider: str = "") -> str:
+    """The Caddyfile for these `(stacklet_id, snippet)` pairs, in order.
+
+    Raises ValueError for a DNS provider the infra image has no plugin for.
+    """
+    parts = [_HEADER, _global_options(dns_provider), _UNKNOWN_HOSTS]
     for stacklet_id, snippet in snippets:
         parts.append(f"# ── {stacklet_id} ──\n\n{snippet.strip()}\n")
     return "\n".join(parts)

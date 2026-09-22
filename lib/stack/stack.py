@@ -484,17 +484,24 @@ class Stack:
     def _public_url(self, stacklet_id: str, port: int) -> str:
         """Build the URL a user would click to reach a service.
 
-        In domain mode: http(s)://{stacklet}.{domain}
+        In domain mode: http(s)://{stacklet}.{domain}, see `_domain_scheme`
         In port mode: http://{ip}:{port} (LAN-reachable)
-
-        Set [core].https = true when a reverse proxy terminates TLS in front
-        of the stack.
         """
         domain = self._cfg("core", "domain")
         if domain:
-            scheme = "https" if self._cfg("core", "https") else "http"
-            return f"{scheme}://{stacklet_id}.{domain}"
+            return f"{self._domain_scheme()}://{stacklet_id}.{domain}"
         return f"http://{self._lan_ip()}:{port}"
+
+    def _domain_scheme(self) -> str:
+        """https once the proxy serves certificates, http until then.
+
+        The proxy has certificates when `[core] dns_provider` is set. Set
+        `[core] https = true` instead when some other reverse proxy in
+        front of the stack terminates TLS.
+        """
+        if self._cfg("core", "dns_provider") or self._cfg("core", "https"):
+            return "https"
+        return "http"
 
     def _home_url(self) -> str:
         """Browser-facing base of core's home — where `/go` links live.
@@ -510,8 +517,7 @@ class Stack:
         """
         domain = self._cfg("core", "domain")
         if domain:
-            scheme = "https" if self._cfg("core", "https") else "http"
-            return f"{scheme}://{domain}"
+            return f"{self._domain_scheme()}://{domain}"
         return f"http://{self._lan_ip()}:42000"
 
     def env(self, stacklet_id: str) -> dict:
@@ -890,7 +896,9 @@ class Stack:
 
         Returns the path written, or None when there is nothing to write:
         port mode has no proxy, and with the proxy not up there is nobody to
-        read it.
+        read it. An unsupported `[core] dns_provider` also writes nothing:
+        the proxy keeps the config it has, which still works, and the
+        warning names the value. Infra's on_start refuses it outright.
         """
         if not self._cfg("core", "domain"):
             return None
@@ -903,13 +911,18 @@ class Stack:
             snippet = Path(s["path"]) / "caddy.snippet"
             if s["id"] in up and snippet.is_file():
                 snippets.append((s["id"], snippet.read_text()))
+        try:
+            caddyfile = caddy.assemble(snippets, self._cfg("core", "dns_provider"))
+        except ValueError as e:
+            self.output.warn(f"Caddyfile not updated: {e}")
+            return None
 
         path = self.data / caddy.STACKLET / "Caddyfile"
         path.parent.mkdir(parents=True, exist_ok=True)
         # Written in place. The file is bind-mounted into the proxy
         # container, and a single-file bind mount follows the inode, so a
         # file replaced by rename would leave Caddy reading the old one.
-        path.write_text(caddy.assemble(snippets))
+        path.write_text(caddyfile)
         return path
 
     # ── Secrets (delegated to SecretStore) ────────────────────────────

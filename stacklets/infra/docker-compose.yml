@@ -55,6 +55,8 @@ services:
       - "${PORT_BIND_IP:-0.0.0.0}:443:443"
     environment:
       - STACK_DOMAIN=${STACK_DOMAIN:-home.internal}
+      # Read by the Caddyfile's DNS challenge as {env.DNS_API_TOKEN}.
+      - DNS_API_TOKEN=${DNS_API_TOKEN:-}
     volumes:
       - ${CADDYFILE_PATH}:/etc/caddy/Caddyfile:ro
       - ${CADDY_DATA_DIR}:/data

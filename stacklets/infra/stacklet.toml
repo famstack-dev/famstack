@@ -32,3 +32,6 @@ STACK_DOMAIN        = "{domain}"
 ADGUARD_DATA_DIR    = "{data_dir}/infra/adguard"
 CADDYFILE_PATH      = "{data_dir}/infra/Caddyfile"
 CADDY_DATA_DIR      = "{data_dir}/infra/caddy"
+# API token of [core] dns_provider, stored by `stack infra dns-token`.
+# Empty while the proxy serves plain HTTP.
+DNS_API_TOKEN       = "{infra__DNS_API_TOKEN}"
