@@ -1,35 +1,67 @@
-#!/usr/bin/env python3
 """
-famstack installer — interactive config wizard.
+famstack installer — messages-first, minimal questions.
 
-Gathers preferences, writes stack.toml and users.toml, runs stack init,
-then tells the user what to do next. Does NOT start stacklets — the user
-runs `stack up <name>` for each one, in their own time.
+Asks for family name, admin first name, and optional family members.
+Derives the Matrix server name from the family name. Boots messages
+as the first and only stacklet. Everything else is post-install onboarding.
 """
 
-import os
-import secrets
-import subprocess
-import sys
 import json
+import os
+import sys
+import subprocess
 from pathlib import Path
 
 from .prompt import (
-    ORANGE, TEAL, DIM, BOLD, RESET,
+    ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET,
     clear, nl, out, dim, bold, done, warn,
-    heading, section, banner, rule, kv,
-    Spinner, ask, confirm, choose, choose_many,
+    heading, section, banner, rule, Spinner, ask, confirm, kv, status_list,
+)
+from .users import family_plural
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+HELP_LINKS = (
+    f"  {TEAL}Discord{RESET}  https://discord.com/invite/hfutdmmfBe",
+    f"  {TEAL}GitHub{RESET}   https://github.com/famstack-dev/famstack",
+    f"  {TEAL}Email{RESET}    hello@famstack.dev",
 )
 
 
-# ── Validation ────────────────────────────────────────────────────────────────
+def get_help_text(detail=""):
+    """Format an error footer with optional detail and help links."""
+    lines = []
+    if detail:
+        lines.append("")
+        for line in detail.split("\n"):
+            lines.append(f"  {DIM}{line}{RESET}")
+    lines.append("")
+    lines.append("  Sorry for that. If it keeps happening, we'd love to help.")
+    lines.append("  Please reach out so we can fix it faster:")
+    lines.append("")
+    lines.extend(HELP_LINKS)
+    lines.append("")
+    return "\n".join(lines)
 
-def validate_email(value):
-    if not value:
-        return "Email is required"
-    if "@" not in value:
-        return "Needs an @ symbol"
-    return None
+
+def fail(msg, detail=""):
+    """Print an error message with help links and exit."""
+    nl()
+    out(f"{RED}✗{RESET}  {msg}")
+    print(get_help_text(detail))
+    sys.exit(1)
+
+
+def get_repo_root():
+    here = Path(__file__).parent
+    for candidate in [here.parent.parent, here.parent, Path.cwd()]:
+        if (candidate / "stacklets").is_dir():
+            return candidate
+    return Path.cwd()
+
+
+REPO_ROOT = get_repo_root()
 
 
 def validate_name(value):
@@ -38,57 +70,11 @@ def validate_name(value):
     return None
 
 
-# ── Stacklets ─────────────────────────────────────────────────────────────────
+def sanitize_server_name(family_name):
+    """Turn a family name into a valid Matrix server name."""
+    clean = "".join(c for c in family_name.lower() if c.isalnum() or c in "-_.")
+    return clean or "home"
 
-def load_stacklets(repo_root):
-    """Load stacklet definitions from stacklet.toml files."""
-    import tomllib
-
-    stacklets_dir = repo_root / "stacklets"
-    stacklets = {}
-    core = None
-
-    for path in stacklets_dir.glob("*/stacklet.toml"):
-        try:
-            with open(path, "rb") as f:
-                data = tomllib.load(f)
-
-            sid = data.get("id")
-            if not sid:
-                continue
-
-            info = {
-                "name": data.get("name", sid),
-                "description": data.get("description", ""),
-                "category": data.get("category", "other"),
-                "always_on": data.get("always_on", False),
-            }
-
-            if data.get("always_on"):
-                core = info
-            else:
-                stacklets[sid] = info
-
-        except Exception:
-            continue
-
-    return stacklets, core
-
-
-def get_repo_root():
-    """Find repo root by looking for stacklets/ directory."""
-    here = Path(__file__).parent
-    for candidate in [here.parent, here.parent.parent, Path.cwd()]:
-        if (candidate / "stacklets").is_dir():
-            return candidate
-    return Path.cwd()
-
-
-REPO_ROOT = get_repo_root()
-STACKLETS, CORE = load_stacklets(REPO_ROOT)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def detect_timezone():
     try:
@@ -100,27 +86,64 @@ def detect_timezone():
     return "UTC"
 
 
+# Map timezone to primary language. Only de and en for now --
+# taxonomy.yaml only has these two. Add more as we add translations.
+_TZ_LANGUAGE = {
+    "Europe/Berlin": "de", "Europe/Vienna": "de", "Europe/Zurich": "de",
+}
+
+
+def detect_language(timezone: str) -> str:
+    """Guess the instance language from timezone. Defaults to English."""
+    return _TZ_LANGUAGE.get(timezone, "en")
+
+
+# (min_ram_gb, model_id, label)
+# Qwen3.6 only shipped a 27B dense and a 35B-A3B MoE — no small variant — so
+# the lightweight tier stays on Qwen3.5-9B (3.6's smallest 4bit is 16 GB of
+# weights, too big for a 16 GB Mac).
+MODEL_TIERS = [
+    (32, "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit", "32 GB+ RAM"),
+    (0,  "mlx-community/Qwen3.5-9B-MLX-4bit",    "16 GB+ RAM — lightweight"),
+]
+
+
+def _detect_ram_gb() -> float:
+    try:
+        ram_bytes = int(subprocess.check_output(
+            ["sysctl", "-n", "hw.memsize"]).strip())
+    except Exception:
+        ram_bytes = 0
+    return ram_bytes / (1024 ** 3)
+
+
+def detect_default_model():
+    """Pick a default LLM model based on system RAM."""
+    ram_gb = _detect_ram_gb()
+    for min_ram, model_id, _label in MODEL_TIERS:
+        if ram_gb >= min_ram:
+            return model_id
+    return MODEL_TIERS[-1][1]
+
+
 def email_from_name(name):
     first = name.split()[0] if name else "user"
     clean = "".join(c for c in first.lower() if c.isalnum())
     return f"{clean}@home.local"
 
 
-def generate_password():
-    """Human-friendly password for local services."""
-    words = ["sun", "moon", "star", "rain", "wind", "leaf", "tree", "bird",
-             "fish", "wave", "fire", "lake", "hill", "rock", "sand", "snow"]
-    return "-".join(secrets.choice(words) for _ in range(3))
+def _create_stack():
+    """Create a Stack instance from the repo root."""
+    from .cli import create_stack
+    return create_stack(REPO_ROOT)
 
 
 def _has_brew() -> bool:
-    """Check if Homebrew is installed."""
     import shutil
     return shutil.which("brew") is not None
 
 
 def _ensure_brew():
-    """Verify Homebrew is installed. Guide the user if not."""
     if _has_brew():
         done("Homebrew installed")
         return
@@ -143,11 +166,6 @@ def _ensure_brew():
 
 
 def _ensure_docker():
-    """Verify Docker (OrbStack) is installed and running.
-
-    Checks in order: installed → running. Offers to install via brew
-    if missing, guides the user to start it if stopped.
-    """
     from .docker import check_docker, init_runtime
 
     _, runtime_warn = init_runtime()
@@ -159,7 +177,6 @@ def _ensure_docker():
             warn(runtime_warn)
         return
 
-    # ── Not installed — offer brew install ───────────────────────
     if "not installed" in (err or "").lower():
         warn("Docker is not installed.")
         nl()
@@ -171,10 +188,6 @@ def _ensure_docker():
             nl()
             subprocess.run(["brew", "install", "--cask", "orbstack"], timeout=300)
             nl()
-
-            # OrbStack needs an interactive first-launch (allow Docker
-            # integration, possibly clear Gatekeeper). A new shell session
-            # is needed to pick up the PATH entry it installs.
             out("OrbStack is installed. Opening it for the first-time setup...")
             subprocess.run(["open", "-a", "OrbStack"], timeout=10)
             nl()
@@ -187,21 +200,17 @@ def _ensure_docker():
 
         raise KeyboardInterrupt
 
-    # ── Installed but not running ────────────────────────────────
     warn("Docker is not running.")
     nl()
     out("Start OrbStack from your Applications folder or menu bar.")
     nl()
-
     _wait_for_docker()
 
 
 def _wait_for_docker():
-    """Poll until Docker is running, with user prompts."""
     import time
     from .docker import check_docker, init_runtime
 
-    # Give it a moment to start up
     for _ in range(5):
         time.sleep(2)
         init_runtime()
@@ -210,7 +219,6 @@ def _wait_for_docker():
             done("Docker is running")
             return
 
-    # Still not up — ask the user
     while True:
         if not confirm("Check again?"):
             raise KeyboardInterrupt
@@ -223,92 +231,64 @@ def _wait_for_docker():
         nl()
 
 
-def _announce(service_name: str):
-    """Short voice announcement after a successful stacklet setup.
+# ── Config writers ───────────────────────────────────────────────────────────
 
-    Silently does nothing if TTS isn't available yet.
-    """
-    try:
-        sys.path.insert(0, str(REPO_ROOT / "stacklets" / "ai"))
-        from speech import speak
-        speak(f"{service_name} is ready.")
-    except Exception:
-        pass
-
-
-def run_stack(*args):
-    """Run a stack CLI command, return (success, output)."""
-    cmd = [sys.executable, "-m", "stack"] + list(args)
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")}
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
-                            cwd=str(REPO_ROOT), env=env)
-    return result.returncode == 0, (result.stdout + result.stderr).strip()
+def _model_comments(chosen: str) -> str:
+    """Render model alternatives as TOML comments."""
+    lines = ["# Models by RAM tier — uncomment one to switch, then run:"]
+    lines.append("#   ./stack setup ai")
+    lines.append("#   ./stack ai download <model>")
+    for _min_ram, model_id, label in MODEL_TIERS:
+        if model_id == chosen:
+            lines.append(f'default = "{model_id}"  # ← {label} (selected)')
+        else:
+            lines.append(f'# default = "{model_id}"  # {label}')
+    return "\n".join(lines)
 
 
-def run_stack_live(*args, confirmed=False):
-    """Run a stack CLI command with live output and stdin passthrough.
-
-    confirmed=True sets STACK_SETUP_CONFIRMED=1 so stacklet configure
-    hooks skip interactive prompts the installer already handled.
-
-    Returns True on success, False on failure.
-    """
-    cmd = [sys.executable, "-m", "stack"] + list(args)
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")}
-    if confirmed:
-        env["STACK_SETUP_CONFIRMED"] = "1"
-    result = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env)
-    return result.returncode == 0
-
-
-def print_status(only=None):
-    """Show compact status of stacklets. Pass only=set to filter."""
-    from .prompt import status_list
-    ok, output = run_stack("list", "--json")
-    if not ok:
-        return
-    try:
-        data = json.loads(output)
-    except (json.JSONDecodeError, ValueError):
-        return
-    stacklets = data.get("stacklets", [])
-    if only is not None:
-        stacklets = [s for s in stacklets if s.get("id") in only]
-    status_list(stacklets)
-
-
-# ── Config writers ────────────────────────────────────────────────────────────
-
-def write_stack_toml(config):
-    """Write stack.toml from gathered config."""
-    tz = config["timezone"]
-    data_dir = config["data_dir"]
-    language = config["language"]
-    provider = config.get("provider", "")
-    openai_url = config.get("openai_url", "")
-    openai_key = config.get("openai_key", "")
-
+def write_stack_toml(family_name, server_name, timezone, language="en"):
+    """Write a minimal stack.toml — just enough for messages."""
+    default_model = detect_default_model()
+    model_block = _model_comments(default_model)
     content = f'''# stack.toml — generated by famstack installer
 #
 # Edit freely — this file is gitignored and won't conflict with updates.
 # Run 'stack up <stacklet>' after changes to apply them.
 
 [core]
+# Product name. Drives CLI branding and the default paths derived from it
+# (~/<name>-extensions). Without it the instance calls itself "stack".
+name = "famstack"
+stack_owner = "{family_name}"
 domain = ""
-data_dir = "{data_dir}"
-timezone = "{tz}"
+# Hostname used in port-mode URLs and the `{{ip}}` template var. Empty
+# = auto-detect this machine's LAN IP (the LAN-friendly default).
+# Set to "localhost" for single-machine testing, or to a custom
+# hostname like "mac-mini.local" when the LAN IP shifts.
+host = ""
+data_dir = "~/famstack-data"
+timezone = "{timezone}"
 language = "{language}"
+# Slug for the bucket inside the memory vault that holds institutional
+# artifacts (documents, correspondents). Personal entities live at
+# <vault>/<localpart>/; the shared bucket lives at <vault>/<slug>/.
+# Defaults to "family"; rename for a non-family deployment ("office"), surname-based
+# households, etc.
+shared_bucket = "family"
 
 [updates]
 schedule = "0 0 3 * * *"
 
 [ai]
-provider = "{provider}"
-openai_url = "{openai_url}"
-openai_key = "{openai_key}"
-whisper_url = "http://localhost:42062/v1"
-language = "{language}"
-default = "Qwen3.5-9B-MLX-8bit"
+provider = ""
+openai_url = ""
+openai_key = ""
+language = "en"
+{model_block}
+
+[messages]
+# Permanent — appears in every Matrix user ID (@user:{server_name})
+server_name = "{server_name}"
 '''
     path = REPO_ROOT / "stack.toml"
     path.write_text(content)
@@ -338,7 +318,17 @@ def write_users_toml(users):
     path.write_text("\n".join(lines))
 
 
-# ── Wizard ────────────────────────────────────────────────────────────────────
+# ── Existing config ──────────────────────────────────────────────────────────
+
+def run_stack(*args):
+    """Run a stack CLI command, return (success, output)."""
+    cmd = [sys.executable, "-m", "stack"] + list(args)
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")}
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                            cwd=str(REPO_ROOT), env=env)
+    return result.returncode == 0, (result.stdout + result.stderr).strip()
+
+
 
 def show_existing_config():
     """When config already exists, show what's there and how to change it."""
@@ -367,7 +357,7 @@ def show_existing_config():
     if core.get("domain"):
         kv("Domain", core["domain"])
     if ai.get("openai_url"):
-        kv("LLM", ai["openai_url"])
+        kv("AI server", ai["openai_url"])
     if ai.get("language"):
         kv("AI language", ai["language"])
     if messages.get("server_name"):
@@ -390,7 +380,6 @@ def show_existing_config():
             pass
 
     # All stacklets and their status
-    from .prompt import status_list
     ok, output = run_stack("list", "--json")
     if ok:
         try:
@@ -401,8 +390,9 @@ def show_existing_config():
 
     # How to change things
     heading("To make changes")
-    out(f"Edit {TEAL}stack.toml{RESET} to change settings like timezone, LLM endpoint,")
-    out("or AI language. Changes take effect on the next 'stack up'.")
+    out(f"Edit {TEAL}stack.toml{RESET} to change settings like timezone or AI language.")
+    out("Changes take effect on the next 'stack up'.")
+    out(f"To use another AI server, run {TEAL}stack ai connect <url>{RESET}.")
     nl()
     out(f"Edit {TEAL}users.toml{RESET} to add or remove family members.")
     out("New accounts are created on the next 'stack up' for each service.")
@@ -419,65 +409,69 @@ def show_existing_config():
     nl()
     dim("Need help?")
     dim("  https://github.com/famstack-dev/famstack/issues")
-    dim("  https://discord.gg/rwyrBRun")
+    dim("  https://discord.gg/hfutdmmfBe")
     nl()
 
 
+# ── Wizard ───────────────────────────────────────────────────────────────────
+
 def wizard():
-    # If config already exists, show it instead of re-running the wizard
-    has_config = (REPO_ROOT / "stack.toml").exists()
-    has_users = (REPO_ROOT / "users.toml").exists()
-    if has_config and has_users:
+    # Already configured — don't re-run
+    if (REPO_ROOT / "stack.toml").exists() and (REPO_ROOT / "users.toml").exists():
         show_existing_config()
         return None
 
     clear()
 
-    # ── Welcome ────────────────────────────────────────────────────────────
+    # ── Welcome ────────────────────────────────────────────────────────
 
     banner("famstack", "Your family's private server")
-    out("Photos, messages, documents, and AI that runs entirely")
-    out("on your Mac. No cloud, no subscriptions.")
+    out("Everything stays on your network. Nothing leaves this machine.")
+    nl()
+    warn(f"{RED}{BOLD}Local network only.{RESET} famstack runs plain HTTP and trusts your LAN.")
+    out("   Never install it on a machine reachable from the public internet:")
+    out("   no VPS, no forwarded ports. For remote access, use a VPN (e.g. Tailscale).")
     nl()
 
     _ensure_brew()
     _ensure_docker()
     nl()
 
-    out("This wizard sets up your configuration, then walks you")
-    out("through each service one by one.")
+    # ── Family name ────────────────────────────────────────────────────
+
+    section("Family", "Let's set up your family server")
+
+    out("Your family name is used to identify your server")
+    out("and shows up in chat as @name:family.")
+    nl()
+    dim("This is purely local — nothing is shared or sent anywhere.")
     nl()
 
-    if not confirm("Ready?"):
+    family_name = ask("Family name", validate=validate_name)
+    if not family_name:
         return None
 
-    # ── You ────────────────────────────────────────────────────────────────
+    server_name = sanitize_server_name(family_name)
 
-    section("About You", "Create your admin account")
+    # ── Admin ──────────────────────────────────────────────────────────
 
-    out("This creates your admin account. You'll use it to log into")
-    out("Photos, Chat, and other services.")
+    nl()
+    out("Now create your account — the admin who manages the server.")
     nl()
 
-    name = ask("Your name", validate=validate_name)
-    if not name:
-        return None
-
-    email = ask("Email", default=email_from_name(name), validate=validate_email)
-    dim("Used as login username. Doesn't need to be a real email.")
-    if not email:
+    admin_name = ask("Your first name", validate=validate_name)
+    if not admin_name:
         return None
 
     from .users import user_id
-    admin = {"name": name, "email": email, "role": "admin"}
-    done(f"{name} (id: {user_id(admin)})")
+    admin = {"name": admin_name, "email": email_from_name(admin_name), "role": "admin"}
+    done(f"@{user_id(admin)}:{server_name}")
 
-    # ── Family ─────────────────────────────────────────────────────────────
+    # ── Family members ─────────────────────────────────────────────────
 
-    section("Family", "Add family member accounts")
-    out("Add family members now and we create their accounts")
-    out("in Photos, Chat, and other services automatically.")
-    dim("You can always add more people later in users.toml.")
+    nl()
+    out("Add family members — they'll get their own chat accounts.")
+    dim("You can always add more later.")
     nl()
 
     users = [admin]
@@ -487,345 +481,177 @@ def wizard():
         if not member_name:
             break
 
-        member_email = ask("Email", default=email_from_name(member_name), validate=validate_email)
-        if not member_email:
-            break
-
-        member = {"name": member_name, "email": member_email, "role": "member"}
+        member = {"name": member_name, "email": email_from_name(member_name), "role": "member"}
         users.append(member)
-        done(f"{member_name} (id: {user_id(member)})")
+        done(f"@{user_id(member)}:{server_name}")
         nl()
 
-    # ── Services ───────────────────────────────────────────────────────────
+    # ── Confirm ────────────────────────────────────────────────────────
 
-    section("Services", "Pick what to set up")
-    out("You can always add more later with 'stack up <name>'.")
     nl()
-
-    if CORE:
-        dim(f"{CORE['name']} is always included ({CORE['description']})")
-        nl()
-
-    INSTALL_STACKLETS = ["photos", "messages", "docs", "ai", "chatai", "bots"]
-    stacklet_ids = [sid for sid in INSTALL_STACKLETS if sid in STACKLETS]
-    options = [
-        f"{STACKLETS[sid]['name']}  {STACKLETS[sid]['description']}"
-        for sid in stacklet_ids
-    ]
-
-    preselected = list(range(len(stacklet_ids)))
-    selected = choose_many("Services", options, preselected=preselected)
-
-    if selected is None:
-        selected = ()
-
-    chosen = [stacklet_ids[i] for i in selected]
-
-    # Auto-add dependencies
-    STACKLET_DEPS = {"bots": ["messages", "ai"]}
-    for sid in list(chosen):
-        for dep in STACKLET_DEPS.get(sid, []):
-            if dep not in chosen:
-                chosen.append(dep)
-                dim(f"Adding {STACKLETS[dep]['name']} (needed by {STACKLETS[sid]['name']})")
-
-    if chosen:
-        nl()
-        for sid in chosen:
-            done(STACKLETS[sid]["name"])
-
-    # ── Summary ────────────────────────────────────────────────────────────
-
-    timezone = detect_timezone()
-    data_dir = "~/famstack-data"
-
-    clear()
-    banner("famstack", "Here's what we'll set up")
-
-    # Services
-    rule()
-    if CORE:
-        dim(f"  {CORE['name']}")
-    for sid in chosen:
-        s = STACKLETS[sid]
-        out(f"  {BOLD}{s['name']}{RESET}  {DIM}{s['description']}{RESET}")
-    if not chosen:
-        dim("  No services selected")
     rule()
     nl()
-
-    kv("Timezone", timezone)
-    kv("Data", data_dir)
+    bold(f"The {ORANGE}{family_plural(family_name)}{RESET}")
     nl()
-
     for u in users:
-        if u["role"] == "admin":
-            out(f"  {BOLD}{u['name']}{RESET}  {DIM}{u['email']}  (admin){RESET}")
-        else:
-            out(f"  {u['name']}  {DIM}{u['email']}{RESET}")
+        uid = user_id(u)
+        tag = f"  {DIM}(admin){RESET}" if u["role"] == "admin" else ""
+        out(f"  {TEAL}@{uid}:{server_name}{RESET}{tag}")
+        dim(f"    {u['email']}")
     nl()
-
+    dim("You can edit users.toml any time to add or remove members.")
+    nl()
     rule()
     nl()
-    out("This saves to stack.toml and users.toml in your famstack directory.")
-    out("After that, you'll choose which services to set up.")
+
+    out(f"{ORANGE}{BOLD}How it works{RESET}")
+    nl()
+    out("  Every family member gets an account on each service you enable.")
+    out(f"  Log in with your {TEAL}first name{RESET} or {TEAL}email{RESET}, depending on the service.")
+    out(f"  Default password is your {TEAL}first name{RESET}. Change it after first login.")
+    nl()
+    dim(f"  famstack also creates a {TEAL}stackadmin{RESET}{DIM} service account to manage")
+    dim("  things behind the scenes. You'll find its password in")
+    dim(f"  {TEAL}.stack/secrets.toml{RESET}{DIM} if you ever need it.")
     nl()
 
-    if not confirm("Save configuration?"):
+    out(f"{ORANGE}{BOLD}First step{RESET}")
+    nl()
+    out(f"  We'll start with {TEAL}Messages{RESET}, your family's private chat.")
+    out("  It doubles as the operation center: manage your server")
+    out("  from any device, get notifications, and add more services.")
+    out("  Once it's running, you can continue the setup from there.")
+    nl()
+
+    if not confirm("Ready?"):
         dim("Cancelled — nothing was changed.")
         return None
 
-    # ── Write config ──────────────────────────────────────────────────────
+    # ── Write config ──────────────────────────────────────────────────
 
     clear()
-    section("Writing Configuration", "Saving your choices")
+    section("Setting up", "Writing config and starting messages")
     nl()
 
-    language = "en"
-    ai_config = {}
-
-    config = {
-        "timezone": timezone,
-        "data_dir": data_dir,
-        "language": language,
-        **ai_config,
-    }
+    timezone = detect_timezone()
+    language = detect_language(timezone)
 
     with Spinner("Writing stack.toml"):
-        write_stack_toml(config)
+        write_stack_toml(family_name, server_name, timezone, language)
 
     with Spinner("Writing users.toml"):
         write_users_toml(users)
 
     with Spinner("Writing secrets"):
-        # Default passwords match the user ID (e.g. homer/homer).
-        # Simple and frictionless for a local network setup. Users can
-        # change their passwords in each service after first login.
         from .secrets import TomlSecretStore
-        from .users import user_id, password_key
-        secrets = TomlSecretStore(REPO_ROOT / ".stack" / "secrets.toml")
+        from .users import user_id as uid, password_key
+        import secrets as _secrets
+        store = TomlSecretStore(REPO_ROOT / ".stack" / "secrets.toml")
         for u in users:
-            secrets.set("global", password_key(u), user_id(u))
-        secrets.set("global", "ADMIN_PASSWORD", user_id(admin))
+            store.set("global", password_key(u), uid(u))
+        # Prefix ensures the password never starts with a dash, which would
+        # break CLI tools that parse it as a flag (e.g. register_new_matrix_user)
+        admin_password = "s" + _secrets.token_urlsafe(8)
+        store.set("global", "ADMIN_PASSWORD", admin_password)
 
     with Spinner("Initializing infrastructure") as sp:
-        ok, output = run_stack("init", "--json")
+        from .docker import check_docker, init_runtime, ensure_network
+        ok, err = check_docker()
         if not ok:
             sp.fail()
-            nl()
-            warn("Infrastructure setup had issues:")
-            for line in output.split("\n")[-3:]:
-                dim(f"  {line}")
-            nl()
+            fail("Docker is not running.", err or "")
+        init_runtime()
+        ok, err = ensure_network()
+        if err:
+            sp.fail()
+            fail("Could not create Docker network.", err)
 
-    # ── Set up stacklets ─────────────────────────────────────────────────
+        stck = _create_stack()
+        stck.data.mkdir(parents=True, exist_ok=True)
+        (stck.root / ".stack").mkdir(exist_ok=True)
+
+    # ── Start messages, then core ────────────────────────────────────
+    # Messages (Matrix) must be up first — the bot runner in core
+    # needs it to create accounts and log in.
 
     nl()
-    rule()
+    from .cli import CLI
+    stck = _create_stack()
+    cli = CLI(stck)
+
+    out(f"  Bringing up {TEAL}Messages{RESET}...\n")
+
+    # Skip interactive on_configure prompts — we already wrote server_name
+    os.environ["STACK_SETUP_CONFIRMED"] = "1"
+    result = cli.up("messages")
+
+    if not result.get("ok"):
+        err_msg = result.get("error", "Unknown error")
+        fail("Messages failed to start.",
+             f"{err_msg}\n\nRun 'stack logs messages' to see what went wrong,\n"
+             "then 'stack up messages' to retry.")
+
+    out(f"  Bringing up {TEAL}Core{RESET}...\n")
+    result = cli.up("core")
+    if not result.get("ok"):
+        err_msg = result.get("error", "Unknown error")
+        fail("Core failed to start.", err_msg)
+
     nl()
-    bold("Configuration complete!")
-    nl()
-    out("Now let's set up your services. Each one takes a minute or two.")
-    out("You can skip any and run 'stack up <name>' later.")
-
-    install_order = ["ai", "messages", "docs", "photos", "chatai", "bots"]
-    ordered = [sid for sid in install_order if sid in chosen]
-    for sid in chosen:
-        if sid not in ordered:
-            ordered.append(sid)
-
-    STACKLET_INTRO = {
-        "ai": (
-            "The AI engine behind famstack. Runs large language models,",
-            "speech-to-text, and text-to-speech entirely on your Mac.",
-            "Other services use this for voice transcription and smart features.",
-        ),
-        "messages": (
-            "Private family WhatsApp-like chat powered by Matrix. With mobile app.",
-            "Send messages, photos, and voice notes from any device.",
-            "Other services send notifications here too. Its the backbone of famstack.",
-        ),
-        "docs": (
-            "Drop a PDF, scan, or photo of a document and it gets digitized,",
-            "categorized, and made searchable. Tax returns, school letters,",
-            "receipts — everything in one place, findable in seconds.",
-        ),
-        "photos": (
-            "Back up photos from every phone automatically and browse",
-            "by person or place. Like Google Photos, but on your own hardware.",
-        ),
-        "chatai": (
-            "A browser-based chat interface for your local AI. Ask questions,",
-            "have conversations, or talk to it. Like ChatGPT, but private",
-            "and running on your Mac.",
-        ),
-        "bots": (
-            "Small AI-powered helpers that live in your family chat.",
-            "Send a document and it gets filed. Send a voice message",
-            "and it gets transcribed. More bots are coming.",
-        ),
-    }
-
-    set_up = []
-    skipped = []
-
-    for sid in ordered:
-        sname = STACKLETS[sid]["name"]
-        desc = STACKLETS[sid]["description"]
-
-        print_status(only={"core"} | set(chosen))
-        section(sname, desc)
-
-        intro = STACKLET_INTRO.get(sid)
-        if intro:
-            for line in intro:
-                out(line)
-            nl()
-
-        if not confirm(f"Set up {sname}?"):
-            skipped.append(sid)
-            dim(f"Skipped — run 'stack up {sid}' when you're ready.")
-            continue
-
-        if sid == "ai":
-            # ── Language ────────────────────────────────────────────
-            section("AI Language", "Voice and speech recognition language")
-            out("This controls the voice the AI uses to speak and the")
-            out("default language for speech recognition.")
-            dim("English works best for now. Other languages are experimental.")
-            nl()
-            idx = choose("What language should the AI speak?", ["English", "Deutsch (experimental)"])
-            language = "de" if idx == 1 else "en"
-            nl()
-            done(f"{'Deutsch' if language == 'de' else 'English'}")
-            config["language"] = language
-
-            # ── LLM provider ───────────────────────────────────────
-            section("LLM Provider", "Where does the language model run?")
-            dim("Advanced: if you already run your own OpenAI-compatible LLM")
-            dim("endpoint, you can use that instead of oMLX.")
-            nl()
-
-            if confirm("Bring your own LLM endpoint?", default=False):
-                endpoint_ok = False
-                while not endpoint_ok:
-                    nl()
-                    out("Enter the URL of your OpenAI-compatible endpoint.")
-                    dim("Examples: https://api.openai.com/v1, http://192.168.1.50:11434/v1")
-                    nl()
-                    ep_url = ask("Endpoint URL")
-                    if not ep_url:
-                        break
-                    ep_url = ep_url.strip().rstrip("/")
-                    if not ep_url.startswith("http"):
-                        ep_url = f"http://{ep_url}"
-                    if not ep_url.endswith("/v1"):
-                        ep_url = f"{ep_url}/v1"
-
-                    ep_key = ask("API key (leave empty if none)")
-                    ep_key = ep_key.strip() if ep_key else ""
-
-                    sys.path.insert(0, str(REPO_ROOT / "stacklets" / "ai"))
-                    from backend import _probe
-                    probe = _probe(ep_url, ep_key)
-                    if probe.reachable:
-                        done(f"Connected to {ep_url}")
-                        config["provider"] = "external"
-                        config["openai_url"] = ep_url
-                        config["openai_key"] = ep_key
-                        if ep_key:
-                            from .secrets import TomlSecretStore
-                            secrets_store = TomlSecretStore(REPO_ROOT / ".stack" / "secrets.toml")
-                            secrets_store.set("ai", "AI_API_KEY", ep_key)
-                        endpoint_ok = True
-                    else:
-                        warn(f"Cannot reach {ep_url}")
-                        out("Check the URL and make sure the server is running.")
-                        nl()
-                        if not confirm("Try again?"):
-                            break
-
-                if not endpoint_ok:
-                    nl()
-                    out("No worries — we'll set up oMLX for you instead.")
-                    config["provider"] = "managed"
-            else:
-                config["provider"] = "managed"
-
-            nl()
-            write_stack_toml(config)
-
-        nl()
-        ok = run_stack_live("up", sid, confirmed=True)
-        nl()
-
-        if ok:
-            set_up.append(sid)
-            _announce(sname)
-        else:
-            warn(f"{sname} had issues — check 'stack logs {sid}' for details.")
-            nl()
 
     # ── Done ──────────────────────────────────────────────────────────
 
     clear()
-    banner("famstack")
-    print_status(only={"core"} | set(chosen))
+    nl()
+    out(f"{ORANGE}{BOLD}famstack{RESET}")
+    out(f"{GREEN}The {family_plural(family_name)} are online{RESET}")
 
-    if set_up:
-        rule()
-        nl()
-        bold(f"{len(set_up)} service{'s' if len(set_up) != 1 else ''} running")
-        nl()
+    from .users import user_id as uid2
+    admin_id = uid2(admin)
 
-    not_selected = [sid for sid in STACKLETS if sid not in chosen and sid not in skipped]
-    all_skipped = skipped + not_selected
-    if all_skipped:
-        out("Set up more services any time:")
-        for sid in all_skipped:
-            out(f"  {TEAL}stack up {sid}{RESET}")
-        nl()
+    # Resolve URLs from the Stack instance
+    messages_url = stck._public_url("messages", 42030)
 
-    heading("Useful commands")
-    out(f"  {TEAL}stack status{RESET}         See what's running")
-    out(f"  {TEAL}stack down <name>{RESET}    Stop a service")
-    out(f"  {TEAL}stack logs <name>{RESET}    View logs")
-    out(f"  {TEAL}stack destroy <name>{RESET} Remove a service and its data")
+    # ── Step-by-step guide ────────────────────────────────────────────
+
+    rule()
+    nl()
+    bold("1. Open your browser")
+    nl()
+    if messages_url:
+        out(f"   {BOLD}{TEAL}{messages_url}{RESET}")
     nl()
 
-    return {"stacklets": set_up, "skipped": skipped, "users": users, "config": config}
+    bold("2. Sign in")
+    nl()
+    out(f"   Welcome to Element. Press {BOLD}Sign in{RESET}.")
+    out("   If you see 'does not support this browser', click Continue anyway.")
+    nl()
+    out(f"   Username  {BOLD}{TEAL}{admin_id}{RESET}")
+    out(f"   Password  {BOLD}{TEAL}{admin_id}{RESET}")
+    dim("   (your first name, lowercase — change it after login)")
+    nl()
 
+    bold("3. Explore your rooms")
+    nl()
+    out(f"   {TEAL}#famchat{RESET}    Your private family conversations")
+    out(f"   {TEAL}#famstack{RESET}   Notifications about your server")
+    nl()
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+    rule()
 
-_saved_term = None
+    heading("Add more to your stack")
+    out(f"  {TEAL}stack up photos{RESET}     Private photo library")
+    out(f"  {TEAL}stack up docs{RESET}       Document archive with OCR")
+    out(f"  {TEAL}stack up ai{RESET}         Local AI engine")
+    out(f"  {TEAL}stack ai connect{RESET}    AI on another machine or a hosted provider")
+    out(f"  {TEAL}stack up code{RESET}       Private git server")
+    out(f"  {TEAL}stack up memory{RESET}     Family wiki and curated knowledge")
+    nl()
+    out(f"  {TEAL}stack status{RESET}        See what's running")
+    nl()
 
-def _save_terminal():
-    """Save terminal state before we do anything."""
-    global _saved_term
-    try:
-        import termios
-        _saved_term = termios.tcgetattr(sys.stdin.fileno())
-    except Exception:
-        pass
+    dim("  Service admin password is in .stack/secrets.toml")
+    nl()
 
-def _restore_terminal():
-    """Restore terminal to saved state."""
-    if _saved_term:
-        try:
-            import termios
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_term)
-        except Exception:
-            pass
-
-
-if __name__ == "__main__":
-    _save_terminal()
-    try:
-        wizard()
-    except KeyboardInterrupt:
-        _restore_terminal()
-        print(f"\n\n  {DIM}Cancelled — nothing was changed.{RESET}\n")
-        sys.exit(1)
-    finally:
-        _restore_terminal()
+    return {"stacklets": ["messages"], "users": users}
