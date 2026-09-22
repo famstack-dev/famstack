@@ -1,11 +1,9 @@
-"""AI stacklet first-run configuration — choose LLM provider.
+"""AI stacklet first-run configuration — confirm the local AI engine.
 
-Two paths:
-  1. External endpoint — user provides an OpenAI-compatible URL + API key.
-     We store it and skip oMLX installation entirely.
-  2. Managed oMLX — we install and manage oMLX via Homebrew.
-
-Whisper and TTS are always installed regardless.
+`stack up ai` installs and manages oMLX, Whisper and TTS on this Mac.
+An AI server elsewhere is `stack ai connect <url>`, which installs
+nothing here; after that, bringing up this stacklet asks before it
+switches the stack back to local mode.
 
 Runs before on_install. Only fires on first 'stack up ai'.
 Skipped when STACK_SETUP_CONFIRMED=1 (installer already confirmed).
@@ -15,49 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from stack.prompt import section, out, nl, dim, confirm, ask, done, warn
-
-
-def _probe_endpoint(url: str, key: str = "") -> bool:
-    """Quick check if an OpenAI-compatible endpoint is reachable."""
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from backend import _probe
-    result = _probe(url, key)
-    return result.reachable
-
-
-def _ask_external_endpoint(ctx) -> bool:
-    """Prompt for an external endpoint. Returns True if configured."""
-    nl()
-    out("Enter the URL of your OpenAI-compatible endpoint.")
-    dim("Examples: https://api.openai.com/v1, http://192.168.1.50:11434/v1")
-    nl()
-
-    url = ask("Endpoint URL")
-    if not url:
-        return False
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from backend import normalize_url
-    url = normalize_url(url)
-
-    key = ask("API key (leave empty if none)")
-    key = key.strip() if key else ""
-
-    if not _probe_endpoint(url, key):
-        warn(f"Cannot reach {url}")
-        out("Check the URL, make sure the server is running, and try again.")
-        nl()
-        if confirm("Try again?"):
-            return _ask_external_endpoint(ctx)
-        return False
-
-    done(f"Connected to {url}")
-    ctx.cfg("provider", "external")
-    ctx.cfg("openai_url", url)
-    ctx.cfg("openai_key", key)
-    if key:
-        ctx.secret("AI_API_KEY", key)
-    return True
+from stack.prompt import section, out, nl, dim, confirm, warn
 
 
 def _check_brew_available():
@@ -91,8 +47,16 @@ def run(ctx):
 
     provider = ctx.cfg("provider", default="")
 
+    # A remote endpoint set with `stack ai connect`: installing the ai
+    # stacklet replaces it with the local engine, so that needs a yes.
+    if provider == "external":
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from local_mode import switch_to_local
+        switch_to_local(ctx)
+        return
+
     # Already configured — nothing to do
-    if provider in ("managed", "external"):
+    if provider == "managed":
         return
 
     section("AI Engine", "Local AI on your Mac's GPU")
@@ -103,33 +67,14 @@ def run(ctx):
     dim("After that, everything starts in seconds.")
     nl()
 
-    # ── Provider choice ─────────────────────────────────────────────
-    # Y = managed oMLX (recommended, just works)
-    # N = bring your own OpenAI-compatible endpoint (advanced, unsupported)
-    if confirm("Set up oMLX?", default=True):
-        if not _check_brew_available():
-            raise RuntimeError("Homebrew not found")
-
-        ctx.cfg("provider", "managed")
-        ctx.cfg("openai_url", "http://localhost:42060/v1")
-        ctx.cfg("openai_key", "local")
-        return
-
-    # ── External endpoint (advanced) ────────────────────────────────
-    nl()
-    out("Whisper and TTS still get installed on this Mac.")
-    dim("To install nothing here, cancel and run './stack ai connect <url>'.")
-    nl()
-
-    if _ask_external_endpoint(ctx):
+    # `stack up ai` is the local engine. A server elsewhere is
+    # `stack ai connect`, which installs nothing on this Mac.
+    if not confirm("Set up oMLX?", default=True):
         nl()
-        dim("oMLX will be skipped. Whisper and TTS still get set up.")
+        out("To use an AI server on another machine or a hosted provider,")
+        out("run './stack ai connect <url>' instead. Nothing was installed.")
         nl()
-        return
-
-    nl()
-    out("No worries, setting up oMLX instead.")
-    nl()
+        raise RuntimeError("Cancelled: the local AI engine was not set up")
 
     if not _check_brew_available():
         raise RuntimeError("Homebrew not found")
