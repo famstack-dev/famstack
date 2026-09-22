@@ -2,6 +2,8 @@
 
 DNS server with ad-blocking, and a reverse proxy that gives every stacklet a pretty URL. This is what makes `photos.home.internal` resolve to your Mac and serve the right service.
 
+**Beta.** It works, but how HTTPS and your own sites are configured can still change between releases. Back up `~/famstack-data/infra/` before you upgrade.
+
 ## What it runs
 
 - `stack-infra-adguard`: DNS server with ad-blocking. Resolves `*.{domain}` to the server IP and filters ads, trackers, and malicious domains for every device on the LAN.
