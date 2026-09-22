@@ -547,7 +547,7 @@ The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches th
 
 | | |
 |---|---|
-| Wiki port | `42070` (domain mode: `memory.<your-domain>`) |
+| Wiki port | `42070` (domain mode: `memory.<your-domain>`; `wiki.<your-domain>` redirects there) |
 | Data | `~/famstack-data/memory/vault/` (a checkout of Forgejo `family/memory`) |
 
 Useful commands:

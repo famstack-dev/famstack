@@ -13,3 +13,11 @@
 memory.{$STACK_DOMAIN} {
     reverse_proxy stack-memory-wiki:8080
 }
+
+# wiki.{$STACK_DOMAIN} is what people type for the family wiki. It sends
+# the browser to the same page here. The redirect is temporary (302): a
+# permanent one is kept by browsers for good, which would get in the way
+# if the names change again.
+wiki.{$STACK_DOMAIN} {
+    redir {scheme}://memory.{$STACK_DOMAIN}{uri}
+}

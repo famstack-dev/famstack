@@ -110,6 +110,33 @@ def test_without_tls_every_site_is_plain_http_on_port_80(plain_caddyfile):
     assert "tls" not in config.get("apps", {})
 
 
+def test_wiki_sends_the_browser_to_the_same_page_on_the_memory_host(plain_caddyfile):
+    """The family wiki is served at memory.<domain>, and wiki.<domain> is
+    what people type. The redirect is temporary: browsers keep a permanent
+    one for good, which would get in the way if the names change again."""
+    name = "stack-test-caddy-wiki"
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+    subprocess.run(
+        ["docker", "run", "-d", "--name", name, "-e", f"STACK_DOMAIN={DOMAIN}",
+         "-v", f"{plain_caddyfile}:/etc/caddy/Caddyfile:ro", STOCK_CADDY],
+        check=True, capture_output=True, timeout=60,
+    )
+    try:
+        time.sleep(1)
+        # busybox wget follows the redirect and fails to resolve the target;
+        # -S has printed the first response's headers by then.
+        headers = subprocess.run(
+            ["docker", "exec", name, "wget", "-S", "-O", "/dev/null",
+             "--header", f"Host: wiki.{DOMAIN}", "http://127.0.0.1/family/camping?view=todo"],
+            capture_output=True, text=True, timeout=30,
+        ).stderr
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+    assert "HTTP/1.1 302" in headers
+    assert f"Location: http://memory.{DOMAIN}/family/camping?view=todo" in headers
+
+
 # ── The infra image: TLS through each DNS provider ────────────────────────
 
 INFRA_IMAGE = "stack-infra-caddy:local"
