@@ -1,0 +1,109 @@
+# Release notes, generated from the commit log by git-cliff.
+#
+#     script/release-notes            what the next tag will ship
+#     script/release-notes --latest   what the newest tag shipped
+#
+# The layout is the one docs/agent/dev.md specifies ("Commits: the subject
+# is the changelog"): Action required first, then Security, Added, Fixed,
+# Performance and Documentation, each grouped by rendered scope.
+#
+# The types and scopes below repeat TYPES and SCOPES in tools/commit-lint,
+# because git-cliff cannot read Python. A unit test fails when the two
+# disagree (tests/unit/framework/test_commit_lint.py).
+
+[changelog]
+header = ""
+# Tera template. An entry is "- **<scope label>:** <subject>", and an
+# Action required entry adds its Upgrade: or BREAKING CHANGE: footer as a
+# second paragraph, verbatim, because that text is what the admin must do.
+# Entries without a scope come last in their section (General).
+body = """
+{%- macro entry(commit, label) %}
+- {% if label %}**{{ label }}:** {% endif %}{{ commit.message | upper_first }}
+{%- for footer in commit.footers | default(value=[]) %}{% if footer.token == "Upgrade" or footer.breaking %}
+
+  **{{ footer.token }}:** {{ footer.value | upper_first | replace(from="\n", to="\n  ") }}
+{%- endif %}{% endfor %}
+{%- endmacro entry -%}
+
+{%- if commits | length == 0 -%}
+No user-facing changes since {{ previous.version | default(value="the last release") }}.
+{% else -%}
+{%- for group, commits in commits | group_by(attribute="group") -%}
+{% if not loop.first %}
+{% endif %}### {{ group | striptags | trim }}
+{% for scope, scoped in commits | group_by(attribute="scope") %}{% for commit in scoped %}{{ self::entry(commit=commit, label=scope) }}{% endfor %}{% endfor %}
+{%- for commit in commits %}{% if not commit.scope %}{{ self::entry(commit=commit, label="") }}{% endif %}{% endfor %}
+{% endfor -%}
+{%- endif -%}
+"""
+# Off, because it strips the indent that keeps a footer inside its entry.
+trim = false
+# Render a release with nothing to announce, so that it says so.
+render_always = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"
+
+# Scope to label, one entry per SCOPES key in tools/commit-lint. Every
+# label has a space in it, so the last entry only strips a scope that is
+# not in the table, which then lands under General as dev.md says.
+commit_preprocessors = [
+  { pattern = "^([a-z]+)\\(agent\\)", replace = "${1}(Agent Stacklet)" },
+  { pattern = "^([a-z]+)\\(ai\\)", replace = "${1}(AI Stacklet)" },
+  { pattern = "^([a-z]+)\\(backup\\)", replace = "${1}(Backup Stacklet)" },
+  { pattern = "^([a-z]+)\\(chatai\\)", replace = "${1}(ChatAI Stacklet)" },
+  { pattern = "^([a-z]+)\\(code\\)", replace = "${1}(Code Stacklet)" },
+  { pattern = "^([a-z]+)\\(core\\)", replace = "${1}(Core Stacklet)" },
+  { pattern = "^([a-z]+)\\(docs\\)", replace = "${1}(Docs Stacklet)" },
+  { pattern = "^([a-z]+)\\(infra\\)", replace = "${1}(Infra Stacklet)" },
+  { pattern = "^([a-z]+)\\(memory\\)", replace = "${1}(Memory Stacklet)" },
+  { pattern = "^([a-z]+)\\(messages\\)", replace = "${1}(Messages Stacklet)" },
+  { pattern = "^([a-z]+)\\(photos\\)", replace = "${1}(Photos Stacklet)" },
+  { pattern = "^([a-z]+)\\(archivist\\)", replace = "${1}(Archivist Bot)" },
+  { pattern = "^([a-z]+)\\(mail\\)", replace = "${1}(Mail Bot)" },
+  { pattern = "^([a-z]+)\\(scribe\\)", replace = "${1}(Scribe Bot)" },
+  { pattern = "^([a-z]+)\\(stacker\\)", replace = "${1}(Stacker Bot)" },
+  { pattern = "^([a-z]+)\\(curator\\)", replace = "${1}(Memory Stacklet)" },
+  { pattern = "^([a-z]+)\\(wiki\\)", replace = "${1}(Memory Stacklet)" },
+  { pattern = "^([a-z]+)\\(diary\\)", replace = "${1}(Memory Stacklet)" },
+  { pattern = "^([a-z]+)\\(capture\\)", replace = "${1}(Archivist Bot)" },
+  { pattern = "^([a-z]+)\\(voice\\)", replace = "${1}(AI Stacklet)" },
+  { pattern = "^([a-z]+)\\(stack\\)", replace = "${1}(stack CLI)" },
+  { pattern = "^([a-z]+)\\(cli\\)", replace = "${1}(stack CLI)" },
+  { pattern = "^([a-z]+)\\(doctor\\)", replace = "${1}(stack CLI)" },
+  { pattern = "^([a-z]+)\\(update\\)", replace = "${1}(stack CLI)" },
+  { pattern = "^([a-z]+)\\(install\\)", replace = "${1}(stack CLI)" },
+  { pattern = "^([a-z]+)\\(web\\)", replace = "${1}(web fetch)" },
+  { pattern = "^([a-z]+)\\([a-z0-9-]+\\)", replace = "${1}" },
+]
+
+# First match wins. Anything that needs the admin to act goes to Action
+# required whatever its type. A type with no section is committed but not
+# announced. Merges are skipped because the commits they merge are already
+# listed; commit-lint --range leaves them out the same way. What is left
+# does not parse and shows as Unclassified, which blocks a tag (dev.md,
+# Releases, step 3b).
+commit_parsers = [
+  { field = "breaking", pattern = "true", group = "<!-- 0 -->Action required" },
+  { footer = "^Upgrade", group = "<!-- 0 -->Action required" },
+  { message = "^Merge ", skip = true },
+  { message = "^security", group = "<!-- 1 -->Security" },
+  { message = "^feat", group = "<!-- 2 -->Added" },
+  { message = "^fix", group = "<!-- 3 -->Fixed" },
+  { message = "^perf", group = "<!-- 4 -->Performance" },
+  { message = "^docs", group = "<!-- 5 -->Documentation" },
+  { message = "^refactor", skip = true },
+  { message = "^test", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^style", skip = true },
+  { message = "^build", skip = true },
+  { message = ".*", group = "<!-- 9 -->Unclassified" },
+]

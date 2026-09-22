@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# script/release-notes: the release notes, generated from the commit log.
+#
+#   script/release-notes                   what the next tag will ship
+#   script/release-notes --latest          what the newest tag shipped
+#   script/release-notes <from>..<to>      any range, e.g. v0.3.0-beta.3..main
+#   script/release-notes --bumped-version  the next tag, from the commit types
+#
+# Markdown on stdout, ready to paste into a GitHub release. It reads the
+# checkout this script lives in, so it can be called from any directory.
+# The layout and the tables are in cliff.toml; git-cliff runs through
+# uvx, pinned to the version the template was written for, so there is
+# nothing to install.
+
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# git-cliff reads history through libgit2, which does not handle a shallow
+# clone: it finds no commits, or fails, and neither says why. An empty
+# release would look like a quiet one, so refuse instead.
+if [[ "$(git -C "$root" rev-parse --is-shallow-repository)" == true ]]; then
+  echo "release-notes: $root is a shallow clone, so its history is incomplete." >&2
+  echo "  Fetch the rest first: git -C $root fetch --unshallow" >&2
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  set -- --unreleased
+fi
+
+# git-cliff logs which config it read at INFO level, on every run.
+export RUST_LOG="${RUST_LOG:-warn}"
+exec uvx --quiet git-cliff@2.14.2 \
+  --repository "$root" --config "$root/cliff.toml" --strip all "$@"
