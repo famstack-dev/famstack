@@ -497,9 +497,11 @@ class Stack:
 
         The proxy has certificates when `[core] dns_provider` is set. Set
         `[core] https = true` instead when some other reverse proxy in
-        front of the stack terminates TLS.
+        front of the stack terminates TLS. `_cfg` returns the TOML boolean
+        as the string "True" or "False", and "False" is truthy, so the
+        value is compared rather than tested.
         """
-        if self._cfg("core", "dns_provider") or self._cfg("core", "https"):
+        if self._cfg("core", "dns_provider") or self._cfg("core", "https").lower() == "true":
             return "https"
         return "http"
 
