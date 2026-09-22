@@ -61,7 +61,28 @@ def run(ctx):
             nl()
             raise RuntimeError("Missing openai_url for external provider")
 
+    if provider == "managed":
+        _start_local_engine(ctx)
+
     _reconcile_whisper(ctx)
+
+
+def _start_local_engine(ctx):
+    """Start oMLX when it is not answering.
+
+    It runs as a Homebrew service that on_install starts once. After
+    that nothing started it again, so a service stopped by hand, by a
+    brew upgrade or by a crash stayed down while `stack up ai` reported
+    the AI as running. `brew services start` is idempotent, and the LLM
+    health check that follows waits for the engine to come up.
+    """
+    from stack.ai.probe import probe
+
+    url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
+    if probe(url, ctx.cfg("openai_key", default="")).reachable:
+        return
+    ctx.step("Starting oMLX")
+    ctx.shell("brew services start omlx")
 
 
 def _reconcile_whisper(ctx):

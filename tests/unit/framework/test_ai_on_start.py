@@ -31,7 +31,9 @@ def _ctx(make_stack, env):
     from stack.hooks import StackContext
 
     stck = make_stack()
-    stck._set_cfg("ai", "provider", "managed")  # so on_start doesn't bail early
+    # External, so on_start neither bails early nor starts the local
+    # engine: a managed provider runs `brew services start omlx` for real.
+    stck._set_cfg("ai", "provider", "external")
     return StackContext(stck, "ai", env)
 
 
