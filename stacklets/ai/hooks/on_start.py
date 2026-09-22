@@ -94,11 +94,40 @@ def _start_local_engine(ctx):
     STATE_DIR.mkdir(exist_ok=True)
     (STATE_DIR / "omlx-managed").touch()
 
+    moved = _bind_omlx(ctx)
+
     url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
     if probe(url, ctx.cfg("openai_key", default="")).reachable:
+        if moved:
+            # oMLX reads its settings at start only.
+            ctx.step("Restarting oMLX on its new address")
+            ctx.shell("brew services restart omlx")
         return
     ctx.step("Starting oMLX")
     ctx.shell("brew services start omlx")
+
+
+def _bind_omlx(ctx) -> bool:
+    """Make oMLX listen where the framework binds every service.
+
+    All interfaces in port mode, so the household's other machines can
+    use this Mac's engine, loopback in domain mode. famstack never set
+    it, so oMLX kept its own default, loopback, whatever the mode.
+    on_install creates the settings file; without it there is nothing
+    to reconcile yet. Returns whether the address changed.
+    """
+    import json
+
+    path = Path.home() / ".omlx" / "settings.json"
+    if not path.exists():
+        return False
+    host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
+    settings = json.loads(path.read_text())
+    if settings.get("server", {}).get("host") == host:
+        return False
+    settings.setdefault("server", {})["host"] = host
+    path.write_text(json.dumps(settings, indent=2))
+    return True
 
 
 def _reconcile_whisper(ctx):
