@@ -266,6 +266,11 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
     language = ctx.stack._cfg("core", "language",
                               ctx.cfg("language", default="auto"))
 
+    # The framework's bind rule, as every container port follows it: all
+    # interfaces in port mode so the household's other machines reach
+    # it, loopback in domain mode where the reverse proxy is the way in.
+    host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
+
     plist_path = agents_dir / f"{PLIST_LABEL}.plist"
     plist_content = (
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -287,7 +292,7 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
         f'    <string>--model</string>\n'
         f'    <string>{model_path}</string>\n'
         f'    <string>--host</string>\n'
-        f'    <string>127.0.0.1</string>\n'
+        f'    <string>{host}</string>\n'
         f'    <string>--port</string>\n'
         f'    <string>{WHISPER_PORT}</string>\n'
         f'    <string>--inference-path</string>\n'
