@@ -1,5 +1,5 @@
 """
-stack infra dns-token — store the API token of the DNS provider.
+stack infra dns-token: store the API token of the DNS provider.
 
 With `[core] dns_provider` set, Caddy obtains its certificates by writing
 a TXT record through the provider's API, and needs a token for it. The

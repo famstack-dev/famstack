@@ -953,7 +953,8 @@ The runtime operates in one of two modes based on `stack.toml`:
 - URLs are `http://photos.home.internal`, or `https://` once
   `dns_provider` is set (see TLS below)
 - The runtime assembles the Caddyfile from `caddy.snippet` files
-- Requires wildcard DNS on router
+- Needs two DNS records to the server's LAN IP, `*.<domain>` and
+  `<domain>`, because a wildcard does not cover the bare name
 
 ### Caddy Snippets
 

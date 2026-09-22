@@ -11,9 +11,10 @@
 name = "famstack"
 
 # Leave empty for port mode (zero setup, access via hostname:port from any device).
-# Set to enable pretty URLs via Caddy reverse proxy:
+# Set to enable pretty URLs via Caddy reverse proxy (the infra stacklet):
 #   domain = "home.internal"  →  photos.home.internal, docs.home.internal
-#   Requires wildcard DNS on your router: *.home.internal → server IP
+#   Needs two DNS records to the server's LAN IP, *.home.internal and
+#   home.internal itself: a wildcard does not cover the bare name.
 domain = ""
 
 # With a domain, HTTPS for every service: one wildcard certificate plus one
