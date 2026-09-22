@@ -177,3 +177,37 @@ class TestComposeUpWithNoActiveServices:
 
     def test_success_is_untouched(self):
         assert self._run(0, "") == (0, "")
+
+
+class TestComposeBuildRefreshesBaseImages:
+    """A locally built image starts from a base image (caddy:2, a Python
+    slim image). Without `--pull` the build cache reuses the base it
+    first pulled for good: Watchtower does not touch built images, so
+    that base, and whatever it carries, would never be patched. With it,
+    a rebuild picks up a newer base when there is one and costs a
+    registry lookup when there is not.
+
+    Offline the pull fails, and a stacklet must still start from what is
+    cached, so the build runs again without it."""
+
+    def _build(self, *returncodes):
+        from stack import docker
+        docker._context = None
+
+        results = []
+        for code in returncodes:
+            result = MagicMock()
+            result.returncode = code
+            results.append(result)
+        with patch("subprocess.run", side_effect=results) as run:
+            docker.compose_build("/tmp/compose.yml")
+        return [c[0][0] for c in run.call_args_list]
+
+    def test_the_build_pulls_newer_base_images(self):
+        (cmd,) = self._build(0)
+        assert cmd[cmd.index("build"):] == ["build", "--pull"]
+
+    def test_offline_it_builds_from_the_cached_base(self):
+        pulled, cached = self._build(1, 0)
+        assert "--pull" in pulled
+        assert cached[cached.index("build"):] == ["build"]
