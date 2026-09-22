@@ -119,7 +119,7 @@ TRIGGER_NAME = MIRROR_TRIGGER_NAME
 CURATOR_REMOTE = "curator"
 
 
-# ── Pure decision logic (tested in tests/stacklets) ──────────────────────
+# ── Pure decision logic (tested in tests/unit/stacklets) ──────────────────────
 
 def only_own_commits(subjects: list[str]) -> bool:
     """True when every commit subject is a wiki publish of our own.

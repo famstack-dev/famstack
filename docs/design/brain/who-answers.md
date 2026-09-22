@@ -253,14 +253,14 @@ envelope rather than the prose.
 
 ## Tests that state these rules
 
-- `tests/stacklets/test_microbot.py::TestThreadOwner` - the ownership
+- `tests/unit/stacklets/test_microbot.py::TestThreadOwner` - the ownership
   rule itself, including the mail bot's shape.
-- `tests/stacklets/test_archivist_corrections.py::TestOnlyOurOwnThreads` -
+- `tests/unit/stacklets/test_archivist_corrections.py::TestOnlyOurOwnThreads` -
   what the family sees: the agent's thread is left alone, an @-mention
   still lands, the main timeline is unchanged.
-- `tests/stacklets/test_agent_thread_trigger.py` - the same contract from
+- `tests/unit/stacklets/test_agent_thread_trigger.py` - the same contract from
   the agent's side.
-- `tests/integration/test_bot_arbitration_e2e.py` - the whole contract
+- `tests/e2e/test_bot_arbitration_e2e.py` - the whole contract
   against real containers: real Synapse relations, a real second bot in
   the thread, a real 📌. Marked `unverified` until a green rig run.
 

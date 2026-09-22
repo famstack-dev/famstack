@@ -55,27 +55,35 @@ destructive test-rig commands still require care.
 
 ## Structure
 
-`tests/framework/` contains framework-level tests. Most are offline unit tests.
-`tests/framework/test_config_to_container.py` is intentionally separate because
-it talks to Docker and dominates runtime. `tests/stacklets/test_backup_e2e.py`
-joins it in the integration lane: it creates and mounts an APFS disk image per
-test, about a second each, which was a third of the unit lane. The list lives
-in `script/test` as `SLOW_FILES`.
+Each lane is a directory, so where a test lives says what it costs.
 
-`tests/stacklets/` contains stacklet-level unit tests. These should exercise
-stacklet modules through public boundaries with local fixtures, fake HTTP
-servers, temporary repositories, or mocked external services. They belong in
-`unit` unless they require real containers.
+```
+tests/unit/framework/     unit          offline, no Docker, no live services
+tests/unit/stacklets/     unit
+tests/integration/        integration   real things on the host
+tests/e2e/                demo, smoke, e2e, eval, all through stacktests
+```
 
-`tests/integration/test_demo_rig_e2e.py` contains live demo-rig tests. These
+`tests/unit/framework/` holds framework tests and `tests/unit/stacklets/`
+stacklet tests. The latter exercise stacklet modules through public
+boundaries with local fixtures, fake HTTP servers, temporary repositories, or
+mocked external services. A test that needs real containers or other host
+resources does not belong under `unit/`.
+
+`tests/integration/` holds the tests that drive the host rather than Python:
+`test_config_to_container.py` runs the Docker lifecycle on a throwaway
+instance, and `test_backup_e2e.py` mounts an APFS disk image per test, about a
+second each.
+
+`tests/e2e/test_demo_rig_e2e.py` contains live demo-rig tests. These
 run against the operator's current demo instance and must not reset or own the
 instance. Use this lane when you need read-your-writes confidence against the
 running bots and real service wiring.
 
-`tests/integration/test_*_e2e.py` contains managed container e2e tests. These
-run through `tests/integration/stacktests`, which seeds a test-owned instance,
+`tests/e2e/test_*_e2e.py` contains managed container e2e tests. These
+run through `tests/e2e/stacktests`, which seeds a test-owned instance,
 starts required stacklets, and keeps the rig reusable between runs.
 
-`tests/integration/eval/` is opt-in prompt and model evaluation. It is excluded
-from normal pytest collection and is run with `tests/integration/stacktests eval`.
+`tests/e2e/eval/` is opt-in prompt and model evaluation. It is excluded
+from normal pytest collection and is run with `tests/e2e/stacktests eval`.
 

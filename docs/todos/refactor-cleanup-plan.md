@@ -362,7 +362,7 @@ oMLX, and some backends serialize.
   backend to reject with a clean 4xx if the model can't see, and
   catch that to retry text-only.
 - Remove the `_seed_model_capabilities` shim in
-  `tests/integration/_seed_secrets.py` once the cache is gone.
+  `tests/e2e/_seed_secrets.py` once the cache is gone.
 
 **Why:** simpler bot (less state, fewer files), the test no longer
 needs a magic seed to work, and the race is gone by construction.

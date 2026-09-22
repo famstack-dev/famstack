@@ -1,0 +1,489 @@
+"""Integration test fixtures.
+
+The rig now runs against the *repo root* as a test instance — same
+layout as a real famstack (`stack.toml`, `users.toml`, `.stack/` at
+the repo root). A sentinel file `.stack/.test-instance` marks the
+repo as test-owned; `_seed_secrets.seed()` refuses to clobber a
+non-test setup, so running the rig over a real user's stack errors
+out with a cleanup hint instead of silently overwriting it.
+
+Stacklets are spun up on demand by the fixtures below — `paperless`
+brings up `docs`, `matrix` brings up `messages`, `code` brings up
+Forgejo. They stay running across pytest invocations; tear them down
+between coding sessions with `tests/e2e/stacktests cleanup`.
+
+Per-test isolation is by prefix: every entity a test creates in a
+backend carries its scope uid, and teardown deletes only what matches.
+Tests run in parallel as long as they each ask for the same scope.
+
+External services exercised for real: Paperless, Postgres, Redis,
+Synapse, Forgejo. Only OpenAI is mocked (determinism trumps realism
+for classification output).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tomllib
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# The test instance IS the repo root. Kept as a distinct name so
+# `.stack/` / `stack.toml` / `users.toml` references stay readable.
+INSTANCE_DIR = REPO_ROOT
+
+sys.path.insert(0, str(REPO_ROOT / "lib"))
+
+from tests.e2e.paperless import PaperlessAPI, cleanup_prefix
+from tests.e2e.matrix import login
+from tests.e2e.forgejo import ForgejoAPI, cleanup_mirror_files
+from tests.e2e.bdd import BDDLog
+from tests.e2e._seed_secrets import (
+    seed as _seed_test_instance_secrets,
+    TestInstanceConflict,
+)
+
+
+# ── Pin the OpenAI mock to the port baked into stack.toml ────────────────
+
+@pytest.fixture(scope="session")
+def httpserver_listen_address():
+    """pytest-httpserver binds to 127.0.0.1:42199 — the `openai_url` in
+    tests/e2e/instance/stack.toml points here."""
+    return ("127.0.0.1", 42199)
+
+
+@pytest.fixture
+def openai(httpserver):
+    """Content-routed OpenAI stub backed by pytest-httpserver.
+
+    Queue responses before the bot action that triggers them:
+
+        stub_classify(openai, {"title": "...", "tags": [...], ...})
+        stub_reformat(openai, "# clean markdown")
+        openai.rewrite(["keyword"])
+
+    Responses are routed by prompt content (classify / reformat /
+    rewrite / synthesize), so a pipeline gaining a call can never steal
+    another call's response — it fails loudly instead. Teardown asserts
+    no unexpected calls arrived and every queued stub was consumed.
+    Polling helpers should call `openai.raise_if_unexpected()` per tick
+    to turn a wrong call count into an instant, named failure.
+    """
+    from tests.e2e.openai_stub import OpenAIStub
+
+    stub = OpenAIStub(httpserver)
+    yield stub
+    stub.assert_done()
+
+
+# ── Test stack handle ────────────────────────────────────────────────────
+
+@dataclass
+class TestStack:
+    """Thin wrapper around the CLI pointed at the test instance.
+
+    The test instance IS the repo root, so we don't set STACK_DIR.
+    `_seed_test_instance_secrets()` installs the test-owned stack.toml
+    and sentinel marker up front.
+    """
+
+    instance_dir: Path = INSTANCE_DIR
+
+    def _env(self) -> dict:
+        return {
+            **os.environ,
+            "PYTHONPATH": str(REPO_ROOT / "lib"),
+        }
+
+    def run(self, *args: str, timeout: int = 240) -> dict:
+        cmd = [sys.executable, "-m", "stack", *args]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout, cwd=str(REPO_ROOT), env=self._env(),
+        )
+        for stream in (result.stdout, result.stderr):
+            try:
+                data = json.loads(stream)
+                if isinstance(data, dict):
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return {
+            "ok": result.returncode == 0,
+            "_stdout": result.stdout,
+            "_stderr": result.stderr,
+            "_code": result.returncode,
+        }
+
+
+@pytest.fixture(scope="session")
+def test_stack() -> TestStack:
+    return TestStack()
+
+
+@pytest.fixture(scope="session")
+def stack():
+    """A Stack instance pointed at the test instance — for tests that
+    need to exercise the framework API directly (is_healthy, etc.).
+    Repo root and instance dir are the same in the repo-root rig."""
+    from stack.cli import create_stack
+    return create_stack(REPO_ROOT, REPO_ROOT)
+
+
+# ── Per-test prefix + cleanup ────────────────────────────────────────────
+
+@dataclass
+class Scope:
+    uid: str
+    on_cleanup: list = field(default_factory=list)
+
+    def tag(self, base: str) -> str:
+        return f"{self.uid}-{base}"
+
+    def cleanup(self) -> None:
+        for fn in self.on_cleanup:
+            try:
+                fn(self.uid)
+            except Exception as e:
+                print(f"[scope {self.uid}] cleanup error: {e}", file=sys.stderr)
+
+
+@pytest.fixture
+def scope() -> Scope:
+    s = Scope(uid=f"t-{uuid.uuid4().hex[:8]}")
+    yield s
+    s.cleanup()
+
+
+# ── BDD logger ───────────────────────────────────────────────────────────
+
+@pytest.fixture
+def bdd() -> BDDLog:
+    """A narrator for the test. Call bdd.given/when/then/and_ to emit
+    timestamped protocol lines. Run pytest with `-s` to stream live."""
+    return BDDLog()
+
+
+# ── Sample files for upload ──────────────────────────────────────────────
+
+@pytest.fixture
+def sample_invoice_pdf(scope) -> bytes:
+    """A minimal single-page PDF with extractable text — enough for
+    Paperless OCR to produce recognizable content the LLM can classify.
+
+    Function-scoped with the test's scope uid baked into the rendered
+    text. Different bytes per run → Paperless's content-hash duplicate
+    check doesn't fire on re-runs against a retained instance (where
+    the prior doc is sitting in the trash)."""
+    from PIL import Image, ImageDraw
+    import io as _io
+
+    img = Image.new("RGB", (1200, 1600), "white")
+    draw = ImageDraw.Draw(img)
+    draw.text((80, 80),
+              "Duff Insurance Autoversicherung\n\n"
+              "Kfz-Versicherung 2026\n"
+              "Jahresbeitrag: EUR 340,00\n"
+              "Versicherungsnehmer: Homer Simpson\n"
+              "Vertragsnummer: KFZ-2026-000123\n"
+              "Zahlungsziel: 15.03.2026\n\n"
+              f"Ref: {scope.uid}",
+              fill="black")
+    buf = _io.BytesIO()
+    img.save(buf, format="PDF")
+    return buf.getvalue()
+
+
+# ── Paperless (shared, session-scoped) ───────────────────────────────────
+
+@pytest.fixture(scope="session")
+def paperless(test_stack) -> PaperlessAPI:
+    """Brings up the docs stacklet and returns an API client.
+
+    First call per coding session: ~30s (container boot + Celery warmup).
+    Subsequent: no-op. Not torn down at session end — stop the test stack
+    manually with tests/e2e/test-env-down.sh.
+    """
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
+    result = test_stack.run("up", "docs", timeout=240)
+    if "_stderr" in result and not result.get("ok"):
+        pytest.fail(
+            f"`stack up docs` failed (code {result.get('_code')}):\n"
+            f"{result.get('_stderr', '')}\n{result.get('_stdout', '')}"
+        )
+
+    from stack.secrets import TomlSecretStore
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    token = store.get("docs", "API_TOKEN")
+    if not token:
+        pytest.fail(
+            "No API_TOKEN in test instance secrets after `stack up docs`."
+        )
+
+    return PaperlessAPI(url="http://localhost:42020", token=token)
+
+
+@pytest.fixture
+def paperless_scope(paperless, scope) -> Scope:
+    """Scope bound to Paperless cleanup — on teardown, every tag, doc
+    type, correspondent, and document whose name starts with scope.uid
+    is deleted."""
+    scope.on_cleanup.append(lambda uid: cleanup_prefix(paperless, uid))
+    return scope
+
+
+# ── Matrix (shared, session-scoped) ──────────────────────────────────────
+
+@pytest.fixture(scope="session")
+def matrix(test_stack) -> dict:
+    """Brings up the messages stacklet and logs in the Simpsons family.
+
+    Returns a dict of MatrixCreds keyed by username. Session-scoped so
+    the first test pays the ~40s Synapse boot and the rest pay nothing.
+    Not torn down — stop with tests/e2e/test-env-down.sh.
+    """
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
+    result = test_stack.run("up", "messages", timeout=240)
+    if "_stderr" in result and not result.get("ok"):
+        pytest.fail(
+            f"`stack up messages` failed (code {result.get('_code')}):\n"
+            f"{result.get('_stderr', '')}\n{result.get('_stdout', '')}"
+        )
+
+    # The messages stacklet's setup CLI creates family accounts using
+    # the seeded USER_<NAME>_PASSWORD values. Log them in once to capture
+    # access tokens for use by tests.
+    # Read the realm only now: seeding above is what puts stack.toml in
+    # place, so this cannot be a fixture parameter.
+    realm = _server_name()
+    creds = {}
+    for username in ("homer", "marge", "bart", "lisa"):
+        creds[username] = login(
+            server_name=realm,
+            username=username,
+            password=username,  # seeded in _seed_test_instance_secrets
+        )
+    return creds
+
+
+@pytest.fixture
+async def homer(matrix):
+    """An nio AsyncClient logged in as Homer. Function-scoped so every
+    test gets a fresh client with clean sync state."""
+    from nio import AsyncClient
+    c = matrix["homer"]
+    client = AsyncClient(c.homeserver, c.user_id)
+    client.access_token = c.access_token
+    client.device_id = c.device_id
+    client.user_id = c.user_id
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+# ── Forgejo / code stacklet (shared, session-scoped) ─────────────────────
+
+# The archivist writes into the shared `family/memory` vault repo —
+# documents at `<shared_bucket>/documents/...`, captures at
+# `<sender>/<kind>s/...`. Org name is configurable via `mirror_org`
+# in `stacklets/docs/bot/bot.toml` (default "family"); shared-bucket
+# slug via `stack.toml [core] shared_bucket` (default "family"). The
+# bot keeps its own Forgejo user identity for commit authorship, but
+# the repo owner is the org so admins see it in their dashboards.
+FORGEJO_DOCS_OWNER = "family"
+FORGEJO_DOCS_REPO = "memory"
+
+
+def _instance_config() -> dict:
+    with open(INSTANCE_DIR / "stack.toml", "rb") as fh:
+        return tomllib.load(fh)
+
+
+def _server_name() -> str:
+    """The instance's Matrix realm, read from the live stack.toml.
+
+    One base setup serves both lanes — the managed rig and the demo rig are
+    the same Simpsons instance, so neither may hardcode this. Synapse bakes
+    server_name into every user ID permanently at first start, so a literal
+    that drifts from the running homeserver produces 403s on every login
+    with no hint as to why. That exact drift took the dev instance's bots
+    down: a container carrying a stale realm, logging in against accounts
+    that only existed in another one.
+
+    A plain function, not a fixture, because the managed rig seeds
+    stack.toml on the way up — callers must read it after seeding, and a
+    fixture parameter would resolve too early.
+    """
+    name = _instance_config().get("messages", {}).get("server_name")
+    if not name:
+        pytest.fail("No [messages].server_name in stack.toml — cannot log in.")
+    return name
+
+
+@pytest.fixture(scope="session")
+def server_name() -> str:
+    """Session-wide Matrix realm for tests that only read it."""
+    return _server_name()
+
+
+@pytest.fixture(scope="session")
+def demo_matrix(server_name) -> dict:
+    """Log in to the running Simpson demo instance without seeding or up."""
+    from stack.secrets import TomlSecretStore
+
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    creds = {}
+    for username in ("homer", "marge", "bart", "lisa"):
+        password = store.get("_", f"USER_{username.upper()}_PASSWORD")
+        if not password:
+            pytest.fail(
+                f"No USER_{username.upper()}_PASSWORD in .stack/secrets.toml "
+                "for demo rig login."
+            )
+        creds[username] = login(
+            server_name=server_name,
+            username=username,
+            password=password,
+        )
+    return creds
+
+
+@pytest.fixture
+async def demo_homer(demo_matrix):
+    """Homer client for tests that target the already-running demo rig."""
+    from nio import AsyncClient
+    c = demo_matrix["homer"]
+    client = AsyncClient(c.homeserver, c.user_id)
+    client.access_token = c.access_token
+    client.device_id = c.device_id
+    client.user_id = c.user_id
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+@pytest.fixture(scope="session")
+def demo_paperless() -> PaperlessAPI:
+    from stack.secrets import TomlSecretStore
+
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    token = store.get("docs", "API_TOKEN")
+    if not token:
+        pytest.fail("No docs API_TOKEN in .stack/secrets.toml for demo rig.")
+    api = PaperlessAPI(url="http://localhost:42020", token=token)
+    try:
+        api.list_documents()
+    except Exception as e:
+        pytest.fail(f"Paperless is not reachable for demo rig: {e}")
+    return api
+
+
+@pytest.fixture(scope="session")
+def demo_code() -> ForgejoAPI:
+    from stack.secrets import TomlSecretStore
+
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    admin_password = store.get("_", "ADMIN_PASSWORD") or store.get("global", "ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.fail("No ADMIN_PASSWORD in .stack/secrets.toml for demo rig Forgejo.")
+    api = ForgejoAPI(
+        url="http://localhost:42040",
+        admin_user="stackadmin",
+        admin_password=admin_password,
+    )
+    if not api.ping():
+        pytest.fail("Forgejo is not reachable for demo rig at http://localhost:42040.")
+    return api
+
+
+@pytest.fixture(scope="session")
+def code(test_stack) -> ForgejoAPI:
+    """Brings up the code stacklet (Forgejo) and returns an admin API client.
+
+    `up core` first so any new core env (e.g. CODE_URL for the bot
+    runner) is rendered into the .env file and the bot-runner restarts
+    with it. `up code` then boots Forgejo itself.
+
+    First call per coding session: ~40s. Subsequent: no-op.
+    """
+    try:
+        _seed_test_instance_secrets()
+    except TestInstanceConflict as e:
+        pytest.fail(str(e))
+    for target, timeout in (("core", 60), ("code", 240)):
+        result = test_stack.run("up", target, timeout=timeout)
+        if "_stderr" in result and not result.get("ok"):
+            pytest.fail(
+                f"`stack up {target}` failed (code {result.get('_code')}):\n"
+                f"{result.get('_stderr', '')}\n{result.get('_stdout', '')}"
+            )
+
+    from stack.secrets import TomlSecretStore
+    store = TomlSecretStore(INSTANCE_DIR / ".stack" / "secrets.toml")
+    admin_password = store.get("_", "ADMIN_PASSWORD") or store.get("global", "ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.fail("No ADMIN_PASSWORD in test instance secrets for Forgejo.")
+
+    return ForgejoAPI(
+        url="http://localhost:42040",
+        admin_user="stackadmin",
+        admin_password=admin_password,
+    )
+
+
+@pytest.fixture(scope="session")
+def memory_repo(code) -> None:
+    """Provision the family/memory repo the way the memory stacklet does.
+
+    The archivist mirror writes into this repo but no longer creates it —
+    the memory stacklet owns org, repo, and seed creation. This invokes
+    memory's own provisioning lib (no Quartz container needed) so the e2e
+    exercises the real ownership split: memory creates, archivist consumes.
+    """
+    mem_dir = REPO_ROOT / "stacklets" / "memory"
+    if str(mem_dir) not in sys.path:
+        sys.path.insert(0, str(mem_dir))
+    from stack.forgejo import ForgejoClient
+    import lib as memory_lib
+
+    admin_client = ForgejoClient(
+        url=code.url, admin_user=code.admin_user, admin_password=code.admin_password,
+    )
+    memory_lib.ensure_memory_repo(admin_client)
+    # install_seeds writes through the contents API which requires a
+    # token-authed client (basic admin auth isn't enough). Mirror
+    # `install_memory_to_forgejo_admin`'s production shape: issue an
+    # admin token, then use it for the seed push.
+    admin_token = admin_client.issue_token(
+        code.admin_user, code.admin_password,
+        "memory-install-tests", memory_lib.TOKEN_SCOPES,
+    )
+    token_client = ForgejoClient(url=code.url, token=admin_token)
+    memory_lib.install_seeds(token_client)
+
+
+@pytest.fixture
+def mirror_scope(code, memory_repo, scope) -> Scope:
+    """Scope bound to mirror cleanup — on teardown, every file in the
+    `memory` repo whose frontmatter title starts with scope.uid is
+    deleted. The repo + bot user + seeds survive between tests."""
+    scope.on_cleanup.append(
+        lambda uid: cleanup_mirror_files(code, FORGEJO_DOCS_OWNER, FORGEJO_DOCS_REPO, uid)
+    )
+    return scope

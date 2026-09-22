@@ -121,7 +121,7 @@ its own containers, both reachable.
 
 ### 5. An instance that says which machine it is (an afternoon)
 
-The rig already has half of this. `tests/integration/stacktests` refuses to
+The rig already has half of this. `tests/e2e/stacktests` refuses to
 run over a real stack unless `.stack/.test-instance` is present, and the
 comment above it says why: "running the rig over someone's real stack errors
 out instead of overwriting it". That sentinel protects one script.

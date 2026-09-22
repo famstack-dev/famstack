@@ -389,7 +389,7 @@ main path with it.
 
 Subscribing to custom events on the bot side isn't wired yet — that
 comes with the first consumer bot. The emit contract is stable and
-tested end-to-end (see `tests/integration/test_archivist_e2e.py`).
+tested end-to-end (see `tests/e2e/test_archivist_e2e.py`).
 
 ### Backup
 
@@ -1090,7 +1090,7 @@ state, data) is swappable.
 Point the CLI at a different instance with `STACK_DIR`:
 
 ```
-STACK_DIR=tests/integration/instance stack up docs
+STACK_DIR=tests/e2e/instance stack up docs
 ```
 
 The same `stacklets/` definitions apply, but config, secrets, setup

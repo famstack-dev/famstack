@@ -244,7 +244,7 @@ The mirror writer treats `topics:` as load-bearing and writes the merged list ve
 
 ### Test pins
 
-A new test class `TestTopicSeedInvariant` in `tests/stacklets/test_capture_pipeline.py` pins all three:
+A new test class `TestTopicSeedInvariant` in `tests/unit/stacklets/test_capture_pipeline.py` pins all three:
 
 ```python
 async def test_seed_survives_empty_classifier_output():
@@ -337,11 +337,11 @@ stack memory topic archive <slug>              Manual archive (sets status, no M
 | `stacklets/docs/bot/search_service.py` | changed | `scopes_for_sender` and `run` accept `topic_bucket`. When set, scopes become `[<topic_bucket>/]` only; otherwise the existing shared + sender defaults. |
 | `stacklets/memory/cli/topic.py` | future | `stack memory topic list / show / rename / demote / archive`. Not in v1. |
 | `stacklets/memory/cli/wiki.py` | future change | Extend to discover topic folders under each bucket and generate `about.md` from captures + room state. Replaces the per-bootstrap scaffold idea. |
-| `tests/stacklets/test_topic_rooms.py` | new | Parser, slug derivation, reserved-name check, scope detection, bucket composition, room-state shape, binding extraction. Pure unit tests. |
-| `tests/stacklets/test_capture_pipeline.py` | changed | `TestTopicSeedMerge`, `TestTopicSeedEndToEnd` — the three-piece invariant plus the bucket-override pins. |
-| `tests/stacklets/test_search_service.py` | changed | `TestScopesWithTopicBucket` — topic-bucket override semantics. |
-| `tests/stacklets/test_archivist_topic_bootstrap.py` | new | Bootstrap flow, idempotency, reserved-slug refusal, resilience, human counting. Light fakes for the nio state I/O. |
-| `tests/stacklets/test_topic_promotion.py` | future | Personal → shared promotion, debounce, collision, cancellation. Lands with Step 5. |
+| `tests/unit/stacklets/test_topic_rooms.py` | new | Parser, slug derivation, reserved-name check, scope detection, bucket composition, room-state shape, binding extraction. Pure unit tests. |
+| `tests/unit/stacklets/test_capture_pipeline.py` | changed | `TestTopicSeedMerge`, `TestTopicSeedEndToEnd` — the three-piece invariant plus the bucket-override pins. |
+| `tests/unit/stacklets/test_search_service.py` | changed | `TestScopesWithTopicBucket` — topic-bucket override semantics. |
+| `tests/unit/stacklets/test_archivist_topic_bootstrap.py` | new | Bootstrap flow, idempotency, reserved-slug refusal, resilience, human counting. Light fakes for the nio state I/O. |
+| `tests/unit/stacklets/test_topic_promotion.py` | future | Personal → shared promotion, debounce, collision, cancellation. Lands with Step 5. |
 
 ### Sequencing
 

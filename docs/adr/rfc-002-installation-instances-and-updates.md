@@ -168,7 +168,7 @@ any compose project named `stack-*` to a stacklet id. A second instance would
 report the first instance's containers as its own, so `stack list` lies before
 anything collides.
 
-This is why `tests/integration/stacktests` takes the dev instance down rather
+This is why `tests/e2e/stacktests` takes the dev instance down rather
 than running beside it, and why the operator docs say two instances cannot run
 on one Mac.
 

@@ -207,7 +207,7 @@ def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
         level=WARN,
         title=f"{name} endpoint is not answering",
         detail=f"Configured as {url}, but it did not respond.",
-        fix="tests/integration/stacktests ai   # check or switch the backend",
+        fix="tests/e2e/stacktests ai   # check or switch the backend",
     )
 
 

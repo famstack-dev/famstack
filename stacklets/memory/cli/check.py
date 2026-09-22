@@ -15,7 +15,7 @@ directly (no Forgejo needed) and reports:
 Exits 1 with a list of drifted names when anything is missing.
 
 This is the pre-install / CI-friendly sync gate. The same logic backs
-`tests/stacklets/test_ontology_taxonomy_sync.py`, which invokes this
+`tests/unit/stacklets/test_ontology_taxonomy_sync.py`, which invokes this
 command as a subprocess.
 """
 

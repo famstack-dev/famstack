@@ -260,7 +260,7 @@ before one replaces the other.
 | Reading step | `mode`, `spoken_date`, `addressee`, `gist`, `moments` | card extraction: the same, plus `title`, `description`, `persons`, `tags`, `summary`, `facts`; cached per entry |
 | Entry unit | message group, rendered by day | the unit under test (see above); the compiler takes it as a parameter |
 | Output | month pages (brain) | cards in a separate vault tree, card posts in a test room, month pages composed from the cards in a separate brain tree |
-| Tests | `tests/stacklets/test_memory_diary.py` | new module tests, written first |
+| Tests | `tests/unit/stacklets/test_memory_diary.py` | new module tests, written first |
 
 ### Comparison
 

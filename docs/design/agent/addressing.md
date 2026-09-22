@@ -71,7 +71,7 @@ Make a **thread the conversation unit** in shared rooms. Three steps:
 2. Treat a message in a thread **whose root Stacky authored, or where Stacky has
    already posted**, as addressed. **Shipped** as the `thread_trigger` shim
    (`stacklets/agent/runtime/thread_trigger.py`), specified by
-   `tests/stacklets/test_agent_thread_trigger.py`.
+   `tests/unit/stacklets/test_agent_thread_trigger.py`.
 
    Two halves, because nanobot's gate is synchronous and the question is not:
    `_on_message` (async) settles thread membership against the homeserver and
