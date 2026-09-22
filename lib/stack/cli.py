@@ -978,7 +978,10 @@ def _destroy_one(stck, args):
     name = stacklet.get("name", args.stacklet)
     data_path = stck.data / args.stacklet
 
-    if not stck.is_installed(args.stacklet):
+    # Not installed and no containers: only data a failed setup left behind.
+    # A first `up` that failed after starting containers leaves those too,
+    # holding their names and ports, so that case takes the full path.
+    if not stck.is_installed(args.stacklet) and args.stacklet not in docker.all_project_ids():
         if data_path.exists():
             import shutil
             shutil.rmtree(data_path)
