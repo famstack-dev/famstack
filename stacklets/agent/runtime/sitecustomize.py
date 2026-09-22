@@ -85,7 +85,7 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
     join_greeting: `nanobot.channels.matrix.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
-    `tests/stacklets/test_agent_runtime_shims.py` asserts every one of these is
+    `tests/unit/stacklets/test_agent_runtime_shims.py` asserts every one of these is
     attached — but against a *stub* nanobot this repo hand-writes, so read what
     that does and does not buy. It catches our own mistakes: a shim that stops
     attaching, or one whose failure takes another down with it. It cannot catch

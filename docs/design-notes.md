@@ -48,7 +48,7 @@ the same one.** Half a relation is worse than none, because the send
 side looks right in the client while routing silently degrades.
 
 Also why it survived a release: the intent spec that would have caught it
-(`tests/integration/test_room_modes_e2e.py`) is marked
+(`tests/e2e/test_room_modes_e2e.py`) is marked
 `xfail(strict=False)`, which is green when broken and green when fixed.
 A non-strict xfail is not coverage. Making it `strict=True`, skipping it
 with a reason, or deleting it are all better; the action is FAM-6.

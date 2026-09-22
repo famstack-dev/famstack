@@ -15,7 +15,7 @@
 #                   synonyms = { <lang> = ["..."] }  # optional
 #
 # Every entry here must mirror a name in stacklets/docs/taxonomy.toml.
-# tests/stacklets/test_ontology_taxonomy_sync.py enforces no-drift in
+# tests/unit/stacklets/test_ontology_taxonomy_sync.py enforces no-drift in
 # both directions.
 
 # ──────────────────────────────────────────────────────────────────────

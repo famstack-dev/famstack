@@ -12,13 +12,8 @@ cd "$(dirname "$0")/.."
 
 PYTEST=(uv run --extra test pytest)
 
-# Kept out of the unit lane because they drive the host, not Python:
-# Docker for the one, `hdiutil` mounting an APFS image per test for the
-# other, which alone was a third of the unit lane's time.
-SLOW_FILES=(
-  tests/framework/test_config_to_container.py
-  tests/stacklets/test_backup_e2e.py
-)
+# Each lane is a directory: tests/unit, tests/integration, and tests/e2e
+# behind stacktests. A test's place in the tree says what it costs.
 
 lanes() {
   cat <<'EOF'
@@ -71,8 +66,7 @@ case "$lane" in
   # when a piece of work is finished, too slow to run on every commit.
   unit)
     script/setup --hooks-only
-    "${PYTEST[@]}" tests/framework tests/stacklets -v \
-      "${SLOW_FILES[@]/#/--ignore=}" "$@"
+    "${PYTEST[@]}" tests/unit -v "$@"
     ;;
 
   # The heavier profiles, running real things on the host: the Docker
@@ -80,21 +74,21 @@ case "$lane" in
   # on its own throwaway instance with fixed names and ports, and the
   # backup engine against real APFS disk images, one mounted per test.
   integration)
-    "${PYTEST[@]}" "${SLOW_FILES[@]}" -v "$@"
+    "${PYTEST[@]}" tests/integration -v "$@"
     ;;
 
   # Against the demo instance already running in this checkout. Tests create
   # unique data and clean up after themselves; they never reset the instance.
   demo)
-    tests/integration/stacktests demo-rig "$@"
+    tests/e2e/stacktests demo-rig "$@"
     ;;
 
   # The managed rig. On the Simpsons demo, stacktests stashes it for the run.
   smoke)
-    tests/integration/stacktests smoke "$@"
+    tests/e2e/stacktests smoke "$@"
     ;;
   e2e)
-    tests/integration/stacktests e2e "$@"
+    tests/e2e/stacktests e2e "$@"
     ;;
 
   *)

@@ -39,7 +39,7 @@ THE RECEIPT IS THE POINT
     The agent relays this output to the family. A receipt that reads the
     same whether or not anything was filed is precisely what lets an
     agent report a success it never had, so a failure here never renders
-    as a filing. See tests/stacklets/test_memory_capture_cli.py.
+    as a filing. See tests/unit/stacklets/test_memory_capture_cli.py.
 """
 
 from __future__ import annotations

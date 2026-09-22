@@ -10,7 +10,7 @@ A list is something a family member *wrote on purpose* — a note whose first li
 announces it ("Liste Bus Erweiterungen:", "Todo:", "Einkaufsliste:"). We
 deliberately do NOT mine arbitrary notes: the capture classifier leaves
 action_items out on purpose, because a pasted Reddit thread must not manufacture
-a household todo (see tests/stacklets/test_capture_prompt.py). So detection here
+a household todo (see tests/unit/stacklets/test_capture_prompt.py). So detection here
 is a narrow, deterministic signal — an explicit marker — not an LLM guess. High
 precision, zero false positives, no model call.
 

@@ -232,17 +232,17 @@ Testing rules:
 - **Do not write tests that mirror the implementation.** A test written next to the code it covers proves the two agree, not that either is right. Assert against something external: a spec, a real service's response, an invariant we promise. If a test could only fail when someone changes their mind, delete it.
 - **Behavioural TDD: RED then GREEN.** Write the failing test that captures the behaviour you want; make it pass with the smallest change; then refactor.
 - **Blackbox at the module boundary.** Test what a module promises through its public surface. Mock only external interfaces (network endpoints, the LLM), and only when truly required.
-- **Prefer a real model over a stubbed one.** `tests/integration/stacktests ai local` points the rig at a self-hosted endpoint: real answers, no cost per call, only slower. A green run against a stub proves the wiring, not the behaviour.
+- **Prefer a real model over a stubbed one.** `tests/e2e/stacktests ai local` points the rig at a self-hosted endpoint: real answers, no cost per call, only slower. A green run against a stub proves the wiring, not the behaviour.
 - **Seed through the front door.** See [AGENTS.md non-negotiable 11](../../AGENTS.md). To populate an instance with documents, run `tools/family-docs/ingest.py`: it posts each rendered demo document into the Matrix `documents` room as the family member who would plausibly have sent it, so the archivist picks it up and the whole pipeline runs. Uploading to `POST /api/documents/post_document/` instead is faster and produces the wrong corpus - bare OCR text with a filename for a title, no tags, correspondent, document type, summary note, or vault entry. Search, classification, and mirror behaviour all read differently against that, so measurements taken on it are worthless. The same rule holds for every stacklet: drive the user-facing surface, not the service behind it.
-- **Docker integration tests when warranted.** If a change crosses a container boundary or depends on a real service's behaviour, add a test under `tests/integration/`.
+- **Docker integration tests when warranted.** If a change crosses a container boundary or depends on a real service's behaviour, add a test under `tests/e2e/`.
 - **Tests run against real stacklets and real hooks.** No parallel test-only compose files.
 - **Use real Synapse via the `messages` stacklet.** No handwritten Matrix mocks.
 - **Allowed mocks: loggers only.** Real imports catch real errors.
 - **Established deps over handwritten fakes:** `pytest-httpserver` for HTTP, real services for the rest.
 - **Test helpers do one thing.** Add a parameter only when a second test needs it - not preemptively.
-- **`tests/integration/eval/` is opt-in** (slow, real model). Excluded from `pytest tests/` by `norecursedirs`.
+- **`tests/e2e/eval/` is opt-in** (slow, real model). Excluded from `pytest tests/` by `norecursedirs`.
 - **Write tests before fixing.** No duct tape.
-- **The rig is shared, not off-limits.** This repo root is the Simpsons dev instance, not anyone's real famstack, so agents may run the rig lanes. Ports are fixed, so exactly one run at a time: check nothing else is mid-run before starting. `tests/integration/stacktests help` lists which subcommands are autonomous, shared, or destructive.
+- **The rig is shared, not off-limits.** This repo root is the Simpsons dev instance, not anyone's real famstack, so agents may run the rig lanes. Ports are fixed, so exactly one run at a time: check nothing else is mid-run before starting. `tests/e2e/stacktests help` lists which subcommands are autonomous, shared, or destructive.
 
 ## Code style
 

@@ -53,7 +53,7 @@ supposed to have replaced it has a third state, and that third state is silent.
 
 ### 2. The shim tests cannot catch the thing that actually breaks shims
 
-`tests/stacklets/test_agent_runtime_shims.py` asserts every patch is attached,
+`tests/unit/stacklets/test_agent_runtime_shims.py` asserts every patch is attached,
 which is real value: it catches *our* mistakes. It cannot catch upstream
 moving a symbol, because it runs against a stub nanobot this repo hand-writes.
 The stub still has the old symbol, so the lane stays green while production is

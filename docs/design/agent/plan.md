@@ -150,8 +150,8 @@ Files (framework-agnostic shape, fills in concretely after Phase 0):
 
 Tests:
 
-- `tests/stacklets/test_vault_search.py` — search returns expected paths for known fixtures.
-- `tests/integration/test_agent_qa_e2e.py` — file a doc, ask a question, assert citation appears in the reply.
+- `tests/unit/stacklets/test_vault_search.py` — search returns expected paths for known fixtures.
+- `tests/e2e/test_agent_qa_e2e.py` — file a doc, ask a question, assert citation appears in the reply.
 
 Verification: ask 10 known-answer questions in a test room. ≥8 produce grounded replies with valid citations within latency target.
 
@@ -173,9 +173,9 @@ Shape:
 
 Tests:
 
-- `tests/stacklets/test_grocery_parser.py` — natural-language inputs produce expected tool calls.
-- `tests/integration/test_grocery_e2e.py` — chat round-trip adds and removes items against the vault backend.
-- `tests/stacklets/test_grocery_store_protocol.py` — both backends implement the same protocol contract.
+- `tests/unit/stacklets/test_grocery_parser.py` — natural-language inputs produce expected tool calls.
+- `tests/e2e/test_grocery_e2e.py` — chat round-trip adds and removes items against the vault backend.
+- `tests/unit/stacklets/test_grocery_store_protocol.py` — both backends implement the same protocol contract.
 
 Verification: the family adds items across a week, asks for the list at the store, uses it, finishes the trip without abandoning the bot.
 
@@ -192,7 +192,7 @@ Independent of the agent runtime. A tiny new mechanism, not bundled with the fra
 
 Tests:
 
-- `tests/stacklets/test_reminders_due.py` — given a fixture file and a clock, the right entries fire.
+- `tests/unit/stacklets/test_reminders_due.py` — given a fixture file and a clock, the right entries fire.
 
 Time: ~1 day.
 

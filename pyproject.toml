@@ -51,8 +51,8 @@ demo = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Pipeline-quality evals (real model, real Paperless, slow) are opt-in via
-# `tests/integration/stacktests eval` — never collected by `pytest tests/`.
-norecursedirs = ["tests/integration/eval"]
+# `tests/e2e/stacktests eval` — never collected by `pytest tests/`.
+norecursedirs = ["tests/e2e/eval"]
 markers = [
     "container_lifecycle: Docker lifecycle tests for stack up/down/destroy and rendered container environments",
     "demo_rig: live demo-instance tests using Simpson accounts and the configured AI endpoint",

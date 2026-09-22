@@ -143,10 +143,10 @@ can't interleave or truncate a record mid-line.
 
 ## Testing
 
-`tests/stacklets/test_backup_engine.py` covers the pure-Python parts:
+`tests/unit/stacklets/test_backup_engine.py` covers the pure-Python parts:
 source parsing, canary creation and tampering, preflight thresholds,
 filesystem capability classification, result-file shape. The
 rsync/diskutil/eject flows need a real disk and aren't part of the
 unit suite.
 
-Run with: `uv run --extra test pytest tests/stacklets/test_backup_engine.py`
+Run with: `uv run --extra test pytest tests/unit/stacklets/test_backup_engine.py`

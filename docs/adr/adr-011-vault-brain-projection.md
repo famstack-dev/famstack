@@ -101,5 +101,5 @@ agent fell back to grep on its `vault/` mount, which is the brain.
 
 Cost: a page filed seconds ago is findable after the next mirror tick,
 not at once. Read-your-writes is tested for todos only
-(`tests/integration/test_demo_rig_e2e.py`), so no stated invariant changes.
+(`tests/e2e/test_demo_rig_e2e.py`), so no stated invariant changes.
 

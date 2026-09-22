@@ -103,10 +103,10 @@ Files:
 
 Tests:
 
-- `tests/stacklets/test_ontology_taxonomy_sync.py` — every name in `stacklets/docs/taxonomy.toml` has a matching id in `stacklets/memory/seeds/ontology.toml` (and vice versa). Fails loudly on drift.
-- `tests/stacklets/test_ontology_loader.py` — load, resolve_topics, resolve_person, expand_query happy paths.
-- `tests/stacklets/test_memory_install.py` — `on_install_success` creates the repo and pushes seeds against a real Forgejo from the test harness (per project rules: no library mocks).
-- `tests/integration/test_archivist_e2e.py` — already exists; must stay green with the new ontology source.
+- `tests/unit/stacklets/test_ontology_taxonomy_sync.py` — every name in `stacklets/docs/taxonomy.toml` has a matching id in `stacklets/memory/seeds/ontology.toml` (and vice versa). Fails loudly on drift.
+- `tests/unit/stacklets/test_ontology_loader.py` — load, resolve_topics, resolve_person, expand_query happy paths.
+- `tests/unit/stacklets/test_memory_install.py` — `on_install_success` creates the repo and pushes seeds against a real Forgejo from the test harness (per project rules: no library mocks).
+- `tests/e2e/test_archivist_e2e.py` — already exists; must stay green with the new ontology source.
 
 Out of scope:
 
@@ -126,8 +126,8 @@ Files:
 
 Tests:
 
-- `tests/stacklets/test_facts_store.py` — read/write round-trip against a temp memory repo.
-- `tests/stacklets/test_facts_cli.py` — `stack facts add` produces the expected commit in the working copy.
+- `tests/unit/stacklets/test_facts_store.py` — read/write round-trip against a temp memory repo.
+- `tests/unit/stacklets/test_facts_cli.py` — `stack facts add` produces the expected commit in the working copy.
 
 Time: ~5–7h.
 
@@ -150,7 +150,7 @@ Files:
 
 Tests:
 
-- `tests/stacklets/test_interview_seed.py` — mocked answers produce the expected facts and stubs in the memory repo.
+- `tests/unit/stacklets/test_interview_seed.py` — mocked answers produce the expected facts and stubs in the memory repo.
 
 Time: ~4–6h.
 
@@ -167,8 +167,8 @@ Files:
 
 Tests:
 
-- `tests/stacklets/test_qa_handler.py` — routing heuristic + prompt assembly.
-- `tests/integration/test_archivist_qa_e2e.py` — file a doc, ask a question, assert the citation appears in the reply.
+- `tests/unit/stacklets/test_qa_handler.py` — routing heuristic + prompt assembly.
+- `tests/e2e/test_archivist_qa_e2e.py` — file a doc, ask a question, assert the citation appears in the reply.
 
 Time: ~5–7h.
 
@@ -184,7 +184,7 @@ Files:
 
 Tests:
 
-- `tests/stacklets/test_wiki_rebuild.py` — given a corpus of mirrors, rebuild produces the expected pages.
+- `tests/unit/stacklets/test_wiki_rebuild.py` — given a corpus of mirrors, rebuild produces the expected pages.
 - Idempotency: re-running on unchanged input produces byte-identical output (after timestamp normalization).
 
 Time: ~6–10h.
