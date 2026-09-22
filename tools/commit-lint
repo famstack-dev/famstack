@@ -126,9 +126,12 @@ def check(header: str) -> list[str]:
             f"'{scope}' is not a scope. Use one of: {', '.join(sorted(SCOPES))}"
             " (or no scope at all)")
 
-    if len(header) > SUBJECT_LIMIT:
+    # A squash merge appends " (#106)" after CI has checked the title, so
+    # the number GitHub adds is not the author's to budget for.
+    length = len(header) - (len(f" (#{match['pr']})") if match["pr"] else 0)
+    if length > SUBJECT_LIMIT:
         problems.append(
-            f"{len(header)} characters, limit is {SUBJECT_LIMIT}")
+            f"{length} characters, limit is {SUBJECT_LIMIT}")
 
     if subject[:1].isupper():
         problems.append("starts with a capital; the subject is a sentence "
