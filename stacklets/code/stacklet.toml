@@ -18,7 +18,7 @@ login_field = "username"
 
 hints = [
     "Open {url}",
-    "SSH clone: ssh://git@{ip}:222/user/repo.git",
+    "SSH clone: ssh://git@{url_host}:222/user/repo.git",
 ]
 
 [upstream]
@@ -34,7 +34,9 @@ admin_email    = "{admin_email}"
 admin_password = "{admin_password}"
 FORGEJO__server__ROOT_URL              = "{code_url}/"
 FORGEJO__server__DOMAIN                = "{ip}"
-FORGEJO__server__SSH_DOMAIN            = "{ip}"
+# The host in the SSH clone URLs Forgejo shows: the web UI's host
+# (code.<domain>, or the Mac's address in port mode).
+FORGEJO__server__SSH_DOMAIN            = "{url_host}"
 FORGEJO__server__SSH_PORT              = "222"
 FORGEJO__database__DB_TYPE             = "sqlite3"
 FORGEJO__security__INSTALL_LOCK        = "true"
