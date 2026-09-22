@@ -1,7 +1,7 @@
 # Forgejo — lightweight self-hosted Git server
 #
-# Web UI:  http://<ip>:42040
-# SSH:     ssh://git@<ip>:222/user/repo.git
+# Web UI:  http://<ip>:42040, or https://code.<domain> in domain mode
+# SSH:     ssh://git@<ip>:222/user/repo.git, or code.<domain> in place of <ip>
 #
 # First user to register becomes admin.
 # All data stored in CODE_DATA_DIR (~/famstack-data/code/).
@@ -20,7 +20,10 @@ services:
       - stack
     ports:
       - "${PORT_BIND_IP:-0.0.0.0}:42040:3000"
-      - "${PORT_BIND_IP:-0.0.0.0}:${CODE_SSH_PORT:-222}:22"
+      # SSH does not go through the proxy, so it faces the LAN in both
+      # modes. It is encrypted and authenticated by itself, which is what
+      # keeping plain-HTTP services on the loopback in domain mode is for.
+      - "0.0.0.0:${CODE_SSH_PORT:-222}:22"
     volumes:
       - ${CODE_DATA_DIR}:/data
       - /etc/localtime:/etc/localtime:ro
