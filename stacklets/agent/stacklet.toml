@@ -4,7 +4,8 @@
 # notes and wiki and can act through the stack CLI. It runs the nanobot harness
 # in a container, connects to Matrix through nanobot's own channel as the agent
 # account that the core bot-runner provisions from bot/bot.toml, and talks to the
-# local LLM configured in stack.toml [ai].
+# AI server configured in stack.toml [ai]: the local ai stacklet, another
+# machine on the network, or a hosted provider (`stack ai connect <url>`).
 #
 # The stacklet is "agent"; the persona (name + voice) is configurable. It ships
 # as "Stacky" via AGENT_NAME and a family can rename it (see the note below).
@@ -14,7 +15,7 @@ name        = "Agent"
 description = "The family agent — ask it in chat, it answers from your own notes"
 version     = "0.1.0"
 category    = "ai"
-requires    = ["ai", "messages"]
+requires    = ["messages"]
 
 # Image is built locally from the Dockerfile here (nanobot from PyPI). There is
 # no upstream image to pull, so build on every `stack up`.
