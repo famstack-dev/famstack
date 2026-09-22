@@ -18,13 +18,26 @@ REPO = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(REPO / "lib"))
 
 
+_STATE_DIR = None
+
+
 def _load_on_start():
     # on_start.py lives under stacklets/ai/hooks/, not in a package.
     path = REPO / "stacklets" / "ai" / "hooks" / "on_start.py"
     spec = importlib.util.spec_from_file_location("ai_on_start", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # Its state markers live in the checkout; keep the test out of it.
+    mod.STATE_DIR = _STATE_DIR
     return mod
+
+
+@pytest.fixture(autouse=True)
+def _state_dir(tmp_path):
+    global _STATE_DIR
+    _STATE_DIR = tmp_path / "state"
+    yield
+    _STATE_DIR = None
 
 
 def _ctx(make_stack, env, engine_url):

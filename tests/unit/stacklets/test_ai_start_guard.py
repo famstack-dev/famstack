@@ -30,6 +30,15 @@ on_start = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(on_start)
 
 
+@pytest.fixture(autouse=True)
+def state_dir(monkeypatch, tmp_path):
+    """The hook's state markers live in the checkout. Every test here
+    writes them somewhere else, or `stack down ai` on this Mac would
+    start behaving differently."""
+    monkeypatch.setattr(on_start, "STATE_DIR", tmp_path)
+    return tmp_path
+
+
 class FakeCtx:
     """The hook context: config in, shell commands recorded rather than
     run, since they would start and stop services on this Mac."""
@@ -82,9 +91,17 @@ class TestTheLocalEngineIsStarted:
     AI as running."""
 
     @pytest.fixture(autouse=True)
-    def installed(self, monkeypatch):
+    def installed(self, monkeypatch, tmp_path):
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
+
+    def test_a_started_engine_is_stopped_again_by_stack_down_ai(self, state_dir):
+        """`stack down ai` stops oMLX only when famstack manages it. An
+        instance first set up with a remote endpoint never recorded that,
+        so `down` left running what `up` had started."""
+        on_start.run(FakeCtx(provider="managed", openai_url="http://127.0.0.1:9/v1"))
+
+        assert (state_dir / "omlx-managed").exists()
 
     def test_a_stopped_engine_is_started(self):
         ctx = FakeCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
