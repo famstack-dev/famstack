@@ -158,26 +158,38 @@ class Stack:
     def _set_cfg(self, section: str, key: str, value: str):
         """Write a config value to stack.toml.
 
-        Updates an existing key or appends to the section. Creates the
-        section if it doesn't exist.
+        Updates the key inside `[section]` or adds it there, creating the
+        section if it doesn't exist. Only the one assignment line changes:
+        the file is the admin's, so comments, commented-out alternatives
+        and same-named keys in other sections stay as they are.
         """
+        import json
         import re
         toml_path = self.instance_dir / "stack.toml"
         if not toml_path.exists():
             return
-        content = toml_path.read_text()
+        lines = toml_path.read_text().splitlines()
 
-        pattern = rf'{re.escape(key)}\s*=\s*"[^"]*"'
-        replacement = f'{key} = "{value}"'
+        # A JSON string is a valid TOML basic string, escapes included.
+        quoted = json.dumps(str(value))
+        assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
+        header = re.compile(r"^\s*\[")
 
-        if re.search(pattern, content):
-            content = re.sub(pattern, replacement, content)
-        elif f"[{section}]" in content:
-            content = content.replace(f"[{section}]", f"[{section}]\n{replacement}")
+        start = next((i for i, line in enumerate(lines)
+                      if line.strip() == f"[{section}]"), None)
+        if start is None:
+            lines += ["", f"[{section}]", f"{key} = {quoted}"]
         else:
-            content += f"\n[{section}]\n{replacement}\n"
+            end = next((i for i in range(start + 1, len(lines))
+                        if header.match(lines[i])), len(lines))
+            for i in range(start + 1, end):
+                if m := assignment.match(lines[i]):
+                    lines[i] = f"{m.group(1)}{key} = {quoted}{m.group(3)}"
+                    break
+            else:
+                lines.insert(start + 1, f"{key} = {quoted}")
 
-        toml_path.write_text(content)
+        toml_path.write_text("\n".join(lines) + "\n")
 
     # ── Discovery ─────────────────────────────────────────────────────
 
