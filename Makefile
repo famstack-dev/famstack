@@ -24,8 +24,8 @@ help:
 	  "  make test-unit      ~75s    nothing        no         before a push, or when a piece of work is done" \
 	  "  make test-lifecycle ~6m     Docker         yes        lifecycle, env, compose, ports, health" \
 	  "  make test-demo      ~4m     demo instance  yes        it must work against the running bots" \
-	  "  make test-smoke     ?       test-owned rig yes        quick cross-service check" \
-	  "  make test-e2e       20-30m  uninstalled    yes        end of a branch, before review" \
+	  "  make test-smoke     ?       rig or demo    yes        quick cross-service check" \
+	  "  make test-e2e       ?       rig or demo    yes        end of a branch, before review" \
 	  "" \
 	  "  make typecheck              types across the shipped code, not a gate" \
 	  "  make hooks                  point git at the repo's hooks" \

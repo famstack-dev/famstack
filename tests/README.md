@@ -37,8 +37,8 @@ minute and a quarter would only teach people to skip it.
 | `make test-unit` | ~75s | nothing | no | Before a push, or when a coherent piece of work is done. Offline framework and stacklet tests: no Docker, no live services, no production data. |
 | `make test-lifecycle` | ~6m | Docker | yes | You changed lifecycle, config rendering, `.env`, compose, container names, ports, volumes or health wiring. Owns a throwaway instance on fixed names. |
 | `make test-demo` | ~4m | the demo instance running | yes | The behaviour has to work against the already-running bots and real service wiring. Tests create unique data and clean up after themselves; they never reset the instance. |
-| `make test-smoke` | ? | a test-owned rig | yes | A quick answer on a cross-service path. Seeds secrets and brings the required stacklets up first, so it is not read-only. |
-| `make test-e2e` | 20-30m | an uninstalled instance | yes | End of a branch, or before asking for review, when the change crosses container boundaries. Uninstall first: it seeds and owns the instance it runs against. |
+| `make test-smoke` | ? | the test rig or the Simpsons demo | yes | A quick answer on a cross-service path. Seeds secrets and brings the required stacklets up first, so it is not read-only. |
+| `make test-e2e` | ? | the test rig or the Simpsons demo | yes | End of a branch, or before asking for review, when the change crosses container boundaries. On the demo it stashes the instance for the run and brings it back afterwards, pass or fail; any other instance is refused. |
 
 **Exclusive** means the lane owns fixed container names and ports, so exactly
 one run at a time on this Mac. Check nothing else is mid-run before starting
