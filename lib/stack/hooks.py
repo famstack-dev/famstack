@@ -25,6 +25,15 @@ import subprocess
 from pathlib import Path
 
 
+class Cancelled(Exception):
+    """Raised by a hook when the admin answered no.
+
+    It stops the command the way an error does, but it is not one:
+    nothing is reported as broken and nobody is told a stacklet failed.
+    The message is what the admin sees, once.
+    """
+
+
 class StackContext:
     """Everything a hook needs. No artificial restrictions.
 
@@ -220,6 +229,8 @@ class HookResolver:
             if hasattr(mod, "run"):
                 mod.run(ctx)
             return True
+        except Cancelled:
+            raise
         except Exception as e:
             if hasattr(ctx, "stack") and hasattr(ctx.stack, "output"):
                 ctx.stack.output.error(f"Hook {path.name} error: {e}")

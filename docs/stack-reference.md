@@ -666,6 +666,21 @@ The context object (`ctx`) provides:
 | `ctx["http_post"]` | `callable` | `http_post(url, body, content_type=..., headers=...)` → parsed JSON. Form-encoded by default. |
 | `ctx["http_get"]` | `callable` | `http_get(url, headers=...)` → parsed JSON. Pass auth explicitly: `headers={"Authorization": "Bearer ..."}`. |
 
+A hook that raises stops the command and is reported as a failure. A
+hook that asked the admin and got a no raises `stack.hooks.Cancelled`
+instead: `stack up` stops with `{"cancelled": <message>}`, prints the
+message once, exits 1, and does not tell the family room that the
+stacklet failed to start.
+
+```python
+from stack.hooks import Cancelled
+from stack.prompt import confirm
+
+def run(ctx):
+    if not confirm("Replace the remote AI server with this Mac?", default=False):
+        raise Cancelled("Cancelled. Nothing changed.")
+```
+
 Example `hooks/on_install.py` (system work with `ctx.shell()`):
 
 ```python
