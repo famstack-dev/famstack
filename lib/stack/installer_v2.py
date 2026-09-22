@@ -282,7 +282,6 @@ schedule = "0 0 3 * * *"
 provider = ""
 openai_url = ""
 openai_key = ""
-whisper_url = "http://localhost:42062/v1"
 language = "en"
 {model_block}
 

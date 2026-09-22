@@ -333,9 +333,15 @@ class Stack:
           - Admin user from users.toml
         """
         ai_openai_url = self._cfg("ai", "openai_url", "http://localhost:8000/v1")
-        ai_whisper_url = self._cfg("ai", "whisper_url", "http://localhost:42062/v1")
         ai_openai_key = (self.secrets.get("", "AI_API_KEY")
                          or self._cfg("ai", "openai_key"))
+        # Voice messages go to the AI server, which answers transcription
+        # too on oMLX and the hosted providers, unless [ai] whisper_url
+        # names a dedicated speech server. The key follows the server.
+        dedicated_whisper = self._cfg("ai", "whisper_url")
+        ai_whisper_url = dedicated_whisper or ai_openai_url
+        ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
+                          if dedicated_whisper else ai_openai_key)
 
         template_vars = {
             # Core config
@@ -360,6 +366,10 @@ class Stack:
             "ai_openai_key":         ai_openai_key,
             "ai_whisper_url":        ai_whisper_url,
             "ai_whisper_url_docker": ai_whisper_url.replace("://localhost", "://host.docker.internal"),
+            "ai_whisper_key":        ai_whisper_key,
+            # OpenAI's name. Other servers name their speech models and
+            # refuse any other; whisper.cpp ignores it.
+            "ai_whisper_model":      self._cfg("ai", "whisper_model") or "whisper-1",
             "ai_language":           self._cfg("ai", "language", "en"),
             "ai_tts_voice":          "onyx" if self._cfg("ai", "language", "en").startswith("de") else "alloy",
             "ai_default_model":      self._cfg("ai", "default"),

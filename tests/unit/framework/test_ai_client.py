@@ -524,6 +524,34 @@ class TestTranscriberFromEnv:
         with pytest.raises(LLMUnavailableError):
             Transcriber.from_env()
 
+    async def test_the_speech_model_comes_from_the_environment(
+            self, httpserver: HTTPServer, monkeypatch):
+        """A server that is not OpenAI names its speech models itself and
+        refuses `whisper-1` ("Model 'whisper-1' not found"), so the model
+        the stack configured is the one that goes on the wire."""
+        captured: dict = {}
+
+        def handler(request):
+            captured["body"] = request.get_data()
+            from werkzeug import Response
+            return Response('{"text": "ok"}', content_type="application/json")
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST").respond_with_handler(handler)
+        monkeypatch.setenv("WHISPER_URL", httpserver.url_for("/v1"))
+        monkeypatch.setenv("WHISPER_MODEL", "whisper-large-v3-turbo")
+
+        tr = Transcriber.from_env()
+        await tr.transcribe(b"fake-audio")
+
+        assert b"whisper-large-v3-turbo" in captured["body"]
+        await tr.aclose()
+
+    def test_without_a_configured_model_it_asks_for_openais_name(self, monkeypatch):
+        monkeypatch.setenv("WHISPER_URL", "http://whisper.local/v1")
+        monkeypatch.delenv("WHISPER_MODEL", raising=False)
+        assert Transcriber.from_env().model == "whisper-1"
+
     def test_empty_key_falls_back(self, monkeypatch):
         """Native whisper-server is unauthenticated; the SDK insists on
         *some* key so the constructor substitutes a placeholder."""

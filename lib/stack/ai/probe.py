@@ -49,3 +49,22 @@ def probe(url: str, key: str = "", *, timeout: float = 3.0) -> ProbeResult:
         return ProbeResult(reachable=False)
     except Exception:
         return ProbeResult(reachable=False)
+
+
+def transcribes(url: str, key: str = "", *, timeout: float = 3.0) -> bool:
+    """Whether ``{url}/audio/transcriptions`` exists.
+
+    Asked with an empty POST, so nothing is uploaded and nothing is
+    transcribed. A server with the endpoint rejects the request for the
+    missing file (400, 415 or 422); one without it answers 404 or 405.
+    """
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/audio/transcriptions", data=b"", method="POST",
+        headers={"Authorization": f"Bearer {key}"} if key else {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL):
+            return True
+    except urllib.error.HTTPError as e:
+        return e.code in (400, 415, 422)
+    except Exception:
+        return False

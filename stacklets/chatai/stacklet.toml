@@ -36,12 +36,14 @@ WEBUI_AUTH      = "true"
 WEBUI_ADMIN_NAME     = "{admin_username}"
 WEBUI_ADMIN_EMAIL    = "{admin_email}"
 WEBUI_ADMIN_PASSWORD = "{admin_password}"
-# Speech-to-text — whisper.cpp running natively on the host (Metal GPU).
-# Open WebUI has a built-in faster-whisper, but it runs CPU-only inside
-# Docker and is dramatically slower than native Metal inference.
+# Speech-to-text — whisper.cpp running natively on the host (Metal GPU),
+# or whatever [ai] whisper_url points at. Open WebUI has a built-in
+# faster-whisper, but it runs CPU-only inside Docker and is dramatically
+# slower than native Metal inference.
 AUDIO_STT_ENGINE              = "openai"
 AUDIO_STT_OPENAI_API_BASE_URL = "{ai_whisper_url_docker}"
-AUDIO_STT_OPENAI_API_KEY      = "unused"
+AUDIO_STT_OPENAI_API_KEY      = "{ai_whisper_key}"
+AUDIO_STT_MODEL               = "{ai_whisper_model}"
 # Text-to-speech — Piper via openedai-speech in the ai stacklet.
 # Container-to-container on the stack Docker network.
 AUDIO_TTS_ENGINE              = "openai"

@@ -196,7 +196,9 @@ Available template variables:
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url` |
 | `{ai_openai_url_docker}` | Same, rewritten for container access via `host.docker.internal` |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
-| `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url` |
+| `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
+| `{ai_whisper_key}` | `stack.toml` → `[ai].whisper_key` with a dedicated speech server, otherwise the AI key |
+| `{ai_whisper_model}` | `stack.toml` → `[ai].whisper_model`, default `whisper-1` |
 | `{ai_default_model}` | `stack.toml` → `[ai].default` |
 | `{ai_tts_voice}` | Derived from `[ai].language` |
 | `{messages_server_name}` | `stack.toml` → `[messages].server_name` |
