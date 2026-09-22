@@ -19,17 +19,17 @@ stage       = "beta"
 # Caddy is built locally with the DNS provider plugins (Dockerfile).
 build       = true
 
+hints = [
+    "Point your router's DNS to {ip}",
+    "Services are now available at *.{domain}",
+]
+
 [ports]
 dns         = 53
 dns_setup   = 42081
 dns_admin   = 42080
 http        = 80
 https       = 443
-
-hints = [
-    "Point your router's DNS to {ip}",
-    "Services are now available at *.{domain}",
-]
 
 [env.defaults]
 TZ                  = "{timezone}"
