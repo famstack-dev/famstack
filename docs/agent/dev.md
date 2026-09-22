@@ -339,6 +339,11 @@ needed and what it changes; the diff shows how. It must make sense without
 the PR. Bullets for sets of changes. No debugging history, test narrative
 or rhetoric; those go in the PR.
 
+**No em dashes**, in the subject, the body, or the PR title and
+description. All of them are published as release notes. Use a comma,
+colon, period or parentheses. An en dash in a range (`1–2`) and a hyphen
+are fine. `tools/commit-lint` rejects the em dash in all four places.
+
 | Type | Body states |
 |---|---|
 | `feat` | what is now possible, how to use it, limits |
