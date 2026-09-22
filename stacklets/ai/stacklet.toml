@@ -16,6 +16,10 @@ category    = "ai"
 type        = "host"
 port        = 42060
 
+# Served by another machine after `stack ai connect <url>`: `stack list`
+# then shows that server, and only the checks marked `remote` run.
+remote = "{ai_remote_url}"
+
 hints = [
     "oMLX admin UI: http://localhost:42060/admin (password: {ai_openai_key})",
     "Try: stack ai models",
@@ -39,7 +43,8 @@ skip_when_env = "STACK_AI_NO_VOICE"
 [[health.checks]]
 name = "LLM"
 url  = "{ai_openai_url}/models"
-hint = "LLM endpoint not reachable — run 'stack ai models' to configure"
+hint = "AI server not answering at {ai_openai_url}"
+remote = true
 [health.checks.headers]
 Authorization = "Bearer {ai_openai_key}"
 
