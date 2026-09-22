@@ -122,10 +122,10 @@ def _ai_consumers(repo_root: Path) -> set[str]:
     return ids
 
 
-def _running(ids: set[str]) -> list[str]:
+def _running() -> set[str]:
     from stack.docker import project_states
-    states = project_states()
-    return sorted(i for i in ids if states.get(i) in ("running", "starting", "failing"))
+    return {i for i, state in project_states().items()
+            if state in ("running", "starting", "failing")}
 
 
 def run(args, stacklet, config):
@@ -208,12 +208,17 @@ def run(args, stacklet, config):
             "text, notes, chat questions and voice messages are sent there "
             "and processed by whoever runs that server.")
 
+    running = _running()
+    if not local and "ai" in running:
+        notes.append("The local AI engine is still running and no longer "
+                     "used. './stack down ai' stops it and frees its memory.")
+
     result = {
         "openai_url": url,
         "model": chosen["model"],
         "whisper_url": voice_url,
         "whisper_model": speech_model,
-        "restart": _running(_ai_consumers(Path(config["repo_root"]))),
+        "restart": sorted(_ai_consumers(Path(config["repo_root"])) & running),
     }
     if warnings:
         result["warnings"] = warnings

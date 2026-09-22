@@ -138,6 +138,17 @@ class TestPointingTheStackElsewhere:
         assert "warnings" not in result
 
 
+class TestTheLocalEngineLeftRunning:
+
+    def test_switching_away_says_the_local_engine_can_be_stopped(
+            self, instance, ai_server):
+        """Its containers, oMLX and Whisper keep using memory for nothing,
+        and a later `stack restart ai` would ask to switch back."""
+        result = _connect(instance, ai_server.url_for("/v1"))
+
+        assert any("./stack down ai" in n for n in result["notes"])
+
+
 class TestChoosingAModel:
 
     @pytest.fixture

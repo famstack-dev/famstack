@@ -12,6 +12,9 @@ from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 
+# on_stop reads the markers here to know what famstack manages.
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
+
 
 def run(ctx):
     # Local-dev opt-out: clear the "voice" compose profile so docker compose
@@ -84,6 +87,12 @@ def _start_local_engine(ctx):
     health check that follows waits for the engine to come up.
     """
     from stack.ai.probe import probe
+
+    # famstack manages oMLX whenever it is the provider, so `stack down ai`
+    # stops it. on_install records this too, but only when it installed
+    # oMLX itself, which an instance first set up remotely never did.
+    STATE_DIR.mkdir(exist_ok=True)
+    (STATE_DIR / "omlx-managed").touch()
 
     url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
     if probe(url, ctx.cfg("openai_key", default="")).reachable:
