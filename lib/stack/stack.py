@@ -20,6 +20,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+from . import caddy
 from .docker import running_project_ids
 from .hooks import HookResolver, build_hook_ctx
 from .output import SilentOutput
@@ -483,17 +484,24 @@ class Stack:
     def _public_url(self, stacklet_id: str, port: int) -> str:
         """Build the URL a user would click to reach a service.
 
-        In domain mode: http(s)://{stacklet}.{domain}
+        In domain mode: http(s)://{stacklet}.{domain}, see `_domain_scheme`
         In port mode: http://{ip}:{port} (LAN-reachable)
-
-        Set [core].https = true when a reverse proxy terminates TLS in front
-        of the stack.
         """
         domain = self._cfg("core", "domain")
         if domain:
-            scheme = "https" if self._cfg("core", "https") else "http"
-            return f"{scheme}://{stacklet_id}.{domain}"
+            return f"{self._domain_scheme()}://{stacklet_id}.{domain}"
         return f"http://{self._lan_ip()}:{port}"
+
+    def _domain_scheme(self) -> str:
+        """https once the proxy serves certificates, http until then.
+
+        The proxy has certificates when `[core] dns_provider` is set. Set
+        `[core] https = true` instead when some other reverse proxy in
+        front of the stack terminates TLS.
+        """
+        if self._cfg("core", "dns_provider") or self._cfg("core", "https"):
+            return "https"
+        return "http"
 
     def _home_url(self) -> str:
         """Browser-facing base of core's home — where `/go` links live.
@@ -509,8 +517,7 @@ class Stack:
         """
         domain = self._cfg("core", "domain")
         if domain:
-            scheme = "https" if self._cfg("core", "https") else "http"
-            return f"{scheme}://{domain}"
+            return f"{self._domain_scheme()}://{domain}"
         return f"http://{self._lan_ip()}:42000"
 
     def env(self, stacklet_id: str) -> dict:
@@ -866,6 +873,66 @@ class Stack:
         """Query Docker for stacklet IDs with running containers."""
         return running_project_ids()
 
+    # ── Reverse proxy (domain mode) ───────────────────────────────────
+
+    def serving_ids(self) -> set[str]:
+        """Stacklets with containers that are up, crash-looping ones included.
+
+        This is what the proxy routes to. A stacklet with one container
+        restarting usually has others still serving, so it keeps its routes.
+        """
+        from . import docker
+        return {sid for sid, state in docker.project_states().items()
+                if state in ("running", "starting", "failing")}
+
+    def write_caddyfile(self, starting: str = "", stopping: str = "") -> Path | None:
+        """Write the proxy's Caddyfile from the snippets of the stacklets up.
+
+        `starting` and `stopping` name a stacklet that is changing state as
+        this runs, so its routes follow where it is going rather than where
+        its containers are right now. The file is written before a starting
+        stacklet's containers exist: the proxy's own container reads it the
+        moment it starts.
+
+        Returns the path written, or None when there is nothing to write:
+        port mode has no proxy, and with the proxy not up there is nobody to
+        read it. An unsupported `[core] dns_provider` also writes nothing:
+        the proxy keeps the config it has, which still works, and the
+        warning names the value. Infra's on_start refuses it outright.
+        """
+        if not self._cfg("core", "domain"):
+            return None
+        up = (self.serving_ids() | {starting}) - {stopping, ""}
+        if caddy.STACKLET not in up:
+            return None
+
+        snippets = []
+        for s in self.discover():
+            snippet = Path(s["path"]) / "caddy.snippet"
+            if s["id"] in up and snippet.is_file():
+                snippets.append((s["id"], snippet.read_text()))
+
+        # Sites for services that are not stacklets. Only one proxy can own
+        # ports 80 and 443, so they go in this Caddyfile too. The file is
+        # the admin's, read and never written.
+        path = self.data / caddy.STACKLET / "Caddyfile"
+        local = path.with_name(caddy.LOCAL_FILE)
+        if local.is_file():
+            snippets.append((caddy.LOCAL_FILE, local.read_text()))
+
+        try:
+            caddyfile = caddy.assemble(snippets, self._cfg("core", "dns_provider"))
+        except ValueError as e:
+            self.output.warn(f"Caddyfile not updated: {e}")
+            return None
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Written in place. The file is bind-mounted into the proxy
+        # container, and a single-file bind mount follows the inode, so a
+        # file replaced by rename would leave Caddy reading the old one.
+        path.write_text(caddyfile)
+        return path
+
     # ── Secrets (delegated to SecretStore) ────────────────────────────
 
     def secret(self, stacklet_id: str, name: str) -> str | None:
@@ -1101,6 +1168,9 @@ class Stack:
             self.output.error("on_start hook failed")
             return {"error": "on_start hook failed", "steps": steps}
 
+        if self.write_caddyfile(starting=stacklet_id):
+            self.output.step("Writing Caddyfile")
+
         # Render manifest hints with template vars so credentials are visible
         template_vars = self._build_template_vars()
         template_vars["url"] = self._public_url(stacklet_id, s.get("port", 0))
@@ -1238,6 +1308,8 @@ class Stack:
         ctx = build_hook_ctx(stacklet_id, env={}, step_fn=lambda msg: None, stack=self)
         resolver.run("on_stop", ctx)
 
+        self.write_caddyfile(stopping=stacklet_id)
+
         return {"ok": True, "stacklet": stacklet_id, "path": s["path"]}
 
     def destroy(self, stacklet_id: str) -> dict:
@@ -1272,5 +1344,7 @@ class Stack:
         env_file = stacklet_dir / ".env"
         if env_file.exists():
             env_file.unlink()
+
+        self.write_caddyfile(stopping=stacklet_id)
 
         return {"ok": True, "stacklet": stacklet_id}

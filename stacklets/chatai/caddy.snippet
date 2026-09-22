@@ -3,6 +3,6 @@
 # Assembled into the Caddyfile by 'stack up'. Caddy runs in Docker on the
 # stack network, so backends are referenced by container name.
 
-chatai.{$FAMSTACK_DOMAIN} {
-    reverse_proxy chatai:8080
+chatai.{$STACK_DOMAIN} {
+    reverse_proxy stack-chatai:8080
 }

@@ -109,6 +109,15 @@ def compose_build(compose_file: str | Path, env: dict | None = None) -> None:
     )
 
 
+def exec_in(container: str, *cmd: str) -> tuple[int, str]:
+    """Run a command in a running container. Returns (exit_code, error_output)."""
+    result = _docker(
+        "exec", container, *cmd,
+        capture_output=True, text=True, timeout=60,
+    )
+    return result.returncode, result.stderr
+
+
 def find_compose_file(stacklet_dir: Path) -> Path | None:
     """Find docker-compose.yml for a stacklet. Returns path or None."""
     compose = stacklet_dir / "docker-compose.yml"

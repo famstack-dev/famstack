@@ -21,6 +21,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from . import caddy
 from . import docker
 from . import doctor
 from .commands import COMMANDS
@@ -255,6 +256,8 @@ class CLI:
             if code != 0:
                 return {"error": "Failed to start services", "output": err}
 
+        self._reload_proxy()
+
         if compose_file:
             # Health checks run first — hooks can assume the service is healthy
             template_vars = self.stack._build_template_vars()
@@ -330,6 +333,7 @@ class CLI:
             except ValueError:
                 pass
             code, output = docker.compose_stop(compose_file)
+            self._reload_proxy()
             result = {"stacklet": stacklet_id, "action": "down",
                       "success": code == 0, "output": output}
             if code != 0:
@@ -337,6 +341,7 @@ class CLI:
                 # "unknown error", which hid the real cause.
                 result["error"] = output or "docker compose stop failed"
             return result
+        self._reload_proxy()
         return {"stacklet": stacklet_id, "action": "down", "success": True}
 
     def _down_all(self) -> dict:
@@ -440,7 +445,27 @@ class CLI:
                 return {"error": "Failed to stop containers", "output": output}
             self.stack.output.step("Containers removed")
 
-        return self.stack.destroy(stacklet_id)
+        result = self.stack.destroy(stacklet_id)
+        self._reload_proxy()
+        return result
+
+    def _reload_proxy(self) -> None:
+        """Have the running proxy load the Caddyfile the framework just wrote.
+
+        Called after every change to which stacklets are up. Port mode has
+        no proxy, and a proxy that is not up reads the file when it starts.
+        A rejected reload leaves Caddy serving its previous config, so the
+        step that asked for it still succeeded; the admin is told the
+        routes did not change.
+        """
+        if not self.stack._cfg("core", "domain"):
+            return
+        if caddy.STACKLET not in self.stack.serving_ids():
+            return
+        code, err = docker.exec_in(caddy.CONTAINER, *caddy.RELOAD_COMMAND)
+        if code != 0:
+            reason = err.strip().splitlines()[-1] if err.strip() else f"exit {code}"
+            self.stack.output.warn(f"Caddy kept its previous routes: {reason}")
 
 
 # ── Stacklet id arguments ─────────────────────────────────────────────────

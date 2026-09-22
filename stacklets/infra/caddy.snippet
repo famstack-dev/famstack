@@ -1,0 +1,9 @@
+# stacklets/infra/caddy.snippet
+#
+# AdGuard's admin pages. They listen on port 80 inside the container once
+# the setup wizard has run; until then this answers 502, and the wizard
+# is at http://localhost:42081 on the Mac.
+
+dns.{$STACK_DOMAIN} {
+    reverse_proxy stack-infra-adguard:80
+}

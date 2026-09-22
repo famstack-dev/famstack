@@ -14,8 +14,8 @@
 import { QuartzConfig } from "./quartz/cfg"
 import * as Plugin from "./quartz/plugins"
 
-// Runtime env. `WIKI_HOST` is "wiki.<domain>" in domain mode and
-// the empty-domain rendering "wiki." in port mode — we treat the
+// Runtime env. `WIKI_HOST` is "memory.<domain>" in domain mode and
+// the empty-domain rendering "memory." in port mode — we treat the
 // trailing-dot form as missing and fall back to the LAN IP so
 // absolute URLs in the sitemap stay reachable in either mode.
 const wikiHost = process.env.WIKI_HOST?.replace(/^https?:\/\//, "") || ""

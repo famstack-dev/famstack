@@ -14,10 +14,12 @@ services:
 
   # ── AdGuard Home ─────────────────────────────────────────────────────────────
   # DNS server with ad-blocking. Provides wildcard DNS for domain mode.
-  # First run: complete setup wizard at http://ip:3000
+  # First run: complete setup wizard at http://localhost:42081
   # After setup: admin panel at http://ip:42080
   stack-infra-adguard:
-    image: adguard/adguardhome:latest
+    # AdGuard publishes exact versions only, no line tag Watchtower could
+    # follow, so a new release is a bump here.
+    image: adguard/adguardhome:v0.107.79
     container_name: stack-infra-adguard
     restart: unless-stopped
     labels:
@@ -26,11 +28,13 @@ services:
     networks:
       - stack
     ports:
-      # DNS (must be 53 for network clients)
-      - "${PORT_BIND_IP:-0.0.0.0}:53:53/udp"
-      - "${PORT_BIND_IP:-0.0.0.0}:53:53/tcp"
+      # DNS (must be 53 for network clients). Every device on the LAN asks
+      # here, so it binds all interfaces. PORT_BIND_IP is 127.0.0.1 in
+      # domain mode, the one mode this stacklet runs in.
+      - "0.0.0.0:53:53/udp"
+      - "0.0.0.0:53:53/tcp"
       # Setup wizard (first run)
-      - "${PORT_BIND_IP:-0.0.0.0}:3000:3000"
+      - "${PORT_BIND_IP:-0.0.0.0}:42081:3000"
       # Admin panel (after setup)
       - "${PORT_BIND_IP:-0.0.0.0}:42080:80"
     volumes:
@@ -40,21 +44,37 @@ services:
       TZ: ${TZ}
 
   # ── Caddy ──────────────────────────────────────────────────────────────────
-  # Reverse proxy. Routes requests by hostname to the right container.
+  # Reverse proxy. Routes requests by hostname to the right container, from
+  # the Caddyfile the stack CLI assembles out of every running stacklet's
+  # caddy.snippet. Built with the DNS provider plugins (see Dockerfile).
   stack-infra-caddy:
-    image: caddy:2-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stack-infra-caddy:local
     container_name: stack-infra-caddy
     restart: unless-stopped
+    # Locally-built image, nothing for Watchtower to pull. `stack up infra`
+    # rebuilds it.
     labels:
-      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.enable=false"
       - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
+    extra_hosts:
+      # Native services on the Mac (whisper-server, oMLX) listen on the
+      # host's loopback, and this is how a container reaches them.
+      - "host.docker.internal:host-gateway"
     ports:
-      - "${PORT_BIND_IP:-0.0.0.0}:80:80"
-      - "${PORT_BIND_IP:-0.0.0.0}:443:443"
+      # The front door for every device on the LAN, so it binds all
+      # interfaces. PORT_BIND_IP (127.0.0.1 in domain mode) keeps the
+      # services behind the proxy off the LAN, not the proxy itself.
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
     environment:
       - STACK_DOMAIN=${STACK_DOMAIN:-home.internal}
+      # Read by the Caddyfile's DNS challenge as {env.DNS_API_TOKEN}.
+      - DNS_API_TOKEN=${DNS_API_TOKEN:-}
     volumes:
       - ${CADDYFILE_PATH}:/etc/caddy/Caddyfile:ro
       - ${CADDY_DATA_DIR}:/data

@@ -1,0 +1,8 @@
+# stacklets/code/caddy.snippet
+#
+# Forgejo's web UI and its git-over-HTTPS. Git over SSH keeps its own
+# port (222) and does not pass through the proxy.
+
+code.{$STACK_DOMAIN} {
+    reverse_proxy stack-code:3000
+}

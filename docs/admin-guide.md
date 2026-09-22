@@ -547,7 +547,7 @@ The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches th
 
 | | |
 |---|---|
-| Wiki port | `42070` (domain mode: `wiki.<your-domain>`) |
+| Wiki port | `42070` (domain mode: `memory.<your-domain>`; `wiki.<your-domain>` redirects there) |
 | Data | `~/famstack-data/memory/vault/` (a checkout of Forgejo `family/memory`) |
 
 Useful commands:
@@ -592,7 +592,8 @@ wiki_nightly = "03:30"           # nightly full rebuild, local time ("" disables
 
 Key things to know:
 
-- **domain**: leave empty to start. Services are reachable via `<host>:<port>`. Set a domain later for pretty URLs like `photos.home.internal` (requires wildcard DNS on your router).
+- **domain**: leave empty to start. Services are reachable via `<host>:<port>`. Set a domain later for pretty URLs like `photos.home.example.family`, served by the infra stacklet's proxy. It needs two DNS records pointing at the Mac's LAN IP, `*.<domain>` and `<domain>` itself, because the wildcard covers neither the bare name's DNS nor its certificate. Add both as DNS rewrites in AdGuard, and at your DNS provider for devices that bypass AdGuard. Domain mode makes the Mac the DNS server of your whole network and takes some networking knowledge to set up; read [stacklets/infra/README.md](../stacklets/infra/README.md) first.
+- **dns_provider**: with a domain, `"hetzner"` or `"cloudflare"` serves everything over HTTPS, with certificates Caddy obtains through the provider's API. Empty serves plain HTTP. The API token is stored with `./stack infra dns-token`, never in `stack.toml`.
 - **host**: the hostname used in port-mode URLs and hints. Empty = auto-detect the LAN IP (right for households: phones need it). Set to `localhost` for a single-machine setup, or to a fixed name like `mac-mini.local` if the LAN IP keeps shifting.
 - **data_dir**: where all persistent data lives. Back this up. Outside the git repo.
 - **language**: detected from your timezone. Controls which document categories get seeded (German or English). Change it and run `./stack restart docs` to seed missing tags.

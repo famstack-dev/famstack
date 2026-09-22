@@ -1,0 +1,22 @@
+# stacklets/ai/caddy.snippet
+#
+# The AI endpoints by name, for clients on the LAN: speech to text, text
+# to speech, and the OpenAI-compatible LLM API.
+#
+# whisper-server and oMLX run natively on the Mac. In domain mode they
+# listen on its loopback only, like every service behind the proxy, and
+# the proxy reaches them through Docker's host gateway
+# (host.docker.internal), the one route in from the LAN. Piper's speech
+# server is a container on the stack network.
+
+stt.{$STACK_DOMAIN} {
+    reverse_proxy host.docker.internal:42062
+}
+
+tts.{$STACK_DOMAIN} {
+    reverse_proxy stack-ai-speech:8000
+}
+
+openai.{$STACK_DOMAIN} {
+    reverse_proxy host.docker.internal:42060
+}

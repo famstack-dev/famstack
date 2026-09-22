@@ -2,22 +2,93 @@
 
 DNS server with ad-blocking, and a reverse proxy that gives every stacklet a pretty URL. This is what makes `photos.home.internal` resolve to your Mac and serve the right service.
 
+**Beta.** It works, but how HTTPS and your own sites are configured can still change between releases. Back up `~/famstack-data/infra/` before you upgrade.
+
+**Sensitive infrastructure.** This stacklet is DNS and the entry point for your whole home network. Once your router hands out the Mac as its DNS server, every device depends on it: when the Mac is off, asleep or rebooting, or AdGuard stops, nothing on the network resolves names, not even sites on the internet. Setting it up takes some networking knowledge: your router's DHCP and DNS settings, DNS records, and a domain at a DNS provider if you want HTTPS. Note your router's current DNS setting before you change it, so you can go back. If this is new territory, stay in port mode, which needs none of it.
+
 ## What it runs
 
 - `stack-infra-adguard`: DNS server with ad-blocking. Resolves `*.{domain}` to the server IP and filters ads, trackers, and malicious domains for every device on the LAN.
-- `stack-infra-caddy`: reverse proxy. Routes incoming requests by hostname to the right container, terminates TLS, and (optionally) provisions Let's Encrypt certificates if you use a real domain.
+- `stack-infra-caddy`: reverse proxy. Routes incoming requests by hostname to the right container and, with a DNS provider configured, serves them over HTTPS with certificates from Let's Encrypt.
 
 ## Enable
+
+Set a domain in `stack.toml`, plus a DNS provider if you want HTTPS:
+
+```toml
+[core]
+domain       = "home.example.family"
+dns_provider = "hetzner"     # or "cloudflare"; empty serves plain HTTP
+```
+
+Then:
 
 ```bash
 stack up infra
 ```
 
-`stack up` creates the data directories, renders the Caddyfile from your `stack.toml`, starts both containers, and prints next-step hints. AdGuard runs its first-run wizard on port 3000.
+`stack up infra` builds the Caddy image with the DNS provider plugins (a minute or two the first time). If HTTPS is on and no token is stored yet, it asks for the provider's API token (see [TLS](#tls)). Then it writes the Caddyfile and starts both containers.
+
+From then on the Caddyfile follows the stacklets. Every `stack up`, `stack down` and `stack destroy` rewrites `~/famstack-data/infra/Caddyfile` from the `caddy.snippet` of each stacklet that is up, and reloads Caddy. Each stacklet is served at `<id>.<domain>` (`photos.home.example.family`), and core's home and `/go` links at the bare domain. A name no running stacklet claims answers 404.
+
+### DNS records
+
+Every device has to resolve the bare domain and every name under it to the Mac. That takes two records, because a wildcard does not cover the bare name:
+
+| Name | Type | Value |
+|---|---|---|
+| `*.home.example.family` | A | `192.0.2.10` (the Mac's LAN IP) |
+| `home.example.family` | A | `192.0.2.10` |
+
+Add both as DNS rewrites in AdGuard (Filters > DNS rewrites). That is what the LAN asks once the router points at AdGuard. Add them at the DNS provider too, for devices that bypass AdGuard, such as a browser with its own secure DNS or iCloud Private Relay. Some routers drop public DNS answers that point at a private address (DNS rebind protection); the AdGuard rewrites are not affected.
+
+Give the Mac a fixed LAN IP with a DHCP reservation on the router, or every record goes stale when it changes.
+
+## TLS
+
+With `dns_provider` set, Caddy serves every service over HTTPS with two certificates from Let's Encrypt: a wildcard for `*.<domain>`, which every stacklet's subdomain uses, and one for the bare domain. It proves you own the domain by writing a TXT record through the provider's API (a DNS-01 challenge), so nothing on your LAN has to be reachable from the internet. The domain has to be registered, with its DNS zone hosted at that provider.
+
+### Provider and token
+
+| `dns_provider` | Token |
+|---|---|
+| `hetzner` | A Hetzner Cloud API token with Read & Write access, created in the Hetzner Console project that holds the zone (Security > API tokens). A token from the old DNS Console at dns.hetzner.com does not work. |
+| `cloudflare` | A Cloudflare API token with `Zone.Zone:Read` and `Zone.DNS:Edit`, limited to this zone. |
+
+### Where the token lives
+
+In `.stack/secrets.toml` as `infra__DNS_API_TOKEN`, never in `stack.toml`. It reaches the Caddy container as the environment variable `DNS_API_TOKEN` and does not appear in the Caddyfile. Nothing prints it; `stack infra dns-token` reports its length only.
+
+The first `stack up infra` asks for it in a terminal. Without a token, or with a provider the image has no plugin for, `stack up infra` stops and says what to do.
+
+### Rotating it
+
+Create the new token at the provider, then:
+
+```bash
+stack infra dns-token     # paste the new token; input is hidden
+stack up infra            # restarts Caddy with it
+```
+
+Revoke the old token at the provider afterwards. Certificates Caddy already holds stay valid; the token is only used when a certificate is issued or renewed. Switching provider works the same way: change `dns_provider`, store the new provider's token, `stack up infra`.
+
+Certificates and the ACME account live in `~/famstack-data/infra/caddy/`. Keep that directory. Without it Caddy requests every certificate again, and Let's Encrypt limits how many it issues per domain per week.
+
+## Your own sites
+
+Services that are not stacklets (a dashboard, a Docker UI) go in `~/famstack-data/infra/Caddyfile.local`. Only one proxy can own ports 80 and 443, so they cannot keep a Caddyfile of their own. The file is yours: the stack appends it after the stacklets' sites and never writes it.
+
+```
+status.{$STACK_DOMAIN} {
+    reverse_proxy homepage:3000
+}
+```
+
+Backends are container names on the `stack` network, or `host.docker.internal:<port>` for something running on the Mac itself. Run `stack up infra` after an edit. A name that a running stacklet also serves makes Caddy refuse the new config and keep the old one, and the command prints a warning.
 
 ## First run
 
-Open `http://<server-ip>:3000` and walk through the AdGuard wizard.
+AdGuard's setup wizard listens on the Mac only. Open `http://localhost:42081` there, or from another computer tunnel to it first with `ssh -L 42081:localhost:42081 you@<mac>` and open the same address. Walk through the wizard.
 
 1. **Admin user**: pick any username and password. You will only use this when changing AdGuard settings, not for daily browsing.
 2. **Network interfaces**: accept the defaults (`0.0.0.0` for both web and DNS, port 53).
@@ -126,9 +197,11 @@ docker logs -f stack-infra-adguard | grep -iE "error|timeout"
 
 ## Access
 
-- Setup wizard (first run only): `http://<server-ip>:3000`
-- AdGuard admin (after setup): `http://<server-ip>:42080` or `http://dns.{domain}`
-- Every other stacklet: `http://<stacklet>.{domain}`
+- Setup wizard (first run only): `http://localhost:42081` on the Mac
+- AdGuard admin (after setup): `https://dns.<domain>`, or `http://localhost:42080` on the Mac
+- Every other stacklet: `https://<stacklet>.<domain>`
+
+Without a DNS provider, every address is `http://` instead.
 
 ## Point your router
 
@@ -142,8 +215,9 @@ Stored under `${ADGUARD_DATA_DIR}` and `${CADDY_DATA_DIR}` (defaults to `~/famst
 
 - `adguard/work/`: query logs and stats. Volatile, fine to wipe.
 - `adguard/conf/AdGuardHome.yaml`: DNS configuration, filter lists, custom rules. Back this up.
-- `Caddyfile`: reverse-proxy routes. Regenerated from `stack.toml` on every `stack up`.
-- `caddy/`: TLS certificates and ACME state. Back this up if you use a real domain.
+- `Caddyfile`: reverse-proxy routes, rewritten from the stacklets' snippets whenever a stacklet starts or stops. Do not edit it.
+- `Caddyfile.local`: your own sites, if you have any. Back this up.
+- `caddy/`: TLS certificates and ACME state. Back this up if you use HTTPS.
 
 ## Updating
 
@@ -159,4 +233,4 @@ stack restart infra
 stack destroy infra
 ```
 
-This stops both containers, removes state, and deletes everything under `~/famstack-data/infra/`. Your router's DNS server setting does not change automatically; update it back to whatever it was before, or to your ISP's DNS, to keep the LAN online.
+This stops both containers, removes state, and deletes everything under `~/famstack-data/infra/`, including certificates and `Caddyfile.local`. The stored DNS API token is removed too; revoke it at the provider. Your router's DNS server setting does not change automatically; update it back to whatever it was before, or to your ISP's DNS, to keep the LAN online.

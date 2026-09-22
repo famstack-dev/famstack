@@ -7,11 +7,15 @@ services:
   stack-test:
     container_name: stack-test
     image: alpine:latest
-    command: >
-      sh -c "while true; do
-        echo -e 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok' |
-        nc -l -p 8080;
-      done"
+    # A list, not a string: compose splits a string command itself and
+    # drops the backslashes, which left the response without line breaks.
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok' | nc -l -p 8080
+        done
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
     networks:

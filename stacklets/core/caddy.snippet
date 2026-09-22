@@ -1,6 +1,6 @@
 # stacklets/core/caddy.snippet
 #
-# core owns its home — the bare {$FAMSTACK_DOMAIN} — and serves the
+# core owns its home — the bare {$STACK_DOMAIN} — and serves the
 # persistent-link resolver under /go/. A dashboard / welcome page can take
 # over `/` later; for now home just answers a friendly placeholder.
 #
@@ -12,7 +12,7 @@
 # The /go prefix mirrors core's LINK_PREFIX env (default "go"); if you move
 # the namespace, change both.
 
-{$FAMSTACK_DOMAIN} {
+{$STACK_DOMAIN} {
     handle /go/* {
         reverse_proxy stack-core-tools:8000
     }

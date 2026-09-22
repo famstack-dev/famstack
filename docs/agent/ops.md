@@ -43,6 +43,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack ai connect <url>` | yes | no | points `[ai]` at an AI server elsewhere, or `local`; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
+| `./stack infra dns-token` | yes | no | stores or replaces the DNS provider API token (HTTPS in domain mode); `./stack up infra` applies it |
 
 **Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success.
 
@@ -72,7 +73,9 @@ Refuse without explicit, scoped human approval:
 | Editing `.stack/secrets.toml` | Breaks every stacklet that depends on the changed secret. |
 | Moving `data_dir` while stacklets are running | Bind mounts break. `stack down all` first, then move, then `stack up`. |
 | Changing `stack.toml [core] language` | Re-seeds Paperless taxonomy. Orphan tags require manual cleanup. |
-| Switching `[core] domain` empty ↔ non-empty | Switches port mode ↔ domain mode. Requires wildcard DNS + Caddy understanding. |
+| Switching `[core] domain` empty ↔ non-empty | Switches port mode ↔ domain mode. Needs `*.<domain>` and `<domain>` DNS records to the Mac, and the infra stacklet up. |
+| Pointing the router's DNS at the Mac (infra) | Every device on the LAN then resolves through AdGuard; the Mac or AdGuard going down takes name resolution for the whole house with it. The admin changes the router, never an agent; note the previous DNS setting first. |
+| `./stack down infra` / `./stack destroy infra` | With the router pointing at the Mac, the house loses DNS until infra is back or the router is switched back. |
 
 ## Ports (42xxx range)
 
@@ -88,6 +91,9 @@ Refuse without explicit, scoped human approval:
 | 42060 | ai | oMLX |
 | 42062 | ai | Whisper |
 | 42070 | memory | Family wiki (Quartz) |
+| 42080 | infra | AdGuard admin (domain mode, Mac only) |
+| 42081 | infra | AdGuard setup wizard, first run (domain mode, Mac only) |
+| 53, 80, 443 | infra | DNS and the Caddy proxy (domain mode, whole LAN) |
 
 Port collisions: do not silently rebind. Surface them. The user's fix is "stop the offender" or switch to domain mode.
 

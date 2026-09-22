@@ -13,10 +13,15 @@ description = "DNS + reverse proxy for domain mode"
 version     = "0.2.1"
 category    = "infrastructure"
 always_on   = true
+# Beta until HTTPS has run on a real instance: how TLS and the admin's own
+# sites are configured can still change between releases.
+stage       = "beta"
+# Caddy is built locally with the DNS provider plugins (Dockerfile).
+build       = true
 
 [ports]
 dns         = 53
-dns_setup   = 3000
+dns_setup   = 42081
 dns_admin   = 42080
 http        = 80
 https       = 443
@@ -32,3 +37,6 @@ STACK_DOMAIN        = "{domain}"
 ADGUARD_DATA_DIR    = "{data_dir}/infra/adguard"
 CADDYFILE_PATH      = "{data_dir}/infra/Caddyfile"
 CADDY_DATA_DIR      = "{data_dir}/infra/caddy"
+# API token of [core] dns_provider, stored by `stack infra dns-token`.
+# Empty while the proxy serves plain HTTP.
+DNS_API_TOKEN       = "{infra__DNS_API_TOKEN}"
