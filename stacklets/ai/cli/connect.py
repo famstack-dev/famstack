@@ -76,8 +76,8 @@ def _choose_model(asked: str, current: str, available: list[str]) -> dict:
         return {"model": found}
     if len(available) == 1:
         return {"model": available[0]}
-    return {"error": "The server lists several models. "
-                     "Choose one with --model <id>.",
+    return {"error": "The server lists several models. Choose one with "
+                     "--model <id>:\n" + "\n".join(f"    {m}" for m in available),
             "models": available}
 
 

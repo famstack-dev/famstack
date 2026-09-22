@@ -161,6 +161,8 @@ class TestChoosingAModel:
 
         assert "--model" in result["error"]
         assert result["models"] == ["llama3.1:8b", "qwen3:14b"]
+        # In a terminal only the error line is printed, so it names them.
+        assert "llama3.1:8b" in result["error"] and "qwen3:14b" in result["error"]
         assert _ai(instance)["openai_url"] == ""
 
     def test_a_chosen_model_the_server_has(self, instance, many_models):
