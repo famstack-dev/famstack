@@ -12,6 +12,14 @@ cd "$(dirname "$0")/.."
 
 PYTEST=(uv run --extra test pytest)
 
+# Kept out of the unit lane because they drive the host, not Python:
+# Docker for the one, `hdiutil` mounting an APFS image per test for the
+# other, which alone was a third of the unit lane's time.
+SLOW_FILES=(
+  tests/framework/test_config_to_container.py
+  tests/stacklets/test_backup_e2e.py
+)
+
 lanes() {
   cat <<'EOF'
 
@@ -22,8 +30,8 @@ lanes() {
 
   LANE                   TIME    NEEDS          EXCLUSIVE  RUN IT WHEN
   script/test lint       <1s     nothing        no         the whole tree, when you want it
-  script/test unit       ~75s    nothing        no         before a push, or when a piece of work is done
-  script/test lifecycle  ~6m     Docker         yes        lifecycle, env, compose, ports, health
+  script/test unit       ~50s    nothing        no         before a push, or when a piece of work is done
+  script/test lifecycle  ~6m     Docker, APFS   yes        lifecycle, env, compose, ports, health, backup
   script/test demo       ~4m     demo instance  yes        it must work against the running bots
   script/test smoke      ?       rig or demo    yes        quick cross-service check
   script/test e2e        ?       rig or demo    yes        end of a branch, before review
@@ -64,13 +72,15 @@ case "$lane" in
   unit)
     script/setup --hooks-only
     "${PYTEST[@]}" tests/framework tests/stacklets -v \
-      --ignore=tests/framework/test_config_to_container.py "$@"
+      "${SLOW_FILES[@]/#/--ignore=}" "$@"
     ;;
 
-  # Docker lifecycle: up, down, destroy, env rendering, container environment.
-  # Owns its own throwaway instance, but on fixed names and ports.
+  # What the host itself provides: the Docker lifecycle (up, down, destroy,
+  # env rendering, container environment) on its own throwaway instance,
+  # with fixed names and ports, and the backup engine against real APFS
+  # disk images, which it creates and mounts one per test.
   lifecycle)
-    "${PYTEST[@]}" tests/framework/test_config_to_container.py -v "$@"
+    "${PYTEST[@]}" "${SLOW_FILES[@]}" -v "$@"
     ;;
 
   # Against the demo instance already running in this checkout. Tests create
