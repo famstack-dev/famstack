@@ -390,7 +390,7 @@ subject is not: it appears in plain-text contexts too, including
 `tools/commit-lint` enforces the header, and is the same check in every
 place that matters: the `commit-msg` hook rejects it before the commit
 exists, CI rejects the PR title and every commit in the PR, and the
-release gate runs it over the range being tagged. `tools/init-repo`
+release gate runs it over the range being tagged. `script/setup`
 turns the hooks on, as do `make test-unit` and `make typecheck`; git
 cannot do it on clone, by design.
 

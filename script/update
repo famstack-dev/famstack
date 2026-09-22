@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# script/update — bring this clone up to date after a pull or a branch switch.
+#
+# Re-runs setup, which syncs the virtualenv with the lockfile and is
+# otherwise a no-op, then restarts the stacklets whose running code the
+# checkout has moved past. A clone with no instance stops after setup.
+# Moving to a release is `./stack update`, not this.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+script/setup
+
+if [[ -f stack.toml ]]; then
+  ./stack restart
+fi

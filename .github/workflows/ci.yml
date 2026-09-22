@@ -1,8 +1,7 @@
 # Tier 1 of the release gate (docs/agent/dev.md, "Releases"): the checks
-# that need no Docker and no macOS, including that every commit subject
-# parses as a changelog entry. Runs on every push/PR; on version
-# tags it additionally enforces that the tag, the CLI VERSION, and
-# pyproject.toml all agree. Tiers 2 (integration suite) and 3 (fresh
+# that need no Docker and no macOS, run by script/cibuild. Runs on every
+# push/PR; on version tags it additionally enforces that the tag, the CLI
+# VERSION, and pyproject.toml all agree. Tiers 2 (integration suite) and 3 (fresh
 # install, ai stacklet) stay manual — see docs/cleanup-backlog.md.
 
 name: CI
@@ -21,64 +20,12 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - name: Lint (ruff)
-        run: uvx ruff check .
-
-      - name: Lockfile in sync with pyproject.toml
-        run: uv lock --check
-
-      - name: Version consistency
+      # Everything the job checks lives in script/cibuild, so it runs
+      # the same on a laptop. The PR values are empty on a push.
+      - name: script/cibuild
         env:
           GITHUB_REF: ${{ github.ref }}
-        run: |
-          uv run python - <<'EOF'
-          import os, re, sys, tomllib
-
-          def normalize(v: str) -> str:
-              """PEP-440-ish: v0.3.0-beta.1 / 0.3.0b1 -> 0.3.0b1"""
-              v = v.strip().lstrip("v").lower()
-              v = re.sub(r"[-.]?beta[-.]?", "b", v)
-              v = re.sub(r"[-.]?alpha[-.]?", "a", v)
-              v = re.sub(r"[-.]?rc[-.]?", "rc", v)
-              return v
-
-          cli = re.search(
-              r'^VERSION = "([^"]+)"',
-              open("lib/stack/cli.py").read(), re.M,
-          ).group(1)
-          pyproject = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
-
-          versions = {"lib/stack/cli.py": cli, "pyproject.toml": pyproject}
-          ref = os.environ.get("GITHUB_REF", "")
-          if ref.startswith("refs/tags/v"):
-              versions["tag"] = ref.removeprefix("refs/tags/")
-
-          normalized = {src: normalize(v) for src, v in versions.items()}
-          if len(set(normalized.values())) != 1:
-              print("Version mismatch:")
-              for src, v in versions.items():
-                  print(f"  {src}: {v} (normalized: {normalized[src]})")
-              sys.exit(1)
-          print("Versions agree:", ", ".join(f"{s}={v}" for s, v in versions.items()))
-          EOF
-
-      - name: Commit convention
-        # The changelog is generated from these subjects, so one that
-        # does not parse is an entry missing from the release notes.
-        # Squash merging makes the PR title the subject that lands, so
-        # it is checked too.
-        if: github.event_name == 'pull_request'
-        env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git fetch --no-tags --depth=50 origin "$BASE" "$HEAD" 2>/dev/null || true
-          python3 tools/commit-lint --title "$PR_TITLE"
-          python3 tools/commit-lint --range "$BASE..$HEAD"
-
-      - name: Framework tests
-        run: uv run --extra test pytest tests/framework/ --ignore=tests/framework/test_config_to_container.py -q
-
-      - name: Stacklet tests
-        run: uv run --extra test pytest tests/stacklets/ -q
+        run: script/cibuild

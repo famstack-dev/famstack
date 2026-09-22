@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# script/server — start every installed stacklet of the instance here.
+#
+# First-time install is `./stack`; this only brings back what exists.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+exec ./stack up all
