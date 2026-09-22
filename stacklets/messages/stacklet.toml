@@ -29,7 +29,7 @@ login_field = "username"
 
 hints = [
     "Open {url} in your browser",
-    "On phones: install Element, use http://{ip}:42031 as the server",
+    "On phones: install Element, use {messages_synapse_url} as the server",
 ]
 
 # Secondary ports — the main 'port' is Element (web client), but Synapse
