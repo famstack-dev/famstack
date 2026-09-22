@@ -251,7 +251,7 @@ Testing rules:
 - **Literate code.** Narrative docstrings, section dividers (`# ── Section ──`), prose flow over terse chains. The code IS the specification AND the implementation - keep both legible.
 - **Python 3.11 floor.** `tomllib` is stdlib; no compat shims. Use modern Python (`match`, structural pattern matching, walrus when it earns its keep).
 - **Comments explain WHY, not WHAT.** If a comment paraphrases the code, delete it. Keep comments that document constraints, invariants, or surprises.
-- **No em dashes in user-facing text** (commit messages, rendered docstrings, blog drafts). Hyphens or sentence breaks instead.
+- **No em dashes in user-facing text** (commit messages, rendered docstrings, blog drafts). Use a comma, colon, period or parentheses instead.
 - **No `--no-verify` or `--no-gpg-sign`** on commits unless the user explicitly asks. If a hook fails, fix the underlying issue.
 - **Unchecked return values are a smell.** On the third site in a session, propose an audit instead of patching a third instance.
 - **Re-read the full error line before calling a failure a duplicate.** Check sender, target, specific IDs. Two errors that look similar at a glance often differ in the load-bearing field.
