@@ -94,6 +94,111 @@ ids = [s["id"] for s in json.load(sys.stdin)["stacklets"]
 print(",".join(ids))' "${PRESERVED_STACKLETS[@]}"
 }
 
+# Only the Simpsons demo is ever swapped out for a test run. Its Matrix
+# server name is fixed at install and is in every user id, so a family's
+# instance cannot carry it by accident.
+DEMO_SERVER_NAME="simpson"
+
+require_demo_instance() {
+  local name
+  name=$("$PYTHON" -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    print(tomllib.load(f).get("messages", {}).get("server_name", ""))' "$REPO_ROOT/stack.toml")
+  if [[ "$name" != "$DEMO_SERVER_NAME" ]]; then
+    echo "stacktests: refusing to stash the instance at the repo root." >&2
+    echo "  stack.toml names the Matrix server '${name:-unset}', not '$DEMO_SERVER_NAME'." >&2
+    echo "  Tests swap out the Simpsons demo only, never a family's instance." >&2
+    exit 1
+  fi
+}
+
+# Set the dev instance at the repo root aside so the rig can use the root.
+#
+# The rig and a dev instance share only the root config (stack.toml,
+# users.toml, .stack/) and the container names. Their data dirs are
+# separate (~/famstack-test-data vs the instance's own), so moving the
+# three config entries and stopping the containers is the whole swap: no
+# data is copied. The rig's config comes back from its own slot, so its
+# secrets still match the test data it left behind.
+stash_instance() {
+  if [[ -f "$REPO_ROOT/.stack/.test-instance" ]]; then
+    echo "stacktests: the repo root is already the test instance." >&2; exit 1
+  fi
+  if [[ ! -f "$REPO_ROOT/stack.toml" ]]; then
+    echo "stacktests: no instance at the repo root to stash." >&2; exit 1
+  fi
+  require_demo_instance
+  if [[ -e "$STASH_DIR/instance" ]]; then
+    echo "stacktests: $STASH_DIR/instance already holds a stash." >&2
+    echo "  Run 'stacktests unstash' first." >&2; exit 1
+  fi
+
+  local running
+  running=$(running_stacklets)
+  if [[ -n "$running" ]]; then
+    echo "==> stack down $running"
+    stack_cli down "$running"
+  fi
+
+  mkdir -p "$STASH_DIR/instance"
+  echo "$running" > "$STASH_DIR/instance/running"
+  mv "$REPO_ROOT/stack.toml" "$REPO_ROOT/users.toml" "$REPO_ROOT/.stack" "$STASH_DIR/instance/"
+  echo "==> demo instance stashed in $STASH_DIR/instance"
+
+  if [[ -d "$STASH_DIR/rig" ]]; then
+    mv "$STASH_DIR/rig/stack.toml" "$STASH_DIR/rig/users.toml" "$STASH_DIR/rig/.stack" "$REPO_ROOT/"
+    rmdir "$STASH_DIR/rig"
+    echo "==> test rig config restored from $STASH_DIR/rig"
+  fi
+}
+
+# Reverse of stash: park the rig's config in its slot, put the demo back
+# and start what was running when it was stashed.
+unstash_instance() {
+  if [[ ! -d "$STASH_DIR/instance" ]]; then
+    echo "stacktests: nothing stashed in $STASH_DIR/instance." >&2; exit 1
+  fi
+
+  local running
+  if [[ -f "$REPO_ROOT/.stack/.test-instance" ]]; then
+    running=$(running_stacklets)
+    if [[ -n "$running" ]]; then
+      echo "==> stack down $running (test rig)"
+      stack_cli down "$running"
+    fi
+    mkdir -p "$STASH_DIR/rig"
+    mv "$REPO_ROOT/stack.toml" "$REPO_ROOT/users.toml" "$REPO_ROOT/.stack" "$STASH_DIR/rig/"
+    echo "==> test rig config kept in $STASH_DIR/rig"
+  elif [[ -e "$REPO_ROOT/stack.toml" || -e "$REPO_ROOT/.stack" ]]; then
+    echo "stacktests: the repo root holds an instance that is not the rig." >&2
+    echo "  Refusing to overwrite it with the stash." >&2; exit 1
+  fi
+
+  running=$(cat "$STASH_DIR/instance/running")
+  mv "$STASH_DIR/instance/stack.toml" "$STASH_DIR/instance/users.toml" "$STASH_DIR/instance/.stack" "$REPO_ROOT/"
+  rm "$STASH_DIR/instance/running"
+  rmdir "$STASH_DIR/instance"
+  echo "==> demo instance restored"
+  if [[ -n "$running" ]]; then
+    echo "==> stack up $running"
+    stack_cli up "$running"
+  fi
+}
+
+# e2e and smoke need the rig at the repo root. When the demo is there
+# instead, swap it out for the run and back afterwards, whatever the
+# run's outcome. pytest then runs as a child rather than through exec,
+# since exec would replace this shell and the trap with it.
+use_rig() {
+  if [[ -f "$REPO_ROOT/.stack/.test-instance" || ! -f "$REPO_ROOT/stack.toml" ]]; then
+    return
+  fi
+  stash_instance
+  trap 'rc=$?; trap - EXIT; unstash_instance; exit $rc' EXIT
+  trap 'exit 130' INT TERM
+}
+
 # Bootstrap the repo root as a test instance and seed global secrets.
 # Fails loudly if the repo root already holds a non-test stack.toml —
 # see _seed_secrets.py's TestInstanceConflict message for the cleanup
@@ -155,74 +260,11 @@ case "${1:-}" in
     ;;
 
   stash)
-    # Set the dev instance at the repo root aside so e2e can use the root.
-    #
-    # The rig and a dev instance share only the root config (stack.toml,
-    # users.toml, .stack/) and the container names. Their data dirs are
-    # separate (~/famstack-test-data vs the instance's own), so moving
-    # the three config entries and stopping the containers is the whole
-    # swap: no data is copied. The rig's config comes back from its own
-    # slot, so its secrets still match the test data it left behind.
-    if [[ -f "$REPO_ROOT/.stack/.test-instance" ]]; then
-      echo "stacktests: the repo root is already the test instance." >&2; exit 1
-    fi
-    if [[ ! -f "$REPO_ROOT/stack.toml" ]]; then
-      echo "stacktests: no instance at the repo root to stash." >&2; exit 1
-    fi
-    if [[ -e "$STASH_DIR/instance" ]]; then
-      echo "stacktests: $STASH_DIR/instance already holds a stash." >&2
-      echo "  Run 'stacktests unstash' first." >&2; exit 1
-    fi
-
-    running=$(running_stacklets)
-    if [[ -n "$running" ]]; then
-      echo "==> stack down $running"
-      stack_cli down "$running"
-    fi
-
-    mkdir -p "$STASH_DIR/instance"
-    echo "$running" > "$STASH_DIR/instance/running"
-    mv "$REPO_ROOT/stack.toml" "$REPO_ROOT/users.toml" "$REPO_ROOT/.stack" "$STASH_DIR/instance/"
-    echo "==> dev instance stashed in $STASH_DIR/instance"
-
-    if [[ -d "$STASH_DIR/rig" ]]; then
-      mv "$STASH_DIR/rig/stack.toml" "$STASH_DIR/rig/users.toml" "$STASH_DIR/rig/.stack" "$REPO_ROOT/"
-      rmdir "$STASH_DIR/rig"
-      echo "==> test rig config restored from $STASH_DIR/rig"
-    fi
-    echo "✓ Repo root is free for the rig. 'stacktests unstash' brings the instance back."
+    stash_instance
     ;;
 
   unstash)
-    # Reverse of stash: park the rig's config in its slot, put the dev
-    # instance back and start what was running when it was stashed.
-    if [[ ! -d "$STASH_DIR/instance" ]]; then
-      echo "stacktests: nothing stashed in $STASH_DIR/instance." >&2; exit 1
-    fi
-
-    if [[ -f "$REPO_ROOT/.stack/.test-instance" ]]; then
-      running=$(running_stacklets)
-      if [[ -n "$running" ]]; then
-        echo "==> stack down $running (test rig)"
-        stack_cli down "$running"
-      fi
-      mkdir -p "$STASH_DIR/rig"
-      mv "$REPO_ROOT/stack.toml" "$REPO_ROOT/users.toml" "$REPO_ROOT/.stack" "$STASH_DIR/rig/"
-      echo "==> test rig config kept in $STASH_DIR/rig"
-    elif [[ -e "$REPO_ROOT/stack.toml" || -e "$REPO_ROOT/.stack" ]]; then
-      echo "stacktests: the repo root holds an instance that is not the rig." >&2
-      echo "  Refusing to overwrite it with the stash." >&2; exit 1
-    fi
-
-    running=$(cat "$STASH_DIR/instance/running")
-    mv "$STASH_DIR/instance/stack.toml" "$STASH_DIR/instance/users.toml" "$STASH_DIR/instance/.stack" "$REPO_ROOT/"
-    rm "$STASH_DIR/instance/running"
-    rmdir "$STASH_DIR/instance"
-    echo "==> dev instance restored"
-    if [[ -n "$running" ]]; then
-      echo "==> stack up $running"
-      stack_cli up "$running"
-    fi
+    unstash_instance
     ;;
 
   pytest)
@@ -244,22 +286,24 @@ case "${1:-}" in
     # Seeds secrets + brings up required stacklets first. Both steps
     # are idempotent, so repeat runs pay near-zero cost.
     shift || true
+    use_rig
     seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       stack_cli up "$sid" > /dev/null
     done
-    exec uv run --extra test pytest tests/integration/ -k "_e2e" -m "not demo_rig" --durations=20 "$@"
+    uv run --extra test pytest tests/integration/ -k "_e2e" -m "not demo_rig" --durations=20 "$@"
     ;;
 
   smoke)
     # Run the smoke subset of end-to-end tests. Like e2e, this seeds
     # secrets and ensures required stacklets are up before pytest starts.
     shift || true
+    use_rig
     seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       stack_cli up "$sid" > /dev/null
     done
-    exec uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
+    uv run --extra test pytest tests/integration/ -k "_e2e" -m smoke "$@"
     ;;
 
   demo-rig|demo)
@@ -450,9 +494,12 @@ Autonomy — what an agent may run unattended:
                check nothing else is mid-run before starting.
                up, down, e2e, smoke, demo-rig, eval, stash, unstash
 
-               e2e needs the root to be the test instance. On a dev
-               instance, `stash` first and `unstash` after: the swap
-               moves config only and leaves both data dirs alone.
+               e2e and smoke need the root to be the test instance. On
+               the Simpsons demo they stash it for the run and unstash
+               it afterwards, pass or fail; `stash`/`unstash` do the same
+               by hand, to keep the rig up for a look after a failure.
+               Any other instance is refused. The swap moves config only
+               and leaves both data dirs alone.
 
   destructive  Wipes state that re-running cannot recover.
                reset, cleanup, down ai
