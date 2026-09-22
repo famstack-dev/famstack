@@ -370,6 +370,29 @@ class TestHandlersTakeManyIds:
         assert cli.stack.is_installed("a")
 
 
+class TestUpFailureNamesTheCause:
+    """When compose cannot start a container, the reason is in its output
+    (a port another process holds, a missing mount), and the admin
+    cannot act on "Failed to start services" alone."""
+
+    def test_composes_error_is_shown(self, tmp_path, monkeypatch, capsys):
+        from argparse import Namespace
+        from stack.cli import handle_up
+        cli, _ = _make_cli(tmp_path, {"myapp": {}})
+        (tmp_path / "stacklets" / "myapp" / "docker-compose.yml").write_text(
+            "name: stack-myapp\nservices: {}\n")
+        monkeypatch.setattr("stack.docker.compose_pull", lambda *a, **kw: None)
+        monkeypatch.setattr("stack.docker.compose_up", lambda *a, **kw: (1, (
+            " Container stack-myapp Starting\n"
+            "Error response from daemon: Bind for 0.0.0.0:42080 failed: "
+            "port is already allocated\n")))
+
+        with pytest.raises(SystemExit):
+            handle_up(cli.stack, Namespace(stacklet=["myapp"], no_voice=False))
+
+        assert "Bind for 0.0.0.0:42080 failed: port is already allocated" in capsys.readouterr().err
+
+
 class TestDestroyAfterAFailedFirstUp:
     """A first `stack up` can fail after compose has started containers,
     on a port conflict for instance. The stacklet is then not installed

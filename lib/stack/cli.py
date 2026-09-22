@@ -639,6 +639,13 @@ def print_error(result: dict) -> None:
     """Print an error with stack colors."""
     error = result.get("error", "unknown error")
     print(f"\n  {RED}✗{RESET}  {error}\n", file=sys.stderr)
+    # The tool's own output says why (compose names the port, the mount,
+    # the image). Its last lines carry the error; the rest is progress.
+    output = (result.get("output") or "").strip()
+    if output and output != str(error).strip():
+        for line in [ln for ln in output.splitlines() if ln.strip()][-5:]:
+            print(f"      {DIM}{line.strip()}{RESET}", file=sys.stderr)
+        print(file=sys.stderr)
     for p in result.get("problems", result.get("dependents", [])):
         print(f"      {p}", file=sys.stderr)
     if result.get("hint"):
