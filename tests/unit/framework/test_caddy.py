@@ -156,6 +156,16 @@ class TestPublicUrls:
         assert env["URL"] == "http://photos.home.example.family"
         assert env["HOME"] == "http://home.example.family"
 
+    def test_https_true_is_for_a_proxy_in_front_of_the_stack(self, tmp_path):
+        stck = _stack(tmp_path, 'domain = "home.example.family"\nhttps = true',
+                      {"photos": self.PHOTOS})
+        assert stck.env("photos")["URL"] == "https://photos.home.example.family"
+
+    def test_https_false_means_http(self, tmp_path):
+        stck = _stack(tmp_path, 'domain = "home.example.family"\nhttps = false',
+                      {"photos": self.PHOTOS})
+        assert stck.env("photos")["URL"] == "http://photos.home.example.family"
+
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────
 
