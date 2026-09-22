@@ -64,9 +64,12 @@ SCOPES = {
     "mail": "Mail Bot",
     "scribe": "Scribe Bot",
     "stacker": "Stacker Bot",
-    # Components that are neither: the stacklet that owns them.
+    # Components that are neither: the stacklet or bot that owns them.
     "curator": "Memory Stacklet",
     "wiki": "Memory Stacklet",
+    "diary": "Memory Stacklet",
+    "capture": "Archivist Bot",
+    "voice": "AI Stacklet",
     # The framework itself.
     "stack": "stack CLI",
     "cli": "stack CLI",
