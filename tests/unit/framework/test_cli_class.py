@@ -370,6 +370,48 @@ class TestHandlersTakeManyIds:
         assert cli.stack.is_installed("a")
 
 
+class TestDestroyAfterAFailedFirstUp:
+    """A first `stack up` can fail after compose has started containers,
+    on a port conflict for instance. The stacklet is then not installed
+    (no setup-done marker) but has containers, which keep their names and
+    ports until something removes them. `stack destroy` is that something."""
+
+    def _stacklet_with_compose(self, tmp_path):
+        cli, _ = _make_cli(tmp_path, {"myapp": {}})
+        (tmp_path / "stacklets" / "myapp" / "docker-compose.yml").write_text(
+            "name: stack-myapp\nservices: {}\n")
+        (tmp_path / "data" / "myapp").mkdir(parents=True)
+        return cli
+
+    def test_its_containers_are_removed(self, tmp_path, monkeypatch):
+        from argparse import Namespace
+        from stack.cli import handle_destroy
+        cli = self._stacklet_with_compose(tmp_path)
+        monkeypatch.setattr("stack.docker.project_states", lambda: {"myapp": "failing"})
+        removed = []
+        monkeypatch.setattr("stack.docker.compose_down",
+                            lambda f: (removed.append(Path(f).parent.name), (0, ""))[1])
+
+        handle_destroy(cli.stack, Namespace(stacklet=["myapp"], yes=True))
+
+        assert removed == ["myapp"]
+        assert not (tmp_path / "data" / "myapp").exists()
+
+    def test_without_containers_only_the_leftover_data_goes(self, tmp_path, monkeypatch):
+        from argparse import Namespace
+        from stack.cli import handle_destroy
+        cli = self._stacklet_with_compose(tmp_path)
+        monkeypatch.setattr("stack.docker.project_states", lambda: {})
+        removed = []
+        monkeypatch.setattr("stack.docker.compose_down",
+                            lambda f: (removed.append(f), (0, ""))[1])
+
+        handle_destroy(cli.stack, Namespace(stacklet=["myapp"], yes=True))
+
+        assert removed == []
+        assert not (tmp_path / "data" / "myapp").exists()
+
+
 class TestCLIDestroy:
     """CLI.destroy() runs Docker compose down then Stack.destroy()."""
 
