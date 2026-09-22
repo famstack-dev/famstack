@@ -3,7 +3,12 @@
 # Assembled into the Caddyfile by 'stack up'. Caddy runs in Docker on the
 # stack network, so backends are referenced by container name.
 # {$STACK_DOMAIN} is set as an env var when Caddy starts.
+#
+# flush_interval -1 passes the response through as it arrives instead of
+# buffering it, which Immich's video streaming needs.
 
 photos.{$STACK_DOMAIN} {
-    reverse_proxy immich_server:2283
+    reverse_proxy stack-photos-server:2283 {
+        flush_interval -1
+    }
 }

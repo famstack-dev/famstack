@@ -1,12 +1,22 @@
 # stacklets/messages/caddy.snippet
 #
-# Two routes: Synapse API and Element Web client.
-# Assembled into the Caddyfile by 'stack up'.
+# One host for the family's chat. A browser gets Element; Element and the
+# phone apps reach Synapse under /_matrix and /_synapse on the same host,
+# which is the address the stack hands out for both ({messages_url},
+# {messages_synapse_url}).
+#
+# Matrix apps look up the homeserver at /.well-known/matrix/client on the
+# host the user types in. The answer is built from the request, so it is
+# right with and without TLS. The JSON braces are escaped so Caddy does
+# not read them as placeholders; {scheme} and {host} are.
 
 messages.{$STACK_DOMAIN} {
-    reverse_proxy stack-messages-synapse:8008
-}
+    header /.well-known/matrix/* Content-Type application/json
+    header /.well-known/matrix/* Access-Control-Allow-Origin *
+    respond /.well-known/matrix/client `\{"m.homeserver":\{"base_url":"{scheme}://{host}"\}\}`
+    respond /.well-known/matrix/server `\{"m.server":"{host}:443"\}`
 
-element.{$STACK_DOMAIN} {
+    reverse_proxy /_matrix/* stack-messages-synapse:8008
+    reverse_proxy /_synapse/* stack-messages-synapse:8008
     reverse_proxy stack-messages-element:80
 }

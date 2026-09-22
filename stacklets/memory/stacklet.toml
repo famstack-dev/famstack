@@ -132,7 +132,7 @@ WIKI_NIGHTLY            = "{wiki_nightly}"
 # Public hostname the wiki renders into absolute URLs (sitemap,
 # social cards, etc). Empty domain (port mode) falls back to the
 # auto-detected LAN IP via `{ip}` so the site stays reachable.
-WIKI_HOST = "wiki.{domain}"
+WIKI_HOST = "memory.{domain}"
 WIKI_IP   = "{ip}"
 
 # What the wiki calls itself, in the sidebar and the browser tab: the
