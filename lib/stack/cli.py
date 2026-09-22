@@ -1326,11 +1326,7 @@ def handle_setup(stck, args):
 
 
 def handle_install(stck, args):
-    full = getattr(args, "full", False)
-    if full:
-        from .installer import wizard
-    else:
-        from .installer_v2 import wizard
+    from .installer import wizard
 
     # Save/restore terminal in case a crash leaves it in raw mode
     saved_term = None
@@ -1892,7 +1888,7 @@ def main():
     parser.add_argument("--version", action="store_true")
 
     sub = parser.add_subparsers(dest="command")
-    p = sub.add_parser("install"); p.add_argument("--full", action="store_true")
+    p = sub.add_parser("install")
     p = sub.add_parser("uninstall")
     p.add_argument("--yes", action="store_true")
     p.add_argument(
