@@ -113,6 +113,8 @@ LANGUAGE         = "{language}"
 MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
 MATRIX_SERVER_NAME = "{messages_server_name}"
 WHISPER_URL        = "{ai_whisper_url_docker}/audio/transcriptions"
+WHISPER_KEY        = "{ai_whisper_key}"
+WHISPER_MODEL      = "{ai_whisper_model}"
 
 TIMEZONE         = "{timezone}"
 MATRIX_ADMIN_USER     = "{admin_username}"

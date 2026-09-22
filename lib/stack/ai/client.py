@@ -449,9 +449,13 @@ class Transcriber:
     archivist vs scribe) without touching call sites later.
     """
 
-    def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None):
+    def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None,
+                 model: str = _DEFAULT_WHISPER_MODEL):
         self._client = client
         self.namespace = namespace
+        # The speech model to ask for. OpenAI's is `whisper-1`; other
+        # servers name theirs and refuse any other name.
+        self.model = model
 
     @classmethod
     def from_env(cls, *, namespace: str | None = None,
@@ -480,7 +484,8 @@ class Transcriber:
         # on *some* key — same trick as LLM.from_env.
         key = os.environ.get("WHISPER_KEY", "") or "not-needed"
         client = AsyncOpenAI(base_url=url, api_key=key, max_retries=max_retries)
-        return cls(client, namespace=namespace)
+        return cls(client, namespace=namespace,
+                   model=os.environ.get("WHISPER_MODEL", "") or _DEFAULT_WHISPER_MODEL)
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
                          model: str | None = None,
@@ -616,7 +621,7 @@ class Transcriber:
         """
         try:
             return await self._client.audio.transcriptions.create(
-                model=model or _DEFAULT_WHISPER_MODEL,
+                model=model or self.model,
                 file=(filename, audio),
                 **params,
                 **({"prompt": vocabulary} if vocabulary.strip() else {}),

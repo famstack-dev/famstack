@@ -60,6 +60,9 @@ def run(ctx):
         dim("STACK_AI_NO_VOICE=1 — skipping Whisper install")
     else:
         _install_whisper(ctx, data_dir, state_dir)
+        # A dedicated speech server. Without it voice messages go to the
+        # AI server, which may not transcribe.
+        ctx.cfg("whisper_url", "http://localhost:42062/v1")
 
     section("Setup complete")
 
