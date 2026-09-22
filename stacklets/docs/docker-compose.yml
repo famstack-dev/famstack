@@ -15,12 +15,12 @@ name: stack-docs
 services:
   stack-docs-paperless:
     container_name: stack-docs-paperless
-    # Pinned to an exact release, never `:latest`. A watchtower pull of
+    # Pinned to the 3.0 line, never `:latest`. A watchtower pull of
     # `:latest` once rolled 2.x straight to 3.0 and broke document filing.
     # Paperless migrates its database on the first 3.x start and 2.x will
     # not boot afterwards, so a major bump is one-way: do it deliberately,
-    # with a backup taken first. Bump within 3.0.x for patches.
-    image: ghcr.io/paperless-ngx/paperless-ngx:3.0.4
+    # with a backup taken first. Watchtower delivers the 3.0.x patches.
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.0
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"
@@ -91,7 +91,7 @@ services:
 
   stack-docs-redis:
     container_name: stack-docs-redis
-    image: docker.io/valkey/valkey:8-alpine
+    image: docker.io/valkey/valkey:8.1-alpine
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"
@@ -106,7 +106,7 @@ services:
 
   stack-docs-gotenberg:
     container_name: stack-docs-gotenberg
-    image: gotenberg/gotenberg:8
+    image: gotenberg/gotenberg:8.37
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"
@@ -120,7 +120,7 @@ services:
 
   stack-docs-tika:
     container_name: stack-docs-tika
-    image: apache/tika:latest
+    image: apache/tika:4.0.0
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"

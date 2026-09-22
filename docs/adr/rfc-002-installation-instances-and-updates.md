@@ -43,7 +43,9 @@ reported, so on a checkout between tags it named a hundred different trees.
 Every surface now derives it from `git describe --tags --dirty`, which
 answers by comparing the tree against the commit a tag points at.
 
-**P3. A release does not describe what runs.** Across the stacklets there are
+**P3. A release does not describe what runs.** *(narrowed: every image now
+names a minor line or an exact version, so installs of one tag differ by patch
+releases only)* Across the stacklets there are
 19 image references. Exactly one is pinned to an exact upstream version
 (`paperless-ngx:3.0.4`). Five are `:latest` (element-web, synapse, tika,
 adguard, watchtower), one is `:main` (open-webui), one carries no tag at all

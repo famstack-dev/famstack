@@ -12,7 +12,9 @@ name: stack-ai
 services:
   stack-ai-speech:
     container_name: stack-ai-speech
-    image: ghcr.io/matatonic/openedai-speech-min
+    # No version tag after 0.18.2 (2024). `latest` is a later build, so the
+    # digest is the only name for the image that runs.
+    image: ghcr.io/matatonic/openedai-speech-min@sha256:e82d719252fb1b861967f4f9abb8513f028ab9c1139451245688dbf34992b060
     # Gated by the "voice" compose profile. The stacklet defaults
     # COMPOSE_PROFILES=voice so this runs in normal use; `STACK_AI_NO_VOICE=1`
     # clears it so local-dev `stack up ai` skips the speech container.

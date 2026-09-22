@@ -145,7 +145,7 @@ name: stack-myapp                    # project name: stack-{id}
 services:
   stack-myapp:                       # container name: stack-{id}
     container_name: stack-myapp
-    image: someimage:latest
+    image: someimage:1.4             # minor line, else the exact version
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
@@ -284,7 +284,7 @@ name: stack-code
 services:
   stack-code:
     container_name: stack-code
-    image: codeberg.org/forgejo/forgejo:14
+    image: codeberg.org/forgejo/forgejo:14.0
     networks:
       - stack
     ports:

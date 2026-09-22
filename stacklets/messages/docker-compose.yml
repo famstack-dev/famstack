@@ -14,7 +14,7 @@ name: stack-messages
 services:
   stack-messages-synapse:
     container_name: stack-messages-synapse
-    image: matrixdotorg/synapse:latest
+    image: matrixdotorg/synapse:v1.161.0
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"
@@ -55,7 +55,7 @@ services:
 
   stack-messages-element:
     container_name: stack-messages-element
-    image: vectorim/element-web:latest
+    image: vectorim/element-web:v1.12.28
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"

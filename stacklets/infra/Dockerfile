@@ -8,13 +8,13 @@
 # The hetzner module is v2, which talks to the Hetzner Cloud API. v1 used
 # the DNS Console API, which Hetzner has deprecated.
 #
-# Pinned to the Caddy 2 line. Every subdomain reusing the wildcard
+# Pinned to the Caddy 2.10 line. Every subdomain reusing the wildcard
 # certificate needs 2.10 or later.
 
-FROM caddy:2-builder AS builder
+FROM caddy:2.10-builder AS builder
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
     --with github.com/caddy-dns/cloudflare
 
-FROM caddy:2
+FROM caddy:2.10
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

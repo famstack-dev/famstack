@@ -857,6 +857,16 @@ Every container gets this label. Watchtower (in the `core` stacklet)
 monitors labeled containers and pulls new images on the nightly schedule.
 Set `channel = "none"` in `stacklet.toml` to disable.
 
+Watchtower pulls the tag the compose file names, so the tag decides how far
+an image can move. Pin the minor line where upstream publishes one
+(`gotenberg:8.37`), otherwise the exact version (`synapse:v1.161.0`), or a
+digest when upstream tags no release at all. Watchtower then delivers patch
+releases, and a minor or major version changes only with a commit. Immich
+keeps to semantic versioning and tags only its major line, so it is pinned
+to that (`immich-server:v3`). For PostgreSQL the major tag (`postgres:16-alpine`) is already the patch line:
+its minor releases are bug and security fixes. Named tags such as `latest`,
+`main` or `release` fail `tests/unit/framework/test_compose_pins.py`.
+
 ### Health Checks
 
 ```yaml
@@ -903,7 +913,7 @@ name: stack-docs
 services:
   stack-docs-paperless:
     container_name: stack-docs-paperless
-    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.0
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
