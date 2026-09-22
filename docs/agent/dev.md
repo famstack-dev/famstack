@@ -386,7 +386,7 @@ subject is not: it appears in plain-text contexts too, including
 | `Upgrade: <what the admin must do>` | Renders as **Action required** at the top of the release. Any update needing a human step: a backup, a config edit, a one-way migration. |
 | `BREAKING CHANGE: <what breaks>` | Same section, for something that breaks an existing setup rather than asking for a step. |
 | `Refs: FAM-12` | Links the tracker card. |
-| `Co-Authored-By:` | Never. Project rule. |
+| `Co-Authored-By:` | Never. Project rule, enforced: `tools/commit-lint` rejects the trailer, a "Generated with Claude Code" line, its link and an Anthropic noreply address, in commit messages and in PR descriptions. |
 
 `tools/commit-lint` enforces the header, and is the same check in every
 place that matters: the `commit-msg` hook rejects it before the commit
