@@ -196,3 +196,84 @@ class TestCommandLine:
             "A body line that would never pass as a subject.\n"
         )
         assert self._run("--message", str(message)).returncode == 0
+
+
+# ── No tool attribution ──────────────────────────────────────────────────
+
+class TestNoToolAttribution:
+    """Commits and pull requests carry no credit line for the tool that
+    helped write them: no Co-Authored-By trailer, no "Generated with"
+    footer. A description of the tool is fine; an advertisement is not."""
+
+    @pytest.mark.parametrize("text", [
+        "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+        "co-authored-by: Someone <someone@example.com>",
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+        "Generated with Claude Code",
+        "See https://claude.com/claude-code",
+        "Signed off by noreply@anthropic.com",
+    ])
+    def test_credit_lines_are_found(self, text):
+        assert commit_lint.attribution(f"Summary line.\n\n{text}\n") != []
+
+    @pytest.mark.parametrize("text", [
+        "a language server was wired up. In Claude Code the `LSP` tool is",
+        "Claude Code reads CLAUDE.md, not AGENTS.md, so the repo rules were never",
+        "The co-author of the ADR is named in the header.",
+    ])
+    def test_describing_the_tool_is_not_attribution(self, text):
+        """Both sentences are from commits already on main."""
+        assert commit_lint.attribution(text) == []
+
+
+class TestAttributionOnTheCommandLine:
+
+    def _run(self, *args, cwd=None):
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "commit-lint"), *args],
+            capture_output=True, text=True, cwd=cwd or REPO_ROOT,
+        )
+
+    def test_a_trailer_in_the_message_body_fails_the_commit(self, tmp_path):
+        message = tmp_path / "COMMIT_EDITMSG"
+        message.write_text(
+            "fix(core): answer the first message\n\nBody.\n\n"
+            "Co-Authored-By: Claude <noreply@anthropic.com>\n")
+        result = self._run("--message", str(message))
+        assert result.returncode == 1
+        assert "Co-Authored-By" in result.stderr
+
+    def test_gits_comment_lines_are_not_the_message(self, tmp_path):
+        """The editor template is stripped by git before the commit
+        exists, so whatever it says is not part of what lands."""
+        message = tmp_path / "COMMIT_EDITMSG"
+        message.write_text(
+            "fix(core): answer the first message\n\n"
+            "# Generated with Claude Code, in a comment git will strip\n")
+        assert self._run("--message", str(message)).returncode == 0
+
+    def test_a_pull_request_body_with_a_footer_fails(self):
+        result = self._run("--body", "## Summary\n- a change\n\n"
+                           "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n")
+        assert result.returncode == 1
+        assert "Generated with" in result.stderr
+
+    def test_a_clean_pull_request_body_passes(self):
+        assert self._run("--body", "## Summary\n- a change\n").returncode == 0
+
+    def test_a_range_fails_on_a_trailer_in_any_body(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        for name, message in [
+            ("a", "feat(photos): back up over Wi-Fi"),
+            ("b", "fix(core): answer the first message\n\n"
+                  "Co-Authored-By: Claude <noreply@anthropic.com>"),
+        ]:
+            (repo / name).write_text(name)
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.com",
+                            "-c", "user.name=T", "commit", "-qm", message], check=True)
+        result = self._run("--range", "HEAD~1..HEAD", cwd=repo)
+        assert result.returncode == 1
+        assert "Co-Authored-By" in result.stderr

@@ -9,6 +9,8 @@
 #   GITHUB_REF          on a version tag, the tag must match the versions
 #   PR_TITLE BASE HEAD  on a pull request, the title and every commit
 #                       subject in BASE..HEAD must parse as a changelog entry
+#   PR_BODY             and neither the commits nor the description may
+#                       carry a credit line for the tool that wrote them
 
 set -euo pipefail
 
@@ -60,6 +62,7 @@ if [[ -n "${PR_TITLE:-}" ]]; then
   git fetch --no-tags --depth=50 origin "$BASE" "$HEAD" 2>/dev/null || true
   python3 tools/commit-lint --title "$PR_TITLE"
   python3 tools/commit-lint --range "$BASE..$HEAD"
+  python3 tools/commit-lint --body "${PR_BODY:-}"
 fi
 
 echo "==> unit tests"

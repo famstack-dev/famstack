@@ -11,6 +11,8 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+    # `edited` so a description changed after opening is checked again.
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   checks:
@@ -26,6 +28,7 @@ jobs:
         env:
           GITHUB_REF: ${{ github.ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: script/cibuild

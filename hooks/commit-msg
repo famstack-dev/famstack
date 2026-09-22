@@ -1,5 +1,6 @@
 #!/bin/sh
-# Block commit subjects that would not parse as a changelog entry.
+# Block commit subjects that would not parse as a changelog entry, and
+# messages that carry a credit line for the tool that wrote them.
 #
 # Enable once per clone (same switch as the pre-commit hook):
 #     git config core.hooksPath hooks
@@ -9,6 +10,6 @@
 # commit that passes here passes there.
 
 if ! python3 tools/commit-lint --message "$1"; then
-    echo "  Fix the subject, or commit with --no-verify to bypass." >&2
+    echo "  Fix the message, or commit with --no-verify to bypass." >&2
     exit 1
 fi

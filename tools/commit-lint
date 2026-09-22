@@ -6,12 +6,18 @@ subject is the changelog"), which only works if every subject parses.
 This is the deterministic half of that: the same rules, applied the same
 way, by a hook before the commit exists and by CI before it merges.
 
-Three ways in, one rule set:
+It also refuses credit lines for the tool that helped write a change:
+a Co-Authored-By trailer, a "Generated with Claude Code" footer, its
+link, or an Anthropic noreply address. That is checked in whole
+messages and in pull request descriptions, not just in subjects.
+
+Four ways in, one rule set:
 
     tools/commit-lint --message .git/COMMIT_EDITMSG   one message, for the hook
     tools/commit-lint --range origin/main..HEAD       a range, for CI and releases
     tools/commit-lint --title "feat(photos): ..."     a PR title, which squash
                                                       merging turns into a subject
+    tools/commit-lint --body "## Summary ..."         a PR description
 """
 
 from __future__ import annotations
@@ -134,6 +140,38 @@ def check(header: str) -> list[str]:
     return problems
 
 
+# Credit lines for the tool, never a description of it: "In Claude Code
+# the LSP tool is deferred" is documentation and must pass, which is why
+# the product name alone is not a pattern.
+ATTRIBUTION = [
+    (re.compile(r"^\s*co-authored-by:", re.I | re.M),
+     "a Co-Authored-By trailer; commits here carry none"),
+    (re.compile(r"generated\s+(with|by)\s+\[?claude", re.I),
+     "a 'Generated with Claude Code' line"),
+    (re.compile(r"claude\.com/claude-code", re.I),
+     "a link to claude.com/claude-code"),
+    (re.compile(r"noreply@anthropic\.com", re.I),
+     "an anthropic.com noreply address"),
+]
+
+
+def attribution(text: str) -> list[str]:
+    """Every credit line for the tool found in a message or description."""
+    return [why for pattern, why in ATTRIBUTION if pattern.search(text)]
+
+
+def without_comments(message: str) -> str:
+    """What git keeps of an edited message: comment lines are stripped
+    before the commit exists, and everything below the scissors goes."""
+    kept = []
+    for line in message.splitlines():
+        if line.startswith("# ------------------------ >8"):
+            break
+        if not line.startswith("#"):
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def say(message: str, err: bool = False) -> None:
     print(message, file=sys.stderr if err else sys.stdout, flush=True)
 
@@ -145,25 +183,25 @@ def report(header: str, problems: list[str], where: str = "") -> None:
         print(f"      {problem}", file=sys.stderr)
 
 
-def subjects_in(rev_range: str) -> list[tuple[str, str]]:
-    """Subjects in a range, read from the repository you are standing in.
+def messages_in(rev_range: str) -> list[tuple[str, str]]:
+    """Whole messages in a range, read from the repository you are standing in.
 
     Not from the repository this script lives in: those are the same
     thing in normal use, and letting the caller choose means a release
     script, or a test, can point it at another checkout.
     """
     result = subprocess.run(
-        ["git", "log", "--no-merges", "--format=%h%x00%s", rev_range],
+        ["git", "log", "--no-merges", "--format=%h%x00%B%x1e", rev_range],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         print(result.stderr.strip(), file=sys.stderr)
         sys.exit(2)
     pairs = []
-    for line in result.stdout.splitlines():
-        if line.strip():
-            sha, _, subject = line.partition("\0")
-            pairs.append((sha, subject))
+    for record in result.stdout.split("\x1e"):
+        if record.strip():
+            sha, _, message = record.strip("\n").partition("\0")
+            pairs.append((sha, message))
     return pairs
 
 
@@ -174,16 +212,24 @@ def main() -> int:
     source.add_argument("--message", help="File holding one commit message")
     source.add_argument("--range", help="Revision range, e.g. origin/main..HEAD")
     source.add_argument("--title", help="A pull request title")
+    source.add_argument("--body", help="A pull request description")
     args = parser.parse_args()
 
     failures = 0
 
     if args.message:
         with open(args.message, encoding="utf-8") as f:
-            header = f.readline()
-        problems = check(header)
+            message = without_comments(f.read())
+        header = message.split("\n", 1)[0]
+        problems = check(header) + attribution(message)
         if problems:
             report(header.rstrip(), problems)
+            failures = 1
+
+    elif args.body is not None:
+        problems = attribution(args.body)
+        if problems:
+            report("pull request description", problems)
             failures = 1
 
     elif args.title:
@@ -197,14 +243,15 @@ def main() -> int:
         # or a bad base leaves nothing to check and the step goes green
         # having read nothing. Say what was checked, and refuse to pass
         # on nothing.
-        pairs = subjects_in(args.range)
+        pairs = messages_in(args.range)
         if not pairs:
             say(f"\n  \u2717 no commits in {args.range}", err=True)
             say("      Nothing was checked. A shallow checkout or a wrong "
                 "base makes this guard pass blind.", err=True)
             return 1
-        for sha, subject in pairs:
-            problems = check(subject)
+        for sha, message in pairs:
+            subject = message.split("\n", 1)[0]
+            problems = check(subject) + attribution(message)
             if problems:
                 report(subject, problems, where=sha)
                 failures += 1
@@ -212,7 +259,7 @@ def main() -> int:
             say(f"  {len(pairs)} subject(s) checked, all parse")
 
     if failures:
-        print(f"\n  {failures} subject(s) to fix. The rules and the reasoning:"
+        print(f"\n  {failures} message(s) to fix. The rules and the reasoning:"
               f"\n  docs/agent/dev.md, \"Commits: the subject is the changelog\"\n",
               file=sys.stderr)
         return 1
