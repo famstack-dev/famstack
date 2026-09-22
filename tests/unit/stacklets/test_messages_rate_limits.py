@@ -37,7 +37,7 @@ def _server(tmp_path, config) -> Path:
 
 
 def _start(tmp_path):
-    return on_start.run(SimpleNamespace(stack=SimpleNamespace(data=tmp_path)))
+    return on_start.run(SimpleNamespace(stack=SimpleNamespace(data=tmp_path), env={}))
 
 
 def test_an_existing_server_gains_the_invite_limit(tmp_path):
