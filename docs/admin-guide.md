@@ -405,7 +405,7 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 
 First-run setup takes 10 to 20 minutes:
 
-1. Asks managed oMLX (default, recommended) or external OpenAI-compatible endpoint.
+1. Asks you to confirm the local engine. To use an AI server somewhere else instead, answer no and see [AI on another machine](#ai-on-another-machine-or-a-hosted-provider) below.
 2. Taps and trusts the `jundot/omlx` Homebrew tap, then installs oMLX (see below).
 3. Installs `cmake` and `ffmpeg` if missing.
 4. Clones and builds whisper.cpp with Metal support (1 to 2 minutes of compilation).
@@ -464,10 +464,39 @@ Useful commands:
 ```bash
 ./stack ai models
 ./stack ai download <model-id>
+./stack ai connect <url>
 ./stack setup ai
 ```
 
 To switch LLM models: edit `[ai] default` in `stack.toml` (alternatives are listed as commented lines), then `./stack setup ai`.
+
+#### AI on another machine, or a hosted provider
+
+Everything that uses AI talks to one OpenAI-compatible address, `[ai] openai_url`. The engine `./stack up ai` installs is one option. If your models run on another computer in the house (oMLX, Ollama, LM Studio, anything that speaks the OpenAI API and listens on the network), or you use a hosted provider, skip `./stack up ai` and point the stack there:
+
+```bash
+./stack ai connect 192.168.1.20:11434                      # Ollama on another machine
+./stack ai connect https://api.example.com --key sk-...    # a hosted provider
+./stack ai connect local                                   # back to the engine on this Mac
+```
+
+A second Mac running famstack's AI stacklet in port mode serves both chat and voice to the network, oMLX on port 42060 and Whisper on 42062. Its API key is its own `[ai] openai_key`, `local` unless changed:
+
+```bash
+./stack ai connect 192.168.1.20:42060 --key local --whisper 192.168.1.20:42062
+```
+
+The command checks that the server answers, picks a model it has (`--model <id>` when it lists several), writes `[ai]` in `stack.toml`, and names the running stacklets to restart. It installs nothing and restarts nothing. `./stack list` then shows the AI stacklet as `remote`, with the server's name, and as degraded when that server stops answering.
+
+**Voice messages** have their own address, because not every AI server can transcribe:
+
+- `--whisper <url>` names a speech server. It gets every voice message, whatever the AI server offers. A second Mac running the AI stacklet serves one on port 42062.
+- Without one, the AI server transcribes, if it has a speech-to-text model loaded. The command looks for one and warns when there is none.
+- `--whisper ai` removes the speech server again.
+
+**What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
+
+**Switching back.** On a remote setup, `./stack up ai` asks before it switches the stack to the engine on this Mac; no leaves everything as it was. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
 
 ### ChatAI (`chatai`) optional
 
@@ -672,6 +701,7 @@ Key things to know:
 
 ```bash
 ./stack ai models             # available AI models in the backend
+./stack ai connect <url>      # use an AI server on another machine, or `local`
 ./stack config                # show resolved configuration
 ./stack config --secrets      # include generated passwords
 ./stack version               # print version
