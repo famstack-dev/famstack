@@ -17,7 +17,9 @@ services:
   # First run: complete setup wizard at http://localhost:42081
   # After setup: admin panel at http://ip:42080
   stack-infra-adguard:
-    image: adguard/adguardhome:latest
+    # AdGuard publishes exact versions only, no line tag Watchtower could
+    # follow, so a new release is a bump here.
+    image: adguard/adguardhome:v0.107.79
     container_name: stack-infra-adguard
     restart: unless-stopped
     labels:

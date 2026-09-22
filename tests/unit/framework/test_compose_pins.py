@@ -31,7 +31,6 @@ KNOWN_UNPINNED: set[str] = {
     "ghcr.io/matatonic/openedai-speech-min",  # no tag at all
     "nickfedor/watchtower:latest",
     "apache/tika:latest",
-    "adguard/adguardhome:latest",
     "matrixdotorg/synapse:latest",
     "vectorim/element-web:latest",
 }
