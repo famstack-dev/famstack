@@ -61,6 +61,10 @@ services:
       - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
+    extra_hosts:
+      # Native services on the Mac (whisper-server, oMLX) listen on the
+      # host's loopback, and this is how a container reaches them.
+      - "host.docker.internal:host-gateway"
     ports:
       # The front door for every device on the LAN, so it binds all
       # interfaces. PORT_BIND_IP (127.0.0.1 in domain mode) keeps the
