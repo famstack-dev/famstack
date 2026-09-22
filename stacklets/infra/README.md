@@ -4,6 +4,8 @@ DNS server with ad-blocking, and a reverse proxy that gives every stacklet a pre
 
 **Beta.** It works, but how HTTPS and your own sites are configured can still change between releases. Back up `~/famstack-data/infra/` before you upgrade.
 
+**Sensitive infrastructure.** This stacklet is DNS and the entry point for your whole home network. Once your router hands out the Mac as its DNS server, every device depends on it: when the Mac is off, asleep or rebooting, or AdGuard stops, nothing on the network resolves names, not even sites on the internet. Setting it up takes some networking knowledge: your router's DHCP and DNS settings, DNS records, and a domain at a DNS provider if you want HTTPS. Note your router's current DNS setting before you change it, so you can go back. If this is new territory, stay in port mode, which needs none of it.
+
 ## What it runs
 
 - `stack-infra-adguard`: DNS server with ad-blocking. Resolves `*.{domain}` to the server IP and filters ads, trackers, and malicious domains for every device on the LAN.

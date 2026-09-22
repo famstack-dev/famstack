@@ -74,6 +74,8 @@ Refuse without explicit, scoped human approval:
 | Moving `data_dir` while stacklets are running | Bind mounts break. `stack down all` first, then move, then `stack up`. |
 | Changing `stack.toml [core] language` | Re-seeds Paperless taxonomy. Orphan tags require manual cleanup. |
 | Switching `[core] domain` empty ↔ non-empty | Switches port mode ↔ domain mode. Needs `*.<domain>` and `<domain>` DNS records to the Mac, and the infra stacklet up. |
+| Pointing the router's DNS at the Mac (infra) | Every device on the LAN then resolves through AdGuard; the Mac or AdGuard going down takes name resolution for the whole house with it. The admin changes the router, never an agent; note the previous DNS setting first. |
+| `./stack down infra` / `./stack destroy infra` | With the router pointing at the Mac, the house loses DNS until infra is back or the router is switched back. |
 
 ## Ports (42xxx range)
 
