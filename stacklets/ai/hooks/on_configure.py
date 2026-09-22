@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+from stack.hooks import Cancelled
 from stack.prompt import section, out, nl, dim, confirm, warn
 
 
@@ -74,7 +75,7 @@ def run(ctx):
         out("To use an AI server on another machine or a hosted provider,")
         out("run './stack ai connect <url>' instead. Nothing was installed.")
         nl()
-        raise RuntimeError("Cancelled: the local AI engine was not set up")
+        raise Cancelled("Cancelled. The local AI engine was not set up.")
 
     if not _check_brew_available():
         raise RuntimeError("Homebrew not found")

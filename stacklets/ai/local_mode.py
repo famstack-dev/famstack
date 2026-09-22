@@ -8,6 +8,7 @@ not assumed, and a "no" leaves the remote endpoint exactly as it was.
 
 import sys
 
+from stack.hooks import Cancelled
 from stack.prompt import confirm, dim, nl, out, warn
 
 LOCAL_URL = "http://localhost:42060/v1"
@@ -17,9 +18,10 @@ LOCAL_WHISPER = "http://localhost:42062/v1"
 def switch_to_local(ctx) -> None:
     """Switch `[ai]` to the local engine, once the admin has said yes.
 
-    Does nothing unless the provider is a remote endpoint. Raises when
-    the answer is no, or when there is no terminal to ask in, so the
-    `stack up` stops before anything is installed or started.
+    Does nothing unless the provider is a remote endpoint. Raises
+    `Cancelled` when the answer is no, or when there is no terminal to
+    ask in, so the `stack up` stops before anything is installed or
+    started, without being reported as a failure.
     """
     if ctx.cfg("provider", default="") != "external":
         return
@@ -32,12 +34,12 @@ def switch_to_local(ctx) -> None:
     nl()
 
     if not sys.stdin.isatty():
-        raise RuntimeError(
+        raise Cancelled(
             f"The stack uses the remote AI endpoint {url}. Bringing up the "
             "ai stacklet switches it to local mode, which needs a yes: run "
             "'./stack up ai' in a terminal.")
     if not confirm("Are you sure?", default=False):
-        raise RuntimeError(f"Cancelled. The stack still uses {url}.")
+        raise Cancelled(f"Cancelled. The stack still uses {url}.")
 
     ctx.cfg("provider", "managed")
     ctx.cfg("openai_url", LOCAL_URL)

@@ -219,7 +219,7 @@ class CLI:
             return self._up_all()
 
         result = self.stack.up(stacklet_id)
-        if "error" in result:
+        if "error" in result or "cancelled" in result:
             return result
 
         stacklet = self.stack._find_stacklet(stacklet_id)
@@ -409,7 +409,7 @@ class CLI:
         errors: list[dict] = []
         for sid in order:
             result = self.up(sid)
-            if "error" in result:
+            if "error" in result or "cancelled" in result:
                 errors.append({"stacklet": sid, "result": result})
             else:
                 started.append(sid)
@@ -854,6 +854,9 @@ def handle_up(stck, args):
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
     print(f"\n  Bringing up {TEAL}{name}{RESET}...\n", file=sys.stderr)
     result = cli.up(args.stacklet)
+    if "cancelled" in result:
+        print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
+        sys.exit(1)
     if result.get("ok"):
         print_up_success(result, stck)
         _notify_up(stck, result)

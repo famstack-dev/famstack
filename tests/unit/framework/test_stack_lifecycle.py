@@ -306,3 +306,57 @@ class TestStackDestroy:
         s.destroy("myapp")
         result = s.up("myapp")
         assert result["first_run"] is True
+
+
+# ── A hook that stops the command on purpose ─────────────────────────────
+
+_ASK_AND_DECLINE = textwrap.dedent("""
+    from stack.hooks import Cancelled
+    def run(ctx):
+        raise Cancelled("Cancelled. Nothing changed.")
+""")
+
+
+class TestAHookCanCancel:
+    """A hook that asked the admin and got a no stops `stack up` without
+    it being a failure: nothing is reported as broken, and the family
+    room is not told a stacklet failed to start."""
+
+    def test_up_says_cancelled_not_error(self, tmp_path):
+        s = _make_stack(tmp_path, {"myapp": {"hooks": {"on_start.py": _ASK_AND_DECLINE}}})
+
+        result = s.up("myapp")
+
+        assert result == {"cancelled": "Cancelled. Nothing changed."}
+
+    def test_a_no_before_installing_installs_nothing(self, tmp_path):
+        marker = tmp_path / "installed"
+        s = _make_stack(tmp_path, {"myapp": {"hooks": {
+            "on_configure.py": _ASK_AND_DECLINE,
+            "on_install.py": textwrap.dedent(f"""
+                from pathlib import Path
+                def run(ctx):
+                    Path("{marker}").write_text("yes")
+            """),
+        }}})
+
+        assert "cancelled" in s.up("myapp")
+        assert not marker.exists()
+
+    def test_the_cli_says_it_once_and_tells_nobody(self, tmp_path, capsys, monkeypatch):
+        import argparse
+        from stack import cli
+
+        s = _make_stack(tmp_path, {"myapp": {"hooks": {"on_start.py": _ASK_AND_DECLINE}}})
+        told = []
+        monkeypatch.setattr(cli, "_notify", lambda _stck, msg: told.append(msg))
+
+        with pytest.raises(SystemExit) as exit_:
+            cli.handle_up(s, argparse.Namespace(stacklet=["myapp"], no_voice=False))
+
+        output = capsys.readouterr()
+        text = output.out + output.err
+        assert exit_.value.code == 1
+        assert text.count("Cancelled. Nothing changed.") == 1
+        assert "failed" not in text
+        assert told == []

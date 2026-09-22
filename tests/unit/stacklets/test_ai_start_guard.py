@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from stack.hooks import Cancelled
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
@@ -141,7 +143,7 @@ class TestLeavingARemoteEndpoint:
 
     def test_the_question_names_the_endpoint(self, monkeypatch, capsys):
         self._answer(monkeypatch, "n")
-        with pytest.raises(RuntimeError):
+        with pytest.raises(Cancelled):
             on_start.run(FakeCtx(**self.REMOTE))
 
         assert "remote AI endpoint (https://ai.example.test/v1)" in capsys.readouterr().out
@@ -150,7 +152,7 @@ class TestLeavingARemoteEndpoint:
         self._answer(monkeypatch, "n")
         ctx = FakeCtx(**self.REMOTE)
 
-        with pytest.raises(RuntimeError, match="still uses"):
+        with pytest.raises(Cancelled, match="still uses"):
             on_start.run(ctx)
 
         assert ctx._cfg == self.REMOTE
@@ -160,7 +162,7 @@ class TestLeavingARemoteEndpoint:
         self._answer(monkeypatch, "")
         ctx = FakeCtx(**self.REMOTE)
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(Cancelled):
             on_start.run(ctx)
 
         assert ctx._cfg == self.REMOTE
@@ -184,7 +186,7 @@ class TestLeavingARemoteEndpoint:
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
         ctx = FakeCtx(**self.REMOTE)
 
-        with pytest.raises(RuntimeError, match="in a terminal"):
+        with pytest.raises(Cancelled, match="in a terminal"):
             on_start.run(ctx)
 
         assert ctx._cfg == self.REMOTE

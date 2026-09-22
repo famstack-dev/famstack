@@ -987,6 +987,15 @@ class Stack:
         return env_dict
 
     def up(self, stacklet_id: str) -> dict:
+        """Bring a stacklet up, or `{"cancelled": message}` when one of
+        its hooks asked the admin and got a no. See `_up`."""
+        from .hooks import Cancelled
+        try:
+            return self._up(stacklet_id)
+        except Cancelled as e:
+            return {"cancelled": str(e)}
+
+    def _up(self, stacklet_id: str) -> dict:
         """Bring a stacklet up: render env, run hooks, write .env.
 
         First run:  check deps → render env → generate secrets →
