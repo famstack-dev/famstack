@@ -306,7 +306,9 @@ The scope is what a reader recognises, never a file or a module:
 | `mail` | Mail Bot |
 | `scribe` | Scribe Bot |
 | `stacker` | Stacker Bot |
-| `curator`, `wiki` | Memory Stacklet |
+| `curator`, `wiki`, `diary` | Memory Stacklet |
+| `capture` | Archivist Bot |
+| `voice` | AI Stacklet |
 | `stack`, `cli`, `doctor`, `update`, `install` | stack CLI |
 | `web` | web fetch |
 | *(none)* | General |
@@ -317,7 +319,7 @@ A stacklet renders as "<id> Stacklet" and a bot as "<name> Bot": one release
 line saying "Archivist Bot" and the next saying "Docs Stacklet" tells you
 which one changed without opening anything.
 
-Anything that is neither, a component like the wiki or the curator, renders
+Anything that is neither, a component like the wiki, the curator or capture, renders
 as the stacklet that owns it.
 
 `docs` is both a type and a scope and they mean different things. Type `docs`

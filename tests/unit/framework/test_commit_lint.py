@@ -41,6 +41,9 @@ class TestSubjectsThatPass:
         "feat(docs)!: move Paperless to 3.0.4",
         "chore(release): v0.3.0-beta.4",
         "fix(ai): install the local AI engine on current Homebrew (#72)",
+        "fix(diary): front-page intro addresses the family directly",
+        "feat(capture): file a link card when a page cannot be read (#96)",
+        "feat(voice): treat a voice message like any other message (#85)",
     ])
     def test_real_subjects_from_the_history(self, subject):
         assert commit_lint.check(subject) == []
