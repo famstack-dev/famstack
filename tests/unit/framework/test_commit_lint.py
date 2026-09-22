@@ -81,6 +81,13 @@ class TestSubjectsThatFail:
         subject = "fix(core): " + "x" * 80
         assert any("limit is 72" in p for p in commit_lint.check(subject))
 
+    def test_the_pr_number_github_appends_is_not_counted(self):
+        """CI checks the PR title before a squash merge appends " (#106)",
+        so counting the suffix failed subjects that passed CI."""
+        subject = "test(archivist): pin the note in the demo-rig todo capture scenario"
+        assert len(subject) <= commit_lint.SUBJECT_LIMIT
+        assert commit_lint.check(f"{subject} (#106)") == []
+
     def test_written_as_a_title(self):
         problems = commit_lint.check("feat(photos): Stop the upload stalling")
         assert any("capital" in p for p in problems)
