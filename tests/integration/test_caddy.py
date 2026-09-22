@@ -1,20 +1,27 @@
-"""The assembled Caddyfile, as a real Caddy reads it.
+"""The assembled Caddyfile, as a real Caddy reads it, and the proxy running.
 
 The unit tests pin which snippets the framework puts in the file and when.
 Whether Caddy accepts the result, and what it serves from it, only Caddy
 can say, so these hand it the snippets that ship in the repo and read the
-JSON config it adapts them to.
+JSON config it adapts them to. The last part runs `stack up infra` on a
+throwaway instance and talks to the proxy the way a device on the LAN
+would.
 """
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.parent
+FIXTURES_DIR = REPO_ROOT / "tests" / "unit" / "framework" / "fixtures"
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 from stack.caddy import DNS_PROVIDERS, assemble  # noqa: E402
@@ -184,3 +191,99 @@ def _certificates_requested(container: str) -> set[str]:
     entries = [json.loads(line) for line in logs.splitlines() if line.startswith("{")]
     return {e["identifier"] for e in entries if e.get("msg") == "obtaining certificate"}
 
+
+# ── stack up infra ────────────────────────────────────────────────────────
+
+
+class Instance:
+    """A throwaway instance: the repo's infra, the Alpine test stacklet
+    with a route, domain mode, no TLS."""
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    def stack(self, *args: str, timeout: int = 900) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "stack", *args],
+            cwd=str(self.root), capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "PYTHONPATH": str(self.root / "lib")},
+        )
+
+    def ok(self, *args: str) -> None:
+        result = self.stack(*args)
+        assert result.returncode == 0, (
+            f"`stack {' '.join(args)}` exited {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}")
+
+
+@pytest.fixture(scope="module")
+def instance(tmp_path_factory):
+    root = tmp_path_factory.mktemp("domain") / "stack"
+    (root / "stacklets").mkdir(parents=True)
+    (root / "lib").symlink_to(REPO_ROOT / "lib")
+    shutil.copytree(REPO_ROOT / "stacklets" / "infra", root / "stacklets" / "infra")
+    shutil.copytree(FIXTURES_DIR / "test", root / "stacklets" / "test")
+    (root / "stacklets" / "test" / "caddy.snippet").write_text(
+        "test.{$STACK_DOMAIN} {\n\treverse_proxy stack-test:8080\n}\n")
+
+    (root / "stack.toml").write_text(
+        f'[core]\nname = "teststack"\ndomain = "{DOMAIN}"\ndns_provider = ""\n'
+        f'data_dir = "{root.parent / "data"}"\n'
+        f'extension_dirs = ["{root / "extensions"}"]\ntimezone = "Europe/Berlin"\n')
+    (root / "users.toml").write_text(
+        '[[users]]\nname = "Test Admin"\nemail = "admin@test.local"\n'
+        'password = "testpass"\nrole = "admin"\n')
+    (root / ".stack").mkdir()
+    (root / ".stack" / "secrets.toml").write_text('global__ADMIN_PASSWORD = "testpass"\n')
+
+    inst = Instance(root)
+    yield inst
+
+    inst.stack("destroy", "test", "--yes")
+    inst.stack("destroy", "infra", "--yes")
+    # `destroy` skips containers of a stacklet whose first `up` failed, so
+    # a failed run would otherwise leave these holding their ports.
+    subprocess.run(["docker", "rm", "-f", "stack-test", "stack-infra-caddy",
+                    "stack-infra-adguard"], capture_output=True, timeout=60)
+
+
+def _get(host: str) -> tuple[int, str]:
+    """GET / through the proxy on the host's port 80, as `host`."""
+    request = urllib.request.Request("http://127.0.0.1/", headers={"Host": host})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, response.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+
+def _host_ips(container: str) -> dict[str, str]:
+    """Published container port -> host address it is bound to."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{json .HostConfig.PortBindings}}", container],
+        capture_output=True, text=True, timeout=30, check=True)
+    return {port: bindings[0]["HostIp"]
+            for port, bindings in json.loads(result.stdout).items()}
+
+
+@pytest.mark.container_lifecycle
+def test_the_proxy_and_dns_face_the_lan_and_nothing_else_does(instance):
+    instance.ok("up", "infra")
+
+    assert _host_ips("stack-infra-caddy") == {"80/tcp": "0.0.0.0", "443/tcp": "0.0.0.0"}
+    adguard = _host_ips("stack-infra-adguard")
+    assert adguard["53/udp"] == adguard["53/tcp"] == "0.0.0.0"
+    assert adguard["80/tcp"] == adguard["3000/tcp"] == "127.0.0.1"
+
+
+@pytest.mark.container_lifecycle
+def test_a_stacklet_is_served_from_the_moment_it_is_up_until_it_is_down(instance):
+    instance.ok("up", "infra")
+    assert _get(f"test.{DOMAIN}")[0] == 404
+
+    instance.ok("up", "test")
+    assert _get(f"test.{DOMAIN}") == (200, "ok")
+
+    instance.ok("down", "test")
+    status, body = _get(f"test.{DOMAIN}")
+    assert (status, body) == (404, f"No service at test.{DOMAIN}")

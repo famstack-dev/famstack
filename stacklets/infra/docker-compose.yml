@@ -26,9 +26,11 @@ services:
     networks:
       - stack
     ports:
-      # DNS (must be 53 for network clients)
-      - "${PORT_BIND_IP:-0.0.0.0}:53:53/udp"
-      - "${PORT_BIND_IP:-0.0.0.0}:53:53/tcp"
+      # DNS (must be 53 for network clients). Every device on the LAN asks
+      # here, so it binds all interfaces. PORT_BIND_IP is 127.0.0.1 in
+      # domain mode, the one mode this stacklet runs in.
+      - "0.0.0.0:53:53/udp"
+      - "0.0.0.0:53:53/tcp"
       # Setup wizard (first run)
       - "${PORT_BIND_IP:-0.0.0.0}:3000:3000"
       # Admin panel (after setup)
@@ -58,8 +60,11 @@ services:
     networks:
       - stack
     ports:
-      - "${PORT_BIND_IP:-0.0.0.0}:80:80"
-      - "${PORT_BIND_IP:-0.0.0.0}:443:443"
+      # The front door for every device on the LAN, so it binds all
+      # interfaces. PORT_BIND_IP (127.0.0.1 in domain mode) keeps the
+      # services behind the proxy off the LAN, not the proxy itself.
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
     environment:
       - STACK_DOMAIN=${STACK_DOMAIN:-home.internal}
       # Read by the Caddyfile's DNS challenge as {env.DNS_API_TOKEN}.
