@@ -14,7 +14,7 @@ services:
 
   # ── AdGuard Home ─────────────────────────────────────────────────────────────
   # DNS server with ad-blocking. Provides wildcard DNS for domain mode.
-  # First run: complete setup wizard at http://ip:3000
+  # First run: complete setup wizard at http://localhost:42081
   # After setup: admin panel at http://ip:42080
   stack-infra-adguard:
     image: adguard/adguardhome:latest
@@ -32,7 +32,7 @@ services:
       - "0.0.0.0:53:53/udp"
       - "0.0.0.0:53:53/tcp"
       # Setup wizard (first run)
-      - "${PORT_BIND_IP:-0.0.0.0}:3000:3000"
+      - "${PORT_BIND_IP:-0.0.0.0}:42081:3000"
       # Admin panel (after setup)
       - "${PORT_BIND_IP:-0.0.0.0}:42080:80"
     volumes:

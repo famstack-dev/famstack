@@ -18,7 +18,7 @@ build       = true
 
 [ports]
 dns         = 53
-dns_setup   = 3000
+dns_setup   = 42081
 dns_admin   = 42080
 http        = 80
 https       = 443
