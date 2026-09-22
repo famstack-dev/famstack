@@ -203,6 +203,7 @@ Available template variables:
 | `{ai_tts_voice}` | Derived from `[ai].language` |
 | `{messages_server_name}` | `stack.toml` → `[messages].server_name` |
 | `{url}`, `{<id>_url}`, `{home_url}` | Public URLs: `http://<ip>:<port>` in port mode; `https://<id>.<domain>` in domain mode once `[core].dns_provider` is set, `http://` before that |
+| `{url_host}` | The host of `{url}`: `<id>.<domain>` in domain mode, `{ip}` in port mode. For a protocol the stacklet serves under the same name besides HTTP, such as Forgejo's SSH |
 | `{<id>__<NAME>}` | A secret from `secrets.toml`, e.g. `{docs__API_TOKEN}`, `{infra__DNS_API_TOKEN}` |
 
 ### Hints
@@ -821,6 +822,10 @@ ports:
 The `PORT_BIND_IP` variable controls access scope. The runtime sets it:
 - Port mode: `0.0.0.0` (reachable from the LAN)
 - Domain mode: `127.0.0.1` (only Caddy reaches it)
+
+A port the LAN needs in domain mode too is bound to `0.0.0.0` literally
+instead: infra's DNS (53) and proxy (80, 443), and Forgejo's SSH, which
+does not go through Caddy and is encrypted and authenticated by itself.
 
 The host port is the stacklet's declared `port` from `stacklet.toml`.
 The container port is whatever the upstream service uses internally.

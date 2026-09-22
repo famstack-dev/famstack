@@ -492,6 +492,17 @@ class Stack:
             return f"{self._domain_scheme()}://{stacklet_id}.{domain}"
         return f"http://{self._lan_ip()}:{port}"
 
+    def _own_template_vars(self, stacklet_id: str, port: int) -> dict:
+        """The template variables whose value depends on the stacklet.
+
+        `{url_host}` is the host of `{url}`: `<id>.<domain>` in domain
+        mode, the address `{ip}` names in port mode. It is for a stacklet
+        that serves another protocol under the same name, such as SSH.
+        """
+        from urllib.parse import urlsplit
+        url = self._public_url(stacklet_id, port)
+        return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip()}
+
     def _domain_scheme(self) -> str:
         """https once the proxy serves certificates, http until then.
 
@@ -549,8 +560,7 @@ class Stack:
 
         template_vars = self._build_template_vars()
         template_vars["stacklet_id"] = stacklet_id
-        template_vars["url"] = self._public_url(stacklet_id, s.get("port", 0))
-        template_vars["ip"] = self._lan_ip()
+        template_vars.update(self._own_template_vars(stacklet_id, s.get("port", 0)))
 
         # Render templates — warn on missing vars (typos cause silent failures)
         import re
@@ -1175,8 +1185,7 @@ class Stack:
 
         # Render manifest hints with template vars so credentials are visible
         template_vars = self._build_template_vars()
-        template_vars["url"] = self._public_url(stacklet_id, s.get("port", 0))
-        template_vars["ip"] = self._lan_ip()
+        template_vars.update(self._own_template_vars(stacklet_id, s.get("port", 0)))
         raw_hints = manifest.get("hints", [])
         hints = []
         for h in raw_hints:
