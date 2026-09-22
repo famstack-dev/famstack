@@ -3,6 +3,6 @@
 # Assembled into the Caddyfile by 'stack up'. Caddy runs in Docker on the
 # stack network, so backends are referenced by container name.
 
-docs.{$FAMSTACK_DOMAIN} {
+docs.{$STACK_DOMAIN} {
     reverse_proxy stack-docs-paperless:8000
 }

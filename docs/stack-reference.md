@@ -512,15 +512,15 @@ effect.
     b. hooks/on_install.sh — create dirs, install deps, build
  4. Write .env to stacklet directory
  5. Bot runner discovers bots (if stacklet has bot/bot.toml)
- 6. Assemble Caddyfile (domain mode)
- 7. Build or pull Docker images
- 8. hooks/on_start.sh — start native services (host stacklets)
+ 6. hooks/on_start.sh — start native services (host stacklets)
+ 7. Write the Caddyfile, counting this stacklet as up (domain mode)
+ 8. Build or pull Docker images
  9. Start containers (docker compose up -d)
-10. Wait for health check
-11. First run only:
+10. Reload Caddy (domain mode)
+11. Wait for health check
+12. First run only:
     a. hooks/on_install_success.py — obtain tokens, seed data
-12. hooks/on_start_ready.py — service is healthy, seed data, sync accounts
-13. Reload Caddy (domain mode)
+13. hooks/on_start_ready.py — service is healthy, seed data, sync accounts
 14. Show welcome screen with URL, login, hints
 ```
 
@@ -546,7 +546,9 @@ dependency order (dependents first, deps last).
 
 ```
 1. hooks/on_stop.sh — stop native services (host stacklets only)
-2. docker compose stop — pause containers
+2. Write the Caddyfile without this stacklet (domain mode)
+3. docker compose stop — pause containers
+4. Reload Caddy (domain mode)
 ```
 
 ### `stack destroy <id>`
@@ -563,7 +565,7 @@ secrets, config. Requires confirmation.
 6. Delete stacklet secrets from secrets.toml ({id}__*)
 7. Delete setup-done marker
 8. Delete data directory (~/{data_dir}/{id}/)
-9. Reassemble Caddyfile (domain mode)
+9. Write the Caddyfile without this stacklet, reload Caddy (domain mode)
 ```
 
 Global secrets (`global__ADMIN_PASSWORD`) survive destroy. The user's
@@ -947,23 +949,49 @@ The runtime operates in one of two modes based on `stack.toml`:
 **Domain mode** (`domain = "home.internal"`):
 - Services bind to `127.0.0.1:<port>` (only Caddy reaches them)
 - URLs are `http://photos.home.internal`
-- Caddy assembles routes from `caddy.snippet` files
+- The runtime assembles the Caddyfile from `caddy.snippet` files
 - Requires wildcard DNS on router
 
 ### Caddy Snippets
 
-Each stacklet can include a `caddy.snippet` file. The runtime assembles
-all snippets into a single Caddyfile on every `stack up`.
+A stacklet that serves something in a browser ships its routes in a
+`caddy.snippet`:
 
 ```
 # stacklets/docs/caddy.snippet
-docs.{$FAMSTACK_DOMAIN} {
+docs.{$STACK_DOMAIN} {
     reverse_proxy stack-docs-paperless:8000
 }
 ```
 
-The `{$FAMSTACK_DOMAIN}` variable is set by the runtime in Caddy's
-environment.
+The domain stays the `{$STACK_DOMAIN}` placeholder. Caddy substitutes it
+from its own environment when it loads the file; the runtime never does.
+Backends are container names on the `stack` network.
+
+In domain mode the runtime assembles the snippets of every stacklet that
+is up into `{data_dir}/infra/Caddyfile`, in stacklet order, and the infra
+stacklet's Caddy container mounts that file. "Up" is read from Docker like
+every other state: the stacklet has containers running, starting, or
+restarting. A crash-looping stacklet keeps its routes, because its other
+containers are usually still serving.
+
+`stack up`, `stack down` and `stack destroy` write the file, each counting
+the stacklet it acts on as already in its new state, and have a running
+Caddy load it with `caddy reload` once the containers have changed. The
+file is written before a starting stacklet's containers exist, because
+infra's own Caddy reads it the moment it starts. A reload Caddy rejects
+leaves it serving its previous routes, and the command prints a warning.
+Nothing is written in port mode, or while infra is not up.
+
+Around the snippets the assembler (`lib/stack/caddy.py`) emits:
+
+- A global options block. Without TLS it serves every site as plain HTTP
+  on port 80.
+- A `*.{$STACK_DOMAIN}` site that answers 404 for any host no running
+  stacklet claims, a stopped stacklet's included.
+
+Snippets describe routes only. Anything that applies to every site belongs
+in the assembler, not in a snippet.
 
 ---
 
@@ -1090,7 +1118,6 @@ Gitignored. Created by `stack init`. Contains:
 |---|---|
 | `secrets.toml` | Auto-generated credentials (passwords, API tokens). |
 | `*.setup-done` | Marker files. Gates once-only hooks (`on_install`, `on_install_success`). |
-| `caddy/conf.d/*.snippet` | Assembled Caddy snippets (domain mode). |
 
 No `enabled` file — stacklet state is derived from Docker containers
 and the filesystem. See [States](#states).

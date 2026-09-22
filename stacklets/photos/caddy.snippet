@@ -2,8 +2,8 @@
 #
 # Assembled into the Caddyfile by 'stack up'. Caddy runs in Docker on the
 # stack network, so backends are referenced by container name.
-# {$FAMSTACK_DOMAIN} is set as an env var when Caddy starts.
+# {$STACK_DOMAIN} is set as an env var when Caddy starts.
 
-photos.{$FAMSTACK_DOMAIN} {
+photos.{$STACK_DOMAIN} {
     reverse_proxy immich_server:2283
 }
