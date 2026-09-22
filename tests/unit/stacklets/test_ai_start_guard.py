@@ -16,6 +16,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import json
+
 import pytest
 
 from stack.hooks import Cancelled
@@ -39,6 +41,14 @@ def state_dir(monkeypatch, tmp_path):
     start behaving differently."""
     monkeypatch.setattr(on_start, "STATE_DIR", tmp_path)
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def home(monkeypatch, tmp_path):
+    """oMLX's settings live in the home directory. Every test here gets
+    its own, so none of them rewrites the engine on this Mac."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    return tmp_path / "home"
 
 
 class FakeCtx:
@@ -190,3 +200,53 @@ class TestLeavingARemoteEndpoint:
             on_start.run(ctx)
 
         assert ctx._cfg == self.REMOTE
+
+
+class TestWhereOMLXListens:
+    """Every service binds by the framework's rule: all interfaces in
+    port mode, so the household's other machines reach it, loopback in
+    domain mode. famstack never set oMLX's, so it kept its own default,
+    loopback, and a second Mac pointed at this one was refused."""
+
+    @pytest.fixture(autouse=True)
+    def installed(self, monkeypatch, home):
+        monkeypatch.setattr(on_start.shutil, "which",
+                            lambda _cmd: "/opt/homebrew/bin/omlx")
+        settings = home / ".omlx" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps(
+            {"server": {"host": "127.0.0.1", "port": 42060},
+             "auth": {"api_key": "local"}}))
+        return settings
+
+    def _ctx(self, url, bind):
+        ctx = FakeCtx(provider="managed", openai_url=url)
+        ctx.env["PORT_BIND_IP"] = bind
+        return ctx
+
+    def test_port_mode_listens_on_every_interface(self, installed):
+        on_start.run(self._ctx("http://127.0.0.1:9/v1", "0.0.0.0"))
+
+        settings = json.loads(installed.read_text())
+        assert settings["server"] == {"host": "0.0.0.0", "port": 42060}
+        assert settings["auth"] == {"api_key": "local"}
+
+    def test_a_running_engine_is_restarted_to_listen_there(self, installed, httpserver):
+        """oMLX reads its settings at start, so a running one keeps its
+        old address until it restarts."""
+        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
+        ctx = self._ctx(httpserver.url_for("/v1"), "0.0.0.0")
+
+        on_start.run(ctx)
+
+        assert ctx.shell_calls == ["brew services restart omlx"]
+
+    def test_the_right_address_changes_nothing(self, installed, httpserver):
+        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
+        before = installed.read_text()
+        ctx = self._ctx(httpserver.url_for("/v1"), "127.0.0.1")
+
+        on_start.run(ctx)
+
+        assert installed.read_text() == before
+        assert ctx.shell_calls == []

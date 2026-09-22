@@ -33,9 +33,11 @@ def _load_on_start():
 
 
 @pytest.fixture(autouse=True)
-def _state_dir(tmp_path):
+def _state_dir(tmp_path, monkeypatch):
     global _STATE_DIR
     _STATE_DIR = tmp_path / "state"
+    # oMLX's settings live in the home directory; keep the test out of it.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     yield
     _STATE_DIR = None
 
