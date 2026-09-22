@@ -27,14 +27,22 @@ def _load_on_start():
     return mod
 
 
-def _ctx(make_stack, env):
+def _ctx(make_stack, env, engine_url):
     from stack.hooks import StackContext
 
     stck = make_stack()
-    # External, so on_start neither bails early nor starts the local
-    # engine: a managed provider runs `brew services start omlx` for real.
-    stck._set_cfg("ai", "provider", "external")
+    # Managed with an engine that answers, so on_start neither bails
+    # early, nor asks about leaving a remote endpoint, nor runs
+    # `brew services start omlx` for real.
+    stck._set_cfg("ai", "provider", "managed")
+    stck._set_cfg("ai", "openai_url", engine_url)
     return StackContext(stck, "ai", env)
+
+
+@pytest.fixture
+def engine_url(httpserver):
+    httpserver.expect_request("/v1/models").respond_with_json({"data": []})
+    return httpserver.url_for("/v1")
 
 
 @pytest.fixture(autouse=True)
@@ -61,15 +69,15 @@ def _restore_no_voice():
         os.environ["STACK_AI_NO_VOICE"] = old
 
 
-def test_no_voice_clears_compose_profile(make_stack):
+def test_no_voice_clears_compose_profile(make_stack, engine_url):
     os.environ["STACK_AI_NO_VOICE"] = "1"
     env = {"COMPOSE_PROFILES": "voice"}
-    _load_on_start().run(_ctx(make_stack, env))
+    _load_on_start().run(_ctx(make_stack, env, engine_url))
     assert env["COMPOSE_PROFILES"] == ""
 
 
-def test_voice_profile_kept_by_default(make_stack):
+def test_voice_profile_kept_by_default(make_stack, engine_url):
     os.environ.pop("STACK_AI_NO_VOICE", None)
     env = {"COMPOSE_PROFILES": "voice"}
-    _load_on_start().run(_ctx(make_stack, env))
+    _load_on_start().run(_ctx(make_stack, env, engine_url))
     assert env["COMPOSE_PROFILES"] == "voice"

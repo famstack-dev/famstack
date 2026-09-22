@@ -64,12 +64,6 @@ class TestManagedProviderNeedsItsEngine:
                             lambda _cmd: "/opt/homebrew/bin/omlx")
         on_start.run(FakeCtx(provider="managed"))  # must not raise
 
-    def test_an_external_endpoint_does_not_need_a_local_engine(self, monkeypatch):
-        """Someone pointing at their own server has no business being told
-        to install oMLX."""
-        monkeypatch.setattr(on_start.shutil, "which", lambda _cmd: None)
-        on_start.run(FakeCtx(provider="external",
-                             openai_url="https://ai.example.test/v1"))
 
 
 class TestExistingGuardsStillHold:
@@ -79,11 +73,6 @@ class TestExistingGuardsStillHold:
         with pytest.raises(RuntimeError, match="provider not configured"):
             on_start.run(FakeCtx())
 
-    def test_external_without_a_url_still_stops(self, monkeypatch):
-        monkeypatch.setattr(on_start.shutil, "which",
-                            lambda _cmd: "/opt/homebrew/bin/omlx")
-        with pytest.raises(RuntimeError, match="Missing openai_url"):
-            on_start.run(FakeCtx(provider="external"))
 
 
 class TestTheLocalEngineIsStarted:
@@ -112,9 +101,73 @@ class TestTheLocalEngineIsStarted:
 
         assert ctx.shell_calls == []
 
-    def test_a_remote_endpoint_starts_nothing_here(self):
-        ctx = FakeCtx(provider="external", openai_url="http://127.0.0.1:9/v1")
+
+
+class TestLeavingARemoteEndpoint:
+    """After `stack ai connect <url>`, bringing up the ai stacklet means
+    the engine and speech-to-text on this Mac take over. That is a
+    different setup, not a restart, so it needs a yes, and a no leaves
+    the remote endpoint exactly as it was."""
+
+    REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
+                  openai_key="sk-test", whisper_url="https://stt.example.test/v1",
+                  whisper_key="stt-key", default="gpt-4.1-mini")
+
+    @pytest.fixture(autouse=True)
+    def installed(self, monkeypatch):
+        monkeypatch.setattr(on_start.shutil, "which",
+                            lambda _cmd: "/opt/homebrew/bin/omlx")
+
+    def _answer(self, monkeypatch, answer):
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+
+    def test_the_question_names_the_endpoint(self, monkeypatch, capsys):
+        self._answer(monkeypatch, "n")
+        with pytest.raises(RuntimeError):
+            on_start.run(FakeCtx(**self.REMOTE))
+
+        assert "remote AI endpoint (https://ai.example.test/v1)" in capsys.readouterr().out
+
+    def test_no_keeps_the_remote_setup_and_starts_nothing(self, monkeypatch):
+        self._answer(monkeypatch, "n")
+        ctx = FakeCtx(**self.REMOTE)
+
+        with pytest.raises(RuntimeError, match="still uses"):
+            on_start.run(ctx)
+
+        assert ctx._cfg == self.REMOTE
+        assert ctx.shell_calls == []
+
+    def test_no_is_the_default(self, monkeypatch):
+        self._answer(monkeypatch, "")
+        ctx = FakeCtx(**self.REMOTE)
+
+        with pytest.raises(RuntimeError):
+            on_start.run(ctx)
+
+        assert ctx._cfg == self.REMOTE
+
+    def test_yes_switches_chat_and_voice_to_this_mac_together(self, monkeypatch):
+        """Never one half remote and the other local."""
+        self._answer(monkeypatch, "y")
+        ctx = FakeCtx(**self.REMOTE)
 
         on_start.run(ctx)
 
-        assert ctx.shell_calls == []
+        assert ctx._cfg["provider"] == "managed"
+        assert ctx._cfg["openai_url"] == "http://localhost:42060/v1"
+        assert ctx._cfg["whisper_url"] == "http://localhost:42062/v1"
+        assert ctx._cfg["whisper_key"] == ""
+        assert ctx._cfg["openai_key"] == "local"
+
+    def test_without_a_terminal_nothing_is_switched(self, monkeypatch):
+        """Nobody to say yes: an agent or a script running `stack up ai`
+        must not move the family's AI onto this Mac."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        ctx = FakeCtx(**self.REMOTE)
+
+        with pytest.raises(RuntimeError, match="in a terminal"):
+            on_start.run(ctx)
+
+        assert ctx._cfg == self.REMOTE
