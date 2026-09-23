@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# remote — run the e2e or smoke lane on another Mac over SSH, AI mocked.
+#
+#   tests/e2e/remote e2e [pytest args]
+#   tests/e2e/remote smoke [pytest args]
+#
+# Exits with pytest's exit code. `script/test remote <lane>` calls this.
+#
+#   FAMSTACK_REMOTE_HOST   ssh destination        (default: famstack-e2e)
+#   FAMSTACK_REMOTE_DIR    base dir on the remote (default: ~/famstack-dev)
+#
+# Layout under the base dir:
+#   e2e/       this working tree, synced; also the test instance
+#              (stack.toml, users.toml, .stack/ survive the sync)
+#   data/      the test instance's data_dir
+#   cache/     uv's cache, so nothing lands in the remote's home
+#   lock/      held for the whole run: holder, start time, token, pid
+#   results/   junit XML and container logs of the last run
+#
+# Results come back to tests/e2e/remote-results/.
+#
+# The same file runs on both ends. Locally it takes the lock, syncs the
+# tree and calls the synced copy with --on-remote, which sets up the
+# instance, runs stacktests and stops the rig again.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Only the mocked lanes. `eval` needs the ai stacklet, and the target
+# laptop is too weak to run local models; integration and demo own
+# instances this script does not manage.
+LANES="e2e smoke"
+
+# ── Remote side ─────────────────────────────────────────────────────────
+
+# Runs inside <base>/e2e on the remote, under `zsh -lc` for Homebrew's PATH.
+on_remote() {
+  local token="$1" lane="$2"
+  shift 2
+  local e2e base
+  e2e="$REPO_ROOT"
+  base="$(dirname "$e2e")"
+  local lock="$base/lock" results="$base/results"
+
+  if [[ "$(cat "$lock/token" 2>/dev/null)" != "$token" ]]; then
+    echo "remote: $lock is not held by this run." >&2
+    exit 1
+  fi
+  echo $$ > "$lock/pid"
+
+  # Everything the run writes outside Docker stays under the base dir.
+  export UV_CACHE_DIR="$base/cache"
+  export UV_PYTHON_INSTALL_DIR="$base/python"
+
+  rm -rf "$results"
+  mkdir -p "$results/logs" "$base/data"
+
+  # stacktests needs Python 3.11+ on PATH. If the remote has none, uv
+  # fetches one into the base dir.
+  if ! python_ok; then
+    local py
+    py="$(uv python find '>=3.11' 2>/dev/null || { uv python install 3.12 >&2 && uv python find 3.12; })"
+    export PATH="$(dirname "$py"):$PATH"
+  fi
+
+  # The instance. _seed_secrets.py copies the template only when there is
+  # no stack.toml, and refuses one without the sentinel, so writing both
+  # first is what moves data_dir off ~/famstack-test-data before anything
+  # (the seeded model cache included) is written there.
+  if [[ ! -f stack.toml ]]; then
+    mkdir -p .stack
+    cp tests/e2e/instance/stack.toml stack.toml
+    echo "# Written by tests/e2e/remote: this is a remote test instance." > .stack/.test-instance
+  fi
+  sed -i '' -E "s|^data_dir[[:space:]]*=.*|data_dir      = \"$base/data\"|" stack.toml
+  tests/e2e/stacktests ai mock
+
+  local rc=0 interrupted=0
+  # Ctrl-C reaches pytest through the pty; this shell stays alive to
+  # collect results and stop the rig. When the local side goes away, the
+  # run ends with it: over a pty as a hangup, over a plain pipe as a
+  # broken pipe on pytest's next write. SIGPIPE is ignored so that ends
+  # pytest with an error rather than killing this shell before cleanup,
+  # and `say` keeps a dead terminal from stopping it under set -e.
+  trap 'interrupted=1' INT TERM HUP
+  trap '' PIPE
+  tests/e2e/stacktests "$lane" --junitxml="$results/junit.xml" "$@" || rc=$?
+
+  say "==> collecting container logs"
+  local name
+  for name in $(docker ps -a --format '{{.Names}}' --filter 'name=^stack-'); do
+    docker logs --timestamps "$name" > "$results/logs/$name.log" 2>&1 || true
+  done
+
+  say "==> stopping the rig"
+  tests/e2e/stacktests down > "$results/down.log" 2>&1 || true
+  # core's on_start writes a LaunchAgent into the home dir and on_stop
+  # only unloads it. Remove ours so nothing outside the base dir remains.
+  local plist="$HOME/Library/LaunchAgents/dev.famstack.api.plist"
+  if [[ -f "$plist" ]] && grep -q "$base/" "$plist"; then
+    rm -f "$plist"
+  fi
+
+  echo "$rc" > "$results/exit-code"
+  if [[ "$(cat "$lock/token" 2>/dev/null)" == "$token" ]]; then
+    rm -rf "$lock"
+  fi
+  [[ $interrupted -eq 1 && $rc -eq 0 ]] && rc=130
+  exit "$rc"
+}
+
+say() { echo "$@" 2>/dev/null || true; }
+
+python_ok() {
+  local cand
+  for cand in python3.13 python3.12 python3.11 python3; do
+    command -v "$cand" >/dev/null 2>&1 &&
+      "$cand" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null &&
+      return 0
+  done
+  return 1
+}
+
+if [[ "${1:-}" == "--on-remote" ]]; then
+  shift
+  cd "$REPO_ROOT"
+  on_remote "$@"
+fi
+
+# ── Local side ──────────────────────────────────────────────────────────
+
+usage() {
+  sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+lane="${1:-}"
+case " $LANES " in
+  *" $lane "*) shift ;;
+  *)
+    if [[ "$lane" == "help" || "$lane" == "-h" || "$lane" == "--help" ]]; then
+      usage; exit 0
+    fi
+    echo "remote: refusing lane '${lane:-<none>}'. Only mocked AI lanes run remotely: $LANES." >&2
+    [[ "$lane" == "eval" ]] && echo "  eval needs the ai stacklet, which the remote does not run." >&2
+    exit 2
+    ;;
+esac
+
+HOST="${FAMSTACK_REMOTE_HOST:-famstack-e2e}"
+BASE="${FAMSTACK_REMOTE_DIR:-"~/famstack-dev"}"
+
+# rsync takes a path relative to the remote home; the shell snippets
+# need an expression that expands there.
+rel="${BASE#\~/}"
+# Single-quote for the remote shell. The pattern and replacement sit in
+# variables because bash 3.2 keeps backslashes in an inline replacement.
+q() { local sq="'" esc="'\\''"; printf "'%s'" "${1//$sq/$esc}"; }
+if [[ "$rel" == /* ]]; then base_expr="$(q "$rel")"; else base_expr="\"\$HOME\"/$(q "$rel")"; fi
+
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+
+# Run a zsh snippet on the remote with `base` set. Login shell for PATH;
+# an interactive one would stop at a compinit prompt.
+rsh() {
+  ssh "${SSH_OPTS[@]}" "$@"
+}
+snippet() {
+  printf 'zsh -lc %s' "$(q "base=$base_expr; $1")"
+}
+
+token="$(date +%s)-$$-$RANDOM"
+holder="${USER}@$(hostname -s) ($REPO_ROOT, $lane)"
+locked=0
+
+release_lock() {
+  [[ $locked -eq 1 ]] || return 0
+  # The remote runner releases the lock itself. This covers the runs
+  # that never reached it, and leaves the lock alone while it still runs.
+  rsh "$HOST" "$(snippet "
+    [ \"\$(cat \"\$base/lock/token\" 2>/dev/null)\" = $(q "$token") ] || exit 0
+    pid=\$(cat \"\$base/lock/pid\" 2>/dev/null)
+    if [ -n \"\$pid\" ] && kill -0 \"\$pid\" 2>/dev/null; then
+      echo \"remote: the run on $HOST is still finishing; it releases the lock itself.\" >&2
+      exit 0
+    fi
+    rm -rf \"\$base/lock\"")" || true
+}
+trap 'release_lock' EXIT
+trap 'exit 130' INT TERM
+
+# ── 1. Reach the host and take the lock ─────────────────────────────────
+echo "==> $HOST: taking the lock in $BASE/lock"
+set +e
+out="$(rsh "$HOST" "$(snippet "
+  mkdir -p \"\$base\" || exit 4
+  if mkdir \"\$base/lock\" 2>/dev/null; then
+    printf '%s\n' $(q "$holder") > \"\$base/lock/holder\"
+    date -u +%Y-%m-%dT%H:%M:%SZ > \"\$base/lock/started\"
+    printf '%s\n' $(q "$token") > \"\$base/lock/token\"
+    exit 0
+  fi
+  echo \"\$(cat \"\$base/lock/holder\" 2>/dev/null || echo unknown), since \$(cat \"\$base/lock/started\" 2>/dev/null || echo unknown)\"
+  exit 3")" 2>&1)"
+rc=$?
+set -e
+case $rc in
+  0) locked=1 ;;
+  3)
+    echo "remote: $HOST is busy: held by $out" >&2
+    echo "  If that run is dead, remove $BASE/lock on $HOST." >&2
+    exit 1 ;;
+  255)
+    echo "remote: cannot reach $HOST over ssh." >&2
+    echo "  $out" >&2
+    exit 1 ;;
+  *)
+    echo "remote: could not take the lock on $HOST (exit $rc)." >&2
+    [[ -n "$out" ]] && echo "  $out" >&2
+    exit 1 ;;
+esac
+
+# ── 2. Sync this working tree ───────────────────────────────────────────
+# Excluded paths are neither sent nor deleted on the remote, so its
+# instance config, venv and caches persist between runs. An unchanged
+# uv.lock then means uv has nothing to install.
+echo "==> syncing $REPO_ROOT to $HOST:$BASE/e2e"
+rsync -a --delete \
+  --exclude /.git \
+  --exclude /.venv \
+  --exclude /stack.toml \
+  --exclude /users.toml \
+  --exclude /.stack \
+  --exclude /extensions \
+  --exclude /tests/e2e/remote-results \
+  --exclude /tests/e2e/eval/runs \
+  --exclude .env \
+  --exclude .state \
+  --exclude __pycache__ \
+  --exclude .pytest_cache \
+  --exclude .ruff_cache \
+  --exclude .DS_Store \
+  -e "ssh ${SSH_OPTS[*]}" \
+  "$REPO_ROOT/" "$HOST:$rel/e2e/"
+
+# ── 3. Run ──────────────────────────────────────────────────────────────
+# With a terminal, a pty carries Ctrl-C to pytest and a dropped
+# connection to the runner as a hangup. Without one, a killed local side
+# leaves the remote run to finish and release the lock on its own.
+if [[ -t 0 && -t 1 ]]; then tty_opt=-tt; else tty_opt=-T; fi
+args="$(printf ' %q' "$token" "$lane" "$@")"
+echo "==> $HOST: stacktests $lane (AI mocked)"
+set +e
+rsh "$tty_opt" "$HOST" "$(snippet "cd \"\$base/e2e\" && exec tests/e2e/remote --on-remote$args")"
+rc=$?
+set -e
+
+# ── 4. Bring the results home ───────────────────────────────────────────
+dest="$SCRIPT_DIR/remote-results"
+mkdir -p "$dest"
+if rsync -a --delete -e "ssh ${SSH_OPTS[*]}" "$HOST:$rel/results/" "$dest/" 2>/dev/null; then
+  echo "==> results in ${dest#"$REPO_ROOT"/}"
+else
+  echo "remote: no results to fetch from $HOST:$BASE/results" >&2
+fi
+
+[[ $rc -eq 255 ]] && echo "remote: the ssh session to $HOST failed." >&2
+exit "$rc"

@@ -37,8 +37,9 @@ minute and a quarter would only teach people to skip it.
 | `make test-unit` | ~50s | nothing | no | Before a push, or when a coherent piece of work is done. Offline framework and stacklet tests: no Docker, no live services, no production data. |
 | `make test-integration` | ~6m | Docker, APFS | yes | You changed lifecycle, config rendering, `.env`, compose, container names, ports, volumes, health wiring or the backup engine. Owns a throwaway instance on fixed names, and mounts an APFS disk image per backup test. |
 | `make test-demo` | ~4m | the demo instance running | yes | The behaviour has to work against the already-running bots and real service wiring. Tests create unique data and clean up after themselves; they never reset the instance. |
-| `make test-smoke` | ? | the test rig or the Simpsons demo | yes | A quick answer on a cross-service path. Seeds secrets and brings the required stacklets up first, so it is not read-only. |
-| `make test-e2e` | ? | the test rig or the Simpsons demo | yes | End of a branch, or before asking for review, when the change crosses container boundaries. On the demo it stashes the instance for the run and brings it back afterwards, pass or fail; any other instance is refused. |
+| `make test-smoke` | ~3.5m (remote, M4 16 GB) | the test rig or the Simpsons demo | yes | A quick answer on a cross-service path. Seeds secrets and brings the required stacklets up first, so it is not read-only. |
+| `make test-e2e` | ~9.5m (remote, M4 16 GB) | the test rig or the Simpsons demo | yes | End of a branch, or before asking for review, when the change crosses container boundaries. On the demo it stashes the instance for the run and brings it back afterwards, pass or fail; any other instance is refused. |
+| `script/test remote e2e` | ~9.5m | ssh to a Mac with Docker and uv | on the remote | The e2e lane, or `remote smoke`, on another Mac with AI mocked, while this one keeps its own instance. See [Remote e2e](#remote-e2e). |
 
 **Exclusive** means the lane owns fixed container names and ports, so exactly
 one run at a time on this Mac. Check nothing else is mid-run before starting
@@ -48,6 +49,32 @@ why that is courtesy rather than enforcement today.
 **?** means nobody has timed it. If you run one, put the number here.
 
 `make` on its own prints a short version of this table.
+
+## Remote e2e
+
+`script/test remote e2e [pytest args]` (or `remote smoke`) runs the lane on
+another Mac over SSH and exits with pytest's exit code. Nothing on this Mac
+changes: no containers, no `stack.toml`, no AI mode.
+
+1. Takes a lock on the remote (`mkdir`), naming the holder and start time.
+   A second run refuses at once and names the first.
+2. Syncs this working tree, uncommitted changes included, with `rsync`.
+   The remote's instance config and `.venv` are excluded, so they persist
+   and an unchanged `uv.lock` installs nothing.
+3. Runs `stacktests <lane>` there in mock AI mode, whatever mode this Mac
+   is in, stops the rig and releases the lock, also after Ctrl-C.
+4. Copies the junit XML and container logs to `tests/e2e/remote-results/`.
+
+| Variable | Default | |
+|---|---|---|
+| `FAMSTACK_REMOTE_HOST` | `famstack-e2e` | ssh destination; key auth, no prompts |
+| `FAMSTACK_REMOTE_DIR` | `~/famstack-dev` | base dir on the remote; quote the `~` |
+
+Everything the run writes on the remote stays under the base dir
+(`e2e/` tree and instance, `data/`, `cache/`, `lock/`, `results/`), apart
+from Docker's images and volumes. The remote needs Docker and uv; Python
+3.11+ is fetched by uv if missing. Only mocked lanes run remotely: `eval`
+needs the `ai` stacklet and is refused.
 
 Do not run managed integration cleanup or reset commands against a production
 instance. `stacktests` guards this with a test-instance sentinel, but
