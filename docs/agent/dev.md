@@ -424,8 +424,10 @@ unit test fails when the two disagree.
 
 ## Pull requests
 
-- **One PR is one changelog entry.** Squash merge; the PR title is the commit subject, in the format above, under 70 chars. A PR that needs two changelog lines is two PRs.
-- PR body: `## Summary` with 1-3 bullets, plus any `Upgrade:` / `BREAKING CHANGE:` footer, which lands in the squashed commit where a reviewer can argue with it. **No "Test plan" section** - project preference.
+- **Squash or rebase, never a merge commit.** Pick per PR:
+  - **Squash** when the branch is one change, or its commits are work in progress. The PR title becomes the commit subject and the changelog line, in the format above, under 70 chars.
+  - **Rebase** when the branch is a series of coherent commits that each stand alone, for example a fix, then a framework feature, then a stacklet that uses it. Every commit lands on `main` as it is and becomes its own changelog line, so each must pass `tools/commit-lint` and carry its own `Upgrade:` / `BREAKING CHANGE:` footer. The title still has to parse, because CI checks it, but it is not a changelog line.
+- PR body: `## Summary` with 1-3 bullets. On a squash merge, an `Upgrade:` / `BREAKING CHANGE:` footer in the body lands in the squashed commit where a reviewer can argue with it; on a rebase merge it must be in the commit. **No "Test plan" section** - project preference.
 - **Never `git push` without explicit human approval.** Every push, every branch, every time.
 
 ## Releases
