@@ -41,6 +41,27 @@ FORGEJO__server__SSH_PORT              = "222"
 FORGEJO__database__DB_TYPE             = "sqlite3"
 FORGEJO__security__INSTALL_LOCK        = "true"
 FORGEJO__service__DISABLE_REGISTRATION = "false"
+# Single sign-on through the stack's OIDC provider, if one is installed.
+# Empty until the provider has registered this stacklet; then
+# hooks/on_start_ready.py creates the "family account" login source.
+OIDC_ISSUER        = "{oidc_issuer}"
+OIDC_CLIENT_ID     = "{oidc_client_id}"
+OIDC_CLIENT_SECRET = "{oidc_client_secret}"
+# How Forgejo treats a login through that source. They take effect only
+# once the source exists. Family members already have accounts from
+# users.toml under the usernames the provider sends as
+# preferred_username, so an existing account is linked, not duplicated,
+# and someone without one gets it on first login.
+FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION = "true"
+FORGEJO__oauth2_client__ACCOUNT_LINKING          = "auto"
+FORGEJO__oauth2_client__USERNAME                 = "preferred_username"
+FORGEJO__oauth2_client__OPENID_CONNECT_SCOPES    = "email profile"
+
+# Declares this stacklet as an OpenID Connect client. Forgejo builds the
+# callback from the login source name, path-escaped (see oauth.py).
+[oidc]
+name      = "Code"
+callbacks = ["{url}/user/oauth2/family%20account/callback"]
 
 [health]
 url    = "http://localhost:42040/api/healthz"
