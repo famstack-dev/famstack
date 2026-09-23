@@ -625,12 +625,16 @@ def create_stack(repo_root: Path, instance_dir: Path | None = None) -> Stack:
 
     name = cfg.get("core", {}).get("name", "stack")
     data_dir = cfg.get("core", {}).get("data_dir", f"~/{name}-data")
-    return Stack(
+    stck = Stack(
         root=repo_root,
         data=Path(data_dir).expanduser(),
         instance_dir=instance,
         output=TerminalOutput(),
     )
+    if adopted := stck.adopt_product_name():
+        stck.output.step(f"stack.toml: set [core] name = \"{adopted}\", "
+                         f"the name of the data dir {stck.data}")
+    return stck
 
 
 # ── Output formatting ────────────────────────────────────────────────────
