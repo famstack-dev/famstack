@@ -52,6 +52,7 @@ class TestSubjectsThatPass:
         "Merge branch 'main' into feat/x",
         'Revert "feat(photos): something"',
         "fixup! fix(core): something",
+        "amend! fix(core): something",
     ])
     def test_git_writes_these_itself(self, subject):
         """Linting them teaches people to pass --no-verify, nothing else."""

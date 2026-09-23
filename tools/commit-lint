@@ -93,7 +93,7 @@ HEADER = re.compile(
 
 # Git writes these itself, or they are machine-made and never reach a
 # changelog. Linting them would only teach people to pass --no-verify.
-EXEMPT = re.compile(r"^(Merge |Revert \"|fixup! |squash! |Bumps )")
+EXEMPT = re.compile(r"^(Merge |Revert \"|fixup! |squash! |amend! |Bumps )")
 
 
 def check(header: str) -> list[str]:
