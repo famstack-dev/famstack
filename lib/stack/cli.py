@@ -294,8 +294,12 @@ class CLI:
         from .hooks import HookResolver, build_hook_ctx
         ready_resolver = HookResolver(stacklet_dir)
         if ready_resolver.resolve("on_start_ready"):
+            # Rendered again, not the env from the start of this run:
+            # on_install_success may have written secrets since (tokens,
+            # seeds) that templates reference. The containers keep the
+            # env they were started with; this hook reads the current one.
             ready_ctx = build_hook_ctx(
-                stacklet_id, env=env_dict,
+                stacklet_id, env=self.stack.env(stacklet_id),
                 step_fn=self.stack.output.step, stack=self.stack,
             )
             ready_resolver.run("on_start_ready", ready_ctx)

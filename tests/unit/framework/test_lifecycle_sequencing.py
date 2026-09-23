@@ -77,3 +77,26 @@ class TestProvidersComeFirst:
         started = cli.up_many(["alpha", "base", "zid"])["started"]
         assert started.index("base") < started.index("alpha")
         assert started.index("zid") < started.index("alpha")
+
+
+class TestOnStartReadySeesTheCurrentEnv:
+
+    def test_a_token_written_on_install_is_in_the_env_on_start_ready(self, tmp_path):
+        seen = tmp_path / "seen"
+        cli = _cli(
+            tmp_path,
+            {"app": '[env.defaults]\nAPP_TOKEN = "{app__TOKEN}"\n'},
+            {"app": {
+                "on_install_success": """
+                    def run(ctx):
+                        ctx.secret("TOKEN", "t-1")
+                """,
+                "on_start_ready": f"""
+                    from pathlib import Path
+                    def run(ctx):
+                        Path({str(seen)!r}).write_text(ctx.env.get("APP_TOKEN", ""))
+                """,
+            }},
+        )
+        assert cli.up("app")["ok"]
+        assert seen.read_text() == "t-1"
