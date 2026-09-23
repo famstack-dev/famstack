@@ -30,6 +30,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 import voice  # noqa: E402
+from capture_pipeline import CaptureOutcome  # noqa: E402
 from archivist import ArchivistBot  # noqa: E402
 
 
@@ -1122,3 +1123,55 @@ class TestAnUploadKeepsItsFile:
 
         assert calls[0]["kept_media"] is None
         assert calls[0]["file_data"] == b"%PDF-1.4 anmeldung"
+
+
+class TestTheReplyPointsAtThePage:
+    """What the "saved" message links to.
+
+    The footer used to be the source: the URL that was pasted, or a
+    placeholder for typed text. That is the message directly above the
+    reply in the room, so it repeated what the sender already had and
+    left out the only new fact, which is where the capture was filed.
+    """
+
+    def _outcome(self, capture_id="$abc:server"):
+        data = {"vault_path": "family/camping/notes/2026/09/x.md"}
+        if capture_id:
+            data["capture_id"] = capture_id
+        return CaptureOutcome(
+            status="captured",
+            classification={"title": "Boiler service"},
+            display_link="https://example.org/boiler",
+            envelope={"type": "capture.filed", "data": data},
+        )
+
+    def test_the_link_addresses_the_capture_by_id(self, tmp_path, monkeypatch):
+        """Not by vault path: a capture re-scopes when a second person
+        joins the room, a topic gets renamed, a correction rewrites the
+        title. The id is assigned once and never rewritten."""
+        monkeypatch.setenv("LINK_BASE_URL", "https://home.example.org/go")
+        bot = _build_bot(tmp_path)
+
+        link = bot._capture_link(self._outcome())
+
+        assert link == "https://home.example.org/go/capture/%24abc%3Aserver"
+
+    def test_a_capture_that_never_landed_has_nothing_to_link(
+        self, tmp_path, monkeypatch,
+    ):
+        """No mirror, no page. The caller falls back to the source."""
+        monkeypatch.setenv("LINK_BASE_URL", "https://home.example.org/go")
+        bot = _build_bot(tmp_path)
+
+        assert bot._capture_link(self._outcome(capture_id=None)) == ""
+
+    def test_no_home_base_means_no_link_rather_than_a_broken_one(
+        self, tmp_path, monkeypatch,
+    ):
+        """Core renders LINK_BASE_URL; until it has, the namespace is not
+        reachable and posting a URL into it would be a dead link."""
+        monkeypatch.delenv("LINK_BASE_URL", raising=False)
+        bot = _build_bot(tmp_path)
+
+        assert bot._capture_link(self._outcome()) == ""
+
