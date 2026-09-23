@@ -28,14 +28,16 @@ lanes() {
   script/test unit        ~50s    nothing        no         before a push, or when a piece of work is done
   script/test integration ~6m     Docker, APFS   yes        lifecycle, env, compose, ports, health, backup
   script/test demo        ~4m     demo instance  yes        it must work against the running bots
-  script/test smoke       ?       rig or demo    yes        quick cross-service check
-  script/test e2e         ?       rig or demo    yes        end of a branch, before review
+  script/test smoke       ~3.5m*  rig or demo    yes        quick cross-service check
+  script/test e2e         ~9.5m*  rig or demo    yes        end of a branch, before review
+  script/test remote e2e  ~9.5m   ssh to a Mac   remote     e2e or smoke on another Mac, AI mocked
 
   script/test typecheck   types across the shipped code, not a gate
 
   Exclusive means it owns fixed container names and ports, so exactly
-  one run at a time on this Mac. ? means nobody has timed it yet;
-  if you run one, write the number down. Details: tests/README.md
+  one run at a time on this Mac. * was timed remotely (M4, 16 GB).
+  ? means nobody has timed it yet; if you run one, write the number
+  down. Details: tests/README.md
 
 EOF
 }
@@ -89,6 +91,11 @@ case "$lane" in
     ;;
   e2e)
     tests/e2e/stacktests e2e "$@"
+    ;;
+
+  # smoke or e2e on another Mac over SSH, AI mocked. Leaves this Mac alone.
+  remote)
+    tests/e2e/remote "$@"
     ;;
 
   *)

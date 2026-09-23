@@ -46,6 +46,9 @@ htmlcov/
 # scorecards) — written by `stacktests eval`, never committed.
 tests/e2e/eval/runs/
 
+# junit XML and container logs of the last `script/test remote` run.
+tests/e2e/remote-results/
+
 # AI assistant. Local settings and transcripts stay out, but the LSP plugin
 # is repo configuration: it makes agents read this codebase with a language
 # server instead of grep, so every clone should get it.
