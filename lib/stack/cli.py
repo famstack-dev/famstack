@@ -1083,6 +1083,13 @@ def handle_doctor(stck, args):
         stale=stck.list().get("stale", []),
     )
 
+    findings += doctor.check_oidc(
+        [s["id"] for s in discovered if "oidc_provider" in s["manifest"]],
+        {c["stacklet"]: bool(c["client_id"] and c["client_secret"])
+         for c in stck.oidc_clients()},
+        running={sid for sid in stacklets if docker.containers_for(sid)},
+    )
+
     # What this instance is running, and whether a release has passed it.
     # No fetch: doctor is run often, and often when something is
     # unreachable, so it answers from the tags this clone already has.
