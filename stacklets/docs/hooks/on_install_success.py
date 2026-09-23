@@ -40,7 +40,6 @@ def _create_admin_users(ctx, token):
     via Django's manage.py shell (bypasses password validators so short
     initial passwords like first-name-lowercased work).
     """
-    import subprocess
     from stack.users import user_id, get_user_password
 
     users = ctx.users
@@ -63,21 +62,21 @@ def _create_admin_users(ctx, token):
 
         # create_superuser inside the container bypasses Django password
         # validators. The script is idempotent: existing users are skipped.
+        # The values are Python literals (repr), so a quote in a password
+        # cannot end the string and run as code.
         script = (
             "from django.contrib.auth.models import User; "
-            f"User.objects.create_superuser('{uid}', '{email}', '{password}') "
-            f"if not User.objects.filter(username='{uid}').exists() else None"
+            f"User.objects.create_superuser({uid!r}, {email!r}, {password!r}) "
+            f"if not User.objects.filter(username={uid!r}).exists() else None"
         )
-        result = subprocess.run(
-            ["docker", "exec", "stack-docs-paperless",
-             "python3", "/usr/src/paperless/src/manage.py", "shell", "-c", script],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
+        # ctx.run_in_container, because the script carries the password: a failure
+        # reports the reason, never the arguments.
+        try:
+            ctx.run_in_container(["python3", "/usr/src/paperless/src/manage.py", "shell", "-c", script],
+                     service="paperless")
             ctx.step(f"Admin account created in Docs: {uid}")
-        else:
-            err = (result.stderr or result.stdout).strip().split("\n")[-1]
-            ctx.step(f"Could not create Docs admin {uid}: {err}")
+        except RuntimeError as e:
+            ctx.step(f"Could not create Docs admin {uid}: {e}")
 
 
 def _seed_taxonomy(ctx, token):
