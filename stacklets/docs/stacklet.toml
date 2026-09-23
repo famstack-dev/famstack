@@ -46,6 +46,18 @@ ADMIN_USER           = "{admin_username}"
 ADMIN_PASSWORD       = "{admin_password}"
 PAPERLESS_URL        = "{url}"
 LANGUAGE             = "{language}"
+# Single sign-on through the stack's OIDC provider, if one is installed.
+# Empty until the provider has registered this stacklet, and then the
+# compose file leaves Paperless's login untouched.
+OIDC_ISSUER          = "{oidc_issuer}"
+OIDC_CLIENT_ID       = "{oidc_client_id}"
+OIDC_CLIENT_SECRET   = "{oidc_client_secret}"
+
+# Declares this stacklet as an OpenID Connect client. The callback path
+# carries the provider_id of the entry in the compose file.
+[oidc]
+name      = "Documents"
+callbacks = ["{url}/accounts/oidc/pocketid/login/callback/"]
 
 [health]
 url    = "http://localhost:42020/api/"
