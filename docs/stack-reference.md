@@ -1125,6 +1125,12 @@ One file, committed to the repo. User edits it directly.
 
 ```toml
 [core]
+name          = "famstack"            # product name: CLI branding and
+                                      # derived paths (~/<name>-extensions).
+                                      # Missing = "stack". An instance
+                                      # without it whose data dir exists
+                                      # as <name>-data gets it written on
+                                      # the next command.
 domain        = ""                    # empty = port mode
 dns_provider  = ""                    # domain mode: "hetzner" or
                                       # "cloudflare" serves HTTPS with

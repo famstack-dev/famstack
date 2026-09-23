@@ -135,6 +135,23 @@ class Stack:
         """Product name from stack.toml [core] name, defaults to 'stack'."""
         return self._cfg("core", "name", "stack")
 
+    def adopt_product_name(self) -> str | None:
+        """Record `[core] name` for an instance installed without one.
+
+        The installer wrote `data_dir = "~/<name>-data"` long before it
+        wrote `name`, so an installed instance's data dir carries its
+        name. Nothing is written without that evidence: no data dir yet,
+        a dir not named `<name>-data`, or a name already set. Returns the
+        name written, or None.
+        """
+        if self._cfg("core", "name") or not self.data.is_dir():
+            return None
+        name = self.data.name.removesuffix("-data")
+        if not name or name == self.data.name:
+            return None
+        self._set_cfg("core", "name", name)
+        return name
+
     # ── Config ────────────────────────────────────────────────────────
 
     @property
