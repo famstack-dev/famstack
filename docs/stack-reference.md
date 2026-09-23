@@ -701,7 +701,8 @@ runs them again from scratch.
 | `ctx.env` | `dict` | Rendered environment variables. |
 | `ctx.secret(name)` | `callable` | Read a secret. `ctx.secret(name, value)` writes one. |
 | `ctx.step(msg)` | `callable` | Print a progress line. |
-| `ctx.shell(cmd)` | `callable` | Run a shell command with streaming output and error handling. |
+| `ctx.shell(cmd)` | `callable` | Run a shell command with streaming output and error handling. The error message includes the command. |
+| `ctx.run_in_container(argv, service=None, user=None)` | `callable` | Run `argv` in the stacklet's container (`stack-<id>`, or `stack-<id>-<service>`) with `docker exec`, as a list and without a shell. Returns stdout. On failure it raises with the container, the exit code and the last stderr line, never the arguments, so a password or secret can be passed. |
 | `ctx.http_post(url, body)` | `callable` | HTTP POST, returns parsed JSON. |
 | `ctx.http_get(url)` | `callable` | HTTP GET, returns parsed JSON. |
 
