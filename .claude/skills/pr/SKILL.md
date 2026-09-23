@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Write the pull request for the current branch: the merge mode (squash or rebase), a title that is the changelog line when squashed, and a description per the Pull requests rules, all checked with tools/commit-lint. Use when asked to write, draft or open a PR, to produce its title or squash message, or to choose how to merge it.
+description: Write the pull request for the current branch: the merge mode (squash or rebase), a title that is the changelog line when squashed, and a description per the Pull requests rules, all checked with tools/commit-lint. Also writes GitHub issues from two templates: a feature as a story with a definition of done, a bug with steps to reproduce and expected and actual behaviour. Use when asked to write, draft or open a PR or an issue, to produce a PR title or squash message, or to choose how to merge a PR.
 ---
 
 # Pull request
@@ -99,3 +99,88 @@ dialog, or `gh pr merge --squash --body-file`.
 
 Rebase: `gh pr merge --rebase`. The commits land unchanged, so their footers
 are the ones that count; one written only in the description is lost.
+
+## Issues
+
+Work that is not done in this branch goes into a GitHub issue: something
+found mid-task, a follow-up, a bug to fix later. One issue per piece of
+work. Every issue ends with a definition of done, the checks that prove it
+is finished. Pick the template by kind.
+
+**Title.** A feature says what becomes possible, in the imperative:
+"Give CLI plugins a secret lookup instead of a snapshot of every secret".
+A bug says the symptom as a reader meets it: "Paperless login returns 500
+on a first-time signup". No class or function names unless a reader
+types them.
+
+### Feature: a story with a definition of done
+
+```
+## Story
+As <an admin | a family member | a stacklet author>, I want <capability>,
+so that <outcome>.
+
+## Context
+What exists today and why it is not enough. Point at the code
+(`lib/stack/stack.py`, `stacklets/<id>/...`), ADRs and PRs.
+
+## Proposal
+The change, at the level a reviewer can argue with.
+Out of scope: <what this issue does not cover>.
+
+## Definition of done
+- [ ] <an observable check: a command and its result, or a behaviour>
+- [ ] <a caller-side test that states the behaviour>
+- [ ] <docs updated: `docs/stack-reference.md` for framework behaviour>
+```
+
+Example: an admin wants the provider's "My apps" page to show an icon per
+service. Done when `stack up id` sets a logo on every registered client
+that has none, `stack up id` a second time uploads nothing, and a test
+drives both runs against a stand-in for the provider's API.
+
+### Bug: steps to reproduce, expected and actual behaviour
+
+```
+## Summary
+What breaks, for whom, in one sentence.
+
+## Steps to reproduce
+1. <from a known state: which stacklets are up, which mode>
+2. <the action>
+3. <what to look at>
+
+## Expected behaviour
+What should happen, and where that is promised (a doc, a test, a spec).
+
+## Actual behaviour
+What happens. Error text verbatim and trimmed.
+
+## Environment
+`./stack version`, macOS version, OrbStack or Docker Desktop, port or
+domain mode, the stacklets involved.
+
+## Cause
+If known: the file and why. Otherwise leave the heading out.
+
+## Definition of done
+- [ ] <a test that fails before the fix and passes after it>
+- [ ] <the steps above now give the expected behaviour>
+```
+
+Example: steps "bring up `id` and `docs` in domain mode, open the docs
+login, choose the provider button as a user whose account is not linked
+yet". Expected: Paperless creates the account and logs in. Actual:
+`500`, with `MultipleObjectsReturned` in the Paperless log. Done when a
+test pins one provider entry per client id.
+
+### Rules
+
+- Examples and reproduction steps use the demo family and example
+  domains (`home.example.family`), never a real instance, name, address
+  or log excerpt with personal data. This repository is public.
+- No em dashes. No secrets, tokens or passwords, also not in logs.
+- Opening an issue publishes it: ask first. With approval:
+  `gh issue create --title "<title>" --body-file <file>`.
+- A commit or PR that resolves the issue carries `Closes: #N`; one that
+  only relates to it carries `Refs: #N`.

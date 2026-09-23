@@ -450,7 +450,7 @@ Two spellings of the same version exist by necessity: the tag and `lib/stack/cli
 ## Pre-1.0 conventions
 
 - Invariant changes (marker semantics, field renames, contract shifts) get coherent commits - each stands alone for revert.
-- Actionable work lives in GitHub issues, one issue each, every issue carrying a verification gate: a "Done when" section with the checks that prove it. Design notes - decisions, rejected dead ends, known-but-unresolved tensions - live at `docs/design-notes.md`; surface them when adjacent code is touched. If a note grows a "do this next", move it to an issue and leave the reasoning behind.
+- Actionable work lives in GitHub issues, one issue each, every issue carrying a verification gate: a "Definition of done" with the checks that prove it. The pr skill has the issue templates. Design notes - decisions, rejected dead ends, known-but-unresolved tensions - live at `docs/design-notes.md`; surface them when adjacent code is touched. If a note grows a "do this next", move it to an issue and leave the reasoning behind.
 - Don't add backwards-compatibility shims, feature flags for one-shot migrations, or renamed `_unused` vars.
 
 ## What NOT to do
