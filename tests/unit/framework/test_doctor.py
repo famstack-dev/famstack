@@ -396,3 +396,45 @@ def test_summary_counts_and_pluralises():
 
 def test_summary_singular_error():
     assert summarise([Finding(ERROR, "a", "", "")]) == "1 error."
+
+
+# ── single sign-on ───────────────────────────────────────────────────────
+
+class TestSingleSignOn:
+    """A client whose login button never appears says nothing on its own.
+
+    Its `{oidc_*}` variables render empty whether there is no provider or
+    the provider has not registered it yet, and the service simply shows
+    its own login. Doctor tells the two apart.
+    """
+
+    def test_a_running_client_the_running_provider_has_not_registered(self):
+        from stack.doctor import WARN, check_oidc
+        [found] = check_oidc(["id"], {"docs": False}, running={"id", "docs"})
+        assert found.level == WARN
+        assert "docs" in found.title
+        assert found.fix == "stack up id"
+
+    def test_a_registered_client_is_fine(self):
+        from stack.doctor import check_oidc
+        assert check_oidc(["id"], {"docs": True}, running={"id", "docs"}) == []
+
+    def test_no_provider_means_single_sign_on_was_not_chosen(self):
+        from stack.doctor import check_oidc
+        assert check_oidc([], {"docs": False}, running={"docs"}) == []
+
+    def test_a_provider_that_was_never_brought_up_is_not_a_choice_yet(self):
+        """An extension in the directory is not a decision to use it."""
+        from stack.doctor import check_oidc
+        assert check_oidc(["id"], {"docs": False}, running={"docs"}) == []
+
+    def test_a_client_that_is_not_running_is_not_reported(self):
+        from stack.doctor import check_oidc
+        assert check_oidc(["id"], {"docs": False}, running={"id"}) == []
+
+    def test_a_second_provider_is_ignored_and_doctor_says_which(self):
+        """The first provider discovered wins, which is otherwise silent."""
+        from stack.doctor import WARN, check_oidc
+        [found] = check_oidc(["id", "sso"], {}, running={"id"})
+        assert found.level == WARN
+        assert "id" in found.detail and "sso" in found.detail

@@ -211,6 +211,50 @@ def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     )
 
 
+def check_oidc(providers: list[str], clients: dict[str, bool],
+               running: set[str]) -> list[Finding]:
+    """Single sign-on that is set up on one side only.
+
+    A client's `{oidc_*}` variables render empty both when there is no
+    provider and when the provider has not registered it yet, and either
+    way the service shows only its own login. The first is a choice, the
+    second a gap. `providers` are the stacklets declaring
+    `[oidc_provider]` in discovery order, `clients` maps each stacklet
+    declaring `[oidc]` to whether its credentials are stored, `running`
+    names the stacklets with containers.
+
+    A provider that is not running raises nothing: an extension in the
+    directory is not yet a decision to use it.
+    """
+    findings: list[Finding] = []
+    if len(providers) > 1:
+        used, ignored = providers[0], ", ".join(providers[1:])
+        findings.append(Finding(
+            level=WARN,
+            title="more than one stacklet provides single sign-on",
+            detail=f"{used} is used, {ignored} is ignored. Only the first "
+                   "stacklet that declares [oidc_provider] is used.",
+            fix=f"remove [oidc_provider] from {ignored}",
+        ))
+    if not providers or providers[0] not in running:
+        return findings
+    provider = providers[0]
+    for stacklet, registered in sorted(clients.items()):
+        if registered or stacklet not in running:
+            continue
+        findings.append(Finding(
+            level=WARN,
+            title=f"{stacklet} has no single sign-on yet",
+            detail=f"It declares [oidc] and {provider} provides OpenID "
+                   f"Connect, but {provider} has not registered it, so "
+                   f"{stacklet} shows only its own login. Registration "
+                   f"runs on `stack up {provider}`; then run "
+                   f"`stack up {stacklet}` to apply the credentials.",
+            fix=f"stack up {provider}",
+        ))
+    return findings
+
+
 def diagnose(stacklets, expected_env, containers_for, container_env,
              *, missing_secrets=None, stale=()) -> list[Finding]:
     """Run every check across the given stacklets.

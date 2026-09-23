@@ -27,6 +27,12 @@ from .output import SilentOutput
 from .secrets import TomlSecretStore
 
 
+def _oidc_secret_names(stacklet_id: str) -> tuple[str, str]:
+    """Secret names, in the provider's namespace, for one client stacklet."""
+    sid = stacklet_id.upper()
+    return f"CLIENT_{sid}_ID", f"CLIENT_{sid}_SECRET"
+
+
 def _mail_accounts_env(mail_cfg: dict, secret_lookup) -> str:
     """Build MAIL_ACCOUNTS_JSON from stack.toml [mail] + a secret lookup.
 
@@ -578,6 +584,7 @@ class Stack:
         template_vars = self._build_template_vars()
         template_vars["stacklet_id"] = stacklet_id
         template_vars.update(self._own_template_vars(stacklet_id, s.get("port", 0)))
+        template_vars.update(self._oidc_template_vars(s))
 
         # Render templates — warn on missing vars (typos cause silent failures)
         import re
@@ -615,6 +622,90 @@ class Stack:
         rendered["PORT_BIND_IP"] = "127.0.0.1" if self._cfg("core", "domain") else "0.0.0.0"
 
         return rendered
+
+    # ── Single sign-on (OpenID Connect) ───────────────────────────────
+    #
+    # A client stacklet declares `[oidc]`; a provider stacklet declares
+    # `[oidc_provider]`. Neither names the other. The provider's hooks
+    # read `oidc_clients()`, register each client with the identity
+    # service and hand the credentials to `store_oidc_client()`. The
+    # client reads them as `{oidc_issuer}`, `{oidc_client_id}` and
+    # `{oidc_client_secret}`.
+    #
+    # Credentials are stored in the provider's secret namespace, so
+    # `stack destroy <provider>` deletes them and every client falls back
+    # to its own login on its next `stack up`.
+
+    def oidc_provider(self) -> dict | None:
+        """The stacklet that declares `[oidc_provider]`, first found wins."""
+        for s in self.discover():
+            if "oidc_provider" in s.get("manifest", {}):
+                return s
+        return None
+
+    def oidc_clients(self) -> list[dict]:
+        """Every stacklet with an `[oidc]` table, as a provider needs it.
+
+        `callbacks` are rendered against the client's own template vars,
+        so `{url}` is the client's public URL. `client_id` and
+        `client_secret` are what is stored now, None before the first
+        registration.
+        """
+        provider = self.oidc_provider()
+        template_vars = self._build_template_vars()
+        clients = []
+        for s in self.discover():
+            oidc = s.get("manifest", {}).get("oidc")
+            if oidc is None:
+                continue
+            own = collections.defaultdict(str, template_vars)
+            own.update(self._own_template_vars(s["id"], s.get("port", 0)))
+            client_id, client_secret = self._oidc_credentials(provider, s["id"])
+            clients.append({
+                "stacklet":      s["id"],
+                "name":          oidc.get("name") or s["name"],
+                "callbacks":     [c.format_map(own) for c in oidc.get("callbacks", [])],
+                "client_id":     client_id,
+                "client_secret": client_secret,
+            })
+        return clients
+
+    def store_oidc_client(self, stacklet_id: str, client_id: str,
+                          client_secret: str) -> None:
+        """Store the credentials the provider issued for a client stacklet."""
+        provider = self.oidc_provider()
+        if provider is None:
+            raise ValueError("No stacklet declares [oidc_provider]")
+        id_key, secret_key = _oidc_secret_names(stacklet_id)
+        self.secrets.set(provider["id"], id_key, client_id)
+        self.secrets.set(provider["id"], secret_key, client_secret)
+
+    def _oidc_credentials(self, provider: dict | None,
+                          stacklet_id: str) -> tuple[str | None, str | None]:
+        if provider is None:
+            return None, None
+        id_key, secret_key = _oidc_secret_names(stacklet_id)
+        return (self.secrets.get(provider["id"], id_key),
+                self.secrets.get(provider["id"], secret_key))
+
+    def _oidc_template_vars(self, stacklet: dict) -> dict:
+        """`{oidc_*}` for one stacklet: all three set, or all three empty.
+
+        A client without both credentials gets nothing, so a compose file
+        can switch the login on by testing one variable.
+        """
+        empty = {"oidc_issuer": "", "oidc_client_id": "", "oidc_client_secret": ""}
+        if "oidc" not in stacklet.get("manifest", {}):
+            return empty
+        provider = self.oidc_provider()
+        client_id, client_secret = self._oidc_credentials(provider, stacklet["id"])
+        if provider is None or not (client_id and client_secret):
+            return empty
+        return {
+            "oidc_issuer":        self._public_url(provider["id"], provider.get("port", 0)),
+            "oidc_client_id":     client_id,
+            "oidc_client_secret": client_secret,
+        }
 
     # ── List ──────────────────────────────────────────────────────────
 

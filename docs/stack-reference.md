@@ -205,6 +205,7 @@ Available template variables:
 | `{url}`, `{<id>_url}`, `{home_url}` | Public URLs: `http://<ip>:<port>` in port mode; `https://<id>.<domain>` in domain mode once `[core].dns_provider` is set, `http://` before that |
 | `{url_host}` | The host of `{url}`: `<id>.<domain>` in domain mode, `{ip}` in port mode. For a protocol the stacklet serves under the same name besides HTTP, such as Forgejo's SSH |
 | `{<id>__<NAME>}` | A secret from `secrets.toml`, e.g. `{docs__API_TOKEN}`, `{infra__DNS_API_TOKEN}` |
+| `{oidc_issuer}`, `{oidc_client_id}`, `{oidc_client_secret}` | Single sign-on for a stacklet with an `[oidc]` table, see [Single Sign-On](#single-sign-on-oidc). All three empty until the provider has registered the stacklet |
 
 ### Hints
 
@@ -471,6 +472,61 @@ has to be able to refuse an incompatible target.
 A stacklet may declare zero, one, or several entries of each kind. Sources
 flow to every configured target whose engine supports the declared
 section type.
+
+### Single Sign-On (OIDC)
+
+A stacklet can let people log in through an OpenID Connect provider that
+another stacklet runs. The two sides do not name each other: the client
+does not know which provider it gets, and the provider does not know the
+client's env.
+
+A **client** declares `[oidc]` and reads three template variables:
+
+```toml
+[env.defaults]
+OIDC_ISSUER        = "{oidc_issuer}"
+OIDC_CLIENT_ID     = "{oidc_client_id}"
+OIDC_CLIENT_SECRET = "{oidc_client_secret}"
+
+[oidc]
+name      = "Documents"     # shown on the provider's consent page; default: the stacklet name
+callbacks = ["{url}/accounts/oidc/sso/login/callback/"]
+```
+
+`callbacks` are rendered against the client's own template variables, so
+`{url}` is the client's public URL. The three `{oidc_*}` variables are
+set together or not at all: they stay empty while no provider exists, and
+until the provider has registered the client. Test one of them in the
+compose file to switch the login on, and keep the service's own login as
+the fallback.
+
+A **provider** declares `[oidc_provider]` (an empty table). The issuer is
+its public URL, `{url}`. Its hooks do the registration through the
+`Stack` instance in `ctx.stack`:
+
+| Method | What it does |
+|---|---|
+| `oidc_clients()` | Every stacklet with `[oidc]`: `stacklet`, `name`, rendered `callbacks`, and the stored `client_id` and `client_secret` (None before the first registration) |
+| `store_oidc_client(stacklet_id, client_id, client_secret)` | Stores the credentials the provider issued |
+
+Credentials are kept in the provider's secret namespace
+(`<provider>__CLIENT_<ID>_ID` and `_SECRET`). `stack destroy <provider>`
+deletes them, and each client falls back to its own login on its next
+`stack up`. A client reads new credentials only when its containers are
+recreated, so a provider should not rotate a stored secret on every run,
+and should tell the admin which client to `stack up` after storing new
+credentials. If more than one stacklet declares `[oidc_provider]`, the
+first one discovered is used.
+
+`stack doctor` warns about a running client that a running provider has
+not registered, and about a second provider being ignored. A provider
+that is present but was never brought up raises nothing.
+
+A provider may need domain mode with HTTPS, and should refuse to start
+without it in `on_install` and `on_start`. A passkey login is the usual
+reason: browsers allow WebAuthn only on an `https://` origin. The
+framework does not check this, because the requirement belongs to the
+provider, not to OIDC.
 
 ---
 
