@@ -329,7 +329,8 @@ def transcode_audio(src, dst) -> bool:
     return _convert(src, dst, ["-vn", "-c:a", "aac", "-b:a", "96k"])
 
 
-def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH) -> bool:
+def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH,
+                    must_shrink: bool = False) -> bool:
     """Convert an image to a JPEG no wider than `max_width`. True when done.
 
     A page that embeds originals makes a reader download originals, and
@@ -341,9 +342,18 @@ def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH) -> bool:
     bound keeps its dimensions - `min()` in the scale expression is
     what stops an old small photo being blown up to fill the width.
 
+    With `must_shrink`, also False when the result is no smaller than
+    `src`. Flat colour and text compress better as PNG than as JPEG, so
+    a screenshot's bounded copy can be several times the original and
+    blur the text as well. The size is judged before the copy is renamed into place, so a
+    rejected copy never appears under its final name: the wiki watches
+    this tree, and a file that arrives and is deleted a moment later can
+    reach it as a deletion of something it never copied.
+
     False when ffmpeg is absent or the conversion fails, with nothing
     left behind at `dst`. Callers fall back to the original.
     """
+    src = Path(src)
     return _convert(src, dst, [
         "-vf", f"scale='min({int(max_width)},iw)':-1:flags=lanczos",
         # One frame: the source may be an animation, and the point of
@@ -353,10 +363,11 @@ def transcode_image(src, dst, *, max_width: int = MAX_IMAGE_WIDTH) -> bool:
         # 3 is near the top of the quality scale and still a fraction of
         # the original's size.
         "-q:v", "3",
-    ])
+    ], accept=(lambda out: out.stat().st_size < src.stat().st_size)
+       if must_shrink else None)
 
 
-def _convert(src, dst, options: "list[str]") -> bool:
+def _convert(src, dst, options: "list[str]", *, accept=None) -> bool:
     """Run ffmpeg from `src` to `dst` with `options`, atomically.
 
     Shared by every derivative. The output is built under a temporary
@@ -364,6 +375,9 @@ def _convert(src, dst, options: "list[str]") -> bool:
     while a compile is running and a half-written file under the final
     name would be both served and taken for finished work on the next
     run.
+
+    `accept`, when given, sees the finished output under its temporary
+    name and decides whether it is placed at all.
 
     Never raises. A missing converter, a codec the build lacks and a
     file ffmpeg cannot read are all the same to the caller: no
@@ -390,6 +404,10 @@ def _convert(src, dst, options: "list[str]") -> bool:
         detail = done.stderr.decode(errors="replace").strip().splitlines()
         log.warning("ffmpeg could not convert %s: %s",
                     src.name, detail[-1] if detail else f"rc={done.returncode}")
+        tmp.unlink(missing_ok=True)
+        return False
+
+    if accept is not None and not accept(tmp):
         tmp.unlink(missing_ok=True)
         return False
 
@@ -432,14 +450,14 @@ def derive(root, artifact_id: str, *, ext: str, when, kind: str) -> str:
         return ""
     dst, link = _located(root, artifact_id, target_ext, when)
 
-    convert = transcode_audio if kind == "audio" else transcode_image
-    if not convert(src, dst):
-        return ""
     # Audio is transcoded for a codec Safari can play, so its size is
     # not the point and a larger file is still the only playable one.
     # An image derivative has no purpose except being smaller.
-    if kind == "image" and dst.stat().st_size >= src.stat().st_size:
-        dst.unlink(missing_ok=True)
+    if kind == "audio":
+        made = transcode_audio(src, dst)
+    else:
+        made = transcode_image(src, dst, must_shrink=True)
+    if not made:
         return ""
     sidecar, _ = _located(root, artifact_id, _SIDECAR_EXT, when)
     _record_derived(sidecar, link, kind)
