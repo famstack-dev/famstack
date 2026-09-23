@@ -16,6 +16,7 @@ The ctx object provides:
   ctx.env     — rendered environment variables
   ctx.step()  — report progress
   ctx.shell() — run a system command
+  ctx.run_in_container() — run a command in the stacklet's container
 """
 from __future__ import annotations
 
@@ -92,6 +93,39 @@ class StackContext:
         )
         if result.returncode != 0:
             raise RuntimeError(f"Command failed (exit {result.returncode}): {cmd}")
+
+    def run_in_container(self, argv: list[str], service: str | None = None,
+                         user: str | None = None) -> str:
+        """Run a command inside this stacklet's container. Returns stdout.
+
+        The container is found by the naming convention: `stack-<id>`
+        for a stacklet with one service, `stack-<id>-<service>` when
+        `service` is given. `user` is passed to `docker exec --user`,
+        for images whose tools refuse to run as root.
+
+        The arguments go to `docker exec` as a list, with no shell in
+        between. A value is never split, quoted or expanded, so a
+        password or client secret can be passed as it is.
+
+        A failure raises RuntimeError with the container, the exit code
+        and the last line of stderr, which is where a service's CLI
+        states its reason. The arguments are left out of the message on
+        purpose: it is printed to the terminal, and they may hold a
+        secret. `shell` includes its command, so use this for anything
+        that carries a credential.
+        """
+        container = f"stack-{self.stacklet_id}" + (f"-{service}" if service else "")
+        command = ["docker", "exec", *(["--user", user] if user else []), container, *argv]
+        result = subprocess.run(
+            command, capture_output=True, text=True,
+            env={**os.environ, **self.env}, timeout=1200,
+        )
+        if result.returncode != 0:
+            lines = (result.stderr or result.stdout).strip().splitlines()
+            reason = f": {lines[-1]}" if lines else ""
+            raise RuntimeError(
+                f"{argv[0]} in {container} failed (exit {result.returncode}){reason}")
+        return result.stdout
 
     @property
     def secret(self):

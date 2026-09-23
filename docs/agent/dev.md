@@ -112,6 +112,7 @@ Python hooks (preferred) define `def run(ctx):`. `ctx` is the framework hook con
 | `ctx.secret(name)` | read a secret; `ctx.secret(name, value)` writes one |
 | `ctx.step(msg)` | progress line to the user |
 | `ctx.shell(cmd)` | streaming shell with error handling |
+| `ctx.run_in_container(argv, service=, user=)` | a command in the stacklet's container, as a list, no shell; failures never repeat the arguments, so use it for anything that carries a credential |
 | `ctx.http_get(url, headers=...)` | parsed-JSON GET |
 | `ctx.http_post(url, body, content_type=..., headers=...)` | parsed-JSON POST |
 | `ctx.stack` | full Stack instance for `run_cli_command(<id>, <cmd>, ...)` |
