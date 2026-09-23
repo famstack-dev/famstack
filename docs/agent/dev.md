@@ -393,7 +393,7 @@ subject is not: it appears in plain-text contexts too, including
 |---|---|
 | `Upgrade: <what the admin must do>` | Renders as **Action required** at the top of the release. Any update needing a human step: a backup, a config edit, a one-way migration. |
 | `BREAKING CHANGE: <what breaks>` | Same section, for something that breaks an existing setup rather than asking for a step. |
-| `Refs: FAM-12` | Links the tracker card. |
+| `Refs: #127` | Links the GitHub issue. `Closes: #127` closes it when the commit lands on `main`; `Fixes:` is kept for the commit that caused a bug. |
 | `Co-Authored-By:` | Never. Project rule, enforced: `tools/commit-lint` rejects the trailer, a "Generated with Claude Code" line, its link and an Anthropic noreply address, in commit messages and in PR descriptions. |
 
 `tools/commit-lint` enforces the header, and is the same check in every
@@ -450,7 +450,7 @@ Two spellings of the same version exist by necessity: the tag and `lib/stack/cli
 ## Pre-1.0 conventions
 
 - Invariant changes (marker semantics, field renames, contract shifts) get coherent commits - each stands alone for revert.
-- Actionable work lives on the tracker board, one card each, every card carrying a verification gate. Design notes - decisions, rejected dead ends, known-but-unresolved tensions - live at `docs/design-notes.md`; surface them when adjacent code is touched. If a note grows a "do this next", move it to a card and leave the reasoning behind.
+- Actionable work lives in GitHub issues, one issue each, every issue carrying a verification gate: a "Definition of done" with the checks that prove it. The pr skill has the issue templates. Design notes - decisions, rejected dead ends, known-but-unresolved tensions - live at `docs/design-notes.md`; surface them when adjacent code is touched. If a note grows a "do this next", move it to an issue and leave the reasoning behind.
 - Don't add backwards-compatibility shims, feature flags for one-shot migrations, or renamed `_unused` vars.
 
 ## What NOT to do
