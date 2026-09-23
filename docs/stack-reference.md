@@ -518,6 +518,10 @@ and should tell the admin which client to `stack up` after storing new
 credentials. If more than one stacklet declares `[oidc_provider]`, the
 first one discovered is used.
 
+Brought up in one command, such as `stack up all`, the provider starts
+before its clients, so they render their env after it has registered
+them. A client brought up alone does not pull the provider in.
+
 `stack doctor` warns about a running client that a running provider has
 not registered, and about a second provider being ignored. A provider
 that is present but was never brought up raises nothing.
