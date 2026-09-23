@@ -36,6 +36,9 @@ test = [
     "email_reply_parser>=0.5",
     # Convert HTML-only email bodies to Markdown (stack.email_message).
     "html2text>=2024.2",
+    # Drives the first-run installer through a real pseudo-terminal
+    # (tests/e2e/install, `script/test remote install`).
+    "pexpect>=4.9",
 ]
 
 # Host-side tooling for generating the demo family-document set
@@ -51,8 +54,10 @@ demo = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Pipeline-quality evals (real model, real Paperless, slow) are opt-in via
-# `tests/e2e/stacktests eval` — never collected by `pytest tests/`.
-norecursedirs = ["tests/e2e/eval"]
+# `tests/e2e/stacktests eval` — never collected by `pytest tests/`. The
+# first-run install test needs a pristine Mac, which only
+# `script/test remote install` provides.
+norecursedirs = ["tests/e2e/eval", "tests/e2e/install"]
 markers = [
     "container_lifecycle: Docker lifecycle tests for stack up/down/destroy and rendered container environments",
     "demo_rig: live demo-instance tests using Simpson accounts and the configured AI endpoint",

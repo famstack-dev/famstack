@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# remote — run the e2e or smoke lane on another Mac over SSH, AI mocked.
+# remote — run a lane on another Mac over SSH.
 #
 #   tests/e2e/remote e2e [pytest args]
 #   tests/e2e/remote smoke [pytest args]
+#   tests/e2e/remote install [--remove-images] [ref] [pytest args]
+#
+# e2e and smoke run with AI mocked. install runs the first-run installer
+# from a clean clone of a pushed ref (default: main) on a pristine Mac,
+# and puts the Mac back to pristine afterwards; --remove-images deletes
+# the messages and core images first, so the pulls are tested too.
 #
 # Exits with pytest's exit code. `script/test remote <lane>` calls this.
 #
@@ -16,6 +22,7 @@
 #   cache/     uv's cache, so nothing lands in the remote's home
 #   lock/      held for the whole run: holder, start time, token, pid
 #   results/   junit XML and container logs of the last run
+#   install/   the install lane's clone, present only while it runs
 #
 # Results come back to tests/e2e/remote-results/.
 #
@@ -28,10 +35,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Only the mocked lanes. `eval` needs the ai stacklet, and the target
-# laptop is too weak to run local models; integration and demo own
-# instances this script does not manage.
-LANES="e2e smoke"
+# Only the mocked lanes, and the install. `eval` needs the ai stacklet,
+# and the target laptop is too weak to run local models; integration and
+# demo own instances this script does not manage.
+LANES="e2e smoke install"
+
+# The install lane tests what a new admin gets, so it clones from where
+# they do, never from this working tree.
+INSTALL_REPO="https://github.com/famstack-dev/famstack.git"
 
 # ── Remote side ─────────────────────────────────────────────────────────
 
@@ -39,10 +50,11 @@ LANES="e2e smoke"
 on_remote() {
   local token="$1" lane="$2"
   shift 2
-  local e2e base
+  local e2e
   e2e="$REPO_ROOT"
   base="$(dirname "$e2e")"
-  local lock="$base/lock" results="$base/results"
+  lock="$base/lock"
+  results="$base/results"
 
   if [[ "$(cat "$lock/token" 2>/dev/null)" != "$token" ]]; then
     echo "remote: $lock is not held by this run." >&2
@@ -65,6 +77,47 @@ on_remote() {
     export PATH="$(dirname "$py"):$PATH"
   fi
 
+  rc=0
+  interrupted=0
+  if [[ "$lane" == install ]]; then
+    run_install "$@"
+  else
+    run_stacktests "$lane" "$@"
+  fi
+
+  echo "$rc" > "$results/exit-code"
+  if [[ "$(cat "$lock/token" 2>/dev/null)" == "$token" ]]; then
+    rm -rf "$lock"
+  fi
+  [[ $interrupted -eq 1 && $rc -eq 0 ]] && rc=130
+  exit "$rc"
+}
+
+# Ctrl-C reaches pytest through the pty; this shell stays alive to
+# collect results and clean up. When the local side goes away, the run
+# ends with it: over a pty as a hangup, over a plain pipe as a broken
+# pipe on pytest's next write. SIGPIPE is ignored so that ends pytest
+# with an error rather than killing this shell before cleanup, and `say`
+# keeps a dead terminal from stopping it under set -e.
+survive_the_session() {
+  trap 'interrupted=1' INT TERM HUP
+  trap '' PIPE
+}
+
+collect_logs() {
+  say "==> collecting container logs"
+  local name
+  for name in $(docker ps -a --format '{{.Names}}' --filter 'name=^stack-'); do
+    docker logs --timestamps "$name" > "$results/logs/$name.log" 2>&1 || true
+  done
+}
+
+# ── e2e and smoke ───────────────────────────────────────────────────────
+
+run_stacktests() {
+  local lane="$1"
+  shift
+
   # The instance. _seed_secrets.py copies the template only when there is
   # no stack.toml, and refuses one without the sentinel, so writing both
   # first is what moves data_dir off ~/famstack-test-data before anything
@@ -77,23 +130,10 @@ on_remote() {
   sed -i '' -E "s|^data_dir[[:space:]]*=.*|data_dir      = \"$base/data\"|" stack.toml
   tests/e2e/stacktests ai mock
 
-  local rc=0 interrupted=0
-  # Ctrl-C reaches pytest through the pty; this shell stays alive to
-  # collect results and stop the rig. When the local side goes away, the
-  # run ends with it: over a pty as a hangup, over a plain pipe as a
-  # broken pipe on pytest's next write. SIGPIPE is ignored so that ends
-  # pytest with an error rather than killing this shell before cleanup,
-  # and `say` keeps a dead terminal from stopping it under set -e.
-  trap 'interrupted=1' INT TERM HUP
-  trap '' PIPE
+  survive_the_session
   tests/e2e/stacktests "$lane" --junitxml="$results/junit.xml" "$@" || rc=$?
 
-  say "==> collecting container logs"
-  local name
-  for name in $(docker ps -a --format '{{.Names}}' --filter 'name=^stack-'); do
-    docker logs --timestamps "$name" > "$results/logs/$name.log" 2>&1 || true
-  done
-
+  collect_logs
   say "==> stopping the rig"
   tests/e2e/stacktests down > "$results/down.log" 2>&1 || true
   # core's on_start writes a LaunchAgent into the home dir and on_stop
@@ -102,13 +142,122 @@ on_remote() {
   if [[ -f "$plist" ]] && grep -q "$base/" "$plist"; then
     rm -f "$plist"
   fi
+}
 
-  echo "$rc" > "$results/exit-code"
-  if [[ "$(cat "$lock/token" 2>/dev/null)" == "$token" ]]; then
-    rm -rf "$lock"
+# ── install ─────────────────────────────────────────────────────────────
+# The installer always writes its config into its checkout and its data
+# to ~/famstack-data, and the stack's container names, network and ports
+# are fixed. So this lane cannot sandbox the install under the base dir
+# the way e2e does: it owns the whole Mac for the run, and resets it
+# before (a leftover from a crashed run must not make a broken install
+# pass) and after.
+
+run_install() {
+  local remove_images="$1" ref="$2"
+  shift 2
+  local clone="$base/install"
+  survive_the_session
+
+  say "==> resetting the Mac to pristine"
+  if ! reset_install; then
+    echo "remote: cannot start the install from a pristine Mac." >&2
+    rc=1
+    return
   fi
-  [[ $interrupted -eq 1 && $rc -eq 0 ]] && rc=130
-  exit "$rc"
+
+  say "==> cloning $ref from $INSTALL_REPO"
+  if ! git clone --quiet "$INSTALL_REPO" "$clone" || ! git -C "$clone" checkout --quiet "$ref"; then
+    echo "remote: cannot check out '$ref' from $INSTALL_REPO. Is it pushed?" >&2
+    rc=1
+    reset_install || true
+    return
+  fi
+  say "    $(git -C "$clone" log -1 --format='%h %s')"
+
+  [[ "$remove_images" == 1 ]] && remove_images "$clone"
+
+  # The data dir is deleted on reset only when this marker says the
+  # lane created it; anything else at ~/famstack-data is left alone.
+  : > "$base/install-owns-data"
+  local started=$SECONDS
+  FAMSTACK_INSTALL_DIR="$clone" \
+  FAMSTACK_INSTALL_RESULTS="$results" \
+  FAMSTACK_INSTALL_PIDFILE="$base/install.pid" \
+    uv run --extra test pytest tests/e2e/install -v -rxX \
+      --junitxml="$results/junit.xml" "$@" || rc=$?
+  say "==> install tests took $((SECONDS - started))s"
+
+  collect_logs
+  say "==> resetting the Mac to pristine"
+  if ! reset_install; then
+    echo "remote: the Mac is not pristine after the run." >&2
+    [[ $rc -eq 0 ]] && rc=1
+  fi
+}
+
+# What a new admin has: no famstack containers, network, data dir,
+# LaunchAgent or checkout. Removes what the install lane or a stack run
+# from the base dir left, and returns non-zero naming whatever remains.
+reset_install() {
+  local clone="$base/install" data="$HOME/famstack-data" owns="$base/install-owns-data"
+  local plist="$HOME/Library/LaunchAgents/dev.famstack.api.plist"
+  local pid ids net left=""
+
+  # An installer outliving a dropped session would bring the stack back
+  # up behind the reset. pexpect gave it its own session, so its pid is
+  # also its process group, which takes compose and the hooks with it.
+  pid="$(cat "$base/install.pid" 2>/dev/null || true)"
+  if [[ -n "$pid" ]] && ps -o command= -p "$pid" 2>/dev/null | grep -q stack; then
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    sleep 2
+    kill -KILL -- "-$pid" 2>/dev/null || true
+  fi
+  rm -f "$base/install.pid"
+
+  ids="$(docker ps -aq --filter 'name=^stack-')"
+  [[ -n "$ids" ]] && docker rm -f -v $ids > /dev/null
+  for net in $(docker network ls --format '{{.Name}}' | grep -E '^stack($|-)'); do
+    docker network rm "$net" > /dev/null || true
+  done
+
+  if [[ -f "$plist" ]] && grep -qE "$base/|$data/" "$plist"; then
+    launchctl unload "$plist" 2>/dev/null || true
+    rm -f "$plist"
+  fi
+
+  if [[ -e "$data" && -f "$owns" ]]; then
+    rm -rf "$data" || true
+  fi
+  [[ -e "$data" ]] || rm -f "$owns"
+  rm -rf "$clone"
+
+  [[ -n "$(docker ps -aq --filter 'name=^stack-')" ]] && left+="  containers: $(docker ps -a --format '{{.Names}}' --filter 'name=^stack-' | tr '\n' ' ')"$'\n'
+  net="$(docker network ls --format '{{.Name}}' | grep -E '^stack($|-)' | tr '\n' ' ')"
+  [[ -n "$net" ]] && left+="  networks: $net"$'\n'
+  if [[ -e "$data" ]]; then
+    if [[ -f "$owns" ]]; then left+="  $data"$'\n'
+    else left+="  $data, which this lane did not create: remove it by hand if it is disposable"$'\n'
+    fi
+  fi
+  [[ -e "$plist" ]] && left+="  $plist, which points outside this lane's paths"$'\n'
+  launchctl list 2>/dev/null | grep -q 'dev\.famstack\.api$' && left+="  the loaded dev.famstack.api agent"$'\n'
+  [[ -e "$clone" ]] && left+="  $clone"$'\n'
+  if [[ -n "$left" ]]; then
+    printf 'remote: still on the Mac:\n%s' "$left" >&2
+    return 1
+  fi
+  return 0
+}
+
+# The images messages and core pull, and the ones core builds.
+remove_images() {
+  local clone="$1" image
+  say "==> removing the messages and core images"
+  for image in $(awk '$1 == "image:" { print $2 }' "$clone"/stacklets/{messages,core}/docker-compose.yml) \
+               $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^stack-core-' || true); do
+    docker rmi -f "$image" > /dev/null 2>&1 && say "    $image"
+  done
+  return 0
 }
 
 say() { echo "$@" 2>/dev/null || true; }
@@ -142,11 +291,23 @@ case " $LANES " in
     if [[ "$lane" == "help" || "$lane" == "-h" || "$lane" == "--help" ]]; then
       usage; exit 0
     fi
-    echo "remote: refusing lane '${lane:-<none>}'. Only mocked AI lanes run remotely: $LANES." >&2
+    echo "remote: refusing lane '${lane:-<none>}'. Only these lanes run remotely: $LANES." >&2
     [[ "$lane" == "eval" ]] && echo "  eval needs the ai stacklet, which the remote does not run." >&2
     exit 2
     ;;
 esac
+
+# install takes its options before the pytest args, and always hands
+# both on, so the remote side reads them by position.
+what="$lane"
+if [[ "$lane" == install ]]; then
+  remove_images=0
+  if [[ "${1:-}" == --remove-images ]]; then remove_images=1; shift; fi
+  ref=main
+  if [[ $# -gt 0 && "$1" != -* ]]; then ref="$1"; shift; fi
+  set -- "$remove_images" "$ref" "$@"
+  what="install of $ref"
+fi
 
 HOST="${FAMSTACK_REMOTE_HOST:-famstack-e2e}"
 BASE="${FAMSTACK_REMOTE_DIR:-"~/famstack-dev"}"
@@ -171,7 +332,7 @@ snippet() {
 }
 
 token="$(date +%s)-$$-$RANDOM"
-holder="${USER}@$(hostname -s) ($REPO_ROOT, $lane)"
+holder="${USER}@$(hostname -s) ($REPO_ROOT, $what)"
 locked=0
 
 release_lock() {
@@ -250,7 +411,11 @@ rsync -a --delete \
 # leaves the remote run to finish and release the lock on its own.
 if [[ -t 0 && -t 1 ]]; then tty_opt=-tt; else tty_opt=-T; fi
 args="$(printf ' %q' "$token" "$lane" "$@")"
-echo "==> $HOST: stacktests $lane (AI mocked)"
+if [[ "$lane" == install ]]; then
+  echo "==> $HOST: first-run $what"
+else
+  echo "==> $HOST: stacktests $lane (AI mocked)"
+fi
 set +e
 rsh "$tty_opt" "$HOST" "$(snippet "cd \"\$base/e2e\" && exec tests/e2e/remote --on-remote$args")"
 rc=$?
