@@ -36,6 +36,20 @@ stack photos seed
 
 This creates accounts for everyone in `users.toml`.
 
+## Single sign-on
+
+With an OIDC provider installed (see `docs/stack-reference.md`, "Single
+Sign-On (OIDC)"), `stack up photos` turns on "Sign in with family
+account" on the login page and in the mobile app. Accounts link by
+email: the address at the provider must equal the one on the Immich
+account.
+
+`hooks/on_start_ready.py` writes five keys of Immich's OAuth settings
+through the admin API: on, issuer, client id, client secret, button
+text. Every other setting stays as set in the admin UI, and the
+password login stays on. Without a provider nothing is written, so a
+login set up by hand in the admin UI is kept.
+
 ## Data
 
 Stored in `~/famstack-data/photos/`:

@@ -46,6 +46,23 @@ DB_DATABASE_NAME = "immich"
 DB_HOSTNAME      = "stack-photos-db"
 REDIS_HOSTNAME   = "stack-photos-redis"
 IMMICH_VERSION   = "v3"
+# Single sign-on through the stack's OIDC provider, if one is installed.
+# Empty until the provider has registered this stacklet. Immich does not
+# read these; hooks/on_start_ready.py writes them into its system config.
+OIDC_ISSUER        = "{oidc_issuer}"
+OIDC_CLIENT_ID     = "{oidc_client_id}"
+OIDC_CLIENT_SECRET = "{oidc_client_secret}"
+
+# Declares this stacklet as an OpenID Connect client. Immich redirects to
+# /auth/login and /user-settings in the browser, and the mobile app to
+# app.immich:///oauth-callback.
+[oidc]
+name      = "Photos"
+callbacks = [
+    "{url}/auth/login",
+    "{url}/user-settings",
+    "app.immich:///oauth-callback",
+]
 
 # stack status uses this to confirm the service is actually responding,
 # not just that the container is running.
