@@ -1,6 +1,7 @@
 #!/bin/sh
 # Block commit subjects that would not parse as a changelog entry, and
-# messages that carry a credit line for the tool that wrote them.
+# messages that carry a credit line for the tool that wrote them or an
+# em dash.
 #
 # Enable once per clone (same switch as the pre-commit hook):
 #     git config core.hooksPath hooks

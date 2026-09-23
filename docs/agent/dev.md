@@ -251,7 +251,7 @@ Testing rules:
 - **Literate code.** Narrative docstrings, section dividers (`# ── Section ──`), prose flow over terse chains. The code IS the specification AND the implementation - keep both legible.
 - **Python 3.11 floor.** `tomllib` is stdlib; no compat shims. Use modern Python (`match`, structural pattern matching, walrus when it earns its keep).
 - **Comments explain WHY, not WHAT.** If a comment paraphrases the code, delete it. Keep comments that document constraints, invariants, or surprises.
-- **No em dashes in user-facing text** (commit messages, rendered docstrings, blog drafts). Hyphens or sentence breaks instead.
+- **No em dashes in user-facing text** (commit messages, rendered docstrings, blog drafts). Use a comma, colon, period or parentheses instead.
 - **No `--no-verify` or `--no-gpg-sign`** on commits unless the user explicitly asks. If a hook fails, fix the underlying issue.
 - **Unchecked return values are a smell.** On the third site in a session, propose an audit instead of patching a third instance.
 - **Re-read the full error line before calling a failure a duplicate.** Check sender, target, specific IDs. Two errors that look similar at a glance often differ in the load-bearing field.
@@ -339,6 +339,11 @@ needed and what it changes; the diff shows how. It must make sense without
 the PR. Bullets for sets of changes. No debugging history, test narrative
 or rhetoric; those go in the PR.
 
+**No em dashes**, in the subject, the body, or the PR title and
+description. All of them are published as release notes. Use a comma,
+colon, period or parentheses. An en dash in a range (`1–2`) and a hyphen
+are fine. `tools/commit-lint` rejects the em dash in all four places.
+
 | Type | Body states |
 |---|---|
 | `feat` | what is now possible, how to use it, limits |
@@ -397,10 +402,17 @@ release gate runs it over the range being tagged. `script/setup`
 turns the hooks on, as do `make test-unit` and `make typecheck`; git
 cannot do it on clone, by design.
 
-A generator reads the header as
-`^(type)(\((scope)\))?(!)?: (subject)( \(#(pr)\))?$` and groups into **Action
-required** (any `!` or `Upgrade:`), Security, Added, Fixed, Performance,
-Documentation, by rendered scope within each.
+`script/release-notes` generates the release notes from these messages
+with git-cliff, through `uvx`, so there is nothing to install. It reads the
+header as `^(type)(\((scope)\))?(!)?: (subject)( \(#(pr)\))?$` and groups
+into **Action required** (any `!`, `Upgrade:` or `BREAKING CHANGE:`, with the
+footer quoted), Security, Added, Fixed, Performance, Documentation, by
+rendered scope within each. With no argument it prints what the next tag
+will ship; `--latest` prints what the newest tag shipped, and a range such
+as `v0.3.0-beta.3..main` works too. It runs from any directory and needs the
+full history: in a shallow clone it stops and says to `git fetch
+--unshallow`. `cliff.toml` repeats commit-lint's types and scopes, and a
+unit test fails when the two disagree.
 
 ## Branch rules
 
@@ -423,10 +435,10 @@ Pre-tag gate, in order. A published tag is never moved; anything missed here shi
 1. Working tree clean - `git status` shows nothing modified, no stale `uv.lock` (the version bump touches `pyproject.toml` AND the lock; commit them together).
 2. Version bumped in `lib/stack/cli.py` (`VERSION`) and `pyproject.toml`.
 3. Full test round green: framework, stacklets, integration.
-3b. Every commit since the previous tag parses as a changelog entry. An unclassified subject blocks the tag: it would be missing from the release notes and from the website. Reword it if it has not shipped, add the entry by hand if it has.
+3b. Every commit since the previous tag parses as a changelog entry. An unclassified subject blocks the tag: it would be missing from the release notes and from the website. Reword it if it has not shipped, add the entry by hand if it has. `script/release-notes` shows such a subject under Unclassified.
 4. Fresh-instance install verified.
 5. Stale references updated: README version callouts, docs links, blog "Try it" instructions.
-6. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with Highlights and an "Upgrading from" section.
+6. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with Highlights and an "Upgrading from" section, followed by the change list from `script/release-notes --latest`.
 
 **The tag format is load-bearing.** `stack update` parses `v?MAJOR.MINOR.PATCH[-label.N]` and ignores anything else, so a tag spelled `v0.3.0.beta1` is invisible: `stack update` would keep offering the previous release and never mention it. Hyphen before the label, dot before its number, as SemVer has it. The prerelease sorts below the release it leads to, and label numbers compare as numbers, so `beta.10` is newer than `beta.9`.
 

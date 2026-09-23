@@ -10,6 +10,7 @@ It also refuses credit lines for the tool that helped write a change:
 a Co-Authored-By trailer, a "Generated with Claude Code" footer, its
 link, or an Anthropic noreply address. That is checked in whole
 messages and in pull request descriptions, not just in subjects.
+So is the em dash, which the published release notes do not use.
 
 Four ways in, one rule set:
 
@@ -166,6 +167,20 @@ def attribution(text: str) -> list[str]:
     return [why for pattern, why in ATTRIBUTION if pattern.search(text)]
 
 
+# Subjects and bodies are quoted verbatim into the release notes, which
+# use no em dashes. Only U+2014 is refused: an en dash in a range such
+# as "1–2" and a plain hyphen are different characters and pass.
+EM_DASH = "\u2014"
+
+
+def em_dashes(text: str) -> list[str]:
+    """The em dash rule, for a subject, a whole message or a description."""
+    if EM_DASH in text:
+        return [f"an em dash ({EM_DASH}); use a comma, colon, period "
+                "or parentheses instead"]
+    return []
+
+
 def without_comments(message: str) -> str:
     """What git keeps of an edited message: comment lines are stripped
     before the commit exists, and everything below the scissors goes."""
@@ -227,19 +242,19 @@ def main() -> int:
         with open(args.message, encoding="utf-8") as f:
             message = without_comments(f.read())
         header = message.split("\n", 1)[0]
-        problems = check(header) + attribution(message)
+        problems = check(header) + attribution(message) + em_dashes(message)
         if problems:
             report(header.rstrip(), problems)
             failures = 1
 
     elif args.body is not None:
-        problems = attribution(args.body)
+        problems = attribution(args.body) + em_dashes(args.body)
         if problems:
             report("pull request description", problems)
             failures = 1
 
     elif args.title:
-        problems = check(args.title)
+        problems = check(args.title) + em_dashes(args.title)
         if problems:
             report(args.title, problems)
             failures = 1
@@ -257,7 +272,7 @@ def main() -> int:
             return 1
         for sha, message in pairs:
             subject = message.split("\n", 1)[0]
-            problems = check(subject) + attribution(message)
+            problems = check(subject) + attribution(message) + em_dashes(message)
             if problems:
                 report(subject, problems, where=sha)
                 failures += 1

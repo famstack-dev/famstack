@@ -287,3 +287,93 @@ class TestAttributionOnTheCommandLine:
         result = self._run("--range", "HEAD~1..HEAD", cwd=repo)
         assert result.returncode == 1
         assert "Co-Authored-By" in result.stderr
+
+
+# ── No em dashes ─────────────────────────────────────────────────────────
+
+class TestNoEmDashes:
+    """Subjects and bodies are quoted verbatim into the release notes,
+    and the release notes use no em dashes. A comma, colon, period or
+    parentheses does the same job. The check covers whole messages and
+    pull request text, like the attribution check, because a body is
+    published as much as a subject is."""
+
+    @pytest.mark.parametrize("text", [
+        "fix(ai): stop the engine — for good",
+        "fix(ai): stop the engine\n\nIt restarted — every time.\n",
+        "fix(ai): stop the engine—for good",
+    ])
+    def test_an_em_dash_is_found_anywhere_in_the_text(self, text):
+        problems = commit_lint.em_dashes(text)
+        assert problems
+        assert "comma, colon, period or parentheses" in problems[0]
+
+    @pytest.mark.parametrize("text", [
+        "fix(photos): retry the upload after 1–2 minutes",
+        "fix(photos): keep the built-in thumbnails - the rest regenerate",
+        "docs: explain the pre-tag gate",
+    ])
+    def test_an_en_dash_or_a_hyphen_is_not_an_em_dash(self, text):
+        """U+2013 in a number range is correct typography, and a
+        hyphen is a different character altogether."""
+        assert commit_lint.em_dashes(text) == []
+
+
+class TestEmDashesOnTheCommandLine:
+    """The same four ways in as every other rule: the hook, a range for
+    CI and the release gate, and the pull request title and body."""
+
+    def _run(self, *args, cwd=None):
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "commit-lint"), *args],
+            capture_output=True, text=True, cwd=cwd or REPO_ROOT,
+        )
+
+    def test_a_title_with_an_em_dash_fails_and_names_the_alternatives(self):
+        result = self._run("--title", "fix(ai): stop the engine — for good")
+        assert result.returncode == 1
+        assert "em dash" in result.stderr
+        assert "comma, colon, period or parentheses" in result.stderr
+
+    def test_an_em_dash_in_the_body_fails_the_commit(self, tmp_path):
+        message = tmp_path / "COMMIT_EDITMSG"
+        message.write_text(
+            "fix(core): answer the first message\n\n"
+            "The bot slept through it — now it does not.\n")
+        result = self._run("--message", str(message))
+        assert result.returncode == 1
+        assert "em dash" in result.stderr
+
+    def test_the_diff_below_the_scissors_is_not_the_message(self, tmp_path):
+        """`git commit -v` appends the diff under a scissors line. A
+        commit that removes em dashes from a document has them in that
+        diff, and git drops it before the commit exists."""
+        message = tmp_path / "COMMIT_EDITMSG"
+        message.write_text(
+            "docs(readme): replace em dashes with commas\n\n"
+            "# ------------------------ >8 ------------------------\n"
+            "-Local first — your data stays home.\n"
+            "+Local first, your data stays home.\n")
+        assert self._run("--message", str(message)).returncode == 0
+
+    def test_a_pull_request_body_with_an_em_dash_fails(self):
+        result = self._run("--body", "## Summary\n- stop the engine — for good\n")
+        assert result.returncode == 1
+        assert "em dash" in result.stderr
+
+    def test_a_range_fails_on_an_em_dash_in_any_body(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        for name, message in [
+            ("a", "feat(photos): back up over Wi-Fi"),
+            ("b", "fix(core): answer the first message\n\n"
+                  "It slept through it — now it does not."),
+        ]:
+            (repo / name).write_text(name)
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.com",
+                            "-c", "user.name=T", "commit", "-qm", message], check=True)
+        result = self._run("--range", "HEAD~1..HEAD", cwd=repo)
+        assert result.returncode == 1
+        assert "em dash" in result.stderr
