@@ -55,7 +55,7 @@ Never write a title containing "and".
 - <user-visible change, and why>
 
 Upgrade: <required action, as markdown>
-Refs: FAM-12
+Refs: #127
 ```
 
 - One to three bullets. Footers only when they apply.
