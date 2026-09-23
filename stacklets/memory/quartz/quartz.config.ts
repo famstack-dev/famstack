@@ -48,8 +48,13 @@ const config: QuartzConfig = {
     // published site. Each one names the room, the sender's full mxid and
     // the original filename: useful beside the file on disk, not something
     // to serve. The media itself is copied by the Assets emitter as usual.
+    // `media/**/.tmp-*` hides the archive's in-progress writes, which are
+    // renamed into place when complete. The watcher otherwise reports
+    // them, the Assets emitter copies or unlinks a path that is already
+    // gone, and Quartz 4.5.2 keeps the failed change and replays it on
+    // every rebuild, so no later asset reaches the site.
     ignorePatterns: [".git", ".obsidian", "private", "templates",
-                     "media/**/*.json"],
+                     "media/**/*.json", "media/**/.tmp-*"],
     defaultDateType: "modified",
     theme: {
       // Self-hosted. The comment above about analytics applies with more
