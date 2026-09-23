@@ -1,13 +1,15 @@
 ---
 name: pr
-description: Write the pull request for the current branch: a title that is the changelog line and a description per the Pull requests rules, both checked with tools/commit-lint. Use when asked to write, draft or open a PR, or to produce its title or squash message.
+description: Write the pull request for the current branch: the merge mode (squash or rebase), a title that is the changelog line when squashed, and a description per the Pull requests rules, all checked with tools/commit-lint. Use when asked to write, draft or open a PR, to produce its title or squash message, or to choose how to merge it.
 ---
 
 # Pull request
 
-A PR is squash merged: the title becomes the commit subject on main and the
-release-notes line. `docs/agent/dev.md` ("Commits: the subject is the changelog",
-"Pull requests") holds the rules; this file is the procedure. dev.md wins.
+A PR is squash merged or rebase merged, never with a merge commit. Squashed,
+the title becomes the commit subject on main and the release-notes line.
+Rebased, every commit lands as it is and each subject is a release-notes line.
+`docs/agent/dev.md` ("Commits: the subject is the changelog", "Pull requests")
+holds the rules; this file is the procedure. dev.md wins.
 
 ## 1. Read the branch
 
@@ -20,14 +22,20 @@ git diff --stat origin/main...HEAD
 Read the diff wherever a subject does not state the user-visible change. Report a
 non-empty `HEAD..origin/main` as "branch is behind". Do not rebase unasked.
 
-## 2. One entry or two
+## 2. Squash or rebase
 
 Count the entries a release-notes reader sees: commits of a shown type (`feat`,
 `fix`, `security`, `perf`, `docs`) plus any commit carrying `!`, `Upgrade:` or
 `BREAKING CHANGE:`. Tests, refactors and chores serving one of those add no entry.
 
-Two visible entries mean two PRs. Never write a title containing "and": report
-the split and which commits belong to which PR.
+- One visible entry: squash. The title is that entry.
+- Several, and every commit stands alone and passes commit-lint: rebase. Say
+  so in the handover, and write the title as the lead change; it is not a
+  changelog line.
+- Several, but mixed with fixups or work in progress: report it. The branch
+  needs cleaning into coherent commits, or splitting. Do not rebase unasked.
+
+Never write a title containing "and".
 
 ## 3. Title
 
@@ -82,11 +90,12 @@ Add `--draft` when asked. Never merge.
 
 ## Merge
 
-The repository builds the squash body from the branch's commit messages, not
-from the PR description. A footer written in the description reaches main only
-when the merge uses the description as the body: the merge dialog, or
-`gh pr merge --squash --body-file`. State this when handing the PR over.
+State the merge mode when handing the PR over.
 
-Rebase merge, when requested, is the exception: every commit becomes its own
-changelog line, each must pass commit-lint alone, and the title is not a
-changelog line.
+Squash: the repository builds the squash body from the branch's commit
+messages, not from the PR description. A footer written in the description
+reaches main only when the merge uses the description as the body: the merge
+dialog, or `gh pr merge --squash --body-file`.
+
+Rebase: `gh pr merge --rebase`. The commits land unchanged, so their footers
+are the ones that count; one written only in the description is lost.
