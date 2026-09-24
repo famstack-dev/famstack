@@ -102,6 +102,8 @@ a video, or a few lines of writing.
 - Open with the date ("Today is the third of March") and the entry is
   filed on that day. Without one, the day you sent it counts.
 - Reply to a message to add to that memory later.
+- Each morning a card appears in the thread under your message. Reply to
+  it to fix a name, a date or a fact.
 
 There is no wrong way to use it. Press record.""",
         "across": "across",
@@ -166,6 +168,8 @@ ein Foto, ein Video oder ein paar Zeilen Text.
   Eintrag auf diesen Tag datiert. Ohne Datum z\u00e4hlt der Tag, an dem
   ihr gesendet habt.
 - Antwortet auf eine Nachricht, um sp\u00e4ter etwas zu erg\u00e4nzen.
+- Jeden Morgen erscheint im Thread unter eurer Nachricht eine Karte.
+  Antwortet darauf, um einen Namen, ein Datum oder eine Angabe zu korrigieren.
 
 Es gibt kein falsches Vorgehen. Dr\u00fcckt auf Aufnahme.""",
         "across": "in",
