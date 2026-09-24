@@ -416,6 +416,25 @@ class TestACorrectionMakesTheCardTheFamilys:
         assert fixed.confidence == "corrected"
         assert diary_card.to_entry(fixed).basis == diary.basis_text("corrected")
 
+    def test_a_correction_can_say_who_the_memory_was_for(self):
+        """"This was for Marge, not Homie": the reading took a nickname for
+        the person spoken to, and the family puts it right."""
+        card = replace(_card(), addressee="Homie")
+        fixed = diary_card.correct(card, _read(addressee="marge"), event_id="$fix")
+
+        assert fixed.addressee == "Marge"
+
+    def test_a_correction_that_names_no_one_keeps_who_it_was_for(self):
+        card = replace(_card(), addressee="Bart")
+        assert diary_card.correct(card, _read(), event_id="$fix").addressee == "Bart"
+
+    def test_someone_outside_the_household_is_kept_as_the_family_named_them(self):
+        """A memo can be for "the kids" or for Grandpa: the family's words
+        stand when they name no household member."""
+        card = replace(_card(), addressee="Bart")
+        fixed = diary_card.correct(card, _read(addressee="  the kids "), event_id="$fix")
+        assert fixed.addressee == "the kids"
+
     def test_a_correction_without_a_date_keeps_the_date(self):
         fixed = diary_card.correct(_card(), _extraction(), event_id="$fix")
 

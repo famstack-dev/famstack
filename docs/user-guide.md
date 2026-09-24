@@ -231,7 +231,7 @@ The AI mishears names and gets things wrong. Correct it in the memory's thread, 
 > **archivist**: 📔 **Sandcastle at the lake** · Sunday, 20 September 2026 ...
 > **you** (in the thread): It was Lisa who built the tower, not Bart. And it was the 19th.
 
-The archivist answers with 👀, puts the corrected card in the thread, and confirms with ✅. You can correct the title, the date, who it is about, the summary and the facts. The recorded words themselves stay as they were.
+The archivist answers with 👀, puts the corrected card in the thread, and confirms with ✅. You can correct the title, the date, who it is about, who it was for, the summary and the facts. The recorded words themselves stay as they were.
 
 famstack saves your correction in the family's archive under your name, and the card is yours from then on: the nightly run never changes it back. To correct it again, reply in the same thread.
 
