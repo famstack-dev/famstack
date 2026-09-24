@@ -270,6 +270,7 @@ def to_entry(card: Card) -> "diary.Entry":
         comments=list(card.replies),
         gist=card.summary,
         moments=diary.verify_moments(card.body, card.quotes),
+        title=card.title,
     )
 
 

@@ -676,14 +676,17 @@ class TestRendering:
         # The body appears only inside the folded block, quoted.
         assert "\nwort0." not in page
 
-    def test_a_short_entry_stays_verbatim_even_with_a_gist(self):
+    def test_a_short_entry_keeps_every_word_under_its_summary(self):
+        """The summary is narrative above the words, never in their place:
+        a short entry is shown whole, not folded behind it."""
         page = diary.render_month([diary.Entry(
             on=date(2026, 9, 14), confidence="sent", basis="b",
             kind="voice", sender="marge", body="Kurz und wichtig.",
-            gist="A gist that must not replace the words.")])
+            gist="A summary that must not replace the words.")])
 
         assert "Kurz und wichtig." in page
-        assert "A gist that must not replace the words." not in page
+        assert "[!note]-" not in page
+        assert page.index("A summary that must not") < page.index("Kurz und wichtig.")
 
 
 class TestTheKeptFileOnThePage:

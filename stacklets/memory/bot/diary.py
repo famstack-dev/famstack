@@ -289,6 +289,9 @@ class Entry:
     # then shows the body in full.
     gist: str = ""
     moments: list[str] = field(default_factory=list)
+    # The card's title, when the entry comes from a card. Heads the entry
+    # on the page.
+    title: str = ""
 
 
 # ── What this household says ──────────────────────────────────────────
@@ -931,15 +934,19 @@ def _entry_block(entry: Entry, *, room_id: str,
     # not title-cased, so a group reads as a group. A message whose
     # addressee resolves to its own sender is a misread, not a dedication.
     to = (entry.addressee or "").strip()
-    if to and to.lower() != entry.sender.lower():
-        heading = f"### {who} — {_L['for']} {to}"
-    else:
-        heading = f"### {who}"
+    addressed = bool(to) and to.lower() != entry.sender.lower()
 
     # How the date was derived is our concern, not the reader's, and it
     # would repeat under every entry on every page. Where it matters,
     # because we could not derive one, the callout below says so.
-    lines = [heading, f"*{_kind_label(entry)}*", ""]
+    if entry.title:
+        # From a card: its title heads the entry, and who recorded it
+        # and what it is follow on one line.
+        by = f"{who}, {_L['for']} {to}" if addressed else who
+        lines = [f"### {entry.title}", f"*{by} · {_kind_label(entry)}*", ""]
+    else:
+        heading = f"### {who} — {_L['for']} {to}" if addressed else f"### {who}"
+        lines = [heading, f"*{_kind_label(entry)}*", ""]
 
     if entry.confidence == "uncertain":
         lines += [
@@ -948,11 +955,16 @@ def _entry_block(entry: Entry, *, room_id: str,
             "",
         ]
 
+    # The summary opens the entry as narrative, above the family's words
+    # and never in their place. A message spoken to one person gets none:
+    # it is posted whole, with nothing generated in front of it.
+    if entry.gist and not addressed:
+        lines += [entry.gist, ""]
+
     if entry.body.strip() and _distills(entry):
-        # The distilled view for long recordings: one narrative line,
+        # The distilled view for long recordings: the summary above,
         # verified quotes, and the full transcript in a folded block.
         # verify_moments() guarantees each quote is an exact excerpt.
-        lines += [entry.gist, ""]
         for moment in entry.moments:
             lines += [f"> [!quote] {moment}", ""]
         lines += [f"> [!note]- {_L['full_transcript']}"]

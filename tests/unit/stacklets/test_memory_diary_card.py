@@ -88,8 +88,10 @@ class TestACardHoldsTheWholeEntry:
         direct = diary.pages_for(
             [replace(e, gist="", moments=[]) for e in entries],
             room_id=ROOM, media=media)
+        # What the card adds on purpose (its title and summary) is set
+        # aside: this pins that nothing of the entry itself is lost.
         from_cards = diary.pages_for(
-            [replace(diary_card.to_entry(c), gist="", moments=[]) for c in cards],
+            [replace(diary_card.to_entry(c), gist="", moments=[], title="") for c in cards],
             room_id=ROOM, media=diary_card.media_of(cards))
         assert from_cards == direct
 
@@ -445,3 +447,60 @@ class TestACorrectionMakesTheCardTheFamilys:
         assert _read(date="17 March").date == ""
         assert _read(date="2026-03-17").date == "2026-03-17"
 
+
+# ── The card on the diary page ────────────────────────────────────────
+
+
+def _page_for(card) -> str:
+    return diary.render_month([diary_card.to_entry(card)], room_id=ROOM)
+
+
+class TestTheDiaryPageShowsTheCard:
+    """Each entry on the page opens with its card: the title, who recorded
+    it and what it is, and the summary as a short narrative line. Then
+    the family's words, every one of them. A correction to the card is
+    therefore a correction to the page."""
+
+    def _note(self, **kw):
+        entry = diary.Entry(on=date(2026, 9, 20), confidence="sent", basis="",
+                            kind="voice", sender="marge", body="We went to the lake today.",
+                            event_ids=["$lake"], duration_ms=7000)
+        for k, v in kw.items():
+            setattr(entry, k, v)
+        return entry
+
+    def test_the_title_heads_the_entry_and_says_who_and_what(self):
+        card = diary_card.to_card(self._note(), _extraction(title="A day at the lake"),
+                                  room_id=ROOM, media={})
+        page = _page_for(card)
+
+        assert "### A day at the lake" in page
+        assert "*Marge · Voice note, 0:07*" in page
+
+    def test_the_summary_opens_the_entry_and_every_word_follows(self):
+        card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake."),
+                                  room_id=ROOM, media={})
+        page = _page_for(card)
+
+        assert page.index("Marge tells of the lake.") < page.index("We went to the lake today.")
+
+    def test_a_correction_shows_on_the_page(self):
+        card = diary_card.to_card(self._note(), _extraction(summary="Bart built the tower."),
+                                  room_id=ROOM, media={})
+        fixed = diary_card.correct(card, _extraction(summary="Lisa built the tower.",
+                                                     title="Lisa's tower"), event_id="$fix")
+        page = _page_for(fixed)
+
+        assert "### Lisa's tower" in page and "Lisa built the tower." in page
+        assert "Bart built the tower." not in page
+
+    def test_a_letter_to_one_person_keeps_its_title_and_no_summary(self):
+        """A message spoken to one person is posted whole, as agreed for
+        letters: nothing generated stands between the reader and it."""
+        card = diary_card.to_card(self._note(addressee="Lisa"),
+                                  _extraction(title="For Lisa", summary="Marge talks to Lisa."),
+                                  room_id=ROOM, media={})
+        page = _page_for(card)
+
+        assert "### For Lisa" in page and "*Marge, for Lisa · Voice note, 0:07*" in page
+        assert "Marge talks to Lisa." not in page
