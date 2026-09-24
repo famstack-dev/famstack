@@ -547,6 +547,53 @@ class TestTranscriberFromEnv:
         assert b"whisper-large-v3-turbo" in captured["body"]
         await tr.aclose()
 
+    async def test_the_household_language_tells_whisper_what_it_hears(
+            self, httpserver: HTTPServer, monkeypatch):
+        """A whisper server started with a fixed language decodes every
+        clip as that language: English audio against a German server
+        comes back as a German translation. Stating the household's
+        language on each request is what makes the transcript the words
+        that were spoken. Whisper takes an ISO-639-1 code, so a regional
+        form such as `de_DE` is cut to its language."""
+        captured: dict = {}
+
+        def handler(request):
+            captured["form"] = dict(request.form)
+            from werkzeug import Response
+            return Response('{"text": "ok"}', content_type="application/json")
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST").respond_with_handler(handler)
+        monkeypatch.setenv("WHISPER_URL", httpserver.url_for("/v1"))
+        monkeypatch.setenv("LANGUAGE", "de_DE")
+
+        tr = Transcriber.from_env()
+        await tr.transcribe(b"fake-audio")
+
+        assert captured["form"].get("language") == "de"
+        await tr.aclose()
+
+    async def test_without_a_household_language_whisper_detects_it(
+            self, httpserver: HTTPServer, monkeypatch):
+        """No configured language leaves detection to whisper, as before."""
+        captured: dict = {}
+
+        def handler(request):
+            captured["form"] = dict(request.form)
+            from werkzeug import Response
+            return Response('{"text": "ok"}', content_type="application/json")
+
+        httpserver.expect_request(
+            "/v1/audio/transcriptions", method="POST").respond_with_handler(handler)
+        monkeypatch.setenv("WHISPER_URL", httpserver.url_for("/v1"))
+        monkeypatch.delenv("LANGUAGE", raising=False)
+
+        tr = Transcriber.from_env()
+        await tr.transcribe_verbose(b"fake-audio")
+
+        assert "language" not in captured["form"]
+        await tr.aclose()
+
     def test_without_a_configured_model_it_asks_for_openais_name(self, monkeypatch):
         monkeypatch.setenv("WHISPER_URL", "http://whisper.local/v1")
         monkeypatch.delenv("WHISPER_MODEL", raising=False)
