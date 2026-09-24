@@ -80,6 +80,19 @@ def _strings(value) -> list[str]:
     return [" ".join(v.split()) for v in value if isinstance(v, str) and v.strip()]
 
 
+# Labels that say what kind of thing a fact is rather than whom or what it
+# is about. Models reach for them when asked for "Label: value", and the
+# result restates the summary, the date or the people as a form.
+_KIND_LABELS = {"action", "actions", "activity", "detail", "details", "event",
+                "events", "date", "year", "time", "speaker", "recipient",
+                "person", "persons", "people", "note"}
+
+
+def _kind_only(fact: str) -> bool:
+    label, sep, _ = fact.partition(":")
+    return bool(sep) and label.strip().lower() in _KIND_LABELS
+
+
 def _iso_day(value) -> str:
     """`value` if it is a YYYY-MM-DD day, else ""."""
     if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()):
@@ -132,7 +145,8 @@ def extraction_from(raw, *, ontology, language: str,
         persons=persons,
         tags=[*topics, *(f"Person: {p}" for p in persons)],
         summary=text("summary"),
-        facts=[f for f in (_LIST_MARKER.sub("", f) for f in _strings(raw.get("facts"))) if f],
+        facts=[f for f in (_LIST_MARKER.sub("", f) for f in _strings(raw.get("facts")))
+               if f and not _kind_only(f)],
         quotes=_strings(raw.get("quotes"))[:_MAX_QUOTES],
         model=model,
         date=_iso_day(raw.get("date")),

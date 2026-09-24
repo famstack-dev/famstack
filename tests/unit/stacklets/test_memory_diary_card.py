@@ -324,9 +324,20 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
     def test_a_fact_is_the_fact_not_the_list_marker_the_model_copied(self):
         """Shown a card's facts as a list, a model hands them back with the
         markers on, and the callout would render "- - Date"."""
-        assert _read(facts=["- Date: 2026-09-20", "* Place: lake", "• Who: Bart",
-                            "- - Action: Lisa built the tower"]).facts == [
-            "Date: 2026-09-20", "Place: lake", "Who: Bart", "Action: Lisa built the tower"]
+        assert _read(facts=["- Lisa: built the tower", "* Place: lake", "• Bart: dug the moat",
+                            "- - Maggie: first tooth"]).facts == [
+            "Lisa: built the tower", "Place: lake", "Bart: dug the moat", "Maggie: first tooth"]
+
+    def test_a_fact_says_who_or_what_it_is_about_not_what_kind_it_is(self):
+        """"Action: Maggie knocked it over" repeats the summary as a form.
+        A fact names who or what it is about; the card's date, people and
+        summary already carry the rest."""
+        read = _read(facts=["Action: Maggie knocked it over", "Date: 2026-03-17",
+                            "Person: Maggie", "Event: first tooth", "Speaker: Marge",
+                            "Maggie: first tooth", "Place: Springfield Lake",
+                            "Swimming badge: 25 metres"])
+        assert read.facts == ["Maggie: first tooth", "Place: Springfield Lake",
+                              "Swimming badge: 25 metres"]
 
     def test_an_answer_that_is_not_an_object_reads_as_nothing(self):
         empty = diary_card.extraction_from(None, ontology=SEED_ONTOLOGY, language="en",

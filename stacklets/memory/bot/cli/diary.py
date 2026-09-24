@@ -846,10 +846,15 @@ Reply with a JSON object with these keys:
   Not wanted: "Anna und ein Kind berichten über einen Ausflug, ein
   Picknick, einen verlorenen Schuh und das Wetter."
 
-"facts": up to six short facts from the entry, in {language}, each
-  written as "Label: value" and each anchored on a name, a date, a
-  number or a place. A sentence without such an anchor is summary, not
-  a fact. An empty list when the entry states none.
+"facts": what someone would want to look up about this entry later, in
+  {language}, each as "Label: value". The label is who or what the fact
+  is about: a family member's name ("Maggie: first tooth"), a place
+  ("Place: Springfield Lake"), a thing ("Swimming badge: 25 metres"),
+  never the kind of fact ("Action", "Event", "Detail", "Date", "Person").
+  Milestones first: a first step, a first word, a badge, a birthday, a
+  new school. Leave out what the summary already says in a sentence and
+  the day the entry happened. At most five. An empty list when the entry
+  holds nothing worth looking up, which is often.
 
 "persons": the family members the entry is about or spoken to, using
   the names from the family list above. Only names from that list.
@@ -1451,8 +1456,11 @@ The correction, from {who}:
 Reply with a JSON object with these keys, all in {language} except the
 names of people and topics:
 "title", "description", "summary" (one to three short sentences),
-"facts" (each "Label: value", anchored on a name, a date, a number or a
-place), "persons" (names from the family list only), "topics" (topics
+"facts" (each "Label: value", labelled by who or what it is about, such
+as a family member's name or "Place", never by the kind of fact such as
+"Action", "Event", "Date" or "Person"; milestones first; at most five;
+none for what the summary already says), "persons" (names from the
+family list only), "topics" (topics
 from the vocabulary only), "quotes" (passages copied word for word from
 the entry's words; keep the card's quotes unless the correction touches
 them), and "date": the day the entry happened as YYYY-MM-DD when the
