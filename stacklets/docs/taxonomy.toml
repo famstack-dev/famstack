@@ -40,6 +40,12 @@ tags = [
     "Telekommunikation",   # phone, internet, mobile contracts
     "Rezept",              # family recipes, grandma's classics, cooking and baking
     "Erinnerung",          # kids' artwork, letters, postcards, milestone docs
+    "Musik",               # music school, concerts, instruments
+    "Sport",               # clubs, swimming, tournaments
+    "Hobby",
+    "Feier",               # birthdays, parties, holidays at home
+    "Freunde",
+    "Familienleben",
     "Urkunde",             # birth/death certificates, passports, wills, Vollmacht
     "Rente",               # state pension, Riester, company pension, Altersvorsorge
     "Spende",              # charity donations, tax-deductible receipts
@@ -101,6 +107,12 @@ tags = [
     "Telecom",             # phone, internet, mobile contracts
     "Recipe",              # family recipes, grandma's classics, cooking and baking
     "Memory",              # kids' artwork, letters, postcards, milestone docs
+    "Music",               # music school, concerts, instruments
+    "Sport",               # clubs, swimming, tournaments
+    "Hobby",
+    "Celebration",         # birthdays, parties, holidays at home
+    "Friends",
+    "Family Life",
     "Personal Record",     # birth/death certificates, passports, wills, power of attorney
     "Pension",             # state pension, 401k, company pension, retirement
     "Donation",            # charity donations, tax-deductible receipts

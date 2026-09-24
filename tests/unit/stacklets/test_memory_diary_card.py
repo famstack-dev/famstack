@@ -324,3 +324,39 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
                                            people=PEOPLE, model="m")
         assert empty == diary_card.Extraction(model="m")
 
+
+class TestTheSeedOntologyCoversFamilyLife:
+    """The seed was written for documents. The diary is the first reader
+    that is about family life, and without topics for it the model files
+    a saxophone concert under "Memory" and a bike ride under "Child"."""
+
+    def test_family_life_resolves_to_its_own_topics(self):
+        assert _read(topics=["concert"]).tags == ["Music"]
+        assert _read(topics=["swimming"]).tags == ["Sport"]
+        assert _read(topics=["birthday"]).tags == ["Celebration"]
+        assert _read(topics=["playdate"]).tags == ["Friends"]
+        assert _read(topics=["drawing"]).tags == ["Hobby"]
+        assert _read(topics=["family time"]).tags == ["Family Life"]
+
+    def test_the_household_language_names_them(self):
+        read = diary_card.extraction_from(
+            {"topics": ["Konzert", "Geburtstag"]}, ontology=SEED_ONTOLOGY,
+            language="de", people=PEOPLE, model="")
+        assert read.tags == ["Musik", "Feier"]
+
+    def test_the_family_life_topics_share_no_word_with_anything_else(self):
+        """A name or synonym shared by two topics resolves to whichever
+        comes first, silently. The family-life topics must not take a
+        word another topic or document type already answers to."""
+        life = {"music", "sport", "hobby", "celebration", "friends", "family_life"}
+        owners: dict[tuple[str, str], set[str]] = {}
+        for kind, items in (("topic", SEED_ONTOLOGY.topics),
+                            ("doctype", SEED_ONTOLOGY.doctypes)):
+            for key, item in items.items():
+                for lang in ("de", "en"):
+                    for word in [item.name(lang), *item.synonyms_for(lang)]:
+                        owners.setdefault((lang, word.lower()), set()).add(f"{kind}.{key}")
+        shared = {w: o for w, o in owners.items()
+                  if len(o) > 1 and o & {f"topic.{k}" for k in life}}
+        assert shared == {}
+        assert life <= set(SEED_ONTOLOGY.topics)

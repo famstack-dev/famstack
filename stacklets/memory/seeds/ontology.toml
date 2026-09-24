@@ -184,6 +184,34 @@ synonyms = { de = ["Kochrezept"], en = ["cooking", "baking"] }
 names = { de = "Erinnerung", en = "Memory" }
 synonyms = { de = ["Erinnerungsstück"], en = ["keepsake", "milestone"] }
 
+# Family life: what the memories room and the diary are about. A letter
+# from the music school can be Music too; that is the point of one
+# vocabulary for documents and diary alike.
+
+[topic.music]
+names = { de = "Musik", en = "Music" }
+synonyms = { de = ["Konzert", "Instrument", "Chor", "Musikschule"], en = ["concert", "instrument", "choir", "recital", "music school"] }
+
+[topic.sport]
+names = { de = "Sport", en = "Sport" }
+synonyms = { de = ["Schwimmen", "Fußball", "Sportverein", "Turnier"], en = ["sports", "swimming", "football", "soccer", "tournament"] }
+
+[topic.hobby]
+names = { de = "Hobby", en = "Hobby" }
+synonyms = { de = ["Basteln", "Zeichnen", "Freizeit"], en = ["pastime", "crafts", "drawing"] }
+
+[topic.celebration]
+names = { de = "Feier", en = "Celebration" }
+synonyms = { de = ["Geburtstag", "Party", "Weihnachten", "Jubiläum", "Fest"], en = ["birthday", "party", "christmas", "anniversary"] }
+
+[topic.friends]
+names = { de = "Freunde", en = "Friends" }
+synonyms = { de = ["Freundschaft", "Spielverabredung"], en = ["friend", "friendship", "playdate"] }
+
+[topic.family_life]
+names = { de = "Familienleben", en = "Family Life" }
+synonyms = { de = ["Familienzeit", "Alltag"], en = ["family time", "everyday life"] }
+
 [topic.personal_record]
 names = { de = "Urkunde", en = "Personal Record" }
 synonyms = { de = ["Geburtsurkunde", "Sterbeurkunde"], en = ["birth certificate", "death certificate", "passport"] }
