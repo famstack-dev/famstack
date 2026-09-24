@@ -152,7 +152,12 @@ and the agent read them, but the wiki does not publish `diary/entries/`.
 | `timestamp` | R | when the entry's first message reached the room. |
 | `date` | R | the day it happened (spoken date, else the day it was sent). |
 | `entry_id` | R | short hash of the first message's event id; the path's identity. |
-| `date_basis` | O | `spoken` \| `sent` \| `uncertain`. |
+| `date_basis` | O | `spoken` \| `sent` \| `uncertain` \| `corrected` (a family member's correction set it). |
+
+A correction is a reply in the card's thread in the room. It is read
+again on every compile, applied to the card, and recorded in the vault
+commit (`correct: <title>`, authored by whoever wrote it), not on the
+card; its event id joins `event_ids`.
 | `description` | O | one sentence. |
 | `persons` | O | list. |
 | `tags` | O | list. |

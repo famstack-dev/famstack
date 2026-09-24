@@ -59,6 +59,7 @@ _STRINGS = {
         "vocab_topics": "They often talk about {topics}.",
         "basis_spoken": "dated from the spoken opening",
         "basis_sent": "dated from when it was sent",
+        "basis_corrected": "dated by a correction from the family",
         "basis_burst": ("arrived in a sync burst with no spoken date, "
                         "so this is the week it surfaced, not when it "
                         "happened"),
@@ -117,6 +118,7 @@ There is no wrong way to use it. Press record.""",
         "vocab_topics": "Sie sprechen oft \u00fcber {topics}.",
         "basis_spoken": "datiert nach dem gesprochenen Datum",
         "basis_sent": "datiert nach dem Sendezeitpunkt",
+        "basis_corrected": "datiert nach einer Korrektur aus der Familie",
         "basis_burst": ("kam in einem Sync-Schub ohne gesprochenes "
                         "Datum an; eingeordnet in der Woche des "
                         "Auftauchens, nicht des Geschehens"),
@@ -192,6 +194,11 @@ def _day_heading(on: date) -> str:
         day=_L["days"][on.weekday()], dom=on.day, month=_month_name(on))
 
 
+def day_label(on: date) -> str:
+    """A day as a family reads it, with the year: "Sunday, 20 September 2026"."""
+    return f"{_day_heading(on)} {on.year}"
+
+
 def _counted(n: int, one: str, many: str) -> str:
     return f"{n} {_L[one] if n == 1 else _L[many]}"
 
@@ -220,6 +227,8 @@ class Message:
     reply_to: str | None = None
     burst: str | None = None
     zone: tzinfo = timezone.utc
+    # The first message of the thread this one was written in, if any.
+    thread_root: str | None = None
 
     @property
     def sent_on(self) -> date:
@@ -418,6 +427,13 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
 
         info = content.get("info") or {}
         in_reply_to = (relates.get("m.in_reply_to") or {}).get("event_id")
+        # In a thread, a client adds `m.in_reply_to` pointing at the
+        # thread's latest event so older clients can show something.
+        # The thread is the relation that means something here.
+        thread_root = (relates.get("event_id")
+                       if relates.get("rel_type") == "m.thread" else None)
+        if thread_root:
+            in_reply_to = None
 
         body = content.get("body", "")
         if in_reply_to:
@@ -441,6 +457,7 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
             duration_ms=info.get("duration"),
             reply_to=in_reply_to,
             zone=zone,
+            thread_root=thread_root,
         ))
 
     plain.sort(key=lambda m: (m.ts, m.event_id))
@@ -449,6 +466,32 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
         for m in plain
     ]
     return mark_bursts(resolved, window_s=burst_window_s)
+
+
+# The envelope types of the archivist's notices carrying an entry's card:
+# the first filing, and each refiling after a correction (the archivist's
+# own pattern for documents). Their thread is where a family member talks
+# to the archivist about the card.
+CARD_EVENTS = ("diary.filed", "diary.reclassified")
+
+
+def card_threads(events) -> set[str]:
+    """The roots of the threads that hold a diary card.
+
+    Found from the room itself, like everything else the compiler knows:
+    a thread is a card's thread when the archivist's card notice is in
+    it. Read from the raw events, because `resolve` drops bot messages.
+    """
+    roots: set[str] = set()
+    for ev in events:
+        content = ev.get("content") or {}
+        envelope = content.get("dev.famstack.event") or {}
+        relates = content.get("m.relates_to") or {}
+        if (isinstance(envelope, dict) and envelope.get("type") in CARD_EVENTS
+                and relates.get("rel_type") == "m.thread"
+                and relates.get("event_id")):
+            roots.add(relates["event_id"])
+    return roots
 
 
 def mark_bursts(messages, *, window_s: float = DEFAULT_BURST_WINDOW_S):
@@ -623,8 +666,8 @@ def basis_text(confidence: str) -> str:
     A diary record stores only the word (`spoken`, `sent`, `uncertain`);
     the sentence is chrome and follows the language the pages render in.
     """
-    return _L[{"spoken": "basis_spoken", "uncertain": "basis_burst"}
-              .get(confidence, "basis_sent")]
+    return _L[{"spoken": "basis_spoken", "uncertain": "basis_burst",
+               "corrected": "basis_corrected"}.get(confidence, "basis_sent")]
 
 
 def plain_title(entry: "Entry") -> str:
@@ -673,7 +716,9 @@ def _remarks_only_on_what_is_still_in_view(messages, refers_to):
 
 def compile_entries(messages, readings, *,
                     continues: "dict[str, str] | None" = None,
-                    refers_to: "dict[str, str] | None" = None) -> list[Entry]:
+                    refers_to: "dict[str, str] | None" = None,
+                    card_roots: "set[str] | frozenset[str]" = frozenset(),
+                    ) -> list[Entry]:
     """Messages and their readings to dated diary entries.
 
     Some messages do not earn an entry of their own. A reply belongs to
@@ -685,6 +730,13 @@ def compile_entries(messages, readings, *,
     remark floating with no subject.
     """
     continues = continues or {}
+    # A card's thread is a conversation with the archivist about that
+    # card, corrections included, and none of it is a memory: corrections
+    # reach the card through `stack memory diary correct`, and the vault
+    # commit keeps them. Any other thread is a conversation about the
+    # message it hangs off, which is what a reply is, so it becomes one.
+    messages = [replace(m, reply_to=m.thread_root) if m.thread_root else m
+                for m in messages if m.thread_root not in card_roots]
     about = _remarks_only_on_what_is_still_in_view(messages, refers_to or {})
 
     # Join first (a split recording is two adjacent uploads), then

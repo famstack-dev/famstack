@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -63,9 +63,13 @@ class Extraction:
     facts: list[str] = field(default_factory=list)
     quotes: list[str] = field(default_factory=list)
     model: str = ""
+    # A day a family member's correction states, as YYYY-MM-DD. Honoured
+    # only for an entry that has corrections (see `to_card`).
+    date: str = ""
 
 
 _MAX_QUOTES = 3
+_LIST_MARKER = re.compile(r"^(?:\s*[-*\u2022]\s+)+")
 
 
 def _strings(value) -> list[str]:
@@ -74,6 +78,16 @@ def _strings(value) -> list[str]:
     if not isinstance(value, list):
         return []
     return [" ".join(v.split()) for v in value if isinstance(v, str) and v.strip()]
+
+
+def _iso_day(value) -> str:
+    """`value` if it is a YYYY-MM-DD day, else ""."""
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()):
+        return ""
+    try:
+        return date.fromisoformat(value.strip()).isoformat()
+    except ValueError:
+        return ""
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -118,9 +132,10 @@ def extraction_from(raw, *, ontology, language: str,
         persons=persons,
         tags=[*topics, *(f"Person: {p}" for p in persons)],
         summary=text("summary"),
-        facts=_strings(raw.get("facts")),
+        facts=[f for f in (_LIST_MARKER.sub("", f) for f in _strings(raw.get("facts"))) if f],
         quotes=_strings(raw.get("quotes"))[:_MAX_QUOTES],
         model=model,
+        date=_iso_day(raw.get("date")),
     )
 
 
@@ -175,6 +190,9 @@ def to_card(entry: "diary.Entry", extraction: Extraction, *, room_id: str,
     entry's own files.
     """
     first = entry.event_ids[0]
+    # The room's evidence dates an entry: a spoken date, or the day it was
+    # sent. A date the model offers is ignored here; only a family
+    # member's correction can move it (`correct`).
     return Card(
         entry_id=entry_id_for(first),
         on=entry.on,
@@ -198,6 +216,35 @@ def to_card(entry: "diary.Entry", extraction: Extraction, *, room_id: str,
         facts=[f.strip() for f in extraction.facts if f.strip()],
         quotes=[" ".join(q.split()) for q in extraction.quotes if q.strip()],
         model=extraction.model,
+    )
+
+
+def correct(card: Card, extraction: Extraction, *, event_id: str) -> Card:
+    """The card after a family member's correction.
+
+    `extraction` is the model's reading of the current card with the
+    correction applied. It replaces everything the model reads out of an
+    entry (title, description, people, tags, summary, facts, quotes) and,
+    when it names a day, the date. The family's words, replies and files
+    stay as they are. The correction's event id joins the card's, so the
+    card leads back to the message that changed it; the words of the
+    correction are kept by the vault commit, not on the card.
+    """
+    on, confidence = card.on, card.confidence
+    if extraction.date:
+        on, confidence = date.fromisoformat(extraction.date), "corrected"
+    return replace(
+        card, on=on, confidence=confidence,
+        title=extraction.title.strip() or card.title,
+        description=extraction.description.strip(),
+        persons=list(extraction.persons),
+        tags=list(extraction.tags),
+        summary=" ".join(extraction.summary.split()),
+        facts=[f.strip() for f in extraction.facts if f.strip()],
+        quotes=[" ".join(q.split()) for q in extraction.quotes if q.strip()],
+        model=extraction.model or card.model,
+        event_ids=[*card.event_ids, event_id] if event_id not in card.event_ids
+        else list(card.event_ids),
     )
 
 
@@ -354,9 +401,15 @@ def _digest_of(text: str) -> str:
     return hashlib.sha256(normal.encode("utf-8")).hexdigest()[:16]
 
 
-def render(card: Card) -> str:
-    """The card as a vault file, signed with the digest of its content."""
+def render(card: Card, *, family_owned: bool = False) -> str:
+    """The card as a vault file, signed with the digest of its content.
+
+    A card a family member corrected is written unsigned: it is theirs
+    from then on, and the compile leaves it alone (`edited_by_hand`).
+    """
     unsigned = _unsigned(card)
+    if family_owned:
+        return unsigned
     head, sep, rest = unsigned.partition("\n---\n")
     return f"{head}\ndigest: {_digest_of(unsigned)}{sep}{rest}"
 
@@ -364,18 +417,19 @@ def render(card: Card) -> str:
 def edited_by_hand(text: str) -> bool:
     """Whether a person has changed this file since the compiler wrote it.
 
-    A file without a digest was never written by the compiler, and a
-    file whose content no longer matches its digest was changed after.
-    Either way it is a person's, and the compiler leaves it alone.
+    A file without a digest was written by a person or corrected by one
+    (`render(..., family_owned=True)`), and a file whose content no longer
+    matches its digest was changed after the compiler wrote it. Either
+    way it is the family's, and the compiler leaves it alone.
     """
     stored = str(frontmatter_parse(text).get("digest") or "")
     return not stored or stored != _digest_of(text)
 
 
-def _sections(body: str) -> "tuple[list[str], list[tuple[str, str]], str]":
-    """The quotes, replies and words of a card body, in that order."""
+def _sections(body: str):
+    """The quotes, replies and words of a card body."""
     quotes: list[str] = []
-    replies: list[tuple[str, str]] = []
+    said: dict[str, list[tuple[str, str]]] = {_REPLIES: []}
     words = ""
     lines = body.splitlines()
     heads = [f"## {h}" for h in (*_BODY_HEADINGS.values(), _CAPTION)]
@@ -392,15 +446,16 @@ def _sections(body: str) -> "tuple[list[str], list[tuple[str, str]], str]":
             continue
         if section == _QUOTES and ln.startswith("- "):
             quotes.append(ln[2:].strip())
-        elif section == _REPLIES:
+        elif section in said:
+            block = said[section]
             if m := _REPLY_HEAD.match(ln.strip()):
-                replies.append((m.group(1), ""))
-            elif ln.startswith(">") and replies:
-                who, text = replies[-1]
+                block.append((m.group(1), ""))
+            elif ln.startswith(">") and block:
+                who, text = block[-1]
                 part = ln[2:] if ln.startswith("> ") else ln[1:]
-                replies[-1] = (who, f"{text}\n{part}" if text else part)
-    replies = [(who, text.strip("\n")) for who, text in replies]
-    return quotes, replies, words
+                block[-1] = (who, f"{text}\n{part}" if text else part)
+    tidy = {k: [(who, text.strip("\n")) for who, text in v] for k, v in said.items()}
+    return quotes, tidy[_REPLIES], words
 
 
 def parse(text: str) -> Card:
@@ -485,10 +540,13 @@ def plan(existing: "dict[str, str]", cards, *, bucket: str,
             continue
         old_path, old_text = on_disk[card.entry_id]
         if edited_by_hand(old_text):
-            # The digest a person's file still carries is the one the
+            # The digest a hand-edited file still carries is the one the
             # compiler signed it with, so it says whether the room has
-            # moved on since. Only then is there anything to report.
-            if str(frontmatter_parse(old_text).get("digest") or "") != _digest_of(text):
+            # moved on since. Only then is there anything to report. A
+            # file with no digest (written or corrected by the family)
+            # is theirs by design and kept without a word.
+            signed = str(frontmatter_parse(old_text).get("digest") or "")
+            if signed and signed != _digest_of(text):
                 out.kept.append(old_path)
             continue
         if old_path != path:

@@ -1017,12 +1017,19 @@ def _identity(localpart: str) -> tuple[str, str]:
     return localpart, f"{localpart}@{server}"
 
 
-def _commit_message(cards, *, new: int) -> str:
-    """The commit a family reads in the vault's history."""
-    verb = "learn" if new == len(cards) else "update"
+def _commit_message(cards, *, new: int, verb: str | None = None,
+                    corrections=()) -> str:
+    """The commit a family reads in the vault's history.
+
+    A correction's own words go in the body: the card shows what it
+    changed, and this is where what was said is kept.
+    """
+    verb = verb or ("learn" if new == len(cards) else "update")
     subject = (cards[0].title if len(cards) == 1
                else f"{len(cards)} diary entries")
     lines = [f"{verb}: {subject}", ""]
+    for who, text, _ in corrections:
+        lines += [f"{who.title()}:"] + [f"> {ln}" for ln in text.splitlines()] + [""]
     lines += [f"- {c.on.isoformat()} {c.title}" for c in cards]
     lines += ["", "Source: memories room"]
     return "\n".join(lines)
@@ -1088,7 +1095,7 @@ def _household_zone():
 
 # Flags that consume the token after them, so the room can be picked out
 # of the rest without mistaking a flag's value for it.
-_TAKES_A_VALUE = ("--burst-window", "--limit")
+_TAKES_A_VALUE = ("--burst-window", "--limit", "--by", "--event", "--text")
 
 
 def _opt(argv: list[str], flag: str, fallback: str) -> str:
@@ -1118,8 +1125,13 @@ def _positional(argv: list[str], fallback: str) -> str:
 
 
 async def run(llm, argv: list[str]) -> int:
+    if argv and argv[0] == "correct":
+        return await correct(llm, argv[1:])
     room_arg = _positional(argv, "memories")
     dry_run = "--dry-run" in argv
+    # A machine-readable report of the cards on stdout, for the archivist,
+    # which posts them. Progress stays on stderr.
+    as_json = "--json" in argv
     rebuild = "--force" in argv
     # --force re-reads and re-summarises but keeps transcripts: whisper
     # costs minutes of GPU per recording and its output only changes
@@ -1235,27 +1247,17 @@ async def run(llm, argv: list[str]) -> int:
 
     entries = diary.compile_entries(decoded, readings,
                                     continues=continues,
-                                    refers_to=refers_to)
+                                    refers_to=refers_to,
+                                    card_roots=diary.card_threads(events))
     _err(f"{len(entries)} diary entr{'y' if len(entries) == 1 else 'ies'}")
 
     # ── Cards: one record per entry, in the vault ──
-    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
-    language_code = (os.environ.get("LANGUAGE") or "en").strip().lower()[:2]
-    ontology = get_ontology(vault_dir if vault_dir.is_dir() else None)
-    # Person pages are generated, so they live in the brain, not the vault.
-    brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
-    persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
-    people = {name.lower(): p.canonical for p in persons for name in p.all_known_names()}
-    if not people:
-        # No person pages yet: the household's names from the wiki, as
-        # whisper is primed with, so a first compile still knows them.
-        people = {name.lower(): name for name in _household_people()}
+    ontology, people, people_section, language_code = _vocabulary(bucket)
     extractions = await _extract_all(
         entries, llm, extractions_cache, ontology=ontology, people=people,
         vocabulary=ontology.classifier_prompt_section(language_code),
-        people_section=(persons_prompt_section(persons)
-                        or "Family members: " + ", ".join(sorted(set(people.values())))),
-        language_code=language_code, force=rebuild)
+        people_section=people_section, language_code=language_code,
+        force=rebuild)
     cards = [diary_card.to_card(e, x, room_id=room_id, media=kept)
              for e, x in zip(entries, extractions)]
 
@@ -1272,9 +1274,9 @@ async def run(llm, argv: list[str]) -> int:
     plan = diary_card.plan({p: t for p, (_, t) in tree.items()}, cards,
                            bucket=bucket, complete=not limit)
     _err(f"  cards: {len(plan.writes)} to write, {len(plan.deletes)} to remove, "
-         f"{len(plan.kept)} changed by hand and kept")
+         f"{len(plan.kept)} the family's and kept")
     for path in plan.kept:
-        _err(f"    kept as edited: {path}")
+        _err(f"    kept as the family left it: {path}")
 
     failed: set[str] = set()
     if dry_run:
@@ -1285,13 +1287,8 @@ async def run(llm, argv: list[str]) -> int:
     elif plan.writes or plan.deletes:
         by_path = {diary_card.card_path(c, bucket=bucket): c for c in cards}
         failed = _commit(client, plan, tree, by_path)
-        try:
-            request_mirror(Path(os.environ.get(
-                "CURATOR_STATE_DIR", "/data/memory/curator")))
-        except OSError as e:
-            _err(f"  could not ask the curator to mirror: {e}")
+        _mirror()
 
-    # ── The pages: a view of the records, including anyone's corrections ──
     records = {p: t for p, (_, t) in tree.items()}
     for path, text in plan.writes.items():
         if path not in failed:
@@ -1299,6 +1296,54 @@ async def run(llm, argv: list[str]) -> int:
     for path in plan.deletes:
         if path not in failed:
             records.pop(path, None)
+    readings_cache.save()
+    rc = await _project(records, llm, summaries_cache, room_id=room_id,
+                        bucket=bucket, rebuild=rebuild,
+                        dry_run=dry_run and not as_json)
+    if as_json:
+        print(json.dumps(_report(cards, plan, tree, failed, bucket=bucket,
+                                 room_id=room_id,
+                                 posted=diary.card_threads(events)),
+                         ensure_ascii=False))
+    return rc or (1 if failed else 0)
+
+
+def _vocabulary(bucket: str):
+    """What the model is offered and held to: the ontology, the family's
+    names (canonical form by every known name), the family block for the
+    prompt, and the household language code."""
+    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    language_code = (os.environ.get("LANGUAGE") or "en").strip().lower()[:2]
+    ontology = get_ontology(vault_dir if vault_dir.is_dir() else None)
+    # Person pages are generated, so they live in the brain, not the vault.
+    brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
+    persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
+    people = {name.lower(): p.canonical for p in persons for name in p.all_known_names()}
+    if not people:
+        # No person pages yet: the household's names from the wiki, as
+        # whisper is primed with, so a first compile still knows them.
+        people = {name.lower(): name for name in _household_people()}
+    section = (persons_prompt_section(persons)
+               or "Family members: " + ", ".join(sorted(set(people.values()))))
+    return ontology, people, section, language_code
+
+
+def _mirror() -> None:
+    """Ask the curator to bring the new records into the brain."""
+    try:
+        request_mirror(Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator")))
+    except OSError as e:
+        _err(f"  could not ask the curator to mirror: {e}")
+
+
+async def _project(records, llm, summaries_cache, *, room_id: str,
+                   bucket: str, rebuild: bool, dry_run: bool) -> int:
+    """Build and publish the diary pages from the records in the vault.
+
+    `records` maps each record's path to its content, as the vault holds
+    it after this run's writes. The pages are a view of these and of
+    nothing else, so every correction and hand edit shows.
+    """
     on_file = [diary_card.parse(t) for t in records.values()]
     entries = sorted((diary_card.to_entry(c) for c in on_file),
                      key=lambda e: (e.on, e.at))
@@ -1320,13 +1365,215 @@ async def run(llm, argv: list[str]) -> int:
         if summaries[key]:
             summaries_cache.put(key, digest, summaries[key])
             summaries_cache.save()
-
-    readings_cache.save()
     summaries_cache.save()
 
     pages = diary.pages_for(entries, room_id=room_id, summaries=summaries,
                             media=diary_card.media_of(on_file))
-    return _publish_pages(pages, bucket=bucket, dry_run=dry_run) or (1 if failed else 0)
+    return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
+
+
+def _card_json(card, *, path: str, room_id: str) -> dict:
+    """A card as the archivist posts it."""
+    return {
+        "entry_id": card.entry_id, "path": path,
+        "root": card.event_ids[0], "room_id": room_id,
+        "date": card.on.isoformat(), "date_basis": card.confidence,
+        "date_label": diary.day_label(card.on), "at": card.at,
+        "title": card.title, "summary": card.summary,
+        "facts": card.facts, "persons": card.persons,
+        "tags": [t for t in card.tags if not t.startswith("Person: ")],
+    }
+
+
+def _report(cards, plan, tree, failed, *, bucket: str, room_id: str,
+            posted: "set[str]") -> dict:
+    """What this run filed, for whoever posts the cards to the family.
+
+    Every card of the run: `new`, `changed` or `unchanged`, and whether
+    its thread already holds a card notice (`posted`), so a card filed by
+    a run nobody announced still gets posted. `root` is the entry's first
+    message, which never changes, so a card's thread never moves. A card
+    the family owns is reported as they left it. Cards whose write failed
+    are left out: announcing them would promise something the vault does
+    not hold.
+    """
+    on_file = {}
+    for _, text in tree.values():
+        before = diary_card.parse(text)
+        on_file[before.entry_id] = before
+    out = []
+    for card in cards:
+        path = diary_card.card_path(card, bucket=bucket)
+        if path in failed:
+            continue
+        before = on_file.get(card.entry_id)
+        if path in plan.writes:
+            state, shown = ("changed" if before is not None else "new"), card
+        else:
+            state, shown = "unchanged", (before or card)
+        out.append({**_card_json(shown, path=path, room_id=room_id),
+                    "state": state, "posted": card.event_ids[0] in posted})
+    return {"room_id": room_id, "cards": out,
+            "new": sum(1 for c in out if c["state"] == "new"),
+            "kept_as_edited": list(plan.kept)}
+
+
+# ── Correcting a card ─────────────────────────────────────────────────
+#
+# A family member replies in a card's thread: "that was Lisa, not Bart".
+# The archivist hands the words here. The correction is applied once, to
+# the card as it is in the vault, and committed by the person who made
+# it, their words in the commit. From then on the card is the family's
+# and the compile leaves it alone.
+
+_CORRECT_TOKENS = 900
+
+_CORRECT_PROMPT = """\
+A family member corrected an entry in the family archive. Apply the
+correction to the entry's card and return the corrected card. Change
+what the correction says is wrong and anything that follows from it;
+keep everything else as it is. The correction is right wherever it
+disagrees with the card or with the entry's words.
+
+{vocabulary}
+
+{people}
+
+The card as it is now:
+{card}
+
+The entry's words:
+{words}
+
+The correction, from {who}:
+{correction}
+
+Reply with a JSON object with these keys, all in {language} except the
+names of people and topics:
+"title", "description", "summary" (one to three short sentences),
+"facts" (each "Label: value", anchored on a name, a date, a number or a
+place), "persons" (names from the family list only), "topics" (topics
+from the vocabulary only), "quotes" (passages copied word for word from
+the entry's words; keep the card's quotes unless the correction touches
+them), and "date": the day the entry happened as YYYY-MM-DD when the
+correction states it, otherwise null.
+"""
+
+
+def _card_prompt(card) -> str:
+    lines = [f"Title: {card.title}", f"Date: {card.on.isoformat()}",
+             f"Description: {card.description}",
+             f"People: {', '.join(card.persons)}",
+             f"Topics: {', '.join(t for t in card.tags if not t.startswith('Person: '))}",
+             f"Summary: {card.summary}"]
+    lines += ["Facts:"] + [f"- {f}" for f in card.facts]
+    if card.quotes:
+        lines += ["Quotes:"] + [f"- {q}" for q in card.quotes]
+    return "\n".join(lines)
+
+
+def _words_prompt(card) -> str:
+    lines = [f"Recorded by {card.sender.title()}:", card.body.strip() or "(no words)"]
+    for who, text in card.replies:
+        lines += ["", f"{who.title()} replied: {text}"]
+    return "\n".join(lines)
+
+
+def _room_of(card) -> str:
+    """The room a card came from, read off its permalink."""
+    tail = card.resource.split("/#/", 1)[-1] if card.resource else ""
+    return tail.split("/", 1)[0] if tail.startswith("!") else ""
+
+
+async def correct(llm, argv: list[str]) -> int:
+    """`diary correct <entry_id> --by <person> --event <event_id> --text <words>`
+
+    Prints the corrected card as JSON. Running it again for the same
+    correction event changes nothing: the event id is on the card once
+    it is applied.
+    """
+    entry_id = argv[0] if argv and not argv[0].startswith("-") else ""
+    by, event_id, words = (_opt(argv, "--by", ""), _opt(argv, "--event", ""),
+                           _opt(argv, "--text", "").strip())
+    if not (entry_id and by and event_id and words):
+        _err("usage: diary correct <entry_id> --by <person> --event <event_id> --text <words>")
+        return 2
+    bucket = os.environ.get("SHARED_BUCKET", "family")
+    diary.configure_language(os.environ.get("LANGUAGE", ""))
+
+    client = _vault_client()
+    if client is None:
+        _err("no Forgejo address or admin credentials here")
+        return 1
+    try:
+        tree = _read_diary_tree(client, bucket)
+    except ForgejoError as e:
+        _err(f"could not read the diary records from the vault: {e}")
+        return 1
+    found = [(path, sha, text) for path, (sha, text) in tree.items()
+             if diary_card.parse(text).entry_id == entry_id]
+    if not found:
+        _err(f"no diary card with entry id {entry_id}")
+        return 1
+    old_path, old_sha, old_text = found[0]
+    card = diary_card.parse(old_text)
+    room_id = _room_of(card)
+    if event_id in card.event_ids:
+        _err(f"  {event_id} is already applied to {old_path}")
+        print(json.dumps({**_card_json(card, path=old_path, room_id=room_id),
+                          "changed": False}, ensure_ascii=False))
+        return 0
+
+    ontology, people, people_section, language_code = _vocabulary(bucket)
+    prompt = _CORRECT_PROMPT.format(
+        vocabulary=ontology.classifier_prompt_section(language_code),
+        people=people_section, card=_card_prompt(card),
+        words=_words_prompt(card), who=by.title(), correction=words,
+        language=_household_language())
+    try:
+        raw = json.loads(await llm.complete(
+            "classifier", prompt, json_mode=True, temperature=0,
+            max_tokens=_CORRECT_TOKENS, timeout=_EXTRACT_TIMEOUT_S))
+    except (LLMError, json.JSONDecodeError, TypeError) as e:
+        _err(f"could not apply the correction: {e}")
+        return 1
+    extraction = diary_card.extraction_from(
+        raw, ontology=ontology, language=language_code, people=people,
+        model=os.environ.get("AI_DEFAULT_MODEL", ""))
+    extraction = diary_card.Extraction(**{
+        **extraction.__dict__,
+        "quotes": _sure_quotes(extraction.quotes, card.event_ids)})
+    fixed = diary_card.correct(card, extraction, event_id=event_id)
+    new_path = diary_card.card_path(fixed, bucket=bucket)
+    text = diary_card.render(fixed, family_owned=True)
+
+    if new_path == old_path:
+        changes = [FileChange("update", old_path, content=text, sha=old_sha)]
+    else:
+        changes = [FileChange("delete", old_path, sha=old_sha),
+                   FileChange("create", new_path, content=text)]
+    name, email = _identity(by)
+    try:
+        client.change_files(REPO_OWNER, REPO_NAME, changes, author_name=name,
+                            author_email=email, message=_commit_message(
+                                [fixed], new=0, verb="correct",
+                                corrections=[(by, words, event_id)]))
+    except ForgejoError as e:
+        _err(f"could not write the corrected card: {e}")
+        return 1
+    _err(f"  corrected {new_path}" + (f" (moved from {old_path})" if new_path != old_path else ""))
+    _mirror()
+
+    records = {p: t for p, (_, t) in tree.items() if p != old_path}
+    records[new_path] = text
+    _, summaries_cache = diary_store.open_stores(
+        summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
+    rc = await _project(records, llm, summaries_cache, room_id=room_id,
+                        bucket=bucket, rebuild=False, dry_run=False)
+    print(json.dumps({**_card_json(fixed, path=new_path, room_id=room_id),
+                      "changed": True, "moved_from": old_path if new_path != old_path else ""},
+                     ensure_ascii=False))
+    return rc
 
 
 def _publish_pages(pages, *, bucket: str, dry_run: bool) -> int:

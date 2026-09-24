@@ -319,6 +319,13 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
         assert read.quotes == ["One.", "Two.", "Three."]
         assert read.model == "test-model"
 
+    def test_a_fact_is_the_fact_not_the_list_marker_the_model_copied(self):
+        """Shown a card's facts as a list, a model hands them back with the
+        markers on, and the callout would render "- - Date"."""
+        assert _read(facts=["- Date: 2026-09-20", "* Place: lake", "• Who: Bart",
+                            "- - Action: Lisa built the tower"]).facts == [
+            "Date: 2026-09-20", "Place: lake", "Who: Bart", "Action: Lisa built the tower"]
+
     def test_an_answer_that_is_not_an_object_reads_as_nothing(self):
         empty = diary_card.extraction_from(None, ontology=SEED_ONTOLOGY, language="en",
                                            people=PEOPLE, model="m")
@@ -360,3 +367,81 @@ class TestTheSeedOntologyCoversFamilyLife:
                   if len(o) > 1 and o & {f"topic.{k}" for k in life}}
         assert shared == {}
         assert life <= set(SEED_ONTOLOGY.topics)
+
+
+# ── Corrections ───────────────────────────────────────────────────────
+
+
+def _card():
+    entry = _entry_for(_compile(), "memo-bart-zeugnis")
+    return diary_card.to_card(entry, _extraction(), room_id=ROOM, media={})
+
+
+class TestACorrectionMakesTheCardTheFamilys:
+    """A correction is a family member's reply in the card's thread. It is
+    applied once, to the card as it is in the vault, and from then on the
+    card is the family's: the nightly compile leaves it alone, like a card
+    edited by hand. The vault commit that applies it keeps the words."""
+
+    def test_a_correction_updates_what_the_model_read_and_leaves_the_words(self):
+        card = _card()
+        fixed = diary_card.correct(card, _extraction(
+            title="Lisa's report card", persons=["Lisa", "Marge"],
+            facts=["Report card: Lisa's"]), event_id="$fix")
+
+        assert fixed.title == "Lisa's report card"
+        assert fixed.persons == ["Lisa", "Marge"]
+        assert fixed.facts == ["Report card: Lisa's"]
+        assert fixed.body == card.body
+        assert fixed.replies == card.replies
+        assert fixed.event_ids == [*card.event_ids, "$fix"]
+
+    def test_a_correction_can_move_the_date(self):
+        fixed = diary_card.correct(_card(), _extraction(date="2026-03-17"), event_id="$fix")
+
+        assert fixed.on == date(2026, 3, 17)
+        assert fixed.confidence == "corrected"
+        assert diary_card.to_entry(fixed).basis == diary.basis_text("corrected")
+
+    def test_a_correction_without_a_date_keeps_the_date(self):
+        fixed = diary_card.correct(_card(), _extraction(), event_id="$fix")
+
+        assert fixed.on == date(2026, 3, 16)
+        assert fixed.confidence == "spoken"
+
+    def test_the_model_cannot_redate_an_entry_outside_a_correction(self):
+        """The spoken date or the day it was sent is the room's own
+        evidence. A model's guess does not override it; a person does."""
+        entry = _entry_for(_compile(), "memo-bart-zeugnis")
+        card = diary_card.to_card(entry, _extraction(date="2020-01-01"), room_id=ROOM, media={})
+
+        assert card.on == date(2026, 3, 16)
+
+    def test_a_corrected_card_is_the_familys_and_the_compile_keeps_it(self):
+        cards = _cards(_compile())
+        fixed = diary_card.correct(cards[0], _extraction(title="Fixed"), event_id="$fix")
+        vault = _vault(cards)
+        del vault[diary_card.card_path(cards[0], bucket=BUCKET)]
+        vault[diary_card.card_path(fixed, bucket=BUCKET)] = diary_card.render(fixed, family_owned=True)
+
+        assert diary_card.edited_by_hand(diary_card.render(fixed, family_owned=True))
+        plan = diary_card.plan(vault, cards, bucket=BUCKET, complete=True)
+        assert plan.writes == {} and plan.deletes == []
+
+    def test_a_corrected_card_is_kept_without_being_reported_every_night(self):
+        """"Kept" tells the family the room moved on under a card they
+        edited. A corrected card is theirs by design; saying so every
+        night would be noise."""
+        cards = _cards(_compile())
+        fixed = diary_card.correct(cards[0], _extraction(title="Fixed"), event_id="$fix")
+        vault = _vault(cards)
+        vault[diary_card.card_path(cards[0], bucket=BUCKET)] = diary_card.render(fixed, family_owned=True)
+        changed = replace(cards[0], replies=[("homer", "A new reply.")])
+
+        plan = diary_card.plan(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
+        assert plan.kept == [] and plan.writes == {}
+
+    def test_the_model_offers_a_date_only_as_an_iso_day(self):
+        assert _read(date="17 March").date == ""
+        assert _read(date="2026-03-17").date == "2026-03-17"
+
