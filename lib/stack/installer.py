@@ -138,6 +138,20 @@ def _create_stack():
     return create_stack(REPO_ROOT)
 
 
+def _install_global_command(stck) -> str:
+    """Put `famstack` on PATH and return what to tell the admin to type.
+
+    `famstack` when it now runs this checkout, `./stack` when another
+    command of that name is in the way or there is nowhere to put it.
+    The final screen prints whichever works on this Mac.
+    """
+    from . import global_command
+    directory = global_command.bin_dir()
+    if directory and global_command.install(stck.root, directory):
+        return global_command.NAME
+    return "./stack"
+
+
 def _has_brew() -> bool:
     import shutil
     return shutil.which("brew") is not None
@@ -599,6 +613,8 @@ def wizard():
 
     nl()
 
+    command = _install_global_command(stck)
+
     # ── Done ──────────────────────────────────────────────────────────
 
     clear()
@@ -641,14 +657,19 @@ def wizard():
     rule()
 
     heading("Add more to your stack")
-    out(f"  {TEAL}stack up photos{RESET}     Private photo library")
-    out(f"  {TEAL}stack up docs{RESET}       Document archive with OCR")
-    out(f"  {TEAL}stack up ai{RESET}         Local AI engine")
-    out(f"  {TEAL}stack ai connect{RESET}    AI on another machine or a hosted provider")
-    out(f"  {TEAL}stack up code{RESET}       Private git server")
-    out(f"  {TEAL}stack up memory{RESET}     Family wiki and curated knowledge")
+    more = [
+        ("up photos", "Private photo library"),
+        ("up docs", "Document archive with OCR"),
+        ("up ai", "Local AI engine"),
+        ("ai connect", "AI on another machine or a hosted provider"),
+        ("up code", "Private git server"),
+        ("up memory", "Family wiki and curated knowledge"),
+    ]
+    width = max(len(f"{command} {args}") for args, _ in [*more, ("status", "")]) + 4
+    for args, what in more:
+        out(f"  {TEAL}{f'{command} {args}':<{width}}{RESET}{what}")
     nl()
-    out(f"  {TEAL}stack status{RESET}        See what's running")
+    out(f"  {TEAL}{f'{command} status':<{width}}{RESET}See what's running")
     nl()
 
     dim("  Service admin password is in .stack/secrets.toml")

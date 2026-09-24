@@ -409,21 +409,18 @@ def test_the_printed_commands_name_real_commands(install):
     assert not broken, "\n".join(broken)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="nothing puts the printed command on PATH yet (workspace decision 0013)",
-)
 def test_the_printed_commands_work_as_typed_in_a_new_terminal(install):
     """Typed exactly as printed, in a new login shell, each command runs.
 
-    `status` runs for real. The others would install services, so they
-    are asked for their help instead, which proves the command and the
-    stacklet resolve.
+    A new terminal opens in the home directory, not in the checkout, so
+    that is where they run. `status` runs for real. The others would
+    install services, so they are asked for their help instead, which
+    proves the command and the stacklet resolve.
     """
     broken = []
     for command in printed_commands(install):
         check = command if command.split()[1:] == ["status"] else f"{command} --help"
-        result = login_shell(check, CLONE)
+        result = login_shell(check, Path.home())
         if result.returncode != 0:
             broken.append(f"{command!r}: {(result.stderr or result.stdout).strip()[-300:]}")
     assert not broken, "\n".join(broken)

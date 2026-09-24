@@ -187,7 +187,8 @@ What it does, in order:
    - `users.toml`: family roster, gitignored.
    - `.stack/secrets.toml`: auto-generated passwords for service accounts. Treat like a password manager export.
 7. **Brings up `messages` and `core`.** Pulls Synapse, Element and Postgres images (about 600 MB), starts them, creates Matrix accounts, seeds two default rooms (`#famchat`, `#famstack`).
-8. **Prints a sign-in URL.** Something like `http://192.168.1.42:42030`.
+8. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
+9. **Prints a sign-in URL.** Something like `http://192.168.1.42:42030`.
 
 Total time on a fresh Mac with a decent connection: 5 to 10 minutes.
 
@@ -1042,7 +1043,7 @@ The backup stacklet does not cover this yet. It archives Paperless's files but n
 ./stack uninstall
 ```
 
-Stops every stacklet and deletes its data. Asks for confirmation. There is no undo.
+Stops every stacklet and deletes its data. Asks for confirmation. There is no undo. It also removes the `famstack` command the installer put on your PATH, and nothing else of that name.
 
 For a single stacklet:
 

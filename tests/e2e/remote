@@ -195,7 +195,7 @@ run_install() {
 reset_install() {
   local clone="$base/install" data="$HOME/famstack-data" owns="$base/install-owns-data"
   local plist="$HOME/Library/LaunchAgents/dev.famstack.api.plist"
-  local pid ids net left=""
+  local pid ids net wrapper left=""
 
   # An installer outliving a dropped session would bring the stack back
   # up behind the reset. pexpect gave it its own session, so its pid is
@@ -219,6 +219,13 @@ reset_install() {
     rm -f "$plist"
   fi
 
+  # The installer's global command. Only ours: it execs a launcher
+  # under the base dir. Anyone else's of that name stays.
+  wrapper="$(brew --prefix)/bin/famstack"
+  if [[ -f "$wrapper" ]] && grep -q "$base/" "$wrapper"; then
+    rm -f "$wrapper"
+  fi
+
   if [[ -e "$data" && -f "$owns" ]]; then
     rm -rf "$data" || true
   fi
@@ -236,6 +243,7 @@ reset_install() {
   [[ -e "$plist" ]] && left+="  $plist, which points outside this lane's paths"$'\n'
   launchctl list 2>/dev/null | grep -q 'dev\.famstack\.api$' && left+="  the loaded dev.famstack.api agent"$'\n'
   [[ -e "$clone" ]] && left+="  $clone"$'\n'
+  [[ -e "$wrapper" ]] && grep -q "$base/" "$wrapper" && left+="  $wrapper"$'\n'
   if [[ -n "$left" ]]; then
     printf 'remote: still on the Mac:\n%s' "$left" >&2
     return 1
