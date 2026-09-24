@@ -162,7 +162,7 @@ card; its event id joins `event_ids`.
 | `persons` | O | list. |
 | `tags` | O | list. |
 | `filed_by` | O | Matrix localpart of the sender. |
-| `addressee` | O | who the message is spoken to, as it names them. |
+| `addressee` | O | who the message is spoken to, as it names them; a correction can change it. |
 | `medium` | O | `voice` \| `image` \| `video` \| `file` \| `text`. |
 | `mode` | O | `monologue` \| `dialogue` \| `note`. |
 | `duration_ms` | O | integer. |

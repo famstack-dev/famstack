@@ -1463,13 +1463,16 @@ none for what the summary already says), "persons" (names from the
 family list only), "topics" (topics
 from the vocabulary only), "quotes" (passages copied word for word from
 the entry's words; keep the card's quotes unless the correction touches
-them), and "date": the day the entry happened as YYYY-MM-DD when the
-correction states it, otherwise null.
+them), "date": the day the entry happened as YYYY-MM-DD when the
+correction states it, otherwise null, and "addressee": whom the entry is
+spoken to when the correction says so (a name from the family list, or
+the correction's own words such as "the kids"), otherwise null.
 """
 
 
 def _card_prompt(card) -> str:
     lines = [f"Title: {card.title}", f"Date: {card.on.isoformat()}",
+             f"Spoken to: {card.addressee or 'no one in particular'}",
              f"Description: {card.description}",
              f"People: {', '.join(card.persons)}",
              f"Topics: {', '.join(t for t in card.tags if not t.startswith('Person: '))}",

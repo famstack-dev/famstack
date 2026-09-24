@@ -66,6 +66,9 @@ class Extraction:
     # A day a family member's correction states, as YYYY-MM-DD. Honoured
     # only for an entry that has corrections (see `to_card`).
     date: str = ""
+    # Whom the entry is spoken to, as a correction states it. Only
+    # `correct` uses it; a first reading takes the addressee from the room.
+    addressee: str = ""
 
 
 _MAX_QUOTES = 3
@@ -91,6 +94,21 @@ _KIND_LABELS = {"action", "actions", "activity", "detail", "details", "event",
 def _kind_only(fact: str) -> bool:
     label, sep, _ = fact.partition(":")
     return bool(sep) and label.strip().lower() in _KIND_LABELS
+
+
+def _addressee(value, people: "dict[str, str]") -> str:
+    """Whom a correction says the entry was for.
+
+    A household member's name resolves to its canonical form; anyone else
+    ("the kids", "Grandpa") is kept as the family wrote it. Nothing, or a
+    model's null, is "".
+    """
+    if not isinstance(value, str):
+        return ""
+    words = " ".join(value.split())
+    if not words or words.lower() in ("null", "none"):
+        return ""
+    return people.get(words.lower(), words)
 
 
 def _iso_day(value) -> str:
@@ -150,6 +168,7 @@ def extraction_from(raw, *, ontology, language: str,
         quotes=_strings(raw.get("quotes"))[:_MAX_QUOTES],
         model=model,
         date=_iso_day(raw.get("date")),
+        addressee=_addressee(raw.get("addressee"), people),
     )
 
 
@@ -239,7 +258,7 @@ def correct(card: Card, extraction: Extraction, *, event_id: str) -> Card:
     `extraction` is the model's reading of the current card with the
     correction applied. It replaces everything the model reads out of an
     entry (title, description, people, tags, summary, facts, quotes) and,
-    when it names a day, the date. The family's words, replies and files
+    when the correction states them, the date and whom the entry was for. The family's words, replies and files
     stay as they are. The correction's event id joins the card's, so the
     card leads back to the message that changed it; the words of the
     correction are kept by the vault commit, not on the card.
@@ -249,6 +268,7 @@ def correct(card: Card, extraction: Extraction, *, event_id: str) -> Card:
         on, confidence = date.fromisoformat(extraction.date), "corrected"
     return replace(
         card, on=on, confidence=confidence,
+        addressee=extraction.addressee or card.addressee,
         title=extraction.title.strip() or card.title,
         description=extraction.description.strip(),
         persons=list(extraction.persons),
