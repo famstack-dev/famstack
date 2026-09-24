@@ -49,6 +49,7 @@ from stack.frontmatter import dump as frontmatter_dump
 # so the memory wiki and this docs archivist share one source.
 from stack.vault import slug, entity_relpath  # noqa: F401  (slug re-exported for callers/tests)
 from stack.email_message import defang_links
+from stack.briefing import render_briefing
 
 
 def document_filepath(
@@ -414,7 +415,7 @@ def render_document(
         parts.append("> " + " · ".join(bits))
         parts.append("")
 
-    briefing = _briefing_block(
+    briefing = render_briefing(
         summary=summary, facts=facts, action_items=action_items,
         source_link=source_link,
     )
@@ -514,7 +515,7 @@ def render_capture(
 
     # Briefing — summary + facts, plus action items when the note carried
     # any (bookmarks pass None, so nothing changes for them).
-    briefing = _briefing_block(
+    briefing = render_briefing(
         summary=summary, facts=facts, action_items=action_items,
     )
     if briefing:
@@ -598,7 +599,7 @@ def render_email_message_section(
     summary = defang_links(summary) if summary else summary
     facts = [defang_links(f) if isinstance(f, str) else f for f in facts] if facts else facts
 
-    briefing = _briefing_block(
+    briefing = render_briefing(
         summary=summary, facts=facts, action_items=action_items,
     )
     if briefing:
@@ -757,96 +758,3 @@ def fold_email_message(
 # in Obsidian and remain Tasks-plugin-queryable).
 
 
-def _briefing_block(
-    *,
-    summary: str | None,
-    facts: list | None,
-    action_items: list | None,
-    source_link: tuple[str, str] | None = None,
-) -> str:
-    """Render the briefing as a ``> [!summary]`` callout.
-
-    Sections are conditional: an empty prose summary, empty facts,
-    or empty action items all drop out. When everything is empty the
-    callout itself is suppressed — no stale ``> [!summary]`` shell.
-
-    ``source_link`` is ``(label, url)``; when both are non-empty it
-    renders as ``[label](url)`` directly under the prose.
-
-    Args:
-        summary: Prose summary text.
-        facts: List of fact strings.
-        action_items: List of action item dicts or strings.
-        source_link: ``(label, url)`` tuple for a source link.
-
-    Returns:
-        Briefing callout string, or "" when all sections are empty.
-    """
-    sections: list[str] = []
-
-    if summary and isinstance(summary, str) and summary.strip():
-        sections.append(summary.strip())
-
-    if source_link:
-        label, url = source_link
-        if label and url:
-            sections.append(f"[{label}]({url})")
-
-    fact_lines = _fact_lines(facts or [])
-    if fact_lines:
-        sections.append("**Facts**\n" + "\n".join(fact_lines))
-
-    task_lines = _action_item_lines(action_items or [])
-    if task_lines:
-        sections.append("**Action items**\n" + "\n".join(task_lines))
-
-    if not sections:
-        return ""
-
-    inner = "\n\n".join(sections)
-    lines = ["> [!summary]"]
-    for ln in inner.split("\n"):
-        lines.append(f"> {ln}" if ln else ">")
-    return "\n".join(lines)
-
-
-def _fact_lines(facts: list) -> list[str]:
-    out = []
-    for f in facts:
-        if isinstance(f, str) and f.strip():
-            out.append(f"- {f.strip()}")
-    return out
-
-
-def _action_item_lines(items: list) -> list[str]:
-    out: list[str] = []
-    for ai in items:
-        line = _format_action_item(ai)
-        if line:
-            out.append(line)
-    return out
-
-
-def _format_action_item(ai) -> str | None:
-    """``{action, due}`` → ``- [ ] action — YYYY-MM-DD`` or ``- [ ] action``.
-
-    Args:
-        ai: Action item as a dict (with "action" and optional "due")
-            or a plain string.
-
-    Returns:
-        Formatted checkbox line, or None when the item is empty/invalid.
-    """
-    if isinstance(ai, str):
-        return f"- [ ] {ai.strip()}" if ai.strip() else None
-    if not isinstance(ai, dict):
-        return None
-    action = (ai.get("action") or "").strip()
-    if not action:
-        return None
-    due = ai.get("due")
-    if isinstance(due, str):
-        due_clean = due.strip()
-        if due_clean and due_clean.lower() not in ("null", "none", "n/a"):
-            return f"- [ ] {action} — {due_clean}"
-    return f"- [ ] {action}"
