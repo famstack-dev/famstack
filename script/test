@@ -31,6 +31,7 @@ lanes() {
   script/test smoke       ~3.5m*  rig or demo    yes        quick cross-service check
   script/test e2e         ~9.5m*  rig or demo    yes        end of a branch, before review
   script/test remote e2e  ~9.5m   ssh to a Mac   remote     e2e or smoke on another Mac, AI mocked
+  script/test remote install ~1.5m  ssh to a Mac   remote     the first-run installer, from a pushed ref
 
   script/test typecheck   types across the shipped code, not a gate
 
@@ -93,7 +94,8 @@ case "$lane" in
     tests/e2e/stacktests e2e "$@"
     ;;
 
-  # smoke or e2e on another Mac over SSH, AI mocked. Leaves this Mac alone.
+  # smoke, e2e or the first-run install on another Mac over SSH. Leaves
+  # this Mac alone.
   remote)
     tests/e2e/remote "$@"
     ;;
