@@ -24,6 +24,7 @@ from pathlib import Path
 from . import caddy
 from . import docker
 from . import doctor
+from . import global_command
 from .commands import COMMANDS
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack
@@ -598,12 +599,17 @@ def _reverse_dependency_order(stacklets: list[dict], include: set[str]) -> list[
 # ── Repo discovery ────────────────────────────────────────────────────────
 
 def find_repo_root() -> Path | None:
-    """Walk up from CWD to find the repo root (has stacklets/ dir)."""
+    """Walk up from CWD to find the repo root (has stacklets/ dir).
+
+    Outside any checkout, the checkout this code runs from, so a global
+    command started from another directory still finds its stacklets.
+    """
     here = Path.cwd()
     for candidate in [here, *here.parents]:
         if (candidate / "stacklets").is_dir():
             return candidate
-    return None
+    own = Path(__file__).resolve().parents[2]
+    return own if (own / "stacklets").is_dir() else None
 
 
 def find_instance_dir() -> Path | None:
@@ -1501,11 +1507,11 @@ def handle_uninstall(stck, args):
         print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
 
     # Remove config files
-    for name in ("stack.toml", "users.toml"):
-        path = stck.root / name
+    for filename in ("stack.toml", "users.toml"):
+        path = stck.root / filename
         if path.exists():
             path.unlink()
-            print(f"  {GREEN}\u2713{RESET} Removed {name}")
+            print(f"  {GREEN}\u2713{RESET} Removed {filename}")
 
     # Remove runtime state. With exclusions, wipe entry by entry so the
     # setup markers of the preserved stacklets (and anything else they
@@ -1526,6 +1532,13 @@ def handle_uninstall(stck, args):
         else:
             shutil.rmtree(state_dir)
             print(f"  {GREEN}\u2713{RESET} Removed .stack/")
+
+    # The installer puts the global command in place for the checkout's
+    # own instance, so only uninstalling that instance takes it away. A
+    # STACK_DIR instance (a test run, a sandbox) leaves it for the others.
+    if stck.instance_dir == stck.root and (bin_dir := global_command.bin_dir()):
+        if global_command.uninstall(stck.root, bin_dir):
+            print(f"  {GREEN}\u2713{RESET} Removed the {global_command.NAME} command")
 
     # Offer to remove data
     if stck.data.exists():

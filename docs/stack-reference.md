@@ -1269,7 +1269,11 @@ One repo can power more than one stack instance. A stacklet definition
 state, data) is swappable.
 
 - **Repo root** — holds `stacklets/` and `lib/`. Discovered by walking
-  up from the current working directory.
+  up from the current working directory; outside any checkout, the
+  checkout the CLI runs from. That is how the installer's global
+  `famstack` command (in Homebrew's `bin`) works from any directory. It
+  names only the checkout, so `STACK_DIR` selects the instance through
+  it as it does through `./stack`.
 - **Instance dir** — holds `stack.toml`, `users.toml`, `.stack/`. Holds
   the data referenced by `[core].data_dir`. Defaults to the repo root.
 
