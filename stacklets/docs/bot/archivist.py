@@ -89,6 +89,7 @@ from text_utils import (  # noqa: E402
     split_scan_command as _split_scan_command,
     strip_reply_fallback as _strip_reply_fallback,
 )
+from diary_room import DEFAULT_JOB_AT, DiaryRoom  # noqa: E402
 from reply_presenter import (  # noqa: E402
     render_capture_reply,
     render_filing_reply,
@@ -374,6 +375,16 @@ class ArchivistBot(MicroBot):
         self.documents_room_alias = normalize_alias(
             settings.get("documents_room_alias", "documents"),
         )
+        # The memories room is the family's own. The archivist posts the
+        # diary's cards there once a day and takes corrections in their
+        # threads, and says nothing else (see diary_room.py).
+        self._diary = DiaryRoom(
+            self,
+            alias=normalize_alias(settings.get("memories_room_alias", "memories")),
+            job_at=str(settings.get("diary_job_at", DEFAULT_JOB_AT)),
+            state_path=Path(self._session_dir) / "diary-room.json",
+        )
+        self._diary_task: asyncio.Task | None = None
         # Captures are bookmarks (URL pointer + LLM summary) by default —
         # the source URL is the truth, the digest is the marker. Flip
         # `capture_keep_body = true` in bot.toml to also archive the
@@ -430,6 +441,10 @@ class ArchivistBot(MicroBot):
         classifier = self._services.classifier
         if self.classify_enabled and classifier is not None:
             asyncio.create_task(classifier.has_vision())
+        # The diary's daily job, on every boot for the same reason: the
+        # first-sync hook runs once per install, not once per start.
+        if self._diary_task is None:
+            self._diary_task = asyncio.create_task(self._diary.loop())
         # The framework's start() owns the session loop and closes the
         # http session (via _aclose) on shutdown.
         await super().start()
@@ -679,6 +694,14 @@ class ArchivistBot(MicroBot):
         without Paperless) collapses every room to capture mode.
         """
         return bool(self.documents_room_alias) and ctx.alias == self.documents_room_alias
+
+    def _wants_voice(self, room, event) -> bool:
+        """In the memories room, only a voice reply in a thread is ours to
+        hear: it may be a correction to a card. A memo is the family's,
+        and the diary transcribes it on its own schedule."""
+        if self._diary.is_room(self._room_context(room)):
+            return self.get_thread_root(event) is not None
+        return True
 
     # ── Topic-room routing ─────────────────────────────────────────────
     #
@@ -1015,6 +1038,10 @@ class ArchivistBot(MicroBot):
         events in a fresh room cannot produce a second welcome while
         the first send is in flight.
         """
+        # The memories room gets no welcome: the diary's first daily
+        # notices explain what the cards are, in the family's own room.
+        if self._diary.is_room(ctx):
+            return
 
         if room is None:
             return
@@ -1527,6 +1554,10 @@ class ArchivistBot(MicroBot):
             return
 
         ctx = self._room_context(room)
+        # A photo or a recording in the memories room is a memory, not a
+        # document: the diary files it, and the archivist leaves it be.
+        if self._diary.is_room(ctx):
+            return
         # First-encounter welcome -- idempotent, gated by a per-room
         # state event. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
@@ -1624,6 +1655,12 @@ class ArchivistBot(MicroBot):
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
         if event.sender == self.user_id:
+            return
+
+        # The memories room is the family's; only replies in our card
+        # threads are ours, and they are corrections (diary_room.py).
+        if self._diary.is_room(self._room_context(room)):
+            await self._diary.on_text(room, event)
             return
 
         # Inbound source event: a `dev.famstack.source` block means another
@@ -1879,6 +1916,8 @@ class ArchivistBot(MicroBot):
         id so a drain replay dedups rather than acting twice.
         """
         if event.sender == self.user_id or self.is_bot_user(event.sender):
+            return
+        if self._diary.is_room(self._room_context(room)):
             return
         emoji = self.normalize_emoji(getattr(event, "key", ""))
         handler = self._reaction_handlers().get(emoji)

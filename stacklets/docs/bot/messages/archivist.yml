@@ -216,6 +216,17 @@ en:
 
     **Pro tip:** create a `Thema: <name>` room (e.g. `Thema: Camping`) and invite me — everything you drop there will be organised under that topic automatically.
 
+  # Diary, in the memories room (diary_room.py)
+  diary_card: "\U0001F4D4 **{title}** · {date}"
+  diary_card_corrected: "\u270F\uFE0F **{title}** · {date} (corrected)"
+  diary_card_hint: "_Reply here to fix a name, a date or a fact._"
+  diary_summary: "\u2764\uFE0F {count} new memories in the family diary."
+  diary_summary_one: "\u2764\uFE0F 1 new memory in the family diary."
+  diary_summary_first: "\u2764\uFE0F {count} new memories are in the family diary. Each has a card in the thread under its message: reply there to fix a name, a date or a fact."
+  diary_summary_first_one: "\u2764\uFE0F 1 new memory is in the family diary. It has a card in the thread under its message: reply there to fix a name, a date or a fact."
+  diary_open: "Open the diary"
+  diary_correct_failed: "I could not apply that just now. It is kept in this thread; reply again later to retry."
+
 de:
   # Startup
   startup: "\u270D\uFE0F Der Archivar ist zurück. Gebt mir eure Dokumente."
@@ -412,3 +423,14 @@ de:
     **help** tippen für diese Nachricht.
 
     **Profi-Tipp:** Erstellt einen Raum mit dem Präfix `Thema:` (z.B. `Thema: Camping`) und ladet mich ein — alles dort wird automatisch unter diesem Thema organisiert.
+
+  # Tagebuch, im Erinnerungen-Raum (diary_room.py)
+  diary_card: "\U0001F4D4 **{title}** · {date}"
+  diary_card_corrected: "\u270F\uFE0F **{title}** · {date} (korrigiert)"
+  diary_card_hint: "_Antworte hier, um einen Namen, ein Datum oder eine Angabe zu korrigieren._"
+  diary_summary: "\u2764\uFE0F {count} neue Erinnerungen im Familientagebuch."
+  diary_summary_one: "\u2764\uFE0F 1 neue Erinnerung im Familientagebuch."
+  diary_summary_first: "\u2764\uFE0F {count} neue Erinnerungen stehen im Familientagebuch. Jede hat eine Karte im Thread unter ihrer Nachricht: Antworte dort, um einen Namen, ein Datum oder eine Angabe zu korrigieren."
+  diary_summary_first_one: "\u2764\uFE0F 1 neue Erinnerung steht im Familientagebuch. Sie hat eine Karte im Thread unter ihrer Nachricht: Antworte dort, um einen Namen, ein Datum oder eine Angabe zu korrigieren."
+  diary_open: "Tagebuch öffnen"
+  diary_correct_failed: "Das konnte ich gerade nicht übernehmen. Es bleibt in diesem Thread; antworte später noch einmal, um es erneut zu versuchen."

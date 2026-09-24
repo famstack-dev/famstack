@@ -300,7 +300,7 @@ def _wire_file(bot):
 
     bot._handle_binary_capture = rec_binary
     bot._scan_sessions = set()
-    bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id)
+    bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id, alias=None)
     bot._send_room_welcome_if_needed = lambda *_a, **_k: _none()
     bot._is_bot_mentioned = lambda _e: False
     bot._should_react = lambda *_a, **_k: _true()
