@@ -37,6 +37,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > [!TIP]
 > **New in 0.3: your family server gets a memory.**
 > The `memory` stacklet curates a wiki of your family life out of the documents, notes, and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources.
+> **And a family diary.** famstack turns the voice messages and photos you post in the Memories room into a diary you read back month by month, in your own words. Each memory gets a card in the chat; reply to it to fix a name or a date.
 > It's in daily use on our own server, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1). [Read the introduction](https://famstack.dev/blog/famstack-0-3-beta/).
 
 ## What you get today
@@ -45,6 +46,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **Photo library and mobile backup** that replaces iCloud Photos for the whole family (Immich).
 - **Document archive with OCR** that you photograph from your phone and the local AI files for you (Paperless-ngx).
 - **Your family wiki**: an Obsidian-compatible second brain, generated from the documents, notes, and voice memos you file (memory).
+- **Your family diary**: voice messages, photos and notes from the Memories room, read back month by month in your own words. Correct any memory by replying to its card in the chat (memory).
 - **Local AI engine** on Apple Metal GPU: voice transcription, text-to-speech, document classification (oMLX + Whisper + Piper).
 - **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
 - **Email into the family brain**: point a mailbox at a chat room and new mail (with its attachments) lands there for the archivist to file, newsletters and marketing filtered out (IMAP, read-only, private).
@@ -205,6 +207,7 @@ Document filing, photo backup, family chat with voice memos, and the family memo
 | Bot runtime (archivist-bot, scribe-bot, stacker-bot)     | :white_check_mark: Live      |
 | Private Git server (Forgejo)                             | :white_check_mark: Live      |
 | Family wiki generated from your documents (memory)       | :construction: 0.3-beta      |
+| Family diary from the Memories room (memory)             | :construction: 0.3-beta      |
 | Document Q&A with citations, in chat                     | :construction: 0.3-beta      |
 | Voice memos become searchable notes                      | :construction: 0.3-beta      |
 | Topic rooms: the room name is the filing system          | :construction: 0.3-beta      |

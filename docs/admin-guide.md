@@ -206,7 +206,7 @@ You will see two rooms:
 
 - `#Family Chat`: where the family talks. Photos, voice memos, life.
 - `#Server Room`: where the server talks back. Status, alerts, install confirmations.
-- `#Memories`: a place to store your memories, voice diaries, stories, funny moments.
+- `#Memories`: a place to store your memories, voice diaries, stories, funny moments. With the `memory` stacklet it becomes the family diary (see [Memory](#memory-memory-optional)).
 
 ### 5. Connect your phones
 
@@ -545,6 +545,8 @@ Setup seeds the vault with three things: the classification ontology (the topics
 
 The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault: when new filings settle it regenerates the pages of the family members involved plus the home page (a couple of LLM calls, a few minutes after the burst), and once a night it rebuilds everything — topic pages, cross-references, the lot — while the GPU has nothing better to do. `./stack memory wiki` stays available as the manual trigger, and `[memory]` in `stack.toml` holds the knobs (see [Configuration](#configuration)). Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
 
+**The family diary.** Everything posted in `#Memories` becomes a diary entry. Each night the curator transcribes the new recordings, has the AI read each entry (a title, a summary, the people, topics from the ontology, facts), writes one card per entry to the vault under `family/diary/entries/`, and rebuilds the diary pages in the wiki from those cards. At 07:30 local time the archivist posts each new card as a quiet notice in the thread under its memory, and one short notice with the count (`diary_job_at` in the archivist's `bot.toml` sets the time; it catches up after a night the Mac slept through). A family member corrects a card by replying in its thread, typed or spoken; the correction is committed to the vault under their name, and a corrected or hand-edited card is never overwritten by a later run. The archivist says nothing else in `#Memories`. The user guide has the family's side: [The Memories Room](user-guide.md#the-memories-room).
+
 | | |
 |---|---|
 | Wiki port | `42070` (domain mode: `memory.<your-domain>`; `wiki.<your-domain>` redirects there) |
@@ -559,6 +561,9 @@ Useful commands:
 ./stack memory lookup <text>      # which topic or doctype does a term resolve to?
 ./stack memory correspondents     # inspect the correspondent layer
 ./stack memory pull               # fast-forward the local vault after Forgejo edits
+./stack memory diary              # take in the Memories room now instead of tonight
+./stack memory diary --dry-run    # show what would be written, write nothing
+./stack memory prompt             # the vocabulary the models are given, per prompt
 ```
 
 ---
