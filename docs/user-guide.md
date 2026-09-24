@@ -6,6 +6,7 @@ What that gets you:
 
 - **A wikipedia of your family.** Documents, notes, links and voice memos become a curated wiki of your family life. Searchable, browsable, owned by you.
 - **Paperwork that files itself.** Photograph a letter, send it to chat, done. OCR'd, tagged, findable forever.
+- **Your family's memories, kept.** Your kids' voices, the funny things they said, bedtime stories in their own words. Record them in the chat and famstack turns them into a family diary you read back month by month. Your personal family story at your fingertips.
 - **Answers instead of folder hunting.** Ask "when does the car insurance renew?" and get the answer, with sources.
 - **Never miss a thought.** Voice memos become clean, filed, searchable notes.
 - **Nothing leaves the house.** No cloud, no subscription, nobody else reading your family's life. It all runs on your own Mac.
@@ -14,19 +15,24 @@ This guide is for everyone in the family: what to type, what comes back, and wha
 
 Setting the server up, or keeping it running? That is the [Admin Guide](admin-guide.md).
 
+> [!TIP]
+> **Try the Memories Room.** Record a voice message for your kids tonight, and tomorrow morning it is in your family diary. After four months of recording memos and our kids' voices, it has already become one of our most valuable artifacts. [How it works](#the-memories-room)
+
 ## How do I...?
 
 | You want to | Go to |
 |---|---|
+| Record the kids, keep the stories | [The Memories Room](#the-memories-room) |
+| Read the family diary | [The family diary](#the-family-diary) |
+| Fix a name or a date in a memory | [Put a memory right](#put-a-memory-right) |
 | File a letter, receipt or contract | [File documents](#file-documents) |
 | Find a document again | [Ask questions](#ask-questions) |
 | Save a link, note or PDF for later | [Capture rooms](#save-anything-capture-rooms) |
 | Collect everything about one project | [Topic rooms](#topic-rooms) |
 | Get email into the family chat | [Email](#email) |
 | Capture a thought without typing | [Voice memos](#voice-memos) |
-| Fix a wrong tag or title | [Correct the bot](#correct-the-bot) |
+| Fix a wrong tag or title | [Correct bot mistakes](#correct-bot-mistakes) |
 | Browse what the family knows | [The family wiki](#the-family-wiki) |
-| Record the kids, keep the stories | [The Memories Room](#the-memories-room) |
 
 ---
 
@@ -142,7 +148,7 @@ Driving home and something crosses your mind: hold the mic button, talk, done. T
 
 ---
 
-## Correct the bot
+## Correct bot mistakes
 
 The archivist gets things wrong sometimes. Wrong family member, too generic a tag, a title that misses the point. You fix it by replying.
 
@@ -156,6 +162,8 @@ The archivist re-reads the document with your correction, re-files it, and confi
 Anything you write in the filing's thread counts as a correction, so you can also just type in the thread the bot answered in, or reply to your own original message. You do not have to quote the confirmation.
 
 This works for captures too: reply to a bookmark or note confirmation and it gets re-filed with your hint.
+
+Memories work the same way, in the thread under each memory: see [Put a memory right](#put-a-memory-right).
 
 ---
 
@@ -182,7 +190,7 @@ If the first pass isn't enough, it tells you it's looking deeper and reads the a
 
 Everything the archivist files becomes more than a pile of documents: the memory stacklet renders it as a wiki of your family life. A home page, a page per family member, topic pages, a page per correspondent (the insurance company, the school, the doctor's office).
 
-Open it at `http://<mac-ip>:42070` (or `wiki.<your-domain>` if the admin set up a domain). It updates itself as things get filed.
+Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It updates itself as things get filed.
 
 Every page has an edit link: edits happen in Forgejo (the family's private git server), so every change is tracked and nothing is ever lost. If you use Obsidian, you can clone the vault and browse it there; it's all plain Markdown.
 
@@ -190,11 +198,48 @@ Every page has an edit link: edits happen in Forgejo (the family's private git s
 
 ## The Memories Room
 
-One of the most valuable things you can do with famstack has nothing to do with documents.
+> Needs the `memory` stacklet. Voice messages need the `ai` stacklet; the cards in the room need the archivist (`docs`).
 
-The Memories Room is a place to record your family's life. Voice messages, photos, text. We record a voice diary once or twice a week at the dinner table: what was funny, what was special, what the kids want to tell their future selves. Holiday diaries, first days at school, bedtime stories in their own words.
+One of the most valuable things you can do with famstack has nothing to do with documents. If you try one thing, make it this room.
 
-Start collecting these. They become valuable just as they are. Voice transcription already works; an upcoming update will weave the Memories Room into the family wiki as a chronicle: "Remember? One year ago...", "Lisa's third birthday...". Everything stays on your Mac. Your memories are just yours.
+The Memories Room keeps what photos can't: your kids' voices, the funny things they said, bedtime stories in their own words. We record a voice diary once or twice a week at the dinner table: what was funny, what was special, what the kids want to tell their future selves. Holiday diaries, first days at school, a birthday message. We wish we had started with our first son.
+
+famstack does more than keep them. Every night it transcribes what you recorded, works out the date and who it was for, and writes it into a family diary you can read back month by month, with every recording one tap away. You don't type, tag or file anything. This is the feature that keeps gaining value.
+
+A few habits help:
+
+- **Say the date.** Start a recording with "Today is the third of March" and famstack files the memory on that day, even if your phone uploads it a week later. Without a date, the day you sent it counts.
+- **Say who it is for.** Start with "Hi Bart, ..." and famstack files the memory as a message to Bart. The diary shows it whole, as a letter.
+- **Reply to add to a memory.** The diary keeps your reply, or a caption under a photo, with the memory.
+
+The archivist does not reply to anything you post there.
+
+### What happens overnight
+
+Every night, famstack reads the new memories: it transcribes the recordings, and your own AI reads each one for a title, who it is about, a short summary and the facts worth finding again ("Maggie: first tooth", "Swimming badge: 25 metres"). famstack files each memory as a card in the family's archive.
+
+In the morning, the archivist puts each new card in the thread under its memory, and one short note in the room:
+
+> **archivist**: ❤️ 3 new memories in the family diary. [Open the diary]
+
+Both are quiet messages, so no phone buzzes. A memory you post today gets its card tomorrow morning.
+
+### Put a memory right
+
+The AI mishears names and gets things wrong. Correct it in the memory's thread, the way you correct a document: open the thread under the memory, and reply to its card, typed or as a voice message.
+
+> **archivist**: 📔 **Sandcastle at the lake** · Sunday, 20 September 2026 ...
+> **you** (in the thread): It was Lisa who built the tower, not Bart. And it was the 19th.
+
+The archivist answers with 👀, puts the corrected card in the thread, and confirms with ✅. You can correct the title, the date, who it is about, the summary and the facts. The recorded words themselves stay as they were.
+
+famstack saves your correction in the family's archive under your name, and the card is yours from then on: the nightly run never changes it back. To correct it again, reply in the same thread.
+
+### The family diary
+
+Open it from the note's link, or from the family wiki's home page (**Family Diary**). You read it month by month: a short opening for each month, then every memory under its day, with its title, who recorded it, a short summary, the words as they were said, the photos, and the recordings to play. For a long recording you see a few lines worth keeping, and the full transcript is one click away. A message spoken to one person appears whole.
+
+Transcription and reading run on your household's own AI, so nothing leaves your home. Your memories are just yours.
 
 Start now. You will wish you had started earlier.
 
