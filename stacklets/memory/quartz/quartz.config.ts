@@ -53,8 +53,12 @@ const config: QuartzConfig = {
     // them, the Assets emitter copies or unlinks a path that is already
     // gone, and Quartz 4.5.2 keeps the failed change and replays it on
     // every rebuild, so no later asset reaches the site.
+    // `**/diary/entries/**` keeps the diary's records off the site. They
+    // are the raw source the diary pages are compiled from, and stay in
+    // the brain for search and the agent; the family reads the pages.
     ignorePatterns: [".git", ".obsidian", "private", "templates",
-                     "media/**/*.json", "media/**/.tmp-*"],
+                     "media/**/*.json", "media/**/.tmp-*",
+                     "**/diary/entries/**"],
     defaultDateType: "modified",
     theme: {
       // Self-hosted. The comment above about analytics applies with more

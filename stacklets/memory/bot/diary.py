@@ -251,12 +251,6 @@ class Reading:
     mode: str = "monologue"  # "monologue" | "dialogue" | "note"
     spoken_date: str | None = None
     addressee: str | None = None
-    # Distillation, for long recordings. `gist` is one narrative
-    # sentence about the message. `moments` are passages the model
-    # copied from the text; verify_moments() checks each one against
-    # the body before it can render as a quote.
-    gist: str | None = None
-    moments: tuple = ()
 
 
 @dataclass
@@ -281,8 +275,9 @@ class Entry:
     mode: str = "monologue"
     comments: list[tuple[str, str]] = field(default_factory=list)
     # Distilled view for long recordings: one narrative sentence and
-    # verified word-for-word quotes. Empty for short entries; the
-    # renderer then shows the body in full.
+    # verified word-for-word quotes, both from the entry's diary card
+    # (`diary_card.to_entry`). Empty for short entries; the renderer
+    # then shows the body in full.
     gist: str = ""
     moments: list[str] = field(default_factory=list)
 
@@ -616,10 +611,29 @@ def date_for(msg: Message, reading: Reading) -> tuple[date, str, str]:
     """
     spoken = parse_spoken_date(reading.spoken_date)
     if spoken is not None:
-        return spoken, "spoken", _L["basis_spoken"]
+        return spoken, "spoken", basis_text("spoken")
     if msg.burst:
-        return msg.sent_on, "uncertain", _L["basis_burst"]
-    return msg.sent_on, "sent", _L["basis_sent"]
+        return msg.sent_on, "uncertain", basis_text("uncertain")
+    return msg.sent_on, "sent", basis_text("sent")
+
+
+def basis_text(confidence: str) -> str:
+    """How a date was arrived at, in the household language.
+
+    A diary record stores only the word (`spoken`, `sent`, `uncertain`);
+    the sentence is chrome and follows the language the pages render in.
+    """
+    return _L[{"spoken": "basis_spoken", "uncertain": "basis_burst"}
+              .get(confidence, "basis_sent")]
+
+
+def plain_title(entry: "Entry") -> str:
+    """A title that needs no model: what the entry is, and its day.
+
+    For a record whose reading failed. It says nothing the room does not
+    say, so a later run with a working model can replace it.
+    """
+    return f"{_kind_label(replace(entry, duration_ms=None))}, {_day_heading(entry.on)}"
 
 
 # ── Step 4: compile ───────────────────────────────────────────────────
@@ -703,8 +717,6 @@ def compile_entries(messages, readings, *,
             addressee=reading.addressee,
             duration_ms=_total_duration(group),
             mode=reading.mode,
-            gist=(reading.gist or "").strip(),
-            moments=verify_moments(_joined_body(group), reading.moments),
         )
         entries.append(entry)
         for m in group:
@@ -723,8 +735,6 @@ def compile_entries(messages, readings, *,
                 sender=msg.sender, body=_joined_body(group), at=msg.ts,
                 event_ids=[m.event_id for m in group],
                 addressee=reading.addressee, mode=reading.mode,
-                gist=(reading.gist or "").strip(),
-                moments=verify_moments(_joined_body(group), reading.moments),
             )
             entries.append(orphan)
             by_event[msg.event_id] = orphan

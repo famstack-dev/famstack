@@ -34,6 +34,21 @@ class ForgejoError(RuntimeError):
     """HTTP error from Forgejo. Message carries status + response body."""
 
 
+@dataclass(frozen=True)
+class FileChange:
+    """One file in a multi-file commit (`ForgejoClient.change_files`).
+
+    `operation` is `create`, `update` or `delete`. `sha` is the blob hash
+    the caller read the file at; Forgejo refuses the commit when the file
+    has changed since, so a batch never overwrites an edit it did not see.
+    """
+
+    operation: str
+    path: str
+    content: str = ""
+    sha: str = ""
+
+
 @dataclass
 class ForgejoClient:
     url: str
@@ -54,6 +69,12 @@ class ForgejoClient:
         if not self.token:
             raise ForgejoError("token not configured")
         return {"Authorization": f"token {self.token}"}
+
+    def _content_header(self) -> dict[str, str]:
+        """Auth for the contents API: the token when there is one, else the
+        admin account. Containers that run batch writers hold the stack
+        admin credentials but not a per-stacklet token."""
+        return self._token_header() if self.token else self._admin_header()
 
     def _basic_for(self, username: str, password: str) -> dict[str, str]:
         creds = f"{username}:{password}".encode()
@@ -289,7 +310,7 @@ class ForgejoClient:
         data = self._req(
             "GET",
             f"/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
-            headers=self._token_header(),
+            headers=self._content_header(),
             params={"ref": ref},
             allow_404=True,
         )
@@ -372,6 +393,43 @@ class ForgejoClient:
             headers=self._token_header(),
             body={"sha": sha, "message": message, "branch": branch},
         )
+
+    def change_files(self, owner: str, repo: str, changes: "list[FileChange]", *,
+                     message: str, branch: str = "main",
+                     author_name: str | None = None,
+                     author_email: str | None = None) -> dict:
+        """Create, update and delete several files in one commit.
+
+        All or nothing: when any update or delete names a `sha` the file
+        no longer has, Forgejo rejects the commit and nothing is written.
+        """
+        files: list[dict[str, Any]] = []
+        for change in changes:
+            entry: dict[str, Any] = {"operation": change.operation, "path": change.path}
+            if change.operation != "delete":
+                entry["content"] = base64.b64encode(change.content.encode("utf-8")).decode()
+            if change.sha:
+                entry["sha"] = change.sha
+            files.append(entry)
+        payload: dict[str, Any] = {"files": files, "message": message, "branch": branch}
+        if author_name and author_email:
+            payload["author"] = {"name": author_name, "email": author_email}
+            payload["committer"] = {"name": author_name, "email": author_email}
+        return self._req("POST", f"/api/v1/repos/{owner}/{repo}/contents",
+                         headers=self._content_header(), body=payload)
+
+    def list_dir(self, owner: str, repo: str, path: str,
+                 ref: str = "main") -> list[dict]:
+        """The entries of one directory, each with `type`, `path` and `sha`.
+
+        Not recursive. Empty when the directory does not exist.
+        """
+        data = self._req(
+            "GET",
+            f"/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
+            headers=self._content_header(), params={"ref": ref}, allow_404=True,
+        )
+        return data if isinstance(data, list) else []
 
     def list_tree(self, owner: str, repo: str, ref: str = "main") -> list[dict]:
         """Full recursive tree of `owner/repo` at `ref` — used to rebuild

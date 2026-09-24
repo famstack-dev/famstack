@@ -46,6 +46,7 @@ host-side wrapper is a thin docker-exec, like `stack memory wiki`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -67,13 +68,29 @@ sys.path.insert(0, "/app")  # stack.ai.client, and voice in the bot-runner
 # bot-runner has it baked at /app; the curator, which schedules this
 # nightly, only mounts /stacklets. Both see it here.
 sys.path.append("/stacklets/core/bot-runner")
+# `memory.lib`, the memory stacklet's own vault readers (ontology, person
+# pages, the repository's name), as the archivist imports them.
+sys.path.append("/stacklets")
 
 import diary  # noqa: E402
+import diary_card  # noqa: E402
 import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
+from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
 from stack import media  # noqa: E402
+
+from memory.lib import (  # noqa: E402
+    BOT_EMAIL,
+    BOT_USERNAME,
+    REPO_NAME,
+    REPO_OWNER,
+    get_ontology,
+    load_persons_from_vault,
+    persons_prompt_section,
+    request_mirror,
+)
 
 from . import wiki  # noqa: E402
 
@@ -413,9 +430,7 @@ _OVERLAP = 4
 # One small JSON object per message in the slice, plus the enclosing
 # structure. A model that loops instead of closing the array is capped
 # here rather than at the client timeout.
-# The budget covers the facts plus the distillation: a gist sentence
-# and up to three copied passages for long messages.
-_READ_TOKENS_PER_MESSAGE = 240
+_READ_TOKENS_PER_MESSAGE = 120
 _READ_TIMEOUT_S = 300.0
 
 # Two to four sentences.
@@ -474,28 +489,6 @@ message above, in the same order, each with these keys:
   recording from weeks ago and is still its own memory, not a footnote
   to it. Use this only when the message would make no sense on its own
   page. Otherwise null.
-
-"gist": for a message longer than about 100 words: one or two short
-  sentences in {language} saying what the message is about. Write
-  with verbs, as things that happened, never as a list of topics.
-  Name at most two moments and let the rest go; the full text sits
-  below the gist on the page. You may name a conversation participant
-  only when the words address them by name. No marketing words. Use
-  null for shorter messages, and for a message spoken to one person
-  as a personal message -- those are posted whole.
-
-  Wanted register (invented examples, not this family):
-    "Anna erzählt mit einem der Kinder vom Tag am See und vom
-    Schuh, der im Wasser landete."
-    "Anna and one of the kids talk about the day at the lake and the
-    shoe that landed in the water."
-  Not wanted: "Anna und ein Kind berichten über einen Ausflug,
-  ein Picknick, einen verlorenen Schuh und das Wetter."
-
-"moments": for a message longer than about 100 words: up to three
-  short passages copied word-for-word from the message, the lines most
-  worth keeping. Copy them exactly as written, complete sentences
-  only, no edits. Otherwise an empty list.
 """
 
 
@@ -559,28 +552,11 @@ async def _read_room(messages, llm, cache=None):
     refers_to: dict[str, str] = {}
     known: set[str] = set()
 
-    def _sure_moments(event_id: str, moments) -> tuple:
-        """Drop claimed quotes that contain a word whisper was unsure
-        of. A quote is the most prominent text in an entry; it must
-        not showcase a word the recognizer flagged."""
-        record = voice.TRANSCRIPTS.read(event_id) or {}
-        unsure = {(w.get("word") or "").strip().lower()
-                  for w in (record.get("quality") or {}).get("low_words") or []}
-        unsure.discard("")
-        if not unsure:
-            return tuple(moments or ())
-        return tuple(
-            m for m in moments or ()
-            if not (set(re.findall(r"[\\w\\u00c0-\\u024f]+", str(m).lower()))
-                    & unsure))
-
     def remember(event_id: str, row: dict) -> None:
         readings[event_id] = diary.Reading(
             mode=str(row.get("mode") or "monologue"),
             spoken_date=row.get("spoken_date") or None,
             addressee=row.get("addressee") or None,
-            gist=row.get("gist") or None,
-            moments=_sure_moments(event_id, row.get("moments")),
         )
         if target := row.get("continues"):
             continues[event_id] = target
@@ -604,8 +580,7 @@ async def _read_room(messages, llm, cache=None):
             continue
         _err(f"  reading slice {n} of {len(slices)}")
 
-        prompt = _READ_PROMPT.format(
-            language=_household_language(), messages=_as_prompt(chunk))
+        prompt = _READ_PROMPT.format(messages=_as_prompt(chunk))
         try:
             raw = await llm.complete(
                 "classifier", prompt, json_mode=True, temperature=0,
@@ -632,10 +607,6 @@ async def _read_room(messages, llm, cache=None):
                 "addressee": row.get("addressee") or None,
                 "continues": _link(row.get("continues"), chunk),
                 "refers_to": _link(row.get("refers_to"), chunk),
-                "gist": (str(row.get("gist")).strip()
-                         if row.get("gist") else None),
-                "moments": [str(m) for m in row.get("moments") or []
-                            if str(m).strip()][:5],
             }
             remember(here.event_id, found)
             if cache is not None:
@@ -831,6 +802,268 @@ async def _summarise(entries, llm) -> str:
     return cleaned
 
 
+# ── Reading an entry for its card ─────────────────────────────────────
+#
+# One call per entry, after the room has been read and the entries
+# compiled: the entry is the unit a card describes, so it is the unit the
+# model reads. A recording joined from two uploads is read once, whole,
+# with its replies. What comes back is held to the household's vocabulary
+# (`diary_card.extraction_from`) before it touches a card.
+
+
+_EXTRACT_TOKENS = 900
+_EXTRACT_TIMEOUT_S = 180.0
+
+_EXTRACT_PROMPT = """\
+You are filing one entry from a family's private memories room into the
+family archive. Report what the entry says. Never translate its words,
+never add to them. When you quote, copy the words exactly.
+
+{vocabulary}
+
+{people}
+
+The entry:
+{entry}
+
+Reply with a JSON object with these keys:
+
+"title": a short name for the entry, three to six words, in {language}.
+  Name what happened, not the medium: "Bart's first bike ride", not
+  "Voice note".
+
+"description": one sentence in {language} saying what this entry is.
+
+"summary": one to three short sentences in {language} saying what the
+  entry is about. Write with verbs, as things that happened, never as a
+  list of topics. You may name a conversation participant only when the
+  words address them by name. No marketing words.
+  Wanted register (invented examples, not this family):
+    "Anna erzählt mit einem der Kinder vom Tag am See und vom Schuh,
+    der im Wasser landete."
+    "Anna and one of the kids talk about the day at the lake and the
+    shoe that landed in the water."
+  Not wanted: "Anna und ein Kind berichten über einen Ausflug, ein
+  Picknick, einen verlorenen Schuh und das Wetter."
+
+"facts": up to six short facts from the entry, in {language}, each
+  written as "Label: value" and each anchored on a name, a date, a
+  number or a place. A sentence without such an anchor is summary, not
+  a fact. An empty list when the entry states none.
+
+"persons": the family members the entry is about or spoken to, using
+  the names from the family list above. Only names from that list.
+
+"topics": up to three topics from the vocabulary above that fit the
+  entry. Only topics from that vocabulary. An empty list when none fits.
+
+"quotes": when the entry's words are longer than about 100 words: up to
+  three short passages copied word for word from them, complete
+  sentences only, the lines most worth keeping. Otherwise an empty list.
+"""
+
+
+def _entry_prompt(entry) -> str:
+    """One entry as the model reads it: who, when, what, and the words."""
+    when = ("date unknown" if entry.confidence == "uncertain"
+            else entry.on.isoformat())
+    kind = {"voice": "voice recording", "image": "photo", "video": "video",
+            "file": "file"}.get(entry.kind, "written note")
+    if entry.kind == "voice" and entry.mode == "dialogue":
+        kind = "recorded conversation (no speaker labels)"
+    lines = [f"Recorded by {entry.sender.title()}, {when}, {kind}."]
+    if entry.addressee:
+        lines.append(f"Spoken to: {entry.addressee}.")
+    lines.append("")
+    lines.append(entry.body.strip() or "(no words)")
+    for who, text in entry.comments:
+        lines += ["", f"{who.title()} replied: {text.strip()}"]
+    return "\n".join(lines)
+
+
+def _unsure_words(event_ids) -> set[str]:
+    """Words whisper flagged as unsure in any of these recordings."""
+    unsure: set[str] = set()
+    for event_id in event_ids:
+        record = voice.TRANSCRIPTS.read(event_id) or {}
+        for w in (record.get("quality") or {}).get("low_words") or []:
+            if word := (w.get("word") or "").strip().lower():
+                unsure.add(word)
+    return unsure
+
+
+def _sure_quotes(quotes, event_ids) -> list[str]:
+    """Drop quotes holding a word whisper was unsure of.
+
+    A quote is the most prominent text on a diary page; it must not
+    showcase a word the recognizer flagged.
+    """
+    unsure = _unsure_words(event_ids)
+    if not unsure:
+        return list(quotes)
+    return [q for q in quotes
+            if not set(re.findall(r"[\wÀ-ɏ]+", q.lower())) & unsure]
+
+
+async def _extract_all(entries, llm, cache, *, ontology, people: dict,
+                       vocabulary: str, people_section: str,
+                       language_code: str, force: bool = False) -> list:
+    """What a model reads out of each entry, cached per entry.
+
+    An entry the model fails on still gets an empty extraction: its card
+    is written with a plain title and the family's words, and a later run
+    fills in the rest once the entry's words or the prompt change.
+    """
+    model = os.environ.get("AI_DEFAULT_MODEL", "")
+
+    # The whole prompt is the cache key, not only the entry: a topic added
+    # to the ontology or a new person page changes what the model is
+    # offered, and every entry is read again under the new vocabulary.
+    def prompt_for(entry) -> str:
+        return _EXTRACT_PROMPT.format(
+            vocabulary=vocabulary, people=people_section or "",
+            entry=_entry_prompt(entry), language=_household_language())
+
+    out = []
+    todo = len(entries) if force else sum(
+        1 for e in entries
+        if cache.get(diary_card.entry_id_for(e.event_ids[0]),
+                     prompt_for(e)) is None)
+    if todo:
+        _err(f"  reading {todo} entr{'y' if todo == 1 else 'ies'} for their cards")
+    for entry in entries:
+        entry_id = diary_card.entry_id_for(entry.event_ids[0])
+        prompt = prompt_for(entry)
+        raw = None if force else cache.get(entry_id, prompt)
+        if raw is None:
+            try:
+                answer = await llm.complete(
+                    "classifier", prompt, json_mode=True, temperature=0,
+                    max_tokens=_EXTRACT_TOKENS, timeout=_EXTRACT_TIMEOUT_S)
+                raw = json.loads(answer)
+            except (LLMError, json.JSONDecodeError, TypeError) as e:
+                _err(f"  could not read the entry {entry_id}: {e}")
+                raw = None
+            if isinstance(raw, dict):
+                cache.put(entry_id, raw, prompt)
+                cache.save()
+        extraction = diary_card.extraction_from(
+            raw, ontology=ontology, language=language_code, people=people,
+            model=model)
+        out.append(diary_card.Extraction(**{
+            **extraction.__dict__,
+            "quotes": _sure_quotes(extraction.quotes, entry.event_ids)}))
+    return out
+
+
+# ── The vault ─────────────────────────────────────────────────────────
+#
+# Cards are records, so they go to the memory vault in Forgejo, the same
+# repository documents and captures are filed into. What is on disk in
+# the local clone can be behind Forgejo (a person just corrected a card
+# in the web editor), and deciding "nobody touched this" from a stale
+# copy would overwrite that correction. So the listing comes from
+# Forgejo, the local copy is used only where its blob hash matches, and
+# every write names the hash it expects: a file that changed in between
+# fails the commit instead of losing the change.
+
+
+# Files per commit. A first compile over years of a room writes hundreds
+# of cards; batches keep each request a modest size.
+_COMMIT_BATCH = 100
+
+
+def _vault_client():
+    url = os.environ.get("CODE_URL", "").rstrip("/")
+    user = os.environ.get("MATRIX_ADMIN_USER", "")
+    password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+    if not (url and user and password):
+        return None
+    return ForgejoClient(url=url, admin_user=user, admin_password=password,
+                         timeout=60)
+
+
+def _blob_sha(data: bytes) -> str:
+    """The hash git gives a file's content, as Forgejo reports it."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def _read_diary_tree(client, bucket: str) -> "dict[str, tuple[str, str]]":
+    """Every diary record in the vault: path -> (blob hash, content)."""
+    vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    root = f"{bucket}/{diary.DIARY_DIR}/{diary_card.ENTRIES_DIR}"
+    found: dict[str, tuple[str, str]] = {}
+    pending = [root]
+    while pending:
+        for item in client.list_dir(REPO_OWNER, REPO_NAME, pending.pop()):
+            path, sha = item.get("path", ""), item.get("sha", "")
+            if item.get("type") == "dir":
+                pending.append(path)
+                continue
+            if not path.endswith(".md"):
+                continue
+            local = vault / path
+            data = local.read_bytes() if local.is_file() else b""
+            if data and _blob_sha(data) == sha:
+                found[path] = (sha, data.decode("utf-8"))
+                continue
+            fetched = client.get_file(REPO_OWNER, REPO_NAME, path) or {}
+            found[path] = (sha, fetched.get("content", ""))
+    return found
+
+
+def _identity(localpart: str) -> tuple[str, str]:
+    server = os.environ.get("MATRIX_SERVER_NAME", "") or "local"
+    return localpart, f"{localpart}@{server}"
+
+
+def _commit_message(cards, *, new: int) -> str:
+    """The commit a family reads in the vault's history."""
+    verb = "learn" if new == len(cards) else "update"
+    subject = (cards[0].title if len(cards) == 1
+               else f"{len(cards)} diary entries")
+    lines = [f"{verb}: {subject}", ""]
+    lines += [f"- {c.on.isoformat()} {c.title}" for c in cards]
+    lines += ["", "Source: memories room"]
+    return "\n".join(lines)
+
+
+def _commit(client, plan, tree, cards_by_path) -> "set[str]":
+    """Write a plan to Forgejo, one commit per sender. Returns the paths
+    that did not land, so the pages can be built from what did."""
+    failed: set[str] = set()
+    by_sender: dict[str, list[str]] = {}
+    for path in plan.writes:
+        by_sender.setdefault(cards_by_path[path].sender, []).append(path)
+
+    batches = []
+    for sender, paths in sorted(by_sender.items()):
+        for i in range(0, len(paths), _COMMIT_BATCH):
+            chunk = paths[i:i + _COMMIT_BATCH]
+            changes = [FileChange("update" if p in tree else "create", p,
+                                  content=plan.writes[p],
+                                  sha=tree[p][0] if p in tree else "")
+                       for p in chunk]
+            new = sum(1 for p in chunk if p not in tree)
+            batches.append((changes, _commit_message(
+                [cards_by_path[p] for p in chunk], new=new), _identity(sender)))
+    if plan.deletes:
+        changes = [FileChange("delete", p, sha=tree[p][0]) for p in plan.deletes]
+        subject = (f"forget: {len(changes)} diary "
+                   f"entr{'y' if len(changes) == 1 else 'ies'} deleted in the room")
+        batches.append((changes, subject, (BOT_USERNAME, BOT_EMAIL)))
+
+    for changes, message, (name, email) in batches:
+        try:
+            client.change_files(REPO_OWNER, REPO_NAME, changes, message=message,
+                                author_name=name, author_email=email)
+        except ForgejoError as e:
+            _err(f"  could not write {len(changes)} card(s): {e}")
+            failed.update(c.path for c in changes)
+    return failed
+
+
+
 # ── The command ───────────────────────────────────────────────────────
 
 
@@ -910,6 +1143,8 @@ async def run(llm, argv: list[str]) -> int:
     readings_cache, summaries_cache = diary_store.open_stores(
         reading_fingerprint=transcripts.fingerprint(_READ_PROMPT),
         summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
+    extractions_cache = diary_store.open_extractions(
+        fingerprint=transcripts.fingerprint(_EXTRACT_PROMPT))
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:
         _err("MATRIX_HOMESERVER not set; is core up?")
@@ -1003,6 +1238,71 @@ async def run(llm, argv: list[str]) -> int:
                                     refers_to=refers_to)
     _err(f"{len(entries)} diary entr{'y' if len(entries) == 1 else 'ies'}")
 
+    # ── Cards: one record per entry, in the vault ──
+    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    language_code = (os.environ.get("LANGUAGE") or "en").strip().lower()[:2]
+    ontology = get_ontology(vault_dir if vault_dir.is_dir() else None)
+    # Person pages are generated, so they live in the brain, not the vault.
+    brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
+    persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
+    people = {name.lower(): p.canonical for p in persons for name in p.all_known_names()}
+    if not people:
+        # No person pages yet: the household's names from the wiki, as
+        # whisper is primed with, so a first compile still knows them.
+        people = {name.lower(): name for name in _household_people()}
+    extractions = await _extract_all(
+        entries, llm, extractions_cache, ontology=ontology, people=people,
+        vocabulary=ontology.classifier_prompt_section(language_code),
+        people_section=(persons_prompt_section(persons)
+                        or "Family members: " + ", ".join(sorted(set(people.values())))),
+        language_code=language_code, force=rebuild)
+    cards = [diary_card.to_card(e, x, room_id=room_id, media=kept)
+             for e, x in zip(entries, extractions)]
+
+    client = _vault_client()
+    if client is None:
+        _err("no Forgejo address or admin credentials here; cards not written, "
+             "diary pages left as they were")
+        return 1
+    try:
+        tree = _read_diary_tree(client, bucket)
+    except ForgejoError as e:
+        _err(f"could not read the diary records from the vault: {e}")
+        return 1
+    plan = diary_card.plan({p: t for p, (_, t) in tree.items()}, cards,
+                           bucket=bucket, complete=not limit)
+    _err(f"  cards: {len(plan.writes)} to write, {len(plan.deletes)} to remove, "
+         f"{len(plan.kept)} changed by hand and kept")
+    for path in plan.kept:
+        _err(f"    kept as edited: {path}")
+
+    failed: set[str] = set()
+    if dry_run:
+        for path in sorted(plan.writes):
+            _err(f"    would write {path}")
+        for path in plan.deletes:
+            _err(f"    would remove {path}")
+    elif plan.writes or plan.deletes:
+        by_path = {diary_card.card_path(c, bucket=bucket): c for c in cards}
+        failed = _commit(client, plan, tree, by_path)
+        try:
+            request_mirror(Path(os.environ.get(
+                "CURATOR_STATE_DIR", "/data/memory/curator")))
+        except OSError as e:
+            _err(f"  could not ask the curator to mirror: {e}")
+
+    # ── The pages: a view of the records, including anyone's corrections ──
+    records = {p: t for p, (_, t) in tree.items()}
+    for path, text in plan.writes.items():
+        if path not in failed:
+            records[path] = text
+    for path in plan.deletes:
+        if path not in failed:
+            records.pop(path, None)
+    on_file = [diary_card.parse(t) for t in records.values()]
+    entries = sorted((diary_card.to_entry(c) for c in on_file),
+                     key=lambda e: (e.on, e.at))
+
     months: dict[str, list] = {}
     for entry in entries:
         key = f"{diary.year_key(entry.on)}-{diary.month_key(entry.on)}"
@@ -1025,8 +1325,8 @@ async def run(llm, argv: list[str]) -> int:
     summaries_cache.save()
 
     pages = diary.pages_for(entries, room_id=room_id, summaries=summaries,
-                            media=kept)
-    return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
+                            media=diary_card.media_of(on_file))
+    return _publish_pages(pages, bucket=bucket, dry_run=dry_run) or (1 if failed else 0)
 
 
 def _publish_pages(pages, *, bucket: str, dry_run: bool) -> int:

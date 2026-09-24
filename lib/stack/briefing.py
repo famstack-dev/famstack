@@ -105,3 +105,42 @@ def format_action_item(ai) -> str | None:
         if due_clean and due_clean.lower() not in ("null", "none", "n/a"):
             return f"- [ ] {action} — {due_clean}"
     return f"- [ ] {action}"
+
+
+def read_briefing(text: str) -> tuple[str, list[str]]:
+    """The summary and facts of the first briefing callout in `text`.
+
+    The inverse of `render_briefing` for the two parts a reader needs
+    back. A page a person edited is read the same way, so a fact they
+    corrected in the callout is the fact that comes back. Action items
+    are left out: they live on in the todo lists they were folded into.
+    Returns ``("", [])`` when the page has no briefing.
+    """
+    lines = text.splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines)
+                     if ln.strip() == "> [!summary]")
+    except StopIteration:
+        return "", []
+
+    inner: list[str] = []
+    for ln in lines[start + 1:]:
+        if not ln.startswith(">"):
+            break
+        inner.append(ln[2:] if ln.startswith("> ") else ln[1:])
+
+    summary_parts: list[str] = []
+    facts: list[str] = []
+    for section in "\n".join(inner).split("\n\n"):
+        section = section.strip()
+        if not section:
+            continue
+        head, _, rest = section.partition("\n")
+        if head == "**Facts**":
+            facts = [ln[2:].strip() for ln in rest.splitlines()
+                     if ln.startswith("- ") and ln[2:].strip()]
+        elif head.startswith("**"):
+            continue
+        elif not (section.startswith("[") and section.endswith(")")):
+            summary_parts.append(section)
+    return "\n\n".join(summary_parts), facts
