@@ -294,8 +294,12 @@ class CLI:
         from .hooks import HookResolver, build_hook_ctx
         ready_resolver = HookResolver(stacklet_dir)
         if ready_resolver.resolve("on_start_ready"):
+            # Rendered again, not the env from the start of this run:
+            # on_install_success may have written secrets since (tokens,
+            # seeds) that templates reference. The containers keep the
+            # env they were started with; this hook reads the current one.
             ready_ctx = build_hook_ctx(
-                stacklet_id, env=env_dict,
+                stacklet_id, env=self.stack.env(stacklet_id),
                 step_fn=self.stack.output.step, stack=self.stack,
             )
             ready_resolver.run("on_start_ready", ready_ctx)
@@ -494,13 +498,27 @@ def _dependency_order(stacklets: list[dict], include: set[str]) -> list[str]:
     on the forward graph. Stacklets with `requires` on entries NOT in
     `include` have those edges dropped; we only order among the ones
     we're actually bringing up.
+
+    An OIDC client also waits for the provider when both are in
+    `include`, as if it listed it in `requires`. A client reads its
+    credentials when its env is rendered, at the start of its own `up`,
+    and the provider stores them during its own. Brought up first, the
+    client would start without single sign-on until its next `up`. It
+    is not a real dependency: a client brought up alone does not pull
+    the provider in, and keeps its own login.
     """
     by_id = {s["id"]: s for s in stacklets if s["id"] in include}
     if not by_id:
         return []
 
+    # The same provider Stack.oidc_provider() picks: the first declared.
+    provider = next((s["id"] for s in stacklets
+                     if "oidc_provider" in s.get("manifest", {})), None)
+
     remaining_deps = {
         sid: {d for d in s.get("manifest", {}).get("requires", []) if d in by_id}
+             | ({provider} if provider in by_id and provider != sid
+                and "oidc" in s.get("manifest", {}) else set())
         for sid, s in by_id.items()
     }
 

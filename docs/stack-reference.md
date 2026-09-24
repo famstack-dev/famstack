@@ -519,6 +519,10 @@ and should tell the admin which client to `stack up` after storing new
 credentials. If more than one stacklet declares `[oidc_provider]`, the
 first one discovered is used.
 
+Brought up in one command, such as `stack up all`, the provider starts
+before its clients, so they render their env after it has registered
+them. A client brought up alone does not pull the provider in.
+
 `stack doctor` warns about a running client that a running provider has
 not registered, and about a second provider being ignored. A provider
 that is present but was never brought up raises nothing.
@@ -677,7 +681,7 @@ stack destroy:
 | `on_install` | Once | **System setup.** Create directories, install native software, build from source. Should be idempotent — check whether each step was already done before doing it again (e.g. `brew list omlx` before `brew install omlx`, check if binary exists before building). |
 | `on_install_success` | Once | Obtain API tokens, seed initial data, create accounts. Runs after first healthy start. |
 | `on_start` | Every up | **Runs before containers start.** Validate config, start native services. If required config is missing or invalid, raise with a clear message — the framework stops the pipeline and containers won't start. |
-| `on_start_ready` | Every up | **Runs after health checks pass.** The service is healthy and accepting API calls. Seed data, sync accounts, anything that needs the service running. Must be idempotent. |
+| `on_start_ready` | Every up | **Runs after health checks pass.** The service is healthy and accepting API calls. Seed data, sync accounts, anything that needs the service running. Must be idempotent. Its `ctx.env` is rendered after `on_install_success`, so secrets written there are in it. |
 | `on_stop` | Every down | Stop native services. Only stops services we manage (.state/ markers). |
 | `on_destroy` | Once | Remove native services entirely (unload plists, uninstall). |
 | `on_restore` | On `stack backup restore` | **Reserved — not yet invoked.** Runs after the backup engine has put a stacklet's files back on disk. Owns stacklet-specific recovery: DB import, search-index rebuild, account re-seed. Photos can ship an empty stub (Immich re-indexes from the library on its own); Docs needs `pg_restore` + Paperless reindex. Hook signature will match the other `run(ctx)` hooks. |
