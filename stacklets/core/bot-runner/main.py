@@ -158,6 +158,7 @@ def discover_bots():
                 "display_name": decl.get("name", bot_id),
                 "room": decl.get("room"),
                 "room_topic": decl.get("room_topic"),
+                "join_rooms": list(decl.get("join_rooms") or []),
                 "settings": decl.get("settings", {}),
             })
 
@@ -277,6 +278,7 @@ def _ensure_bot_accounts(configs):
         "id": c["bot_id"],
         "room": c.get("room"),
         "room_topic": c.get("room_topic"),
+        "join_rooms": c.get("join_rooms") or [],
     } for c in configs]
     ensure_rooms(
         all_bots, MATRIX_HOMESERVER, MATRIX_SERVER_NAME,
