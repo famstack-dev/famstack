@@ -676,14 +676,17 @@ class TestRendering:
         # The body appears only inside the folded block, quoted.
         assert "\nwort0." not in page
 
-    def test_a_short_entry_stays_verbatim_even_with_a_gist(self):
+    def test_a_short_entry_keeps_every_word_under_its_summary(self):
+        """The summary is narrative above the words, never in their place:
+        a short entry is shown whole, not folded behind it."""
         page = diary.render_month([diary.Entry(
             on=date(2026, 9, 14), confidence="sent", basis="b",
             kind="voice", sender="marge", body="Kurz und wichtig.",
-            gist="A gist that must not replace the words.")])
+            gist="A summary that must not replace the words.")])
 
         assert "Kurz und wichtig." in page
-        assert "A gist that must not replace the words." not in page
+        assert "[!note]-" not in page
+        assert page.index("A summary that must not") < page.index("Kurz und wichtig.")
 
 
 class TestTheKeptFileOnThePage:
@@ -1240,3 +1243,63 @@ class TestBotMessagesAreNotMemories:
 
         assert [m.sender for m in messages] == ["abbot"]
 
+
+
+# ── Corrections in a card's thread ────────────────────────────────────
+
+
+class TestACardsThreadIsNotTheDiary:
+    """The archivist posts each entry's card as a notice in a thread on
+    the entry's first message. What the family writes in that thread is
+    addressed to the archivist, corrections included, and never becomes
+    a diary entry or a reply on the page. A thread without a card is a
+    family conversation about a memory, and stays what it was: a reply
+    attached to it."""
+
+    ROOT = "$memo"
+
+    def _memo(self):
+        return {"type": "m.room.message", "event_id": self.ROOT,
+                "sender": "@marge:simpson", "origin_server_ts": BASE_TS,
+                "content": {"msgtype": "m.text", "body": "Bart played the saxophone today."}}
+
+    def _card_notice(self, kind="diary.filed"):
+        return {"type": "m.room.message", "event_id": "$card",
+                "sender": "@archivist-bot:simpson", "origin_server_ts": BASE_TS + 60_000,
+                "content": {"msgtype": "m.notice", "body": "Saxophone",
+                            "dev.famstack.event": {"type": kind, "data": {"entry_id": "x"}},
+                            "m.relates_to": {"rel_type": "m.thread",
+                                             "event_id": self.ROOT}}}
+
+    def _in_thread(self, event_id, body, reply_to="$card"):
+        return {"type": "m.room.message", "event_id": event_id,
+                "sender": "@homer:simpson", "origin_server_ts": BASE_TS + 120_000,
+                "content": {"msgtype": "m.text", "body": body,
+                            "m.relates_to": {
+                                "rel_type": "m.thread", "event_id": self.ROOT,
+                                "is_falling_back": True,
+                                "m.in_reply_to": {"event_id": reply_to}}}}
+
+    def _compile(self, events):
+        return diary.compile_entries(diary.resolve(events), {},
+                                     card_roots=diary.card_threads(events))
+
+    def test_the_cards_thread_is_found_from_the_notice_in_it(self):
+        assert diary.card_threads([self._memo(), self._card_notice()]) == {self.ROOT}
+        assert diary.card_threads([self._memo(),
+                                   self._card_notice("diary.reclassified")]) == {self.ROOT}
+
+    def test_a_correction_in_the_cards_thread_is_neither_entry_nor_reply(self):
+        entries = self._compile([self._memo(), self._card_notice(),
+                                 self._in_thread("$fix", "That was Lisa, not Bart.")])
+
+        assert len(entries) == 1
+        assert entries[0].comments == []
+        assert "$fix" not in entries[0].event_ids
+
+    def test_a_thread_without_a_card_is_a_conversation_about_the_memory(self):
+        entries = self._compile([self._memo(),
+                                 self._in_thread("$chat", "He was so proud!", reply_to=self.ROOT)])
+
+        assert len(entries) == 1
+        assert entries[0].comments == [("homer", "He was so proud!")]

@@ -61,6 +61,8 @@ famstack/
 
 Reprocessing re-derives from the source, never from the vault file. For a chat filing the source is the **whole thread** - the original message **plus its reply chain** (corrections) - folded in timeline order. Machine-derived vault state must stay reproducible this way; only user hand-edits are irreducible. See [adr-010](../adr/adr-010-event-pipeline.md).
 
+The diary is the exception. A reply in a diary card's thread is applied to the card once, recorded in the vault commit that applied it (`correct: <title>`, authored by the person), and the corrected card is the family's from then on: the compile leaves it alone, like a hand-edited card. The card thread is never replayed into the card. See [vault-format.md](../design/brain/vault-format.md) (`diary`).
+
 ## Stacklet anatomy
 
 Required:

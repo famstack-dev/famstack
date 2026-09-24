@@ -321,6 +321,7 @@ reformat = true
 | `name` | Display name in Matrix. |
 | `room` | Room alias to create/join. Optional — omit for bots that only respond to DMs/invites. |
 | `room_topic` | Topic set on auto-created room. |
+| `join_rooms` | Aliases of rooms another stacklet owns that the bot takes part in. Joined on every start when they exist; never created, and no one else is joined to them. |
 | `settings` | Arbitrary key-value pairs passed as kwargs to the bot constructor. |
 
 Module convention: strip `-bot` from the ID → `archivist.py` → class `ArchivistBot`.

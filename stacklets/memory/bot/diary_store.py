@@ -172,3 +172,22 @@ def open_stores(directory: Path | None = None, *,
                          reading_fingerprint).load(),
             SummaryStore(root / "summaries.json",
                          summary_fingerprint).load())
+
+
+class ExtractionStore(ReadingStore):
+    """What a model read out of each entry for its diary card.
+
+    Keyed by the entry's identity and by the words it was read from, the
+    same way a reading is: a new reply or a better transcript changes the
+    words, and the entry is read again. An unchanged entry is never sent
+    to the model twice, so a nightly compile pays for new entries only.
+    """
+
+    section = "extractions"
+
+
+def open_extractions(directory: Path | None = None, *,
+                     fingerprint: str = "") -> ExtractionStore:
+    """The extraction cache, loaded. A missing file is an empty one."""
+    root = Path(directory) if directory else state_dir()
+    return ExtractionStore(root / "extractions.json", fingerprint).load()

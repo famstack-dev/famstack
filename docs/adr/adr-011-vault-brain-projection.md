@@ -103,3 +103,18 @@ Cost: a page filed seconds ago is findable after the next mirror tick,
 not at once. Read-your-writes is tested for todos only
 (`tests/e2e/test_demo_rig_e2e.py`), so no stated invariant changes.
 
+## Update 2026-09-24: diary entries are records
+
+A diary entry is a thing that happened, so it is now a record in the
+vault: one card per entry of `type: diary` under
+`<bucket>/diary/entries/`, written by the diary compile through the
+Forgejo API. The month, year and index pages stay projections in the
+brain and are rebuilt from the cards alone. The wiki does not publish
+`diary/entries/`, while search and the agent read the cards through the
+brain like any other record.
+
+A card the family corrected (by replying in its thread in the memories
+room) or edited by hand is theirs: the compile never overwrites it, and
+the vault commit that changed it names who did. The diary is therefore
+the one chat filing not rebuilt by replaying its thread (see
+`docs/agent/dev.md`, "Reprocessing replays the source").

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 import urllib.request
 import wave
@@ -29,7 +30,11 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
-TTS_URL = "http://localhost:42063/v1/audio/speech"
+# The ai stacklet's speech service by default. FAMSTACK_TTS_URL points it
+# at another OpenAI-compatible speech endpoint, for a Mac without the ai
+# stacklet running.
+TTS_URL = os.environ.get("FAMSTACK_TTS_URL",
+                         "http://localhost:42063/v1/audio/speech")
 TURN_GAP_MS = 400
 
 

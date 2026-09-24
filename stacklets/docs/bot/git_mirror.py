@@ -69,8 +69,8 @@ from vault_entry import (
     render_capture,
     render_email_message_section,
     fold_email_message,
-    _format_action_item,
 )
+from stack.briefing import format_action_item  # noqa: E402
 
 
 # The shared family knowledge vault. The memory stacklet creates and
@@ -503,7 +503,7 @@ class GitMirror:
         """Action items in the same text form rendered into capture callouts."""
         texts: list[str] = []
         for item in action_items or []:
-            line = _format_action_item(item)
+            line = format_action_item(item)
             if not line:
                 continue
             texts.append(line.removeprefix("- [ ] ").strip())
@@ -687,7 +687,7 @@ class GitMirror:
         # `summary` parameter on `publish()` is the multi-section
         # Markdown that goes into Paperless and the commit body — it
         # already contains its own `## Summary` / `## Facts` headings,
-        # so feeding it into `_briefing_block` (which would wrap it in
+        # so feeding it into `render_briefing` (which would wrap it in
         # ANOTHER `## Summary`) double-nests headings and duplicates the
         # facts list. The briefing block expects prose; that lives on
         # `classification["summary"]`.

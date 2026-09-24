@@ -521,6 +521,8 @@ class MicroBot:
         if room is None:
             return
 
+        if voice.is_voice(event) and not self._wants_voice(room, event):
+            return
         decoding = voice.is_voice(event)
         if decoding:
             # Transcription can run for minutes and happens before any
@@ -540,6 +542,17 @@ class MicroBot:
                 await handler(room, event)
         if decoding and not handled:
             await self._set_typing(room_id, on=False)
+
+    def _wants_voice(self, room, event) -> bool:
+        """Whether this bot decodes a voice message in `room`.
+
+        Every voice message it can hear, by default. A bot present in a
+        room only for part of what happens there declines the rest: the
+        decode costs a transcription and shows the bot typing, which is
+        noise to the people in the room. A declined voice message is
+        dispatched to no handler.
+        """
+        return True
 
     async def _decode_voice(self, room_id: str, event):
         """Return the text event this voice message decodes to, or None.

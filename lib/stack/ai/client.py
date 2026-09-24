@@ -450,12 +450,18 @@ class Transcriber:
     """
 
     def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None,
-                 model: str = _DEFAULT_WHISPER_MODEL):
+                 model: str = _DEFAULT_WHISPER_MODEL,
+                 language: str | None = None):
         self._client = client
         self.namespace = namespace
         # The speech model to ask for. OpenAI's is `whisper-1`; other
         # servers name theirs and refuse any other name.
         self.model = model
+        # The language the household speaks, as ISO-639-1, or None to let
+        # whisper detect it. A server started with a fixed language
+        # decodes every clip as that language, translating anything else,
+        # so the request states it.
+        self.language = language
 
     @classmethod
     def from_env(cls, *, namespace: str | None = None,
@@ -472,6 +478,9 @@ class Transcriber:
         would silently fall back to ``api.openai.com``, which for a
         privacy-first family server is the wrong default to ever reach
         by accident.
+
+        ``LANGUAGE`` (the household language, rendered by core) becomes
+        the language stated on every request; unset, whisper detects it.
         """
         url = os.environ.get("WHISPER_URL", "").rstrip("/")
         if url.endswith("/audio/transcriptions"):
@@ -484,8 +493,10 @@ class Transcriber:
         # on *some* key — same trick as LLM.from_env.
         key = os.environ.get("WHISPER_KEY", "") or "not-needed"
         client = AsyncOpenAI(base_url=url, api_key=key, max_retries=max_retries)
+        language = os.environ.get("LANGUAGE", "").strip().lower()[:2] or None
         return cls(client, namespace=namespace,
-                   model=os.environ.get("WHISPER_MODEL", "") or _DEFAULT_WHISPER_MODEL)
+                   model=os.environ.get("WHISPER_MODEL", "") or _DEFAULT_WHISPER_MODEL,
+                   language=language)
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
                          model: str | None = None,
@@ -625,6 +636,7 @@ class Transcriber:
                 file=(filename, audio),
                 **params,
                 **({"prompt": vocabulary} if vocabulary.strip() else {}),
+                **({"language": self.language} if self.language else {}),
             )
         except openai.APITimeoutError as e:
             raise LLMTimeoutError(

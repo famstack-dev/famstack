@@ -3,7 +3,7 @@
 One vocabulary across the stack: **action_items** are the extracted concept
 (documents already produce them; a note announced as a list produces them too),
 and **todos** are those action_items *transformed* into rendered, tickable
-`- [ ]` lines (`_format_action_item` in vault_entry.py is that transform). This
+`- [ ]` lines (`format_action_item` in `stack.briefing` is that transform). This
 module is the note half of the extraction plus the `todos.md` surface.
 
 A list is something a family member *wrote on purpose* — a note whose first line

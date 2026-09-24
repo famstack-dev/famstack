@@ -2,8 +2,9 @@
 
 The memories room is where a family records things for its future self:
 voice notes to a child, a photo with a caption, a dinner conversation
-someone hit record on. This reads the whole room back and publishes it
-as diary pages in the wiki, in the words it was recorded in.
+someone hit record on. This reads the whole room back, files one card
+per entry in the memory vault, and publishes the diary pages in the wiki
+from those cards, in the words it was recorded in.
 
     stack memory diary                   compile and publish
     stack memory diary --dry-run         print the pages, write nothing
@@ -38,11 +39,16 @@ WHAT IT RECOVERS
     The habit that prevents the third case costs nothing: say the date
     at the start of the recording.
 
-NOTHING IS SUMMARISED
-    The model is asked to read each message, never to rewrite one. What
-    lands on the page is what was said. Transcription and reading both
-    run on the local AI stacklet; the room's contents never leave the
-    box.
+CARDS ARE THE RECORD
+    Each entry becomes a card under `family/diary/entries/` in the
+    memory vault: the words as they were recorded, the files, and a
+    title, summary, facts, people and topics a model read out of it.
+    The diary pages are compiled from the cards alone, so a correction
+    made on a card (in Forgejo or Obsidian) shows on the pages. A card
+    someone edited is never overwritten; the run lists it as kept.
+
+    The words themselves are never rewritten. Transcription and reading
+    both run on the AI stacklet configured for this household.
 
 Runs inside `stack-core-bot-runner` (it has the whisper client, the LLM
 client, and the brain working copy); this is a thin docker-exec, the

@@ -27,7 +27,7 @@ class FrontmatterError(ValueError):
 # ── Type vocabulary (§4) ──────────────────────────────────────────────
 
 # Records: source records (not generated)
-RECORD_TYPES = {"document", "note", "bookmark", "email"}
+RECORD_TYPES = {"document", "note", "bookmark", "email", "diary"}
 
 # Projections: generated wiki pages
 PROJECTION_TYPES = {"person", "correspondent", "topic", "index"}
@@ -62,6 +62,10 @@ SCHEMAS: dict[str, TypeSchema] = {
     "email": TypeSchema(
         required={"type", "title", "timestamp"},
         list_fields={"persons", "tags"},
+    ),
+    "diary": TypeSchema(
+        required={"type", "title", "timestamp", "date", "entry_id"},
+        list_fields={"persons", "tags", "event_ids", "media"},
     ),
     "person": TypeSchema(
         required={"type", "generated", "title", "slug", "canonical"},

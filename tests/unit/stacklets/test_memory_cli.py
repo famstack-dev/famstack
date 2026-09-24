@@ -95,14 +95,29 @@ class TestPrompt:
         assert code == 0
         assert "Versicherung" in out
         assert "Rechnung" in out
-        # English names must not leak into the German prompt.
-        assert "Insurance" not in out
+        # English topic names must not leak into the German topics.
+        # (Correspondents keep their own names in any language.)
+        topics = out.split("## Family members")[0]
+        assert "Insurance" not in topics
 
     def test_includes_synonyms_inline(self, stack_cli):
         code, out, _ = stack_cli("memory", "prompt")
         assert code == 0
         # `coverage` is a synonym of Insurance; the LLM must see it.
         assert "coverage" in out
+
+    def test_shows_every_vocabulary_block_and_which_prompts_read_it(self, stack_cli):
+        """What the models are fed is more than the topics: the family's
+        names and the known correspondents ride along. Each block is shown
+        under a heading naming the prompts that receive it, so reviewing
+        the vocabulary answers "what does the diary see" as well as "what
+        does the archivist see"."""
+        code, out, _ = stack_cli("memory", "prompt")
+        assert code == 0
+        assert "## Topics and document types" in out
+        assert "## Family members" in out
+        assert "## Correspondents" in out
+        assert "diary cards" in out
 
 
 class TestTopicReaderRouting:

@@ -105,7 +105,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
     Creates rooms, joins bots, joins admin-role users.
     """
     # Only process bots that declare a room
-    bots_with_rooms = [b for b in bots if b.get("room")]
+    bots_with_rooms = [b for b in bots if b.get("room") or b.get("join_rooms")]
     if not bots_with_rooms:
         return
 
@@ -118,8 +118,18 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
 
     for bot in bots_with_rooms:
         bot_id = bot["id"]
-        room_alias = bot["room"]
+        room_alias = bot.get("room")
 
+        # Rooms another stacklet owns, which the bot takes part in:
+        # joined when they exist, never created here, and nobody else is
+        # joined to them.
+        for alias in bot.get("join_rooms") or []:
+            existing = _resolve_room(base, token, server_name, alias)
+            if existing:
+                _join_user(base, token, existing, f"@{bot_id}:{server_name}")
+
+        if not room_alias:
+            continue
         room_id = _ensure_room(base, token, server_name, room_alias,
                                bot.get("room_topic"), space_id)
         if not room_id:
@@ -129,6 +139,13 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         _join_user(base, token, room_id, f"@{bot_id}:{server_name}")
         for uid in (admin_user_ids or []):
             _join_user(base, token, room_id, f"@{uid}:{server_name}")
+
+
+def _resolve_room(base, token, server_name, alias):
+    """The id of the room with this alias, or None if there is none."""
+    encoded = urllib.parse.quote(f"#{alias}:{server_name}")
+    status, resp = _api("GET", f"{base}/_matrix/client/v3/directory/room/{encoded}", token=token)
+    return resp.get("room_id") if status == 200 else None
 
 
 def _ensure_room(base, token, server_name, alias, topic, space_id):

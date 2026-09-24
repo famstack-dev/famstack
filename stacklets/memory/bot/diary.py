@@ -59,6 +59,7 @@ _STRINGS = {
         "vocab_topics": "They often talk about {topics}.",
         "basis_spoken": "dated from the spoken opening",
         "basis_sent": "dated from when it was sent",
+        "basis_corrected": "dated by a correction from the family",
         "basis_burst": ("arrived in a sync burst with no spoken date, "
                         "so this is the week it surfaced, not when it "
                         "happened"),
@@ -101,6 +102,8 @@ a video, or a few lines of writing.
 - Open with the date ("Today is the third of March") and the entry is
   filed on that day. Without one, the day you sent it counts.
 - Reply to a message to add to that memory later.
+- Each morning a card appears in the thread under your message. Reply to
+  it to fix a name, a date or a fact.
 
 There is no wrong way to use it. Press record.""",
         "across": "across",
@@ -117,6 +120,7 @@ There is no wrong way to use it. Press record.""",
         "vocab_topics": "Sie sprechen oft \u00fcber {topics}.",
         "basis_spoken": "datiert nach dem gesprochenen Datum",
         "basis_sent": "datiert nach dem Sendezeitpunkt",
+        "basis_corrected": "datiert nach einer Korrektur aus der Familie",
         "basis_burst": ("kam in einem Sync-Schub ohne gesprochenes "
                         "Datum an; eingeordnet in der Woche des "
                         "Auftauchens, nicht des Geschehens"),
@@ -164,6 +168,8 @@ ein Foto, ein Video oder ein paar Zeilen Text.
   Eintrag auf diesen Tag datiert. Ohne Datum z\u00e4hlt der Tag, an dem
   ihr gesendet habt.
 - Antwortet auf eine Nachricht, um sp\u00e4ter etwas zu erg\u00e4nzen.
+- Jeden Morgen erscheint im Thread unter eurer Nachricht eine Karte.
+  Antwortet darauf, um einen Namen, ein Datum oder eine Angabe zu korrigieren.
 
 Es gibt kein falsches Vorgehen. Dr\u00fcckt auf Aufnahme.""",
         "across": "in",
@@ -190,6 +196,11 @@ def _month_year(on: date) -> str:
 def _day_heading(on: date) -> str:
     return _L["day_heading"].format(
         day=_L["days"][on.weekday()], dom=on.day, month=_month_name(on))
+
+
+def day_label(on: date) -> str:
+    """A day as a family reads it, with the year: "Sunday, 20 September 2026"."""
+    return f"{_day_heading(on)} {on.year}"
 
 
 def _counted(n: int, one: str, many: str) -> str:
@@ -220,6 +231,8 @@ class Message:
     reply_to: str | None = None
     burst: str | None = None
     zone: tzinfo = timezone.utc
+    # The first message of the thread this one was written in, if any.
+    thread_root: str | None = None
 
     @property
     def sent_on(self) -> date:
@@ -251,12 +264,6 @@ class Reading:
     mode: str = "monologue"  # "monologue" | "dialogue" | "note"
     spoken_date: str | None = None
     addressee: str | None = None
-    # Distillation, for long recordings. `gist` is one narrative
-    # sentence about the message. `moments` are passages the model
-    # copied from the text; verify_moments() checks each one against
-    # the body before it can render as a quote.
-    gist: str | None = None
-    moments: tuple = ()
 
 
 @dataclass
@@ -281,10 +288,14 @@ class Entry:
     mode: str = "monologue"
     comments: list[tuple[str, str]] = field(default_factory=list)
     # Distilled view for long recordings: one narrative sentence and
-    # verified word-for-word quotes. Empty for short entries; the
-    # renderer then shows the body in full.
+    # verified word-for-word quotes, both from the entry's diary card
+    # (`diary_card.to_entry`). Empty for short entries; the renderer
+    # then shows the body in full.
     gist: str = ""
     moments: list[str] = field(default_factory=list)
+    # The card's title, when the entry comes from a card. Heads the entry
+    # on the page.
+    title: str = ""
 
 
 # ── What this household says ──────────────────────────────────────────
@@ -423,6 +434,13 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
 
         info = content.get("info") or {}
         in_reply_to = (relates.get("m.in_reply_to") or {}).get("event_id")
+        # In a thread, a client adds `m.in_reply_to` pointing at the
+        # thread's latest event so older clients can show something.
+        # The thread is the relation that means something here.
+        thread_root = (relates.get("event_id")
+                       if relates.get("rel_type") == "m.thread" else None)
+        if thread_root:
+            in_reply_to = None
 
         body = content.get("body", "")
         if in_reply_to:
@@ -446,6 +464,7 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
             duration_ms=info.get("duration"),
             reply_to=in_reply_to,
             zone=zone,
+            thread_root=thread_root,
         ))
 
     plain.sort(key=lambda m: (m.ts, m.event_id))
@@ -454,6 +473,32 @@ def resolve(events, *, burst_window_s: float = DEFAULT_BURST_WINDOW_S,
         for m in plain
     ]
     return mark_bursts(resolved, window_s=burst_window_s)
+
+
+# The envelope types of the archivist's notices carrying an entry's card:
+# the first filing, and each refiling after a correction (the archivist's
+# own pattern for documents). Their thread is where a family member talks
+# to the archivist about the card.
+CARD_EVENTS = ("diary.filed", "diary.reclassified")
+
+
+def card_threads(events) -> set[str]:
+    """The roots of the threads that hold a diary card.
+
+    Found from the room itself, like everything else the compiler knows:
+    a thread is a card's thread when the archivist's card notice is in
+    it. Read from the raw events, because `resolve` drops bot messages.
+    """
+    roots: set[str] = set()
+    for ev in events:
+        content = ev.get("content") or {}
+        envelope = content.get("dev.famstack.event") or {}
+        relates = content.get("m.relates_to") or {}
+        if (isinstance(envelope, dict) and envelope.get("type") in CARD_EVENTS
+                and relates.get("rel_type") == "m.thread"
+                and relates.get("event_id")):
+            roots.add(relates["event_id"])
+    return roots
 
 
 def mark_bursts(messages, *, window_s: float = DEFAULT_BURST_WINDOW_S):
@@ -616,10 +661,29 @@ def date_for(msg: Message, reading: Reading) -> tuple[date, str, str]:
     """
     spoken = parse_spoken_date(reading.spoken_date)
     if spoken is not None:
-        return spoken, "spoken", _L["basis_spoken"]
+        return spoken, "spoken", basis_text("spoken")
     if msg.burst:
-        return msg.sent_on, "uncertain", _L["basis_burst"]
-    return msg.sent_on, "sent", _L["basis_sent"]
+        return msg.sent_on, "uncertain", basis_text("uncertain")
+    return msg.sent_on, "sent", basis_text("sent")
+
+
+def basis_text(confidence: str) -> str:
+    """How a date was arrived at, in the household language.
+
+    A diary record stores only the word (`spoken`, `sent`, `uncertain`);
+    the sentence is chrome and follows the language the pages render in.
+    """
+    return _L[{"spoken": "basis_spoken", "uncertain": "basis_burst",
+               "corrected": "basis_corrected"}.get(confidence, "basis_sent")]
+
+
+def plain_title(entry: "Entry") -> str:
+    """A title that needs no model: what the entry is, and its day.
+
+    For a record whose reading failed. It says nothing the room does not
+    say, so a later run with a working model can replace it.
+    """
+    return f"{_kind_label(replace(entry, duration_ms=None))}, {_day_heading(entry.on)}"
 
 
 # ── Step 4: compile ───────────────────────────────────────────────────
@@ -659,7 +723,9 @@ def _remarks_only_on_what_is_still_in_view(messages, refers_to):
 
 def compile_entries(messages, readings, *,
                     continues: "dict[str, str] | None" = None,
-                    refers_to: "dict[str, str] | None" = None) -> list[Entry]:
+                    refers_to: "dict[str, str] | None" = None,
+                    card_roots: "set[str] | frozenset[str]" = frozenset(),
+                    ) -> list[Entry]:
     """Messages and their readings to dated diary entries.
 
     Some messages do not earn an entry of their own. A reply belongs to
@@ -671,6 +737,13 @@ def compile_entries(messages, readings, *,
     remark floating with no subject.
     """
     continues = continues or {}
+    # A card's thread is a conversation with the archivist about that
+    # card, corrections included, and none of it is a memory: corrections
+    # reach the card through `stack memory diary correct`, and the vault
+    # commit keeps them. Any other thread is a conversation about the
+    # message it hangs off, which is what a reply is, so it becomes one.
+    messages = [replace(m, reply_to=m.thread_root) if m.thread_root else m
+                for m in messages if m.thread_root not in card_roots]
     about = _remarks_only_on_what_is_still_in_view(messages, refers_to or {})
 
     # Join first (a split recording is two adjacent uploads), then
@@ -703,8 +776,6 @@ def compile_entries(messages, readings, *,
             addressee=reading.addressee,
             duration_ms=_total_duration(group),
             mode=reading.mode,
-            gist=(reading.gist or "").strip(),
-            moments=verify_moments(_joined_body(group), reading.moments),
         )
         entries.append(entry)
         for m in group:
@@ -723,8 +794,6 @@ def compile_entries(messages, readings, *,
                 sender=msg.sender, body=_joined_body(group), at=msg.ts,
                 event_ids=[m.event_id for m in group],
                 addressee=reading.addressee, mode=reading.mode,
-                gist=(reading.gist or "").strip(),
-                moments=verify_moments(_joined_body(group), reading.moments),
             )
             entries.append(orphan)
             by_event[msg.event_id] = orphan
@@ -869,15 +938,19 @@ def _entry_block(entry: Entry, *, room_id: str,
     # not title-cased, so a group reads as a group. A message whose
     # addressee resolves to its own sender is a misread, not a dedication.
     to = (entry.addressee or "").strip()
-    if to and to.lower() != entry.sender.lower():
-        heading = f"### {who} — {_L['for']} {to}"
-    else:
-        heading = f"### {who}"
+    addressed = bool(to) and to.lower() != entry.sender.lower()
 
     # How the date was derived is our concern, not the reader's, and it
     # would repeat under every entry on every page. Where it matters,
     # because we could not derive one, the callout below says so.
-    lines = [heading, f"*{_kind_label(entry)}*", ""]
+    if entry.title:
+        # From a card: its title heads the entry, and who recorded it
+        # and what it is follow on one line.
+        by = f"{who}, {_L['for']} {to}" if addressed else who
+        lines = [f"### {entry.title}", f"*{by} · {_kind_label(entry)}*", ""]
+    else:
+        heading = f"### {who} — {_L['for']} {to}" if addressed else f"### {who}"
+        lines = [heading, f"*{_kind_label(entry)}*", ""]
 
     if entry.confidence == "uncertain":
         lines += [
@@ -886,11 +959,16 @@ def _entry_block(entry: Entry, *, room_id: str,
             "",
         ]
 
+    # The summary opens the entry as narrative, above the family's words
+    # and never in their place. A message spoken to one person gets none:
+    # it is posted whole, with nothing generated in front of it.
+    if entry.gist and not addressed:
+        lines += [entry.gist, ""]
+
     if entry.body.strip() and _distills(entry):
-        # The distilled view for long recordings: one narrative line,
+        # The distilled view for long recordings: the summary above,
         # verified quotes, and the full transcript in a folded block.
         # verify_moments() guarantees each quote is an exact excerpt.
-        lines += [entry.gist, ""]
         for moment in entry.moments:
             lines += [f"> [!quote] {moment}", ""]
         lines += [f"> [!note]- {_L['full_transcript']}"]

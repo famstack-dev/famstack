@@ -1,6 +1,23 @@
 # One content pattern for the brain
 
-Status: proposed, 2026-09-19. Nothing is built yet.
+Status: built for the diary, 2026-09-24 (famstack #132). Decisions taken
+in building it, where they differ from the proposal below:
+
+- Entry unit: the message group (one recording, photo or note with its
+  joined fragments and replies). Longer occasions ("Roadtrip 2026") are
+  a later layer above the cards, not bigger cards.
+- One compiler, changed in place, not two compared side by side: with
+  the entry unit unchanged, a module test pins that the pages built from
+  cards lose nothing of the entries.
+- Cards live at `<bucket>/diary/entries/YYYY/MM/YYYY-MM-DD-<id>.md`, out
+  of the wiki's way; `type: diary` (vault-format.md).
+- Tags are the ontology's topic names and `Person: <name>`, as on
+  documents, not `Topic:<name>`.
+- The archivist, not a memory bot, posts the cards (once a day) and takes
+  corrections in their threads, reusing its correction handling.
+- A correction is applied once to the card in the vault and recorded in
+  the vault commit under the corrector's name; the corrected card is the
+  family's and is never recompiled. The thread is not replayed into it.
 Related: [open-knowledge-format.md](open-knowledge-format.md),
 [vault-format.md](vault-format.md), [diary-journal.md](diary-journal.md),
 ADR-011 (vault as database, brain as projection).

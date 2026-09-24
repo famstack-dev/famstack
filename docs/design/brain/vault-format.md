@@ -79,6 +79,8 @@ cheap).
 - `note` — a captured note (verbatim paste).
 - `bookmark` — a captured URL.
 - `email` — a folded email thread.
+- `diary` — one entry from the memories room (a recording, photo or note,
+  with its joined fragments and replies).
 
 **Entities & structure** (generated projections; MUST carry
 `generated: true`):
@@ -134,6 +136,46 @@ As `note`, plus the thread is a fold of per-message sections; each
 message is preceded by an idempotency marker comment
 `<!-- mid:<Message-ID> -->` in the body (not frontmatter). `resource`
 may carry the mailbox/thread reference.
+
+### `diary`
+One file per entry at
+`<bucket>/diary/entries/YYYY/MM/YYYY-MM-DD-<entry_id>.md`.
+The diary pages in brain are compiled from these files and nothing
+else, so a correction made here reaches every page.
+The records are mirrored into brain like every source file, so search
+and the agent read them, but the wiki does not publish `diary/entries/`.
+
+| Field | | Notes |
+|---|---|---|
+| `type` | R | `diary` |
+| `title` | R | |
+| `timestamp` | R | when the entry's first message reached the room. |
+| `date` | R | the day it happened (spoken date, else the day it was sent). |
+| `entry_id` | R | short hash of the first message's event id; the path's identity. |
+| `date_basis` | O | `spoken` \| `sent` \| `uncertain` \| `corrected` (a family member's correction set it). |
+
+A correction is a reply in the card's thread in the room. It is read
+again on every compile, applied to the card, and recorded in the vault
+commit (`correct: <title>`, authored by whoever wrote it), not on the
+card; its event id joins `event_ids`.
+| `description` | O | one sentence. |
+| `persons` | O | list. |
+| `tags` | O | list. |
+| `filed_by` | O | Matrix localpart of the sender. |
+| `addressee` | O | who the message is spoken to, as it names them. |
+| `medium` | O | `voice` \| `image` \| `video` \| `file` \| `text`. |
+| `mode` | O | `monologue` \| `dialogue` \| `note`. |
+| `duration_ms` | O | integer. |
+| `resource` | O | Matrix permalink of the first message. |
+| `event_ids` | O | list; every message folded into the entry. |
+| `media` | O | list; site paths of the archived files. |
+| `model` | O | |
+| `digest` | O | hash of the file as the compiler wrote it. A file that no longer matches was edited by a person, and the compiler leaves it alone. |
+
+The body holds the briefing callout, then `## Quotes`, `## Replies`,
+and last the family's own words under `## Transcript`, `## Text` or
+`## Caption`. The words come last so nothing in them can be mistaken
+for a section.
 
 ### `person` (generated)
 | Field | | Notes |
