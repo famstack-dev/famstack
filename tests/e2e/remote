@@ -136,12 +136,6 @@ run_stacktests() {
   collect_logs
   say "==> stopping the rig"
   tests/e2e/stacktests down > "$results/down.log" 2>&1 || true
-  # core's on_start writes a LaunchAgent into the home dir and on_stop
-  # only unloads it. Remove ours so nothing outside the base dir remains.
-  local plist="$HOME/Library/LaunchAgents/dev.famstack.api.plist"
-  if [[ -f "$plist" ]] && grep -q "$base/" "$plist"; then
-    rm -f "$plist"
-  fi
 }
 
 # ── install ─────────────────────────────────────────────────────────────
