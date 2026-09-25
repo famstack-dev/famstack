@@ -29,6 +29,7 @@ from pathlib import Path
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from _matrix import MatrixClient, _get, _api
+from _admins import admin_user_ids, ensure_admins
 
 
 # ── Authentication ──────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ def _cmd_list(client, base_url, argv):
     print()
 
 
-def _cmd_create(client, base_url, server_name, argv):
+def _cmd_create(client, base_url, server_name, argv, users=()):
     """Create a room and add it to the family Space.
 
     The room is created as a private room with shared history visibility,
@@ -150,6 +151,11 @@ def _cmd_create(client, base_url, server_name, argv):
     if space_id:
         client.add_space_child(space_id, room_id)
         print("  Added to family Space")
+
+    # The creating account is the tech admin; the family's admins would
+    # otherwise have no rights in the new room.
+    for r in ensure_admins(client, [room_id], admin_user_ids(users), {room_id: f"#{alias}"}):
+        print(f"  {r['item']}: {r['action']}")
 
     print()
 
@@ -226,7 +232,7 @@ def run(args, stacklet, config):
     if subcmd == "list":
         return _cmd_list(client, base_url, rest)
     elif subcmd == "create":
-        return _cmd_create(client, base_url, server_name, rest)
+        return _cmd_create(client, base_url, server_name, rest, config.get("users", []))
     elif subcmd == "delete":
         return _cmd_delete(client, base_url, server_name, rest)
     else:

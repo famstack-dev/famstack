@@ -7,6 +7,12 @@ automatically so they see everything the moment they log in.
 
 Idempotent — safe to run again. Existing users, rooms, and spaces are
 skipped. New users.toml entries get accounts and join existing rooms.
+
+    stack messages setup --room-admins
+
+only makes the admin-role users admins of the family Space and every room
+in it. `stack up messages` runs it on every start, so rooms created after
+install and installs from before this rule are brought up to date.
 """
 
 HELP = "Bootstrap admin, rooms, and family accounts"
@@ -20,6 +26,35 @@ sys.path.insert(0, str(_here))
 from _matrix import MatrixClient
 sys.path.insert(0, str(_here.parent.parent.parent / "lib"))
 from stack.users import user_id, get_admin_password, get_user_password, TECH_ADMIN_USERNAME
+from _admins import admin_user_ids, ensure_admins, family_room_ids, summary
+
+
+def _login_tech_admin(client, secrets):
+    """Log the client in as the tech admin. Returns an error dict, or None."""
+    admin_pass = get_admin_password(secrets)
+    if not admin_pass:
+        return {"error": "Admin password not found in secrets. Run './stack install' or set global__ADMIN_PASSWORD in .stack/secrets.toml."}
+
+    if not client.login(TECH_ADMIN_USERNAME, admin_pass):
+        return {
+            "error": "Can't log in to Messages as tech admin.",
+            "hint": f"docker exec -it stack-messages-synapse register_new_matrix_user -u {TECH_ADMIN_USERNAME} -p <password> -a -c /data/homeserver.yaml http://localhost:8008",
+        }
+    return None
+
+
+def _room_admins(client, users, secrets):
+    """Only the room-admin rule: every admin-role user at power level 100
+    in the family Space and every room in it."""
+    if failed := _login_tech_admin(client, secrets):
+        return failed
+    space_id = client.resolve_room("family")
+    if not space_id:
+        return {"error": "No family Space found. Run 'stack messages setup'."}
+    rooms = family_room_ids(client, space_id)
+    admins = admin_user_ids(users)
+    results = ensure_admins(client, rooms, admins)
+    return {"ok": True, "results": results, "summary": summary(admins, len(rooms), results)}
 
 
 def _setup(client, users, config, secrets=None):
@@ -32,15 +67,8 @@ def _setup(client, users, config, secrets=None):
     # The tech admin (stackadmin) is created by on_install_success via
     # register_new_matrix_user. Here we just log in to get a session.
 
-    admin_pass = get_admin_password(secrets)
-    if not admin_pass:
-        return {"error": "Admin password not found in secrets. Run './stack install' or set global__ADMIN_PASSWORD in .stack/secrets.toml."}
-
-    if not client.login(TECH_ADMIN_USERNAME, admin_pass):
-        return {
-            "error": "Can't log in to Messages as tech admin.",
-            "hint": f"docker exec -it stack-messages-synapse register_new_matrix_user -u {TECH_ADMIN_USERNAME} -p <password> -a -c /data/homeserver.yaml http://localhost:8008",
-        }
+    if failed := _login_tech_admin(client, secrets):
+        return failed
 
     results.append({"item": f"@{TECH_ADMIN_USERNAME}:{server_name}", "action": "tech admin"})
 
@@ -161,44 +189,21 @@ def _setup(client, users, config, secrets=None):
             join_rooms = all_rooms if is_admin_role else everyone_rooms
             for rid in join_rooms:
                 client.join_user(rid, uid)
-
-            # ── Per-room power level ─────────────────────────────────
-            # The Synapse "admin" flag passed to createUser is
-            # server-side only -- it does NOT grant in-room PL.
-            # Family admins from users.toml need an explicit PL bump
-            # in the space and every seeded room so they can manage
-            # settings, ban/kick, and write state events without
-            # someone having to elevate them manually in Element.
-            # Idempotent: ensure_user_power_level reads first, only
-            # writes when the target differs. Non-admin members keep
-            # the default PL 0 (the private_chat preset). A future
-            # `role = "moderator"` tier would land as another branch
-            # here -- not introduced now because the household-policy
-            # decision about kid PL hasn't been made.
-            if is_admin_role:
-                full_uid = client._full_user(uid)
-                pl_targets = []
-                if space_id:
-                    pl_targets.append((space_id, space_name))
-                for alias, rid in room_ids.items():
-                    pl_targets.append((rid, f"#{alias}"))
-                for room_id_target, label_target in pl_targets:
-                    outcome = client.ensure_user_power_level(
-                        room_id_target, full_uid, 100,
-                    )
-                    if outcome == "set":
-                        results.append({
-                            "item": f"{full_uid} in {label_target}",
-                            "action": "promoted to PL 100",
-                        })
-                    elif outcome == "failed":
-                        results.append({
-                            "item": f"{full_uid} in {label_target}",
-                            "action": "could not promote (Synapse refused)",
-                        })
-                    # "ok" stays silent -- already at PL 100, no news.
         else:
             results.append({"item": uid, "action": "failed to create"})
+
+    # ── Step 4b: the family's admins are admins in every family room ────
+    # For every admin-role user, not only the ones created in this run,
+    # and in every room of the space, not only the ones created above:
+    # re-running setup brings an older install up to date. Members keep
+    # the preset's power level 0.
+    labels = {rid: f"#{alias}" for alias, rid in room_ids.items()}
+    if space_id:
+        labels[space_id] = space_name
+    results += ensure_admins(
+        client, family_room_ids(client, space_id) or list(room_ids.values()),
+        admin_user_ids(users), labels,
+    )
 
     # ── Step 5: create stacker-bot and post welcome messages ───────────
 
@@ -389,6 +394,16 @@ def run(args, stacklet, config):
         return {"error": "No users found. Add family members to users.toml."}
 
     secrets = config.get("secrets", {})
+    if "--room-admins" in (args or []):
+        result = _room_admins(client, users, secrets)
+        if result.get("ok"):
+            print("\n  Room admins:\n", file=sys.stderr)
+            for s in result["summary"]:
+                print(f"    {'✓' if s['ok'] else '✗'}  {s['line']}", file=sys.stderr)
+            print(file=sys.stderr)
+        else:
+            print(_pretty(result), file=sys.stderr)
+        return result
     result = _setup(client, users, {"space_name": "Family"}, secrets)
 
     # Setup is a one-shot operator command; print the result regardless

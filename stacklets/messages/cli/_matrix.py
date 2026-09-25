@@ -261,6 +261,26 @@ class MatrixClient:
             token=self.token,
         )
 
+    def joined_rooms(self):
+        """Room ids this account is joined to."""
+        status, body = _get(self._url("/_matrix/client/v3/joined_rooms"), token=self.token)
+        return set(body.get("joined_rooms", [])) if status == 200 else set()
+
+    def room_name(self, room_id):
+        """The room's display name, or its id when it has none."""
+        return (self.get_state(room_id, "m.room.name") or {}).get("name") or room_id
+
+    def space_children(self, space_id):
+        """Room ids a Space lists as children. A removed child keeps its
+        `m.space.child` event with empty content, so only non-empty ones count."""
+        status, body = _get(
+            self._url(f"/_matrix/client/v3/rooms/{space_id}/state"), token=self.token,
+        )
+        # This endpoint answers with a list of events, not an object.
+        events: list = body if status == 200 and isinstance(body, list) else []
+        return [e["state_key"] for e in events
+                if isinstance(e, dict) and e.get("type") == "m.space.child" and e.get("content")]
+
     # ── Room state + power levels ────────────────────────────────────────
     #
     # Synapse's "make me an admin" flag controls server-side operations

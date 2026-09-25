@@ -135,10 +135,27 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         if not room_id:
             continue
 
-        # Join the bot and all admin-role family members
+        # Join the bot and all admin-role family members, and make those
+        # admins of the room: the tech admin created it and is otherwise
+        # the only account with power there.
         _join_user(base, token, room_id, f"@{bot_id}:{server_name}")
         for uid in (admin_user_ids or []):
             _join_user(base, token, room_id, f"@{uid}:{server_name}")
+            _ensure_admin_power(base, token, room_id, f"@{uid}:{server_name}")
+
+
+def _ensure_admin_power(base, token, room_id, full_user):
+    """Give a user power level 100 in a room, writing only when it differs.
+    The same rule `stack messages setup --room-admins` applies to every family room."""
+    path = f"{base}/_matrix/client/v3/rooms/{room_id}/state/m.room.power_levels/"
+    status, body = _api("GET", path, token=token)
+    levels: dict = dict(body) if status == 200 else {}
+    users: dict = dict(levels.get("users") or {})
+    if status != 200 or users.get(full_user) == 100:
+        return
+    status, resp = _api("PUT", path, {**levels, "users": {**users, full_user: 100}}, token=token)
+    if status != 200:
+        logger.warning("Could not make {} an admin of {}: {}", full_user, room_id, resp.get("error", "?"))
 
 
 def _resolve_room(base, token, server_name, alias):
