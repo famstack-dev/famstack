@@ -75,10 +75,7 @@ struct MenuPanel: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: store.summary.symbol)
-                .font(.title2)
-                .foregroundStyle(summaryTint)
-                .frame(width: 28)
+            Image(nsImage: Logo.appIcon(side: 34))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text("famstack").font(.headline)
@@ -103,15 +100,6 @@ struct MenuPanel: View {
                     .buttonStyle(.borderless)
                     .help("Check again")
             }
-        }
-    }
-
-    private var summaryTint: Color {
-        switch store.summary {
-        case .healthy: .green
-        case .attention: .orange
-        case .busy: .blue
-        case .unreachable, .unconfigured: .secondary
         }
     }
 
