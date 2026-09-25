@@ -27,7 +27,7 @@ FamilyNav.afterDOMLoaded = script
 
 FamilyNav.css = `
 .family-nav {
-  margin-top: 0.5rem;
+  margin-top: 0;
   min-height: 0;
   overflow-y: auto;
   flex: 1 1 auto;
@@ -77,8 +77,8 @@ FamilyNav.css = `
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  min-height: 2rem;
-  padding: 0.2rem 0.5rem;
+  min-height: 1.7rem;
+  padding: 0.1rem 0.5rem;
   border-radius: 6px;
   color: var(--darkgray);
   /* Quartz makes every link bold; here weight marks the current page only. */
@@ -110,7 +110,7 @@ FamilyNav.css = `
 /* Level 1 reads like the site's headings: Newsreader, a little larger.
    A leaf at level 1 (Start) is indented to line up with the folded ones. */
 .family-nav .fn-l1 {
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.1rem;
 }
 
 .family-nav .fn-l1 > .fn-link,
@@ -126,7 +126,7 @@ FamilyNav.css = `
 }
 
 .family-nav .fn-l1 ul {
-  margin: 0.1rem 0 0.35rem 0.3rem;
+  margin: 0 0 0.3rem 0.3rem;
   padding-left: 0.6rem;
   border-left: 1px solid var(--lightgray);
 }
@@ -165,12 +165,14 @@ FamilyNav.css = `
   .family-nav * { animation: none !important; transition: none !important; }
 }
 
-/* On a phone the sidebar is a row above the page; the navigation folds
-   behind a Menu button there. */
+/* On a phone the sidebar is a row above the page: title, search, and a
+   Menu button. The menu opens as a panel over the page, under that row,
+   because inside the row it would squeeze everything beside it. */
 @media all and (max-width: 800px) {
   .family-nav {
-    flex-basis: 100%;
+    flex: 0 0 auto;
     margin-top: 0;
+    overflow: visible;
   }
 
   .family-nav .fn-menu > summary {
@@ -184,7 +186,18 @@ FamilyNav.css = `
   }
 
   .family-nav .fn-menu[open] > .fn-tree {
-    margin-top: 0.6rem;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 0.5rem);
+    z-index: 30;
+    max-height: calc(100vh - 7rem);
+    overflow-y: auto;
+    padding: 0.75rem 0.75rem 0.75rem 0.4rem;
+    background: #f7f6f0;
+    border: 1px solid rgba(61, 143, 160, 0.22);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(22, 31, 36, 0.16);
   }
 }
 `

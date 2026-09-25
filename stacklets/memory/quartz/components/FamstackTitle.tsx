@@ -42,7 +42,7 @@ FamstackTitle.css = `
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  padding-bottom: 1rem;
+  padding-bottom: 0.8rem;
   border-bottom: 1px solid rgba(61, 143, 160, 0.14);
 }
 

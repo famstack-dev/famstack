@@ -70,8 +70,15 @@ document.addEventListener("nav", async (e: CustomEventMap["nav"]) => {
   for (const root of document.querySelectorAll<HTMLElement>(".family-nav")) {
     const tree = root.querySelector(".fn-tree")!
     tree.replaceChildren(...nav.map((n) => item(n, 1, here)))
-    // On a phone the navigation starts folded behind its Menu button.
+    // On a phone the navigation starts folded behind its Menu button, and
+    // a tap anywhere outside the open panel folds it again.
+    const phone = window.matchMedia("(max-width: 800px)")
     const menu = root.querySelector<HTMLDetailsElement>(".fn-menu")!
-    menu.open = !window.matchMedia("(max-width: 800px)").matches
+    menu.open = !phone.matches
+    const fold = (ev: MouseEvent) => {
+      if (phone.matches && menu.open && !root.contains(ev.target as Node)) menu.open = false
+    }
+    document.addEventListener("click", fold)
+    window.addCleanup(() => document.removeEventListener("click", fold))
   }
 })

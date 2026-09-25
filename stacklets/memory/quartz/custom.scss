@@ -337,3 +337,37 @@ footer ul {
 .search > .search-button:hover {
   border-color: var(--secondary);
 }
+
+// ── Left sidebar rhythm ─────────────────────────────────────────────
+//
+// Upstream spaces sidebar panels for a search box, a graph and a file
+// tree. Ours is a title, search and one menu, which reads as one block
+// when the gaps are smaller.
+
+.page > #quartz-body .sidebar.left {
+  gap: 1rem;
+}
+
+// Both sidebars start level with the top edge of the page card.
+@media all and (min-width: 801px) {
+  .page > #quartz-body .sidebar.left,
+  .page > #quartz-body .sidebar.right {
+    padding-top: 3.5rem;
+  }
+}
+
+// ── Phone header ────────────────────────────────────────────────────
+//
+// The sidebar becomes the row above the page. It is the positioned box
+// the open menu panel hangs from (see FamilyNav.tsx), and the family's
+// name stays on one line in it.
+
+@media all and (max-width: 800px) {
+  .page > #quartz-body .sidebar.left {
+    position: relative;
+  }
+
+  .famstack-title .page-title {
+    white-space: nowrap;
+  }
+}
