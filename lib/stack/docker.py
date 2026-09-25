@@ -323,40 +323,63 @@ def project_states() -> dict[str, str]:
         return {}
 
 
-def containers_for(stacklet_id: str) -> list[dict]:
-    """Every container of a stacklet, running or not.
+_PROJECT_LABEL = "com.docker.compose.project"
+_PROJECT_PREFIX = "stack-"
 
-    Returns dicts with name, state, exit_code and a human "since" string.
-    `stack status` only reports the stacklet as a whole, so a single dead
-    sidecar shows up as "failing" with no clue which one died.
+
+def _parse_ps_line(line: str) -> dict | None:
+    """One `docker ps` row (name, project, state, status) as a container dict.
+
+    The stacklet id comes from the compose project, `stack-<id>`. A
+    container that belongs to another project yields None.
     """
+    parts = line.split("\t")
+    if len(parts) != 4:
+        return None
+    name, project, state, status = parts
+    if not project.startswith(_PROJECT_PREFIX):
+        return None
+    # "Exited (128) 3 weeks ago" -> code 128, "3 weeks ago"
+    code, since = 0, status
+    if status.startswith("Exited ("):
+        head, _, tail = status.partition(")")
+        try:
+            code = int(head[len("Exited ("):])
+        except ValueError:
+            code = 1
+        since = tail.strip()
+    return {"name": name, "stacklet": project[len(_PROJECT_PREFIX):],
+            "state": state, "exit_code": code, "since": since}
+
+
+def _ps(label_filter: str) -> list[dict]:
     try:
         r = _docker(
-            "ps", "-a", "--filter", f"name=^stack-{stacklet_id}-",
-            "--format", "{{.Names}}\t{{.State}}\t{{.Status}}",
+            "ps", "-a", "--filter", f"label={label_filter}",
+            "--format", f'{{{{.Names}}}}\t{{{{.Label "{_PROJECT_LABEL}"}}}}'
+                        "\t{{.State}}\t{{.Status}}",
             capture_output=True, text=True, timeout=10,
         )
         if r.returncode != 0:
             return []
-        out = []
-        for line in r.stdout.strip().splitlines():
-            parts = line.split("\t")
-            if len(parts) != 3:
-                continue
-            name, state, status = parts
-            # "Exited (128) 3 weeks ago" -> code 128, "3 weeks ago"
-            code, since = 0, status
-            if status.startswith("Exited ("):
-                head, _, tail = status.partition(")")
-                try:
-                    code = int(head[len("Exited ("):])
-                except ValueError:
-                    code = 1
-                since = tail.strip()
-            out.append({"name": name, "state": state, "exit_code": code, "since": since})
-        return out
+        rows = (_parse_ps_line(line) for line in r.stdout.strip().splitlines())
+        return [row for row in rows if row]
     except Exception:
         return []
+
+
+def containers_for(stacklet_id: str) -> list[dict]:
+    """Every container of a stacklet, running or not.
+
+    Returns dicts with name, stacklet, state, exit_code and a human "since"
+    string. `stack status` only reports the stacklet as a whole, so a single
+    dead sidecar shows up as "failing" with no clue which one died.
+
+    Matched by compose project rather than by name: a stacklet with one
+    service is named `stack-<id>`, without the `-<service>` suffix a name
+    pattern would need.
+    """
+    return _ps(f"{_PROJECT_LABEL}={_PROJECT_PREFIX}{stacklet_id}")
 
 
 def _parse_env(text: str) -> dict:
