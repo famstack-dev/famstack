@@ -402,6 +402,49 @@ def container_logs(name: str, since: str) -> str:
         return ""
 
 
+_SIZE_UNITS = {"b": 1, "kb": 1000, "mb": 1000 ** 2, "gb": 1000 ** 3, "tb": 1000 ** 4,
+               "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4}
+
+
+def parse_size(text: str) -> int:
+    """`docker stats` sizes (`512MiB`, `1.2GiB`, `0B`) as bytes; 0 if unreadable."""
+    text = text.strip()
+    digits = text.rstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    unit = text[len(digits):].lower()
+    try:
+        return int(float(digits) * _SIZE_UNITS[unit])
+    except (ValueError, KeyError):
+        return 0
+
+
+def container_stats() -> dict[str, dict]:
+    """Memory and CPU of every running container, keyed by name.
+
+    `docker stats --no-stream` samples for about two seconds, so this is
+    for a command someone asked for, not for anything run on every poll.
+    """
+    try:
+        r = _docker("stats", "--no-stream", "--format",
+                    "{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}",
+                    capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return {}
+    except Exception:
+        return {}
+    stats = {}
+    for line in r.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        name, mem, cpu = parts
+        try:
+            cpu_pct = float(cpu.strip().rstrip("%"))
+        except ValueError:
+            cpu_pct = 0.0
+        stats[name] = {"memory_bytes": parse_size(mem.split("/")[0]), "cpu_pct": cpu_pct}
+    return stats
+
+
 def _parse_env(text: str) -> dict:
     """Turn `docker inspect`'s KEY=VALUE lines into a dict."""
     env = {}

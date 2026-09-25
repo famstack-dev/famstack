@@ -18,7 +18,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
+import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -1280,7 +1282,7 @@ def handle_logs(stck, args):
         print(output)
 
 
-# ── errors: what an admin checks first ────────────────────────────────────
+# ── errors, host: what an admin checks first ──────────────────────────────
 
 _DURATION = re.compile(r"^\d+[smh]$")
 
@@ -1325,6 +1327,64 @@ def handle_errors(stck, args):
         for line in entry["lines"][-3:]:
             print(f"     {DIM}{line['text'][:160]}{RESET}")
         print(f"     {DIM}more:{RESET} {TEAL}./stack logs {entry['stacklet']}{RESET}\n")
+
+
+def _uptime_seconds() -> int | None:
+    """Seconds since boot, from `sysctl kern.boottime` (`{ sec = 1727..., ...}`)."""
+    try:
+        r = subprocess.run(["sysctl", "-n", "kern.boottime"],
+                           capture_output=True, text=True, timeout=5)
+        match = re.search(r"sec = (\d+)", r.stdout)
+        return int(time.time()) - int(match.group(1)) if match else None
+    except Exception:
+        return None
+
+
+def handle_host(stck, args):
+    """The machine: memory, disk, uptime, and what each stacklet uses.
+
+    Stacklet figures come from `docker stats`, so a stacklet that runs on
+    the host itself (the AI server) has none: its processes are not
+    containers.
+    """
+    known = {s["id"] for s in stck.discover()}
+    stats = docker.container_stats()
+    per_stacklet: dict[str, dict] = {}
+    for c in docker.stack_containers():
+        if c["stacklet"] not in known or c["name"] not in stats:
+            continue
+        entry = per_stacklet.setdefault(
+            c["stacklet"], {"id": c["stacklet"], "memory_bytes": 0, "cpu_pct": 0.0, "containers": 0})
+        entry["memory_bytes"] += stats[c["name"]]["memory_bytes"]
+        entry["cpu_pct"] = round(entry["cpu_pct"] + stats[c["name"]]["cpu_pct"], 1)
+        entry["containers"] += 1
+
+    report = {
+        **stck._host_stats(),
+        "uptime_seconds": _uptime_seconds(),
+        "stacklets": sorted(per_stacklet.values(), key=lambda e: e["memory_bytes"], reverse=True),
+    }
+
+    if args.json:
+        json.dump(report, sys.stdout, indent=2)
+        print()
+        return
+
+    print(f"\n  {BOLD}Host{RESET}")
+    if "memory_total_gb" in report:
+        print(f"    Memory   {report.get('memory_used_gb', '?')} of {report['memory_total_gb']} GB used")
+    if "disk_total_gb" in report:
+        print(f"    Disk     {report['disk_free_gb']} GB free of {report['disk_total_gb']} GB "
+              f"({report['disk_used_pct']}% used)")
+    if report["uptime_seconds"] is not None:
+        days, rest = divmod(report["uptime_seconds"], 86400)
+        print(f"    Up       {days} days, {rest // 3600} hours")
+    if report["stacklets"]:
+        print(f"\n  {BOLD}Stacklets by memory{RESET}")
+        for e in report["stacklets"]:
+            print(f"    {e['id']:<12}{e['memory_bytes'] / 1024 ** 3:>6.2f} GB"
+                  f"   {e['cpu_pct']:>5.1f}% CPU   {DIM}{e['containers']} containers{RESET}")
+    print()
 
 
 def handle_restart(stck, args):
@@ -1924,6 +1984,7 @@ DISPATCH = {
     "setup": handle_setup,
     "logs": handle_logs,
     "errors": handle_errors,
+    "host": handle_host,
     "version": handle_version,
     "update": handle_update,
 }
@@ -1946,6 +2007,7 @@ _HELP_COMMANDS = [
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
         ("errors [--since 24h]", "Recent error lines across every stacklet"),
+        ("host",               "Memory, disk, uptime, and what each stacklet uses"),
     ]),
     ("Setup", [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
@@ -2069,6 +2131,8 @@ def main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("errors")
     p.add_argument("--since", default="24h", help="How far back to look: 30m, 24h, 168h")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("host")
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
     # Stacklet CLI plugins
