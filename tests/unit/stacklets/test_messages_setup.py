@@ -63,6 +63,12 @@ class FakeMatrixClient:
     def add_space_child(self, space_id, child_id):
         return True
 
+    def space_children(self, space_id):
+        return []
+
+    def joined_rooms(self):
+        return set()
+
     def send(self, room_alias, plain, html=None):
         # Same shape as the real client: (ok, detail). Setup reports the
         # welcome message's outcome, so a fake that returns None here
