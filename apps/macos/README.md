@@ -15,8 +15,14 @@ configured, what is not installed yet, and which checkout the app uses.
   dir, from `stack config --json` (credentials hidden), with buttons that open
   `stack.toml` and `users.toml` in the text editor.
 
-The icon turns into a warning only for errors: a failing stacklet, a doctor
-error, a failed backup. Warnings stay in the panel.
+The menu bar shows the famstack mark in monochrome, as macOS expects. It
+gets a badge dot only for errors: a failing stacklet, a doctor error, a
+failed backup. Warnings stay in the panel. Its dots turn hollow while an
+action runs, and the mark dims when the CLI does not answer.
+
+The mark is drawn from `Sources/StackMenu/LogoOutline.swift`, generated
+once from Inter Bold by `script/logo-outline.py`; the app icon is rendered
+from the same drawing at build time.
 
 It is a client of the `stack` CLI and nothing else: `status --json` every
 minute, and `doctor --json`, `errors --json`, `host --json`, `config --json`

@@ -121,12 +121,12 @@ final class StackStore: ObservableObject {
     enum Summary {
         case healthy, attention, busy, unreachable, unconfigured
 
-        var symbol: String {
+        var logo: Logo.State {
             switch self {
-            case .healthy: "house.fill"
-            case .attention: "exclamationmark.triangle.fill"
-            case .busy: "arrow.triangle.2.circlepath"
-            case .unreachable, .unconfigured: "house"
+            case .healthy: .normal
+            case .attention: .attention
+            case .busy: .busy
+            case .unreachable, .unconfigured: .unreachable
             }
         }
     }
