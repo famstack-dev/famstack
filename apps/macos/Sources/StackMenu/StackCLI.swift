@@ -53,6 +53,8 @@ struct StackCLI {
     func host() async throws -> HostReport { try await json(["host", "--json"]) }
     /// Prints JSON because its output is a pipe; it takes no `--json`.
     func backup() async throws -> BackupReport { try await json(["backup", "status"]) }
+    /// Keys are TOML keys, kept exactly as written.
+    func config() async throws -> ConfigReport { try await json(["config", "--json"], snakeCase: false) }
 
     /// Runs a command and decodes its JSON output.
     ///
@@ -60,7 +62,7 @@ struct StackCLI {
     /// found an error and still prints its report. Anything before the first
     /// `{` line is skipped, such as a one-time notice the CLI prints on the
     /// first run after a config change.
-    private func json<T: Decodable>(_ arguments: [String]) async throws -> T {
+    private func json<T: Decodable>(_ arguments: [String], snakeCase: Bool = true) async throws -> T {
         let result = await run(arguments)
         let lines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
         guard let start = lines.firstIndex(where: { $0.hasPrefix("{") }) else {
@@ -68,7 +70,7 @@ struct StackCLI {
         }
         let body = lines[start...].joined(separator: "\n")
         let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        if snakeCase { decoder.keyDecodingStrategy = .convertFromSnakeCase }
         do {
             return try decoder.decode(T.self, from: Data(body.utf8))
         } catch {
@@ -166,6 +168,14 @@ struct StackCLI {
         let extra = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "\(home)/.orbstack/bin"]
         env["PATH"] = (extra + [env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"]).joined(separator: ":")
         return env
+    }
+
+    /// Opens a file in the default text editor, as `open -t` does.
+    static func openInEditor(_ path: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-t", path]
+        try? process.run()
     }
 
     private static func shellQuote(_ s: String) -> String {

@@ -4,7 +4,7 @@ import SwiftUI
 //
 // Ordered by the questions an admin opens it with: is everything fine, what
 // needs me, what is running, what broke recently, is the data backed up,
-// how full is the machine.
+// how full is the machine, and how is it set up.
 
 struct MenuPanel: View {
     @ObservedObject var store: StackStore
@@ -42,6 +42,9 @@ struct MenuPanel: View {
                 }
                 if let figures = store.hostFigures {
                     Section("This Mac") { HostMetrics(figures: figures) }
+                }
+                if let config = store.config {
+                    SetupSection(report: config)
                 }
             }
             Divider()
@@ -223,7 +226,9 @@ struct AttentionRow: View {
             Image(systemName: icon).foregroundStyle(tint).frame(width: 14)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.callout).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let fix = item.fix {
                     Button { store.apply(fix: fix) } label: {
                         Text(fix).font(.caption.monospaced())
@@ -364,6 +369,102 @@ struct ErrorsList: View {
         let when = entry.lastAt.flatMap(parseTimestamp).map { relative($0) } ?? ""
         return "\(entry.count)× \(when)"
     }
+}
+
+/// The choices in stack.toml and users.toml an admin looks for first.
+/// Read-only: the buttons open the files, and doctor then lists every
+/// container still running with the old setting, with the command to apply it.
+struct SetupSection: View {
+    let report: ConfigReport
+    @State private var expanded = false
+
+    private var config: JSONValue { report.config }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 5) {
+                    row("Family", family)
+                    row("Address", address)
+                    row("Language", language)
+                    row("AI", ai)
+                    row("Updates", updates)
+                    row("Data", config["core"]?["data_dir"]?.text ?? "default")
+                }
+                .font(.callout)
+                HStack(spacing: 12) {
+                    Button("Edit stack.toml") { StackCLI.openInEditor(report.stackToml) }
+                    Button("Edit users.toml") { StackCLI.openInEditor(report.usersToml) }
+                        .disabled(!FileManager.default.fileExists(atPath: report.usersToml))
+                }
+                .buttonStyle(.link).font(.caption)
+                Text("A change applies with stack up <stacklet>. Doctor lists what still runs the old setting.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("SETUP").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
+            Text(value).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // ── What each row says ───────────────────────────────────────────────
+
+    private var family: String {
+        let people = report.users.compactMap { user -> String? in
+            guard let name = user["name"]?.text ?? user["id"]?.text else { return nil }
+            return user["role"]?.text == "admin" ? "\(name) (admin)" : name
+        }
+        if people.isEmpty { return "nobody in users.toml" }
+        let owner = config["core"]?["stack_owner"]?.text.map { "\($0): " } ?? ""
+        return owner + people.joined(separator: ", ")
+    }
+
+    private var address: String {
+        if let domain = config["core"]?["domain"]?.text { return "Domain mode, *.\(domain)" }
+        if let host = config["core"]?["host"]?.text { return "Port mode, \(host)" }
+        return "Port mode"
+    }
+
+    private var language: String {
+        let parts = [config["core"]?["language"]?.text, config["core"]?["timezone"]?.text].compactMap { $0 }
+        return parts.isEmpty ? "default" : parts.joined(separator: ", ")
+    }
+
+    private var ai: String {
+        let section = config["ai"]
+        let model = section?["default"]?.text
+        let server = section?["openai_url"]?.text.flatMap { URL(string: $0)?.host }
+        switch section?["provider"]?.text {
+        case nil, "local":
+            return model.map { "This Mac, \($0)" } ?? "This Mac"
+        case let provider?:
+            return [model, server.map { "at \($0)" }].compactMap { $0 }.joined(separator: " ")
+                .ifEmpty(provider)
+        }
+    }
+
+    /// `[updates] schedule` is a cron expression with seconds. The common
+    /// daily form reads as a time; anything else is shown as written.
+    private var updates: String {
+        guard let cron = config["updates"]?["schedule"]?.text else { return "default" }
+        let f = cron.split(separator: " ").map(String.init)
+        if f.count == 6, f[3...].allSatisfy({ $0 == "*" }), let m = Int(f[1]), let h = Int(f[2]) {
+            return String(format: "Daily at %02d:%02d", h, m)
+        }
+        return cron
+    }
+}
+
+private extension String {
+    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
 }
 
 struct HostMetrics: View {
