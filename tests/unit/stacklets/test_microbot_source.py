@@ -112,6 +112,12 @@ class TestIsBotUser:
         assert MicroBot.is_bot_user("@archivist-bot:simpson")
         assert MicroBot.is_bot_user("scribe-bot")  # bare localpart
 
+    def test_the_tech_admin_is_not_a_person(self):
+        # It stays joined to every room it created (Synapse's admin join
+        # needs that), so counting it as a person would make every
+        # one-person room look shared.
+        assert MicroBot.is_bot_user("@stackadmin:simpson")
+
     def test_humans(self):
         assert not MicroBot.is_bot_user("@homer:simpson")
         assert not MicroBot.is_bot_user("@marge:simpson")

@@ -136,6 +136,18 @@ def test_human_members_excludes_all_bots(tmp_path):
     assert bot._count_humans_in_room(room) == 1  # not 2 — bots don't count
 
 
+def test_a_room_made_by_the_stack_is_personal_with_one_person_in_it(tmp_path):
+    # `stack messages room create` leaves the tech admin in the room. Lisa
+    # alone with the archivist is still Lisa's room: her pasted notes are
+    # filed without a 📌 and under her name.
+    bot = _bot(tmp_path)
+    room = _room_with({
+        "@lisa:server": 1, "@archivist-bot:server": 1, "@stackadmin:server": 1,
+    })
+    assert bot._human_members(room) == ["@lisa:server"]
+    assert bot._scope_owner_localpart(room, "@lisa:server", "personal") == "lisa"
+
+
 def test_scope_owner_is_sole_human_not_bot_sender(tmp_path):
     # The bot-sender fix: a personal topic from a bot-posted email nests
     # under the room's lone human, not under @mail-bot.

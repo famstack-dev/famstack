@@ -76,6 +76,7 @@ from nio.api import RelationshipType
 import voice
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
+from stack.users import TECH_ADMIN_USERNAME
 
 # The framework's "I picked this up and I'm working on it" signal. A
 # bot reacts with 👀 on the source message the moment it starts a
@@ -832,15 +833,18 @@ class MicroBot:
 
     @staticmethod
     def is_bot_user(user_id: str) -> bool:
-        """Whether a Matrix user is a famstack bot, by convention.
+        """Whether a Matrix user is one of the stack's own accounts, not a person.
 
         Bot accounts have a localpart ending in ``-bot`` (mail-bot,
-        archivist-bot, scribe-bot, …). The framework owns this one
-        definition so every surface agrees on it — counting the humans in
-        a room (scope/visibility), ignoring bot-to-bot chatter, deciding
-        on-behalf-of attribution. A non-bot string is simply not a bot.
+        archivist-bot, scribe-bot, …). The tech admin is the other one: it
+        creates every room and has to stay joined, because Synapse's admin
+        join only works in rooms it is in, but nobody talks as it. The
+        framework owns this one definition so every surface agrees on it:
+        counting the humans in a room (scope/visibility), ignoring
+        bot-to-bot chatter, deciding on-behalf-of attribution.
         """
-        return (user_id or "").split(":")[0].lstrip("@").endswith("-bot")
+        localpart = (user_id or "").split(":")[0].lstrip("@")
+        return localpart.endswith("-bot") or localpart == TECH_ADMIN_USERNAME
 
     async def post_source_message(
         self,
