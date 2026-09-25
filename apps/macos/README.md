@@ -1,8 +1,9 @@
 # Menu bar app (prototype)
 
-A native macOS menu bar app for the stack on this Mac. It answers, in this
-order: is everything fine, what needs me, what is running, what broke
-recently, is the data backed up, and how full is the machine.
+A native macOS menu bar app for the stack on this Mac. **Overview** answers,
+in this order: is everything fine, what needs me, what is running, what
+broke recently, and how full is the machine. **Setup** shows how the stack is
+configured, what is not installed yet, and which checkout the app uses.
 
 - **Needs attention**: `stack doctor` findings, a backup that failed or is
   overdue (when the beta backup stacklet is installed), a disk above 90%. Each item carries its fix command; `up`,
@@ -30,6 +31,13 @@ Needs macOS 14 and the Command Line Tools; no Xcode.
 ```bash
 apps/macos/build.sh          # prints the path of build/famstack.app
 open apps/macos/build/famstack.app
+```
+
+To check a layout change without opening the menu, render both tabs from the
+real data to PNG files (`<prefix>-overview.png`, `<prefix>-setup.png`):
+
+```bash
+apps/macos/build/famstack.app/Contents/MacOS/StackMenu --snapshot /tmp/panel
 ```
 
 ## Which checkout

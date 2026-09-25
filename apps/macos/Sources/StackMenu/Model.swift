@@ -260,6 +260,7 @@ func parseTimestamp(_ text: String) -> Date? {
 }
 
 func relative(_ date: Date, _ now: Date = Date()) -> String {
+    if abs(now.timeIntervalSince(date)) < 60 { return "just now" }
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .full
     return formatter.localizedString(for: date, relativeTo: now)
