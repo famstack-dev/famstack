@@ -1,20 +1,23 @@
 import { QuartzComponent, QuartzComponentConstructor, QuartzComponentProps } from "./types"
-import { PageList } from "./PageList"
 import { FullSlug, resolveRelative } from "../util/path"
-import { familyModel, L } from "./familyModel"
+import { familyModel, fmtDate, L } from "./familyModel"
 
 // NEW COMPONENT (not an upstream override): the body of a page the
-// FamilyLists emitter writes: a topic without an about page, a document
-// type, needs attention, all notes, all bookmarks. Sections without
-// entries are left out, so a topic with only tasks shows only tasks.
+// FamilyLists emitter writes, such as a topic without an about page, a
+// document type, a year, or all notes. Sections without entries are left
+// out, so a topic with only tasks shows only tasks.
+//
+// Rows are our own rather than upstream's PageList: a date, the title,
+// and one line saying what it is (type, sender, people). PageList shows
+// raw tags instead, which in this vault includes "Person: Marge".
 
-const FamilyList: QuartzComponent = (props: QuartzComponentProps) => {
-  const { ctx, fileData, allFiles } = props
+const FamilyList: QuartzComponent = ({ ctx, fileData, allFiles }: QuartzComponentProps) => {
   const here = fileData.slug as FullSlug
-  const page = familyModel(ctx, allFiles).lists.get(here)
+  const model = familyModel(ctx, allFiles)
+  const page = model.lists.get(here)
   if (!page) return null
 
-  const bySlug = new Map(allFiles.map((f) => [f.slug, f]))
+  const bySlug = new Map(allFiles.map((f) => [String(f.slug), f]))
   const sections = page.sections.filter((s) => s.tasks?.length || s.slugs?.length)
   const multi = sections.length > 1
 
@@ -35,20 +38,30 @@ const FamilyList: QuartzComponent = (props: QuartzComponentProps) => {
               {s.tasks.map((t) => (
                 <li>
                   <span class="fl-box" aria-hidden="true"></span>
-                  <a class="internal" href={resolveRelative(here, t.slug as FullSlug)}>
-                    {t.text}
-                  </a>
+                  <a href={resolveRelative(here, t.slug as FullSlug)}>{t.text}</a>
                 </li>
               ))}
             </ul>
           )}
           {s.slugs && (
-            <PageList
-              {...props}
-              allFiles={s.slugs.map((slug) => bySlug.get(slug as FullSlug)!).filter(Boolean)}
-              // Keep the model's order: newest filed first.
-              sort={() => 0}
-            />
+            <ul class="fl-rows">
+              {s.slugs.map((slug) => {
+                const f = bySlug.get(slug)
+                if (!f) return null
+                const row = model.describe(f)
+                return (
+                  <li>
+                    <span class="fl-date">{row.date ? fmtDate(row.date) : ""}</span>
+                    <div class="fl-main">
+                      <a class="internal" href={resolveRelative(here, slug as FullSlug)}>
+                        {f.frontmatter?.title ?? slug}
+                      </a>
+                      {row.meta.length > 0 && <span class="fl-meta">{row.meta.join(" · ")}</span>}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </section>
       ))}
@@ -59,14 +72,19 @@ const FamilyList: QuartzComponent = (props: QuartzComponentProps) => {
 FamilyList.css = `
 .family-list .fl-intro {
   color: var(--gray);
-  margin-top: 0;
+  margin: 0 0 1.2rem;
 }
 
 .family-list .fl-section h2 {
   display: flex;
   align-items: baseline;
   gap: 0.6rem;
-  margin-top: 2rem;
+  margin: 2rem 0 0.4rem;
+  font-size: 1.35rem;
+}
+
+.family-list .fl-section:first-of-type h2 {
+  margin-top: 1.4rem;
 }
 
 .family-list .fl-count {
@@ -76,27 +94,74 @@ FamilyList.css = `
   color: var(--gray);
 }
 
-.family-list .fl-tasks {
+.family-list ul {
   list-style: none;
   padding: 0;
-  margin: 0.5rem 0 1rem;
+  margin: 0;
+}
+
+.family-list .fl-rows li,
+.family-list .fl-tasks li {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid rgba(61, 143, 160, 0.14);
+}
+
+.family-list .fl-rows li:last-child,
+.family-list .fl-tasks li:last-child {
+  border-bottom: 0;
+}
+
+.family-list .fl-date {
+  font-family: var(--codeFont);
+  font-size: 0.75rem;
+  color: var(--gray);
+  white-space: nowrap;
+}
+
+.family-list .fl-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.family-list .fl-main > a {
+  font-weight: 600;
+  color: var(--dark);
+}
+
+.family-list .fl-meta {
+  font-size: 0.85rem;
+  color: var(--gray);
 }
 
 .family-list .fl-tasks li {
-  display: flex;
-  gap: 0.7rem;
-  align-items: baseline;
-  padding: 0.45rem 0;
-  border-bottom: 1px solid var(--lightgray);
+  grid-template-columns: 1.2rem 1fr;
+  gap: 0.6rem;
+}
+
+.family-list .fl-tasks a {
+  color: var(--darkgray);
+  font-weight: 400;
 }
 
 .family-list .fl-box {
-  flex: none;
-  width: 0.85rem;
-  height: 0.85rem;
+  width: 0.9rem;
+  height: 0.9rem;
   border: 1.5px solid var(--secondary);
   border-radius: 3px;
-  transform: translateY(0.1rem);
+  transform: translateY(0.15rem);
+}
+
+@media all and (max-width: 600px) {
+  .family-list .fl-rows li {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
 }
 `
 

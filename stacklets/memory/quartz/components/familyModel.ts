@@ -52,6 +52,22 @@ const LABELS = {
     topicIntro: "Everything filed about this topic, newest first.",
     notesIntro: "Every note the family has saved, newest first.",
     bookmarksIntro: "Every link the family has saved, newest first.",
+    documentsIntro: "Every document the family has filed. The latest are below; the menu sorts them by type, year and sender.",
+    yearIntro: "Every document dated this year, newest first.",
+    latest: "Latest",
+    document: "Document",
+    note: "Note",
+    bookmark: "Link",
+    email: "Email",
+    person: "Person",
+    topic: "Topic",
+    sender: "Sender",
+    filedBy: "filed by",
+    updated: "updated",
+    familyWiki: "family wiki",
+    welcome: "Everything the family has kept: documents, notes, the diary, and the people they belong to.",
+    welcomeHint: "Start with the menu on the left, or search for a name.",
+    editOnForgejo: "Edit on Forgejo",
   },
   de: {
     nav: "Familienwiki",
@@ -79,10 +95,30 @@ const LABELS = {
     topicIntro: "Alles, was zu diesem Thema abgelegt ist, das Neueste zuerst.",
     notesIntro: "Alle Notizen der Familie, die neuesten zuerst.",
     bookmarksIntro: "Alle Links der Familie, die neuesten zuerst.",
+    documentsIntro: "Alle Dokumente der Familie. Unten die neuesten; im Menü nach Art, Jahr und Absender sortiert.",
+    yearIntro: "Alle Dokumente aus diesem Jahr, die neuesten zuerst.",
+    latest: "Neueste",
+    document: "Dokument",
+    note: "Notiz",
+    bookmark: "Link",
+    email: "E-Mail",
+    person: "Person",
+    topic: "Thema",
+    sender: "Absender",
+    filedBy: "abgelegt von",
+    updated: "aktualisiert",
+    familyWiki: "Familienwiki",
+    welcome: "Alles, was die Familie aufbewahrt: Dokumente, Notizen, das Tagebuch und die Menschen, zu denen sie gehören.",
+    welcomeHint: "Fangt im Menü links an oder sucht nach einem Namen.",
+    editOnForgejo: "In Forgejo bearbeiten",
   },
 } as const
 
 export const L = LABELS[lang]
+
+export const locale = lang === "de" ? "de-DE" : "en-US"
+const dateFormat = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" })
+export const fmtDate = (d: Date) => dateFormat.format(d)
 
 // ── Tuning ───────────────────────────────────────────────────────────────
 
@@ -217,9 +253,20 @@ export interface ListPage {
   sections: ListSection[]
 }
 
+// What the page header shows above and below a page's title.
+export interface Head {
+  kicker: string[]
+  meta: string[]
+  date?: Date
+  chips: { label: string; slug?: string }[]
+}
+
 export interface Model {
   nav: NavNode[]
   lists: Map<string, ListPage>
+  head: (slug: string) => Head
+  crumbs: (slug: string) => NavNode[]
+  describe: (f: QuartzPluginData) => { date?: Date; meta: string[] }
 }
 
 type Kind = "document" | "note" | "bookmark" | "email"
@@ -230,6 +277,8 @@ interface Rec {
   slug: string
   kind: Kind
   filed?: Date
+  // The date a list sorts by: a document's own date, else when it was filed.
+  dated?: Date
 }
 
 interface Topic {
@@ -265,7 +314,7 @@ const openTasks = (text: string) =>
   [...text.matchAll(/^\s*[-*] \[ \] (.+)$/gm)].map((m) => m[1].trim())
 
 const newest = (a?: Date, b?: Date) => (!a ? b : !b ? a : a > b ? a : b)
-const byFiledDesc = (a: Rec, b: Rec) => (b.filed?.getTime() ?? 0) - (a.filed?.getTime() ?? 0)
+const byDatedDesc = (a: Rec, b: Rec) => (b.dated?.getTime() ?? 0) - (a.dated?.getTime() ?? 0)
 
 // Every page of a build renders the sidebar, and the emitters each pass
 // their own copy of the file list, so the model is kept per list.
@@ -319,6 +368,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
   }
 
   const records: Rec[] = []
+  const recTopics = new Map<string, Topic[]>()
   const people: NavNode[] = []
   const diaryYears = new Map<string, { slug: string; label: string; months: NavNode[] }>()
   let diaryRoot: string | undefined
@@ -369,6 +419,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       kind: meta.type as Kind,
       filed: parseDate(meta.timestamp) ?? parseDate(meta.date) ?? f.dates?.modified,
     }
+    rec.dated = meta.type === "document" ? parseDate(meta.date) ?? rec.filed : rec.filed
     records.push(rec)
 
     // A record belongs to every topic its category or tags name, and to
@@ -380,6 +431,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       if (entry) hits.add(topicFor(entry))
     }
     if (segs[0] === bucket && segs.length > 2 && !KIND_FOLDERS.has(segs[1])) hits.add(folderTopic(segs[1]))
+    recTopics.set(slug, [...hits])
     for (const t of hits) {
       t.records.push(rec)
       t.last = newest(t.last, rec.filed)
@@ -388,7 +440,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
 
   const lists = new Map<string, ListPage>()
   const addList = (page: ListPage) => lists.set(page.slug, page)
-  const slugs = (rs: Rec[]) => [...rs].sort(byFiledDesc).map((r) => r.slug)
+  const slugs = (rs: Rec[]) => [...rs].sort(byDatedDesc).map((r) => r.slug)
 
   // Every visible topic gets a page: its own about page when the curator
   // wrote one, otherwise a list page with its tasks and records.
@@ -489,14 +541,28 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       return { label: g.label, slug, count: g.recs.length }
     })
 
-  const years = new Map<string, number>()
+  const years = new Map<string, Rec[]>()
   for (const r of docs) {
     const y = r.slug.split("/")[2]
-    if (/^\d{4}$/.test(y)) years.set(y, (years.get(y) ?? 0) + 1)
+    if (/^\d{4}$/.test(y)) years.set(y, [...(years.get(y) ?? []), r])
   }
   const yearNodes = [...years.entries()]
     .sort((a, b) => Number(b[0]) - Number(a[0]))
-    .map(([y, n]) => ({ label: y, slug: `${bucket}/documents/${y}/index`, count: n }))
+    .map(([y, rs]) => {
+      const slug = `lists/year/${y}`
+      addList({ slug, title: y, intro: L.yearIntro, sections: [{ slugs: slugs(rs) }] })
+      return { label: y, slug, count: rs.length }
+    })
+  if (docs.length)
+    addList({
+      slug: "lists/documents",
+      title: L.documents,
+      intro: L.documentsIntro,
+      sections: [
+        { heading: L.needsAttention, slugs: slugs(attention) },
+        { heading: L.latest, slugs: slugs(docs).slice(0, 30) },
+      ],
+    })
 
   // Senders: correspondent pages, the ones that wrote most recently first.
   const corrPages = new Map<string, string>()
@@ -561,8 +627,115 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     nav.push({ key: "people", label: L.people, children: people.sort((a, b) => a.label.localeCompare(b.label, lang)) })
   if (areaNodes.length) nav.push({ key: "topics", label: L.topics, children: areaNodes })
   if (docs.length || emails.length)
-    nav.push({ key: "documents", label: L.documents, slug: `${bucket}/documents/index`, count: docs.length, children: docChildren })
+    nav.push({ key: "documents", label: L.documents, slug: "lists/documents", count: docs.length, children: docChildren })
   if (captureNodes.length) nav.push({ key: "notes", label: L.notesLinks, children: captureNodes })
 
-  return { nav, lists }
+  // ── page header and breadcrumbs ──
+  const bySlug = new Map(allFiles.map((f) => [String(f.slug), f]))
+  const peopleBy = new Map(people.map((p) => [fold(p.label), p.slug!]))
+  const personChip = (name: string) => {
+    const slug = peopleBy.get(fold(name)) ?? peopleBy.get(fold(name.split(" ")[0]))
+    return { label: name.charAt(0).toUpperCase() + name.slice(1), slug }
+  }
+  const kindLabel: Record<string, string> = { note: L.note, bookmark: L.bookmark, email: L.email }
+
+  const describe = (f: QuartzPluginData) => {
+    const m = fm(f)
+    const meta: string[] = []
+    let date: Date | undefined
+    if (m.type === "document") {
+      const e = typeIdx.get(fold(String(m.document_type ?? "")))
+      if (m.document_type) meta.push(e ? nameOf(e) : String(m.document_type))
+      if (m.correspondent) meta.push(String(m.correspondent))
+      date = parseDate(m.date) ?? parseDate(m.timestamp)
+    } else {
+      meta.push(kindLabel[m.type] ?? String(m.type))
+      if (m.type === "bookmark" && m.resource) {
+        try {
+          meta.push(new URL(String(m.resource)).hostname.replace(/^www\./, ""))
+        } catch {}
+      }
+      date = parseDate(m.timestamp) ?? parseDate(m.date)
+    }
+    const persons = asList(m.persons)
+    if (persons.length) meta.push(persons.map((p) => personChip(p).label).join(", "))
+    return { date, meta }
+  }
+
+  const trim = (s?: string) => (s ?? "").replace(/\/index$/, "")
+  const pathTo = (nodes: NavNode[], slug: string, trail: NavNode[] = []): NavNode[] | undefined => {
+    for (const n of nodes) {
+      if (n.key === "recent") continue
+      if (n.slug && trim(n.slug) === trim(slug)) return trail
+      const hit = n.children && pathTo(n.children, slug, [...trail, n])
+      if (hit) return hit
+    }
+    return undefined
+  }
+  const topLevel = (key: string) => nav.find((n) => n.key === key)
+  const crumbs = (slug: string): NavNode[] => {
+    const start = nav[0]
+    const inNav = pathTo(nav, slug)
+    if (inNav) return [start, ...inNav]
+    const m = fm(bySlug.get(slug) ?? ({} as QuartzPluginData))
+    const topic = recTopics.get(slug)?.find((t) => t.room && t.slug)
+    if (topic) {
+      const trail = pathTo(nav, topic.slug!)
+      if (trail) return [start, ...trail, topicNode(topic)]
+    }
+    if (m.type === "document") {
+      const e = typeIdx.get(fold(String(m.document_type ?? "")))
+      const node = topLevel("documents")?.children?.find((c) => c.label === L.byType)?.children
+        ?.find((c) => c.slug === `lists/type/${e?.id ?? ""}`)
+      return [start, topLevel("documents")!, ...(node ? [node] : [])].filter(Boolean)
+    }
+    if (m.type === "correspondent") {
+      const docsNode = topLevel("documents")
+      const senders = docsNode?.children?.find((c) => c.label === L.senders)
+      return [start, ...(docsNode ? [docsNode] : []), ...(senders ? [senders] : [])]
+    }
+    if (m.type === "note" || m.type === "bookmark") {
+      const notesNode = topLevel("notes")
+      const leaf = notesNode?.children?.find((c) => c.slug === `lists/${m.type}s`)
+      return [start, ...(notesNode ? [notesNode] : []), ...(leaf ? [leaf] : [])]
+    }
+    return [start]
+  }
+
+  const head = (slug: string): Head => {
+    const f = bySlug.get(slug)
+    const m = fm(f ?? ({} as QuartzPluginData))
+    const list = lists.get(slug)
+    if (list) {
+      const trail = crumbs(slug).slice(1)
+      return { kicker: trail.map((n) => n.label), meta: [], chips: [] }
+    }
+    if (RECORD_KINDS.has(m.type)) {
+      const d = describe(f!)
+      const [first, ...rest] = d.meta
+      const kicker = m.type === "document" ? [L.document, first] : [first]
+      const topicsOf = (recTopics.get(slug) ?? []).filter((t) => t.slug)
+      return {
+        kicker: kicker.filter(Boolean),
+        meta: m.type === "document" ? rest.slice(0, 1) : m.filed_by ? [`${L.filedBy} ${personChip(String(m.filed_by)).label}`] : [],
+        date: d.date,
+        chips: [
+          ...topicsOf.map((t) => ({ label: t.label, slug: t.slug })),
+          ...asList(m.persons).map(personChip),
+        ],
+      }
+    }
+    const updated = f?.dates?.modified
+    if (m.type === "person") return { kicker: [L.person], meta: [], date: updated, chips: [] }
+    if (m.type === "correspondent") return { kicker: [L.sender], meta: [], date: updated, chips: [] }
+    if (m.type === "topic") {
+      const t = [...topics.values()].find((x) => x.slug === slug)
+      const area = onto.areas.find((a) => a.id === t?.area)
+      return { kicker: [L.topic, ...(area ? [nameOf(area)] : [])], meta: [], date: updated, chips: [] }
+    }
+    if (slug.startsWith(`${bucket}/diary/`)) return { kicker: [L.diary], meta: [], date: updated, chips: [] }
+    return { kicker: [], meta: [], date: slug === "index" ? undefined : updated, chips: [] }
+  }
+
+  return { nav, lists, head, crumbs, describe }
 }

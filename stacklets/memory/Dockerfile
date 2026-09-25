@@ -83,6 +83,8 @@ COPY quartz/components/Welcome.tsx ./quartz/components/Welcome.tsx
 COPY quartz/components/familyModel.ts ./quartz/components/familyModel.ts
 COPY quartz/components/FamilyNav.tsx ./quartz/components/FamilyNav.tsx
 COPY quartz/components/FamilyList.tsx ./quartz/components/FamilyList.tsx
+COPY quartz/components/FamilyHead.tsx ./quartz/components/FamilyHead.tsx
+COPY quartz/components/FamilyCrumbs.tsx ./quartz/components/FamilyCrumbs.tsx
 COPY quartz/components/scripts/familyNav.inline.ts ./quartz/components/scripts/familyNav.inline.ts
 COPY quartz/plugins/familyLists.tsx ./quartz/plugins/emitters/familyLists.tsx
 # The shipped ontology, for the topic areas a vault installed earlier
