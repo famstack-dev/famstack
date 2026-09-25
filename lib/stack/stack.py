@@ -751,6 +751,10 @@ class Stack:
             s["online"] = docker_state == "running"
             s["degraded"] = False
             s["health_issues"] = []
+            # The address a person opens, for clients that are not on this
+            # Mac and cannot use localhost.
+            if s.get("port"):
+                s["url"] = self._public_url(sid, s["port"])
 
             # A stacklet whose manifest renders a `remote` address is
             # served by another machine. Its row reports that server,
