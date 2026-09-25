@@ -17,14 +17,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
 from . import caddy
 from . import docker
 from . import doctor
+from . import logscan
 from .commands import COMMANDS
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack
@@ -1277,6 +1280,53 @@ def handle_logs(stck, args):
         print(output)
 
 
+# ── errors: what an admin checks first ────────────────────────────────────
+
+_DURATION = re.compile(r"^\d+[smh]$")
+
+
+def handle_errors(stck, args):
+    """Error lines from every stacklet's containers over a recent window.
+
+    One question across the whole stack, so a failure in a sidecar nobody
+    watches is seen without opening each stacklet's log. What counts as an
+    error lives in logscan.py; this is the I/O around it.
+    """
+    since = args.since
+    if not _DURATION.match(since):
+        print_error({"error": f"--since takes a duration such as 30m or 24h, not '{since}'"})
+        sys.exit(1)
+
+    known = {s["id"] for s in stck.discover()}
+    containers = [c for c in docker.stack_containers() if c["stacklet"] in known]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        scans = list(pool.map(
+            lambda c: logscan.scan(docker.container_logs(c["name"], since)), containers))
+
+    found = [{"stacklet": c["stacklet"], "container": c["name"], **scan}
+             for c, scan in zip(containers, scans) if scan["count"]]
+    found.sort(key=lambda e: e["last_at"] or "", reverse=True)
+    report = {"since": since, "scanned": len(containers), "containers": found}
+
+    if args.json:
+        json.dump(report, sys.stdout, indent=2)
+        print()
+        return
+
+    print()
+    if not found:
+        print(f"  {GREEN}✓{RESET}  No errors in the last {since} "
+              f"across {len(containers)} containers.\n")
+        return
+    for entry in found:
+        noun = "error" if entry["count"] == 1 else "errors"
+        print(f"  {RED}✗{RESET}  {BOLD}{entry['container']}{RESET}  "
+              f"{entry['count']} {noun} in the last {since}")
+        for line in entry["lines"][-3:]:
+            print(f"     {DIM}{line['text'][:160]}{RESET}")
+        print(f"     {DIM}more:{RESET} {TEAL}./stack logs {entry['stacklet']}{RESET}\n")
+
+
 def handle_restart(stck, args):
     cli = CLI(stck)
 
@@ -1873,6 +1923,7 @@ DISPATCH = {
     "restart": handle_restart,
     "setup": handle_setup,
     "logs": handle_logs,
+    "errors": handle_errors,
     "version": handle_version,
     "update": handle_update,
 }
@@ -1894,6 +1945,7 @@ _HELP_COMMANDS = [
         ("config admin",       "Print tech admin credentials"),
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
+        ("errors [--since 24h]", "Recent error lines across every stacklet"),
     ]),
     ("Setup", [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
@@ -2014,6 +2066,9 @@ def main():
     p.add_argument("stacklet")
     p.add_argument("--tail", default=200, type=int)
     p.add_argument("--grep", default=None, help="Filter log lines with grep pattern")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("errors")
+    p.add_argument("--since", default="24h", help="How far back to look: 30m, 24h, 168h")
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
     # Stacklet CLI plugins

@@ -382,6 +382,26 @@ def containers_for(stacklet_id: str) -> list[dict]:
     return _ps(f"{_PROJECT_LABEL}={_PROJECT_PREFIX}{stacklet_id}")
 
 
+def stack_containers() -> list[dict]:
+    """Every container of every stacklet, in one query. Same dicts as
+    `containers_for`. Projects of other tools on the same Docker are left
+    out; a `stack-` project whose stacklet no longer exists is not, so
+    callers filter by the stacklets they know."""
+    return _ps(_PROJECT_LABEL)
+
+
+def container_logs(name: str, since: str) -> str:
+    """A container's log since `since` (a docker duration such as `24h`),
+    stdout and stderr together, each line prefixed with its timestamp so
+    the two streams can be put back in order."""
+    try:
+        r = _docker("logs", "--since", since, "--timestamps", name,
+                    capture_output=True, text=True, timeout=60)
+        return r.stdout + r.stderr
+    except Exception:
+        return ""
+
+
 def _parse_env(text: str) -> dict:
     """Turn `docker inspect`'s KEY=VALUE lines into a dict."""
     env = {}
