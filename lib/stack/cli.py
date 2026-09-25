@@ -1193,7 +1193,7 @@ def handle_config(stck, args):
     if action == "admin":
         _config_admin(stck)
         return
-    path = stck.root / "stack.toml"
+    path = stck.instance_dir / "stack.toml"
     if not path.exists():
         print("  No stack.toml found.")
         return
