@@ -1,7 +1,12 @@
 import AppKit
 import Foundation
 
-// ── App state: the last status, what is running, what failed ──────────────
+// ── App state: what the CLI last said, what is running, what failed ───────
+//
+// Two refresh rates. `status` is cheap and drives the icon, so it runs every
+// minute. The rest (doctor, errors, host, backup) take two to three seconds
+// each, so they run when the panel opens, at most once a minute, and every
+// ten minutes in the background so the icon also reflects the doctor.
 
 @MainActor
 final class StackStore: ObservableObject {
@@ -9,6 +14,14 @@ final class StackStore: ObservableObject {
     @Published private(set) var status: StackStatus?
     @Published private(set) var loadError: String?
     @Published private(set) var refreshing = false
+
+    @Published private(set) var doctor: DoctorReport?
+    @Published private(set) var errors: ErrorsReport?
+    @Published private(set) var host: HostReport?
+    @Published private(set) var backup: BackupReport?
+    @Published private(set) var checking = false
+    @Published private(set) var checkedAt: Date?
+
     /// Stacklet id (or "" for the whole stack) to the verb running on it.
     @Published private(set) var busy: [String: String] = [:]
     @Published var lastFailure: ActionFailure?
@@ -20,15 +33,24 @@ final class StackStore: ObservableObject {
     }
 
     private static let checkoutKey = "checkout"
-    private static let pollInterval: TimeInterval = 60
-    private var timer: Timer?
+    private static let statusInterval: TimeInterval = 60
+    private static let detailInterval: TimeInterval = 600
+    private var timers: [Timer] = []
 
     init() {
         checkout = Self.resolveCheckout()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refresh() }
+        timers = [
+            Timer.scheduledTimer(withTimeInterval: Self.statusInterval, repeats: true) { [weak self] _ in
+                Task { @MainActor in await self?.refresh() }
+            },
+            Timer.scheduledTimer(withTimeInterval: Self.detailInterval, repeats: true) { [weak self] _ in
+                Task { @MainActor in await self?.check() }
+            },
+        ]
+        Task {
+            await refresh()
+            await check()
         }
-        Task { await refresh() }
     }
 
     private var cli: StackCLI? { checkout.map(StackCLI.init) }
@@ -47,12 +69,49 @@ final class StackStore: ObservableObject {
         }
     }
 
-    /// What the menu bar icon shows, worst state first.
+    /// The slower reports, all at once. One failing leaves the others.
+    func check() async {
+        guard let cli, !checking else { return }
+        checking = true
+        defer { checking = false }
+        let wantsBackup = status?.isInstalled("backup") ?? false
+        async let doctor = try? cli.doctor()
+        async let errors = try? cli.errors()
+        async let host = try? cli.host()
+        async let backup = wantsBackup ? try? cli.backup() : nil
+        (self.doctor, self.errors, self.host, self.backup) = await (doctor, errors, host, backup)
+        checkedAt = Date()
+    }
+
+    /// When the panel opens: status always, the rest unless just done.
+    func panelOpened() async {
+        await refresh()
+        if checkedAt.map({ Date().timeIntervalSince($0) > 60 }) ?? true {
+            await check()
+        }
+    }
+
+    // ── Derived ──────────────────────────────────────────────────────────
+
+    var hostFigures: HostFigures? { host?.figures ?? status?.host }
+
+    var attention: [Attention] {
+        Attention.collect(status: status, doctor: doctor, backup: backup, disk: hostFigures)
+    }
+
+    func memory(of stacklet: String) -> Int? {
+        host?.stacklets.first { $0.id == stacklet }?.memoryBytes
+    }
+
+    /// What the menu bar icon shows, worst state first. Only errors turn it
+    /// into a warning: a warning that never clears (no backup set up) would
+    /// teach the admin to stop looking at the icon.
     var summary: Summary {
         guard checkout != nil else { return .unconfigured }
         guard let status, loadError == nil else { return .unreachable }
         if !busy.isEmpty { return .busy }
         if status.installed.contains(where: { $0.health.needsAttention }) { return .attention }
+        if attention.contains(where: { $0.level == .error }) { return .attention }
         return .healthy
     }
 
@@ -71,7 +130,7 @@ final class StackStore: ObservableObject {
 
     // ── Acting ───────────────────────────────────────────────────────────
 
-    /// Runs a lifecycle verb in the background, then re-reads the status.
+    /// Runs a lifecycle verb in the background, then re-reads everything.
     /// One verb per stacklet at a time; the CLI serialises the rest.
     func perform(_ verb: String, _ stacklet: String? = nil) async {
         guard let cli else { return }
@@ -85,6 +144,18 @@ final class StackStore: ObservableObject {
             lastFailure = ActionFailure(command: command, message: result.tail())
         }
         await refresh()
+        await check()
+    }
+
+    /// A doctor fix: `stack up|restart|down <id>` runs in the background like
+    /// the row actions; anything else opens in Terminal, where it can be read.
+    func apply(fix: String) {
+        let words = fix.split(separator: " ").map(String.init)
+        if words.count == 3, words[0] == "stack", ["up", "restart", "down"].contains(words[1]) {
+            Task { await perform(words[1], words[2]) }
+        } else {
+            cli?.openInTerminal(fix: fix)
+        }
     }
 
     func openInTerminal(_ arguments: [String]) {
@@ -114,7 +185,11 @@ final class StackStore: ObservableObject {
         UserDefaults.standard.set(url.path, forKey: Self.checkoutKey)
         checkout = url
         status = nil
-        Task { await refresh() }
+        doctor = nil; errors = nil; host = nil; backup = nil; checkedAt = nil
+        Task {
+            await refresh()
+            await check()
+        }
     }
 
     /// The saved choice, else `~/famstack`, where the README's clone lands

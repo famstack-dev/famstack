@@ -12,25 +12,27 @@ struct StackCLI {
 
     struct Result {
         let exitCode: Int32
-        let output: String
+        let stdout: String
+        let stderr: String
 
         var succeeded: Bool { exitCode == 0 }
 
-        /// The last lines are where the CLI says what went wrong.
+        /// The last lines are where the CLI says what went wrong. Both
+        /// streams, because commands print their progress to either.
         func tail(_ lines: Int = 6) -> String {
-            output.split(separator: "\n", omittingEmptySubsequences: true)
+            (stdout + "\n" + stderr).split(separator: "\n", omittingEmptySubsequences: true)
                 .suffix(lines).joined(separator: "\n")
         }
     }
 
     enum Failure: LocalizedError {
         case exited(Result)
-        case undecodable(String)
+        case undecodable(command: String, reason: String)
 
         var errorDescription: String? {
             switch self {
             case .exited(let result): result.tail(3)
-            case .undecodable(let reason): "Unexpected output from stack status: \(reason)"
+            case .undecodable(let command, let reason): "Unexpected output from stack \(command): \(reason)"
             }
         }
     }
@@ -43,17 +45,38 @@ struct StackCLI {
             && fm.fileExists(atPath: url.appendingPathComponent("stacklets").path)
     }
 
-    func status() async throws -> StackStatus {
-        let result = await run(["status", "--json"])
-        guard result.succeeded else { throw Failure.exited(result) }
+    // ── Reading ──────────────────────────────────────────────────────────
+
+    func status() async throws -> StackStatus { try await json(["status", "--json"]) }
+    func doctor() async throws -> DoctorReport { try await json(["doctor", "--json"]) }
+    func errors() async throws -> ErrorsReport { try await json(["errors", "--json"]) }
+    func host() async throws -> HostReport { try await json(["host", "--json"]) }
+    /// Prints JSON because its output is a pipe; it takes no `--json`.
+    func backup() async throws -> BackupReport { try await json(["backup", "status"]) }
+
+    /// Runs a command and decodes its JSON output.
+    ///
+    /// The exit code alone does not decide: `doctor` exits 1 when it has
+    /// found an error and still prints its report. Anything before the first
+    /// `{` line is skipped, such as a one-time notice the CLI prints on the
+    /// first run after a config change.
+    private func json<T: Decodable>(_ arguments: [String]) async throws -> T {
+        let result = await run(arguments)
+        let lines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("{") }) else {
+            throw Failure.exited(result)
+        }
+        let body = lines[start...].joined(separator: "\n")
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
-            return try decoder.decode(StackStatus.self, from: Data(result.output.utf8))
+            return try decoder.decode(T.self, from: Data(body.utf8))
         } catch {
-            throw Failure.undecodable(String(describing: error))
+            throw Failure.undecodable(command: arguments.joined(separator: " "), reason: String(describing: error))
         }
     }
+
+    // ── Running ──────────────────────────────────────────────────────────
 
     /// Runs `./stack <arguments>` to completion off the main thread.
     ///
@@ -71,35 +94,58 @@ struct StackCLI {
                 process.currentDirectoryURL = checkout
                 process.environment = Self.environment()
                 process.standardInput = FileHandle.nullDevice
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = pipe
+                let out = Pipe(), err = Pipe()
+                process.standardOutput = out
+                process.standardError = err
                 do {
                     try process.run()
                 } catch {
-                    continuation.resume(returning: Result(exitCode: -1, output: error.localizedDescription))
+                    continuation.resume(returning: Result(exitCode: -1, stdout: "", stderr: error.localizedDescription))
                     return
                 }
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                // Both pipes drain at once: a command that fills one while
+                // the other is being read would otherwise block forever.
+                let errData = Collected()
+                let group = DispatchGroup()
+                group.enter()
+                DispatchQueue.global().async {
+                    errData.data = err.fileHandleForReading.readDataToEndOfFile()
+                    group.leave()
+                }
+                let outData = out.fileHandleForReading.readDataToEndOfFile()
+                group.wait()
                 process.waitUntilExit()
-                let text = String(decoding: data, as: UTF8.self)
-                continuation.resume(returning: Result(exitCode: process.terminationStatus,
-                                                      output: Self.stripANSI(text)))
+                continuation.resume(returning: Result(
+                    exitCode: process.terminationStatus,
+                    stdout: Self.stripANSI(String(decoding: outData, as: UTF8.self)),
+                    stderr: Self.stripANSI(String(decoding: errData.data, as: UTF8.self))))
             }
         }
     }
 
+    private final class Collected: @unchecked Sendable { var data = Data() }
+
     /// Opens Terminal on `./stack <arguments>` in the checkout. Used for
-    /// anything interactive or endless: first installs, logs, doctor.
-    ///
+    /// anything interactive or long to read: first installs, logs, doctor.
+    func openInTerminal(_ arguments: [String]) {
+        let line = ([checkout.appendingPathComponent("stack").path] + arguments)
+            .map(Self.shellQuote).joined(separator: " ")
+        openInTerminal(commandLine: line, name: arguments.joined(separator: "-"))
+    }
+
+    /// Opens Terminal on a command line exactly as the CLI printed it, such
+    /// as a doctor fix. `stack …` runs this checkout's wrapper.
+    func openInTerminal(fix: String) {
+        let line = fix.hasPrefix("stack ") ? "./" + fix : fix
+        openInTerminal(commandLine: line, name: "fix")
+    }
+
     /// A `.command` file opens in Terminal through Launch Services, which
     /// needs no Automation permission, unlike scripting Terminal directly.
-    func openInTerminal(_ arguments: [String]) {
-        let quoted = ([checkout.appendingPathComponent("stack").path] + arguments)
-            .map(Self.shellQuote).joined(separator: " ")
-        let script = "#!/bin/zsh -l\ncd \(Self.shellQuote(checkout.path)) || exit 1\n\(quoted)\n"
-        let file = FileManager.default.temporaryDirectory
-            .appendingPathComponent("stack-\(arguments.joined(separator: "-")).command")
+    private func openInTerminal(commandLine: String, name: String) {
+        let script = "#!/bin/zsh -l\ncd \(Self.shellQuote(checkout.path)) || exit 1\n\(commandLine)\n"
+        let safeName = name.filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("stack-\(safeName).command")
         do {
             try script.write(to: file, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
