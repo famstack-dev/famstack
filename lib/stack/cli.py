@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import tomllib
+from dataclasses import asdict
 from pathlib import Path
 
 from . import caddy
@@ -1121,6 +1122,17 @@ def handle_doctor(stck, args):
     if release:
         findings.insert(0, release)
 
+    if args.json:
+        json.dump({
+            "version": running_version_of(stck),
+            "summary": doctor.summarise(findings),
+            "findings": [asdict(f) for f in findings],
+        }, sys.stdout, indent=2)
+        print()
+        if any(f.is_error for f in findings):
+            sys.exit(1)
+        return
+
     print()
     if position:
         print(f"  {ORANGE}{BOLD}{stck.product_name()}{RESET} "
@@ -1964,7 +1976,8 @@ def main():
     )
     sub.add_parser("init")
     sub.add_parser("status")
-    sub.add_parser("doctor")
+    p = sub.add_parser("doctor")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
     sub.add_parser("list")
     p = sub.add_parser("config")
     config_sub = p.add_subparsers(dest="config_action")
