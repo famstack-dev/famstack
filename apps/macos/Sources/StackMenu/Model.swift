@@ -174,7 +174,7 @@ struct Attention: Identifiable {
 
     /// Everything that needs the admin, worst first. Stacklet rows already
     /// show which stacklets are failing; this adds what a row cannot: the
-    /// doctor's diagnoses, backups and the disk.
+    /// doctor's diagnoses, a backup that failed and the disk.
     static func collect(status: StackStatus?, doctor: DoctorReport?, backup: BackupReport?,
                         disk: HostFigures?, now: Date = Date()) -> [Attention] {
         var items: [Attention] = []
@@ -193,15 +193,10 @@ struct Attention: Identifiable {
                                    detail: finding.detail, fix: finding.fix.isEmpty ? nil : finding.fix))
         }
 
-        if let status {
-            if !status.isInstalled("backup") {
-                items.append(Attention(
-                    id: "backup-missing", level: .warn, title: "Backups are not set up",
-                    detail: "Nothing copies the data in this Mac's data dir to a second disk.",
-                    fix: "stack up backup"))
-            } else if let backup {
-                items += backupItems(backup, now: now)
-            }
+        // Backup is a beta stacklet, so not having it is not a problem to
+        // report. Once installed, a failed or missed run is.
+        if let status, status.isInstalled("backup"), let backup {
+            items += backupItems(backup, now: now)
         }
 
         if let pct = disk?.diskUsedPct, pct >= 90 {
@@ -268,4 +263,50 @@ func relative(_ date: Date, _ now: Date = Date()) -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .full
     return formatter.localizedString(for: date, relativeTo: now)
+}
+
+// ── Configuration ─────────────────────────────────────────────────────────
+
+/// `stack config --json`: stack.toml and users.toml as written, credentials
+/// hidden. The files are free-form TOML, so their content stays generic and
+/// the panel picks out what it shows.
+struct ConfigReport: Decodable {
+    let stackToml: String
+    let usersToml: String
+    let config: JSONValue
+    let users: [JSONValue]
+
+    enum CodingKeys: String, CodingKey {
+        case stackToml = "stack_toml", usersToml = "users_toml", config, users
+    }
+}
+
+enum JSONValue: Decodable {
+    case string(String), number(Double), bool(Bool), array([JSONValue]), object([String: JSONValue]), null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let v = try? c.decode(Bool.self) { self = .bool(v) }
+        else if let v = try? c.decode(Double.self) { self = .number(v) }
+        else if let v = try? c.decode(String.self) { self = .string(v) }
+        else if let v = try? c.decode([JSONValue].self) { self = .array(v) }
+        else { self = .object(try c.decode([String: JSONValue].self)) }
+    }
+
+    subscript(key: String) -> JSONValue? {
+        if case .object(let o) = self { return o[key] }
+        return nil
+    }
+
+    /// A string value, with an empty one read as absent.
+    var text: String? {
+        if case .string(let v) = self, !v.isEmpty { return v }
+        return nil
+    }
+
+    var texts: [String] {
+        if case .array(let a) = self { return a.compactMap(\.text) }
+        return []
+    }
 }

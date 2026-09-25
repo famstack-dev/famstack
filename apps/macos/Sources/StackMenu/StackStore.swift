@@ -4,7 +4,7 @@ import Foundation
 // ── App state: what the CLI last said, what is running, what failed ───────
 //
 // Two refresh rates. `status` is cheap and drives the icon, so it runs every
-// minute. The rest (doctor, errors, host, backup) take two to three seconds
+// minute. The rest (doctor, errors, host, backup, config) take two to three seconds
 // each, so they run when the panel opens, at most once a minute, and every
 // ten minutes in the background so the icon also reflects the doctor.
 
@@ -19,6 +19,7 @@ final class StackStore: ObservableObject {
     @Published private(set) var errors: ErrorsReport?
     @Published private(set) var host: HostReport?
     @Published private(set) var backup: BackupReport?
+    @Published private(set) var config: ConfigReport?
     @Published private(set) var checking = false
     @Published private(set) var checkedAt: Date?
 
@@ -79,7 +80,9 @@ final class StackStore: ObservableObject {
         async let errors = try? cli.errors()
         async let host = try? cli.host()
         async let backup = wantsBackup ? try? cli.backup() : nil
-        (self.doctor, self.errors, self.host, self.backup) = await (doctor, errors, host, backup)
+        async let config = try? cli.config()
+        (self.doctor, self.errors, self.host, self.backup, self.config) =
+            await (doctor, errors, host, backup, config)
         checkedAt = Date()
     }
 
@@ -185,7 +188,7 @@ final class StackStore: ObservableObject {
         UserDefaults.standard.set(url.path, forKey: Self.checkoutKey)
         checkout = url
         status = nil
-        doctor = nil; errors = nil; host = nil; backup = nil; checkedAt = nil
+        doctor = nil; errors = nil; host = nil; backup = nil; config = nil; checkedAt = nil
         Task {
             await refresh()
             await check()
