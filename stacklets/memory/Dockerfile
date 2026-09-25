@@ -78,6 +78,17 @@ COPY quartz/components/scripts/mermaid.inline.ts ./quartz/components/scripts/mer
 COPY quartz/components/FamstackTitle.tsx ./quartz/components/FamstackTitle.tsx
 COPY quartz/components/Welcome.tsx ./quartz/components/Welcome.tsx
 
+# The family navigation: a sidebar that replaces the Explorer, the list
+# pages behind it, and the emitter that writes both. See familyModel.ts.
+COPY quartz/components/familyModel.ts ./quartz/components/familyModel.ts
+COPY quartz/components/FamilyNav.tsx ./quartz/components/FamilyNav.tsx
+COPY quartz/components/FamilyList.tsx ./quartz/components/FamilyList.tsx
+COPY quartz/components/scripts/familyNav.inline.ts ./quartz/components/scripts/familyNav.inline.ts
+COPY quartz/plugins/familyLists.tsx ./quartz/plugins/emitters/familyLists.tsx
+# The shipped ontology, for the topic areas a vault installed earlier
+# does not name yet (see readOntology in familyModel.ts).
+COPY seeds/ontology.toml ./ontology.seed.toml
+
 # The entrypoint serves the vault with Quartz — a pure view. The
 # curator sidecar owns the git pull. See quartz/entrypoint.sh.
 COPY quartz/entrypoint.sh /usr/local/bin/wiki-entrypoint.sh

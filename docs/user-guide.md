@@ -192,6 +192,17 @@ Everything the archivist files becomes more than a pile of documents: the memory
 
 Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It updates itself as things get filed.
 
+The menu on the left is sorted by what you look for, not by how the files are stored:
+
+- **Recent**: the topics where something was filed in the last four weeks.
+- **Diary**: the family diary, month by month.
+- **People**: a page per family member.
+- **Topics**: everything filed about a subject, grouped by area of life (money and work, health, home, the car, …). A topic appears once something is filed under it, with the number of entries next to it.
+- **Documents**: every document by type, by year and by sender.
+- **Notes & links**: every note and saved link, newest first.
+
+The menu follows the language set for your famstack.
+
 Every page has an edit link: edits happen in Forgejo (the family's private git server), so every change is tracked and nothing is ever lost. If you use Obsidian, you can clone the vault and browse it there; it's all plain Markdown.
 
 ---
