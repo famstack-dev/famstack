@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import shutil
 import subprocess
 import time
 import unicodedata
@@ -274,6 +275,45 @@ def ensure_vault_cloned(
     rc, _, _ = _git(
         ["git", "clone", remote_url, str(vault_path)], timeout=timeout,
     )
+    return rc == 0
+
+
+def ensure_projection_cloned(
+    brain_path: Path,
+    remote_url: str,
+    *,
+    timeout: int = 60,
+) -> bool:
+    """Clone the brain projection into `brain_path`, adopting what is there.
+
+    On a first install `brain_path` is never empty by the time the brain
+    repo exists: `on_start` creates the wiki's media mountpoint inside it
+    before the containers start, and the repo is created after they are
+    up. `git clone` refuses a non-empty directory, so the directory is
+    turned into a working copy in place instead. Files the repo tracks
+    are replaced by the repo's version; untracked ones, the mountpoint
+    among them, stay. That is only acceptable because brain is a
+    projection that can be rebuilt at any time. The vault is the family's
+    source and keeps the strict `ensure_vault_cloned`.
+
+    Returns True when a working copy is there afterwards. On failure the
+    directory is left as it was found.
+    """
+    brain_path = Path(brain_path)
+    if (brain_path / ".git").exists():
+        return True
+    if not brain_path.is_dir() or not any(brain_path.iterdir()):
+        return ensure_vault_cloned(brain_path, remote_url, timeout=timeout)
+
+    staging = brain_path.with_name(brain_path.name + ".clone")
+    shutil.rmtree(staging, ignore_errors=True)
+    rc, _, _ = _git(["git", "clone", "--no-checkout", remote_url, str(staging)], timeout=timeout)
+    if rc == 0:
+        (staging / ".git").rename(brain_path / ".git")
+        rc, _, _ = run_git(brain_path, "reset", "--hard", "--quiet", timeout=timeout)
+        if rc != 0:
+            shutil.rmtree(brain_path / ".git", ignore_errors=True)
+    shutil.rmtree(staging, ignore_errors=True)
     return rc == 0
 
 
@@ -1354,7 +1394,7 @@ def ensure_brain_projection_admin(
             brain_remote_url(code_url),
             admin_user, admin_token,
         )
-        cloned_brain = ensure_vault_cloned(brain_path, brain_remote) and not had_brain
+        cloned_brain = ensure_projection_cloned(brain_path, brain_remote) and not had_brain
         if had_brain:
             # Freshly issued token, current host URL — the clone made on
             # an older lease with an older token gets both refreshed.
@@ -2157,7 +2197,7 @@ def install_memory_to_forgejo_admin(
             brain_remote_url(code_url),
             admin_user, admin_token,
         )
-        cloned_brain = ensure_vault_cloned(brain_path, brain_remote)
+        cloned_brain = ensure_projection_cloned(brain_path, brain_remote)
 
     return {
         "created_org": repo_state["created_org"],

@@ -98,7 +98,7 @@ def run(ctx):
         if ensure_vault_cloned(vault, remote):
             ctx.step(f"Memory vault cloned to {vault}")
         else:
-            ctx.step(f"Memory vault clone failed at {vault}")
+            ctx.warn(f"Memory vault clone failed at {vault}")
             return
     else:
         if remote:
@@ -140,4 +140,4 @@ def run(ctx):
     if result.get("cloned_brain"):
         ctx.step(f"Memory: cloned brain projection to {brain}")
     elif not (brain / ".git").exists():
-        ctx.step(f"Memory brain projection clone failed at {brain}")
+        ctx.warn(f"Memory brain projection clone failed at {brain}: the wiki and the diary will not update")

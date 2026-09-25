@@ -338,12 +338,12 @@ class TestEnsureBrainProjectionAdmin:
 
         cloned = {}
 
-        def fake_clone(path, remote):
+        def fake_clone(path, remote, **_):
             cloned["path"] = path
             cloned["remote"] = remote
             return True
 
-        monkeypatch.setattr(memory_lib, "ensure_vault_cloned", fake_clone)
+        monkeypatch.setattr(memory_lib, "ensure_projection_cloned", fake_clone)
 
         brain = tmp_path / "brain"
         result = ensure_brain_projection_admin(

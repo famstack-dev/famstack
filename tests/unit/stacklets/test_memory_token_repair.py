@@ -107,7 +107,7 @@ class _RecordingCtx:
 
     A real `StackContext` wants an instance on disk, a parsed config and
     a Docker runtime. The hook wants four things: the data dir, the
-    rendered env, the secret store, and somewhere to log progress.
+    rendered env, the secret store, and somewhere to log progress and warnings.
     Standing up only those four is what lets the hook be driven end to
     end here, which matters because the bug this file guards lived in
     `run()` itself and not in any helper it calls.
@@ -126,6 +126,9 @@ class _RecordingCtx:
         return self.secrets.get(name)      # None when unset, as the store does
 
     def step(self, message):
+        self.steps.append(message)
+
+    def warn(self, message):
         self.steps.append(message)
 
 
