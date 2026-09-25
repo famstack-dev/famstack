@@ -46,11 +46,25 @@ real data to PNG files (`<prefix>-overview.png`, `<prefix>-setup.png`):
 apps/macos/build/famstack.app/Contents/MacOS/StackMenu --snapshot /tmp/panel
 ```
 
-## Which checkout
+## Which machine
 
-The app runs `./stack` from the checkout you choose in the panel
-(**Checkout…**), and remembers it. Without a choice it tries `~/famstack`.
-To set it from a shell:
+**Setup → Connection** switches between a checkout on this Mac and one on
+another Mac, and remembers both.
+
+- **This Mac**: the folder you run `./stack` from, chosen with **Change…**.
+  Without a choice the app tries `~/famstack`.
+- **Remote**: an SSH host (an alias from `~/.ssh/config` or `user@host`) and
+  the checkout path on it, `~/famstack` unless you say otherwise. The app
+  runs `ssh <host> 'zsh -lc "cd <checkout> && ./stack …"'` with your SSH key
+  and never asks for a password, so the key must work without one (or be in
+  the agent). The server needs **Remote Login** turned on. Logs, doctor and
+  editing open Terminal with an SSH session to that Mac; stacklets open at the
+  address the stack names for them, its LAN address in port mode.
+
+Every call gives up after a minute, lifecycle actions after fifteen, so an
+unreachable machine shows an error instead of a panel that never updates.
+
+To set the local checkout from a shell:
 
 ```bash
 defaults write dev.famstack.menubar checkout /path/to/famstack

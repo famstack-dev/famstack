@@ -6,9 +6,33 @@ import Foundation
 // The app holds no state about the stack and starts no services itself. It
 // runs `./stack` in a checkout and renders what comes back, so the CLI stays
 // the one owner of the lifecycle, as it is for every other client.
+//
+// The checkout is on this Mac or on another one reached over SSH. Every
+// command goes through `invocation`, so reading, acting, Terminal links and
+// editing all reach the same machine the panel shows.
+
+enum Connection: Equatable {
+    case local(checkout: URL)
+    /// `host` is anything `ssh` accepts: an alias from ~/.ssh/config or
+    /// `user@host`. `checkout` is a path on that machine; `~/` is expanded
+    /// there.
+    case remote(host: String, checkout: String)
+
+    var label: String {
+        switch self {
+        case .local: "This Mac"
+        case .remote(let host, _): host
+        }
+    }
+
+    var isRemote: Bool {
+        if case .remote = self { return true }
+        return false
+    }
+}
 
 struct StackCLI {
-    let checkout: URL
+    let connection: Connection
 
     struct Result {
         let exitCode: Int32
@@ -37,8 +61,13 @@ struct StackCLI {
         }
     }
 
-    /// A checkout is a directory holding the `stack` wrapper and `stacklets/`,
-    /// the same marker the CLI itself walks up to.
+    /// Reading calls give up after a minute; a lifecycle action may pull
+    /// images and gets much longer.
+    static let readTimeout: TimeInterval = 60
+    static let actionTimeout: TimeInterval = 15 * 60
+
+    /// A local checkout is a directory holding the `stack` wrapper and
+    /// `stacklets/`, the same marker the CLI itself walks up to.
     static func isCheckout(_ url: URL) -> Bool {
         let fm = FileManager.default
         return fm.isExecutableFile(atPath: url.appendingPathComponent("stack").path)
@@ -63,7 +92,7 @@ struct StackCLI {
     /// `{` line is skipped, such as a one-time notice the CLI prints on the
     /// first run after a config change.
     private func json<T: Decodable>(_ arguments: [String], snakeCase: Bool = true) async throws -> T {
-        let result = await run(arguments)
+        let result = await run(arguments, timeout: Self.readTimeout)
         let lines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
         guard let start = lines.firstIndex(where: { $0.hasPrefix("{") }) else {
             throw Failure.exited(result)
@@ -80,20 +109,35 @@ struct StackCLI {
 
     // ── Running ──────────────────────────────────────────────────────────
 
-    /// Runs `./stack <arguments>` to completion off the main thread.
+    /// What to execute for `./stack <arguments>`.
     ///
-    /// The working directory is the checkout because the CLI finds its root
-    /// by walking up from the current directory, not from where the script
-    /// lives. Stdin is empty so a hook that prompts fails instead of waiting
-    /// on an answer nobody can give.
-    func run(_ arguments: [String]) async -> Result {
-        let checkout = self.checkout
+    /// Locally the working directory is the checkout, because the CLI finds
+    /// its root by walking up from the current directory, not from where the
+    /// script lives. Remotely a login shell runs it, which gives the remote
+    /// Python and docker their PATH, as it does for a person logging in.
+    private func invocation(_ arguments: [String]) -> (executable: URL, arguments: [String], directory: URL?) {
+        switch connection {
+        case .local(let checkout):
+            return (checkout.appendingPathComponent("stack"), arguments, checkout)
+        case .remote(let host, let checkout):
+            let line = "cd \(Self.remotePath(checkout)) && ./stack " + arguments.map(Self.shellQuote).joined(separator: " ")
+            return (URL(fileURLWithPath: "/usr/bin/ssh"),
+                    Self.sshOptions(batch: true) + [host, "zsh -lc " + Self.shellQuote(line)], nil)
+        }
+    }
+
+    /// Runs `./stack <arguments>` to completion off the main thread, and
+    /// stops it after `timeout`. Stdin is empty so a hook that prompts fails
+    /// instead of waiting on an answer nobody can give.
+    func run(_ arguments: [String], timeout: TimeInterval = actionTimeout) async -> Result {
+        let (executable, argv, directory) = invocation(arguments)
+        let description = "stack " + arguments.joined(separator: " ")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
-                process.executableURL = checkout.appendingPathComponent("stack")
-                process.arguments = arguments
-                process.currentDirectoryURL = checkout
+                process.executableURL = executable
+                process.arguments = argv
+                if let directory { process.currentDirectoryURL = directory }
                 process.environment = Self.environment()
                 process.standardInput = FileHandle.nullDevice
                 let out = Pipe(), err = Pipe()
@@ -104,6 +148,13 @@ struct StackCLI {
                 } catch {
                     continuation.resume(returning: Result(exitCode: -1, stdout: "", stderr: error.localizedDescription))
                     return
+                }
+                let timedOut = Flag()
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                    if process.isRunning {
+                        timedOut.value = true
+                        process.terminate()
+                    }
                 }
                 // Both pipes drain at once: a command that fills one while
                 // the other is being read would otherwise block forever.
@@ -117,35 +168,67 @@ struct StackCLI {
                 let outData = out.fileHandleForReading.readDataToEndOfFile()
                 group.wait()
                 process.waitUntilExit()
+                var stderr = Self.stripANSI(String(decoding: errData.data, as: UTF8.self))
+                if timedOut.value { stderr += "\n\(description) did not finish within \(Int(timeout)) seconds." }
                 continuation.resume(returning: Result(
                     exitCode: process.terminationStatus,
                     stdout: Self.stripANSI(String(decoding: outData, as: UTF8.self)),
-                    stderr: Self.stripANSI(String(decoding: errData.data, as: UTF8.self))))
+                    stderr: stderr))
             }
         }
     }
 
     private final class Collected: @unchecked Sendable { var data = Data() }
+    private final class Flag: @unchecked Sendable { var value = false }
 
-    /// Opens Terminal on `./stack <arguments>` in the checkout. Used for
-    /// anything interactive or long to read: first installs, logs, doctor.
+    // ── Terminal ─────────────────────────────────────────────────────────
+
+    /// Opens Terminal on `./stack <arguments>` on the connected machine.
+    /// Used for anything interactive or long to read: installs, logs, doctor.
     func openInTerminal(_ arguments: [String]) {
-        let line = ([checkout.appendingPathComponent("stack").path] + arguments)
-            .map(Self.shellQuote).joined(separator: " ")
-        openInTerminal(commandLine: line, name: arguments.joined(separator: "-"))
+        openInTerminal(line: "./stack " + arguments.map(Self.shellQuote).joined(separator: " "),
+                       name: arguments.joined(separator: "-"))
     }
 
     /// Opens Terminal on a command line exactly as the CLI printed it, such
-    /// as a doctor fix. `stack …` runs this checkout's wrapper.
+    /// as a doctor fix. `stack …` runs the checkout's wrapper.
     func openInTerminal(fix: String) {
-        let line = fix.hasPrefix("stack ") ? "./" + fix : fix
-        openInTerminal(commandLine: line, name: "fix")
+        openInTerminal(line: fix.hasPrefix("stack ") ? "./" + fix : fix, name: "fix")
     }
 
-    /// A `.command` file opens in Terminal through Launch Services, which
-    /// needs no Automation permission, unlike scripting Terminal directly.
-    private func openInTerminal(commandLine: String, name: String) {
-        let script = "#!/bin/zsh -l\ncd \(Self.shellQuote(checkout.path)) || exit 1\n\(commandLine)\n"
+    /// Opens a file of the instance in a text editor: TextEdit (or the
+    /// default editor) for a local file, the remote `$EDITOR` in Terminal
+    /// for a remote one.
+    func edit(_ path: String) {
+        switch connection {
+        case .local:
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-t", path]
+            try? process.run()
+        case .remote:
+            openInTerminal(line: "${EDITOR:-nano} " + Self.shellQuote(path), name: "edit")
+        }
+    }
+
+    /// Writes `line`, run in the checkout, to a `.command` file and opens
+    /// it. Launch Services opens it in Terminal without the Automation
+    /// permission that scripting Terminal would need.
+    private func openInTerminal(line: String, name: String) {
+        let body: String
+        switch connection {
+        case .local(let checkout):
+            // Terminal does not inherit this app's environment. An app
+            // pointed at another instance with STACK_DIR passes it on.
+            let stackDir = ProcessInfo.processInfo.environment["STACK_DIR"]
+                .map { "export STACK_DIR=\(Self.shellQuote($0))\n" } ?? ""
+            body = "\(stackDir)cd \(Self.shellQuote(checkout.path)) || exit 1\n\(line)\n"
+        case .remote(let host, let checkout):
+            let remote = "cd \(Self.remotePath(checkout)) && \(line)"
+            let ssh = (["ssh", "-t"] + Self.sshOptions(batch: false) + [host]).map(Self.shellQuote).joined(separator: " ")
+            body = "\(ssh) \(Self.shellQuote("zsh -lc " + Self.shellQuote(remote)))\n"
+        }
+        let script = "#!/bin/zsh -l\n" + body
         let safeName = name.filter { $0.isLetter || $0.isNumber || $0 == "-" }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("stack-\(safeName).command")
         do {
@@ -159,6 +242,20 @@ struct StackCLI {
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
+    /// `BatchMode` makes ssh fail instead of asking for a password or a
+    /// host key nobody can type into; Terminal sessions may ask.
+    private static func sshOptions(batch: Bool) -> [String] {
+        (batch ? ["-o", "BatchMode=yes"] : []) + ["-o", "ConnectTimeout=8", "-o", "LogLevel=ERROR"]
+    }
+
+    /// A remote path quoted for the remote shell, with a leading `~/` left
+    /// outside the quotes so that shell expands it.
+    private static func remotePath(_ path: String) -> String {
+        if path == "~" { return "~" }
+        if path.hasPrefix("~/") { return "~/" + shellQuote(String(path.dropFirst(2))) }
+        return shellQuote(path)
+    }
+
     /// An app started from Finder or at login gets launchd's minimal PATH,
     /// in which the wrapper finds only Apple's Python 3.9 and no docker.
     /// Prepend where Homebrew and OrbStack install them.
@@ -168,14 +265,6 @@ struct StackCLI {
         let extra = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "\(home)/.orbstack/bin"]
         env["PATH"] = (extra + [env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"]).joined(separator: ":")
         return env
-    }
-
-    /// Opens a file in the default text editor, as `open -t` does.
-    static func openInEditor(_ path: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-t", path]
-        try? process.run()
     }
 
     private static func shellQuote(_ s: String) -> String {

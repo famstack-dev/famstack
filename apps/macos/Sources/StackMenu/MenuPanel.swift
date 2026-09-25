@@ -55,8 +55,10 @@ struct MenuPanel: View {
 
     @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if store.checkout == nil {
-                Notice(text: "No checkout found. Choose the folder you run ./stack from in Setup.", tint: .orange)
+            if store.connection == nil {
+                Notice(text: store.mode == .local
+                       ? "No checkout found. Choose the folder you run ./stack from in Setup."
+                       : "No remote host yet. Set one in Setup.", tint: .orange)
             }
             if let error = store.loadError {
                 Notice(text: error, tint: .red)
@@ -121,6 +123,7 @@ struct MenuPanel: View {
         let running = status.installed.filter { $0.online }.count
         var parts = ["\(running) of \(status.installed.count) running"]
         if let up = store.host?.uptimeSeconds { parts.append("up \(up / 86400) days") }
+        if let connection = store.connection, connection.isRemote { parts.append("on \(connection.label)") }
         return parts.joined(separator: " · ")
     }
 
@@ -148,9 +151,11 @@ struct MenuPanel: View {
                 Card("Backup") { Text(line).font(.callout) }
             }
             if let figures = store.hostFigures {
-                Card("This Mac") { HostMetrics(figures: figures) }
+                Card(store.connection?.isRemote == true ? store.remoteHost : "This Mac") {
+                    HostMetrics(figures: figures)
+                }
             }
-        } else if store.checkout != nil {
+        } else if store.connection != nil {
             HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 30)
         }
     }
@@ -189,7 +194,7 @@ struct MenuPanel: View {
 
     @ViewBuilder private var setup: some View {
         if let config = store.config {
-            Card("Configuration") { SetupGrid(report: config) }
+            Card("Configuration") { SetupGrid(report: config, store: store) }
         }
         if let status = store.status, !status.available.isEmpty {
             Card("Not installed", spacing: 2) {
@@ -205,19 +210,38 @@ struct MenuPanel: View {
                 }
             }
         }
-        Card("Checkout") {
+        Card("Connection") {
+            Picker("", selection: Binding(get: { store.mode }, set: { store.setMode($0) })) {
+                Text("This Mac").tag(StackStore.Mode.local)
+                Text("Remote").tag(StackStore.Mode.remote)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(store.checkout?.path ?? "None chosen")
-                        .font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
-                        .foregroundStyle(store.checkout == nil ? .secondary : .primary)
+                    switch store.mode {
+                    case .local:
+                        Text(store.checkout?.path ?? "No checkout chosen")
+                            .font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(store.checkout == nil ? .secondary : .primary)
+                    case .remote:
+                        Text(store.remoteHost.isEmpty ? "No host set" : store.remoteHost)
+                            .font(.callout.monospaced()).lineLimit(1)
+                            .foregroundStyle(store.remoteHost.isEmpty ? .secondary : .primary)
+                        Text(store.remoteCheckout)
+                            .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     if let version = store.status?.version {
                         Text(version).font(.caption.monospaced()).foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                 }
                 Spacer()
-                Button("Change…") { store.chooseCheckout() }.controlSize(.small)
+                Button("Change…") {
+                    store.mode == .local ? store.chooseCheckout() : store.editRemote()
+                }
+                .controlSize(.small)
             }
         }
     }
@@ -245,7 +269,7 @@ struct MenuPanel: View {
     private var footer: some View {
         HStack(spacing: 14) {
             Button("Doctor") { store.openInTerminal(["doctor"]) }
-                .disabled(store.checkout == nil)
+                .disabled(store.connection == nil)
             Spacer()
             if let checked = store.checkedAt {
                 Text("checked \(relative(checked))").font(.caption).foregroundStyle(.tertiary)
@@ -361,8 +385,8 @@ struct StackletRow: View {
         .background(hovering ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { if stacklet.online { store.openInBrowser(stacklet) } }
-        .help(stacklet.online && stacklet.port != nil ? "Open in the browser" : "")
+        .onTapGesture { if store.canOpen(stacklet) { store.openInBrowser(stacklet) } }
+        .help(store.canOpen(stacklet) ? "Open \(stacklet.url ?? "in the browser")" : "")
     }
 
     /// Memory while it runs, otherwise the state. The port is one hover away
@@ -376,8 +400,8 @@ struct StackletRow: View {
 
     private var actions: some View {
         Menu {
-            if let port = stacklet.port, stacklet.online {
-                Button("Open in Browser (:\(port))") { store.openInBrowser(stacklet) }
+            if store.canOpen(stacklet) {
+                Button("Open in Browser") { store.openInBrowser(stacklet) }
                 Divider()
             }
             if stacklet.health == .down {
@@ -446,6 +470,7 @@ struct ErrorsList: View {
 /// container still running with the old setting, with the command to apply it.
 struct SetupGrid: View {
     let report: ConfigReport
+    @ObservedObject var store: StackStore
 
     private var config: JSONValue { report.config }
 
@@ -461,9 +486,8 @@ struct SetupGrid: View {
         .font(.callout)
         Divider()
         HStack(spacing: 14) {
-            Button("Edit stack.toml") { StackCLI.openInEditor(report.stackToml) }
-            Button("Edit users.toml") { StackCLI.openInEditor(report.usersToml) }
-                .disabled(!FileManager.default.fileExists(atPath: report.usersToml))
+            Button("Edit stack.toml") { store.edit(report.stackToml) }
+            Button("Edit users.toml") { store.edit(report.usersToml) }
         }
         .buttonStyle(.link).font(.callout)
         Text("A change applies with stack up <stacklet>. Doctor lists what still runs the old setting.")

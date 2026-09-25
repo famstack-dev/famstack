@@ -37,6 +37,9 @@ struct Stacklet: Decodable, Identifiable {
     let degraded: Bool
     let stale: Bool
     let remote: String?
+    /// Where a person opens it; absent without a web port or from a CLI
+    /// older than the field.
+    let url: String?
     let healthIssues: [String]
 
     /// One state per row, derived in the same order `stack list` reads the
