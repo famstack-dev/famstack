@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
 
 from lib import (  # noqa: E402
     authenticated_remote,
+    ensure_projection_cloned,
     ensure_vault_cloned,
     get_ontology,
     host_code_url,
@@ -205,6 +206,84 @@ class TestEnsureVaultCloned:
         ok = ensure_vault_cloned(vault, "/nonexistent/repo", timeout=5)
         assert ok is False
         assert not (vault / ".git").exists()
+
+
+class TestEnsureVaultClonedLeavesExistingFilesAlone:
+    """The vault is the family's source: never clone over files already there."""
+
+    def test_refuses_a_directory_that_already_holds_files(self, tmp_path, seeded_upstream):
+        vault = tmp_path / "memory" / "vault"
+        vault.mkdir(parents=True)
+        (vault / "notes.md").write_text("typed by hand\n")
+
+        ok = ensure_vault_cloned(vault, str(seeded_upstream))
+
+        assert ok is False
+        assert not (vault / ".git").exists()
+        assert (vault / "notes.md").read_text() == "typed by hand\n"
+
+
+# ─── ensure_projection_cloned ────────────────────────────────────────────
+# On a first install the wiki's media mountpoint (`brain/media`) is created
+# before the containers start, and the brain repo only exists once they are
+# up. By the time brain is cloned its directory is therefore never empty.
+# Brain is a projection that can be rebuilt at any time, so the clone
+# adopts the directory instead of refusing it.
+
+class TestEnsureProjectionCloned:
+
+    def test_adopts_a_directory_the_mountpoint_already_created(self, tmp_path, seeded_upstream):
+        brain = tmp_path / "memory" / "brain"
+        (brain / "media").mkdir(parents=True)
+        (brain / "media" / "photo.png").write_bytes(b"png")
+
+        ok = ensure_projection_cloned(brain, str(seeded_upstream))
+
+        assert ok is True
+        assert (brain / ".git").is_dir()
+        assert (brain / "ontology.toml").exists()
+        assert (brain / "media" / "photo.png").read_bytes() == b"png"
+
+    def test_the_repository_wins_over_a_page_written_before_the_clone(self, tmp_path, seeded_upstream):
+        brain = tmp_path / "memory" / "brain"
+        brain.mkdir(parents=True)
+        (brain / "ontology.toml").write_text("# generated before the clone\n")
+
+        assert ensure_projection_cloned(brain, str(seeded_upstream)) is True
+
+        assert "simracing" in (brain / "ontology.toml").read_text()
+
+    def test_leaves_the_working_copy_on_the_default_branch_tracking_origin(self, tmp_path, seeded_upstream):
+        brain = tmp_path / "memory" / "brain"
+        (brain / "media").mkdir(parents=True)
+        ensure_projection_cloned(brain, str(seeded_upstream))
+
+        _push_change(seeded_upstream, tmp_path, "later.md", "pushed later\n")
+
+        assert pull_vault(brain) is True
+        assert (brain / "later.md").exists()
+
+    def test_clones_normally_when_the_directory_is_missing(self, tmp_path, seeded_upstream):
+        brain = tmp_path / "memory" / "brain"
+
+        assert ensure_projection_cloned(brain, str(seeded_upstream)) is True
+        assert (brain / "ontology.toml").exists()
+
+    def test_idempotent_on_an_existing_working_copy(self, tmp_path, seeded_upstream):
+        brain = tmp_path / "memory" / "brain"
+        ensure_projection_cloned(brain, str(seeded_upstream))
+
+        assert ensure_projection_cloned(brain, str(seeded_upstream)) is True
+
+    def test_bad_remote_leaves_the_directory_as_it_was(self, tmp_path):
+        brain = tmp_path / "memory" / "brain"
+        (brain / "media").mkdir(parents=True)
+
+        ok = ensure_projection_cloned(brain, "/nonexistent/repo", timeout=5)
+
+        assert ok is False
+        assert not (brain / ".git").exists()
+        assert (brain / "media").is_dir()
 
 
 # ─── pull_vault ──────────────────────────────────────────────────────────
