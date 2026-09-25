@@ -851,7 +851,7 @@ class TestVerifyMoments:
 
     def test_a_summary_reaches_the_month_it_describes(self):
         pages = {path: body for path, body, _title in
-                 diary.pages_for(_compile(),
+                 diary.pages_for(bucket="family", entries=_compile(),
                                  summaries={"2026-03": "Only March."})}
 
         assert "Only March." in pages["diary/2026/03.md"]
@@ -860,25 +860,27 @@ class TestVerifyMoments:
     def test_the_index_lists_a_page_for_every_year(self):
         entries = _compile()
 
-        index = diary.render_index(entries)
+        index = diary.render_index(entries, bucket="family")
 
+        # Root-based, like every generated link: the wiki resolves links
+        # from the vault root, where `2026/about` names no page.
         for key in {diary.year_key(e.on) for e in entries}:
-            assert f"]({key}/about)" in index
+            assert f"](/family/diary/{key}/about)" in index
 
     def test_a_year_lists_its_months_and_who_is_in_them(self):
         entries = _compile()
         in_2026 = [e for e in entries if e.on.year == 2026]
 
-        page = diary.render_year(in_2026)
+        page = diary.render_year(in_2026, bucket="family")
 
         assert "## Months" in page
-        assert "[March](03)" in page
+        assert "[March](/family/diary/2026/03)" in page
         assert "recorded by Marge and Homer" in page
 
     def test_a_year_credits_only_who_recorded(self):
         """An addressee is the model's reading, not a fact about the
         household, so it never reaches a landing page."""
-        page = diary.render_year([diary.Entry(
+        page = diary.render_year(bucket="family", entries=[diary.Entry(
             on=date(2026, 3, 16), confidence="spoken", basis="b", kind="voice",
             sender="marge", body="words", addressee="Bart")])
 
@@ -891,7 +893,7 @@ class TestVerifyMoments:
         Flat `2026-03.md` files pile every month of every year into one
         folder, which is the explorer sidebar the family actually reads.
         """
-        paths = [path for path, _body, _title in diary.pages_for(_compile())]
+        paths = [path for path, _body, _title in diary.pages_for(bucket="family", entries=_compile())]
 
         assert "diary/about.md" in paths
         assert "diary/2026/about.md" in paths
@@ -902,7 +904,7 @@ class TestVerifyMoments:
         """Quartz renders a folder URL through a layout with no body in
         this wiki, so an `index.md` would be unreadable. Every other
         entity here is `about.md` for the same reason."""
-        paths = [path for path, _body, _title in diary.pages_for(_compile())]
+        paths = [path for path, _body, _title in diary.pages_for(bucket="family", entries=_compile())]
 
         assert not any(p.endswith("index.md") for p in paths)
 
@@ -910,7 +912,7 @@ class TestVerifyMoments:
         """The folder gives context in the sidebar; a link or a search
         result does not, so the title carries the year itself."""
         titles = {path: title for path, _body, title in
-                  diary.pages_for(_compile())}
+                  diary.pages_for(bucket="family", entries=_compile())}
 
         assert titles["diary/2026/03.md"] == "March 2026"
         assert titles["diary/2026/about.md"] == "2026"
@@ -1160,7 +1162,7 @@ class TestEmptyDiary:
     """
 
     def test_it_says_how_to_record_something(self):
-        page = diary.render_index([])
+        page = diary.render_index([], bucket="family")
 
         assert "Memories" in page                 # names the room
         assert "voice message" in page.lower()
@@ -1169,7 +1171,7 @@ class TestEmptyDiary:
     def test_it_keeps_the_diary_title_and_opening(self):
         """Not a separate error page: the same front door, with the
         years replaced by the note on how to fill them."""
-        page = diary.render_index([])
+        page = diary.render_index([], bucket="family")
 
         assert page.startswith("# Family Diary")
         assert "## Years" not in page
@@ -1178,7 +1180,7 @@ class TestEmptyDiary:
         """Speaking the date and replying to a message both change what
         the compiler does with a recording, and neither is guessable
         from the room."""
-        page = diary.render_index([])
+        page = diary.render_index([], bucket="family")
 
         assert "Today is the third of March" in page
         assert "Reply to a message" in page
@@ -1186,7 +1188,7 @@ class TestEmptyDiary:
     def test_it_is_written_in_the_household_language(self):
         diary.configure_language("de")
         try:
-            page = diary.render_index([])
+            page = diary.render_index([], bucket="family")
             assert "Noch nichts aufgenommen" in page
             assert "Nothing recorded yet" not in page
         finally:
@@ -1195,7 +1197,7 @@ class TestEmptyDiary:
     def test_a_compiled_diary_shows_years_instead(self):
         """The note is for the empty case only. One entry and the page
         goes back to being an index."""
-        page = diary.render_index(_compile())
+        page = diary.render_index(_compile(), bucket="family")
 
         assert "Press record." not in page
         assert "## Years" in page

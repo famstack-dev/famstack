@@ -1193,7 +1193,7 @@ async def run(llm, argv: list[str]) -> int:
             # explains how to record something.
             _err(f"nothing recorded in {room_arg} yet, publishing an empty diary")
             await transcriber.aclose()
-            return _publish_pages(diary.pages_for([]),
+            return _publish_pages(diary.pages_for([], bucket=bucket),
                                   bucket=bucket, dry_run=dry_run)
         _err(f"{len(messages)} message(s) in {room_arg}")
 
@@ -1372,7 +1372,7 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
             summaries_cache.save()
     summaries_cache.save()
 
-    pages = diary.pages_for(entries, room_id=room_id, summaries=summaries,
+    pages = diary.pages_for(entries, bucket=bucket, room_id=room_id, summaries=summaries,
                             media=diary_card.media_of(on_file))
     return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
 

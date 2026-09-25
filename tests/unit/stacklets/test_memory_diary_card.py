@@ -87,12 +87,12 @@ class TestACardHoldsTheWholeEntry:
 
         direct = diary.pages_for(
             [replace(e, gist="", moments=[]) for e in entries],
-            room_id=ROOM, media=media)
+            bucket="family", room_id=ROOM, media=media)
         # What the card adds on purpose (its title and summary) is set
         # aside: this pins that nothing of the entry itself is lost.
         from_cards = diary.pages_for(
             [replace(diary_card.to_entry(c), gist="", moments=[], title="") for c in cards],
-            room_id=ROOM, media=diary_card.media_of(cards))
+            bucket="family", room_id=ROOM, media=diary_card.media_of(cards))
         assert from_cards == direct
 
     def test_a_long_recording_shows_the_cards_summary_and_its_quotes(self):

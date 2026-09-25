@@ -1122,7 +1122,7 @@ def render_month(entries, *, room_id: str = "", summary: str = "",
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_year(entries) -> str:
+def render_year(entries, *, bucket: str) -> str:
     """A year's landing page: its months, and who is in them.
 
     Deterministic. Counting entries and naming the people who appear is
@@ -1144,15 +1144,20 @@ def render_year(entries) -> str:
         label = _month_name(month[0].on)
         count = len(month)
         lines.append(
-            f"- [{label}]({key}): "
+            f"- [{label}](/{bucket}/{DIARY_DIR}/{year}/{key}): "
             f"{_counted(count, 'entry_one', 'entry_many')}")
     lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_index(entries) -> str:
-    """The diary's front door: what it is, and a way into every year."""
+def render_index(entries, *, bucket: str) -> str:
+    """The diary's front door: what it is, and a way into every year.
+
+    Links are root-based (`/<bucket>/diary/2026/about`), like every link
+    the wiki generates: the wiki resolves links from the vault root, where
+    a page-relative `2026/about` names no page.
+    """
     lines = [
         f"# {_L['diary_title']}",
         "",
@@ -1172,7 +1177,7 @@ def render_index(entries) -> str:
         count = len(year)
         months = len(_by_month(year))
         lines.append(
-            f"- [{key}]({key}/about): "
+            f"- [{key}](/{bucket}/{DIARY_DIR}/{key}/about): "
             f"{_counted(count, 'entry_one', 'entry_many')} "
             f"{_L['across']} "
             f"{_counted(months, 'month_one', 'month_many')}")
@@ -1202,7 +1207,7 @@ def _and_list(names: list[str]) -> str:
     return ", ".join(names[:-1]) + f" {_L['and']} {names[-1]}"
 
 
-def pages_for(entries, *, room_id: str = "",
+def pages_for(entries, *, bucket: str, room_id: str = "",
               summaries: "dict[str, str] | None" = None,
               media: "dict[str, str] | None" = None,
               ) -> list[tuple[str, str, str]]:
@@ -1219,18 +1224,19 @@ def pages_for(entries, *, room_id: str = "",
     contents nobody can read.
 
     Paths are relative to the shared bucket, which the caller prefixes
-    -- the bucket is named in config (`family`, `office`, a surname)
-    and this module has no business knowing which.
+    -- the bucket is named in config (`family`, `office`, a surname).
+    `bucket` is that name, needed only for the links between these pages,
+    which the wiki resolves from the vault root.
 
     `summaries` and `media` arrive the same way and for the same
     reason: both are the result of work this module cannot do (a model
     call; a download and a file write), handed in keyed by month and by
     event id so rendering stays a pure function of its inputs.
     """
-    out = [(f"{DIARY_DIR}/about.md", render_index(entries), _L["diary_title"])]
+    out = [(f"{DIARY_DIR}/about.md", render_index(entries, bucket=bucket), _L["diary_title"])]
     for year, in_year in sorted(_by_year(entries).items()):
         out.append((
-            f"{DIARY_DIR}/{year}/about.md", render_year(in_year), year,
+            f"{DIARY_DIR}/{year}/about.md", render_year(in_year, bucket=bucket), year,
         ))
         for month, in_month in sorted(_by_month(in_year).items()):
             out.append((
