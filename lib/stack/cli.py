@@ -1168,11 +1168,57 @@ def handle_list(stck, args):
     print_list(stck.list(), stck)
 
 
+# A key named like a credential. Matched on the name, not the value, so a
+# secret added to stack.toml or users.toml later is hidden without a change here.
+_SECRET_KEY = re.compile(r"(key|password|passwd|secret|token)$", re.IGNORECASE)
+_HIDDEN = "(hidden)"
+
+
+def _redact(value):
+    """`value` with every credential replaced by a marker. An empty one stays
+    empty, so the reader can still tell set from unset."""
+    if isinstance(value, dict):
+        return {k: (_HIDDEN if _SECRET_KEY.search(k) and v not in ("", None) else _redact(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    return value
+
+
+def _read_toml(path: Path) -> dict:
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def config_report(instance_dir: Path) -> dict:
+    """stack.toml and users.toml as written, without their credentials.
+
+    The raw files, not resolved values: a key the admin left out is absent
+    here and its default applies. Both paths are included so a reader can
+    open the file to change it.
+    """
+    stack_toml = instance_dir / "stack.toml"
+    users_toml = instance_dir / "users.toml"
+    return {
+        "stack_toml": str(stack_toml),
+        "users_toml": str(users_toml),
+        "config": _redact(_read_toml(stack_toml)),
+        "users": _redact(_read_toml(users_toml).get("users", [])),
+    }
+
+
 def handle_config(stck, args):
     """Config subcommands. Bare 'stack config' prints stack.toml."""
     action = getattr(args, "config_action", None)
     if action == "admin":
         _config_admin(stck)
+        return
+    if getattr(args, "json", False):
+        json.dump(config_report(stck.instance_dir), sys.stdout, indent=2, default=str)
+        print()
         return
     path = stck.instance_dir / "stack.toml"
     if not path.exists():
@@ -2094,6 +2140,8 @@ def main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     sub.add_parser("list")
     p = sub.add_parser("config")
+    p.add_argument("--json", action="store_true",
+                   help="stack.toml and users.toml as JSON, credentials hidden")
     config_sub = p.add_subparsers(dest="config_action")
     config_sub.add_parser("admin")
     sub.add_parser("help")
