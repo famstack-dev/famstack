@@ -481,3 +481,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-008](../adr/adr-008-convention-based-bot-runner.md) | Convention-based bot runner |
 | [adr-009](../adr/adr-009-managed-ai-provider.md) | Managed AI provider |
 | [adr-013](../adr/adr-013-stacklet-locations-and-stages.md) | Stacklet locations and stages |
+| [adr-014](../adr/adr-014-archivist-steps-back-for-the-agent.md) | The archivist steps back when the agent is in the room |
