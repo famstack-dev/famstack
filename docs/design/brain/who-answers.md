@@ -50,7 +50,7 @@ make that true, and any new bot has to state which gate it uses.
 |---|---|---|
 | **Reaction** | This message, this action, chosen per message | archivist `_on_reaction` (🔖 📌 bookmark, 📎 📄 archive, 🔁 🔄 retry) |
 | **@-mention** | Deliberate address, overrides everything ambient | every bot, `MicroBot._is_bot_mentioned`; the agent adds nanobot's own pill check |
-| **Name in the vocative** | "Merlin, what is missing?" - how people actually talk | agent only, `name_trigger.addressed_by_name` |
+| **Name in the vocative** | "Merlin, what is missing?" - how people actually talk | every bot on the main timeline (`MicroBot._is_bot_mentioned`), and the agent, through the same `stack.name_trigger` |
 | **Thread ownership** | Inside a bounded conversation, the thread is the address | agent `AgentThreads`, archivist `MicroBot.thread_owner` |
 | **Room** | The room's default job, and its `!config process` mode | archivist (`documents` room means search; `react` mode means reactions only) |
 | **Message shape** | A URL, a long paste, a file | archivist only, and only on the main timeline |

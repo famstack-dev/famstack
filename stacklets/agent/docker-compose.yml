@@ -48,6 +48,12 @@ services:
       # image runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with the Dockerfile COPY.
       - ./runtime:/app/runtime:ro
+      # The name trigger is shared with the bot-runner, so every bot agrees
+      # on "was I addressed by name". It lives in lib/stack; only this one
+      # stdlib file is mounted, under the name the shim imports. Not into
+      # /app/runtime: that is a read-only mount itself, and Docker cannot
+      # create a mountpoint inside it. /app/shared is on PYTHONPATH.
+      - ../../lib/stack/name_trigger.py:/app/shared/name_trigger.py:ro
       # The `stack` shim, live for the same reason. It is the agent's only
       # route to the CLI, so a bug in it takes out every vault tool at once —
       # and it stayed baked-only long enough for one to go unnoticed.

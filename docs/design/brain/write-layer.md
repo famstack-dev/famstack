@@ -77,9 +77,9 @@ that started the session.
    agent exists.
 10. **The signal is free.** `AGENT_NAME=Stacky` and `AGENT_BOT_ID=stacky-bot` are
     already in the bot-runner's environment.
-11. **But the matcher is not shared.** `name_trigger.py` lives in the agent
-    stacklet, and the agent container mounts no `lib/stack`. If the two ever
-    disagree about "was the agent addressed", either both act or neither does.
+11. **The matcher is shared.** `lib/stack/name_trigger.py` is imported by the
+    bot-runner and mounted as one file into the agent container, so the bots
+    agree on "was I addressed by name".
 12. **The two answerers are not redundant.** The archivist's search is dual
     (Paperless plus vault, with synthesis and deep-dive); the agent's
     `memory_search` is vault-only, and `stack docs search` does not exist.

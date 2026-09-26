@@ -12,15 +12,9 @@ a family actually sends, and the boundary they draw is between speaking
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
-
-from name_trigger import addressed_by_name  # noqa: E402
+from stack.name_trigger import addressed_by_name, strip_address
 
 
 class TestSpeakingToTheAgent:
@@ -122,3 +116,20 @@ class TestAnUnconfiguredNameMatchesNothing:
     def test_an_empty_message_is_not_an_address(self):
         assert not addressed_by_name("", "Stacky")
         assert not addressed_by_name("> <@marge:simpson> quoted only\n", "Stacky")
+
+
+class TestWhatIsLeftForTheBot:
+    """After the address, the bot hears the question, not its own name."""
+
+    @pytest.mark.parametrize("body, question", [
+        ("Archivist, when does the car insurance renew?", "when does the car insurance renew?"),
+        ("archivist when does the car insurance renew?", "when does the car insurance renew?"),
+        ("hey Archivist: what did Lenny suggest?", "what did Lenny suggest?"),
+        ("what did Lenny suggest, Archivist?", "what did Lenny suggest?"),
+    ])
+    def test_the_address_is_dropped(self, body, question):
+        assert strip_address(body, "Archivist") == question
+
+    def test_a_message_about_the_bot_is_left_as_it_is(self):
+        body = "I asked the Archivist and it said no"
+        assert strip_address(body, "Archivist") == body

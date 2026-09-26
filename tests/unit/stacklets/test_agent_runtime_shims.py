@@ -49,6 +49,9 @@ def nanobot(monkeypatch, nanobot_stub):
             monkeypatch.setitem(sys.modules, name, module)
         for name in SHIMMED_MODULES:
             monkeypatch.delitem(sys.modules, name, raising=False)
+        # The container mounts lib/stack/name_trigger.py as `name_trigger`.
+        monkeypatch.setitem(sys.modules, "name_trigger",
+                            importlib.import_module("stack.name_trigger"))
         importlib.import_module("sitecustomize")
         return mods
 
@@ -121,7 +124,7 @@ def test_being_named_counts_as_a_mention(nanobot, monkeypatch):
     """Without this shim the agent ignores everyone who does not use a pill.
 
     Driven through nanobot's own gate rather than the matcher directly:
-    the matcher is specified in `test_agent_name_trigger.py`, and what
+    the matcher is specified in `tests/unit/framework/test_name_trigger.py`, and what
     is at stake here is that nanobot actually asks it.
     """
     monkeypatch.setenv("AGENT_NAME", "Stacky")

@@ -77,6 +77,7 @@ import voice
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 from stack.users import TECH_ADMIN_USERNAME
+from stack.name_trigger import addressed_by_name, strip_address
 
 # The framework's "I picked this up and I'm working on it" signal. A
 # bot reacts with 👀 on the source message the moment it starts a
@@ -1319,7 +1320,7 @@ class MicroBot:
     def _is_bot_mentioned(self, event) -> bool:
         """True if the event explicitly addresses this bot.
 
-        Two paths, OR-ed:
+        Three paths, OR-ed:
 
           1. ``m.mentions.user_ids`` (MSC3952) — modern Matrix clients
              (Element X, Element-web) populate this list when the user
@@ -1330,6 +1331,12 @@ class MicroBot:
              ``@bot:server`` form. The check is on the full mxid, not
              the localpart, so a casual mention of the bot's name in
              chat doesn't trip the gate.
+          3. Addressed by name, the way people talk: "Archivist, when does
+             the insurance renew?" (`stack.name_trigger`, the same rule the
+             agent uses, from the bot's `name` in bot.toml). Only on the
+             main timeline: in a thread or a reply the conversation already
+             has an address, and there a message without a pick from the
+             list keeps its meaning (for the archivist, a correction).
         """
         content = (
             event.source.get("content", {}) if hasattr(event, "source") else {}
@@ -1338,7 +1345,12 @@ class MicroBot:
         if self.user_id in (mentions.get("user_ids") or []):
             return True
         body = getattr(event, "body", "") or ""
-        return self.user_id in body
+        if self.user_id in body:
+            return True
+        relates = content.get("m.relates_to") or {}
+        if relates.get("rel_type") == "m.thread" or relates.get("m.in_reply_to"):
+            return False
+        return addressed_by_name(body, self.display_name or "")
 
     async def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
         """Decide whether the bot acts on the current event at all.
@@ -1520,6 +1532,7 @@ class MicroBot:
     @staticmethod
     def strip_mention(
         body: str, bot_user_id: str, *, formatted_body: str | None = None,
+        display_name: str | None = None,
     ) -> str:
         """Remove the bot mention (and any clinging punctuation/whitespace)
         from a message body.
@@ -1538,7 +1551,9 @@ class MicroBot:
              only inside the HTML ``formatted_body``. We pull the
              display name from the formatted_body's anchor element and
              strip it from the start of ``body``.
-          3. Neither: nothing to strip.
+          3. Addressed by name ("Archivist, find MLX", "..., Archivist?"):
+             the address is dropped, see `stack.name_trigger`.
+          4. None of these: nothing to strip.
 
         Conservative on punctuation: trims a single trailing ``:`` or
         ``,`` after the mention (common in tab-complete output) and
@@ -1576,6 +1591,9 @@ class MicroBot:
                         rest = rest[1:].lstrip()
                     return rest.strip()
 
+        # Path 3: addressed by name, no pill.
+        if display_name:
+            return strip_address(body, display_name)
         return body
 
     async def emit_event(self, room_id: str, event_type: str, body: dict) -> bool:
