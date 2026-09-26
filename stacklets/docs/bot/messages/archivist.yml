@@ -183,7 +183,7 @@ en:
     - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
     - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
     - 🎤 **Multi-memo notes:** type `(` then send multiple voice memos, then `)` → combined into one note
-    - 🔍 **Search this topic:** start a message with `?` (e.g. `?how did we pack the trunk last trip`) → I search only this topic's folder
+    - 🔍 **Ask about this topic:** start with my name (e.g. `Archivist, how did we pack the trunk last trip?`) → I answer from this topic's folder only
 
     Every capture in this room is tagged `{slug}` automatically, so the wiki's **{display}** page accumulates everything in one place.
 
@@ -196,7 +196,7 @@ en:
     - 📝 **Notes & links:** paste text or paste a URL → filed under your personal bucket
     - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
     - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
-    - 🔍 **Ask me anything:** start a message with `?` (e.g. `?when does our car insurance expire`) → I search your captures and our household documents
+    - 🔍 **Ask me anything:** start with my name (e.g. `Archivist, when does our car insurance expire?`) → I search your captures and our household documents
 
     Type **help** to see this message again.
 
@@ -210,7 +210,7 @@ en:
     - 📌 **Notes:** react 📌 to any message to keep it (in a room with just you, a long paste is kept on its own)
     - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
     - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
-    - 🔍 **Ask me anything:** start a message with `?` (e.g. `?did we get the dentist confirmation`) → I search captures and documents
+    - 🔍 **Ask me anything:** start with my name (e.g. `Archivist, did we get the dentist confirmation?`) → I search captures and documents
 
     Type **help** to see this message again.
 
@@ -391,7 +391,7 @@ de:
     - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
     - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
     - 🎤 **Mehrere Sprachnachrichten:** `(` tippen, mehrere Memos senden, dann `)` → werden zu einer Notiz kombiniert
-    - 🔍 **In diesem Thema suchen:** Nachricht mit `?` beginnen (z.B. `?wie haben wir letztes Mal die Kisten gepackt`) → ich suche nur in diesem Topic-Ordner
+    - 🔍 **Zu diesem Thema fragen:** mit meinem Namen beginnen (z.B. `Archivist, wie haben wir letztes Mal die Kisten gepackt?`) → ich antworte nur aus diesem Topic-Ordner
 
     Jeder Eintrag in diesem Raum wird automatisch mit `{slug}` getaggt, damit die **{display}**-Wiki-Seite alles an einem Ort sammelt.
 
@@ -404,7 +404,7 @@ de:
     - 📝 **Notizen & Links:** Text einfügen oder URL pasten → wird in deinem persönlichen Bucket abgelegt
     - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
     - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
-    - 🔍 **Frag mich was:** Nachricht mit `?` beginnen (z.B. `?wann läuft die KFZ-Versicherung ab`) → ich durchsuche deine Captures und unsere Dokumente
+    - 🔍 **Frag mich was:** mit meinem Namen beginnen (z.B. `Archivist, wann läuft die KFZ-Versicherung ab?`) → ich durchsuche deine Captures und unsere Dokumente
 
     **help** tippen für diese Nachricht.
 
@@ -418,7 +418,7 @@ de:
     - 📌 **Notizen:** mit 📌 auf eine Nachricht reagieren, dann merke ich sie mir (bist du allein im Raum, wird ein langer Text automatisch abgelegt)
     - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
     - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
-    - 🔍 **Frag mich was:** Nachricht mit `?` beginnen (z.B. `?haben wir die Zahnarzt-Bestätigung bekommen`) → ich durchsuche Captures und Dokumente
+    - 🔍 **Frag mich was:** mit meinem Namen beginnen (z.B. `Archivist, haben wir die Zahnarzt-Bestätigung bekommen?`) → ich durchsuche Captures und Dokumente
 
     **help** tippen für diese Nachricht.
 
