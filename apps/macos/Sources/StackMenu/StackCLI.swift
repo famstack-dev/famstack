@@ -31,38 +31,64 @@ enum Connection: Equatable {
     }
 }
 
+// ── What went wrong, for a person ─────────────────────────────────────────
+
+/// A failure as the panel shows it: what happened, what to do, and the raw
+/// output for anyone who wants it.
+struct Problem: Equatable, Error {
+    enum Kind { case connection, timeout, command }
+
+    let kind: Kind
+    let title: String
+    /// What to do about it, when there is something to do.
+    var hint: String?
+    /// The last lines the command printed.
+    var detail: String?
+    /// A command line that helps, run in Terminal on this Mac.
+    var terminal: TerminalCommand?
+
+    struct TerminalCommand: Equatable {
+        let label: String
+        let line: String
+    }
+}
+
 struct StackCLI {
     let connection: Connection
 
     struct Result {
-        let exitCode: Int32
-        let stdout: String
-        let stderr: String
+        var exitCode: Int32 = 0
+        var stdout = ""
+        var stderr = ""
+        /// Stopped because it ran past its time.
+        var timedOut = false
+        /// Past its time but left running (lifecycle actions).
+        var stillRunning = false
+        /// The process could not be started at all.
+        var launchError: String?
 
-        var succeeded: Bool { exitCode == 0 }
+        var succeeded: Bool { exitCode == 0 && !timedOut && !stillRunning && launchError == nil }
 
         /// The last lines are where the CLI says what went wrong. Both
         /// streams, because commands print their progress to either.
         func tail(_ lines: Int = 6) -> String {
             (stdout + "\n" + stderr).split(separator: "\n", omittingEmptySubsequences: true)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
                 .suffix(lines).joined(separator: "\n")
         }
     }
 
-    enum Failure: LocalizedError {
-        case exited(Result)
-        case undecodable(command: String, reason: String)
-
-        var errorDescription: String? {
-            switch self {
-            case .exited(let result): result.tail(3)
-            case .undecodable(let command, let reason): "Unexpected output from stack \(command): \(reason)"
-            }
-        }
+    /// What happens when a command runs past its time.
+    enum Overrun {
+        /// Stop it. For reads: an answer that late is worth nothing.
+        case stop
+        /// Stop waiting but let it finish, calling back when it does. For
+        /// lifecycle actions: a slow `up` is usually still pulling images,
+        /// and killing it halfway helps nobody.
+        case detach(whenDone: @Sendable (Result) -> Void)
     }
 
-    /// Reading calls give up after a minute; a lifecycle action may pull
-    /// images and gets much longer.
     static let readTimeout: TimeInterval = 60
     static let actionTimeout: TimeInterval = 15 * 60
 
@@ -85,27 +111,40 @@ struct StackCLI {
     /// Keys are TOML keys, kept exactly as written.
     func config() async throws -> ConfigReport { try await json(["config", "--json"], snakeCase: false) }
 
-    /// Runs a command and decodes its JSON output.
+    /// Runs a command and decodes its JSON output, or throws a `Problem`.
     ///
     /// The exit code alone does not decide: `doctor` exits 1 when it has
     /// found an error and still prints its report. Anything before the first
     /// `{` line is skipped, such as a one-time notice the CLI prints on the
     /// first run after a config change.
     private func json<T: Decodable>(_ arguments: [String], snakeCase: Bool = true) async throws -> T {
-        let result = await run(arguments, timeout: Self.readTimeout)
+        let result = await run(arguments, timeout: Self.readTimeout, overrun: .stop)
+        // A run that was killed or never started may have printed half a
+        // document; what it printed says nothing.
+        if result.timedOut || result.launchError != nil { throw diagnose(result, arguments) }
         let lines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
         guard let start = lines.firstIndex(where: { $0.hasPrefix("{") }) else {
-            throw Failure.exited(result)
+            throw readProblem(result, arguments)
         }
-        let body = lines[start...].joined(separator: "\n")
+        let body = Data(lines[start...].joined(separator: "\n").utf8)
         let decoder = JSONDecoder()
         if snakeCase { decoder.keyDecodingStrategy = .convertFromSnakeCase }
         do {
-            return try decoder.decode(T.self, from: Data(body.utf8))
+            return try decoder.decode(T.self, from: body)
         } catch {
-            throw Failure.undecodable(command: arguments.joined(separator: " "), reason: String(describing: error))
+            // A failing command answers `{"error": "..."}` (the CLI's
+            // contract): that message is for people, so it is the title.
+            if let reply = try? JSONDecoder().decode(ErrorReply.self, from: body) {
+                throw Problem(kind: .command, title: reply.error)
+            }
+            throw Problem(kind: .command,
+                          title: "The app does not understand what stack \(arguments[0]) returned",
+                          hint: "The app and the checkout are probably from different versions.",
+                          detail: String(describing: error))
         }
     }
+
+    private struct ErrorReply: Decodable { let error: String }
 
     // ── Running ──────────────────────────────────────────────────────────
 
@@ -120,124 +159,167 @@ struct StackCLI {
         case .local(let checkout):
             return (checkout.appendingPathComponent("stack"), arguments, checkout)
         case .remote(let host, let checkout):
-            let line = "cd \(Self.remotePath(checkout)) && ./stack " + arguments.map(Self.shellQuote).joined(separator: " ")
+            let line = Self.inRemoteCheckout(checkout, "./stack " + arguments.map(Self.shellQuote).joined(separator: " "))
             return (URL(fileURLWithPath: "/usr/bin/ssh"),
-                    Self.sshOptions(batch: true) + [host, "zsh -lc " + Self.shellQuote(line)], nil)
+                    Self.sshOptions(batch: true) + ["--", host, "zsh -lc " + Self.shellQuote(line)], nil)
         }
     }
 
-    /// Runs `./stack <arguments>` to completion off the main thread, and
-    /// stops it after `timeout`. Stdin is empty so a hook that prompts fails
-    /// instead of waiting on an answer nobody can give.
-    func run(_ arguments: [String], timeout: TimeInterval = actionTimeout) async -> Result {
+    /// Runs `./stack <arguments>` off the main thread. Stdin is empty, so a
+    /// hook that prompts fails instead of waiting for an answer nobody can
+    /// give.
+    func run(_ arguments: [String], timeout: TimeInterval, overrun: Overrun) async -> Result {
         let (executable, argv, directory) = invocation(arguments)
-        let description = "stack " + arguments.joined(separator: " ")
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = executable
-                process.arguments = argv
-                if let directory { process.currentDirectoryURL = directory }
-                process.environment = Self.environment()
-                process.standardInput = FileHandle.nullDevice
-                let out = Pipe(), err = Pipe()
-                process.standardOutput = out
-                process.standardError = err
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(returning: Result(exitCode: -1, stdout: "", stderr: error.localizedDescription))
-                    return
-                }
-                let timedOut = Flag()
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                    if process.isRunning {
-                        timedOut.value = true
-                        process.terminate()
-                    }
-                }
-                // Both pipes drain at once: a command that fills one while
-                // the other is being read would otherwise block forever.
-                let errData = Collected()
-                let group = DispatchGroup()
-                group.enter()
-                DispatchQueue.global().async {
-                    errData.data = err.fileHandleForReading.readDataToEndOfFile()
-                    group.leave()
-                }
-                let outData = out.fileHandleForReading.readDataToEndOfFile()
-                group.wait()
-                process.waitUntilExit()
-                var stderr = Self.stripANSI(String(decoding: errData.data, as: UTF8.self))
-                if timedOut.value { stderr += "\n\(description) did not finish within \(Int(timeout)) seconds." }
-                continuation.resume(returning: Result(
-                    exitCode: process.terminationStatus,
-                    stdout: Self.stripANSI(String(decoding: outData, as: UTF8.self)),
-                    stderr: stderr))
-            }
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = argv
+            if let directory { process.currentDirectoryURL = directory }
+            process.environment = Self.environment()
+            process.standardInput = FileHandle.nullDevice
+            let run = ProcessRun(process: process, continuation: continuation)
+            run.start(timeout: timeout, overrun: overrun)
         }
     }
-
-    private final class Collected: @unchecked Sendable { var data = Data() }
-    private final class Flag: @unchecked Sendable { var value = false }
 
     // ── Terminal ─────────────────────────────────────────────────────────
 
     /// Opens Terminal on `./stack <arguments>` on the connected machine.
     /// Used for anything interactive or long to read: installs, logs, doctor.
-    func openInTerminal(_ arguments: [String]) {
-        openInTerminal(line: "./stack " + arguments.map(Self.shellQuote).joined(separator: " "),
-                       name: arguments.joined(separator: "-"))
+    @discardableResult
+    func openInTerminal(_ arguments: [String]) -> Bool {
+        openInTerminal(inCheckout: "./stack " + arguments.map(Self.shellQuote).joined(separator: " "))
     }
 
     /// Opens Terminal on a command line exactly as the CLI printed it, such
     /// as a doctor fix. `stack …` runs the checkout's wrapper.
-    func openInTerminal(fix: String) {
-        openInTerminal(line: fix.hasPrefix("stack ") ? "./" + fix : fix, name: "fix")
+    @discardableResult
+    func openInTerminal(fix: String) -> Bool {
+        openInTerminal(inCheckout: fix.hasPrefix("stack ") ? "./" + fix : fix)
     }
 
-    /// Opens a file of the instance in a text editor: TextEdit (or the
-    /// default editor) for a local file, the remote `$EDITOR` in Terminal
-    /// for a remote one.
-    func edit(_ path: String) {
+    /// Opens a file of the instance in a text editor: the default editor for
+    /// a local file, the remote `$EDITOR` in Terminal for a remote one.
+    @discardableResult
+    func edit(_ path: String) -> Bool {
         switch connection {
         case .local:
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["-t", path]
-            try? process.run()
+            return NSWorkspace.shared.open(URL(fileURLWithPath: path)) || Self.openWithTextEdit(path)
         case .remote:
-            openInTerminal(line: "${EDITOR:-nano} " + Self.shellQuote(path), name: "edit")
+            return openInTerminal(inCheckout: "${EDITOR:-nano} " + Self.shellQuote(path))
         }
     }
 
-    /// Writes `line`, run in the checkout, to a `.command` file and opens
-    /// it. Launch Services opens it in Terminal without the Automation
-    /// permission that scripting Terminal would need.
-    private func openInTerminal(line: String, name: String) {
-        let body: String
+    private static func openWithTextEdit(_ path: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-t", path]
+        return (try? process.run()) != nil
+    }
+
+    /// `line`, run in the checkout on the connected machine.
+    private func openInTerminal(inCheckout line: String) -> Bool {
         switch connection {
         case .local(let checkout):
             // Terminal does not inherit this app's environment. An app
             // pointed at another instance with STACK_DIR passes it on.
             let stackDir = ProcessInfo.processInfo.environment["STACK_DIR"]
                 .map { "export STACK_DIR=\(Self.shellQuote($0))\n" } ?? ""
-            body = "\(stackDir)cd \(Self.shellQuote(checkout.path)) || exit 1\n\(line)\n"
+            return Self.openShell("\(stackDir)cd \(Self.shellQuote(checkout.path)) || exit 1\n\(line)")
         case .remote(let host, let checkout):
-            let remote = "cd \(Self.remotePath(checkout)) && \(line)"
-            let ssh = (["ssh", "-t"] + Self.sshOptions(batch: false) + [host]).map(Self.shellQuote).joined(separator: " ")
-            body = "\(ssh) \(Self.shellQuote("zsh -lc " + Self.shellQuote(remote)))\n"
+            let remote = Self.inRemoteCheckout(checkout, line)
+            let ssh = (["ssh", "-t"] + Self.sshOptions(batch: false) + ["--", host]).map(Self.shellQuote)
+                .joined(separator: " ")
+            return Self.openShell("\(ssh) \(Self.shellQuote("zsh -lc " + Self.shellQuote(remote)))")
         }
-        let script = "#!/bin/zsh -l\n" + body
-        let safeName = name.filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("stack-\(safeName).command")
+    }
+
+    /// Runs `script` in a new Terminal window on this Mac. A `.command` file
+    /// opens there through Launch Services, which needs no Automation
+    /// permission, unlike scripting Terminal directly. Each gets its own
+    /// file, so two windows never share one that is being rewritten.
+    @discardableResult
+    static func openShell(_ script: String) -> Bool {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("famstack-\(UUID().uuidString.prefix(8)).command")
         do {
-            try script.write(to: file, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
-            NSWorkspace.shared.open(file)
+            try ("#!/bin/zsh -l\nrm -f -- \"$0\"\n" + script + "\n").write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
         } catch {
-            NSSound.beep()
+            return false
         }
+        return NSWorkspace.shared.open(file)
+    }
+
+    // ── Diagnosis ────────────────────────────────────────────────────────
+
+    /// A read that returned no JSON. Its stdout is never shown: an older CLI
+    /// that ignores `--json` can print a whole file there, stack.toml with
+    /// its credentials included.
+    private func readProblem(_ result: Result, _ arguments: [String]) -> Problem {
+        var problem = diagnose(result, arguments)
+        guard problem.kind == .command else { return problem }
+        let machine = connection.isRemote ? connection.label : "this Mac"
+        let stderr = result.stderr.split(whereSeparator: \.isNewline).suffix(2).joined(separator: "\n")
+        // argparse exits 2 for a subcommand or flag it does not know.
+        if result.exitCode == 2 {
+            return Problem(kind: .command, title: "Not in the famstack version on \(machine)",
+                           hint: "Update that checkout with `./stack update`.")
+        }
+        problem = Problem(kind: .command, title: "stack \(arguments[0]) gave no report the app can read",
+                          hint: "The famstack on \(machine) may be older than the app; `./stack update` brings it level.",
+                          detail: stderr.isEmpty ? nil : stderr)
+        return problem
+    }
+
+    /// Turns a failed run into what the panel says. It reads only what the
+    /// app controls (the process, its timeout, ssh's documented exit code,
+    /// the exit code of its own remote wrapper) and otherwise shows the
+    /// CLI's last lines as they are: those are written for people already.
+    func diagnose(_ result: Result, _ arguments: [String]) -> Problem {
+        let command = "stack " + arguments.joined(separator: " ")
+        let detail = result.tail(4).isEmpty ? nil : result.tail(4)
+
+        if let launch = result.launchError {
+            return Problem(kind: .connection, title: "Could not run ./stack",
+                           hint: "Choose the checkout again in Setup → Connection.", detail: launch)
+        }
+        if result.stillRunning {
+            return Problem(kind: .timeout, title: "\(command) is still running",
+                           hint: "It continues in the background; the panel updates when it finishes.")
+        }
+        if result.timedOut {
+            return Problem(kind: .timeout, title: "\(command) did not answer in time",
+                           hint: "Docker on \(connection.label) may be stuck, or the connection dropped.",
+                           detail: detail)
+        }
+        if case .remote(let host, let checkout) = connection {
+            switch result.exitCode {
+            case Self.sshFailed:
+                return Problem(kind: .connection, title: "Could not connect to \(host) over SSH",
+                               hint: "`ssh \(host)` has to work without a password, and that Mac needs Remote Login.",
+                               detail: result.stderr.split(whereSeparator: \.isNewline).last
+                                   .map { $0.trimmingCharacters(in: .whitespaces) },
+                               terminal: .init(label: "Test in Terminal",
+                                               line: "ssh -- \(Self.shellQuote(host)) exit && echo 'SSH works.'"))
+            case Self.noRemoteCheckout:
+                return Problem(kind: .connection, title: "No famstack checkout at \(checkout) on \(host)",
+                               hint: "Set the checkout path in Setup → Connection.")
+            default:
+                break
+            }
+        }
+        return Problem(kind: .command, title: "\(command) failed", detail: detail)
+    }
+
+    /// ssh's own failures (it documents 255 for them), and the code the
+    /// remote wrapper exits with when the path holds no checkout.
+    private static let sshFailed: Int32 = 255
+    private static let noRemoteCheckout: Int32 = 96
+
+    /// `line` run in the remote checkout, or exit 96 when there is none.
+    private static func inRemoteCheckout(_ checkout: String, _ line: String) -> String {
+        "{ cd \(remotePath(checkout)) 2>/dev/null && [ -x ./stack ]; } || exit \(noRemoteCheckout); \(line)"
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -245,7 +327,8 @@ struct StackCLI {
     /// `BatchMode` makes ssh fail instead of asking for a password or a
     /// host key nobody can type into; Terminal sessions may ask.
     private static func sshOptions(batch: Bool) -> [String] {
-        (batch ? ["-o", "BatchMode=yes"] : []) + ["-o", "ConnectTimeout=8", "-o", "LogLevel=ERROR"]
+        (batch ? ["-o", "BatchMode=yes"] : [])
+            + ["-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "LogLevel=ERROR"]
     }
 
     /// A remote path quoted for the remote shell, with a leading `~/` left
@@ -267,11 +350,125 @@ struct StackCLI {
         return env
     }
 
-    private static func shellQuote(_ s: String) -> String {
+    static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    private static func stripANSI(_ s: String) -> String {
+    fileprivate static func stripANSI(_ s: String) -> String {
         s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "", options: .regularExpression)
+    }
+}
+
+// ── One process ───────────────────────────────────────────────────────────
+
+/// Runs one process and collects both of its streams.
+///
+/// It is done when the process exits, not when its pipes close: `stack`
+/// starts docker, and a docker child can hold the pipes open after `stack`
+/// itself is gone. So after the exit the readers get a moment to drain, and
+/// then the result is handed back regardless.
+private final class ProcessRun: @unchecked Sendable {
+    private let process: Process
+    private let lock = NSLock()
+    private var stdout = Data()
+    private var stderr = Data()
+    private var continuation: CheckedContinuation<StackCLI.Result, Never>?
+    private var whenDone: (@Sendable (StackCLI.Result) -> Void)?
+    private var timedOut = false
+    private var exited = false
+    private let drained = DispatchGroup()
+
+    init(process: Process, continuation: CheckedContinuation<StackCLI.Result, Never>) {
+        self.process = process
+        self.continuation = continuation
+    }
+
+    func start(timeout: TimeInterval, overrun: StackCLI.Overrun) {
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        collect(out) { self.stdout.append($0) }
+        collect(err) { self.stderr.append($0) }
+
+        process.terminationHandler = { [self] process in
+            lock.withLock { exited = true }
+            DispatchQueue.global().async { [self] in
+                _ = drained.wait(timeout: .now() + 1)
+                out.fileHandleForReading.readabilityHandler = nil
+                err.fileHandleForReading.readabilityHandler = nil
+                finish(exitCode: process.terminationReason == .uncaughtSignal
+                           ? 128 + process.terminationStatus : process.terminationStatus)
+            }
+        }
+
+        do {
+            try process.run()
+        } catch {
+            out.fileHandleForReading.readabilityHandler = nil
+            err.fileHandleForReading.readabilityHandler = nil
+            deliver(StackCLI.Result(exitCode: -1, launchError: error.localizedDescription))
+            return
+        }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [self] in
+            // Decided under the lock that `finish` also takes, so an exit in
+            // the same instant either wins completely or not at all.
+            let overran = lock.withLock { () -> Bool in
+                guard !exited else { return false }
+                switch overrun {
+                case .stop: timedOut = true
+                case .detach(let callback): whenDone = callback
+                }
+                return true
+            }
+            guard overran else { return }
+            switch overrun {
+            case .stop:
+                process.terminate()
+                // A process that ignores SIGTERM gets SIGKILL.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [self] in
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                }
+            case .detach:
+                deliver(StackCLI.Result(stillRunning: true))
+            }
+        }
+    }
+
+    private func collect(_ pipe: Pipe, into append: @escaping (Data) -> Void) {
+        drained.enter()
+        pipe.fileHandleForReading.readabilityHandler = { [self] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                drained.leave()
+            } else {
+                lock.withLock { append(data) }
+            }
+        }
+    }
+
+    private func finish(exitCode: Int32) {
+        let result = lock.withLock {
+            StackCLI.Result(exitCode: exitCode,
+                            stdout: StackCLI.stripANSI(String(decoding: stdout, as: UTF8.self)),
+                            stderr: StackCLI.stripANSI(String(decoding: stderr, as: UTF8.self)),
+                            timedOut: timedOut)
+        }
+        // Whoever is still waiting gets the result; a caller that was
+        // already told "still running" hears it through the callback.
+        if !deliver(result), let callback = lock.withLock({ whenDone }) { callback(result) }
+    }
+
+    /// Resumes the caller exactly once, whichever of exit, timeout or launch
+    /// failure comes first. Returns whether this call was the one.
+    @discardableResult
+    private func deliver(_ result: StackCLI.Result) -> Bool {
+        let pending = lock.withLock { () -> CheckedContinuation<StackCLI.Result, Never>? in
+            defer { continuation = nil }
+            return continuation
+        }
+        pending?.resume(returning: result)
+        return pending != nil
     }
 }

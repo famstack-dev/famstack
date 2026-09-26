@@ -19,8 +19,13 @@ final class StackStore: ObservableObject {
     @Published private(set) var checkout: URL?
     @Published private(set) var remoteHost: String
     @Published private(set) var remoteCheckout: String
+
     @Published private(set) var status: StackStatus?
-    @Published private(set) var loadError: String?
+    /// When `status` was last read successfully.
+    @Published private(set) var statusAt: Date?
+    /// Why the last status read failed; the panel then marks what it shows
+    /// as the last known state.
+    @Published private(set) var loadProblem: Problem?
     @Published private(set) var refreshing = false
 
     @Published private(set) var doctor: DoctorReport?
@@ -28,17 +33,53 @@ final class StackStore: ObservableObject {
     @Published private(set) var host: HostReport?
     @Published private(set) var backup: BackupReport?
     @Published private(set) var config: ConfigReport?
+    /// Reports that could not be read, by name, so a missing section is
+    /// explained instead of silently absent.
+    @Published private(set) var reportProblems: [(report: String, problem: Problem)] = []
     @Published private(set) var checking = false
     @Published private(set) var checkedAt: Date?
 
-    /// Stacklet id (or "" for the whole stack) to the verb running on it.
-    @Published private(set) var busy: [String: String] = [:]
-    @Published var lastFailure: ActionFailure?
+    /// The one lifecycle action running. Actions run one at a time: two
+    /// `up`s racing each other on one Docker is not something to invite.
+    @Published private(set) var running: RunningAction?
+    @Published var banner: Banner?
 
-    struct ActionFailure: Identifiable {
+    struct RunningAction: Equatable {
         let id = UUID()
-        let command: [String]
-        let message: String
+        /// A stacklet id, or "" for an action on the whole stack.
+        let key: String
+        let verb: String
+        let startedAt: Date
+    }
+
+    /// A message at the top of the panel: an action's outcome, or a choice
+    /// that could not be applied.
+    struct Banner: Identifiable {
+        enum Kind { case success, info, failure }
+
+        let id = UUID()
+        let kind: Kind
+        let title: String
+        var hint: String?
+        var detail: String?
+        /// Stack arguments to run again in Terminal, where the output stays.
+        var retry: [String]?
+        var terminal: Problem.TerminalCommand?
+
+        init(_ kind: Kind, _ title: String, hint: String? = nil) {
+            self.kind = kind
+            self.title = title
+            self.hint = hint
+        }
+
+        init(_ kind: Kind, _ problem: Problem, title: String? = nil, retry: [String]? = nil) {
+            self.kind = kind
+            self.title = title ?? problem.title
+            hint = problem.hint
+            detail = problem.detail
+            terminal = problem.terminal
+            self.retry = retry
+        }
     }
 
     private static let checkoutKey = "checkout"
@@ -48,10 +89,17 @@ final class StackStore: ObservableObject {
     private static let defaultRemoteCheckout = "~/famstack"
     private static let statusInterval: TimeInterval = 60
     private static let detailInterval: TimeInterval = 600
+    private static let successBannerSeconds: UInt64 = 6
+
     private var timers: [Timer] = []
+    private var wakeObserver: NSObjectProtocol?
     /// Bumped on every switch of machine, so an answer that arrives after
     /// the switch is dropped instead of shown for the wrong machine.
     private var generation = 0
+    /// A read asked for while one runs is not dropped: it runs right after,
+    /// against whatever machine is selected by then.
+    private var refreshQueued = false
+    private var checkQueued = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -67,6 +115,17 @@ final class StackStore: ObservableObject {
                 Task { @MainActor in await self?.check() }
             },
         ]
+        // After sleep the last answer is hours old. The network needs a
+        // moment to come back, a remote machine especially.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                await self?.refresh()
+                await self?.check()
+            }
+        }
         Task {
             await refresh()
             await check()
@@ -86,37 +145,62 @@ final class StackStore: ObservableObject {
     // ── Reading ──────────────────────────────────────────────────────────
 
     func refresh() async {
-        guard let cli, !refreshing else { return }
-        let started = generation
+        if refreshing { refreshQueued = true; return }
         refreshing = true
         defer { refreshing = false }
-        do {
-            let fresh = try await cli.status()
-            guard started == generation else { return }
-            status = fresh
-            loadError = nil
-        } catch {
-            guard started == generation else { return }
-            loadError = error.localizedDescription
-        }
+        repeat {
+            refreshQueued = false
+            guard let cli else { return }
+            let started = generation
+            do {
+                let fresh = try await cli.status()
+                guard started == generation else { continue }
+                status = fresh
+                statusAt = Date()
+                loadProblem = nil
+            } catch {
+                guard started == generation else { continue }
+                loadProblem = error as? Problem
+                    ?? Problem(kind: .command, title: "Could not read the stack's status", detail: "\(error)")
+            }
+        } while refreshQueued
     }
 
     /// The slower reports, all at once. One failing leaves the others.
     func check() async {
-        guard let cli, !checking else { return }
-        let started = generation
+        if checking { checkQueued = true; return }
         checking = true
         defer { checking = false }
-        let wantsBackup = status?.isInstalled("backup") ?? false
-        async let doctor = try? cli.doctor()
-        async let errors = try? cli.errors()
-        async let host = try? cli.host()
-        async let backup = wantsBackup ? try? cli.backup() : nil
-        async let config = try? cli.config()
-        let reports = await (doctor, errors, host, backup, config)
-        guard started == generation else { return }
-        (self.doctor, self.errors, self.host, self.backup, self.config) = reports
-        checkedAt = Date()
+        repeat {
+            checkQueued = false
+            guard let cli else { return }
+            let started = generation
+            // Right after a switch of machine there is no status yet, and
+            // without it the backup report would be skipped.
+            if status == nil { await refresh() }
+            let wantsBackup = status?.isInstalled("backup") ?? false
+            async let doctor = Self.attempt { try await cli.doctor() }
+            async let errors = Self.attempt { try await cli.errors() }
+            async let host = Self.attempt { try await cli.host() }
+            async let backup = wantsBackup ? Self.attempt { try await cli.backup() } : (nil, nil)
+            async let config = Self.attempt { try await cli.config() }
+            let (d, e, h, b, c) = await (doctor, errors, host, backup, config)
+            guard started == generation else { continue }
+            (self.doctor, self.errors, self.host, self.backup, self.config) = (d.0, e.0, h.0, b.0, c.0)
+            reportProblems = [("Doctor", d.1), ("Errors", e.1), ("Memory", h.1), ("Backup", b.1), ("Setup", c.1)]
+                .compactMap { name, problem in problem.map { (name, $0) } }
+            checkedAt = Date()
+        } while checkQueued
+    }
+
+    private static func attempt<T>(_ read: () async throws -> T) async -> (T?, Problem?) {
+        do {
+            return (try await read(), nil)
+        } catch let problem as Problem {
+            return (nil, problem)
+        } catch {
+            return (nil, Problem(kind: .command, title: "\(error)"))
+        }
     }
 
     /// When the panel opens: status always, the rest unless just done.
@@ -139,13 +223,17 @@ final class StackStore: ObservableObject {
         host?.stacklets.first { $0.id == stacklet }?.memoryBytes
     }
 
+    func name(of stacklet: String) -> String {
+        status?.stacklets.first { $0.id == stacklet }?.name ?? stacklet
+    }
+
     /// What the menu bar icon shows, worst state first. Only errors turn it
     /// into a warning: a warning that never clears (no backup set up) would
     /// teach the admin to stop looking at the icon.
     var summary: Summary {
         guard connection != nil else { return .unconfigured }
-        guard let status, loadError == nil else { return .unreachable }
-        if !busy.isEmpty { return .busy }
+        guard let status, loadProblem == nil else { return .unreachable }
+        if running != nil { return .busy }
         if status.installed.contains(where: { $0.health.needsAttention }) { return .attention }
         if attention.contains(where: { $0.level == .error }) { return .attention }
         return .healthy
@@ -166,21 +254,76 @@ final class StackStore: ObservableObject {
 
     // ── Acting ───────────────────────────────────────────────────────────
 
-    /// Runs a lifecycle verb in the background, then re-reads everything.
-    /// One verb per stacklet at a time; the CLI serialises the rest.
+    /// Runs a lifecycle verb in the background, says how it went, and
+    /// re-reads everything.
     func perform(_ verb: String, _ stacklet: String? = nil) async {
-        guard let cli else { return }
+        guard let cli, running == nil else { return }
         let key = stacklet ?? ""
-        guard busy[key] == nil else { return }
         let command = [verb] + (stacklet.map { [$0] } ?? [])
-        busy[key] = verb
-        let result = await cli.run(command)
-        busy[key] = nil
-        if !result.succeeded {
-            lastFailure = ActionFailure(command: command, message: result.tail())
+        let started = generation
+        let action = RunningAction(key: key, verb: verb, startedAt: Date())
+        running = action
+        banner = nil
+
+        let result = await cli.run(command, timeout: StackCLI.actionTimeout, overrun: .detach { [weak self] late in
+            Task { @MainActor in self?.finish(command, late, generation: started) }
+        })
+        // Only this action's own indicator is cleared: after a detach or a
+        // switch of machine, another action may be the running one by now.
+        if running?.id == action.id { running = nil }
+        if result.stillRunning {
+            // Left running; its callback reports the outcome later. The
+            // panel is free for other actions meanwhile.
+            show(Banner(.info, cli.diagnose(result, command)))
+            return
         }
-        await refresh()
-        await check()
+        finish(command, result, generation: started)
+    }
+
+    private func finish(_ command: [String], _ result: StackCLI.Result, generation started: Int) {
+        guard started == generation, let cli else { return }
+        let target = command.count > 1 ? name(of: command[1]) : nil
+        if result.succeeded {
+            show(Banner(.success, Self.done(command[0], target)))
+        } else {
+            let problem = cli.diagnose(result, command)
+            let title = problem.kind == .command ? Self.failed(command[0], target) : nil
+            show(Banner(.failure, problem, title: title, retry: command))
+        }
+        Task {
+            await refresh()
+            await check()
+        }
+    }
+
+    private static func done(_ verb: String, _ target: String?) -> String {
+        guard let target else { return verb == "restart" ? "Restarted what was running old code" : "Done" }
+        return switch verb {
+        case "up": "\(target) started"
+        case "down": "\(target) stopped"
+        case "restart": "\(target) restarted"
+        default: "Done"
+        }
+    }
+
+    private static func failed(_ verb: String, _ target: String?) -> String {
+        let what = target ?? "the stacklets running old code"
+        return switch verb {
+        case "up": "Could not start \(what)"
+        case "down": "Could not stop \(what)"
+        case "restart": "Could not restart \(what)"
+        default: "stack \(verb) failed"
+        }
+    }
+
+    /// Shows a banner; a success clears itself after a few seconds.
+    private func show(_ new: Banner) {
+        banner = new
+        guard new.kind == .success else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: Self.successBannerSeconds * 1_000_000_000)
+            if banner?.id == new.id { banner = nil }
+        }
     }
 
     /// A doctor fix: `stack up|restart|down <id>` runs in the background like
@@ -189,17 +332,28 @@ final class StackStore: ObservableObject {
         let words = fix.split(separator: " ").map(String.init)
         if words.count == 3, words[0] == "stack", ["up", "restart", "down"].contains(words[1]) {
             Task { await perform(words[1], words[2]) }
-        } else {
-            cli?.openInTerminal(fix: fix)
+        } else if cli?.openInTerminal(fix: fix) == false {
+            show(Banner(.failure, "Could not open Terminal"))
         }
     }
 
     func openInTerminal(_ arguments: [String]) {
-        cli?.openInTerminal(arguments)
+        if cli?.openInTerminal(arguments) == false {
+            show(Banner(.failure, "Could not open Terminal"))
+        }
+    }
+
+    func openTerminal(_ command: Problem.TerminalCommand) {
+        if !StackCLI.openShell(command.line) {
+            show(Banner(.failure, "Could not open Terminal"))
+        }
     }
 
     func edit(_ path: String) {
-        cli?.edit(path)
+        if cli?.edit(path) == false {
+            show(Banner(.failure, "Could not open \((path as NSString).lastPathComponent)",
+                        hint: "Open it yourself: \(path)"))
+        }
     }
 
     /// The address the CLI names for the stacklet. A checkout older than
@@ -208,8 +362,10 @@ final class StackStore: ObservableObject {
     func openInBrowser(_ stacklet: Stacklet) {
         var address = stacklet.url
         if address == nil, mode == .local, let port = stacklet.port { address = "http://localhost:\(port)" }
-        guard let address, let url = URL(string: address) else { return }
-        NSWorkspace.shared.open(url)
+        guard let address, let url = URL(string: address), NSWorkspace.shared.open(url) else {
+            show(Banner(.failure, "Could not open \(stacklet.name) in the browser"))
+            return
+        }
     }
 
     func canOpen(_ stacklet: Stacklet) -> Bool {
@@ -220,16 +376,18 @@ final class StackStore: ObservableObject {
 
     func setMode(_ new: Mode) {
         guard new != mode else { return }
+        // Switching to a remote that was never set up asks for it first,
+        // and a cancel leaves the switch where it was.
+        if new == .remote && remoteHost.isEmpty && !editRemote(switching: true) { return }
         mode = new
         UserDefaults.standard.set(new.rawValue, forKey: Self.modeKey)
-        if new == .remote && remoteHost.isEmpty {
-            editRemote()
-        }
         reconnect()
     }
 
-    /// Asks for the SSH host and the checkout path on it.
-    func editRemote() {
+    /// Asks for the SSH host and the checkout path on it. Returns whether
+    /// something was saved.
+    @discardableResult
+    func editRemote(switching: Bool = false) -> Bool {
         let host = NSTextField(string: remoteHost)
         host.placeholderString = "ssh alias or user@host"
         let path = NSTextField(string: remoteCheckout)
@@ -243,20 +401,34 @@ final class StackStore: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = "Connect to a stack on another Mac"
-        alert.informativeText = "The app runs ./stack there over SSH with your key. The server needs Remote Login turned on."
+        alert.informativeText = "The app runs ./stack there over SSH with your key, without a password. "
+            + "That Mac needs Remote Login turned on."
         alert.accessoryView = fields
         alert.addButton(withTitle: "Connect")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = host
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
 
-        remoteHost = host.stringValue.trimmingCharacters(in: .whitespaces)
-        let typed = path.stringValue.trimmingCharacters(in: .whitespaces)
-        remoteCheckout = typed.isEmpty ? Self.defaultRemoteCheckout : typed
+        let newHost = host.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typedPath = path.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Whatever is typed becomes an ssh argument: a leading dash would be
+        // read as an option, and whitespace is never part of a host.
+        guard !newHost.isEmpty, !newHost.hasPrefix("-"), !newHost.contains(where: \.isWhitespace) else {
+            show(Banner(.failure, "“\(newHost)” is not an SSH host",
+                        hint: "Use an alias from ~/.ssh/config or user@host."))
+            return false
+        }
+        guard !typedPath.contains(where: \.isNewline) else {
+            show(Banner(.failure, "The checkout path cannot span lines"))
+            return false
+        }
+        remoteHost = newHost
+        remoteCheckout = typedPath.isEmpty ? Self.defaultRemoteCheckout : typedPath
         UserDefaults.standard.set(remoteHost, forKey: Self.remoteHostKey)
         UserDefaults.standard.set(remoteCheckout, forKey: Self.remoteCheckoutKey)
-        if mode == .remote { reconnect() }
+        if mode == .remote && !switching { reconnect() }
+        return true
     }
 
     private func label(_ text: String) -> NSTextField {
@@ -269,8 +441,9 @@ final class StackStore: ObservableObject {
     /// Forgets everything read from the previous machine and reads again.
     private func reconnect() {
         generation += 1
-        status = nil; loadError = nil; lastFailure = nil
-        doctor = nil; errors = nil; host = nil; backup = nil; config = nil; checkedAt = nil
+        status = nil; statusAt = nil; loadProblem = nil; banner = nil; running = nil
+        doctor = nil; errors = nil; host = nil; backup = nil; config = nil
+        reportProblems = []; checkedAt = nil
         Task {
             await refresh()
             await check()
@@ -285,7 +458,8 @@ final class StackStore: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard StackCLI.isCheckout(url) else {
-            loadError = "\(url.path) has no ./stack and stacklets/ folder"
+            show(Banner(.failure, "\(url.lastPathComponent) is not a famstack checkout",
+                        hint: "Choose the folder that holds ./stack and stacklets/."))
             return
         }
         UserDefaults.standard.set(url.path, forKey: Self.checkoutKey)
