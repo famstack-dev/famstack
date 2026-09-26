@@ -427,6 +427,12 @@ class TestConsumeTrigger:
     def test_no_trigger_is_false(self, tmp_path):
         assert consume_trigger(tmp_path) is False
 
+    def test_a_named_trigger_is_consumed_on_its_own(self, tmp_path):
+        # `stack memory wiki update --all` drops its own trigger next to mirror-now.
+        (tmp_path / "nightly-now").write_text("now", encoding="utf-8")
+        assert consume_trigger(tmp_path) is False
+        assert consume_trigger(tmp_path, "nightly-now") is True
+
 
 class TestSleepUntilTick:
     async def test_pending_trigger_wakes_immediately(self, tmp_path):
@@ -493,3 +499,27 @@ class TestRebuild:
     ):
         monkeypatch.setattr(curator.sys, "executable", "/nonexistent/python")
         assert await curator.rebuild([]) is False
+
+    async def test_every_page_the_child_reports_reaches_the_progress_file(
+        self, tmp_path, monkeypatch,
+    ):
+        # An admin waiting on `stack memory wiki update` sees each page as
+        # the child writes it, not a count once the whole pass is over.
+        from memory.lib import progress_since
+        script = tmp_path / "pages.py"
+        script.write_text(
+            "import sys\n"
+            "print('published family/home.md', file=sys.stderr, flush=True)\n"
+            "print('unchanged homer/about.md, skipped', file=sys.stderr, flush=True)\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(curator, "ENTRYPOINT", str(script))
+        started = time.time()
+
+        assert await curator.rebuild(["--home"], tmp_path) is True
+
+        assert progress_since(tmp_path, started) == [
+            "regenerating wiki pages: --home",
+            "published family/home.md",
+            "unchanged homer/about.md, skipped",
+        ]

@@ -115,7 +115,7 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | Voice messages fail on a remote AI setup | `./stack ai switch <url>` output, "Voice messages" line | The AI server lists no speech-to-text model. Pass `--whisper <url>` for a speech server. |
 | Disk full | `./stack host` | Likely the photo library. Move `data_dir` to external SSD. |
 | Element warns "browser not supported", then never loads | Which address is open? | Port mode over the LAN IP: plain HTTP is not a secure context. On the server Mac open `http://localhost:42030`; other computers use the Element desktop app with `http://<ip>:42031`. |
-| Wiki pages stale after filings | `docker logs stack-memory-curator` | Curator debounces (~3 min quiet) before rebuilding; topic pages wait for the nightly sweep. Manual override: `./stack memory wiki`. |
+| Wiki pages stale after filings | `docker logs stack-memory-curator` | Curator debounces (~3 min quiet) before rebuilding; topic pages wait for the nightly sweep. Manual override: `./stack memory wiki update` (what the last filings touched) or `./stack memory wiki update --all` (everything, as at night). |
 | Wiki shows old content entirely | `docker logs stack-memory-curator` | The curator owns the vault `git pull` (the wiki container is a read-only view). Curator down/stuck → vault and wiki go stale together. |
 | Curator logs "waiting for vault" | `./stack status` → memory, code | Vault not cloned yet — the memory install hooks own the initial clone. |
 
