@@ -105,16 +105,17 @@ class TestAskingForEventIds:
     message you did not send, which is exactly the message you want to
     thread onto: the bot's own answer."""
 
+    def _asked(self, argv):
+        opts, err = read._parse_args(argv)
+        assert err is None
+        return opts["room"], opts["limit"], opts["ids"]
+
     def test_ids_are_off_unless_asked_for(self):
-        room, limit, show_ids, err = read._parse_args(["chat"])
-        assert (room, limit, show_ids, err) == ("chat", 20, False, None)
+        assert self._asked(["chat"]) == ("chat", 20, False)
 
     def test_the_flag_turns_them_on_without_eating_the_room(self):
-        room, _, show_ids, err = read._parse_args(["chat", "--ids"])
-        assert (room, show_ids, err) == ("chat", True, None)
+        assert self._asked(["chat", "--ids"]) == ("chat", 20, True)
 
     def test_it_composes_with_limit_in_either_order(self):
-        assert read._parse_args(["--ids", "chat", "--limit", "3"])[:3] == \
-            ("chat", 3, True)
-        assert read._parse_args(["chat", "--limit", "3", "--ids"])[:3] == \
-            ("chat", 3, True)
+        assert self._asked(["--ids", "chat", "--limit", "3"]) == ("chat", 3, True)
+        assert self._asked(["chat", "--limit", "3", "--ids"]) == ("chat", 3, True)

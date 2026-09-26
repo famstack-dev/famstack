@@ -450,7 +450,7 @@ class MatrixClient:
 
     # ── Messaging ────────────────────────────────────────────────────────
 
-    def send(self, room, message, html=None, mentions=None, thread_root=None):
+    def send(self, room, message, html=None, mentions=None, thread_root=None, reply_to=None):
         """Send a text message to a room (by alias or ID).
 
         Resolves aliases automatically. If html is provided, sends a
@@ -464,6 +464,10 @@ class MatrixClient:
         event id, the way a client's "Reply in thread" does. A thread is a
         conversation the agent treats as addressed to it once it is part of
         one, so this is how that path is exercised from the terminal.
+
+        `reply_to` answers one message without starting a thread, the way a
+        client's "Reply" does. For the archivist a reply to its filing is a
+        correction, so this is how that path is exercised.
         """
         if room.startswith("!"):
             room_id = room
@@ -488,9 +492,27 @@ class MatrixClient:
                 "is_falling_back": True,
                 "m.in_reply_to": {"event_id": thread_root},
             }
+        elif reply_to:
+            body["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
         status, resp = _put(
             self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn}"),
             body,
+            token=self.token,
+        )
+        if status == 200:
+            return True, resp.get("event_id", "sent")
+        return False, resp.get("error", "unknown error")
+
+    def react(self, room, event_id, key):
+        """React to a message with `key` (an emoji), as the logged-in user.
+        Returns (ok, event id or error)."""
+        room_id = room if room.startswith("!") else self.resolve_room(room)
+        if not room_id:
+            return False, f"Room '{room}' not found"
+        txn = f"{int(time.time() * 1000)}_{random.randint(0, 0xFFFFFFFF):08x}"
+        status, resp = _put(
+            self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.reaction/{txn}"),
+            {"m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": key}},
             token=self.token,
         )
         if status == 200:

@@ -1,5 +1,5 @@
 """
-stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] — send a message to a room
+stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] — send a message to a room
 
 Sends a plain text message to the specified room. By default it posts as
 stacker-bot (the system account); pass `--as <user>` to post as a family
@@ -17,6 +17,13 @@ in thread" does. The event id comes back from the send that started the thread,
 so a whole threaded conversation can be driven from the terminal. The agent
 treats a thread it is part of as addressed to it, so this is also how you check
 that a follow-up needs no mention at all.
+
+Pass `--reply-to <event-id>` to answer one message without starting a
+thread, the way a client's "Reply" does. For the archivist, a reply to its
+filing is a correction.
+
+The id of the message sent is printed, and returned with `--json`: it is what
+`--thread`, `--reply-to` and `stack messages read --after` take.
 
 This is the building block other stacklets use for notifications:
   - photos could notify #notifications when a backup completes
@@ -101,6 +108,7 @@ def run(args, stacklet, config):
     sender = None
     mentions = []
     thread_root = None
+    reply_to = None
     rest = []
     argv = sys.argv[3:]  # skip 'stack', 'messages', 'send'
     i = 0
@@ -117,6 +125,12 @@ def run(args, stacklet, config):
             mentions.append(argv[i + 1])
             i += 2
             continue
+        if argv[i] == "--reply-to":
+            if i + 1 >= len(argv):
+                return {"error": "--reply-to needs an event id"}
+            reply_to = argv[i + 1]
+            i += 2
+            continue
         if argv[i] == "--thread":
             if i + 1 >= len(argv):
                 return {"error": "--thread needs an event id"}
@@ -127,7 +141,7 @@ def run(args, stacklet, config):
         i += 1
     if len(rest) < 2:
         return {"error": 'Usage: stack messages send <room> "message" [--as <user>] '
-                         '[--mention <user>] [--thread <event-id>]'}
+                         '[--mention <user>] [--thread <event-id>] [--reply-to <event-id>]'}
 
     room = rest[0]
     message = " ".join(rest[1:])
@@ -158,9 +172,11 @@ def run(args, stacklet, config):
 
     ok, detail = client.send(
         room, message, html=html, mentions=mentions or None,
-        thread_root=thread_root,
+        thread_root=thread_root, reply_to=reply_to,
     )
     if ok:
+        # The id is what `--thread`, `--reply-to` and `read --after` take.
+        print(f"  Sent to {room}: {detail}")
         return {"ok": True, "room": room, "event_id": detail}
     else:
         return {"error": f"Failed to send: {detail}"}
