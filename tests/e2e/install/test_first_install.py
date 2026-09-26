@@ -59,6 +59,7 @@ MEMBERS = ["Marge", "Bart", "Lisa"]
 def _answers() -> dict[str, list[str]]:
     return {
         "Family name": [FAMILY],
+        "Language (en, de)": ["en"],
         "Your first name": [ADMIN],
         "Name (leave empty to continue)": [*MEMBERS, ""],
         "Ready?": ["y"],
@@ -387,6 +388,13 @@ def test_the_secrets_file_holds_the_service_admin_password(install):
     assert account, "the wizard does not name the service account"
     secrets = tomllib.loads((Path(CLONE) / path[1]).read_text())
     login(homeserver(printed_url(install)), account[1], secrets["global__ADMIN_PASSWORD"])
+
+
+def test_the_answered_language_is_the_family_language(install):
+    # Answered "en" on a Mac whose time zone proposes "de": the answer wins,
+    # for the family and as the first voice language.
+    cfg = tomllib.loads((Path(CLONE) / "stack.toml").read_text())
+    assert (cfg["core"]["language"], cfg["ai"]["language"]) == ("en", "en")
 
 
 def test_the_printed_commands_name_real_commands(install):

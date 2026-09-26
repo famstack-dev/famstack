@@ -180,15 +180,16 @@ What it does, in order:
 1. **Checks Homebrew.** If missing, prints the install one-liner and waits.
 2. **Checks Docker.** If missing, offers to install OrbStack via Homebrew. If installed but not running, asks you to start it and waits.
 3. **Asks for a family name.** Becomes your Matrix server identity. Permanent. Pick something short and lowercase-friendly. `mueller` is fine; "The Müller-Schmidt Family" gets sanitized to `mueller-schmidt`.
-4. **Asks for your first name.** Becomes the admin account on every stacklet. Default password is your first name in lowercase. Change it at first login.
-5. **Asks for additional family members.** Empty input ends the loop. Each member gets their own account on each stacklet.
-6. **Writes config.** Three files appear:
+4. **Asks for your family's language.** `en` or `de`, proposed from the Mac's time zone. The bots answer in it, documents are tagged in it, and voice messages are transcribed in it. Choose it deliberately: changing it later leaves the first set of document tags behind.
+5. **Asks for your first name.** Becomes the admin account on every stacklet. Default password is your first name in lowercase. Change it at first login.
+6. **Asks for additional family members.** Empty input ends the loop. Each member gets their own account on each stacklet.
+7. **Writes config.** Three files appear:
    - `stack.toml`: central config, gitignored, yours to edit.
    - `users.toml`: family roster, gitignored.
    - `.stack/secrets.toml`: auto-generated passwords for service accounts. Treat like a password manager export.
-7. **Brings up `messages` and `core`.** Pulls Synapse, Element and Postgres images (about 600 MB), starts them, creates Matrix accounts, seeds two default rooms (`#famchat`, `#famstack`).
-8. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
-9. **Prints a sign-in URL.** Something like `http://192.168.1.42:42030`.
+8. **Brings up `messages` and `core`.** Pulls Synapse, Element and Postgres images (about 600 MB), starts them, creates Matrix accounts, seeds two default rooms (`#famchat`, `#famstack`).
+9. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
+10. **Prints a sign-in URL.** Something like `http://192.168.1.42:42030`.
 
 Total time on a fresh Mac with a decent connection: 5 to 10 minutes.
 
@@ -588,7 +589,7 @@ schedule = "0 0 3 * * *"         # Watchtower nightly image updates
 
 [ai]
 default = "mlx-community/Qwen3.5-9B-MLX-4bit"   # change to match your RAM
-language = "en"                                   # "de" for German voice/transcription
+language = "en"                                   # the voice that reads answers aloud; can differ from [core]
 
 [memory]
 wiki_auto_rebuild = true         # curator refreshes member pages after filings
@@ -602,7 +603,7 @@ Key things to know:
 - **dns_provider**: with a domain, `"hetzner"` or `"cloudflare"` serves everything over HTTPS, with certificates Caddy obtains through the provider's API. Empty serves plain HTTP. The API token is stored with `./stack infra dns-token`, never in `stack.toml`.
 - **host**: the hostname used in port-mode URLs and hints. Empty = auto-detect the LAN IP (right for households: phones need it). Set to `localhost` for a single-machine setup, or to a fixed name like `mac-mini.local` if the LAN IP keeps shifting.
 - **data_dir**: where all persistent data lives. Back this up. Outside the git repo.
-- **language**: detected from your timezone. Controls which document categories get seeded (German or English). Change it and run `./stack restart docs` to seed missing tags.
+- **language**: asked during install, proposed from your timezone. `[core] language` is the family's language: the bots answer in it, document categories are seeded in it, voice messages are transcribed in it. Changing it later seeds the other set of tags alongside the first with `./stack restart docs`; the first set stays. `[ai] language` is the language the stack speaks to you, the voice that reads answers aloud. The installer sets it to the family language; set it to `en` for an English voice in a German household.
 - **AI model**: installer picks one for your RAM tier. Alternatives are listed as comments in `stack.toml`. Switch by uncommenting a different line and running `./stack setup ai`.
 
 ### users.toml
