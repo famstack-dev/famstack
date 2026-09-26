@@ -18,6 +18,9 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 > [!TIP]
 > **Try the Memories Room.** Record a voice message for your kids tonight, and tomorrow morning it is in your family diary. After four months of recording memos and our kids' voices, it has already become one of our most valuable artifacts. [How it works](#the-memories-room)
 
+> [!TIP]
+> **On your phone, turn on threads.** In Element X: **Settings > Labs > Threads**, then close and reopen the app. The archivist answers in threads, you correct it there, and each diary card sits in the thread under its memory. Without threads those replies land in one flat list.
+
 ## How do I...?
 
 | You want to | Go to |

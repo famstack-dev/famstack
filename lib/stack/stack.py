@@ -521,10 +521,18 @@ class Stack:
         `{url_host}` is the host of `{url}`: `<id>.<domain>` in domain
         mode, the address `{ip}` names in port mode. It is for a stacklet
         that serves another protocol under the same name, such as SSH.
+
+        `{browser_url}` is the address to open in a browser on this Mac.
+        A browser runs a web app that needs WebCrypto, such as Element,
+        only in a secure context: HTTPS, or localhost. The LAN address in
+        port mode is neither, so it is localhost there; other devices use
+        an app and `{url}`.
         """
         from urllib.parse import urlsplit
         url = self._public_url(stacklet_id, port)
-        return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip()}
+        browser_url = url if self._cfg("core", "domain") else f"http://localhost:{port}"
+        return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip(),
+                "browser_url": browser_url}
 
     def _domain_scheme(self) -> str:
         """https once the proxy serves certificates, http until then.

@@ -28,8 +28,9 @@ port        = 42030
 login_field = "username"
 
 hints = [
-    "Open {url} in your browser",
-    "On phones: install Element, use {messages_synapse_url} as the server",
+    "On this Mac: open {browser_url} in your browser",
+    "On phones: install Element X (App Store / Play Store). On other computers: the Element desktop app (element.io/download)",
+    "In both apps, enter {messages_synapse_url} as the server: the full address, starting with http",
 ]
 
 # Secondary ports — the main 'port' is Element (web client), but Synapse
