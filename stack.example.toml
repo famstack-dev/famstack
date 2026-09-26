@@ -115,8 +115,8 @@ whisper_url = "http://localhost:42062/v1"
 # whisper_key = ""               # only for a speech server that needs one
 # whisper_model = "whisper-1"    # the speech model to ask the server for
 
-# Language for AI interactions — controls TTS voice selection and
-# default Whisper transcription language.
+# The language the stack speaks to you: the voice that reads answers
+# aloud. Can differ from [core] language, which decides transcription.
 # "en" = English (alloy voice), "de" = German (onyx voice)
 language = "en"
 

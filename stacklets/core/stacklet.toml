@@ -129,10 +129,11 @@ TOOLS_PORT = "42000"
 # midnight is filed under the previous day.
 TIMEZONE         = "{timezone}"
 
-# Household language — drives bot-side i18n, ontology rendering, and
-# any prompt that should be in the family's primary language. Distinct
-# from `[ai].language` (`{ai_language}`), which controls AI subsystem
-# settings like TTS voice and Whisper transcription language.
+# Household language — drives bot-side i18n, ontology rendering, any
+# prompt that should be in the family's primary language, and the
+# language voice messages are transcribed in. Distinct from
+# `[ai].language` (`{ai_language}`), the language the stack speaks to
+# you: it picks the voice that reads answers aloud.
 LANGUAGE         = "{language}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"

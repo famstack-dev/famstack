@@ -98,6 +98,16 @@ def detect_language(timezone: str) -> str:
     return _TZ_LANGUAGE.get(timezone, "en")
 
 
+LANGUAGES = {"en": "English", "de": "Deutsch"}
+
+
+def validate_language(value: str) -> str | None:
+    """The languages the seeded taxonomy and the bots' texts exist in."""
+    if value in LANGUAGES:
+        return None
+    return "Choose " + " or ".join(LANGUAGES)
+
+
 # (min_ram_gb, model_id, label)
 # Qwen3.6 only shipped a 27B dense and a 35B-A3B MoE — no small variant — so
 # the lightweight tier stays on Qwen3.5-9B (3.6's smallest 4bit is 16 GB of
@@ -297,7 +307,10 @@ schedule = "0 0 3 * * *"
 provider = ""
 openai_url = ""
 openai_key = ""
-language = "en"
+# The language the stack speaks to you: the voice that reads answers
+# aloud. Starts as the family language; it can differ. Transcription and
+# document tags follow [core] language.
+language = "{language}"
 {model_block}
 
 [messages]
@@ -372,8 +385,10 @@ def show_existing_config():
         kv("Domain", core["domain"])
     if ai.get("openai_url"):
         kv("AI server", ai["openai_url"])
+    if core.get("language"):
+        kv("Language", core["language"])
     if ai.get("language"):
-        kv("AI language", ai["language"])
+        kv("Voice", ai["language"])
     if messages.get("server_name"):
         kv("Chat server", messages["server_name"])
     nl()
@@ -467,6 +482,20 @@ def wizard():
 
     server_name = sanitize_server_name(family_name)
 
+    # ── Language ───────────────────────────────────────────────────────
+    # Asked, not only guessed: it names the document categories seeded
+    # into Paperless, and changing it later leaves the first set behind.
+
+    timezone = detect_timezone()
+    nl()
+    out("Which language does your family read? The bots answer in it,")
+    out("documents are tagged in it, and voice messages are transcribed in it.")
+    nl()
+    language = ask(f"Language ({', '.join(LANGUAGES)})",
+                   default=detect_language(timezone), validate=validate_language)
+    if not language:
+        return None
+
     # ── Admin ──────────────────────────────────────────────────────────
 
     nl()
@@ -506,6 +535,7 @@ def wizard():
     rule()
     nl()
     bold(f"The {ORANGE}{family_plural(family_name)}{RESET}")
+    dim(f"Language: {LANGUAGES[language]}")
     nl()
     for u in users:
         uid = user_id(u)
@@ -546,9 +576,6 @@ def wizard():
     clear()
     section("Setting up", "Writing config and starting messages")
     nl()
-
-    timezone = detect_timezone()
-    language = detect_language(timezone)
 
     with Spinner("Writing stack.toml"):
         write_stack_toml(family_name, server_name, timezone, language)
