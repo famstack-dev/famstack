@@ -224,6 +224,99 @@ and the archivist when it posts a filing card). Their output carries
 `dev.famstack.source` / `dev.famstack.event`, and other bots read the
 envelope rather than the prose.
 
+## The archivist, as a decision tree
+
+What the archivist does with one event, read from the code
+(`stacklets/docs/bot/archivist.py`, gates in `MicroBot`). The first
+matching line wins. "Addressed" means: picked from the `@` list
+(`m.mentions`), or its Matrix ID in the text, or, on the main timeline
+only, its name at the start or end of the message ("Archivist, ...",
+"..., Archivist?", `stack.name_trigger`).
+
+### A text message (`_on_text`)
+
+```
+1. sent by the archivist itself ............................ ignore
+2. in the Memories room .................................... diary_room.on_text:
+     in a thread under one of its diary cards, with words ...  correct that card
+     anything else .........................................  silence
+3. carries a dev.famstack.source envelope (mail bot) ....... file the source
+4. sent by another bot (localpart ends in -bot) ............ ignore
+5. empty ................................................... ignore
+6. a `!config` command ..................................... change the room's settings
+   (first message in a room: post the welcome first)
+7. not addressed, and the room's mode is `react` ........... ignore (reactions only)
+8. not addressed, in a thread the archivist does not own ... ignore
+     (except a handoff: mail attachments posted under a mail card)
+9. not addressed, and it lands on one of its filings
+   (a reply to it, or in its thread) ....................... correction: re-file
+10. the command ladder:
+     help / hilfe / ? ....................................... the room's welcome text
+     `(` ... `)` ............................................ start / finish a scan session
+     `show 42` .............................................. post document 42
+     only a URL ............................................. Documents room: archive in Paperless
+                                                              elsewhere: bookmark
+     not addressed, text with a URL ......................... same, the words are the hint
+     addressed, or in the Documents room .................... search and answer
+                                                              (topic room: that topic only)
+     a voice transcript, or a long paste with one
+     person in the room (bots and the tech admin not
+     counted) ............................................... note
+     anything else .......................................... ignore: people talking
+```
+
+### A voice message (`MicroBot._dispatch`)
+
+```
+Every m.audio with a plain mxc:// payload is transcribed before any
+handler sees it (voice.is_voice, _decode_voice):
+  no speech, or no transcriber ................................ nothing at all
+  otherwise ................................................... the transcript goes through
+                                                                "A text message" above, same
+                                                                event id and thread, marked
+                                                                as transcribed
+In the Memories room only a voice reply in a thread is decoded
+(a correction to a card); memos are left for the diary.
+```
+
+Speech and typing are routed identically, with one difference: a
+transcript that reaches the end of the ladder is filed as a note, where
+typed text would need to be a long paste in a one-person room.
+
+### A file: photo or PDF (`_on_file`)
+
+```
+1. sent by the archivist, unsupported type, or no mxc:// .... ignore
+2. in the Memories room ..................................... ignore; the diary reads it
+                                                              on its own schedule
+3. not addressed, room mode `react` ......................... ignore
+4. not addressed, in a thread it does not own ............... ignore (handoffs excepted)
+5. the sender has an open scan session ...................... add as a page
+6. in the Documents room .................................... file in Paperless
+7. elsewhere ................................................ capture: text extracted,
+                                                              summarised, filed
+```
+
+### A reaction (`_on_reaction`)
+
+```
+1. by a bot or the tech admin, or in the Memories room ...... ignore
+2. 🔖 📌 ...................................................... keep the message: bookmark or note
+   📎 📄 ...................................................... archive the source in Paperless
+   🔁 🔄 ...................................................... retry the filing
+   any other emoji ........................................... ignore
+```
+
+### What the tree says about priorities
+
+- An address beats every guess: steps 7 and 8 only apply when the
+  archivist was not addressed, and step 9 (correction) only then too.
+- Inside a thread the name alone is not an address, so "Archivist, this
+  is Marge's car" in a filing's thread stays a correction (step 9). To
+  search from a thread, pick the archivist from the `@` list.
+- The Memories room is decided first and keeps the archivist silent
+  except for corrections to its own cards.
+
 ## The gaps
 
 1. **The vocative is not shared.** "Merlin, save this" on the main
