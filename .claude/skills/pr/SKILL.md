@@ -64,6 +64,12 @@ Refs: #127
 - No `Co-Authored-By`, no "Generated with" line, no tool link: this repository is
   public and commit-lint rejects all three.
 
+## 4b. Read the diff as a reviewer
+
+Check the new and touched code against `docs/agent/dev.md`, "Clean code:
+what a reviewer checks". Fix what breaks a rule before opening the PR, or
+say in the handover which rule it breaks and why.
+
 ## 5. Check
 
 ```bash
