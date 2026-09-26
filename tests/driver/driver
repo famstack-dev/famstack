@@ -1,0 +1,21 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pexpect", "playwright"]
+# ///
+"""driver: operate a running famstack instance from its own surfaces.
+
+Acts as a family member in the chat, runs `./stack` as the admin, answers the
+installer, opens the web UIs, and reads what the bots answered: through the
+stack's own CLI and chat only, on this Mac or another over ssh. See README.md.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from commands import main  # noqa: E402
+
+if __name__ == "__main__":
+    main()

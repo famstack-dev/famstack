@@ -223,6 +223,8 @@ make test-smoke      # quick managed-rig e2e subset.
 make test-e2e        # full managed-rig e2e suite.
 ```
 
+To try something on a running instance by hand (say something as Marge, read what the archivist answered, run `./stack` on the test Mac), use `tests/driver/driver`; see its README. It drives the stack through its own surfaces only.
+
 Run the cheapest lane that proves what you changed. Every lane but
 `test-unit` owns fixed container names and ports, so exactly one runs at a
 time on a Mac: check nothing else is mid-run first. One name per lane, no
