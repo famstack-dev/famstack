@@ -7,6 +7,7 @@ prevent. Pure functions, no instance required.
 from __future__ import annotations
 
 from stack.doctor import (
+    check_language,
     ERROR,
     Finding,
     check_endpoint,
@@ -438,3 +439,24 @@ class TestSingleSignOn:
         [found] = check_oidc(["id", "sso"], {}, running={"id"})
         assert found.level == WARN
         assert "id" in found.detail and "sso" in found.detail
+
+
+class TestLanguage:
+    """`[core] language` is the family's language; `[ai] language` the
+    language the stack speaks to you. Early installs have only the second,
+    and everything silently falls back to it. Doctor says so."""
+
+    def test_an_install_without_a_family_language_is_told_to_set_one(self):
+        finding = check_language("", "de")
+
+        assert finding.title == "no family language set"
+        assert 'language = "de"' in finding.fix
+        assert "voice" in finding.detail
+        assert finding.is_error is False
+
+    def test_without_either_it_falls_back_to_english(self):
+        assert 'language = "en"' in check_language("", "").fix
+
+    def test_a_voice_in_another_language_is_a_valid_setup(self):
+        """German documents, an English voice: nothing to report."""
+        assert check_language("de", "en") is None

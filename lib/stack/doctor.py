@@ -194,6 +194,31 @@ def check_release(position: str, latest: str, up_to_date: bool) -> Finding | Non
     )
 
 
+def check_language(core_language: str, ai_language: str) -> Finding | None:
+    """Whether the family's language, `[core] language`, is set.
+
+    Installs from before the installer wrote it have none. Everything that
+    reads the family language then falls back to `[ai] language`, the
+    language the stack speaks to you, which may be a different one: the
+    bots, the document categories and transcription follow the voice.
+    A `[core] language` different from `[ai] language` is a valid setup
+    and not reported.
+    """
+    if core_language:
+        return None
+    fallback = ai_language or "en"
+    return Finding(
+        level=WARN,
+        title="no family language set",
+        detail=(f"stack.toml has no `language` under [core]. The bots, document "
+                f"tags and transcription fall back to \"{fallback}\""
+                + (", the language of the voice under [ai]." if ai_language else ".")),
+        fix=(f'add language = "{fallback}" under [core] in stack.toml (or the '
+             f"language your family reads), then restart what is running: "
+             f"stack restart <id>..."),
+    )
+
+
 def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     """A configured endpoint that does not answer.
 

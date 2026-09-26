@@ -1114,6 +1114,11 @@ def handle_doctor(stck, args):
         running={sid for sid in stacklets if docker.containers_for(sid)},
     )
 
+    language = doctor.check_language(stck._cfg("core", "language", ""),
+                                     stck._cfg("ai", "language", ""))
+    if language:
+        findings.append(language)
+
     # What this instance is running, and whether a release has passed it.
     # No fetch: doctor is run often, and often when something is
     # unreachable, so it answers from the tags this clone already has.
