@@ -262,6 +262,39 @@ Testing rules:
 - **Re-read the full error line before calling a failure a duplicate.** Check sender, target, specific IDs. Two errors that look similar at a glance often differ in the load-bearing field.
 - **No backwards-compatibility shims** in pre-1.0 code. Change the code, update callers, ship.
 
+### Clean code: what a reviewer checks
+
+Structure a reader can follow without running the code, so a review reads the
+change instead of reverse-engineering it. After Robert C. Martin's *Clean
+Code*, trimmed to what this codebase needs.
+
+1. **A function does one thing, at one level of abstraction.** The top level
+   reads like a table of contents. A description that needs "and then" is two
+   functions.
+2. **Small.** A function fits on a screen (about 30 lines), a file holds one
+   topic (about 300 lines). Past that, splitting is the rule.
+3. **Names say what, not how.** `answer_to(message)`, not
+   `select(messages, after=...)`. No abbreviations beyond the domain's own.
+4. **No flag arguments that switch behaviour.** `as_json=True` deep in the
+   logic is two functions, or rendering that belongs at the edge.
+5. **Return early instead of nesting.** At most two levels of indentation in
+   the logic.
+6. **I/O at the edge, decisions in the middle.** Parsing, deciding and
+   formatting are pure functions; only the outer layer talks to ssh, Matrix,
+   a database or the terminal (principle 5 in AGENTS.md, made concrete).
+7. **Name the magic.** A regex, a port, a timeout becomes a named constant
+   with a one-line reason.
+8. **No dead code.** Delete instead of commenting out; a comment says why,
+   never what the code already says.
+
+9. **A class says what it is for.** Its docstring gives its purpose within
+   the module and one short example of using it.
+10. **Leave it cleaner than you found it.** Code you visit or change leaves
+   more readable and more testable than it came, until it follows these
+   rules. Much of the existing code predates them; this is how it gets there,
+   one touched function at a time, with its behaviour pinned by a test before
+   it moves.
+
 ## Commits: the subject is the changelog
 
 The release log is the changelog. `stack update` prints it, the GitHub release
