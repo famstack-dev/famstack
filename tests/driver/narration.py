@@ -44,6 +44,10 @@ class Narrator(BDDLog):
     def failed(self, msg: str) -> None:
         self._emit("\u2717", msg, indent=True)
 
+    def cycle(self, msg: str) -> None:
+        """Work the stack does on a timer, run now: named apart from what people do."""
+        self._emit("CYCLE", msg)
+
 
 def first_line(text: str, width: int = 100, lines: int = 2) -> str:
     """A message on one protocol line: its first non-empty lines, shortened."""
