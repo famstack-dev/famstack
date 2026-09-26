@@ -50,6 +50,8 @@ driver as marge react picnic <id> 📌
 driver read picnic [--limit 20]                   # recent messages, with ids
 driver answer picnic --from archivist --after <id> [--first] [--timeout 180]   # its answer to <id>
 
+driver cycle curator                              # the pages a filing touched, now
+driver cycle nightly                              # tonight's sweep, now
 driver stack up agent                             # ./stack on the instance
 driver tty "./stack" --answer "Family name=Simpson" --answer "Your first name=Homer" \
     --answer "Name (leave empty=Marge" --answer "Name (leave empty=" \
@@ -60,8 +62,23 @@ driver logs archivist [--grep search]             # a bot's lines from its log
 ```
 
 A room is its alias (`picnic`, `documents`, `memories`) or a room id. A family
-member is their user name (`marge`). `--json` on `as`, `read` and `answer`
-gives the stack's own answer.
+member is their user name (`marge`). `--json` on `as`, `read`, `answer` and
+`cycle` gives the stack's own answer.
+
+## Timed work
+
+Some of the chain from a message to the wiki runs on a timer: the curator
+regenerates pages after a quiet window following a filing, and sweeps
+everything once a night. `driver cycle` runs that work now and returns when it
+is done, through `stack memory sync --pages` and `stack memory nightly`. In
+the protocol it is a `CYCLE` line, so a reader tells what the family did from
+what the stack did on its own:
+
+```
+[20:14:02.118] WHEN       lisa sends report-card.pdf to documents
+[20:14:40.905] CYCLE      the curator regenerates the pages the last filing touched (...)
+[20:14:52.330]   ✓        done after 11.4s
+```
 
 ## An exchange
 

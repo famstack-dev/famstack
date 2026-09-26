@@ -77,6 +77,25 @@ def stack(args, instance: Instance) -> None:
     sys.exit(result.returncode)
 
 
+# Work the stack otherwise does on a timer, each with the stack command that
+# runs it now and waits until it is done.
+CYCLES = {
+    "curator": ("the curator regenerates the pages the last filing touched "
+                "(on its own after a quiet window)", ("memory", "sync", "--pages")),
+    "nightly": ("the curator's nightly sweep: diary, source reconcile, every page "
+                "(on its own at 03:30)", ("memory", "nightly")),
+}
+
+
+def cycle(args, instance: Instance) -> None:
+    what, command = CYCLES[args.which]
+    log.cycle(what)
+    started = time.time()
+    answer = instance.stack(*command)
+    log.ok(f"done after {time.time() - started:.1f}s")
+    print(json.dumps(answer) if args.json else f"{args.which} cycle done")
+
+
 def logs(args, instance: Instance) -> None:
     """A bot's lines: in core's log (the bot-runner), tagged `[name]`; the agent's own."""
     name = args.name.lower().removesuffix("-bot")
@@ -124,7 +143,7 @@ def browse_ui(args, instance: Instance) -> None:
 
 
 HANDLERS = {"as": as_member, "read": read, "answer": answer, "stack": stack,
-            "logs": logs, "tty": tty, "browse": browse_ui}
+            "logs": logs, "cycle": cycle, "tty": tty, "browse": browse_ui}
 
 
 # ── Arguments ────────────────────────────────────────────────────────────
@@ -136,7 +155,8 @@ def parser() -> argparse.ArgumentParser:
     top.add_argument("--root", default=os.environ.get("DRIVER_ROOT"),
                      help="checkout on that Mac (default: ~/famstack over ssh)")
     sub = top.add_subparsers(dest="command", required=True)
-    json_commands = [*_member_actions(sub), _read(sub), _answer(sub), _tty(sub), _browse(sub)]
+    json_commands = [*_member_actions(sub), _read(sub), _answer(sub), _cycle(sub),
+                     _tty(sub), _browse(sub)]
     _stack(sub)
     _logs(sub)
     for command in json_commands:
@@ -182,6 +202,12 @@ def _answer(sub):
     answer_.add_argument("--timeout", type=int, default=180)
     answer_.add_argument("--first", action="store_true", help="only the first answer")
     return answer_
+
+
+def _cycle(sub):
+    cycle_ = sub.add_parser("cycle", help="run timed work now: the curator's pages, the nightly sweep")
+    cycle_.add_argument("which", choices=sorted(CYCLES))
+    return cycle_
 
 
 def _tty(sub):
