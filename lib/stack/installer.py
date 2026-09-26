@@ -653,13 +653,18 @@ def wizard():
     admin_id = uid2(admin)
 
     # Resolve URLs from the Stack instance
-    messages_url = stck._public_url("messages", 42030)
+    # The browser address is localhost in port mode: Element only runs in
+    # a secure context, and a LAN address over plain HTTP is not one.
+    # Phones and other computers use the Element apps with the server's
+    # address instead.
+    messages_url = stck._own_template_vars("messages", 42030)["browser_url"]
+    server_url = stck._public_url("messages", 42031)
 
     # ── Step-by-step guide ────────────────────────────────────────────
 
     rule()
     nl()
-    bold("1. Open your browser")
+    bold("1. Open your browser on this Mac")
     nl()
     if messages_url:
         out(f"   {BOLD}{TEAL}{messages_url}{RESET}")
@@ -668,14 +673,22 @@ def wizard():
     bold("2. Sign in")
     nl()
     out(f"   Welcome to Element. Press {BOLD}Sign in{RESET}.")
-    out("   If you see 'does not support this browser', click Continue anyway.")
     nl()
     out(f"   Username  {BOLD}{TEAL}{admin_id}{RESET}")
     out(f"   Password  {BOLD}{TEAL}{admin_id}{RESET}")
     dim("   (your first name, lowercase — change it after login)")
     nl()
 
-    bold("3. Explore your rooms")
+    bold("3. Phones and other computers")
+    nl()
+    out(f"   On phones: install {BOLD}Element X{RESET} (App Store / Play Store).")
+    out(f"   On other computers: the {BOLD}Element{RESET} desktop app, {TEAL}element.io/download{RESET}")
+    out("   In both, enter as the server")
+    out(f"   {BOLD}{TEAL}{server_url}{RESET}  "
+        f"{DIM}with {server_url.split('://')[0]}:// at the front{RESET}")
+    nl()
+
+    bold("4. Explore your rooms")
     nl()
     out(f"   {TEAL}#famchat{RESET}    Your private family conversations")
     out(f"   {TEAL}#famstack{RESET}   Notifications about your server")

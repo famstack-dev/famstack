@@ -336,13 +336,28 @@ def test_messages_and_core_are_healthy(install):
     assert not bad, f"not healthy: {bad}"
 
 
-def test_the_printed_address_serves_element_on_the_lan(install):
+def test_the_browser_address_is_one_element_can_start_on(install):
+    # A browser runs Element only in a secure context: HTTPS or localhost.
+    # The LAN address over plain HTTP serves the page, but Element never
+    # finishes loading there, so the address printed for the browser on
+    # this Mac is localhost.
     url = printed_url(install)
     parts = urllib.parse.urlsplit(url)
-    assert parts.hostname == lan_ip(), f"{url} is not this Mac's LAN address {lan_ip()}"
+    assert parts.hostname == "localhost", f"{url} is not a secure context for Element in a browser"
     assert parts.port == 42030, f"{url} is not Element's port 42030"
     status, body = _http(url)
     assert status == 200 and b"Element" in body, f"{url} answered {status} without Element Web"
+
+
+def test_the_app_address_is_the_server_on_the_lan(install):
+    # Phones and other computers use the Element apps. They need the full
+    # address, http:// included, and reach Synapse on the LAN directly.
+    urls = re.findall(r"https?://\S+", install.between("Phones and other computers", "Explore your rooms"))
+    assert len(urls) == 1, f"expected one server address for the apps, got {urls}"
+    parts = urllib.parse.urlsplit(urls[0])
+    assert (parts.scheme, parts.hostname, parts.port) == ("http", lan_ip(), 42031), urls[0]
+    status, body = _http(f"{urls[0]}/_matrix/client/versions")
+    assert status == 200 and b"versions" in body, f"{urls[0]} is not answering as a Matrix server"
 
 
 def test_the_printed_login_works(install):

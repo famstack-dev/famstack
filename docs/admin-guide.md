@@ -197,7 +197,9 @@ If something fails partway through, fix the underlying issue (usually Docker not
 
 ### 4. Sign in (browser)
 
-Open the URL the installer printed. You should see Element. If your browser warns "this browser is not supported", click Continue anyway. Element works in Safari, Chrome, Firefox and Edge despite the warning.
+On the Mac that runs famstack, open the address the installer printed: `http://localhost:42030` in port mode. You should see Element.
+
+Element runs in a browser only over HTTPS or on `localhost`. In port mode the Mac's LAN address is plain HTTP, so on any other computer the browser shows "does not support this browser" and Element never finishes loading. Other computers and phones use the Element apps instead (below), or you set up domain mode with HTTPS.
 
 - **Username**: your first name, lowercase.
 - **Password**: same as the username.
@@ -227,16 +229,30 @@ Sign-in flow:
    http://<mac-lan-ip>:42031
    ```
 
-   That is the Synapse port (`42031`), not the Element web port (`42030`). Phones talk to Synapse directly.
+   Type it in full, with `http://` at the front: without it the app tries HTTPS and cannot connect. That is the Synapse port (`42031`), not the Element web port (`42030`). Phones talk to Synapse directly.
 
 3. Element X warns the connection is not HTTPS. Correct. famstack runs unencrypted on your LAN by default, because trusting your own router is fine and Let's Encrypt does not issue certs for `192.168.x.x`. Confirm and continue. (For HTTPS, set up `domain` mode and Caddy will issue certs. See [stack-reference.md](stack-reference.md).)
 4. Username: first name, lowercase. Password: same, unless changed in the browser.
 5. Set up encryption. First device on the account: **Reset identity**. Subsequent devices: **Verify** with the QR-code flow from an already-signed-in session.
 6. Allow notifications when prompted. Without this, you do not get pings for new messages.
+7. Turn on threads: **Settings > Labs > Threads**, then restart the app. The archivist answers in threads and takes corrections there, and the diary cards sit in the thread under each memory. Without it, Element X shows those replies as a flat list. It is a beta in Element X, and works.
 
 Verify: send a message from the phone. It should appear in the browser session within a second. Reverse it. If both directions work, you are done. If only one direction works, it is almost always a notification permission issue, not a Matrix issue.
 
 Repeat for every family member. Each one logs in with their own first-name account.
+
+#### Element (other computers)
+
+The browser on another computer cannot run Element in port mode (see [Sign in](#4-sign-in-browser)). Download the Element desktop app from [element.io/download](https://element.io/download) instead (the "Desktop" section; there is no Element X for computers):
+
+1. Open Element and click **Sign in**.
+2. Next to the homeserver, click **Edit** and enter the server in full, with `http://` at the front:
+
+   ```
+   http://<mac-lan-ip>:42031
+   ```
+
+3. Sign in with your first name, lowercase, and your password.
 
 #### Immich (photos)
 
@@ -1083,7 +1099,11 @@ Stop it, or change the port mapping in `stacklets/<name>/docker-compose.yml`.
 
 ### Element shows "this browser is not supported"
 
-Click Continue anyway. Element works in every modern browser. The warning is from an outdated check.
+The browser is fine; the address is the problem. Element needs HTTPS or `localhost`, and in port mode the Mac's LAN address is plain HTTP. "Continue anyway" then leads to a page that never finishes loading.
+
+- On the Mac that runs famstack: open `http://localhost:42030`.
+- On any other computer: use the Element desktop app, see [Element (other computers)](#element-other-computers).
+- For Element in the browser everywhere: domain mode with HTTPS (`dns_provider`).
 
 ### Phones cannot reach the server
 

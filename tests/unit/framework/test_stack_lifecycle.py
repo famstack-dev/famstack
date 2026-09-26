@@ -102,6 +102,26 @@ class TestStackUp:
         assert result["ok"]
         assert result["env"]["TZ"] == "Europe/Berlin"
 
+    def test_the_browser_address_is_localhost_in_port_mode(self, tmp_path):
+        """A browser runs Element only over HTTPS or on localhost; the LAN
+        address in port mode is plain HTTP, so the browser gets localhost."""
+        manifest = ('id = "web"\nname = "Web"\nversion = "0.1.0"\ncategory = "test"\n'
+                    'port = 42030\n\n[env.defaults]\nOPEN = "{browser_url}"\nLAN = "{url}"\n')
+        s = _make_stack(tmp_path, {"web": {"manifest": manifest}})
+        env = s.up("web")["env"]
+        assert env["OPEN"] == "http://localhost:42030"
+        assert env["LAN"] != env["OPEN"]
+
+    def test_the_browser_address_is_the_public_one_in_domain_mode(self, tmp_path):
+        manifest = ('id = "web"\nname = "Web"\nversion = "0.1.0"\ncategory = "test"\n'
+                    'port = 42030\n\n[env.defaults]\nOPEN = "{browser_url}"\nLAN = "{url}"\n')
+        s = _make_stack(tmp_path, {"web": {"manifest": manifest}})
+        toml = tmp_path / "stack.toml"
+        toml.write_text(toml.read_text().replace('domain = ""', 'domain = "home.example.family"'))
+        env = s.up("web")["env"]
+        assert env["OPEN"] == env["LAN"]
+        assert "home.example.family" in env["OPEN"]
+
     def test_generates_secrets(self, tmp_path):
         """up() generates declared secrets on first run."""
         s = _make_stack(tmp_path, {"myapp": {"generate": ["DB_PASSWORD"]}})
