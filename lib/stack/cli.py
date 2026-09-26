@@ -2105,6 +2105,21 @@ def main():
         action = getattr(args, "action", None)
         if not action:
             parser.parse_args([args.command, "--help"]); return
+        if json_mode:
+            # The plugin contract: a command returns a dict and the framework
+            # renders it. With --json that dict is the only thing on stdout;
+            # what the command prints for people goes to stderr, and the flag
+            # is taken out of the arguments before the command reads them.
+            import contextlib
+            _remaining = [a for a in _remaining if a != "--json"]
+            sys.argv = [a for a in sys.argv if a != "--json"]
+            with contextlib.redirect_stdout(sys.stderr):
+                result = stck.run_cli_command(args.command, action, _remaining)
+            json.dump(result or {}, sys.stdout, indent=2, default=str)
+            print()
+            if result and "error" in result:
+                sys.exit(1)
+            return
         result = stck.run_cli_command(args.command, action, _remaining)
         if result and "error" in result:
             print_error(result); sys.exit(1)
