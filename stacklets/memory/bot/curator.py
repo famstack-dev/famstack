@@ -28,7 +28,7 @@ interrupted rebuild is simply redone.
 
 Failure shape: a failed rebuild keeps the SHA where it was and
 retries after another quiet window — the trigger is never lost, and
-`stack memory wiki` always works as the manual override. If the
+`stack memory wiki update` always works as the manual override. If the
 curator is down, the vault (and therefore the wiki) goes stale
 together — one component, one failure story. Disabling
 `wiki_auto_rebuild` stops the rebuilds, NOT the pull: the wiki must
@@ -43,6 +43,7 @@ Config surface (rendered from stack.toml by the runtime):
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -61,11 +62,15 @@ from loguru import logger  # noqa: E402
 from memory.lib import (  # noqa: E402
     MIRROR_SHA_NAME,
     MIRROR_TRIGGER_NAME,
+    NIGHTLY_RUN_NAME,
+    NIGHTLY_TRIGGER_NAME,
+    REBUILT_SHA_NAME,
     PRESERVE_LOCAL,
     RESET_LOCAL,
     SyncResult,
     _parse_frontmatter,
     authenticated_remote,
+    report_progress,
     brain_remote_url,
     is_auth_failure,
     reconcile_with_remote,
@@ -403,14 +408,14 @@ def reconcile_fileops(
     return ops
 
 
-def consume_trigger(state_dir: Path) -> bool:
-    """Consume a pending mirror-now trigger. True when one was there.
+def consume_trigger(state_dir: Path, name: str = TRIGGER_NAME) -> bool:
+    """Consume a pending trigger (mirror-now by default). True when one was there.
 
     Deletion is the consumption: a concurrent second consumer loses the
     unlink race and correctly reports no trigger.
     """
     try:
-        (state_dir / TRIGGER_NAME).unlink()
+        (state_dir / name).unlink()
         return True
     except OSError:
         return False
@@ -764,7 +769,7 @@ class Brain:
 
 # ── Rebuild ──────────────────────────────────────────────────────────────
 
-async def compile_diary() -> bool:
+async def compile_diary(state_dir: Path | None = None) -> bool:
     """One diary pass over the memories room, on the nightly sweep.
 
     The compiler re-reads the whole room every time, because a reply or
@@ -774,19 +779,26 @@ async def compile_diary() -> bool:
     the nightly pays for recordings and readings that are genuinely new
     and reuses the rest.
     """
-    return await _run_command("diary", [], "compiling diary")
+    return await _run_command("diary", [], "compiling the diary", state_dir)
 
 
-async def rebuild(selection: list[str]) -> bool:
+async def rebuild(selection: list[str], state_dir: Path | None = None) -> bool:
     """One wiki generation pass via the CLI entrypoint — the same code
-    path `stack memory wiki` execs, in a subprocess so a wedged LLM
-    call dies with the child instead of inside this loop."""
-    label = " ".join(selection) if selection else "(full sweep)"
-    return await _run_command("wiki", selection, f"rebuilding wiki: {label}")
+    path `stack memory wiki update` execs, in a subprocess so a wedged
+    LLM call dies with the child instead of inside this loop."""
+    label = " ".join(selection) if selection else "every page"
+    return await _run_command("wiki", selection, f"regenerating wiki pages: {label}", state_dir)
 
 
-async def _run_command(command: str, selection: list[str], what: str) -> bool:
-    logger.info("[curator] {}", what)
+async def _run_command(command: str, selection: list[str], what: str,
+                       state_dir: Path | None = None) -> bool:
+    """Run one entrypoint command in a child process; True when it succeeded.
+
+    The child's lines (one per page: published, unchanged, skipped) go to
+    the log and, with a `state_dir`, to the progress file a waiting
+    `stack memory wiki update` prints from, as they come.
+    """
+    _progress(state_dir, what)
     # Starting the child and waiting on it are separate failure modes, and
     # only the second one has a child to kill. Keeping them in one block
     # left `proc.kill()` reachable on a path where `proc` was never bound.
@@ -800,10 +812,19 @@ async def _run_command(command: str, selection: list[str], what: str) -> bool:
         logger.warning("[curator] {} failed to start: {}", command, e)
         return False
 
+    lines: list[str] = []
+
+    async def follow() -> None:
+        assert proc.stdout is not None
+        async for raw in proc.stdout:
+            line = raw.decode(errors="replace").rstrip()
+            lines.append(line)
+            if line.strip() and not line.startswith("{"):
+                _progress(state_dir, line.strip()[:200])
+        await proc.wait()
+
     try:
-        out_bytes, _ = await asyncio.wait_for(
-            proc.communicate(), timeout=REBUILD_TIMEOUT_SECS,
-        )
+        await asyncio.wait_for(follow(), timeout=REBUILD_TIMEOUT_SECS)
     except TimeoutError:
         proc.kill()
         logger.warning("[curator] {} timed out after {}s",
@@ -813,14 +834,24 @@ async def _run_command(command: str, selection: list[str], what: str) -> bool:
         logger.warning("[curator] {} failed: {}", command, e)
         return False
 
-    output = out_bytes.decode(errors="replace").strip()
     if proc.returncode != 0:
-        tail = "\n".join(output.splitlines()[-5:])
+        tail = "\n".join(lines[-5:])
         logger.warning("[curator] {} rc={}: {}", command, proc.returncode, tail)
         return False
-    published = sum(1 for ln in output.splitlines() if ln.startswith("published "))
+    published = sum(1 for ln in lines if ln.startswith("published "))
     logger.info("[curator] {} done — {} page(s) published", command, published)
     return True
+
+
+def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None:
+    """One step, to the log and, when someone may be waiting, the progress file."""
+    logger.info("[curator] {}", what)
+    if state_dir is None:
+        return
+    try:
+        report_progress(state_dir, what, fresh=fresh)
+    except OSError as e:
+        logger.warning("[curator] could not record progress: {}", e)
 
 
 # ── Main loop ────────────────────────────────────────────────────────────
@@ -832,7 +863,7 @@ async def main() -> None:
     brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", "/data/memory/brain"))
     shared_bucket = os.environ.get("SHARED_BUCKET", "family")
     state_dir = Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator"))
-    sha_file = state_dir / "last-rebuilt-sha"
+    sha_file = state_dir / REBUILT_SHA_NAME
     mirror_file = state_dir / MIRROR_SHA_NAME
     nightly_file = state_dir / "last-nightly-date"
 
@@ -872,7 +903,7 @@ async def main() -> None:
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
     # First boot starts from the current HEAD: existing content is the
-    # operator's to backfill (`stack memory wiki`), not something to
+    # operator's to backfill (`stack memory wiki update --all`), not something to
     # surprise a fresh install with. From then on the SHA survives
     # restarts, so a rebuild interrupted mid-flight is simply redone.
     last = _read(sha_file)
@@ -976,20 +1007,29 @@ async def main() -> None:
         # date is recorded even on failure: one attempt per night, the
         # incremental path and the manual CLI cover the gap. A full
         # source reconcile precedes the regen so brain self-heals any
-        # drift the incremental mirror missed.
-        if nightly_due(NIGHTLY, _read(nightly_file), time.localtime()):
-            _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+        # drift the incremental mirror missed. `stack memory wiki update --all`
+        # asks for the same sweep now; that does not count as tonight's.
+        asked = consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
+        if asked or nightly_due(NIGHTLY, _read(nightly_file), time.localtime()):
+            if not asked:
+                _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+            _progress(state_dir, "rebuilding the whole wiki", fresh=True)
+            _progress(state_dir, "reconciling the source vault with the brain")
             if await mirror_reconcile():
                 mirror_sha = _write(mirror_file, head)
             # Diary first: it writes pages into the same working tree,
             # and the commit below should carry both nights' work.
-            await compile_diary()
-            if await rebuild([]):
+            await compile_diary(state_dir)
+            rebuilt = await rebuild([], state_dir)
+            if rebuilt:
                 # Generation wrote pages into brain's working tree; commit
                 # and push them (one commit alongside the reconcile).
                 await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} nightly rebuild")
                 last = _write(sha_file, head)
                 debounce.reset()
+            # The record a waiting `stack memory wiki update --all` reads.
+            _write(state_dir / NIGHTLY_RUN_NAME,
+                   json.dumps({"at": time.time(), "ok": rebuilt, "asked": asked}))
             continue
 
         # ── Incremental: persons + home, debounced ────────────────────
@@ -1015,7 +1055,8 @@ async def main() -> None:
             debounce.reset()
             continue
 
-        if await rebuild(selection):
+        _progress(state_dir, "regenerating the pages new filings touched", fresh=True)
+        if await rebuild(selection, state_dir):
             # Commit + push the regenerated pages the wiki CLI wrote into
             # brain's working tree.
             await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")

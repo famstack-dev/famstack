@@ -711,6 +711,14 @@ def _preserve_and_reset(git, local_head: str, remote_head: str) -> SyncResult:
 MIRROR_TRIGGER_NAME = "mirror-now"
 # The file the curator writes after each successful projection.
 MIRROR_SHA_NAME = "last-mirrored-sha"
+# The memory commit the wiki pages were last regenerated up to.
+REBUILT_SHA_NAME = "last-rebuilt-sha"
+# Asks the curator for its nightly sweep now, whatever the time.
+NIGHTLY_TRIGGER_NAME = "nightly-now"
+# When the last nightly sweep finished, and whether its rebuild succeeded.
+NIGHTLY_RUN_NAME = "last-nightly-run"
+# What the curator is doing: one timestamped line per step and per page.
+PROGRESS_NAME = "progress"
 
 # How long a write waits for its own change to become visible. Short on
 # purpose: the curator slices its sleep by the second and a mirror is
@@ -753,24 +761,108 @@ def mirrored_contains(memory: Path, target: str, mirrored: str) -> bool:
 
 def wait_for_mirror(state_dir: Path, memory: Path, target: str, *,
                     timeout: float = MIRROR_WAIT_SECS,
-                    interval: float = MIRROR_POLL_INTERVAL) -> Optional[str]:
+                    interval: float = MIRROR_POLL_INTERVAL,
+                    on_poll: Callable[[], None] | None = None) -> Optional[str]:
     """Poll `last-mirrored-sha` until it contains `target`.
 
     Returns the mirrored sha, or None on timeout. The condition is
     checked once before the clock is consulted, so an already-current
     mirror succeeds even with a zero timeout.
     """
-    sha_file = Path(state_dir) / MIRROR_SHA_NAME
+    return _wait_for_sha(Path(state_dir) / MIRROR_SHA_NAME, memory, target, timeout, interval, on_poll)
+
+
+def wait_for_rebuilt(state_dir: Path, memory: Path, target: str, *,
+                     timeout: float, interval: float = MIRROR_POLL_INTERVAL,
+                     on_poll: Callable[[], None] | None = None) -> Optional[str]:
+    """Poll `last-rebuilt-sha` until the wiki pages are regenerated up to `target`.
+
+    The curator records it after regenerating the pages a change touched,
+    and also when a change touched none, so it always moves on.
+    """
+    return _wait_for_sha(Path(state_dir) / REBUILT_SHA_NAME, memory, target, timeout, interval, on_poll)
+
+
+def _wait_for_sha(sha_file: Path, memory: Path, target: str, timeout: float,
+                  interval: float, on_poll: Callable[[], None] | None) -> Optional[str]:
     deadline = time.monotonic() + timeout
     while True:
-        mirrored = ""
-        if sha_file.exists():
-            mirrored = sha_file.read_text(encoding="utf-8").strip()
-        if mirrored_contains(memory, target, mirrored):
-            return mirrored
+        if on_poll:
+            on_poll()
+        recorded = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() else ""
+        if mirrored_contains(memory, target, recorded):
+            return recorded
         if time.monotonic() >= deadline:
             return None
         time.sleep(interval)
+
+
+# ── The nightly sweep, on request ────────────────────────────────────────
+# Tonight's sweep (diary, full source reconcile, every wiki page) can be
+# asked for now. The curator stays the one writer: this drops a trigger,
+# wakes its tick, and waits for the run record the sweep leaves behind.
+
+def request_nightly(state_dir: Path) -> float:
+    """Ask for the nightly sweep now; the time asked, to wait against."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    asked = time.time()
+    (state_dir / NIGHTLY_TRIGGER_NAME).write_text(str(asked), encoding="utf-8")
+    request_mirror(state_dir)  # wakes the tick within a second
+    return asked
+
+
+def last_nightly_run(state_dir: Path) -> Optional[dict]:
+    """The last finished sweep: {"at": epoch seconds, "ok": bool}, or None."""
+    record = Path(state_dir) / NIGHTLY_RUN_NAME
+    try:
+        return json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def wait_for_nightly(state_dir: Path, asked: float, *, timeout: float,
+                     interval: float = 2.0,
+                     on_poll: Callable[[], None] | None = None) -> Optional[dict]:
+    """Wait for a sweep that finished after `asked`; its record, or None."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if on_poll:
+            on_poll()
+        run = last_nightly_run(state_dir)
+        if run and run.get("at", 0) >= asked:
+            return run
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(interval)
+
+
+# ── What the curator is doing ────────────────────────────────────────────
+# A command waiting on the curator would otherwise sit silent for minutes.
+# The curator appends one line per step and per page it writes, stamped
+# with the time; a waiting command prints the lines stamped after it asked.
+# The file starts over with each piece of work, so it stays small.
+
+def report_progress(state_dir: Path, what: str, *, fresh: bool = False) -> None:
+    """Record one step of the curator's work; `fresh` starts a new piece of work."""
+    with open(Path(state_dir) / PROGRESS_NAME, "w" if fresh else "a", encoding="utf-8") as log:
+        log.write(f"{time.time()!r} {what}\n")
+
+
+def progress_since(state_dir: Path, since: float) -> list[str]:
+    """The steps the curator recorded at or after `since`, oldest first."""
+    try:
+        lines = (Path(state_dir) / PROGRESS_NAME).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    steps = []
+    for line in lines:
+        stamp, _, what = line.partition(" ")
+        try:
+            if float(stamp) >= since:
+                steps.append(what)
+        except ValueError:
+            continue
+    return steps
 
 
 def propagate_write(data_dir: Path, *,

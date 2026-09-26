@@ -562,7 +562,7 @@ The persistent layer of the household brain: a curated knowledge vault, rendered
 
 Setup seeds the vault with three things: the classification ontology (the topics and document types the archivist files against), household facts, and a hand-curated correspondents layer with aliases, so "Springfield Insurance" and "Springfield Ins. Co." resolve to the same page instead of becoming duplicates.
 
-The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault: when new filings settle it regenerates the pages of the family members involved plus the home page (a couple of LLM calls, a few minutes after the burst), and once a night it rebuilds everything — topic pages, cross-references, the lot — while the GPU has nothing better to do. `./stack memory wiki` stays available as the manual trigger, and `[memory]` in `stack.toml` holds the knobs (see [Configuration](#configuration)). Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
+The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault: when new filings settle it regenerates the pages of the family members involved plus the home page (a couple of LLM calls, a few minutes after the burst), and once a night it rebuilds everything — topic pages, cross-references, the lot — while the GPU has nothing better to do. To bring the wiki up to date now instead of waiting, `./stack memory wiki update` regenerates what the latest filings touched and `./stack memory wiki update --all` runs the whole nightly rebuild; both return when the pages are written. `--member`, `--topic` and `--home` regenerate just those pages, and `[memory]` in `stack.toml` holds the knobs (see [Configuration](#configuration)). Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
 
 **The family diary.** Everything posted in `#Memories` becomes a diary entry. Each night the curator transcribes the new recordings, has the AI read each entry (a title, a summary, the people, topics from the ontology, facts), writes one card per entry to the vault under `family/diary/entries/`, and rebuilds the diary pages in the wiki from those cards. At 07:30 local time the archivist posts each new card as a quiet notice in the thread under its memory, and one short notice with the count (`diary_job_at` in the archivist's `bot.toml` sets the time; it catches up after a night the Mac slept through). A family member corrects a card by replying in its thread, typed or spoken; the correction is committed to the vault under their name, and a corrected or hand-edited card is never overwritten by a later run. The archivist says nothing else in `#Memories`. The user guide has the family's side: [The Memories Room](user-guide.md#the-memories-room).
 
@@ -575,7 +575,9 @@ Useful commands:
 
 ```bash
 ./stack memory search <term>      # full-text query over the vault
-./stack memory wiki               # regenerate home, member, and topic pages with the LLM
+./stack memory wiki update             # bring the latest filings into the wiki, and wait
+./stack memory wiki update --all       # the nightly rebuild now: diary, sources, every page
+./stack memory wiki update --member homer   # regenerate one page
 ./stack memory ontology           # sync the vault ontology with the shipped seed
 ./stack memory lookup <text>      # which topic or doctype does a term resolve to?
 ./stack memory correspondents     # inspect the correspondent layer

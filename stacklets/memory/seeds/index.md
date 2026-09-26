@@ -23,7 +23,7 @@ the documents you file and the notes you save, and refreshes it every night.
 To build it now instead of waiting, run:
 
 ```sh
-stack memory wiki
+stack memory wiki update --all
 ```
 <!-- end: generated -->
 

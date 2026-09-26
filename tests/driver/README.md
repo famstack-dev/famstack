@@ -70,7 +70,7 @@ member is their user name (`marge`). `--json` on `as`, `read`, `answer` and
 Some of the chain from a message to the wiki runs on a timer: the curator
 regenerates pages after a quiet window following a filing, and sweeps
 everything once a night. `driver cycle` runs that work now and returns when it
-is done, through `stack memory sync --pages` and `stack memory nightly`. In
+is done, through `stack memory wiki update` and `stack memory wiki update --all`. In
 the protocol it is a `CYCLE` line, so a reader tells what the family did from
 what the stack did on its own:
 

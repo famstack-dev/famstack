@@ -81,9 +81,9 @@ def stack(args, instance: Instance) -> None:
 # runs it now and waits until it is done.
 CYCLES = {
     "curator": ("the curator regenerates the pages the last filing touched "
-                "(on its own after a quiet window)", ("memory", "sync", "--pages")),
+                "(on its own after a quiet window)", ("memory", "wiki", "update")),
     "nightly": ("the curator's nightly sweep: diary, source reconcile, every page "
-                "(on its own at 03:30)", ("memory", "nightly")),
+                "(on its own at 03:30)", ("memory", "wiki", "update", "--all")),
 }
 
 

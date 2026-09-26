@@ -1,17 +1,22 @@
-"""`stack memory wiki` — regenerate the family wiki's entry pages.
+"""`stack memory wiki update` — regenerate the family wiki's entry pages.
 
 Walks the memory vault, pulls every document's `> [!summary]` callout,
 and asks the LLM to compose the browsable pages a family lands on:
 
-    stack memory wiki                   home + members + topics (apply)
-    stack memory wiki --home            just the household home page
-    stack memory wiki --member homer    just Homer's page
-    stack memory wiki --topic camping   just one topic's page
-    stack memory wiki --topics          every topic page, no home/members
-    stack memory wiki --dry-run         preview to stdout, no writes
-    stack memory wiki clean             delete every generated page (asks first)
-    stack memory wiki clean --dry-run   list the pages clean would delete
-    stack memory wiki clean --yes       skip the confirmation (scripted rebuild)
+    (no flags)             home + members + topics: the curator's nightly pass
+    --home                 just the household home page
+    --member homer         just Homer's page
+    --topic camping        just one topic's page
+    --topics               every topic page, no home/members
+    --dry-run              preview to stdout, no writes
+    clean                  delete every generated page (asks first)
+    clean --dry-run        list the pages clean would delete
+    clean --yes            skip the confirmation (scripted rebuild)
+
+These are the arguments this module takes inside the bot-runner. Admins
+reach the page flags as `stack memory wiki update --member homer` and
+`clean` as `stack memory wiki clean`; a bare `stack memory wiki update`
+asks the curator instead (host side, `cli/wiki.py`).
 
 `--member` and `--topic` repeat and combine with `--home`: any
 selection flag switches from the full sweep to "generate exactly this
