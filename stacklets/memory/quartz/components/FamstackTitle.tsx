@@ -2,6 +2,7 @@ import { pathToRoot } from "../util/path"
 import { QuartzComponent, QuartzComponentConstructor, QuartzComponentProps } from "./types"
 import { classNames } from "../util/lang"
 import { i18n } from "../i18n"
+import { L } from "./familyModel"
 
 // NEW COMPONENT (not an upstream override) — the sidebar lockup that
 // replaces PageTitle.
@@ -23,12 +24,15 @@ const FamstackTitle: QuartzComponent = ({ fileData, cfg, displayClass }: QuartzC
       <h2 class="page-title">
         <a href={baseDir}>{title}</a>
       </h2>
-      <span class="fs-brandmark" aria-label="famstack">
-        fam
-        <span class="fs-brand-accent">
-          st<span class="fs-brand-a">a</span>ck
+      <p class="fs-byline">
+        <span class="fs-brandmark" aria-label="famstack">
+          fam
+          <span class="fs-brand-accent">
+            st<span class="fs-brand-a">a</span>ck
+          </span>
         </span>
-      </span>
+        <span class="fs-tag">{L.familyWiki}</span>
+      </p>
     </div>
   )
 }
@@ -37,31 +41,50 @@ FamstackTitle.css = `
 .famstack-title {
   display: flex;
   flex-direction: column;
-  /* Room for the title's underline to sit clear of the wordmark. */
-  gap: 0.5rem;
+  gap: 0.3rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid rgba(61, 143, 160, 0.14);
 }
 
+/* The family's name in the headline face, like the page titles. It is
+   the way back to the front page from anywhere; the hover says so. */
 .famstack-title .page-title {
-  font-size: 1.6rem;
+  font-size: 1.65rem;
   margin: 0;
-  font-family: var(--titleFont);
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-family: var(--headerFont);
+  font-weight: 500;
+  letter-spacing: -0.02em;
   line-height: 1.1;
 }
 
-/* Underlined, because it is the way back to the front page from
-   anywhere and should look like somewhere you can go. Drawn as a
-   border rather than text-decoration so it sits clear of the
-   descenders in a name like Simpsons. */
 .famstack-title .page-title > a {
-  border-bottom: 2px solid var(--secondary);
-  padding-bottom: 2px;
-  transition: border-color 0.2s ease;
+  color: var(--dark);
+  font-weight: 500;
+  transition: color 0.2s ease;
 }
 
 .famstack-title .page-title > a:hover {
-  border-bottom-color: var(--tertiary);
+  color: var(--tertiary);
+}
+
+.famstack-title .fs-byline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.famstack-title .fs-tag {
+  font-family: var(--codeFont);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+.famstack-title .fs-tag::before {
+  content: "·";
+  margin-right: 0.45rem;
 }
 
 .famstack-title .fs-brandmark {
@@ -103,8 +126,9 @@ FamstackTitle.css = `
 /* On mobile the sidebar becomes a header row and space is tight, so
    the maker's mark steps aside and the wiki name carries it alone. */
 @media all and (max-width: 800px) {
-  .famstack-title .fs-brandmark { display: none; }
-  .famstack-title .page-title { font-size: 1.3rem; }
+  .famstack-title .fs-byline { display: none; }
+  .famstack-title { padding-bottom: 0; border-bottom: 0; }
+  .famstack-title .page-title { font-size: 1.2rem; }
 }
 `
 

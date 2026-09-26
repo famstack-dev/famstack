@@ -10,7 +10,8 @@ learning history — revert anything that got out of hand.
 ## Layout
 
 ```
-ontology.toml          classifier seed (topics, types, synonyms)
+ontology.toml          classifier seed (topics, types, synonyms) and
+                       the areas that group topics in the wiki menu
 facts.toml             household facts (people, services, dates)
 
 family/                shared bucket (slug configurable via

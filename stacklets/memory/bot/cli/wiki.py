@@ -1038,12 +1038,27 @@ def _build_references_section(
         title = (s.get("title") or "").strip() or "(untitled)"
         date = (s.get("date") or "").strip()
         rel = s.get("rel") or ""
-        link = _relative_link(rel, page_dir) if rel else ""
+        link = _relative_link(_published_path(rel), page_dir) if rel else ""
         head = f"- [{n}] [{title}]({link})" if link else f"- [{n}] **{title}**"
         if date:
             head += f" - {date}"
         rows.append(head)
     return "\n".join(rows)
+
+
+# Diary entries are the source the month pages are compiled from, and the
+# wiki does not publish them (quartz.config.ts ignores `**/diary/entries/**`).
+# A citation of one points at the month page that shows it.
+_DIARY_ENTRY = re.compile(
+    rf"^(?P<bucket>[^/]+)/{diary.DIARY_DIR}/entries/(?P<year>\d{{4}})/(?P<month>\d{{2}})/[^/]+\.md$")
+
+
+def _published_path(rel: str) -> str:
+    """The published page for vault file `rel`: itself, or a diary entry's month."""
+    m = _DIARY_ENTRY.match(rel.lstrip("/"))
+    if not m:
+        return rel
+    return f"{m['bucket']}/{diary.DIARY_DIR}/{m['year']}/{m['month']}.md"
 
 
 def _relative_link(rel: str, page_dir: str) -> str:

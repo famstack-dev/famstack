@@ -106,10 +106,14 @@ h6 {
     0 10px 28px rgba(22, 31, 36, 0.05);
   padding: 2rem 2.5rem 2.5rem;
   box-sizing: border-box;
+  // Down from the window edge, so the first line on the page sits level
+  // with the family's name in the sidebar.
+  margin-top: 3.5rem;
 
   @media all and (max-width: 800px) {
     padding: 1.25rem 1.25rem 2rem;
     border-radius: 8px;
+    margin-top: 0;
   }
 }
 
@@ -277,4 +281,93 @@ footer {
 
 footer ul {
   font-size: 0.72rem;
+}
+
+// ── Scrollbars ──────────────────────────────────────────────────────
+//
+// Thin and quiet, in the teal of the borders. The sidebars scroll on
+// their own, and a stock scrollbar is the heaviest line on the page.
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(61, 143, 160, 0.3) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(61, 143, 160, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+// ── One title per page ──────────────────────────────────────────────
+//
+// FamilyHead takes a page's own leading `# Heading` as the title, so the
+// copy at the top of the article goes. Only a heading that opens the
+// article: one further down is a section and stays.
+
+.center article > h1:first-child {
+  display: none;
+}
+
+// The writers put a meta line under that heading ("From: … · About: …",
+// "About … · Captured …"), which FamilyHead now shows as the date line
+// and chips. Only a quote that opens with a bold label goes, so a plain
+// quote under a heading (the home page's address) stays.
+.center article > h1:first-child + blockquote:has(> p:first-child > strong:first-child) {
+  display: none;
+}
+
+// ── Search, as the sketch's ask box ─────────────────────────────────
+
+.search > .search-button {
+  background: var(--fs-paper);
+  border: 1px solid var(--fs-border);
+  border-radius: 10px;
+  min-height: 2.5rem;
+}
+
+.search > .search-button:hover {
+  border-color: var(--secondary);
+}
+
+// ── Left sidebar rhythm ─────────────────────────────────────────────
+//
+// Upstream spaces sidebar panels for a search box, a graph and a file
+// tree. Ours is a title, search and one menu, which reads as one block
+// when the gaps are smaller.
+
+.page > #quartz-body .sidebar.left {
+  gap: 1rem;
+}
+
+// Both sidebars start level with the top edge of the page card.
+@media all and (min-width: 801px) {
+  .page > #quartz-body .sidebar.left,
+  .page > #quartz-body .sidebar.right {
+    padding-top: 3.5rem;
+  }
+}
+
+// ── Phone header ────────────────────────────────────────────────────
+//
+// The sidebar becomes the row above the page. It is the positioned box
+// the open menu panel hangs from (see FamilyNav.tsx), and the family's
+// name stays on one line in it.
+
+@media all and (max-width: 800px) {
+  .page > #quartz-body .sidebar.left {
+    position: relative;
+  }
+
+  .famstack-title .page-title {
+    white-space: nowrap;
+  }
 }

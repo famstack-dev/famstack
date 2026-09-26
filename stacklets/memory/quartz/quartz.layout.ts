@@ -8,7 +8,6 @@
  */
 
 import { PageLayout, SharedLayout } from "./quartz/cfg"
-import { FileTrieNode } from "./quartz/util/fileTrie"
 import * as Component from "./quartz/components"
 // Our own components, imported directly rather than through the
 // `Component` namespace so we do not have to overlay upstream's
@@ -16,30 +15,14 @@ import * as Component from "./quartz/components"
 // walking the layout, so a direct import styles itself just the same.
 import FamstackTitle from "./quartz/components/FamstackTitle"
 import Welcome from "./quartz/components/Welcome"
+import FamilyNav from "./quartz/components/FamilyNav"
+import FamilyCrumbs from "./quartz/components/FamilyCrumbs"
+import FamilyHead from "./quartz/components/FamilyHead"
+import { L } from "./quartz/components/familyModel"
 
 // `CODE_URL` is set in the container env from {code_url} — the
 // user-facing Forgejo URL. Empty falls back to a `#` placeholder so
 // the footer still renders even if env wiring drifts.
-// Dated pages are named for their number, not their title: a diary's
-// March lives at `2026/03`. Upstream's explorer sorts files by display
-// title, which files April above March and makes a year read as
-// nonsense. Compare numeric names as numbers and leave everything else
-// on upstream's alphabetical order, so this only ever reorders folders
-// whose pages are named for a date.
-//
-// Quartz serialises this function with `toString()` and re-evaluates it
-// in the browser, so it must not reference anything outside itself.
-const sortByDateThenTitle = (a: FileTrieNode, b: FileTrieNode): number => {
-  if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1
-  const an = a.slugSegment
-  const bn = b.slugSegment
-  if (/^\d+$/.test(an) && /^\d+$/.test(bn)) return Number(an) - Number(bn)
-  return a.displayName.localeCompare(b.displayName, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  })
-}
-
 const codeUrl = process.env.CODE_URL || ""
 const repoUrl = codeUrl ? `${codeUrl.replace(/\/$/, "")}/family/memory` : "#"
 
@@ -49,7 +32,7 @@ export const sharedPageComponents: SharedLayout = {
   afterBody: [],
   footer: Component.Footer({
     links: {
-      "Edit on Forgejo": repoUrl,
+      [L.editOnForgejo]: repoUrl,
     },
   }),
 }
@@ -63,13 +46,13 @@ export const sharedPageComponents: SharedLayout = {
 // palette, not before.
 export const defaultContentPageLayout: PageLayout = {
   beforeBody: [
+    // Breadcrumbs, a label, one title, and the page's topics and people.
+    // See FamilyCrumbs.tsx and FamilyHead.tsx.
     Component.ConditionalRender({
-      component: Component.Breadcrumbs(),
+      component: FamilyCrumbs(),
       condition: (page) => page.fileData.slug !== "index",
     }),
-    Component.ArticleTitle(),
-    Component.ContentMeta(),
-    Component.TagList(),
+    FamilyHead(),
     // The greeting belongs to the front door only.
     Component.ConditionalRender({
       component: Welcome(),
@@ -80,12 +63,10 @@ export const defaultContentPageLayout: PageLayout = {
     FamstackTitle(),
     Component.MobileOnly(Component.Spacer()),
     Component.Flex({
-      components: [
-        { Component: Component.Search(), grow: true },
-        { Component: Component.ReaderMode() },
-      ],
+      components: [{ Component: Component.Search(), grow: true }],
     }),
-    Component.Explorer({ sortFn: sortByDateThenTitle }),
+    // The family's structure, not the vault's folders. See FamilyNav.tsx.
+    FamilyNav(),
   ],
   right: [
     Component.Graph(),
@@ -99,9 +80,8 @@ export const defaultContentPageLayout: PageLayout = {
 // graph.
 export const defaultListPageLayout: PageLayout = {
   beforeBody: [
-    Component.Breadcrumbs(),
-    Component.ArticleTitle(),
-    Component.ContentMeta(),
+    FamilyCrumbs(),
+    FamilyHead(),
   ],
   left: [
     FamstackTitle(),
@@ -109,7 +89,8 @@ export const defaultListPageLayout: PageLayout = {
     Component.Flex({
       components: [{ Component: Component.Search(), grow: true }],
     }),
-    Component.Explorer({ sortFn: sortByDateThenTitle }),
+    // The family's structure, not the vault's folders. See FamilyNav.tsx.
+    FamilyNav(),
   ],
   right: [],
 }

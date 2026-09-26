@@ -13,6 +13,7 @@
 
 import { QuartzConfig } from "./quartz/cfg"
 import * as Plugin from "./quartz/plugins"
+import { FamilyLists } from "./quartz/plugins/emitters/familyLists"
 
 // Runtime env. `WIKI_HOST` is "memory.<domain>" in domain mode and
 // the empty-domain rendering "memory." in port mode — we treat the
@@ -40,7 +41,9 @@ const config: QuartzConfig = {
     // No analytics — this is a private family site, the upstream
     // Plausible default would leak page views to a third party.
     analytics: null,
-    locale: "en-US",
+    // The instance language (`[core] language`), so dates and Quartz's
+    // own labels match the navigation's.
+    locale: (process.env.WIKI_LANGUAGE ?? "").toLowerCase().startsWith("de") ? "de-DE" : "en-US",
     baseUrl,
     // Skip git internals and Obsidian config dirs. The vault is a
     // real git clone, not a stripped checkout, so `.git` matters.
@@ -56,7 +59,7 @@ const config: QuartzConfig = {
     // `**/diary/entries/**` keeps the diary's records off the site. They
     // are the raw source the diary pages are compiled from, and stay in
     // the brain for search and the agent; the family reads the pages.
-    ignorePatterns: [".git", ".obsidian", "private", "templates",
+    ignorePatterns: [".git", ".obsidian", "private", "templates", "README.md", "**/README.md",
                      "media/**/*.json", "media/**/.tmp-*",
                      "**/diary/entries/**"],
     defaultDateType: "modified",
@@ -152,6 +155,7 @@ const config: QuartzConfig = {
       Plugin.ContentPage(),
       Plugin.FolderPage(),
       Plugin.TagPage(),
+      FamilyLists(),
       Plugin.ContentIndex({ enableSiteMap: true, enableRSS: true }),
       Plugin.Assets(),
       Plugin.Static(),

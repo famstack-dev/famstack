@@ -23,6 +23,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
+    _build_references_section,
     _build_topic_prompt,
     _capture_index_pages,
     _clean_generated,
@@ -1034,3 +1035,30 @@ class TestDiaryLink:
         monkeypatch.delenv("BRAIN_REPO_DIR", raising=False)
 
         assert _with_diary_link(self.PAGE, shared_bucket="family") == self.PAGE
+
+
+class TestReferences:
+    """The References block under a generated page links every cited source."""
+
+    def test_a_cited_diary_entry_links_to_its_month_page(self):
+        # The wiki does not publish diary/entries/ (the month pages are the
+        # readable form), so a link to the entry file would be a dead link
+        # on the family's front page.
+        page = "Maggie said her first word. [1]"
+        entries = [{
+            "title": "Maggie's first word",
+            "date": "2026-09-22",
+            "rel": "family/diary/entries/2026/09/2026-09-22-549db38495.md",
+        }]
+        section = _build_references_section(page, entries, page_dir="")
+        assert "[Maggie's first word](/family/diary/2026/09.md)" in section
+
+    def test_other_sources_keep_their_own_path(self):
+        page = "The mortgage runs thirty years. [1]"
+        entries = [{
+            "title": "Mortgage agreement",
+            "date": "2009-06-15",
+            "rel": "family/documents/2009/06/2009-06-15-mortgage-p23.md",
+        }]
+        section = _build_references_section(page, entries, page_dir="")
+        assert "(/family/documents/2009/06/2009-06-15-mortgage-p23.md)" in section

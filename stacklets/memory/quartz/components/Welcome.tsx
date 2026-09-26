@@ -1,5 +1,6 @@
 import { QuartzComponent, QuartzComponentConstructor, QuartzComponentProps } from "./types"
 import { classNames } from "../util/lang"
+import { L } from "./familyModel"
 
 // NEW COMPONENT (not an upstream override) — the greeting on the home
 // page, and only there. The layout gates it on the index slug.
@@ -10,17 +11,13 @@ import { classNames } from "../util/lang"
 // written into it would survive exactly until the next rebuild. Chrome
 // belongs in the chrome.
 //
-// The copy is English because quartz.config.ts pins locale to en-US.
-// When the wiki is localised, this string moves with the locale rather
-// than staying here.
+// The copy follows the instance language, from the label table in
+// familyModel.ts.
 const Welcome: QuartzComponent = ({ displayClass }: QuartzComponentProps) => {
   return (
     <div class={classNames(displayClass, "fs-welcome")}>
-      <p>
-        Everything the household has kept: documents, the notes about them, and the people they
-        belong to.
-      </p>
-      <p class="fs-welcome-hint">Search from the sidebar, or start with a name.</p>
+      <p>{L.welcome}</p>
+      <p class="fs-welcome-hint">{L.welcomeHint}</p>
     </div>
   )
 }
