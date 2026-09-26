@@ -111,7 +111,7 @@ Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`), disable encryptio
 
 The room becomes the filing system. Plan the picnic in chat, drop the gear list, the location ideas, the photo of the flyer. When it's over you have a complete, searchable record of the project without ever having organized anything.
 
-Questions asked inside a topic room automatically search just that topic. Ask "@archivist what did Lenny suggest?" in the picnic room and the answer comes from the picnic material, not from your tax documents.
+Questions asked inside a topic room automatically search just that topic. Ask "Archivist, what did Lenny suggest?" in the picnic room and the answer comes from the picnic material, not from your tax documents.
 
 ---
 
@@ -177,7 +177,7 @@ Memories work the same way, in the thread under each memory: see [Put a memory r
 Two ways to ask:
 
 - In **#Documents**, just type. Search is the default there.
-- In **any other room**, @-mention the bot: `@archivist when does the car insurance renew?`
+- In **any other room**, start with its name: `Archivist, when does the car insurance renew?` Picking it from the `@` list works too. Inside a thread the name alone is not enough, because a message there corrects the filing: pick the archivist from the `@` list to ask something instead.
 
 Plain words work as search ("Duff Insurance", "vaccination Bart"). Questions get real answers: the archivist searches the document archive and the family knowledge vault, reads what it finds, and answers with numbered sources you can check:
 
