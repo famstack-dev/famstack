@@ -203,6 +203,7 @@ Available template variables:
 | `{ai_tts_voice}` | Derived from `[ai].language` |
 | `{messages_server_name}` | `stack.toml` → `[messages].server_name` |
 | `{url}`, `{<id>_url}`, `{home_url}` | Public URLs: `http://<ip>:<port>` in port mode; `https://<id>.<domain>` in domain mode once `[core].dns_provider` is set, `http://` before that |
+| `{browser_url}` | The address to open in a browser on this Mac: `{url}` in domain mode, `http://localhost:<port>` in port mode, because a web app that needs WebCrypto (Element) only runs over HTTPS or on localhost |
 | `{url_host}` | The host of `{url}`: `<id>.<domain>` in domain mode, `{ip}` in port mode. For a protocol the stacklet serves under the same name besides HTTP, such as Forgejo's SSH |
 | `{<id>__<NAME>}` | A secret from `secrets.toml`, e.g. `{docs__API_TOKEN}`, `{infra__DNS_API_TOKEN}` |
 | `{oidc_issuer}`, `{oidc_client_id}`, `{oidc_client_secret}` | Single sign-on for a stacklet with an `[oidc]` table, see [Single Sign-On](#single-sign-on-oidc). All three empty until the provider has registered the stacklet |
