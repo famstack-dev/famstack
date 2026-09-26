@@ -33,6 +33,9 @@ COPY workspace/ /app/workspace-seed/
 # Runtime-context shim: per-turn family briefing injected into nanobot's prompt.
 # See runtime/README.md for what it patches and why.
 COPY runtime/ /app/runtime/
+# name_trigger.py is not baked: compose mounts it from lib/stack, where the
+# bot-runner reads the same file. Without the mount the shim logs and the
+# agent answers pill mentions only.
 # Container-side `stack` shim: forwards allowlisted commands to the host's
 # famstack API (host.docker.internal) and prints the CLI's plaintext output.
 # See client/stack and stacklets/core/famstack-api.py.
@@ -44,7 +47,8 @@ USER nanobot
 ENV HOME=/home/nanobot
 # Put the runtime shim on the path so its sitecustomize.py auto-loads at
 # interpreter startup and patches nanobot's per-turn context assembly.
-ENV PYTHONPATH=/app/runtime
+# /app/shared holds framework files compose mounts one by one (name_trigger).
+ENV PYTHONPATH=/app/runtime:/app/shared
 # Where the container-side `stack` shim reaches the host's famstack API (core).
 ENV STACK_API_ADDR=host.docker.internal:42001
 

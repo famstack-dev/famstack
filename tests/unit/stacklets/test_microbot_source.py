@@ -9,6 +9,7 @@ content dict.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,50 @@ class TestSyncDisplayName:
         b._client = self._ProfileClient(current="whatever")
         await b._sync_display_name()
         assert b._client.set_calls == []
+
+
+class TestAddressedByName:
+    """People write "Archivist, when does the insurance renew?" rather than
+    picking the bot from a list. On the main timeline that is an address;
+    in a thread or a reply it is not, because there the conversation
+    already has one (for the archivist, a message there is a correction)."""
+
+    def _event(self, body, relates=None):
+        content = {"body": body, "msgtype": "m.text"}
+        if relates:
+            content["m.relates_to"] = relates
+        return SimpleNamespace(body=body, source={"content": content})
+
+    def _named_bot(self, tmp_path):
+        b = _bot(tmp_path)
+        b.display_name = "Archivist"
+        return b
+
+    def test_the_name_at_the_start_is_an_address(self, tmp_path):
+        assert self._named_bot(tmp_path)._is_bot_mentioned(
+            self._event("archivist, when does the car insurance renew?"))
+
+    def test_talking_about_the_bot_is_not(self, tmp_path):
+        assert not self._named_bot(tmp_path)._is_bot_mentioned(
+            self._event("I asked the Archivist and it said no"))
+
+    def test_in_a_thread_the_name_alone_is_not_an_address(self, tmp_path):
+        thread = {"rel_type": "m.thread", "event_id": "$root"}
+        assert not self._named_bot(tmp_path)._is_bot_mentioned(
+            self._event("Archivist, this is Marge's car", thread))
+
+    def test_in_a_reply_the_name_alone_is_not_an_address(self, tmp_path):
+        reply = {"m.in_reply_to": {"event_id": "$filed"}}
+        assert not self._named_bot(tmp_path)._is_bot_mentioned(
+            self._event("Archivist, this is Marge's car", reply))
+
+    def test_a_picked_mention_still_counts_in_a_thread(self, tmp_path):
+        b = self._named_bot(tmp_path)
+        event = self._event("Archivist: search this", {"rel_type": "m.thread", "event_id": "$r"})
+        event.source["content"]["m.mentions"] = {"user_ids": [b.user_id]}
+        assert b._is_bot_mentioned(event)
+
+    def test_the_question_is_what_is_left(self, tmp_path):
+        assert MicroBot.strip_mention(
+            "Archivist, when does the car insurance renew?", "@t:hs",
+            display_name="Archivist") == "when does the car insurance renew?"

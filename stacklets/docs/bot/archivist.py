@@ -1729,6 +1729,7 @@ class ArchivistBot(MicroBot):
             formatted_body = event.source.get("content", {}).get("formatted_body")
             query = self.strip_mention(
                 query, self.user_id, formatted_body=formatted_body,
+                display_name=self.display_name,
             )
             if not query:
                 query = "help"

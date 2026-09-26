@@ -1,16 +1,18 @@
-"""Does this message address the agent by name?
+"""Does this message address a bot by name?
 
-nanobot's group policy answers "is the bot mentioned?" by reading the
-`m.mentions` payload, which only exists when the sender picked the bot
-out of an autocomplete list. That is a fine rule for Slack and a poor
-one for a family room, where people type what they would say out loud:
+Matrix answers "is the bot mentioned?" with the `m.mentions` payload,
+which only exists when the sender picked the bot out of an autocomplete
+list. That is a fine rule for Slack and a poor one for a family room,
+where people type what they would say out loud:
 
     Stacky, what's on our list?
 
 No pill, no `m.mentions`, no reply. This module supplies the missing
 half of the question, and nothing else -- it is pure text in, bool out,
 so the rule can be argued with in tests rather than in a running
-container.
+container. It is stdlib-only and imports nothing from the framework:
+the bot-runner uses it as `stack.name_trigger`, and the agent container
+mounts this one file as `name_trigger`, so both agree on what counts.
 
 WHAT COUNTS AS BEING ADDRESSED
 
@@ -111,3 +113,19 @@ def addressed_by_name(body: str, name: str) -> bool:
     if not text:
         return False
     return bool(_pattern(name).search(text))
+
+
+def strip_address(body: str, name: str) -> str:
+    """The message without the words that address `name`.
+
+    "hey Archivist, when does the insurance renew?" becomes "when does
+    the insurance renew?", so the bot hears the question, not its own
+    name. Unchanged when the message does not address `name`.
+    """
+    text = strip_reply_fallback(body).strip()
+    if not addressed_by_name(text, name):
+        return body or ""
+    n = re.escape(name.strip())
+    text = re.sub(rf"^\W*(?:{_GREETINGS}\W+)?{n}(?!\w)[\s,:;.!-]*", "", text, count=1, flags=re.IGNORECASE)
+    text = re.sub(rf"[,;]\s*{n}(?!\w)(\W*)$", r"\1", text, count=1, flags=re.IGNORECASE)
+    return text.strip()
