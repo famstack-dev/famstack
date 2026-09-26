@@ -60,11 +60,11 @@ struct MenuPanel: View {
                        ? "No checkout found. Choose the folder you run ./stack from in Setup."
                        : "No remote host yet. Set one in Setup.", tint: .orange)
             }
-            if let error = store.loadError {
-                Notice(text: error, tint: .red)
+            if let banner = store.banner {
+                BannerView(banner: banner, store: store)
             }
-            if let failure = store.lastFailure {
-                failureNotice(failure)
+            if let problem = store.loadProblem {
+                ProblemNotice(problem: problem, since: store.status == nil ? nil : store.statusAt, store: store)
             }
             switch tab {
             case .overview: overview
@@ -140,8 +140,7 @@ struct MenuPanel: View {
             }
             Card("Stacklets", spacing: 2) {
                 ForEach(status.installed) { stacklet in
-                    StackletRow(stacklet: stacklet, busyVerb: store.busy[stacklet.id],
-                                memory: store.memory(of: stacklet.id), store: store)
+                    StackletRow(stacklet: stacklet, memory: store.memory(of: stacklet.id), store: store)
                 }
             }
             if let errors = store.errors {
@@ -155,7 +154,10 @@ struct MenuPanel: View {
                     HostMetrics(figures: figures)
                 }
             }
-        } else if store.connection != nil {
+            if !store.reportProblems.isEmpty {
+                ReportProblems(problems: store.reportProblems)
+            }
+        } else if store.connection != nil && store.loadProblem == nil {
             HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 30)
         }
     }
@@ -169,11 +171,12 @@ struct MenuPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            if store.busy[""] != nil {
+            if store.running?.key == "" {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Restart") { Task { await store.perform("restart") } }
                     .controlSize(.small)
+                    .disabled(store.running != nil)
             }
         }
     }
@@ -239,7 +242,7 @@ struct MenuPanel: View {
                 }
                 Spacer()
                 Button("Change…") {
-                    store.mode == .local ? store.chooseCheckout() : store.editRemote()
+                    if store.mode == .local { store.chooseCheckout() } else { store.editRemote() }
                 }
                 .controlSize(.small)
             }
@@ -247,24 +250,6 @@ struct MenuPanel: View {
     }
 
     // ── Notices and footer ───────────────────────────────────────────────
-
-    private func failureNotice(_ failure: StackStore.ActionFailure) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("stack \(failure.command.joined(separator: " ")) failed").font(.callout.bold())
-            Text(failure.message).font(.caption.monospaced()).lineLimit(6)
-            HStack {
-                Button("Run in Terminal") {
-                    store.openInTerminal(failure.command)
-                    store.lastFailure = nil
-                }
-                Button("Dismiss") { store.lastFailure = nil }
-            }
-            .controlSize(.small)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-    }
 
     private var footer: some View {
         HStack(spacing: 14) {
@@ -356,7 +341,6 @@ struct AttentionRow: View {
 
 struct StackletRow: View {
     let stacklet: Stacklet
-    let busyVerb: String?
     let memory: Int?
     @ObservedObject var store: StackStore
     @State private var hovering = false
@@ -371,9 +355,8 @@ struct StackletRow: View {
                 }
             }
             Spacer()
-            if let busyVerb {
-                Text(busyVerb).font(.caption).foregroundStyle(.secondary)
-                ProgressView().controlSize(.small)
+            if let running = store.running, running.key == stacklet.id {
+                RunningLabel(action: running)
             } else {
                 Text(detail)
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -415,9 +398,157 @@ struct StackletRow: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+        .disabled(store.running != nil)
+        .help(store.running != nil ? "Another action is running" : "")
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+}
+
+/// "restarting 0:42" while a lifecycle action runs, so a slow `up` that is
+/// pulling images reads as working rather than hung.
+struct RunningLabel: View {
+    let action: StackStore.RunningAction
+
+    var body: some View {
+        TimelineView(.periodic(from: action.startedAt, by: 1)) { context in
+            let seconds = max(0, Int(context.date.timeIntervalSince(action.startedAt)))
+            Text("\(Self.progressive(action.verb)) \(seconds / 60):\(String(format: "%02d", seconds % 60))")
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
+        ProgressView().controlSize(.small)
+    }
+
+    private static func progressive(_ verb: String) -> String {
+        switch verb {
+        case "up": "starting"
+        case "down": "stopping"
+        case "restart": "restarting"
+        default: verb
+        }
+    }
+}
+
+/// An action's outcome, or a choice that could not be applied.
+struct BannerView: View {
+    let banner: StackStore.Banner
+    @ObservedObject var store: StackStore
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).foregroundStyle(tint).frame(width: 16)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(banner.title).font(.callout.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let hint = banner.hint {
+                    Text(.init(hint)).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let detail = banner.detail {
+                    Text(detail).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(6).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if banner.kind != .success {
+                    HStack(spacing: 12) {
+                        if let terminal = banner.terminal {
+                            Button(terminal.label) { store.openTerminal(terminal) }
+                        }
+                        if let retry = banner.retry {
+                            Button("Run in Terminal") { store.openInTerminal(retry); store.banner = nil }
+                        }
+                        Button("Dismiss") { store.banner = nil }
+                    }
+                    .buttonStyle(.link).font(.caption)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var icon: String {
+        switch banner.kind {
+        case .success: "checkmark.circle.fill"
+        case .info: "clock.fill"
+        case .failure: "xmark.octagon.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch banner.kind {
+        case .success: .green
+        case .info: .blue
+        case .failure: .red
+        }
+    }
+}
+
+/// Why the stack cannot be read right now. With an older answer on screen,
+/// it says how old, so nothing below reads as current.
+struct ProblemNotice: View {
+    let problem: Problem
+    let since: Date?
+    @ObservedObject var store: StackStore
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).frame(width: 16)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(problem.title).font(.callout.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let hint = problem.hint {
+                    Text(.init(hint)).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let detail = problem.detail {
+                    Text(detail).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(4).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let since {
+                    Text("Below: the state from \(relative(since)).").font(.caption).foregroundStyle(.secondary)
+                }
+                if let terminal = problem.terminal {
+                    Button(terminal.label) { store.openTerminal(terminal) }
+                        .buttonStyle(.link).font(.caption)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+/// Sections that could not be read, named, instead of silently missing. The
+/// same cause is said once: an older checkout lacks several reports at once.
+struct ReportProblems: View {
+    let problems: [(report: String, problem: Problem)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Not shown: \(problems.map(\.report).joined(separator: ", "))", systemImage: "info.circle")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(causes, id: \.self) { cause in
+                Text(.init(cause)).font(.caption).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var causes: [String] {
+        var seen: [String] = []
+        for (_, problem) in problems {
+            let line = [problem.title, problem.hint].compactMap { $0 }.joined(separator: ". ")
+            if !seen.contains(line) { seen.append(line) }
+        }
+        return seen
     }
 }
 

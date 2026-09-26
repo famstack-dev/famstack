@@ -58,8 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum Snapshot {
     static func write(prefix: String) async {
         let store = StackStore()
-        // The store starts loading on its own; wait for the slow half.
-        while store.checkedAt == nil { try? await Task.sleep(for: .milliseconds(200)) }
+        // The store starts loading on its own; wait for the slow half, but
+        // not past the read timeout: a machine that does not answer renders
+        // as the panel shows it then.
+        let deadline = Date().addingTimeInterval(StackCLI.readTimeout + 10)
+        while store.checkedAt == nil && store.connection != nil && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
         render(menuBarStates, to: URL(fileURLWithPath: "\(prefix)-menubar.png"))
         for tab in PanelTab.allCases {
             let view = MenuPanel(store: store, tab: tab, scrolls: false)

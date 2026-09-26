@@ -257,16 +257,31 @@ func parseTimestamp(_ text: String) -> Date? {
         let fraction = s[s.index(after: dot)..<z].prefix(3)
         s = String(s[..<dot]) + "." + fraction + "Z"
     }
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = s.contains(".") ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
-    return formatter.date(from: s)
+    return (s.contains(".") ? Formatters.isoFractional : Formatters.iso).date(from: s)
 }
 
 func relative(_ date: Date, _ now: Date = Date()) -> String {
     if abs(now.timeIntervalSince(date)) < 60 { return "just now" }
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .full
-    return formatter.localizedString(for: date, relativeTo: now)
+    return Formatters.relative.localizedString(for: date, relativeTo: now)
+}
+
+/// Built once: the panel formats dates on every redraw.
+private enum Formatters {
+    static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    static let relative: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f
+    }()
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────
