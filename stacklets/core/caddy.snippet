@@ -4,17 +4,17 @@
 # persistent-link resolver under /go/. A dashboard / welcome page can take
 # over `/` later; for now home just answers a friendly placeholder.
 #
-# Only /go/* is forwarded to the tools server. That server ALSO exposes ops
-# and AI-tool endpoints (/logs, /tools/*) that must never be reachable from
-# the public home — they stay internal (container-to-container, plus localhost
-# in port mode). Scoping the route here is what keeps them off the front door.
+# Only /go/* is forwarded to the tools server, and to its public listener
+# (8001), which serves the links and nothing else. Its internal listener
+# (8000) serves search, logs and status to the stack's containers and must
+# never be the target of a route from outside.
 #
 # The /go prefix mirrors core's LINK_PREFIX env (default "go"); if you move
 # the namespace, change both.
 
 {$STACK_DOMAIN} {
     handle /go/* {
-        reverse_proxy stack-core-tools:8000
+        reverse_proxy stack-core-tools:8001
     }
     handle {
         respond "famstack — home server" 200

@@ -7,6 +7,9 @@ can invoke during conversations.
 Each tool wraps an existing service API (Paperless, Immich) or the
 famstack TCP API for host-side CLI control. No business logic here —
 just translation between what the LLM needs and what the services provide.
+
+It listens twice (see access.py): an internal port for the stack's own
+containers, and the published port, which serves only the persistent links.
 """
 
 import json
@@ -18,6 +21,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from access import INTERNAL_PORT, PUBLIC_PORT, serves
 from capture_index import find_capture
 from resolver import build_redirect
 
@@ -59,11 +63,25 @@ LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
 BRAIN_DIR = Path("/brain")
 
 
+
 app = FastAPI(
     title="famstack Tools",
     description="Family server tools for AI assistants — search documents, find photos, check server status.",
     version="0.2.1",
 )
+
+
+@app.middleware("http")
+async def links_only_from_the_network(request, call_next):
+    """Answer the published port with the links and nothing else. A path
+    that is not served there gets the same 404 as one that does not exist,
+    so the network cannot tell which endpoints the server has. The listener
+    a request arrived on is in the ASGI scope; without one it counts as the
+    network."""
+    listener = (request.scope.get("server") or (None, None))[1]
+    if not serves(listener, request.url.path, LINK_PREFIX):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await call_next(request)
 
 
 def _error(msg: str, status: int = 503) -> JSONResponse:
@@ -310,3 +328,21 @@ async def search_photos(query: str, limit: int = 10):
             "description": asset.get("exifInfo", {}).get("description", ""),
         })
     return {"query": query, "count": len(results), "results": results}
+
+
+# ── Serving ──────────────────────────────────────────────────────────────
+
+def _listen(port: int) -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", port))
+    return sock
+
+
+if __name__ == "__main__":
+    # One server on both sockets, so each request's scope names the
+    # listener it came in on, which is what the access rule reads.
+    import uvicorn
+
+    uvicorn.Server(uvicorn.Config(app, log_level="info")).run(
+        sockets=[_listen(INTERNAL_PORT), _listen(PUBLIC_PORT)])
