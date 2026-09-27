@@ -110,7 +110,7 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | AI install fails at whisper.cpp build | `xcode-select -p` | Xcode CLT missing. `xcode-select --install`. |
 | `brew: command not found` after install | PATH on Apple Silicon | Add `eval "$(/opt/homebrew/bin/brew shellenv)"` to `~/.zshrc`. |
 | LLM OOM / very slow | RAM tier | Edit `[ai] default` to smaller model, then `./stack setup ai`. |
-| `stack list` shows ai as `remote` | `[ai] provider` in `stack.toml` | The stack uses an AI server elsewhere (`stack ai connect`). `stack up ai` keeps it; `stack ai connect local` switches back to this Mac. |
+| `stack list` shows ai as `remote` or `localhost` | `[ai] provider` in `stack.toml` | The stack uses an AI server it does not manage (`stack ai connect`): another machine, or an app on this Mac (`localhost`). `stack up ai` keeps it; `stack ai connect local` switches back to this Mac. |
 | Voice messages fail on a remote AI setup | `./stack ai connect <url>` output, "Voice messages" line | The AI server lists no speech-to-text model. Pass `--whisper <url>` for a speech server. |
 | Disk full | `./stack host` | Likely the photo library. Move `data_dir` to external SSD. |
 | Element warns "browser not supported", then never loads | Which address is open? | Port mode over the LAN IP: plain HTTP is not a secure context. On the server Mac open `http://localhost:42030`; other computers use the Element desktop app with `http://<ip>:42031`. |

@@ -258,6 +258,14 @@ them and then reports containers it was told to skip as broken. Any other
 value, including `"0"` or empty, leaves the check in place, so an
 accidentally exported variable cannot quietly disable monitoring.
 
+A stacklet that can be served by another machine declares a top-level
+`remote = "{template}"` in its manifest. When it renders to an address,
+`stack list` shows the row as `remote` with that host, or `localhost` when
+the address is this machine, meaning something on it that the stack does
+not manage serves it. Only the checks marked `remote = true` probe that
+server; the others probe this Mac, so they run only while the stacklet's
+own containers run here as well.
+
 ### Native Services (host stacklets)
 
 Host stacklets (`type = "host"`) declare native macOS services that run

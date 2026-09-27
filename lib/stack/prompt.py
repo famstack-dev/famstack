@@ -112,11 +112,24 @@ def stage_badge(s):
     return "  " + " ".join(parts) if parts else ""
 
 
+def _served_by(url: str) -> tuple[str, str]:
+    """The state word and detail of a row served from ``url``."""
+    from urllib.parse import urlsplit
+
+    from stack.ai.probe import on_this_mac
+    parts = urlsplit(url)
+    if on_this_mac(url):
+        port = f"port {parts.port}, " if parts.port else ""
+        return "localhost", f"{port}not managed by the stack"
+    return "remote", parts.netloc or url
+
+
 def status_list(stacklets):
     """Render a compact stacklet status table.
 
-    Seven states: online, remote, starting, degraded, failing, stopped,
-    available. Remote means another machine serves it.
+    Eight states: online, remote, localhost, starting, degraded, failing,
+    stopped, available. Remote means another machine serves it, localhost
+    that something on this machine the stack does not manage serves it.
     Degraded stacklets show health issue hints.
     """
     if not stacklets:
@@ -141,9 +154,8 @@ def status_list(stacklets):
             for issue in s.get("health_issues", []):
                 out(f"      {ORANGE}{issue}{RESET}")
         elif s.get("remote"):
-            from urllib.parse import urlsplit
-            host = urlsplit(s["remote"]).netloc or s["remote"]
-            out(f"  {GREEN}\u2713{RESET} {label}{' ' * pad} {TEAL}remote{RESET}  {DIM}{host}{RESET}{badges}")
+            state, where = _served_by(s["remote"])
+            out(f"  {GREEN}\u2713{RESET} {label}{' ' * pad} {TEAL}{state}{RESET}  {DIM}{where}{RESET}{badges}")
         elif s.get("online"):
             port = s.get("port")
             url = f"  {DIM}localhost:{port}{RESET}" if port else ""

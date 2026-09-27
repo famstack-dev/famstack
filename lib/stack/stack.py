@@ -748,14 +748,17 @@ class Stack:
 
             # A stacklet whose manifest renders a `remote` address is
             # served by another machine. Its row reports that server,
-            # whether or not anything of it runs here, and only the checks
-            # marked `remote` apply: the rest probe this Mac.
+            # whether or not anything of it runs here. Only the checks
+            # marked `remote` apply, unless its containers run here as
+            # well: then the rest probe what they serve on this Mac.
             remote = self._render_template(
                 s.get("manifest", {}).get("remote", ""), template_vars)
             if remote and not remote.startswith("{"):
                 s["remote"] = remote
+                runs_here = is_set_up and s["online"]
                 checks = [c for c in self._resolve_health_checks(
-                    s.get("manifest", {}), template_vars) if c.get("remote")]
+                    s.get("manifest", {}), template_vars)
+                    if runs_here or c.get("remote")]
             elif not is_set_up or not s["online"]:
                 # Only check health for fully running stacklets — stopped or
                 # starting services will obviously fail their health checks
