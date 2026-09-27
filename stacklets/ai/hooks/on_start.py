@@ -7,7 +7,6 @@ check required config first, raise with a clear fix if missing.
 
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
@@ -24,11 +23,6 @@ def run(ctx):
     if os.environ.get("STACK_AI_NO_VOICE") == "1":
         ctx.env["COMPOSE_PROFILES"] = ""
         dim("STACK_AI_NO_VOICE=1 — speech container disabled")
-
-    # A remote endpoint is only replaced by the local engine with a yes.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from local_mode import switch_to_local
-    switch_to_local(ctx)
 
     provider = ctx.cfg("provider", default="")
 
@@ -70,6 +64,11 @@ def run(ctx):
             out(f"  {TEAL}stack destroy ai && stack up ai{RESET}")
             nl()
             raise RuntimeError("Missing openai_url for external provider")
+        # The engine is chosen with `stack ai connect`, never by starting
+        # the stacklet: text elsewhere with voice on this Mac is a setup
+        # an admin chose, and `up` only starts what the stacklet runs.
+        dim(f"Chat uses the AI server at {url}. "
+            "'./stack ai connect local' switches to the engine on this Mac.")
 
     if provider == "managed":
         _start_local_engine(ctx)

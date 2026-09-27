@@ -1,9 +1,11 @@
-"""Ask before `stack up ai` moves a remote AI setup onto this Mac.
+"""Ask before installing the ai stacklet moves a remote AI setup onto this Mac.
 
-`stack ai connect <url>` points the stack at a server elsewhere. Bringing
-up the ai stacklet after that means the engine and speech-to-text on this
-Mac take over, which is a different setup, not a restart. So it is asked,
-not assumed, and a "no" leaves the remote endpoint exactly as it was.
+`stack ai connect <url>` points the stack at a server elsewhere. Installing
+the ai stacklet after that, the first `stack up ai`, means the engine and
+speech-to-text on this Mac take over, which is a different setup, not a
+restart. So it is asked, not assumed, and a "no" leaves the remote endpoint
+exactly as it was. An installed stacklet never asks: its engine is chosen
+with `stack ai connect`, and `stack up ai` only starts it.
 """
 
 import sys
@@ -29,7 +31,7 @@ def switch_to_local(ctx) -> None:
 
     nl()
     warn(f"You are connected to a remote AI endpoint ({url}).")
-    out("Bringing up the ai stacklet switches the stack to local mode: the")
+    out("Installing the ai stacklet switches the stack to local mode: the")
     out("AI engine and speech-to-text on this Mac take over from it.")
     nl()
 

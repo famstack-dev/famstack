@@ -2,8 +2,9 @@
 
 `stack up ai` installs and manages oMLX, Whisper and TTS on this Mac.
 An AI server elsewhere is `stack ai connect <url>`, which installs
-nothing here; after that, bringing up this stacklet asks before it
-switches the stack back to local mode.
+nothing here; after that, installing this stacklet asks before it
+switches the stack back to local mode. Once installed, the engine is
+chosen with `stack ai connect`, and `stack up ai` only starts it.
 
 Runs before on_install. Only fires on first 'stack up ai'.
 Skipped when STACK_SETUP_CONFIRMED=1 (installer already confirmed).

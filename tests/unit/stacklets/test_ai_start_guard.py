@@ -33,6 +33,12 @@ _spec = importlib.util.spec_from_file_location(
 on_start = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(on_start)
 
+_spec = importlib.util.spec_from_file_location(
+    "ai_hooks_on_configure",
+    _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_configure.py")
+on_configure = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(on_configure)
+
 
 @pytest.fixture(autouse=True)
 def state_dir(monkeypatch, tmp_path):
@@ -132,57 +138,100 @@ class TestTheLocalEngineIsStarted:
 
 
 
-class TestLeavingARemoteEndpoint:
-    """After `stack ai connect <url>`, bringing up the ai stacklet means
-    the engine and speech-to-text on this Mac take over. That is a
-    different setup, not a restart, so it needs a yes, and a no leaves
-    the remote endpoint exactly as it was."""
+REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
+              openai_key="sk-test", whisper_url="https://stt.example.test/v1",
+              whisper_key="stt-key", default="gpt-4.1-mini")
 
-    REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
-                  openai_key="sk-test", whisper_url="https://stt.example.test/v1",
-                  whisper_key="stt-key", default="gpt-4.1-mini")
+
+def _answer(monkeypatch, answer):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+
+
+class TestAnInstalledStackletKeepsItsEngine:
+    """Chat on an AI server elsewhere with voice on this Mac is a setup an
+    admin chooses with `stack ai connect`. Starting the installed stacklet
+    starts what it runs and leaves that choice alone: a production Mac
+    serving oMLX as an app, with the stacklet for speech, was asked on
+    every `stack up ai` to hand its engine over."""
 
     @pytest.fixture(autouse=True)
     def installed(self, monkeypatch):
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
 
-    def _answer(self, monkeypatch, answer):
+    def test_it_starts_without_asking(self, monkeypatch):
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+        monkeypatch.setattr("builtins.input", _no_question_expected)
+        ctx = FakeCtx(**REMOTE)
+
+        on_start.run(ctx)
+
+        assert ctx._cfg == REMOTE
+        assert ctx.shell_calls == []
+
+    def test_it_starts_without_a_terminal(self, monkeypatch):
+        """An agent or a script restarting the stacklet is not stopped."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        ctx = FakeCtx(**REMOTE)
+
+        on_start.run(ctx)
+
+        assert ctx._cfg == REMOTE
+
+    def test_it_names_the_command_that_switches_the_engine(self, capsys):
+        on_start.run(FakeCtx(**REMOTE))
+
+        out = capsys.readouterr().out
+        assert "https://ai.example.test/v1" in out
+        assert "stack ai connect local" in out
+
+
+def _no_question_expected(prompt):
+    raise AssertionError(f"asked {prompt!r}")
+
+
+class TestInstallingOverARemoteEndpoint:
+    """After `stack ai connect <url>`, installing the ai stacklet means the
+    engine and speech-to-text on this Mac take over. That is a different
+    setup, not a restart, so it needs a yes, and a no leaves the remote
+    endpoint exactly as it was."""
+
+    @pytest.fixture(autouse=True)
+    def interactive_setup(self, monkeypatch):
+        monkeypatch.delenv("STACK_SETUP_CONFIRMED", raising=False)
 
     def test_the_question_names_the_endpoint(self, monkeypatch, capsys):
-        self._answer(monkeypatch, "n")
+        _answer(monkeypatch, "n")
         with pytest.raises(Cancelled):
-            on_start.run(FakeCtx(**self.REMOTE))
+            on_configure.run(FakeCtx(**REMOTE))
 
         assert "remote AI endpoint (https://ai.example.test/v1)" in capsys.readouterr().out
 
-    def test_no_keeps_the_remote_setup_and_starts_nothing(self, monkeypatch):
-        self._answer(monkeypatch, "n")
-        ctx = FakeCtx(**self.REMOTE)
+    def test_no_keeps_the_remote_setup(self, monkeypatch):
+        _answer(monkeypatch, "n")
+        ctx = FakeCtx(**REMOTE)
 
         with pytest.raises(Cancelled, match="still uses"):
-            on_start.run(ctx)
+            on_configure.run(ctx)
 
-        assert ctx._cfg == self.REMOTE
-        assert ctx.shell_calls == []
+        assert ctx._cfg == REMOTE
 
     def test_no_is_the_default(self, monkeypatch):
-        self._answer(monkeypatch, "")
-        ctx = FakeCtx(**self.REMOTE)
+        _answer(monkeypatch, "")
+        ctx = FakeCtx(**REMOTE)
 
         with pytest.raises(Cancelled):
-            on_start.run(ctx)
+            on_configure.run(ctx)
 
-        assert ctx._cfg == self.REMOTE
+        assert ctx._cfg == REMOTE
 
     def test_yes_switches_chat_and_voice_to_this_mac_together(self, monkeypatch):
         """Never one half remote and the other local."""
-        self._answer(monkeypatch, "y")
-        ctx = FakeCtx(**self.REMOTE)
+        _answer(monkeypatch, "y")
+        ctx = FakeCtx(**REMOTE)
 
-        on_start.run(ctx)
+        on_configure.run(ctx)
 
         assert ctx._cfg["provider"] == "managed"
         assert ctx._cfg["openai_url"] == "http://localhost:42060/v1"
@@ -191,15 +240,15 @@ class TestLeavingARemoteEndpoint:
         assert ctx._cfg["openai_key"] == "local"
 
     def test_without_a_terminal_nothing_is_switched(self, monkeypatch):
-        """Nobody to say yes: an agent or a script running `stack up ai`
+        """Nobody to say yes: an agent or a script installing the stacklet
         must not move the family's AI onto this Mac."""
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-        ctx = FakeCtx(**self.REMOTE)
+        ctx = FakeCtx(**REMOTE)
 
-        with pytest.raises(Cancelled, match="in a terminal"):
-            on_start.run(ctx)
+        with pytest.raises(RuntimeError, match="terminal"):
+            on_configure.run(ctx)
 
-        assert ctx._cfg == self.REMOTE
+        assert ctx._cfg == REMOTE
 
 
 class TestWhereOMLXListens:
