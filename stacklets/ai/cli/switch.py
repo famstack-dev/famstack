@@ -138,17 +138,19 @@ def _running() -> set[str]:
             if state in ("running", "starting", "failing")}
 
 
-def _run_the_engine(config: dict, ai: dict) -> dict | None:
+def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     """Hand `[ai]` to the engine the stack manages and bring it up.
 
     `stack up ai` installs whatever is missing (the stacklet, or oMLX on
-    a Mac that ran only the voice services) and starts it. When it fails,
-    `[ai]` goes back to what it was, so the stack keeps a server that
-    answers. Returns an error, or None when the engine is up.
+    a Mac that ran only the voice services), downloads the default model
+    and starts it, so a `--model` is written before it runs. When it
+    fails, `[ai]` goes back to what it was, so the stack keeps a server
+    that answers. Returns an error, or None when the engine is up.
     """
     set_cfg = config["set_cfg"]
-    before = {k: ai.get(k, "") for k in MANAGED_ENGINE}
-    for key, value in MANAGED_ENGINE.items():
+    settings = {**MANAGED_ENGINE, **({"default": model} if model else {})}
+    before = {k: ai.get(k, "") for k in settings}
+    for key, value in settings.items():
         set_cfg("ai", key, value)
     if _stack_up_ai(config) == 0:
         return None
@@ -176,7 +178,7 @@ def run(args, stacklet, config):
     ai = config.get("stack", {}).get("ai", {})
 
     managed = opts.target == MANAGED
-    if managed and (failed := _run_the_engine(config, ai)):
+    if managed and (failed := _run_the_engine(config, ai, opts.model)):
         return failed
     url = MANAGED_ENGINE["openai_url"] if managed else normalize_url(opts.target)
     key = _NO_KEY if managed else opts.key
@@ -263,8 +265,9 @@ def run(args, stacklet, config):
     if notes:
         result["notes"] = notes
 
-    if sys.stderr.isatty():
-        _report(result, dedicated=bool(whisper))
+    # Also without a terminal: over ssh or from a script the admin would
+    # otherwise see nothing. Under --json this goes to stderr.
+    _report(result, dedicated=bool(whisper))
     return result
 
 

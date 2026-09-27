@@ -228,6 +228,16 @@ class TestTheManagedEngine:
         assert "still uses " + ai_server.url_for("/v1") in result["error"]
         assert _ai(instance) == before
 
+    def test_a_chosen_model_is_put_back_with_the_rest(self, instance, ai_server):
+        """The model goes into `[ai]` before the engine comes up, since
+        the install downloads it, and back out when that fails."""
+        _switch(instance, ai_server.url_for("/v1"))
+        before = dict(_ai(instance))
+
+        _switch(instance, "managed", "--model", "mlx-community/Qwen3.5-9B-MLX-4bit")
+
+        assert _ai(instance) == before
+
 
 class TestVoiceMessages:
     """A speech server, once set, gets the voice messages whatever the AI
