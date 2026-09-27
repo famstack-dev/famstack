@@ -58,10 +58,16 @@ class Instance:
         return answer
 
     def put(self, local: Path) -> str:
-        """Copy a file to the instance's Mac; the path it has there."""
+        """Copy a file to the instance's Mac; the path it has there.
+
+        The file keeps its name, in a directory of its own: the upload is
+        posted under that name, as a phone posts a file under its own.
+        """
         if not self.host:
             return str(local.resolve())
-        remote = f"/tmp/driver-{time.time_ns()}-{local.name}"
+        remote = f"/tmp/driver-{time.time_ns()}/{local.name}"
+        subprocess.run(["ssh", self.host, f"mkdir -p {shlex.quote(str(Path(remote).parent))}"],
+                       check=True)
         subprocess.run(["scp", "-q", str(local), f"{self.host}:{remote}"], check=True)
         return remote
 
