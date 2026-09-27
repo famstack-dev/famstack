@@ -160,7 +160,7 @@ def format_evidence_item(ev: dict, n: int) -> str:
     if doc_id := ev.get("doc_id"):
         meta_bits.append(f"#{doc_id}")
     if meta_bits:
-        head += " — " + " · ".join(meta_bits)
+        head += " · " + " · ".join(meta_bits)
     return head
 
 
