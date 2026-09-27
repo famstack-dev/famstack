@@ -25,29 +25,30 @@ en:
   reprocess_doc_missing: "\u274c Cannot reprocess #{doc_id} \u2014 not found in Paperless."
   reprocess_llm_error: "\u274c Reclassify #{doc_id} failed ({kind}): {detail}"
 
-  # Ollama errors
+  # The document is filed either way. Each reply carries the filing's
+  # envelope, so a reply in its thread classifies it again.
   llm_unavailable: |
     📁 Filed: {name}
 
-      *AI classification skipped — set up AI with `stack up ai` for automatic tagging.*
+      ⚠️ The AI could not read it just now, so it has no tags yet.
+      Reply here to try again, with a few words about it if you like.
 
       {link}
   llm_model_missing: |
     📁 Filed: {name}
 
-      ⚠️ Model "{model}" is not available.
-      Check your AI backend (oMLX, Ollama, etc.)
-      Please tag manually in Paperless.
+      ⚠️ The AI model "{model}" is not available, so it has no tags yet.
+      Reply here to try again once the admin has fixed the model.
 
       {link}
   llm_timeout: |
     📁 Filed: {name}
 
-      ⚠️ AI timed out — the model may still be loading.
-      Try uploading again in a minute, or tag manually in Paperless.
+      ⚠️ The AI took too long; the model may still be loading.
+      Reply here in a minute to try again.
 
       {link}
-  classify_failed: "\U0001F4C1 Filed: {name}\n\n  Could not classify automatically — please tag in Paperless.\n\n  {link}"
+  classify_failed: "\U0001F4C1 Filed: {name}\n\n  Could not classify it automatically. Reply here to try again, with a few words about it if you like.\n\n  {link}"
 
   # Classification summary
   category: "Category: {value}"
@@ -248,29 +249,30 @@ de:
   reprocess_doc_missing: "\u274c Kann #{doc_id} nicht erneut verarbeiten \u2014 nicht in Paperless gefunden."
   reprocess_llm_error: "\u274c Neuklassifizierung von #{doc_id} fehlgeschlagen ({kind}): {detail}"
 
-  # Ollama errors
+  # Das Dokument ist in jedem Fall abgelegt. Jede Antwort trägt den
+  # Umschlag der Ablage, eine Antwort im Thread klassifiziert es neu.
   llm_unavailable: |
     📁 Abgelegt: {name}
 
-      *KI-Klassifizierung übersprungen — mit `stack up ai` einrichten für automatisches Tagging.*
+      ⚠️ Die KI konnte es gerade nicht lesen, es hat noch keine Tags.
+      Antworte hier, um es noch einmal zu versuchen, gern mit ein paar Worten dazu.
 
       {link}
   llm_model_missing: |
     📁 Abgelegt: {name}
 
-      ⚠️ Modell "{model}" ist nicht verfügbar.
-      Prüfe dein KI-Backend (oMLX, Ollama, etc.)
-      Bitte manuell in Paperless taggen.
+      ⚠️ Das KI-Modell "{model}" ist nicht verfügbar, es hat noch keine Tags.
+      Antworte hier, um es noch einmal zu versuchen, sobald das Modell wieder da ist.
 
       {link}
   llm_timeout: |
     📁 Abgelegt: {name}
 
-      ⚠️ KI-Zeitlimit erreicht — Modell lädt möglicherweise noch.
-      Versuche es in einer Minute erneut, oder tagge manuell in Paperless.
+      ⚠️ Die KI hat zu lange gebraucht, das Modell lädt vielleicht noch.
+      Antworte hier in einer Minute, um es noch einmal zu versuchen.
 
       {link}
-  classify_failed: "\U0001F4C1 Abgelegt: {name}\n\n  Automatische Klassifizierung fehlgeschlagen — bitte in Paperless taggen.\n\n  {link}"
+  classify_failed: "\U0001F4C1 Abgelegt: {name}\n\n  Automatisch einordnen hat nicht geklappt. Antworte hier, um es noch einmal zu versuchen, gern mit ein paar Worten dazu.\n\n  {link}"
 
   # Classification summary
   category: "Kategorie: {value}"

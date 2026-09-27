@@ -1602,10 +1602,13 @@ async def enrich_document(
             initial_classification=initial_classification,
         )
     except LLMUnavailableError as e:
+        logger.warning("[pipeline] doc #{} classify: AI unavailable: {}", doc.get("id"), e)
         return EnrichResult(llm_error=("unavailable", str(e)))
     except LLMModelNotFoundError as e:
+        logger.warning("[pipeline] doc #{} classify: model missing: {}", doc.get("id"), e)
         return EnrichResult(llm_error=("model_missing", str(e)))
     except LLMTimeoutError as e:
+        logger.warning("[pipeline] doc #{} classify: timed out: {}", doc.get("id"), e)
         return EnrichResult(llm_error=("timeout", str(e)))
 
     if not classification:
