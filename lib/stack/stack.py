@@ -1387,39 +1387,41 @@ class Stack:
             return {"error": f"Command '{command}' not found for {stacklet_id}"}
 
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"{stacklet_id}.cli.{command}", module_path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            if hasattr(mod, "run"):
-                # TODO: secrets.all() exposes every secret to every plugin.
-                # Fine for trusted stacklets, but if we ever support community
-                # plugins, scope this to the stacklet's own secrets only.
-                from .users import load_users
-                config = {
-                    "domain": self._cfg("core", "domain"),
-                    # Same base the containers get as LINK_BASE_URL, for
-                    # plugins that print a `/go` link. Derived here rather
-                    # than from `domain` above, because port mode has no
-                    # domain and the LAN fallback lives in _home_url.
-                    "home_url": self._home_url(),
-                    "data_dir": str(self.data),
-                    "repo_root": str(self.root),
-                    "instance_dir": str(self.instance_dir),
-                    "manifest": stacklet.get("manifest", {}),
-                    "stack": self.config,
-                    "secrets": self.secrets.all(),
-                    "users": load_users(self.instance_dir),
-                    # Lazy health probe — plugins call config["is_healthy"]()
-                    # when they need to gate work on the stacklet actually
-                    # responding. Zero-arg closure so we don't pay the HTTP
-                    # round-trip on every plugin invocation.
-                    "is_healthy": lambda: self.is_healthy(stacklet_id),
-                    # Save a setting to stack.toml, the plugin-side twin of
-                    # a hook's ctx.cfg(key, value), for any section.
-                    "set_cfg": self._set_cfg,
-                }
-                return mod.run(args or [], stacklet, config)
+            from .hooks import stacklet_imports
+            with stacklet_imports(Path(stacklet["path"])):
+                spec = importlib.util.spec_from_file_location(
+                    f"{stacklet_id}.cli.{command}", module_path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                if hasattr(mod, "run"):
+                    # TODO: secrets.all() exposes every secret to every plugin.
+                    # Fine for trusted stacklets, but if we ever support community
+                    # plugins, scope this to the stacklet's own secrets only.
+                    from .users import load_users
+                    config = {
+                        "domain": self._cfg("core", "domain"),
+                        # Same base the containers get as LINK_BASE_URL, for
+                        # plugins that print a `/go` link. Derived here rather
+                        # than from `domain` above, because port mode has no
+                        # domain and the LAN fallback lives in _home_url.
+                        "home_url": self._home_url(),
+                        "data_dir": str(self.data),
+                        "repo_root": str(self.root),
+                        "instance_dir": str(self.instance_dir),
+                        "manifest": stacklet.get("manifest", {}),
+                        "stack": self.config,
+                        "secrets": self.secrets.all(),
+                        "users": load_users(self.instance_dir),
+                        # Lazy health probe — plugins call config["is_healthy"]()
+                        # when they need to gate work on the stacklet actually
+                        # responding. Zero-arg closure so we don't pay the HTTP
+                        # round-trip on every plugin invocation.
+                        "is_healthy": lambda: self.is_healthy(stacklet_id),
+                        # Save a setting to stack.toml, the plugin-side twin of
+                        # a hook's ctx.cfg(key, value), for any section.
+                        "set_cfg": self._set_cfg,
+                    }
+                    return mod.run(args or [], stacklet, config)
         except Exception as e:
             return {"error": str(e)}
 
