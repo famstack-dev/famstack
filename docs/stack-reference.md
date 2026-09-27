@@ -742,6 +742,12 @@ The context object (`ctx`) provides:
 | `ctx["http_post"]` | `callable` | `http_post(url, body, content_type=..., headers=...)` → parsed JSON. Form-encoded by default. |
 | `ctx["http_get"]` | `callable` | `http_get(url, headers=...)` → parsed JSON. Pass auth explicitly: `headers={"Authorization": "Bearer ..."}`. |
 
+A Python hook or CLI plugin may put its stacklet's directory on `sys.path`
+and import helpers from it by bare name (`from oauth import sync`). The
+framework forgets those modules and restores `sys.path` when the hook or
+command returns, so two stacklets can each have a helper of the same name
+even when one process runs both, as `stack restart all` does.
+
 A hook that raises stops the command and is reported as a failure. A
 hook that asked the admin and got a no raises `stack.hooks.Cancelled`
 instead: `stack up` stops with `{"cancelled": <message>}`, prints the

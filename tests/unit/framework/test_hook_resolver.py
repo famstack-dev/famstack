@@ -252,3 +252,45 @@ def _make_ctx(env=None, step_fn=None):
     """Build a minimal StackContext for testing."""
     from stack.hooks import StackContext
     return StackContext(stack=None, stacklet_id="test", env=env or {}, step_fn=step_fn)
+
+
+class TestEachStackletImportsItsOwnHelpers:
+    """Hooks import their stacklet's helper modules by bare name. One
+    process runs many stacklets' hooks (`stack restart all`), and code and
+    photos both ship an `oauth.py`: photos was handed code's, and its
+    start failed with `sync() takes 4 positional arguments but 5 were
+    given`."""
+
+    HOOK = textwrap.dedent("""\
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from helper import WHO
+
+        def run(ctx):
+            ctx["seen"].append(WHO)
+        """)
+
+    def _stacklet(self, tmp_path, name):
+        from stack.hooks import HookResolver
+        root = tmp_path / "stacklets" / name
+        (root / "hooks").mkdir(parents=True)
+        (root / "helper.py").write_text(f"WHO = {name!r}\n")
+        (root / "hooks" / "on_start.py").write_text(self.HOOK)
+        return HookResolver(root)
+
+    def test_two_stacklets_with_a_helper_of_the_same_name(self, tmp_path):
+        seen = []
+        code, photos = self._stacklet(tmp_path, "code"), self._stacklet(tmp_path, "photos")
+
+        assert code.run("on_start", {"seen": seen})
+        assert photos.run("on_start", {"seen": seen})
+
+        assert seen == ["code", "photos"]
+
+    def test_the_search_path_is_left_as_it_was(self, tmp_path):
+        before = list(sys.path)
+
+        self._stacklet(tmp_path, "code").run("on_start", {"seen": []})
+
+        assert sys.path == before

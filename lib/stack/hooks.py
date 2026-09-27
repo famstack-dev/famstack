@@ -23,6 +23,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -206,6 +208,30 @@ def build_hook_ctx(stacklet_id: str, env=None, step_fn=None, **kwargs):
     )
 
 
+@contextmanager
+def stacklet_imports(stacklet_dir: Path):
+    """Keep the modules a stacklet's code imports from its own directory
+    to that stacklet.
+
+    Hooks and CLI plugins put their stacklet's directory on `sys.path` and
+    import its helpers by bare name (`from oauth import sync`). One
+    process runs the hooks of many stacklets, as in `stack restart all`,
+    and Python caches a module by name: the second stacklet with an
+    `oauth.py` got the first one's. On the way out this forgets every
+    module loaded from `stacklet_dir` and puts `sys.path` back.
+    """
+    root = Path(stacklet_dir).resolve()
+    path_before = list(sys.path)
+    try:
+        yield
+    finally:
+        sys.path[:] = path_before
+        for name, module in list(sys.modules.items()):
+            origin = getattr(module, "__file__", None)
+            if origin and Path(origin).resolve().is_relative_to(root):
+                del sys.modules[name]
+
+
 class HookResolver:
     """Finds and runs lifecycle hooks for a stacklet.
 
@@ -256,12 +282,13 @@ class HookResolver:
     def _run_python(self, path: Path, ctx) -> bool:
         """Load and run a Python hook."""
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"hook.{path.stem}", path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            if hasattr(mod, "run"):
-                mod.run(ctx)
+            with stacklet_imports(self._stacklet_dir):
+                spec = importlib.util.spec_from_file_location(
+                    f"hook.{path.stem}", path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                if hasattr(mod, "run"):
+                    mod.run(ctx)
             return True
         except Cancelled:
             raise
