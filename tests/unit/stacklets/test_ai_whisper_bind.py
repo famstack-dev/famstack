@@ -4,7 +4,7 @@ Every other service binds by the framework's rule: all interfaces in
 port mode, so the household's other machines reach it, and loopback in
 domain mode, where the reverse proxy is the way in. Whisper was pinned
 to loopback in both, so a second Mac pointed at this one with
-`stack ai connect <url> --whisper <this Mac>:42062` was refused, and a
+`stack ai switch <url> --whisper <this Mac>:42062` was refused, and a
 proxy on the LAN side could not reach it either.
 
 The LaunchAgent is written to a temporary home and launchd is not

@@ -1,11 +1,15 @@
-"""stack ai connect <url> — choose the AI server the stack uses.
+"""stack ai switch <target> — choose the AI server the stack uses.
 
 The stack talks to one OpenAI-compatible address, `[ai] openai_url`,
-whoever serves it: the local engine `stack up ai` installs, another
-machine on the network, or a hosted provider. This command points the
-stack at one without installing anything here. It checks the server
-answers, picks a model it actually has, and writes `[ai]` in stack.toml.
-`local` switches back to the engine on this Mac.
+whoever serves it: the engine the stack manages on this Mac, an AI app
+on this Mac, another machine on the network, or a hosted provider.
+
+`managed` is the engine the stack runs: it installs oMLX when it is
+missing and starts it, through `stack up ai`, and gives up with `[ai]`
+as it was when that fails. Any other target is an address the stack
+does not manage: nothing is installed. Either way the command checks the
+server answers, picks a model it actually has, and writes `[ai]` in
+stack.toml.
 
 Voice messages go to `[ai] whisper_url` when a speech server is set,
 whatever the AI server offers. Without one they go to the AI server,
@@ -17,15 +21,18 @@ ai` removes it.
 Nothing restarts. The command names the running stacklets that read the
 address, and `stack restart` with those ids applies it.
 
-    stack ai connect 192.168.1.20:11434
-    stack ai connect https://api.example.com --key sk-... --model gpt-4.1-mini
-    stack ai connect 192.168.1.20:8000 --whisper 192.168.1.20:42062
-    stack ai connect local
+    stack ai switch managed
+    stack ai switch localhost:8888
+    stack ai switch 192.168.1.20:11434
+    stack ai switch https://api.example.com --key sk-... --model gpt-4.1-mini
+    stack ai switch 192.168.1.20:8000 --whisper 192.168.1.20:42062
 """
 
-HELP = "Choose the AI server: another machine, a hosted provider, or local"
+HELP = "Choose the AI server: the engine the stack manages, or any other address"
 
 import argparse
+import os
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -34,18 +41,21 @@ from pathlib import Path
 # refuse an empty key. Same placeholder the local engine uses.
 _NO_KEY = "local"
 
-# The engine and speech server `stack up ai` installs on this Mac.
-_LOCAL_URL = "http://localhost:42060/v1"
-_LOCAL_WHISPER = "http://localhost:42062/v1"
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from local_mode import MANAGED_ENGINE  # noqa: E402
+
+# The target that names the engine the stack manages.
+MANAGED = "managed"
 
 # `--whisper ai`: no dedicated speech server, the AI server transcribes.
 _VIA_AI = "ai"
 
 
 def _parse(args: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="stack ai connect", description=HELP)
-    p.add_argument("url", help="address of an OpenAI-compatible server, "
-                               "or 'local' for the engine on this Mac")
+    p = argparse.ArgumentParser(prog="stack ai switch", description=HELP)
+    p.add_argument("target", help="'managed' for the engine the stack runs on "
+                                  "this Mac, or the address of an "
+                                  "OpenAI-compatible server")
     p.add_argument("--key", default="", help="API key, if the server needs one")
     p.add_argument("--model", default="", help="model id the stack uses by default")
     p.add_argument("--whisper", default="",
@@ -88,11 +98,11 @@ def _speech_models(models: list[str]) -> list[str]:
     return [m for m in models if "whisper" in m.lower() or "transcribe" in m.lower()]
 
 
-def _speech_server(opts, local: bool, current: str) -> str:
+def _speech_server(opts, managed: bool, current: str) -> str:
     """The dedicated speech server after this command, "" for none.
 
-    An explicit `--whisper` decides. Otherwise `local` brings the local
-    Whisper back with the local engine, and any other switch keeps the
+    An explicit `--whisper` decides. Otherwise `managed` brings the
+    stack's Whisper back with its engine, and any other switch keeps the
     speech server the admin already chose: keeping voice on this Mac
     while text goes elsewhere is a reasonable choice to have made.
     """
@@ -101,8 +111,8 @@ def _speech_server(opts, local: bool, current: str) -> str:
     if opts.whisper:
         from backend import normalize_url
         return normalize_url(opts.whisper)
-    if local:
-        return _LOCAL_WHISPER
+    if managed:
+        return MANAGED_ENGINE["whisper_url"]
     return current
 
 
@@ -128,30 +138,57 @@ def _running() -> set[str]:
             if state in ("running", "starting", "failing")}
 
 
+def _run_the_engine(config: dict, ai: dict) -> dict | None:
+    """Hand `[ai]` to the engine the stack manages and bring it up.
+
+    `stack up ai` installs whatever is missing (the stacklet, or oMLX on
+    a Mac that ran only the voice services) and starts it. When it fails,
+    `[ai]` goes back to what it was, so the stack keeps a server that
+    answers. Returns an error, or None when the engine is up.
+    """
+    set_cfg = config["set_cfg"]
+    before = {k: ai.get(k, "") for k in MANAGED_ENGINE}
+    for key, value in MANAGED_ENGINE.items():
+        set_cfg("ai", key, value)
+    if _stack_up_ai(config) == 0:
+        return None
+    for key, value in before.items():
+        set_cfg("ai", key, value)
+    kept = before["openai_url"] or "no AI server"
+    return {"error": f"Bringing up the ai stacklet failed, so the stack "
+                     f"still uses {kept}. Its output above says why."}
+
+
+def _stack_up_ai(config: dict) -> int:
+    """`stack up ai` on this instance, its output to stderr so that a
+    `--json` answer stays the only thing on stdout."""
+    stack = Path(config["repo_root"]) / "stack"
+    env = {**os.environ, "STACK_DIR": config["instance_dir"]}
+    return subprocess.run([str(stack), "up", "ai"], env=env,
+                          stdout=sys.stderr).returncode
+
+
 def run(args, stacklet, config):
-    sys.path.insert(0, str(Path(__file__).parent.parent))
     from backend import normalize_url, _probe
     from stack.ai.probe import stays_home, transcribes
 
     opts = _parse(args)
     ai = config.get("stack", {}).get("ai", {})
-    ai_installed = (Path(config["instance_dir"]) / ".stack" / "ai.setup-done").exists()
 
-    local = opts.url == "local"
-    if local and not ai_installed:
-        return {"error": "The local AI engine is not installed. "
-                         "Install it with './stack up ai'."}
-    url = _LOCAL_URL if local else normalize_url(opts.url)
-    key = _NO_KEY if local else opts.key
+    managed = opts.target == MANAGED
+    if managed and (failed := _run_the_engine(config, ai)):
+        return failed
+    url = MANAGED_ENGINE["openai_url"] if managed else normalize_url(opts.target)
+    key = _NO_KEY if managed else opts.key
 
     probe = _probe(url, key)
     if probe.needs_auth:
         return {"error": f"The server at {url} wants an API key. "
                          "Pass it with --key <key>."}
     if not probe.reachable:
-        if local:
-            return {"error": f"The local AI engine is not answering at {url}. "
-                             "Start it with './stack up ai'."}
+        if managed:
+            return {"error": f"The engine the stack manages is not answering "
+                             f"at {url}. './stack logs ai' may say why."}
         return {"error": f"Nothing answers at {url}. Check the address "
                          "and that the server is running."}
 
@@ -161,7 +198,7 @@ def run(args, stacklet, config):
     if "error" in chosen:
         return chosen
 
-    whisper = _speech_server(opts, local, ai.get("whisper_url", ""))
+    whisper = _speech_server(opts, managed, ai.get("whisper_url", ""))
     if not whisper and not speech and opts.whisper == _VIA_AI:
         return {"error": f"The AI server at {url} lists no speech-to-text "
                          "model, so it cannot transcribe voice messages.",
@@ -189,7 +226,7 @@ def run(args, stacklet, config):
             "speech server.")
 
     set_cfg = config["set_cfg"]
-    set_cfg("ai", "provider", "managed" if local else "external")
+    set_cfg("ai", "provider", "managed" if managed else "external")
     set_cfg("ai", "openai_url", url)
     set_cfg("ai", "openai_key", key or _NO_KEY)
     if chosen["model"]:
@@ -209,9 +246,10 @@ def run(args, stacklet, config):
             "and processed by whoever runs that server.")
 
     running = _running()
-    if not local and "ai" in running:
-        notes.append("The local AI engine is still running and no longer "
-                     "used. './stack down ai' stops it and frees its memory.")
+    if not managed and "ai" in running and ai.get("provider") == "managed":
+        notes.append("The engine the stack manages is still running and no "
+                     "longer used. './stack down ai' stops it and frees its "
+                     "memory.")
 
     result = {
         "openai_url": url,

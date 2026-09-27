@@ -5,7 +5,7 @@
 # in a container, connects to Matrix through nanobot's own channel as the agent
 # account that the core bot-runner provisions from bot/bot.toml, and talks to the
 # AI server configured in stack.toml [ai]: the local ai stacklet, another
-# machine on the network, or a hosted provider (`stack ai connect <url>`).
+# machine on the network, or a hosted provider (`stack ai switch <url>`).
 #
 # The stacklet is "agent"; the persona (name + voice) is configurable. It ships
 # as "Stacky" via AGENT_NAME and a family can rename it (see the note below).

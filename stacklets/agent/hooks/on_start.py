@@ -33,7 +33,7 @@ def run(ctx):
         raise RuntimeError(
             "No AI server configured in stack.toml [ai] openai_url. "
             "Install the local engine with './stack up ai', or use one "
-            "elsewhere with './stack ai connect <url>'."
+            "elsewhere with './stack ai switch <url>'."
         )
 
     url = _host_url(url)
@@ -46,4 +46,4 @@ def run(ctx):
     model = ctx.env.get("AGENT_MODEL", "")
     if model and result.models and not _has_model(model, result.models):
         warn(f"The AI server at {url} does not list the model {model}. "
-             f"Pick one it has with './stack ai connect {url} --model <id>'.")
+             f"Pick one it has with './stack ai switch {url} --model <id>'.")

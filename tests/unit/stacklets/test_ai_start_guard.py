@@ -7,7 +7,8 @@ its virtualenv, a brew cleanup, a migrated machine: all leave a stacklet
 that reports itself set up and starts its containers happily, with a
 failing LLM health check as the only clue.
 
-`stack up ai` now says what is wrong before starting anything.
+`stack up ai` installs the engine again when the stack manages it, and
+otherwise leaves the AI server the admin chose alone.
 """
 
 from __future__ import annotations
@@ -78,12 +79,31 @@ class FakeCtx:
         self.shell_calls.append(cmd)
 
 
+class NoEngineCtx(FakeCtx):
+    """A Mac where Homebrew has no oMLX."""
+
+    def shell(self, cmd):
+        super().shell(cmd)
+        if cmd == "brew list omlx":
+            raise RuntimeError("Error: No such keg")
+
+    def shell_live(self, cmd):
+        self.shell_calls.append(cmd)
+
+
 class TestManagedProviderNeedsItsEngine:
 
-    def test_a_missing_engine_stops_the_start(self, monkeypatch):
-        monkeypatch.setattr(on_start.shutil, "which", lambda _cmd: None)
-        with pytest.raises(RuntimeError, match="oMLX missing"):
-            on_start.run(FakeCtx(provider="managed"))
+    def test_a_missing_engine_is_installed(self, monkeypatch):
+        """After `stack ai switch managed` on a Mac with only the voice
+        services, or a brew cleanup that took the binary: the stack
+        manages the engine, so it installs it rather than refusing."""
+        monkeypatch.setattr(on_start.shutil, "which",
+                            lambda cmd: "/opt/homebrew/bin/brew" if cmd == "brew" else None)
+        ctx = NoEngineCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
+
+        on_start.run(ctx)
+
+        assert "brew install omlx --with-grammar" in ctx.shell_calls
 
     def test_an_installed_engine_starts_normally(self, monkeypatch):
         monkeypatch.setattr(on_start.shutil, "which",
@@ -149,7 +169,7 @@ def _answer(monkeypatch, answer):
 
 class TestAnInstalledStackletKeepsItsEngine:
     """Chat on an AI server elsewhere with voice on this Mac is a setup an
-    admin chooses with `stack ai connect`. Starting the installed stacklet
+    admin chooses with `stack ai switch`. Starting the installed stacklet
     starts what it runs and leaves that choice alone: a production Mac
     serving oMLX as an app, with the stacklet for speech, was asked on
     every `stack up ai` to hand its engine over."""
@@ -183,15 +203,15 @@ class TestAnInstalledStackletKeepsItsEngine:
 
         out = capsys.readouterr().out
         assert "https://ai.example.test/v1" in out
-        assert "stack ai connect local" in out
+        assert "stack ai switch managed" in out
 
 
 def _no_question_expected(prompt):
     raise AssertionError(f"asked {prompt!r}")
 
 
-class TestInstallingOverAServerSetWithConnect:
-    """After `stack ai connect <url>`, installing the ai stacklet can mean
+class TestInstallingOverAServerSetWithSwitch:
+    """After `stack ai switch <url>`, installing the ai stacklet can mean
     two setups. Yes moves chat and voice onto the engine installed here.
     No keeps that server for chat and installs only the voice services,
     the setup of a Mac that serves its own AI app."""
@@ -216,7 +236,7 @@ class TestInstallingOverAServerSetWithConnect:
 
     def test_no_keeps_the_server_and_goes_on_to_install_voice(self, monkeypatch):
         """The install that follows skips the engine for a server set
-        with connect, and installs speech-to-text and text-to-speech."""
+        with switch, and installs speech-to-text and text-to-speech."""
         _answer(monkeypatch, "n")
         ctx = FakeCtx(**REMOTE)
 

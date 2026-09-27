@@ -16,7 +16,7 @@ category    = "ai"
 type        = "host"
 port        = 42060
 
-# Served by another machine after `stack ai connect <url>`: `stack list`
+# Served by another machine after `stack ai switch <url>`: `stack list`
 # then shows that server, and only the checks marked `remote` run.
 remote = "{ai_remote_url}"
 

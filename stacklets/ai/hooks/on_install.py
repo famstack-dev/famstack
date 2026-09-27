@@ -49,7 +49,7 @@ def run(ctx):
 
     # ── oMLX (managed provider only) ────────────────────────────────
     if provider == "managed":
-        _install_omlx(ctx, state_dir)
+        install_omlx(ctx, state_dir)
 
     # ── Whisper ─────────────────────────────────────────────────────
     # STACK_AI_NO_VOICE=1 is the local-dev opt-out: skip the whisper build +
@@ -102,7 +102,7 @@ def _install_omlx_formula(ctx) -> None:
     ctx.shell_live("brew install omlx --with-grammar")
 
 
-def _install_omlx(ctx, state_dir: Path):
+def install_omlx(ctx, state_dir: Path):
     section("oMLX", "MLX inference (Metal GPU)")
 
     if shutil.which("brew") is None:

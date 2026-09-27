@@ -1,6 +1,6 @@
 """What the stack can learn about an AI server before using it.
 
-`stack ai connect` asks two things beyond "does it answer": whether the
+`stack ai switch` asks two things beyond "does it answer": whether the
 server transcribes, so voice messages do not fail later, and whether it
 is on the home network, so nobody sends the family's documents to a
 provider without being told.

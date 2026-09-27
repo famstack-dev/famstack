@@ -68,7 +68,7 @@ class TestWhatTheStackletsGet:
         assert "whisper-large-v3-turbo" in env.values()
 
     def test_an_emptied_speech_key_is_not_sent_as_an_empty_key(self, instance):
-        """`stack ai connect --whisper ai` clears the key; the clients
+        """`stack ai switch --whisper ai` clears the key; the clients
         refuse an empty one, so it renders as the placeholder."""
         instance._set_cfg("ai", "whisper_url", "http://localhost:42062/v1")
         instance._set_cfg("ai", "whisper_key", "")

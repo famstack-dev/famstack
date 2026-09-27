@@ -1,6 +1,6 @@
 """`stack list` when the AI runs on another machine.
 
-After `stack ai connect <url>` the family's AI is served elsewhere. The
+After `stack ai switch <url>` the family's AI is served elsewhere. The
 ai stacklet's row used to say `online localhost:42060` whenever its local
 containers happened to run, because its LLM check probes the configured
 address and the remote server answered it. That claimed the engine on
