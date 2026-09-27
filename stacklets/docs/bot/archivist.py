@@ -1495,12 +1495,15 @@ class ArchivistBot(MicroBot):
             return
 
         # status == "enriched": the document is filed; pick the reply.
+        # A failed classification carries the filing's envelope too, so
+        # a reply in its thread classifies the document again.
+        filing = {"dev.famstack.event": o.envelope} if o.envelope else None
         llm_error = _llm_error_for_chat(
             o.llm_error, name=o.display_name, openai_url=self.openai_url, link=o.link,
         )
         if llm_error:
             key, kwargs = llm_error
-            await self._answer(room_id, self.t(key, **kwargs), reply_to)
+            await self._answer(room_id, self.t(key, **kwargs), reply_to, metadata=filing)
         elif not o.has_text:
             await self._answer(
                 room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
@@ -1514,7 +1517,7 @@ class ArchivistBot(MicroBot):
         elif not o.classification:
             await self._answer(
                 room_id, self.t("classify_failed", name=o.display_name, link=o.link),
-                reply_to,
+                reply_to, metadata=filing,
             )
         else:
             reply_text = render_filing_reply(

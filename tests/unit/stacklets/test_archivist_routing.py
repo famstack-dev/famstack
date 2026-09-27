@@ -652,6 +652,54 @@ class TestOutcomeGlyph:
         assert reacts == [self.CROSS]
 
 
+class TestAFailedClassificationCanBeRetried:
+    """The document is filed even when the AI server fails. The reply used
+    to tell the family to run `stack up ai`, which is wrong on a stack
+    that uses a server elsewhere, and carried no filing envelope, so a
+    reply in its thread went to search. It says to reply to try again,
+    and that reply finds the document."""
+
+    def _answered(self, tmp_path, **outcome):
+        from matching import build_document_event
+        bot = _build_bot(tmp_path)
+        sent = []
+
+        async def _answer(room_id, text, reply_to, *, metadata=None, **_):
+            sent.append((text, metadata))
+
+        async def _noop(*a, **k):
+            return None
+
+        bot._answer, bot._react = _answer, _noop
+        o = SimpleNamespace(
+            status="enriched", display_name="policy.pdf", doc_id=2, link="http://x/2",
+            has_text=True, classify_enabled=True, classification={},
+            envelope=build_document_event(2, {}), **outcome)
+        return bot, o, sent
+
+    @pytest.mark.parametrize("error", [("unavailable", "HTTP 400"),
+                                       ("timeout", "60s"),
+                                       ("model_missing", "qwen")])
+    async def test_the_reply_says_how_to_retry_and_carries_the_filing(self, tmp_path, error):
+        bot, o, sent = self._answered(tmp_path, llm_error=error)
+
+        await bot._reply_for_outcome("!r:server", o, "$upload")
+
+        (text, metadata), = sent
+        assert "Reply here" in text
+        assert "stack up ai" not in text
+        assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
+
+    async def test_an_empty_classification_can_be_retried_too(self, tmp_path):
+        bot, o, sent = self._answered(tmp_path, llm_error=None)
+
+        await bot._reply_for_outcome("!r:server", o, "$upload")
+
+        (text, metadata), = sent
+        assert "Reply here" in text
+        assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
+
+
 class TestPastePredicate:
     """`_looks_like_paste` is the gate between "chat in a capture room"
     and "this is content to summarize and file." The heuristic is
