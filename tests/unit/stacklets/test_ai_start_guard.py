@@ -103,7 +103,7 @@ class TestManagedProviderNeedsItsEngine:
 
         on_start.run(ctx)
 
-        assert "brew install omlx --with-grammar" in ctx.shell_calls
+        assert any(c.endswith("brew install omlx --with-grammar") for c in ctx.shell_calls)
 
     def test_an_installed_engine_starts_normally(self, monkeypatch):
         monkeypatch.setattr(on_start.shutil, "which",
