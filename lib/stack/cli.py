@@ -196,7 +196,7 @@ def _notify_up(stck, result):
             lines.append(f"- {hint}")
         _notify(stck, "\n".join(lines))
 
-VERSION = "0.3.0-beta.3"
+VERSION = "0.4.0-rc.1"
 
 
 # ── Stack + Docker orchestration ──────────────────────────────────────────
