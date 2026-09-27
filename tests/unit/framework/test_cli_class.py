@@ -370,6 +370,30 @@ class TestHandlersTakeManyIds:
         assert cli.stack.is_installed("a")
 
 
+class TestEveryUpPullsWhatIsMissing:
+    """After `stack update`, a release can name new image tags for a
+    stacklet that is already set up. `compose up` fetches a missing image
+    itself, with its output captured, so `stack restart` sat at "Starting
+    containers" for minutes with nothing on screen. The visible pull step
+    runs on every up, not only the first."""
+
+    def test_a_second_up_pulls_before_it_starts(self, tmp_path, monkeypatch):
+        cli, _ = _make_cli(tmp_path, {"myapp": {}})
+        (tmp_path / "stacklets" / "myapp" / "docker-compose.yml").write_text(
+            "name: stack-myapp\nservices: {}\n")
+        steps = []
+        monkeypatch.setattr("stack.docker.compose_pull",
+                            lambda *a, **kw: steps.append("pull"))
+        monkeypatch.setattr("stack.docker.compose_up",
+                            lambda *a, **kw: (steps.append("up"), (0, ""))[1])
+        cli.up("myapp")
+        steps.clear()
+
+        cli.up("myapp")
+
+        assert steps == ["pull", "up"]
+
+
 class TestUpFailureNamesTheCause:
     """When compose cannot start a container, the reason is in its output
     (a port another process holds, a missing mount), and the admin
