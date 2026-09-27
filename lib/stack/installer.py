@@ -676,7 +676,7 @@ def wizard():
     nl()
     out(f"   Username  {BOLD}{TEAL}{admin_id}{RESET}")
     out(f"   Password  {BOLD}{TEAL}{admin_id}{RESET}")
-    dim("   (your first name, lowercase — change it after login)")
+    dim("   (your first name, lowercase; change it after login)")
     nl()
 
     bold("3. Phones and other computers")
