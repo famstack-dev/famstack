@@ -2,9 +2,9 @@
 
 `stack up ai` installs and manages oMLX, Whisper and TTS on this Mac.
 An AI server elsewhere is `stack ai connect <url>`, which installs
-nothing here; after that, installing this stacklet asks before it
-switches the stack back to local mode. Once installed, the engine is
-chosen with `stack ai connect`, and `stack up ai` only starts it.
+nothing here; after that, installing this stacklet asks whether the
+engine here takes over or only voice is installed. Once installed, the
+engine is chosen with `stack ai connect`, and `stack up ai` only starts it.
 
 Runs before on_install. Only fires on first 'stack up ai'.
 Skipped when STACK_SETUP_CONFIRMED=1 (installer already confirmed).
@@ -49,12 +49,12 @@ def run(ctx):
 
     provider = ctx.cfg("provider", default="")
 
-    # A remote endpoint set with `stack ai connect`: installing the ai
-    # stacklet replaces it with the local engine, so that needs a yes.
+    # A server set with `stack ai connect`: the admin says whether the
+    # engine here takes over, or only the voice services are installed.
     if provider == "external":
         sys.path.insert(0, str(Path(__file__).parent.parent))
-        from local_mode import switch_to_local
-        switch_to_local(ctx)
+        from local_mode import choose_engine
+        choose_engine(ctx)
         return
 
     # Already configured — nothing to do

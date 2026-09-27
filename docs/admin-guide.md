@@ -515,7 +515,7 @@ The command checks that the server answers, picks a model it has (`--model <id>`
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 
-**Switching back.** `./stack ai connect local` switches the stack to the engine on this Mac. Installing the ai stacklet on a remote setup, the first `./stack up ai`, asks before it does the same; no leaves everything as it was. Once installed, `./stack up ai` keeps the server you chose, so chat can stay elsewhere while voice runs on this Mac. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
+**Switching back.** `./stack ai connect local` switches the stack to the engine on this Mac. Installing the ai stacklet after `connect`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and installs only speech-to-text and text-to-speech here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai connect localhost:<port>`, then `./stack up ai`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
 
 ### ChatAI (`chatai`) optional
 

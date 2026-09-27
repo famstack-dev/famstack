@@ -20,7 +20,6 @@ import json
 
 import pytest
 
-from stack.hooks import Cancelled
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
@@ -191,29 +190,37 @@ def _no_question_expected(prompt):
     raise AssertionError(f"asked {prompt!r}")
 
 
-class TestInstallingOverARemoteEndpoint:
-    """After `stack ai connect <url>`, installing the ai stacklet means the
-    engine and speech-to-text on this Mac take over. That is a different
-    setup, not a restart, so it needs a yes, and a no leaves the remote
-    endpoint exactly as it was."""
+class TestInstallingOverAServerSetWithConnect:
+    """After `stack ai connect <url>`, installing the ai stacklet can mean
+    two setups. Yes moves chat and voice onto the engine installed here.
+    No keeps that server for chat and installs only the voice services,
+    the setup of a Mac that serves its own AI app."""
 
     @pytest.fixture(autouse=True)
     def interactive_setup(self, monkeypatch):
         monkeypatch.delenv("STACK_SETUP_CONFIRMED", raising=False)
 
-    def test_the_question_names_the_endpoint(self, monkeypatch, capsys):
+    def test_the_question_names_a_remote_server(self, monkeypatch, capsys):
         _answer(monkeypatch, "n")
-        with pytest.raises(Cancelled):
-            on_configure.run(FakeCtx(**REMOTE))
+        on_configure.run(FakeCtx(**REMOTE))
 
-        assert "remote AI endpoint (https://ai.example.test/v1)" in capsys.readouterr().out
+        assert "a remote AI server (https://ai.example.test/v1)" in capsys.readouterr().out
 
-    def test_no_keeps_the_remote_setup(self, monkeypatch):
+    def test_a_server_on_this_mac_is_not_called_remote(self, monkeypatch, capsys):
+        _answer(monkeypatch, "n")
+        on_configure.run(FakeCtx(**{**REMOTE, "openai_url": "http://localhost:8888/v1"}))
+
+        out = capsys.readouterr().out
+        assert "on this Mac that the stack does not manage (http://localhost:8888/v1)" in out
+        assert "remote" not in out
+
+    def test_no_keeps_the_server_and_goes_on_to_install_voice(self, monkeypatch):
+        """The install that follows skips the engine for a server set
+        with connect, and installs speech-to-text and text-to-speech."""
         _answer(monkeypatch, "n")
         ctx = FakeCtx(**REMOTE)
 
-        with pytest.raises(Cancelled, match="still uses"):
-            on_configure.run(ctx)
+        on_configure.run(ctx)  # does not cancel
 
         assert ctx._cfg == REMOTE
 
@@ -221,8 +228,7 @@ class TestInstallingOverARemoteEndpoint:
         _answer(monkeypatch, "")
         ctx = FakeCtx(**REMOTE)
 
-        with pytest.raises(Cancelled):
-            on_configure.run(ctx)
+        on_configure.run(ctx)
 
         assert ctx._cfg == REMOTE
 
@@ -239,9 +245,9 @@ class TestInstallingOverARemoteEndpoint:
         assert ctx._cfg["whisper_key"] == ""
         assert ctx._cfg["openai_key"] == "local"
 
-    def test_without_a_terminal_nothing_is_switched(self, monkeypatch):
-        """Nobody to say yes: an agent or a script installing the stacklet
-        must not move the family's AI onto this Mac."""
+    def test_without_a_terminal_nothing_is_installed(self, monkeypatch):
+        """Nobody to answer: an agent or a script installing the stacklet
+        must not change the family's AI setup."""
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
         ctx = FakeCtx(**REMOTE)
 

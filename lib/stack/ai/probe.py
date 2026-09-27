@@ -78,6 +78,21 @@ def transcribes(url: str, key: str = "", *, timeout: float = 3.0) -> bool:
 _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 
 
+def on_this_mac(url: str) -> bool:
+    """Whether ``url`` names this machine: ``localhost`` or a loopback address.
+
+    Decided from the address as written, without a DNS lookup, so it is
+    cheap enough for a status line.
+    """
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def stays_home(url: str) -> bool:
     """Whether every address the host of ``url`` resolves to is on the
     home network: loopback, private, link-local or a Tailscale tailnet.
