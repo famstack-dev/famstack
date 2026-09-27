@@ -433,6 +433,8 @@ subject is not: it appears in plain-text contexts too, including
 | `Refs: #127` | Links the GitHub issue. `Closes: #127` closes it when the commit lands on `main`; `Fixes:` is kept for the commit that caused a bug. |
 | `Co-Authored-By:` | Never. Project rule, enforced: `tools/commit-lint` rejects the trailer, a "Generated with Claude Code" line, its link and an Anthropic noreply address, in commit messages and in PR descriptions. |
 
+Breaking is measured against the last release. Changing something that only lived on `main`, such as a command added since the last tag, breaks no existing setup: it takes no `!` and no footer.
+
 `tools/commit-lint` enforces the header, and is the same check in every
 place that matters: the `commit-msg` hook rejects it before the commit
 exists, CI rejects the PR title and every commit in the PR, and the

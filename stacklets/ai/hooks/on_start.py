@@ -7,7 +7,6 @@ check required config first, raise with a clear fix if missing.
 
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
@@ -25,11 +24,6 @@ def run(ctx):
         ctx.env["COMPOSE_PROFILES"] = ""
         dim("STACK_AI_NO_VOICE=1 — speech container disabled")
 
-    # A remote endpoint is only replaced by the local engine with a yes.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from local_mode import switch_to_local
-    switch_to_local(ctx)
-
     provider = ctx.cfg("provider", default="")
 
     if not provider:
@@ -43,22 +37,11 @@ def run(ctx):
         raise RuntimeError("AI provider not configured")
 
     if provider == "managed" and shutil.which("omlx") is None:
-        # Setup ran once and left a marker, so the install hook will not run
-        # again on its own. If the binary has since gone -- a Python upgrade
-        # that broke its virtualenv, a brew cleanup, a migrated machine --
-        # nothing notices: the containers start, `stack up` reports success,
-        # and the only symptom is an LLM health check failing with no stated
-        # cause. Say what is actually wrong and how to undo it, using the
-        # same two-command recovery this hook already teaches above.
-        nl()
-        warn("oMLX is not installed (no `omlx` command found).")
-        out("The AI engine was set up before but is no longer on this Mac.")
-        out("Reinstall it with:")
-        nl()
-        out(f"  {TEAL}stack destroy ai{RESET}    (keeps your downloaded models)")
-        out(f"  {TEAL}stack up ai{RESET}         (reinstalls oMLX)")
-        nl()
-        raise RuntimeError("oMLX missing for managed provider")
+        # The stack manages the engine, so a missing one is installed:
+        # after `stack ai switch managed` on a Mac that has only the voice
+        # services, or when a Python upgrade, a brew cleanup or a migrated
+        # machine took the binary away after setup.
+        _install_hook().install_omlx(ctx, STATE_DIR)
 
     if provider == "external":
         url = ctx.cfg("openai_url", default="")
@@ -70,6 +53,11 @@ def run(ctx):
             out(f"  {TEAL}stack destroy ai && stack up ai{RESET}")
             nl()
             raise RuntimeError("Missing openai_url for external provider")
+        # The engine is chosen with `stack ai switch`, never by starting
+        # the stacklet: text elsewhere with voice on this Mac is a setup
+        # an admin chose, and `up` only starts what the stacklet runs.
+        dim(f"Chat uses the AI server at {url}. "
+            "'./stack ai switch managed' moves it to the engine the stack runs.")
 
     if provider == "managed":
         _start_local_engine(ctx)
@@ -149,15 +137,7 @@ def _reconcile_whisper(ctx):
     # hook's contract, keeping the plist current is a courtesy.
     if getattr(ctx, "stack", None) is None:
         return
-    import importlib.util
-    from pathlib import Path
-
-    hooks_dir = Path(__file__).resolve().parent
-    spec = importlib.util.spec_from_file_location(
-        "hook.ai_on_install", hooks_dir / "on_install.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
+    mod = _install_hook()
     data_dir = Path(ctx.stack.data)
     whisper_bin = data_dir / "ai" / "whisper.cpp" / "build" / "bin" / "whisper-server"
     model_path = data_dir / "ai" / "whisper-models" / mod.WHISPER_MODEL
@@ -165,3 +145,14 @@ def _reconcile_whisper(ctx):
         return  # whisper never installed here (or opted out) — nothing to reconcile
     state_dir = Path(__file__).resolve().parent.parent / ".state"
     mod._setup_whisper_launchd(ctx, data_dir, whisper_bin, model_path, state_dir)
+
+
+def _install_hook():
+    """The install hook, for the parts of setup a start repeats."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "hook.ai_on_install", Path(__file__).resolve().parent / "on_install.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod

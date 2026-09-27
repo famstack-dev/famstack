@@ -73,7 +73,7 @@ schedule = "0 0 3 * * *"
 # OpenAI-compatible API endpoint for LLM inference. Everything that uses
 # AI talks to this one address. `stack up ai` installs the local engine
 # and sets it. For a server on another machine or a hosted provider, run
-# `./stack ai connect <url>` instead: it checks the server, picks a model
+# `./stack ai switch <url>` instead: it checks the server, picks a model
 # it has and writes this section, without installing anything here.
 #   oMLX native app: http://localhost:8000/v1  (default)
 #   oMLX via brew:   http://localhost:42060/v1

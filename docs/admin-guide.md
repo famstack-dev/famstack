@@ -483,7 +483,7 @@ Useful commands:
 ```bash
 ./stack ai models
 ./stack ai download <model-id>
-./stack ai connect <url>
+./stack ai switch <url>
 ./stack setup ai
 ```
 
@@ -494,15 +494,16 @@ To switch LLM models: edit `[ai] default` in `stack.toml` (alternatives are list
 Everything that uses AI talks to one OpenAI-compatible address, `[ai] openai_url`. The engine `./stack up ai` installs is one option. If your models run on another computer in the house (oMLX, Ollama, LM Studio, anything that speaks the OpenAI API and listens on the network), or you use a hosted provider, skip `./stack up ai` and point the stack there:
 
 ```bash
-./stack ai connect 192.168.1.20:11434                      # Ollama on another machine
-./stack ai connect https://api.example.com --key sk-...    # a hosted provider
-./stack ai connect local                                   # back to the engine on this Mac
+./stack ai switch 192.168.1.20:11434                      # Ollama on another machine
+./stack ai switch https://api.example.com --key sk-...    # a hosted provider
+./stack ai switch localhost:8888                          # an AI app you run on this Mac
+./stack ai switch managed                                 # the engine the stack runs on this Mac
 ```
 
 A second Mac running famstack's AI stacklet in port mode serves both chat and voice to the network, oMLX on port 42060 and Whisper on 42062. Its API key is its own `[ai] openai_key`, `local` unless changed:
 
 ```bash
-./stack ai connect 192.168.1.20:42060 --key local --whisper 192.168.1.20:42062
+./stack ai switch 192.168.1.20:42060 --key local --whisper 192.168.1.20:42062
 ```
 
 The command checks that the server answers, picks a model it has (`--model <id>` when it lists several), writes `[ai]` in `stack.toml`, and names the running stacklets to restart. It installs nothing and restarts nothing. `./stack list` then shows the AI stacklet as `remote`, with the server's name, and as degraded when that server stops answering.
@@ -515,7 +516,7 @@ The command checks that the server answers, picks a model it has (`--model <id>`
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 
-**Switching back.** On a remote setup, `./stack up ai` asks before it switches the stack to the engine on this Mac; no leaves everything as it was. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
+**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and installs only speech-to-text and text-to-speech here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
 
 ### ChatAI (`chatai`) optional
 
@@ -726,7 +727,7 @@ Key things to know:
 
 ```bash
 ./stack ai models             # available AI models in the backend
-./stack ai connect <url>      # use an AI server on another machine, or `local`
+./stack ai switch <url>       # use another AI server; `managed` for the engine the stack runs
 ./stack config                # show resolved configuration
 ./stack config --secrets      # include generated passwords
 ./stack version               # print version

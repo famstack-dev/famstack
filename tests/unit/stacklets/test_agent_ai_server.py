@@ -47,7 +47,7 @@ def test_no_ai_server_stops_the_start_and_names_both_ways_to_get_one():
     with pytest.raises(RuntimeError) as e:
         on_start.run(FakeCtx(url=""))
     assert "stack up ai" in str(e.value)
-    assert "stack ai connect" in str(e.value)
+    assert "stack ai switch" in str(e.value)
 
 
 def test_a_server_that_answers_starts_quietly(httpserver, capsys):

@@ -1,9 +1,10 @@
 """AI stacklet first-run configuration — confirm the local AI engine.
 
 `stack up ai` installs and manages oMLX, Whisper and TTS on this Mac.
-An AI server elsewhere is `stack ai connect <url>`, which installs
-nothing here; after that, bringing up this stacklet asks before it
-switches the stack back to local mode.
+An AI server elsewhere is `stack ai switch <url>`, which installs
+nothing here; after that, installing this stacklet asks whether the
+engine here takes over or only voice is installed. Once installed, the
+engine is chosen with `stack ai switch`, and `stack up ai` only starts it.
 
 Runs before on_install. Only fires on first 'stack up ai'.
 Skipped when STACK_SETUP_CONFIRMED=1 (installer already confirmed).
@@ -48,12 +49,12 @@ def run(ctx):
 
     provider = ctx.cfg("provider", default="")
 
-    # A remote endpoint set with `stack ai connect`: installing the ai
-    # stacklet replaces it with the local engine, so that needs a yes.
+    # A server set with `stack ai switch`: the admin says whether the
+    # engine here takes over, or only the voice services are installed.
     if provider == "external":
         sys.path.insert(0, str(Path(__file__).parent.parent))
-        from local_mode import switch_to_local
-        switch_to_local(ctx)
+        from local_mode import choose_engine
+        choose_engine(ctx)
         return
 
     # Already configured — nothing to do
@@ -69,11 +70,11 @@ def run(ctx):
     nl()
 
     # `stack up ai` is the local engine. A server elsewhere is
-    # `stack ai connect`, which installs nothing on this Mac.
+    # `stack ai switch`, which installs nothing on this Mac.
     if not confirm("Set up oMLX?", default=True):
         nl()
         out("To use an AI server on another machine or a hosted provider,")
-        out("run './stack ai connect <url>' instead. Nothing was installed.")
+        out("run './stack ai switch <url>' instead. Nothing was installed.")
         nl()
         raise Cancelled("Cancelled. The local AI engine was not set up.")
 

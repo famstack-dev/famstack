@@ -41,7 +41,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack host` | yes | no | disk / memory / uptime |
 | `./stack config [--secrets]` | yes | no | prints resolved config |
 | `./stack ai models` | yes | no | lists installed AI models |
-| `./stack ai connect <url>` | yes | no | points `[ai]` at an AI server elsewhere, or `local`; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
+| `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
+| `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
 | `./stack infra dns-token` | yes | no | stores or replaces the DNS provider API token (HTTPS in domain mode); `./stack up infra` applies it |
 
@@ -110,8 +111,8 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | AI install fails at whisper.cpp build | `xcode-select -p` | Xcode CLT missing. `xcode-select --install`. |
 | `brew: command not found` after install | PATH on Apple Silicon | Add `eval "$(/opt/homebrew/bin/brew shellenv)"` to `~/.zshrc`. |
 | LLM OOM / very slow | RAM tier | Edit `[ai] default` to smaller model, then `./stack setup ai`. |
-| `stack list` shows ai as `remote` | `[ai] provider` in `stack.toml` | The stack uses an AI server elsewhere (`stack ai connect`). `stack up ai` asks before switching back to this Mac. |
-| Voice messages fail on a remote AI setup | `./stack ai connect <url>` output, "Voice messages" line | The AI server lists no speech-to-text model. Pass `--whisper <url>` for a speech server. |
+| `stack list` shows ai as `remote` or `localhost` | `[ai] provider` in `stack.toml` | The stack uses an AI server it does not manage (`stack ai switch`): another machine, or an app on this Mac (`localhost`). `stack up ai` keeps it; `stack ai switch managed` switches back to this Mac. |
+| Voice messages fail on a remote AI setup | `./stack ai switch <url>` output, "Voice messages" line | The AI server lists no speech-to-text model. Pass `--whisper <url>` for a speech server. |
 | Disk full | `./stack host` | Likely the photo library. Move `data_dir` to external SSD. |
 | Element warns "browser not supported", then never loads | Which address is open? | Port mode over the LAN IP: plain HTTP is not a secure context. On the server Mac open `http://localhost:42030`; other computers use the Element desktop app with `http://<ip>:42031`. |
 | Wiki pages stale after filings | `docker logs stack-memory-curator` | Curator debounces (~3 min quiet) before rebuilding; topic pages wait for the nightly sweep. Manual override: `./stack memory wiki`. |

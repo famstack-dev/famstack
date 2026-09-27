@@ -7,7 +7,8 @@ its virtualenv, a brew cleanup, a migrated machine: all leave a stacklet
 that reports itself set up and starts its containers happily, with a
 failing LLM health check as the only clue.
 
-`stack up ai` now says what is wrong before starting anything.
+`stack up ai` installs the engine again when the stack manages it, and
+otherwise leaves the AI server the admin chose alone.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import json
 
 import pytest
 
-from stack.hooks import Cancelled
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
@@ -32,6 +32,12 @@ _spec = importlib.util.spec_from_file_location(
     _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_start.py")
 on_start = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(on_start)
+
+_spec = importlib.util.spec_from_file_location(
+    "ai_hooks_on_configure",
+    _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_configure.py")
+on_configure = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(on_configure)
 
 
 @pytest.fixture(autouse=True)
@@ -73,12 +79,31 @@ class FakeCtx:
         self.shell_calls.append(cmd)
 
 
+class NoEngineCtx(FakeCtx):
+    """A Mac where Homebrew has no oMLX."""
+
+    def shell(self, cmd):
+        super().shell(cmd)
+        if cmd == "brew list omlx":
+            raise RuntimeError("Error: No such keg")
+
+    def shell_live(self, cmd):
+        self.shell_calls.append(cmd)
+
+
 class TestManagedProviderNeedsItsEngine:
 
-    def test_a_missing_engine_stops_the_start(self, monkeypatch):
-        monkeypatch.setattr(on_start.shutil, "which", lambda _cmd: None)
-        with pytest.raises(RuntimeError, match="oMLX missing"):
-            on_start.run(FakeCtx(provider="managed"))
+    def test_a_missing_engine_is_installed(self, monkeypatch):
+        """After `stack ai switch managed` on a Mac with only the voice
+        services, or a brew cleanup that took the binary: the stack
+        manages the engine, so it installs it rather than refusing."""
+        monkeypatch.setattr(on_start.shutil, "which",
+                            lambda cmd: "/opt/homebrew/bin/brew" if cmd == "brew" else None)
+        ctx = NoEngineCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
+
+        on_start.run(ctx)
+
+        assert "brew install omlx --with-grammar" in ctx.shell_calls
 
     def test_an_installed_engine_starts_normally(self, monkeypatch):
         monkeypatch.setattr(on_start.shutil, "which",
@@ -132,57 +157,107 @@ class TestTheLocalEngineIsStarted:
 
 
 
-class TestLeavingARemoteEndpoint:
-    """After `stack ai connect <url>`, bringing up the ai stacklet means
-    the engine and speech-to-text on this Mac take over. That is a
-    different setup, not a restart, so it needs a yes, and a no leaves
-    the remote endpoint exactly as it was."""
+REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
+              openai_key="sk-test", whisper_url="https://stt.example.test/v1",
+              whisper_key="stt-key", default="gpt-4.1-mini")
 
-    REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
-                  openai_key="sk-test", whisper_url="https://stt.example.test/v1",
-                  whisper_key="stt-key", default="gpt-4.1-mini")
+
+def _answer(monkeypatch, answer):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+
+
+class TestAnInstalledStackletKeepsItsEngine:
+    """Chat on an AI server elsewhere with voice on this Mac is a setup an
+    admin chooses with `stack ai switch`. Starting the installed stacklet
+    starts what it runs and leaves that choice alone: a production Mac
+    serving oMLX as an app, with the stacklet for speech, was asked on
+    every `stack up ai` to hand its engine over."""
 
     @pytest.fixture(autouse=True)
     def installed(self, monkeypatch):
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
 
-    def _answer(self, monkeypatch, answer):
+    def test_it_starts_without_asking(self, monkeypatch):
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+        monkeypatch.setattr("builtins.input", _no_question_expected)
+        ctx = FakeCtx(**REMOTE)
 
-    def test_the_question_names_the_endpoint(self, monkeypatch, capsys):
-        self._answer(monkeypatch, "n")
-        with pytest.raises(Cancelled):
-            on_start.run(FakeCtx(**self.REMOTE))
+        on_start.run(ctx)
 
-        assert "remote AI endpoint (https://ai.example.test/v1)" in capsys.readouterr().out
-
-    def test_no_keeps_the_remote_setup_and_starts_nothing(self, monkeypatch):
-        self._answer(monkeypatch, "n")
-        ctx = FakeCtx(**self.REMOTE)
-
-        with pytest.raises(Cancelled, match="still uses"):
-            on_start.run(ctx)
-
-        assert ctx._cfg == self.REMOTE
+        assert ctx._cfg == REMOTE
         assert ctx.shell_calls == []
 
+    def test_it_starts_without_a_terminal(self, monkeypatch):
+        """An agent or a script restarting the stacklet is not stopped."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        ctx = FakeCtx(**REMOTE)
+
+        on_start.run(ctx)
+
+        assert ctx._cfg == REMOTE
+
+    def test_it_names_the_command_that_switches_the_engine(self, capsys):
+        on_start.run(FakeCtx(**REMOTE))
+
+        out = capsys.readouterr().out
+        assert "https://ai.example.test/v1" in out
+        assert "stack ai switch managed" in out
+
+
+def _no_question_expected(prompt):
+    raise AssertionError(f"asked {prompt!r}")
+
+
+class TestInstallingOverAServerSetWithSwitch:
+    """After `stack ai switch <url>`, installing the ai stacklet can mean
+    two setups. Yes moves chat and voice onto the engine installed here.
+    No keeps that server for chat and installs only the voice services,
+    the setup of a Mac that serves its own AI app."""
+
+    @pytest.fixture(autouse=True)
+    def interactive_setup(self, monkeypatch):
+        monkeypatch.delenv("STACK_SETUP_CONFIRMED", raising=False)
+
+    def test_the_question_names_a_remote_server(self, monkeypatch, capsys):
+        _answer(monkeypatch, "n")
+        on_configure.run(FakeCtx(**REMOTE))
+
+        assert "a remote AI server (https://ai.example.test/v1)" in capsys.readouterr().out
+
+    def test_a_server_on_this_mac_is_not_called_remote(self, monkeypatch, capsys):
+        _answer(monkeypatch, "n")
+        on_configure.run(FakeCtx(**{**REMOTE, "openai_url": "http://localhost:8888/v1"}))
+
+        out = capsys.readouterr().out
+        assert "on this Mac that the stack does not manage (http://localhost:8888/v1)" in out
+        assert "remote" not in out
+
+    def test_no_keeps_the_server_and_goes_on_to_install_voice(self, monkeypatch):
+        """The install that follows skips the engine for a server set
+        with switch, and installs speech-to-text and text-to-speech."""
+        _answer(monkeypatch, "n")
+        ctx = FakeCtx(**REMOTE)
+
+        on_configure.run(ctx)  # does not cancel
+
+        assert ctx._cfg == REMOTE
+
     def test_no_is_the_default(self, monkeypatch):
-        self._answer(monkeypatch, "")
-        ctx = FakeCtx(**self.REMOTE)
+        _answer(monkeypatch, "")
+        ctx = FakeCtx(**REMOTE)
 
-        with pytest.raises(Cancelled):
-            on_start.run(ctx)
+        on_configure.run(ctx)
 
-        assert ctx._cfg == self.REMOTE
+        assert ctx._cfg == REMOTE
 
     def test_yes_switches_chat_and_voice_to_this_mac_together(self, monkeypatch):
         """Never one half remote and the other local."""
-        self._answer(monkeypatch, "y")
-        ctx = FakeCtx(**self.REMOTE)
+        _answer(monkeypatch, "y")
+        ctx = FakeCtx(**REMOTE)
 
-        on_start.run(ctx)
+        on_configure.run(ctx)
 
         assert ctx._cfg["provider"] == "managed"
         assert ctx._cfg["openai_url"] == "http://localhost:42060/v1"
@@ -190,16 +265,16 @@ class TestLeavingARemoteEndpoint:
         assert ctx._cfg["whisper_key"] == ""
         assert ctx._cfg["openai_key"] == "local"
 
-    def test_without_a_terminal_nothing_is_switched(self, monkeypatch):
-        """Nobody to say yes: an agent or a script running `stack up ai`
-        must not move the family's AI onto this Mac."""
+    def test_without_a_terminal_nothing_is_installed(self, monkeypatch):
+        """Nobody to answer: an agent or a script installing the stacklet
+        must not change the family's AI setup."""
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-        ctx = FakeCtx(**self.REMOTE)
+        ctx = FakeCtx(**REMOTE)
 
-        with pytest.raises(Cancelled, match="in a terminal"):
-            on_start.run(ctx)
+        with pytest.raises(RuntimeError, match="terminal"):
+            on_configure.run(ctx)
 
-        assert ctx._cfg == self.REMOTE
+        assert ctx._cfg == REMOTE
 
 
 class TestWhereOMLXListens:

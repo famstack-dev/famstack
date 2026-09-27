@@ -1,11 +1,12 @@
-"""`stack ai connect <url>`: choose the AI server the stack uses.
+"""`stack ai switch <target>`: choose the AI server the stack uses.
 
-A household may run its models on another machine on the network, or
-with a hosted provider. Pointing the stack there is one command, and it
-must not need the local AI stacklet installed: that is the whole point.
-`stack ai connect local` goes back to the engine on this Mac.
+A household may run its models on another machine on the network, in an
+AI app on the server Mac, or with a hosted provider. Pointing the stack
+there is one command, and it must not need the ai stacklet installed:
+that is the whole point. `stack ai switch managed` moves it to the
+engine the stack runs on this Mac.
 
-The command runs through the same path as `./stack ai connect`, against
+The command runs through the same path as `./stack ai switch`, against
 the real stacklets and a throwaway instance, with a real HTTP server
 standing in for the AI machine. Docker is the one thing it does not ask:
 which stacklets are running is replaced, so the answer does not depend
@@ -82,8 +83,8 @@ def ai_server(httpserver):
     return _serve(httpserver, ["llama3.1:8b", "whisper-large-v3-turbo"])
 
 
-def _connect(instance, *args):
-    return instance.run_cli_command("ai", "connect", list(args))
+def _switch(instance, *args):
+    return instance.run_cli_command("ai", "switch", list(args))
 
 
 def _ai(instance):
@@ -96,7 +97,7 @@ class TestPointingTheStackElsewhere:
         """People write `host:port`; the clients need a scheme and `/v1`."""
         address = ai_server.url_for("/").removeprefix("http://").rstrip("/")
 
-        result = _connect(instance, address)
+        result = _switch(instance, address)
 
         assert "error" not in result, result
         assert _ai(instance)["openai_url"] == ai_server.url_for("/v1")
@@ -106,18 +107,18 @@ class TestPointingTheStackElsewhere:
         """The installer picked an MLX model this server has never heard
         of. Keeping it would fail every request, silently for the family.
         The speech model is not a candidate: it cannot answer a question."""
-        _connect(instance, ai_server.url_for("/v1"))
+        _switch(instance, ai_server.url_for("/v1"))
 
         assert _ai(instance)["default"] == "llama3.1:8b"
 
     def test_a_server_without_auth_still_gets_a_key(self, instance, ai_server):
         """The OpenAI clients refuse an empty key."""
-        _connect(instance, ai_server.url_for("/v1"))
+        _switch(instance, ai_server.url_for("/v1"))
 
         assert _ai(instance)["openai_key"]
 
     def test_the_admins_commented_alternatives_survive(self, instance, ai_server):
-        _connect(instance, ai_server.url_for("/v1"))
+        _switch(instance, ai_server.url_for("/v1"))
 
         text = (instance.instance_dir / "stack.toml").read_text()
         assert '# default = "mlx-community/Qwen2.5-14B-Instruct-4bit"  # 64 GB' in text
@@ -128,25 +129,35 @@ class TestPointingTheStackElsewhere:
         address and are running need it. The archivist runs in core, so
         docs reads no AI setting of its own, messages none at all, and the ai
         stacklet only its speech voice, which this command leaves alone."""
-        result = _connect(instance, ai_server.url_for("/v1"))
+        result = _switch(instance, ai_server.url_for("/v1"))
 
         assert result["restart"] == ["core", "memory"]
 
     def test_a_server_at_home_raises_no_privacy_warning(self, instance, ai_server):
-        result = _connect(instance, ai_server.url_for("/v1"))
+        result = _switch(instance, ai_server.url_for("/v1"))
 
         assert "warnings" not in result
 
 
-class TestTheLocalEngineLeftRunning:
+class TestTheManagedEngineLeftRunning:
 
-    def test_switching_away_says_the_local_engine_can_be_stopped(
+    def test_switching_away_says_the_managed_engine_can_be_stopped(
             self, instance, ai_server):
-        """Its containers, oMLX and Whisper keep using memory for nothing,
-        and a later `stack restart ai` would ask to switch back."""
-        result = _connect(instance, ai_server.url_for("/v1"))
+        """oMLX keeps using memory for nothing."""
+        instance._set_cfg("ai", "provider", "managed")
+
+        result = _switch(instance, ai_server.url_for("/v1"))
 
         assert any("./stack down ai" in n for n in result["notes"])
+
+    def test_voice_on_this_mac_is_not_called_unused(self, instance, ai_server):
+        """Chat moves between servers while the ai stacklet keeps serving
+        speech here: nothing of it is idle."""
+        instance._set_cfg("ai", "provider", "external")
+
+        result = _switch(instance, ai_server.url_for("/v1"))
+
+        assert not any("./stack down ai" in n for n in result.get("notes", []))
 
 
 class TestChoosingAModel:
@@ -157,7 +168,7 @@ class TestChoosingAModel:
 
     def test_several_models_and_no_choice_asks_for_one_and_writes_nothing(
             self, instance, many_models):
-        result = _connect(instance, many_models.url_for("/v1"))
+        result = _switch(instance, many_models.url_for("/v1"))
 
         assert "--model" in result["error"]
         assert result["models"] == ["llama3.1:8b", "qwen3:14b"]
@@ -166,12 +177,12 @@ class TestChoosingAModel:
         assert _ai(instance)["openai_url"] == ""
 
     def test_a_chosen_model_the_server_has(self, instance, many_models):
-        _connect(instance, many_models.url_for("/v1"), "--model", "qwen3:14b")
+        _switch(instance, many_models.url_for("/v1"), "--model", "qwen3:14b")
 
         assert _ai(instance)["default"] == "qwen3:14b"
 
     def test_a_chosen_model_the_server_lacks_is_refused(self, instance, many_models):
-        result = _connect(instance, many_models.url_for("/v1"), "--model", "gpt-4.1")
+        result = _switch(instance, many_models.url_for("/v1"), "--model", "gpt-4.1")
 
         assert "gpt-4.1" in result["error"]
         assert _ai(instance)["openai_url"] == ""
@@ -180,7 +191,7 @@ class TestChoosingAModel:
 class TestServersThatDoNotAnswer:
 
     def test_nothing_listening_writes_nothing(self, instance):
-        result = _connect(instance, "http://127.0.0.1:9")
+        result = _switch(instance, "http://127.0.0.1:9")
 
         assert "Nothing answers" in result["error"]
         assert _ai(instance)["openai_url"] == ""
@@ -188,7 +199,7 @@ class TestServersThatDoNotAnswer:
     def test_a_server_that_wants_a_key_says_so(self, instance, httpserver):
         httpserver.expect_request("/v1/models").respond_with_data("", status=401)
 
-        result = _connect(instance, httpserver.url_for("/v1"))
+        result = _switch(instance, httpserver.url_for("/v1"))
 
         assert "--key" in result["error"]
 
@@ -197,18 +208,25 @@ class TestServersThatDoNotAnswer:
             "/v1/models", headers={"Authorization": "Bearer sk-test"},
         ).respond_with_json({"data": [{"id": "gpt-4.1-mini"}]})
 
-        _connect(instance, httpserver.url_for("/v1"), "--key", "sk-test")
+        _switch(instance, httpserver.url_for("/v1"), "--key", "sk-test")
 
         assert _ai(instance)["openai_key"] == "sk-test"
 
 
-class TestBackToTheLocalEngine:
+class TestTheManagedEngine:
+    """`managed` brings up the engine the stack runs, through `stack up ai`,
+    which installs what is missing. The real command runs here: without a
+    terminal it stops at the install question, before anything is
+    installed, which is the failure this pins."""
 
-    def test_local_without_the_engine_installed_says_how_to_get_it(self, instance):
-        result = _connect(instance, "local")
+    def test_when_it_cannot_come_up_the_stack_keeps_its_server(self, instance, ai_server):
+        _switch(instance, ai_server.url_for("/v1"))
+        before = dict(_ai(instance))
 
-        assert "./stack up ai" in result["error"]
-        assert _ai(instance)["openai_url"] == ""
+        result = _switch(instance, "managed")
+
+        assert "still uses " + ai_server.url_for("/v1") in result["error"]
+        assert _ai(instance) == before
 
 
 class TestVoiceMessages:
@@ -220,7 +238,7 @@ class TestVoiceMessages:
 
     def test_without_a_speech_server_the_ai_servers_speech_model_is_used(
             self, instance, ai_server):
-        result = _connect(instance, ai_server.url_for("/v1"))
+        result = _switch(instance, ai_server.url_for("/v1"))
 
         assert result["whisper_url"] == ai_server.url_for("/v1")
         assert _ai(instance)["whisper_url"] == ""
@@ -231,7 +249,7 @@ class TestVoiceMessages:
         """The oMLX case: the route answers, nothing can transcribe."""
         _serve(httpserver, ["llama3.1:8b"])
 
-        result = _connect(instance, httpserver.url_for("/v1"))
+        result = _switch(instance, httpserver.url_for("/v1"))
 
         assert any("no speech-to-text model" in w for w in result["warnings"])
 
@@ -240,7 +258,7 @@ class TestVoiceMessages:
         _serve(httpserver, ["llama3.1:8b"])
         instance._set_cfg("ai", "whisper_url", "http://localhost:42062/v1")
 
-        result = _connect(instance, httpserver.url_for("/v1"), "--whisper", "ai")
+        result = _switch(instance, httpserver.url_for("/v1"), "--whisper", "ai")
 
         assert "no speech-to-text model" in result["error"]
         assert _ai(instance)["whisper_url"] == "http://localhost:42062/v1"
@@ -250,13 +268,13 @@ class TestVoiceMessages:
         _serve(httpserver, ["llama3.1:8b"])
         stt = _speech_server(httpserver)
 
-        result = _connect(instance, httpserver.url_for("/v1"), "--whisper", stt)
+        result = _switch(instance, httpserver.url_for("/v1"), "--whisper", stt)
 
         assert _ai(instance)["whisper_url"] == stt
         assert "warnings" not in result
 
     def test_a_speech_server_that_does_not_answer_is_named(self, instance, ai_server):
-        result = _connect(instance, ai_server.url_for("/v1"),
+        result = _switch(instance, ai_server.url_for("/v1"),
                           "--whisper", "http://127.0.0.1:9")
 
         assert any("127.0.0.1:9" in w for w in result["warnings"])
@@ -268,7 +286,7 @@ class TestVoiceMessages:
         stt = _speech_server(ai_server)
         instance._set_cfg("ai", "whisper_url", stt)
 
-        result = _connect(instance, ai_server.url_for("/v1"))
+        result = _switch(instance, ai_server.url_for("/v1"))
 
         assert _ai(instance)["whisper_url"] == stt
         assert "whisper_model" not in _ai(instance)
@@ -278,7 +296,7 @@ class TestVoiceMessages:
         instance._set_cfg("ai", "whisper_url", "http://localhost:42062/v1")
         instance._set_cfg("ai", "whisper_key", "old")
 
-        result = _connect(instance, ai_server.url_for("/v1"), "--whisper", "ai")
+        result = _switch(instance, ai_server.url_for("/v1"), "--whisper", "ai")
 
         assert _ai(instance)["whisper_url"] == ""
         assert _ai(instance)["whisper_key"] == ""

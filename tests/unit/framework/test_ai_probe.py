@@ -1,6 +1,6 @@
 """What the stack can learn about an AI server before using it.
 
-`stack ai connect` asks two things beyond "does it answer": whether the
+`stack ai switch` asks two things beyond "does it answer": whether the
 server transcribes, so voice messages do not fail later, and whether it
 is on the home network, so nobody sends the family's documents to a
 provider without being told.
@@ -8,7 +8,7 @@ provider without being told.
 
 import pytest
 
-from stack.ai.probe import stays_home, transcribes
+from stack.ai.probe import on_this_mac, stays_home, transcribes
 
 
 class TestTranscription:
@@ -47,3 +47,23 @@ class TestHomeNetwork:
 
     def test_a_name_that_does_not_resolve_is_not_assumed_home(self):
         assert not stays_home("https://nowhere.invalid/v1")
+
+
+class TestThisMac:
+    """An AI server on this Mac that the stack does not manage, such as
+    an AI app, is described as on this Mac, not as remote."""
+
+    @pytest.mark.parametrize("url", [
+        "http://localhost:8888/v1",
+        "http://127.0.0.1:8000/v1",
+        "http://[::1]:8000/v1",
+    ])
+    def test_loopback_addresses(self, url):
+        assert on_this_mac(url)
+
+    @pytest.mark.parametrize("url", [
+        "http://192.168.1.20:11434/v1",
+        "https://ai.example.test/v1",
+    ])
+    def test_other_machines(self, url):
+        assert not on_this_mac(url)

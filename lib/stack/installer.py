@@ -421,7 +421,7 @@ def show_existing_config():
     heading("To make changes")
     out(f"Edit {TEAL}stack.toml{RESET} to change settings like timezone or AI language.")
     out("Changes take effect on the next 'stack up'.")
-    out(f"To use another AI server, run {TEAL}stack ai connect <url>{RESET}.")
+    out(f"To use another AI server, run {TEAL}stack ai switch <url>{RESET}.")
     nl()
     out(f"Edit {TEAL}users.toml{RESET} to add or remove family members.")
     out("New accounts are created on the next 'stack up' for each service.")
@@ -701,7 +701,7 @@ def wizard():
         ("up photos", "Private photo library"),
         ("up docs", "Document archive with OCR"),
         ("up ai", "Local AI engine"),
-        ("ai connect", "AI on another machine or a hosted provider"),
+        ("ai switch", "AI on another machine or a hosted provider"),
         ("up code", "Private git server"),
         ("up memory", "Family wiki and curated knowledge"),
     ]
