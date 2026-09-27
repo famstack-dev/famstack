@@ -78,13 +78,21 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
+    # Started by server.py itself, which opens both listeners (access.py).
+    # Set here as well as in the Dockerfile so an existing image picks it
+    # up without a rebuild.
+    command: ["python", "server.py"]
     ports:
-      - "${PORT_BIND_IP:-127.0.0.1}:42000:8000"
+      # Only the public listener is published, and it serves only the /go
+      # links. The stack's containers use the internal one,
+      # stack-core-tools:8000, which serves everything.
+      - "${PORT_BIND_IP:-127.0.0.1}:42000:8001"
     volumes:
       # Live like the bot-runner: the Dockerfile COPYs these so the image
       # runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with tools-server/Dockerfile.
       - ./tools-server/server.py:/app/server.py:ro
+      - ./tools-server/access.py:/app/access.py:ro
       - ./tools-server/resolver.py:/app/resolver.py:ro
       - ./tools-server/capture_index.py:/app/capture_index.py:ro
       # The brain projection, read-only: `/go/capture/<id>` finds where a

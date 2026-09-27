@@ -81,6 +81,7 @@ Refuse without explicit, scoped human approval:
 
 | Port | Stacklet | Service |
 |---|---|---|
+| 42000 | core | `/go` links. The tools server's search, logs and status are for the stack's containers only |
 | 42010 | photos | Immich web + API |
 | 42020 | docs | Paperless-ngx |
 | 42030 | messages | Element web |
