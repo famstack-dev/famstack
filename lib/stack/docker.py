@@ -92,10 +92,17 @@ def compose_down(compose_file: str | Path) -> tuple[int, str]:
 
 
 def compose_pull(compose_file: str | Path, env: dict | None = None) -> None:
-    """Pull images for a compose file. Streams output."""
+    """Pull the images a compose file names that are not here yet. Streams output.
+
+    Only missing images: when every image is present this asks no
+    registry, so it costs nothing on a restart and works offline. Newer
+    versions of present images are Watchtower's job. Services built from
+    a Dockerfile are left to `compose_build`.
+    """
     full_env = {**__import__("os").environ, **(env or {})}
     _docker(
         "compose", "-f", str(compose_file), "pull",
+        "--policy", "missing", "--ignore-buildable",
         timeout=600, env=full_env,
     )
 

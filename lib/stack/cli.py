@@ -245,12 +245,15 @@ class CLI:
                 "STACK_DOMAIN": self.stack._cfg("core", "domain"),
             }
 
+            # On every up, not only the first: a release that moves a
+            # service to a new image tag leaves that image missing here,
+            # and `compose up` would download it with its output captured,
+            # a silent wait of minutes behind the start spinner.
+            with self.stack.output.spinner("Pulling images"):
+                docker.compose_pull(compose_file, env=compose_env)
             if manifest.get("build"):
                 with self.stack.output.spinner("Building service"):
                     docker.compose_build(compose_file, env=compose_env)
-            elif first_run:
-                with self.stack.output.spinner("Pulling images"):
-                    docker.compose_pull(compose_file, env=compose_env)
 
             with self.stack.output.spinner("Starting containers"):
                 code, err = docker.compose_up(compose_file, env=compose_env)

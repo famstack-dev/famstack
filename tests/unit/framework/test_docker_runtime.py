@@ -211,3 +211,18 @@ class TestComposeBuildRefreshesBaseImages:
         pulled, cached = self._build(1, 0)
         assert "--pull" in pulled
         assert cached[cached.index("build"):] == ["build"]
+
+
+class TestComposePullFetchesOnlyWhatIsMissing:
+    """The pull runs on every `stack up`, so a release that moves a service
+    to a new image tag downloads it with its progress on screen. It must
+    cost nothing when every image is here, and leave built images to the
+    build."""
+
+    def test_only_missing_images_are_pulled(self):
+        from stack import docker
+        docker._context = None
+        with patch("subprocess.run") as run:
+            docker.compose_pull("/tmp/compose.yml")
+        cmd = run.call_args[0][0]
+        assert cmd[cmd.index("pull"):] == ["pull", "--policy", "missing", "--ignore-buildable"]
