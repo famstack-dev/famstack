@@ -24,6 +24,12 @@ OMLX_PORT = 42060
 # third-party tap until that tap is trusted, so the trust step in
 # `_install_omlx_formula` is what stands between a working `stack up ai`
 # and an install that dies at the first brew command.
+# Homebrew 7 asks before an install that brings dependencies, and the
+# question is buried in `stack up ai`'s output, where a script or an agent
+# waits on it for good. The admin already said yes to setting up AI. Older
+# Homebrew ignores the variable, where it would refuse `--yes`.
+BREW_INSTALL = "HOMEBREW_NO_ASK=1 brew install"
+
 OMLX_TAP = "jundot/omlx"
 OMLX_TAP_URL = "https://github.com/jundot/omlx"
 WHISPER_MODEL = "ggml-large-v3-turbo.bin"
@@ -99,7 +105,7 @@ def _install_omlx_formula(ctx) -> None:
     except RuntimeError:
         dim("  (this Homebrew has no trust gate — nothing to do)")
 
-    ctx.shell_live("brew install omlx --with-grammar")
+    ctx.shell_live(f"{BREW_INSTALL} omlx --with-grammar")
 
 
 def install_omlx(ctx, state_dir: Path):
@@ -183,7 +189,7 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
 
     if missing:
         ctx.step(f"Installing build dependencies: {' '.join(missing)}...")
-        ctx.shell_live(f"brew install {' '.join(missing)}")
+        ctx.shell_live(f"{BREW_INSTALL} {' '.join(missing)}")
         done("Dependencies ready")
 
     # Clone source

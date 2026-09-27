@@ -72,7 +72,7 @@ class TestOmlxInstallSteps:
         trust_at = next(i for i, c in enumerate(ctx.commands)
                         if c.startswith("brew trust"))
         install_at = next(i for i, c in enumerate(ctx.commands)
-                          if c.startswith("brew install omlx"))
+                          if "brew install omlx" in c)
         assert trust_at < install_at, "trusting after installing is too late"
 
     def test_the_tap_is_added_before_it_is_trusted(self):
@@ -90,7 +90,16 @@ class TestOmlxInstallSteps:
         # formula installs a build whose JSON mode is broken.
         ctx = FakeCtx()
         _install_omlx_formula(ctx)
-        assert any(c == "brew install omlx --with-grammar" for c in ctx.commands)
+        assert any(c.endswith("brew install omlx --with-grammar") for c in ctx.commands)
+
+    def test_homebrew_does_not_stop_to_ask(self):
+        """Homebrew 7 asks before an install that brings dependencies. Deep
+        in `stack up ai` nobody expects that question, and a script or an
+        agent running it waits on it for good."""
+        ctx = FakeCtx()
+        _install_omlx_formula(ctx)
+        (install,) = [c for c in ctx.commands if "brew install" in c]
+        assert install.startswith("HOMEBREW_NO_ASK=1 ")
 
     def test_steps_are_separate_commands_not_one_chained_string(self):
         """Chained with `&&`, any failure reported the whole string, so a
@@ -105,4 +114,4 @@ class TestOmlxInstallSteps:
         nothing to clear, so its absence is success, not a failed install."""
         ctx = FakeCtx(no_trust_subcommand=True)
         _install_omlx_formula(ctx)  # must not raise
-        assert any(c.startswith("brew install omlx") for c in ctx.commands)
+        assert any("brew install omlx" in c for c in ctx.commands)
