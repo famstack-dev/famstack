@@ -1193,8 +1193,14 @@ async def run(llm, argv: list[str]) -> int:
             # explains how to record something.
             _err(f"nothing recorded in {room_arg} yet, publishing an empty diary")
             await transcriber.aclose()
-            return _publish_pages(diary.pages_for([], bucket=bucket),
-                                  bucket=bucket, dry_run=dry_run)
+            rc = _publish_pages(diary.pages_for([], bucket=bucket),
+                                bucket=bucket, dry_run=dry_run)
+            if as_json:
+                # The archivist posts from this report, and a run with no
+                # report reads to it as a failed compile.
+                print(json.dumps({"room_id": room_id, "cards": [], "new": 0,
+                                  "kept_as_edited": []}))
+            return rc
         _err(f"{len(messages)} message(s) in {room_arg}")
 
         # Before anything is read or interpreted: the files themselves.
