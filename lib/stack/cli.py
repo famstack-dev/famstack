@@ -11,6 +11,11 @@ This module handles everything user-facing:
 
 All framework logic lives in the Stack class. Docker operations use
 the docker module. This file is the glue.
+
+Stacklet commands (`stacklets/<id>/cli/<cmd>.py`) follow the command
+rules in docs/stack-reference.md § CLI Commands: named for what the
+admin wants, nouns with verbs, one meaning per flag, apply by default,
+wait with progress, return a dict.
 """
 from __future__ import annotations
 
