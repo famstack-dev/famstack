@@ -127,7 +127,7 @@ famstack uses the 420xx range to avoid conflicts with anything you might already
 
 | Port | Service |
 |------|---------|
-| 42000 | core (`/go` links) |
+| 42000 | core (link resolver) |
 | 42010 | photos (Immich) |
 | 42020 | docs (Paperless-ngx) |
 | 42030 | messages (Element web) |
