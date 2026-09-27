@@ -810,6 +810,32 @@ The convention:
 Files starting with `_` are private helpers (e.g., `_matrix.py`), not
 exposed as commands.
 
+### Command rules
+
+Every stacklet adds commands, so these keep them reading as one CLI.
+Check a new command, or a changed one, against them.
+
+1. **Name the thing or the action, as an admin sees it.** Never the
+   component that does the work (`curator`, `archivist`) and never when
+   it usually runs (`nightly`): those change, the admin's intent does not.
+2. **A thing with more than one action is a noun with verbs.**
+   `stack memory wiki update`, `stack memory wiki clean`,
+   `stack messages room list`. The bare noun lists its verbs, and the
+   noun leaves room for a later verb such as `show`.
+3. **Flags narrow or modify, and one word means one thing everywhere.**
+   `--all` everything, `--dry-run` preview and write nothing, `--yes`
+   skip the confirmation, `--as <member>` act as that family member.
+   `--json` belongs to the framework. Flags that contradict each other
+   are refused in one line that names both.
+4. **A command that changes something applies by default.** `--dry-run`
+   is the opt-in preview, never the other way round.
+5. **A command that asks a background worker waits until the work is
+   done**, prints each step and each item while it waits, and on timeout
+   says how far it got. The request itself survives the timeout.
+6. **A command returns a dict**, `{"error": ...}` on failure, which exits
+   non-zero. With `--json` that dict is all of stdout; what the command
+   prints for people goes to stderr.
+
 A command that records a choice in `stack.toml` calls
 `config["set_cfg"](section, key, value)`, the plugin-side twin of a
 hook's `ctx.cfg(key, value)`. It changes that one line in that section

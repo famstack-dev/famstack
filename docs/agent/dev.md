@@ -132,7 +132,7 @@ Shell hooks (`.sh`) receive env vars: all rendered vars plus `FAMSTACK_DATA_DIR`
 
 ## CLI plugin contract
 
-Files under `stacklets/<id>/cli/<cmd>.py` (excluding `_*.py` and `post_setup.py`) become `./stack <id> <cmd>`.
+Files under `stacklets/<id>/cli/<cmd>.py` (excluding `_*.py` and `post_setup.py`) become `./stack <id> <cmd>`. Naming, verbs and flags follow the command rules in [../stack-reference.md § CLI Commands](../stack-reference.md#command-rules); check a new or changed command against them.
 
 ```python
 HELP = "One-line description for --help"
