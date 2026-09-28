@@ -42,6 +42,8 @@ Never write a title containing "and".
 - Format: `type(scope)!: subject`. Types and scopes come from the dev.md tables.
 - The scope names what a reader recognises, a stacklet or a bot, never a file.
 - Imperative, lowercase after the colon, no full stop, no identifiers.
+- Name the concrete change, not its effect: `add an install hint to restart
+  core on the first start`, not `say how to finish the agent's first start`.
 - Limit 72 characters as commit-lint counts them; dev.md asks for under 70. The
   ` (#N)` appended at merge does not count.
 - Use `!` only when the user must act. The description then carries `Upgrade:`
@@ -59,6 +61,12 @@ Refs: #127
 ```
 
 - One to three bullets. Footers only when they apply.
+- Start with the situation the PR answers, then what it changes: "The agent
+  is beta. After its first `./stack up agent`, it can sign in only after a
+  core restart." then "The hints shown after `./stack up agent` tell the
+  admin to run `./stack restart core`, then `./stack restart agent`."
+- Plain technical English: state what the change does. No paraphrase such
+  as "now say so" or "provide the required information".
 - No "Test plan" section. Test output and measurements go in a PR comment.
 - No em dashes. Use a comma, colon, period or parentheses.
 - No `Co-Authored-By`, no "Generated with" line, no tool link: this repository is

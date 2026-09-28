@@ -366,11 +366,19 @@ Paperless behaviour; a README fix is `docs(readme):`. A scope outside the
 table still commits and lands under General, so drift surfaces at release time
 rather than on the website.
 
-**Subject rules.** Describe the**Subject.** Imperative mood: it completes "If applied, this commit will
+**Subject.** Imperative mood: it completes "If applied, this commit will
 ...". Lowercase after the colon, no full stop, at most 72 characters
 including the prefix. Describe the change as an admin sees it: no class,
 file or function names unless an admin types them. A subject that needs
 "and" is two commits.
+
+Name the concrete change, what is added, fixed or removed, not a
+paraphrase of its effect:
+
+```
+fix(agent): say how to finish the agent's first start                # the effect: says nothing
+fix(agent): add an install hint to restart core on the first start   # the change
+```
 
 **Body.** Blank line after the subject, wrapped at 72. Why the change is
 needed and what it changes; the diff shows how. It must make sense without
