@@ -20,6 +20,12 @@ category    = "ai"
 stage       = "beta"
 requires    = ["messages"]
 
+# Shown after every `stack up agent` until the agent waits for its account
+# itself (#173).
+hints = [
+    "First start: run './stack restart core', then './stack restart agent'. Core creates the agent's chat account, and the agent can sign in only after that (#173).",
+]
+
 # Image is built locally from the Dockerfile here (nanobot from PyPI). There is
 # no upstream image to pull, so build on every `stack up`.
 build = true
