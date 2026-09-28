@@ -15,6 +15,9 @@ name        = "Agent"
 description = "The family agent — ask it in chat, it answers from your own notes"
 version     = "0.1.0"
 category    = "ai"
+# Beta: it answers, but its first start still needs core restarted before
+# its Matrix account exists, and its config can change between releases.
+stage       = "beta"
 requires    = ["messages"]
 
 # Image is built locally from the Dockerfile here (nanobot from PyPI). There is
