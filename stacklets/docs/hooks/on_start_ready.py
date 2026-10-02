@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import ensure_api_token
 from seed import seed_person_tags, seed_taxonomy
-from permissions import ensure_group, share_archive
+from permissions import ensure_group, share_archive, share_vocabulary
 
 
 def run(ctx):
@@ -43,3 +43,4 @@ def run(ctx):
             # first enablement: existing documents become visible to
             # the group once; later documents come through the workflow
             share_archive(url, token, step=ctx.step)
+        share_vocabulary(url, token, step=ctx.step)

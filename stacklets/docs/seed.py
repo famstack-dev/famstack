@@ -68,13 +68,18 @@ def _fetch_existing(paperless_url: str, headers: dict, endpoint: str) -> set:
 
 
 def _create_entity(paperless_url: str, headers: dict, endpoint: str, body: dict) -> bool:
-    """Create a single entity via Paperless API. Returns True on success."""
+    """Create a single entity via Paperless API. Returns True on success.
+
+    The entity has no owner, so every family member can see it: seeded
+    tags and types are shared vocabulary, and Paperless would otherwise
+    make the admin behind the token the owner.
+    """
     import urllib.request
 
     try:
         req = urllib.request.Request(
             f"{paperless_url}/api/{endpoint}/",
-            data=json.dumps(body).encode(),
+            data=json.dumps({**body, "owner": None}).encode(),
             headers={**headers, "Content-Type": "application/json"},
             method="POST",
         )

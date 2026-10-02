@@ -17,6 +17,11 @@ consumed, and a one-time grant over the documents that already exist
 (share_archive). A more restricted group (own_documents) is added when
 the first account that must not see everything arrives.
 
+The vocabulary (tags, correspondents, document types, storage paths)
+has no owner, so every member sees it by name; the group still decides
+who may add or change it. share_vocabulary clears the admin as owner
+on entries created before that was the rule.
+
 Superusers (the technical admin) are left alone. Idempotent; runs on
 every 'stack up docs'.
 """
@@ -134,6 +139,45 @@ def share_archive(url, token, step=None):
                            "merge": True},
         })
     step(f"{len(ids)} documents shared with '{GROUP}'")
+
+
+# Vocabulary types that carry an owner. Custom fields have none in
+# Paperless, so they are visible to every member already.
+VOCABULARY = ("tags", "correspondents", "document_types", "storage_paths")
+
+
+def share_vocabulary(url, token, step=None):
+    """Clear the owner of every vocabulary entry the admin owns.
+
+    Paperless shows a member an entry only if they own it, were granted
+    it, or it has no owner. The archivist and the seed create entries
+    with no owner; this covers the ones created before they did, which
+    belong to the admin behind the token. Entries a member owns stay
+    theirs, so one a member made private stays private.
+
+    Runs on every start: once nothing is left that the admin owns, it
+    sends no request and prints nothing. Errors are reported, not
+    raised, as in ensure_group.
+    """
+    step = step or (lambda m: None)
+    try:
+        admin = _call(url, token, "GET", "/ui_settings/")["user"]["id"]
+        for kind in VOCABULARY:
+            ids = [o["id"] for o in _paged(url, token, f"/{kind}/") if o.get("owner") == admin]
+            if not ids:
+                continue
+            # `merge: false` with no `permissions` key sets the owner and
+            # leaves the grants alone. With `merge: true` Paperless never
+            # clears an owner.
+            _call(url, token, "POST", "/bulk_edit_objects/", {
+                "objects": ids, "object_type": kind,
+                "operation": "set_permissions", "owner": None, "merge": False,
+            })
+            step(f"{len(ids)} {kind.replace('_', ' ')} shared with every member")
+    except urllib.error.HTTPError as e:
+        step(f"Paperless vocabulary: {e.code} {e.read().decode()[:160]}")
+    except urllib.error.URLError as e:
+        step(f"Paperless vocabulary skipped: {e}")
 
 
 def ensure_group(url: str, token: str, step=None) -> bool:
