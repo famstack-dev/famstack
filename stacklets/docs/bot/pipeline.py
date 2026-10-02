@@ -453,8 +453,12 @@ class PaperlessAPI:
     # the UI.
 
     async def _create_entity(self, endpoint: str, body: dict) -> int | None:
+        # Tags, types and correspondents are vocabulary the whole family
+        # shares. Without an explicit null owner Paperless makes the
+        # token's user (the admin) the owner, and every member then sees
+        # the entry as "Private".
         data, _ = await self._req(
-            "POST", f"/api/{endpoint}/", json_body=body, expect=(201,),
+            "POST", f"/api/{endpoint}/", json_body={**body, "owner": None}, expect=(201,),
         )
         return data["id"] if isinstance(data, dict) and "id" in data else None
 

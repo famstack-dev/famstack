@@ -390,6 +390,8 @@ The archivist bot creates a `#documents` room in your chat. AI classifies and ta
 
 On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml).
 
+**Who sees what.** When family members sign in to Paperless through single sign-on, every account that is not a superuser joins the `all_documents` group: it sees the whole archive and may add, change and delete documents. The vocabulary (tags, correspondents, document types, storage paths) is shared with every member: entries have no owner, so everyone sees them by name. Members may add and rename tags, correspondents and document types, but not delete them. An entry a member creates in the Paperless UI belongs to that member, and stays private until they share it.
+
 **Memory vault.** With the `code` stacklet up, every filed document and every captured URL or pasted note also lands as a Markdown file in your Forgejo repo `family/memory`. Documents and correspondents live under the shared bucket (`family/` by default, configurable via `stack.toml [core] shared_bucket`). Personal captures route to the sender's own bucket: Homer's pastes end up under `homer/notes/` or `homer/bookmarks/`, Marge's under hers. Paperless stays the canonical store; the memory vault is the browsable, git-versioned human view. Install the [`memory` stacklet](#memory-memory-optional) to seed the ontology and render the vault as the family wiki.
 
 | | |

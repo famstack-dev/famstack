@@ -79,6 +79,12 @@ class PaperlessAPI:
             "name": name, "color": color, "matching_algorithm": 0,
         })
 
+    def create_document_type(self, name: str) -> dict:
+        return self._req("POST", "/api/document_types/", {"name": name, "matching_algorithm": 0})
+
+    def create_correspondent(self, name: str) -> dict:
+        return self._req("POST", "/api/correspondents/", {"name": name, "matching_algorithm": 0})
+
     def delete_tag(self, tag_id: int) -> None:
         self._req("DELETE", f"/api/tags/{tag_id}/")
 
@@ -90,6 +96,26 @@ class PaperlessAPI:
 
     def delete_document(self, doc_id: int) -> None:
         self._req("DELETE", f"/api/documents/{doc_id}/")
+
+    def create_user(self, username: str, password: str) -> dict:
+        """A plain account: no superuser, no group of its own."""
+        return self._req("POST", "/api/users/", {
+            "username": username, "password": password, "is_superuser": False,
+        })
+
+    def delete_user(self, user_id: int) -> None:
+        self._req("DELETE", f"/api/users/{user_id}/")
+
+
+def login(url: str, username: str, password: str) -> PaperlessAPI:
+    """A client that acts as `username`, for asserting what that account
+    sees rather than what the admin token sees."""
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/api/token/", method="POST",
+        data=urllib.parse.urlencode({"username": username, "password": password}).encode(),
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return PaperlessAPI(url=url, token=json.loads(resp.read())["token"])
 
 
 class PaperlessError(RuntimeError):
