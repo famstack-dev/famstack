@@ -101,6 +101,34 @@ _DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
 # enrichment functions further down the file consume the same value.
 DEFAULT_CLASSIFY_MAX_CHARS = 20000
 
+# Output caps for each LLM call. Every answer has a size known in
+# advance, so every call is capped. An uncapped call that repeats itself
+# generates until the client timeout. A server that sizes its memory for
+# the requested output uses its own default without a cap (on oMLX the
+# full context window), and can refuse the request when that does not
+# fit. Each cap fits the largest correct answer with margin, because a
+# truncated JSON answer files the document unclassified.
+#
+# classify: about 15 tokens per line-item fact, so 4096 fits a receipt
+# with more than 150 items plus the other fields.
+CLASSIFY_MAX_TOKENS = 4096
+# capture: a summary of up to 400 words plus facts without a count limit.
+CAPTURE_MAX_TOKENS = 4096
+# recall: a prose answer that cites hits by number.
+SYNTHESIZE_MAX_TOKENS = 2048
+# reformat returns the whole OCR text with Markdown added, so its cap
+# follows the input. Three characters per token is pessimistic for
+# German and OCR noise; the headroom covers headings and table pipes.
+_REFORMAT_CHARS_PER_TOKEN = 3
+_REFORMAT_HEADROOM = 1.5
+_REFORMAT_TOKEN_FLOOR = 512
+
+
+def _reformat_budget(text: str) -> int:
+    """Token cap for reformatting ``text``: its size plus Markdown headroom."""
+    estimated = len(text) / _REFORMAT_CHARS_PER_TOKEN * _REFORMAT_HEADROOM
+    return max(_REFORMAT_TOKEN_FLOOR, int(estimated))
+
 
 # ── Enrichment result ────────────────────────────────────────────────────
 
@@ -695,7 +723,7 @@ class Classifier:
 
         response = await self._llm.complete(
             "classifier", prompt, images=attach, json_mode=True,
-            temperature=0.0,
+            temperature=0.0, max_tokens=CLASSIFY_MAX_TOKENS,
         )
         if not response:
             return {}
@@ -766,7 +794,7 @@ class Classifier:
             )
         response = await self._llm.complete(
             "classifier", prompt, images=attach, json_mode=True,
-            temperature=0.0,
+            temperature=0.0, max_tokens=CAPTURE_MAX_TOKENS,
         )
         if not response:
             return {}
@@ -800,9 +828,12 @@ class Classifier:
         is the pipeline's job (see `reformat_document`); this returns
         whatever the LLM produced, trimmed.
         """
-        prompt = _build_reformat_prompt(ocr_text[:max_chars])
+        text = ocr_text[:max_chars]
+        prompt = _build_reformat_prompt(text)
         try:
-            result = await self._llm.complete("reformat", prompt)
+            result = await self._llm.complete(
+                "reformat", prompt, max_tokens=_reformat_budget(text),
+            )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError):
             return None
         return result.strip() if result else None
@@ -871,7 +902,10 @@ class Classifier:
             today = date.today().isoformat()
         prompt = _build_synthesize_prompt(question, evidence, lang, today=today)
         try:
-            raw = await self._llm.complete("recall", prompt, json_mode=False)
+            raw = await self._llm.complete(
+                "recall", prompt, json_mode=False,
+                max_tokens=SYNTHESIZE_MAX_TOKENS,
+            )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[recall] LLM unavailable for synthesis: {}", e)
             return ""

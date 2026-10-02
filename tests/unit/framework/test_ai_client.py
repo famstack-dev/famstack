@@ -357,6 +357,20 @@ class TestHasVision:
         assert ModelCapabilities(path=tmp_path / "caps.json").supports_vision("test-model") is None
         await llm.aclose()
 
+    async def test_probe_asks_for_a_one_word_answer(self, httpserver: HTTPServer, tmp_path):
+        """The probe needs one word back. A server that plans memory for
+        the requested output size must not reserve its full default for it."""
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_json(_completion_payload("ok"))
+
+        llm = _make_llm(httpserver, capabilities=ModelCapabilities(path=tmp_path / "c.json"))
+        await llm.has_vision()
+
+        request, _ = httpserver.log[0]
+        assert request.get_json()["max_tokens"] <= 16
+        await llm.aclose()
+
     async def test_cached_answer_skips_probe(self, httpserver: HTTPServer, tmp_path):
         """A pre-recorded answer means zero HTTP traffic."""
         cap = ModelCapabilities(path=tmp_path / "caps.json")

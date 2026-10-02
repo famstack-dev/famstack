@@ -1316,7 +1316,7 @@ class TestSummaryWrite:
 # — we test only the Classifier-side decision here.
 
 
-from pipeline import Classifier, ImageAttachment  # noqa: E402
+from pipeline import DEFAULT_CLASSIFY_MAX_CHARS, Classifier, ImageAttachment  # noqa: E402
 from stack.ai.client import ModelCapabilities  # noqa: E402
 
 
@@ -1338,11 +1338,12 @@ class _StubLLM:
         self.calls: list[dict] = []
 
     async def complete(self, role, prompt, *, images=None,
-                       json_mode=False, model_override=None, temperature=None):
+                       json_mode=False, model_override=None, temperature=None,
+                       max_tokens=None, timeout=None):
         self.calls.append({
             "role": role, "prompt": prompt, "images": images,
             "json_mode": json_mode, "model_override": model_override,
-            "temperature": temperature,
+            "temperature": temperature, "max_tokens": max_tokens,
         })
         return self._response
 
@@ -1448,6 +1449,109 @@ class TestClassifyWithImage:
             images=[ImageAttachment(data=b"binary", mime="application/pdf")],
         )
         assert c._stub.calls[0]["images"] is None
+
+
+# Pessimistic on purpose, as for the transcript polish: German compounds
+# and OCR noise tokenize denser than English prose. A cap measured with
+# this ratio fits the answer under any real tokenizer.
+_CHARS_PER_TOKEN = 3
+
+
+def _itemised_receipt_answer(line_items: int) -> str:
+    """The classify answer for a long till receipt, one fact per item."""
+    import json
+    return json.dumps({
+        "title": "Kwik-E-Mart Kassenbon",
+        "date": "2026-09-14",
+        "correspondent": "Kwik-E-Mart",
+        "document_type": "Kassenbon",
+        "tags": ["Einkauf", "Lebensmittel"],
+        "persons": ["Marge"],
+        "correspondent_facts": [
+            "Adresse: 742 Evergreen Terrace, Springfield",
+            "Telefon: +1 555 0100",
+        ],
+        "summary": "Kassenbon von Kwik-E-Mart vom 14.09.2026 für Marge "
+                   "über EUR 412,80. Wocheneinkauf mit Getränken und "
+                   "Haushaltswaren.",
+        "facts": ["Summe: EUR 412,80", "Bon-Nr.: 0042-1187"] + [
+            f"Artikel Nr. {i} Squishee Kirsch groß 2x EUR 3,49"
+            for i in range(line_items)
+        ],
+        "action_items": [],
+    }, ensure_ascii=False, indent=2)
+
+
+class TestAnswersAreBounded:
+    """Every answer the archivist asks for has a size known in advance,
+    so every call carries an output cap. Without one, a model that
+    repeats itself generates until the client timeout, and the server
+    plans memory for its own default, which on oMLX is the whole context
+    window. The cap must still fit the largest correct answer: one set
+    too low truncates the JSON, and the document is filed unclassified."""
+
+    @pytest.mark.asyncio
+    async def test_classify_has_room_for_a_receipt_with_150_line_items(self):
+        c = _make_classifier()
+        await c.classify(
+            ocr_text="Kassenbon", tags={}, doc_types={}, correspondents={},
+        )
+        answer = _itemised_receipt_answer(line_items=150)
+        cap = c._stub.calls[0]["max_tokens"]
+        assert cap is not None
+        assert cap >= len(answer) / _CHARS_PER_TOKEN
+
+    @pytest.mark.asyncio
+    async def test_capture_has_room_for_a_full_article_digest(self):
+        """The capture prompt asks for up to 400 words of summary on a
+        long article, and facts without a count limit."""
+        import json
+        c = _make_classifier()
+        await c.classify_capture(text="article", person_names=["Lisa"])
+        answer = json.dumps({
+            "title": "Saxophon-Wartung: Blätter, Polster und Korken",
+            "summary": " ".join(["Holzblasinstrument"] * 400),
+            "facts": [f"Fakt {i}: Rico-Blatt Stärke 2,5 kostet EUR 3,20 "
+                      f"pro Stück im Zehnerpack" for i in range(30)],
+            "tags": ["saxophon", "instrumentenpflege", "blaetter"],
+            "persons": ["Lisa"],
+        }, ensure_ascii=False, indent=2)
+        cap = c._stub.calls[0]["max_tokens"]
+        assert cap is not None
+        assert cap >= len(answer) / _CHARS_PER_TOKEN
+
+    @pytest.mark.asyncio
+    async def test_reformat_has_room_for_the_longest_document_it_is_given(self):
+        """Reformat returns the whole text again, with Markdown added."""
+        c = _make_classifier(response="text")
+        ocr = "Rechnung Nr. 4711 Springfield Kraftwerk " * 600
+        await c.reformat(ocr)
+        cap = c._stub.calls[0]["max_tokens"]
+        assert cap is not None
+        assert cap >= DEFAULT_CLASSIFY_MAX_CHARS / _CHARS_PER_TOKEN
+
+    @pytest.mark.asyncio
+    async def test_reformat_cap_follows_the_document_length(self):
+        """A one-page letter must not reserve room for a 20-page contract."""
+        c = _make_classifier(response="text")
+        await c.reformat("Lieber Homer, " * 20)
+        await c.reformat("Lieber Homer, " * 1000)
+        short_cap, long_cap = (call["max_tokens"] for call in c._stub.calls)
+        assert short_cap < long_cap
+
+    @pytest.mark.asyncio
+    async def test_a_recall_answer_is_bounded(self):
+        c = _make_classifier(response="answer")
+        await c.synthesize_answer(
+            "Wann ist die Kfz-Versicherung fällig?",
+            [{"title": "Kfz-Versicherung 2026", "summary": "Fällig 01.10."}],
+        )
+        # The prompt asks for one sentence when that answers it. This is
+        # a long answer: about 330 words that cite their sources.
+        answer = "Die Kfz-Versicherung für den Wagen ist am 1. Oktober fällig [1]. " * 30
+        cap = c._stub.calls[0]["max_tokens"]
+        assert cap is not None
+        assert cap >= len(answer) / _CHARS_PER_TOKEN
 
 
 # The recall-mode query rewrite used to be tested here. It now lives in
