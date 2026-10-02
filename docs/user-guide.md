@@ -232,9 +232,9 @@ The archivist does not reply to anything you post there.
 
 Every night, famstack reads the new memories: it transcribes the recordings, and your own AI reads each one for a title, who it is about, a short summary and the facts worth finding again ("Maggie: first tooth", "Swimming badge: 25 metres"). famstack files each memory as a card in the family's archive.
 
-In the morning, the archivist puts each new card in the thread under its memory, and one short note in the room:
+In the morning, the archivist puts each new card in the thread under its memory. The first time, it also posts one short note in the room that says how to correct a card:
 
-> **archivist**: ❤️ 3 new memories in the family diary. [Open the diary]
+> **archivist**: ❤️ 3 new memories are in the family diary. Each has a card in the thread under its message: reply there to fix a name, a date or a fact. [Open the diary]
 
 Both are quiet messages, so no phone buzzes. A memory you post today gets its card tomorrow morning.
 

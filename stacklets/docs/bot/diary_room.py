@@ -2,13 +2,13 @@
 
 The memories room is the family's own. The archivist says nothing about
 what is posted there. Once a day it posts each new diary card as a
-notice in a thread on the entry's first message, followed by one short
-notice saying how many memories were added (the first one also says how
-to correct a card). A family member who replies
-in a card's thread, in writing or by voice, is correcting that card: the
-archivist hands the words to the memory stacklet, which applies them to
-the card in the vault and commits them under that person's name, and
-then posts the corrected card in the same thread.
+notice in a thread on the entry's first message. The first time, one
+notice in the room says how many memories were added and how to correct
+a card; after that the cards are the announcement. A family member who
+replies in a card's thread, in writing or by voice, is correcting that
+card: the archivist hands the words to the memory stacklet, which
+applies them to the card in the vault and commits them under that
+person's name, and then posts the corrected card in the same thread.
 
 The diary itself belongs to the memory stacklet. This module only talks
 to the family and calls `stack memory diary` through the same entry
@@ -57,7 +57,7 @@ CORRECT_TIMEOUT_S = 600
 # ones get a card notice; the rest are counted in the summary.
 FIRST_RUN_LOOKBACK_DAYS = 14
 # The first announcement introduces the diary cards and how to correct
-# one; after that the count is enough.
+# one; after that each card in its thread is announcement enough.
 EXPLAIN_TIMES = 1
 
 
@@ -153,10 +153,10 @@ def card_text(card: dict, t, *, corrected: bool = False, hint: bool = False) -> 
     return "\n".join(lines)
 
 
-def summary_text(count: int, *, explain: bool, link: str, t) -> str:
-    """The daily notice in the main timeline: how many memories were added."""
-    key = "diary_summary" + ("_first" if explain else "") + ("_one" if count == 1 else "")
-    text = t(key, count=count)
+def summary_text(count: int, *, link: str, t) -> str:
+    """The introduction in the main timeline: how many memories were added
+    and how to correct a card."""
+    text = t("diary_intro_one" if count == 1 else "diary_intro", count=count)
     return f"{text} [{t('diary_open')}]({link})" if link else text
 
 
@@ -314,13 +314,15 @@ class DiaryRoom:
                     metadata={self.bot.FAMSTACK_EVENT_KEY: envelope(
                         card, CARD_FILED, actor=self.bot.user_id)},
                     msgtype="m.notice")
+            # Only the introduction carries a count. The backlog is in
+            # it once: its cards never get a notice, so a daily count
+            # would announce them again every morning.
             added = len(fresh) + older
-            if added and room_id:
+            if explain and added and room_id:
                 link = public(go_topic("diary"), self.bot.link_base_url)
                 await self.bot._send(room_id, summary_text(
-                    added, explain=explain, link=link, t=self._t), msgtype="m.notice")
-                if explain:
-                    state["explained"] = int(state.get("explained", 0)) + 1
+                    added, link=link, t=self._t), msgtype="m.notice")
+                state["explained"] = int(state.get("explained", 0)) + 1
             state["last_run"] = now.date().isoformat()
             self._save(state)
             logger.info("[archivist] diary job: {} card(s) posted, {} counted", len(fresh), older)
