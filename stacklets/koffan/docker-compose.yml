@@ -1,0 +1,31 @@
+# stacklets/koffan/docker-compose.yml — Koffan shopping list
+#
+# Single Go binary with embedded SQLite. No database sidecar. The list
+# is stored at /data/shopping.db on the KOFFAN_DATA_DIR bind mount.
+
+name: stack-koffan
+
+services:
+  stack-koffan:
+    container_name: stack-koffan
+    image: ghcr.io/pansalut/koffan:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
+    networks:
+      - stack
+    volumes:
+      - ${KOFFAN_DATA_DIR}:/data
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_PASSWORD: ${APP_PASSWORD}
+      DISABLE_AUTH: ${DISABLE_AUTH:-false}
+      DB_PATH: ${DB_PATH:-/data/shopping.db}
+      DEFAULT_LANG: ${DEFAULT_LANG:-en}
+      TZ: ${TZ}
+    ports:
+      - "${PORT_BIND_IP:-127.0.0.1}:42090:8080"
+    restart: unless-stopped
+
+networks:
+  stack:
+    external: true
