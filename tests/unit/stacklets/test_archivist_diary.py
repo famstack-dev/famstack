@@ -1,8 +1,8 @@
 """The archivist in the memories room: quiet, except about the diary.
 
 The memories room is the family's own. The archivist posts each diary
-card as a notice in a thread on the entry's first message, once a day,
-and one notice saying how many memories were added. A reply in a card's
+card as a notice in a thread on the entry's first message, once a day.
+The first time it adds one notice that says how to correct a card. A reply in a card's
 thread corrects the card. Anything else the family posts there is theirs
 and gets no answer: no filing, no search, no welcome, no reaction.
 
@@ -133,15 +133,11 @@ class TestWhatIsAnnounced:
         assert "Reply here" in diary_room.card_text(_card(), _t_en, hint=True)
         assert "Reply here" not in diary_room.card_text(_card(), _t_en)
 
-    def test_the_summary_explains_itself_the_first_times_then_keeps_to_the_count(self):
-        first = diary_room.summary_text(3, explain=True, link="http://h/go/topic/diary", t=_t_en)
-        later = diary_room.summary_text(6, explain=False, link="http://h/go/topic/diary", t=_t_en)
-        one = diary_room.summary_text(1, explain=False, link="", t=_t_en)
+    def test_the_introduction_says_how_to_correct_a_card(self):
+        text = diary_room.summary_text(3, link="http://h/go/topic/diary", t=_t_en)
 
-        assert first.startswith("❤️ 3 new memories are in the family diary. Each has a card")
-        assert first.endswith("[Open the diary](http://h/go/topic/diary)")
-        assert later == "❤️ 6 new memories in the family diary. [Open the diary](http://h/go/topic/diary)"
-        assert one == "❤️ 1 new memory in the family diary."
+        assert text.startswith("❤️ 3 new memories are in the family diary. Each has a card")
+        assert text.endswith("[Open the diary](http://h/go/topic/diary)")
 
 
 # ── The room ──────────────────────────────────────────────────────────
@@ -261,9 +257,10 @@ class TestTheMemoriesRoomIsTheFamilys:
 class TestTheDailyJobPostsWhatIsNew:
 
     @pytest.mark.asyncio
-    async def test_the_how_to_is_shown_once_then_only_the_count(self, bot, monkeypatch):
+    async def test_the_how_to_is_shown_once_then_only_the_cards(self, bot, monkeypatch):
         """The first announcement introduces the feature and how to correct
-        a card. After that the count is enough."""
+        a card. After that each card in its thread is announcement enough:
+        a daily count in the room repeats it."""
         import json as _json
         days = iter([
             {"room_id": ROOM_ID, "cards": [_card("a", at=2_000_000_000_000)]},
@@ -277,10 +274,9 @@ class TestTheDailyJobPostsWhatIsNew:
         await bot._diary.run_job(datetime(2026, 9, 24, 7, 30, tzinfo=timezone.utc))
         await bot._diary.run_job(datetime(2026, 9, 25, 7, 30, tzinfo=timezone.utc))
 
-        first_card, first_summary, second_card, second_summary = [s[1] for s in bot.sent]
+        first_card, first_summary, second_card = [s[1] for s in bot.sent]
         assert "Reply here" in first_card and "card in the thread" in first_summary
         assert "Reply here" not in second_card
-        assert second_summary.startswith("❤️ 1 new memory in the family diary.")
 
     @pytest.mark.asyncio
     async def test_cards_go_to_their_threads_and_one_summary_to_the_room(self, bot, monkeypatch):
@@ -331,3 +327,25 @@ class TestTheDailyJobPostsWhatIsNew:
         monkeypatch.setattr(diary_room, "_diary_cli", cli)
         await bot._diary.run_job(datetime(2026, 9, 24, 7, 30, tzinfo=timezone.utc))
         assert bot.sent == []
+
+    @pytest.mark.asyncio
+    async def test_the_backlog_is_counted_in_the_introduction_and_never_again(
+            self, bot, monkeypatch):
+        """Cards older than the first run are counted, not posted, so their
+        threads never get a card notice. They must not be counted again
+        every morning as if they were new."""
+        import json as _json
+        old = int(datetime(2026, 1, 10, tzinfo=timezone.utc).timestamp() * 1000)
+        report = {"room_id": ROOM_ID, "cards": [_card("old", at=old)]}
+
+        async def cli(*args, timeout):
+            return 0, _json.dumps(report) + "\n", ""
+
+        monkeypatch.setattr(diary_room, "_diary_cli", cli)
+        await bot._diary.run_job(datetime(2026, 9, 24, 7, 30, tzinfo=timezone.utc))
+        await bot._diary.run_job(datetime(2026, 9, 25, 7, 30, tzinfo=timezone.utc))
+        await bot._diary.run_job(datetime(2026, 9, 26, 7, 30, tzinfo=timezone.utc))
+
+        summaries = [s[1] for s in bot.sent if "family diary" in s[1]]
+        assert len(summaries) == 1 and summaries[0].startswith("❤️ 1 new memory is")
+
