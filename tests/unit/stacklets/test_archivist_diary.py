@@ -2,7 +2,8 @@
 
 The memories room is the family's own. The archivist posts each diary
 card as a notice in a thread on the entry's first message, once a day.
-The first time it adds one notice that says how to correct a card. A reply in a card's
+The first time it adds one notice that says how to correct a card, and
+after two weeks without a new memory one notice that invites the next. A reply in a card's
 thread corrects the card. Anything else the family posts there is theirs
 and gets no answer: no filing, no search, no welcome, no reaction.
 
@@ -349,3 +350,69 @@ class TestTheDailyJobPostsWhatIsNew:
         summaries = [s[1] for s in bot.sent if "family diary" in s[1]]
         assert len(summaries) == 1 and summaries[0].startswith("❤️ 1 new memory is")
 
+
+def _ms(day: datetime) -> int:
+    return int(day.timestamp() * 1000)
+
+
+def _day(month: int, day: int) -> datetime:
+    return datetime(2026, month, day, 7, 30, tzinfo=timezone.utc)
+
+
+class TestAQuietDiaryGetsOneNudge:
+    """Two weeks without a new memory get one notice that invites the
+    next. One per quiet stretch: the next memory starts a new one."""
+
+    @pytest.fixture
+    def diary(self, bot, monkeypatch):
+        """Runs the daily job on a day, with the room holding these cards."""
+        import json as _json
+        held: list[dict] = []
+
+        async def cli(*args, timeout):
+            return 0, _json.dumps({"room_id": ROOM_ID, "cards": held}) + "\n", ""
+
+        monkeypatch.setattr(diary_room, "_diary_cli", cli)
+
+        async def run(day, cards):
+            held[:] = cards
+            await bot._diary.run_job(day)
+            return [s[1] for s in bot.sent if "two weeks" in s[1]]
+
+        return run
+
+    @pytest.mark.asyncio
+    async def test_two_quiet_weeks_get_one_nudge(self, diary):
+        last = _card("a", posted=True, at=_ms(_day(9, 1)))
+        assert await diary(_day(9, 14), [last]) == []
+        nudges = await diary(_day(9, 15), [last])
+        assert nudges == ["📝 No new memory in the family diary for two weeks. "
+                          "What have you been up to? A photo, a voice message "
+                          "or one sentence is enough."]
+
+    @pytest.mark.asyncio
+    async def test_a_longer_silence_is_not_nudged_again(self, diary):
+        last = _card("a", posted=True, at=_ms(_day(9, 1)))
+        await diary(_day(9, 15), [last])
+        await diary(_day(9, 16), [last])
+        assert len(await diary(_day(10, 20), [last])) == 1
+
+    @pytest.mark.asyncio
+    async def test_the_next_memory_starts_a_new_quiet_stretch(self, diary):
+        first = _card("a", posted=True, at=_ms(_day(9, 1)))
+        await diary(_day(9, 15), [first])
+        later = _card("b", posted=True, at=_ms(_day(9, 20)))
+        assert len(await diary(_day(10, 3), [first, later])) == 1
+        assert len(await diary(_day(10, 4), [first, later])) == 2
+
+    @pytest.mark.asyncio
+    async def test_the_introduction_stands_in_for_the_nudge(self, diary):
+        """A first run over a quiet room introduces the diary. A nudge in
+        the same breath, or the next morning, says the same thing again."""
+        backlog = _card("a", at=_ms(_day(8, 1)))
+        assert await diary(_day(9, 15), [backlog]) == []
+        assert await diary(_day(9, 16), [{**backlog, "posted": False}]) == []
+
+    @pytest.mark.asyncio
+    async def test_an_empty_diary_is_not_nudged(self, diary):
+        assert await diary(_day(9, 15), []) == []

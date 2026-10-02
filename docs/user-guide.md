@@ -236,7 +236,7 @@ In the morning, the archivist puts each new card in the thread under its memory.
 
 > **archivist**: ❤️ 3 new memories are in the family diary. Each has a card in the thread under its message: reply there to fix a name, a date or a fact. [Open the diary]
 
-Both are quiet messages, so no phone buzzes. A memory you post today gets its card tomorrow morning.
+After two weeks without a new memory, the archivist posts one reminder, and no more until the next memory. All of these are quiet messages, so no phone buzzes. A memory you post today gets its card tomorrow morning.
 
 ### Put a memory right
 

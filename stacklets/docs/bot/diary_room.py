@@ -4,11 +4,13 @@ The memories room is the family's own. The archivist says nothing about
 what is posted there. Once a day it posts each new diary card as a
 notice in a thread on the entry's first message. The first time, one
 notice in the room says how many memories were added and how to correct
-a card; after that the cards are the announcement. A family member who
-replies in a card's thread, in writing or by voice, is correcting that
-card: the archivist hands the words to the memory stacklet, which
-applies them to the card in the vault and commits them under that
-person's name, and then posts the corrected card in the same thread.
+a card; after that the cards are the announcement. After two weeks
+without a new memory, one notice invites the next, once per quiet
+stretch. A family member who replies in a card's thread, in writing or
+by voice, is correcting that card: the archivist hands the words to the
+memory stacklet, which applies them to the card in the vault and
+commits them under that person's name, and then posts the corrected
+card in the same thread.
 
 The diary itself belongs to the memory stacklet. This module only talks
 to the family and calls `stack memory diary` through the same entry
@@ -59,6 +61,9 @@ FIRST_RUN_LOOKBACK_DAYS = 14
 # The first announcement introduces the diary cards and how to correct
 # one; after that each card in its thread is announcement enough.
 EXPLAIN_TIMES = 1
+# How long the diary may stay without a new memory before the room gets
+# one notice that invites the next.
+NUDGE_AFTER = timedelta(days=14)
 
 
 # ── Pure parts ────────────────────────────────────────────────────────
@@ -158,6 +163,21 @@ def summary_text(count: int, *, link: str, t) -> str:
     and how to correct a card."""
     text = t("diary_intro_one" if count == 1 else "diary_intro", count=count)
     return f"{text} [{t('diary_open')}]({link})" if link else text
+
+
+def quiet_since(report: dict, *, nudged_for: int, now: datetime) -> int | None:
+    """The time of the newest memory, if the diary is due for a nudge.
+
+    Due when the newest memory is at least `NUDGE_AFTER` old and that
+    same memory has not had its nudge yet (`nudged_for`). A newer memory
+    starts a new quiet stretch. An empty diary is never nudged.
+    """
+    newest = max((int(c.get("at") or 0) for c in report.get("cards") or []), default=0)
+    if not newest or newest == nudged_for:
+        return None
+    if now - datetime.fromtimestamp(newest / 1000, timezone.utc) < NUDGE_AFTER:
+        return None
+    return newest
 
 
 def envelope(card: dict, kind: str, *, actor: str) -> dict:
@@ -318,11 +338,18 @@ class DiaryRoom:
             # it once: its cards never get a notice, so a daily count
             # would announce them again every morning.
             added = len(fresh) + older
+            newest = quiet_since(report, nudged_for=int(state.get("nudged_for", 0)), now=now)
             if explain and added and room_id:
                 link = public(go_topic("diary"), self.bot.link_base_url)
                 await self.bot._send(room_id, summary_text(
                     added, link=link, t=self._t), msgtype="m.notice")
                 state["explained"] = int(state.get("explained", 0)) + 1
+            elif newest and room_id:
+                await self.bot._send(room_id, self._t("diary_nudge"), msgtype="m.notice")
+            # The introduction invites the next memory as well, so it
+            # stands in for the nudge of the quiet stretch it opens.
+            if newest:
+                state["nudged_for"] = newest
             state["last_run"] = now.date().isoformat()
             self._save(state)
             logger.info("[archivist] diary job: {} card(s) posted, {} counted", len(fresh), older)

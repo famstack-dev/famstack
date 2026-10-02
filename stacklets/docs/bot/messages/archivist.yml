@@ -224,6 +224,7 @@ en:
   diary_intro: "\u2764\uFE0F {count} new memories are in the family diary. Each has a card in the thread under its message: reply there to fix a name, a date or a fact."
   diary_intro_one: "\u2764\uFE0F 1 new memory is in the family diary. It has a card in the thread under its message: reply there to fix a name, a date or a fact."
   diary_open: "Open the diary"
+  diary_nudge: "\U0001F4DD No new memory in the family diary for two weeks. What have you been up to? A photo, a voice message or one sentence is enough."
   diary_correct_failed: "I could not apply that just now. It is kept in this thread; reply again later to retry."
 
 de:
@@ -431,4 +432,5 @@ de:
   diary_intro: "\u2764\uFE0F {count} neue Erinnerungen stehen im Familientagebuch. Jede hat eine Karte im Thread unter ihrer Nachricht: Antworte dort, um einen Namen, ein Datum oder eine Angabe zu korrigieren."
   diary_intro_one: "\u2764\uFE0F 1 neue Erinnerung steht im Familientagebuch. Sie hat eine Karte im Thread unter ihrer Nachricht: Antworte dort, um einen Namen, ein Datum oder eine Angabe zu korrigieren."
   diary_open: "Tagebuch öffnen"
+  diary_nudge: "\U0001F4DD Seit zwei Wochen keine neue Erinnerung im Familientagebuch. Was war los bei euch? Ein Foto, eine Sprachnachricht oder ein Satz reicht."
   diary_correct_failed: "Das konnte ich gerade nicht übernehmen. Es bleibt in diesem Thread; antworte später noch einmal, um es erneut zu versuchen."
