@@ -141,6 +141,11 @@ _PROBE_PNG_B64 = (
     "IRMhEyETIRMhEyEThXzH8QM9OMM6fAAAAABJRU5ErkJggg=="
 )
 
+# The probe asks for one word. A success needs no complete answer, so a
+# small cap costs nothing and keeps the server from sizing for its
+# default output length.
+_PROBE_MAX_TOKENS = 16
+
 # Substrings text-only models emit when rejecting a multimodal request —
 # used to tell "no vision" (cache it) from "transport flaked" (don't).
 _NO_VISION_HINTS = (
@@ -306,7 +311,8 @@ class LLM:
         probe_img = LLMImage(data=base64.b64decode(_PROBE_PNG_B64), mime="image/png")
         try:
             await self.complete(role, "Reply with the single word 'ok'.",
-                                images=[probe_img], model_override=model)
+                                images=[probe_img], model_override=model,
+                                max_tokens=_PROBE_MAX_TOKENS)
             self.capabilities.record_vision(model, True)
             logger.info("[llm] vision probe: {} -> supported", model)
             return True
