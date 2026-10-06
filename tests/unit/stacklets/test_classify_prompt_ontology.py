@@ -212,3 +212,7 @@ class TestTheLanguageADocumentIsFiledIn:
     def test_names_and_amounts_stay_as_printed(self):
         prompt = _build_classify_prompt(**self.COMMON, lang="de")
         assert "Keep names, product names, amounts" in prompt
+
+    def test_a_room_can_keep_the_language_of_the_document(self):
+        prompt = _build_classify_prompt(**self.COMMON, lang="de", write_in="source")
+        assert "the document's own language" in prompt

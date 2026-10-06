@@ -101,7 +101,15 @@ What you can drop there:
 
 Everything you capture is filed under your own name in the family archive: Homer's pastes land in Homer's notes and bookmarks, Marge's in hers. The bot replies with what it filed and where.
 
-**In your family's language.** The archivist writes titles, summaries and facts in your family's language, whatever language the link, photo or document is in: a Spanish hotel bill from the holiday gets a German summary in a German family. Names, amounts and technical terms stay as they are. The original stays untouched.
+**In your family's language.** The archivist writes titles, summaries and facts in your family's language, whatever language the link, photo or document is in: a Spanish hotel bill from the holiday gets a German summary in a German family. Names, amounts and technical terms stay as they are. The original stays untouched. A room can choose differently with `!config language`:
+
+| Command | What the archivist writes in |
+|---|---|
+| `!config language default` | your family's language (also when nothing is set) |
+| `!config language en` | always English (also `de`, `es`, `fr`, `it`, `nl`, `pt`) |
+| `!config language source` | the language the link or text is written in |
+
+`!config` on its own shows the room's settings.
 
 ---
 

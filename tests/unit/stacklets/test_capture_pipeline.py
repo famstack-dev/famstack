@@ -67,11 +67,12 @@ class FakeClassifier:
                                images=None, user_hint=None,
                                initial_classification=None,
                                extract_action_items=False,
-                               current_list=""):
+                               current_list="", write_in=None):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
         self.saw_current_list = current_list
+        self.saw_write_in = write_in
         if self._raises:
             raise self._raises
         return self._payload
@@ -1146,3 +1147,36 @@ class TestCorrectingAnEntryKeepsItsFile:
         published = await self._reprocess(self._entry())
 
         assert published["kept_media"] is None
+
+
+class TestTheRoomsLanguageReachesTheClassifier:
+    """A room can choose the language its captures are written in
+    (`!config language`). Every capture entry point hands that choice to
+    the classifier; without one the classifier uses the household's."""
+
+    @pytest.mark.asyncio
+    async def test_a_note(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_text(
+            text="Kubernetes upgrade notes", sender_mxid="@homer:server",
+            write_in="en",
+        )
+        assert classifier.saw_write_in == "en"
+
+    @pytest.mark.asyncio
+    async def test_a_pasted_image(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_binary(
+            file_data=b"\x89PNG\r\n", mime="image/png", filename="image.png",
+            source_uri="mxc://home.test/x", sender_mxid="@homer:server",
+            write_in="source",
+        )
+        assert classifier.saw_write_in == "source"
+
+    @pytest.mark.asyncio
+    async def test_no_choice_leaves_it_to_the_household(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_text(
+            text="a note", sender_mxid="@homer:server",
+        )
+        assert classifier.saw_write_in is None
