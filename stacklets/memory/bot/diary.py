@@ -327,6 +327,38 @@ def spoken_vocabulary(people, topics=()) -> str:
     return " ".join(parts)
 
 
+def household(family_names: str, pages) -> list[str]:
+    """The names this family's people go by: users.toml, then the wiki.
+
+    `family_names` is the comma-separated FAMILY_NAMES from users.toml,
+    so everyone counts from the first day, before any filing names them.
+    The person pages (their frontmatter) add the family's own spellings,
+    nicknames and the people without an account. A name already listed is
+    not repeated, whatever its case.
+    """
+    names = [n.strip() for n in family_names.split(",") if n.strip()]
+    for page in pages:
+        if page.get("type") != "person":
+            continue
+        name = page.get("canonical") or page.get("title")
+        names.extend(str(n) for n in [name, *(page.get("synonyms") or [])] if n)
+    seen: set[str] = set()
+    return [n for n in names if not (n.lower() in seen or seen.add(n.lower()))]
+
+
+def card_people(persons, household) -> dict[str, str]:
+    """Every name a card may use, lower-cased, to the person it means.
+
+    The person pages map each known name to its canonical form; everyone
+    else in the household counts under their own name, so a member no
+    filing has named yet can still be who a note is about.
+    """
+    people = {name.lower(): p.canonical for p in persons for name in p.all_known_names()}
+    for name in household:
+        people.setdefault(name.lower(), name)
+    return people
+
+
 def _unique(values):
     seen = []
     for v in values:

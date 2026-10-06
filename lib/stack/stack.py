@@ -447,6 +447,12 @@ class Stack:
         ]
         template_vars["admin_user_ids"] = ",".join(admin_ids)
 
+        # Every family member's first name, account or not, for the bots
+        # that have to recognise people before any filing has named them.
+        template_vars["family_names"] = ",".join(
+            u["name"] for u in load_users(self.instance_dir) if u.get("name")
+        )
+
         # Mail accounts — stack.toml [mail] rendered into one JSON env var
         # for the mail bot. IMAP passwords come from the secret store
         # (mail__<NAME>_IMAP_PASSWORD), embedded in the JSON the same way

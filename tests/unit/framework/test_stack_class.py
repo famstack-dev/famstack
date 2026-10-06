@@ -97,6 +97,20 @@ data_dir = "/tmp/test-data"
         assert env["TZ"] == "Europe/Berlin"
         assert env["DATA"] == "/tmp/test-data/myapp"
 
+    def test_family_names_come_from_users_toml(self, tmp_path):
+        # Everyone in users.toml, account or not yet seen in any filing:
+        # transcription and the diary need the whole household from day one.
+        (tmp_path / "users.toml").write_text(
+            '[[users]]\nname = "Homer"\nrole = "admin"\n'
+            '[[users]]\nname = "Marge"\nrole = "member"\n'
+            '[[users]]\nname = "Bart"\nrole = "member"\n'
+        )
+        _create_stacklet(tmp_path, "myapp", env_defaults={"FAMILY": "{family_names}"})
+
+        from stack import Stack
+        env = Stack(root=tmp_path, data=tmp_path / "data").env("myapp")
+        assert env["FAMILY"] == "Homer,Marge,Bart"
+
     def test_missing_var_resolves_to_empty(self, tmp_path):
         _create_stacklet(tmp_path, "myapp", env_defaults={
             "TOKEN": "{nonexistent_var}",
