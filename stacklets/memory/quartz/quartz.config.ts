@@ -14,6 +14,7 @@
 import { QuartzConfig } from "./quartz/cfg"
 import * as Plugin from "./quartz/plugins"
 import { FamilyLists } from "./quartz/plugins/emitters/familyLists"
+import { VaultLinks } from "./quartz/plugins/transformers/vaultLinks"
 
 // Runtime env. `WIKI_HOST` is "memory.<domain>" in domain mode and
 // the empty-domain rendering "memory." in port mode — we treat the
@@ -136,6 +137,8 @@ const config: QuartzConfig = {
       Plugin.ObsidianFlavoredMarkdown({ enableInHtmlEmbed: false }),
       Plugin.GitHubFlavoredMarkdown(),
       Plugin.TableOfContents(),
+      // Relative vault links to root paths, before CrawlLinks reads them.
+      VaultLinks(),
       Plugin.CrawlLinks({ markdownLinkResolution: "absolute" }),
       Plugin.Description(),
       // MathJax, not KaTeX, and the reason is privacy rather than
