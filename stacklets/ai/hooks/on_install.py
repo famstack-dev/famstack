@@ -108,6 +108,22 @@ def _install_omlx_formula(ctx) -> None:
     ctx.shell_live(f"{BREW_INSTALL} omlx --with-grammar")
 
 
+def wait_for_omlx(ctx, base_url: str, key: str, timeout: float = 30) -> bool:
+    """Wait until oMLX lists its models; False when it does not in time.
+
+    The request carries the key the install wrote into oMLX's settings:
+    oMLX answers 401 to a request without it.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            ctx.shell(f'curl -sf --max-time 2 -H "Authorization: Bearer {key}" {base_url}/models')
+            return True
+        except RuntimeError:
+            time.sleep(2)
+    return False
+
+
 def install_omlx(ctx, state_dir: Path):
     section("oMLX", "MLX inference (Metal GPU)")
 
@@ -153,14 +169,7 @@ def install_omlx(ctx, state_dir: Path):
     (state_dir / "omlx-managed").touch()
 
     ctx.step("Waiting for oMLX to start...")
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            ctx.shell(f'curl -sf --max-time 2 http://localhost:{OMLX_PORT}/v1/models')
-            break
-        except RuntimeError:
-            time.sleep(2)
-    else:
+    if not wait_for_omlx(ctx, f"http://localhost:{OMLX_PORT}/v1", settings["auth"]["api_key"]):
         warn(f"oMLX not responding on port {OMLX_PORT} — it may still be starting")
 
     done(f"oMLX running on port {OMLX_PORT}")

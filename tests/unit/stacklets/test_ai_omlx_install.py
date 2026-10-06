@@ -115,3 +115,36 @@ class TestOmlxInstallSteps:
         ctx = FakeCtx(no_trust_subcommand=True)
         _install_omlx_formula(ctx)  # must not raise
         assert any("brew install omlx" in c for c in ctx.commands)
+
+
+class ShellCtx:
+    """Runs the hook's shell commands for real, as `ctx.shell` does."""
+
+    def shell(self, cmd):
+        import subprocess
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(cmd)
+        return result.stdout
+
+
+class TestWaitingForOmlx:
+    """oMLX 0.7 answers `/v1/models` with 401 unless the request carries the key.
+
+    The install writes that key into oMLX's settings, so its readiness
+    check has to send it, or it waits out its whole timeout on a server
+    that is up and warns that it is not.
+    """
+
+    def test_a_server_that_wants_the_key_counts_as_up(self, httpserver):
+        httpserver.expect_request(
+            "/v1/models", headers={"Authorization": "Bearer local"},
+        ).respond_with_json({"data": []})
+        httpserver.expect_request("/v1/models").respond_with_data("API key required", status=401)
+
+        assert _ai_on_install.wait_for_omlx(ShellCtx(), httpserver.url_for("/v1"), "local", timeout=5)
+
+    def test_a_server_that_refuses_the_key_is_not_up(self, httpserver):
+        httpserver.expect_request("/v1/models").respond_with_data("API key required", status=401)
+
+        assert not _ai_on_install.wait_for_omlx(ShellCtx(), httpserver.url_for("/v1"), "local", timeout=1)
