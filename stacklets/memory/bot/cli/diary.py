@@ -77,6 +77,7 @@ import diary_card  # noqa: E402
 import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
+from stack.ai.language import LANGUAGES, language_code  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
 from stack import media  # noqa: E402
@@ -695,13 +696,9 @@ Entries:
 
 # The prompt is English, so without a stated target language the model
 # answers in English. The household language comes from the core env.
-_LANGUAGE_NAMES = {"de": "German", "en": "English"}
-
-
 def _household_language() -> str:
-    code = (os.environ.get("LANGUAGE") or "").strip().lower()[:2]
-    return _LANGUAGE_NAMES.get(
-        code, "the language the entries are written in")
+    return LANGUAGES.get(language_code(os.environ.get("LANGUAGE") or ""),
+                         "the language the entries are written in")
 
 
 def _unclear_words(entry) -> list[str]:

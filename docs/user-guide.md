@@ -101,6 +101,8 @@ What you can drop there:
 
 Everything you capture is filed under your own name in the family archive: Homer's pastes land in Homer's notes and bookmarks, Marge's in hers. The bot replies with what it filed and where.
 
+**In your family's language.** The archivist writes titles, summaries and facts in your family's language, whatever language the link, photo or document is in: a Spanish hotel bill from the holiday gets a German summary in a German family. Names, amounts and technical terms stay as they are. The original stays untouched.
+
 ---
 
 ## Topic rooms

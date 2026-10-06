@@ -355,13 +355,44 @@ class TestPromptSpeaksOneLanguage:
         prompt = _build_capture_prompt(**COMMON, lang="de").lower()
         assert any(w.lower() in prompt for w in GERMAN_VOCAB)
 
-    def test_the_language_rule_is_about_the_content_not_a_fixed_language(self):
-        """Naming one language in the rule invites that language. The rule
-        has to be generic for the examples to stay examples."""
+    def test_an_english_household_is_never_asked_for_german(self):
+        """The rule names the language to write in. That is only ever the
+        household's own language or the one a room chose, never one the
+        household does not use."""
         prompt = _build_capture_prompt(**COMMON, lang="en")
-        assert "content's language" in prompt.lower()
-        assert "german content" not in prompt.lower()
+        assert "german" not in prompt.lower()
 
     def test_english_is_the_default(self):
         prompt = _build_capture_prompt(**COMMON).lower()
         assert not [w for w in GERMAN_VOCAB if w.lower() in prompt]
+
+
+class TestTheLanguageACaptureIsWrittenIn:
+    """A capture is written in the household language, whatever language
+    the source is in. The wiki is compiled from these entries, and the
+    family reads it in one language.
+
+    The rule used to be "the content's own language". A pasted photo has
+    no words, so the model had nothing to follow and answered in the
+    language of the prompt: English, in a German household.
+    """
+
+    def test_a_german_household_asks_for_german_whatever_the_source_is(self):
+        prompt = _build_capture_prompt(**COMMON, lang="de")
+        assert "in German, whatever language the content is in" in prompt
+
+    def test_a_photo_without_words_still_has_a_language_to_write_in(self):
+        prompt = _build_capture_prompt(text="", person_names=["Homer"], lang="de")
+        assert "in German" in prompt
+
+    def test_names_numbers_and_technical_terms_are_kept(self):
+        """Translating means the prose. A product name, an amount or a
+        term that people use in English anyway stays as it is: an IT
+        bookmark must not come back with invented German jargon."""
+        prompt = _build_capture_prompt(**COMMON, lang="de")
+        assert "Keep names, product names, amounts" in prompt
+        assert "technical terms" in prompt
+
+    def test_a_language_without_a_name_is_asked_for_by_its_code(self):
+        prompt = _build_capture_prompt(**COMMON, lang="sv")
+        assert "in sv, whatever language the content is in" in prompt

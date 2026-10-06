@@ -187,7 +187,28 @@ class TestDocumentPromptSpeaksOneLanguage:
         prompt = _build_classify_prompt(**self.COMMON, lang="de")
         assert any(w in prompt for w in self.GERMAN)
 
-    def test_the_language_rule_names_no_language(self):
+    def test_an_english_household_is_never_asked_for_german(self):
         prompt = _build_classify_prompt(**self.COMMON, lang="en")
-        assert "document's own language" in prompt
-        assert "A German document gets a German title" not in prompt
+        assert "German" not in prompt
+
+
+class TestTheLanguageADocumentIsFiledIn:
+    """Title, summary, facts and action items are written in the household
+    language. A Spanish invoice from the holiday is filed with a German
+    summary in a German household: the wiki the family reads is compiled
+    from them. The document itself, the PDF and its text, is untouched."""
+
+    COMMON = dict(
+        ocr_text="Factura n.º 2026-118, Hotel Playa Sol, total 412,80 EUR",
+        person_names=["Homer"], category_tags=["Reise"],
+        doc_types=["Rechnung"], correspondents=[],
+    )
+
+    def test_a_german_household_files_a_spanish_invoice_in_german(self):
+        prompt = _build_classify_prompt(**self.COMMON, lang="de")
+        assert "in German, whatever language the document is in" in prompt
+        assert "document's own language" not in prompt
+
+    def test_names_and_amounts_stay_as_printed(self):
+        prompt = _build_classify_prompt(**self.COMMON, lang="de")
+        assert "Keep names, product names, amounts" in prompt
