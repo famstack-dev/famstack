@@ -290,32 +290,20 @@ def _length(ms: int | None) -> str:
 
 
 def _household_people() -> list[str]:
-    """The household's names, from the wiki's person pages.
+    """The household's names: everyone in users.toml, then the wiki's person pages.
 
     The pages carry the family's own spelling of each name and its
-    variants. Best-effort: no vault means an empty list.
+    variants. Best-effort: no brain means the users.toml names alone.
     """
-    people: list[str] = []
     brain = Path(os.environ.get("BRAIN_REPO_DIR", ""))
-    if brain.is_dir():
-        for about in sorted(brain.glob("*/about.md")):
-            front = _frontmatter(about)
-            if front.get("type") != "person":
-                continue
-            for key in ("canonical", "title"):
-                if value := front.get(key):
-                    people.append(str(value))
-                    break
-            synonyms = front.get("synonyms")
-            if isinstance(synonyms, list):
-                people.extend(str(x) for x in synonyms)
-    return people
+    pages = [_frontmatter(about) for about in sorted(brain.glob("*/about.md"))] if brain.is_dir() else []
+    return diary.household(os.environ.get("FAMILY_NAMES", ""), pages)
 
 
 def _household_vocabulary() -> str:
     """The names and subjects this family uses, for whisper to decode against.
 
-    People come from the wiki's person pages. The ontology's topics
+    People come from users.toml and the wiki's person pages. The ontology's topics
     follow, because a family's proper nouns are not only its people --
     a campsite, a school, a pet -- and those mishear just as readily.
 
@@ -1329,13 +1317,14 @@ def _vocabulary(bucket: str):
     # Person pages are generated, so they live in the brain, not the vault.
     brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
     persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
-    people = {name.lower(): p.canonical for p in persons for name in p.all_known_names()}
-    if not people:
-        # No person pages yet: the household's names from the wiki, as
-        # whisper is primed with, so a first compile still knows them.
-        people = {name.lower(): name for name in _household_people()}
-    section = (persons_prompt_section(persons)
-               or "Family members: " + ", ".join(sorted(set(people.values()))))
+    people = diary.card_people(persons, _household_people())
+    # The pages describe the people they know; the rest of the household
+    # joins the list by name, so the model can still say a note is about them.
+    others = sorted(set(people.values()) - {p.canonical for p in persons})
+    if persons:
+        section = persons_prompt_section(persons) + "".join(f"\n  - {n}" for n in others)
+    else:
+        section = "Family members: " + ", ".join(others)
     return ontology, people, section, language_code
 
 

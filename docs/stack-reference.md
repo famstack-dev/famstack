@@ -193,6 +193,7 @@ Available template variables:
 | `{admin_username}` | Tech admin username (`stackadmin`) |
 | `{admin_email}` | Tech admin email (`stackadmin@home.local`) |
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
+| `{family_names}` | Comma-separated first names of everyone in `users.toml` |
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url` |
 | `{ai_openai_url_docker}` | Same, rewritten for container access via `host.docker.internal` |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
