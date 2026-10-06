@@ -19,11 +19,13 @@ step, and each page it writes or skips.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
     curator_state_dir_for,
+    failed_rebuild_since,
     progress_since,
     request_mirror,
     request_nightly,
@@ -118,8 +120,13 @@ def pages(vault: Vault, target: str, since: float) -> tuple[str | None, str]:
     """Wait for the touched pages, printing what the curator did since `since`."""
     echo = Echo(vault.state_dir, since)
     sha = wait_for_rebuilt(vault.state_dir, vault.memory, target,
-                           timeout=PAGES_WAIT_SECS, interval=POLL_INTERVAL, on_poll=echo)
+                           timeout=PAGES_WAIT_SECS, interval=POLL_INTERVAL, on_poll=echo,
+                           asked=since)
     echo()
+    if sha is None and (failure := failed_rebuild_since(vault.state_dir, since)):
+        minutes = max(1, round((failure["retry_at"] - time.time()) / 60))
+        return None, ("regenerating the wiki pages failed; the curator tries again in "
+                      f"{minutes} minutes. See the lines above, or ./stack logs memory")
     if sha is None:
         return None, (f"curator did not regenerate the wiki pages for {target[:10]} within "
                       f"{int(PAGES_WAIT_SECS)}s - is [memory] wiki_auto_rebuild off, or the AI down?")

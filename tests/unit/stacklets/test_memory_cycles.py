@@ -37,6 +37,7 @@ from lib import (  # noqa: E402
     REBUILT_SHA_NAME,
     curator_state_dir_for,
     progress_since,
+    record_failed_rebuild,
     report_progress,
     request_nightly,
     vault_path_for,
@@ -96,6 +97,44 @@ class TestTheCycleAfterAFiling:
         result = wiki.run(["update"], {}, {"data_dir": str(data_dir)})
 
         assert "wiki pages" in result["error"]
+
+    def test_a_failed_rebuild_ends_the_wait_and_says_when_it_retries(self, tmp_path, monkeypatch):
+        # The usual cause is the AI refusing or being down. Waiting out the
+        # full timeout then says nothing a person can act on.
+        data_dir, head = _vault(tmp_path)
+        state = curator_state_dir_for(data_dir)
+        wiki = _command("wiki")
+        monkeypatch.setattr(sys.modules["_curator"], "PAGES_WAIT_SECS", 30)
+
+        def curator():
+            (state / MIRROR_SHA_NAME).write_text(head)
+            record_failed_rebuild(state, retry_in=360)
+
+        timer = _curator(state, curator)
+        started = time.monotonic()
+        result = wiki.run(["update"], {}, {"data_dir": str(data_dir)})
+        timer.join()
+
+        assert time.monotonic() - started < 5
+        assert "failed" in result["error"] and "6 minutes" in result["error"]
+
+    def test_a_failure_from_before_the_request_does_not_end_the_wait(self, tmp_path):
+        data_dir, head = _vault(tmp_path)
+        state = curator_state_dir_for(data_dir)
+        state.mkdir(parents=True)
+        record_failed_rebuild(state, retry_in=360)
+        time.sleep(0.01)
+
+        def curator():
+            (state / MIRROR_SHA_NAME).write_text(head)
+            time.sleep(0.1)
+            (state / REBUILT_SHA_NAME).write_text(head)
+
+        timer = _curator(state, curator)
+        result = _command("wiki").run(["update"], {}, {"data_dir": str(data_dir)})
+        timer.join()
+
+        assert result == {"mirrored": head, "rebuilt": head, "target": head}
 
     def test_sync_stops_at_the_mirror(self, tmp_path):
         data_dir, head = _vault(tmp_path)

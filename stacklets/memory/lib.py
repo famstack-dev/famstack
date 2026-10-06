@@ -713,6 +713,9 @@ MIRROR_TRIGGER_NAME = "mirror-now"
 MIRROR_SHA_NAME = "last-mirrored-sha"
 # The memory commit the wiki pages were last regenerated up to.
 REBUILT_SHA_NAME = "last-rebuilt-sha"
+# When regenerating the touched pages last failed, and when the curator
+# tries again. A waiting command reads it to stop instead of timing out.
+REBUILD_FAILED_NAME = "last-rebuild-failed"
 # Asks the curator for its nightly sweep now, whatever the time.
 NIGHTLY_TRIGGER_NAME = "nightly-now"
 # When the last nightly sweep finished, and whether its rebuild succeeded.
@@ -774,17 +777,23 @@ def wait_for_mirror(state_dir: Path, memory: Path, target: str, *,
 
 def wait_for_rebuilt(state_dir: Path, memory: Path, target: str, *,
                      timeout: float, interval: float = MIRROR_POLL_INTERVAL,
-                     on_poll: Callable[[], None] | None = None) -> Optional[str]:
+                     on_poll: Callable[[], None] | None = None,
+                     asked: float | None = None) -> Optional[str]:
     """Poll `last-rebuilt-sha` until the wiki pages are regenerated up to `target`.
 
     The curator records it after regenerating the pages a change touched,
-    and also when a change touched none, so it always moves on.
+    and also when a change touched none, so it always moves on. With
+    `asked`, a failure the curator records after that moment ends the
+    wait early: None, and `failed_rebuild_since` says when it retries.
     """
-    return _wait_for_sha(Path(state_dir) / REBUILT_SHA_NAME, memory, target, timeout, interval, on_poll)
+    failed = (lambda: failed_rebuild_since(state_dir, asked) is not None) if asked else None
+    return _wait_for_sha(Path(state_dir) / REBUILT_SHA_NAME, memory, target, timeout,
+                         interval, on_poll, stop=failed)
 
 
 def _wait_for_sha(sha_file: Path, memory: Path, target: str, timeout: float,
-                  interval: float, on_poll: Callable[[], None] | None) -> Optional[str]:
+                  interval: float, on_poll: Callable[[], None] | None,
+                  stop: Callable[[], bool] | None = None) -> Optional[str]:
     deadline = time.monotonic() + timeout
     while True:
         if on_poll:
@@ -792,9 +801,26 @@ def _wait_for_sha(sha_file: Path, memory: Path, target: str, timeout: float,
         recorded = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() else ""
         if mirrored_contains(memory, target, recorded):
             return recorded
-        if time.monotonic() >= deadline:
+        if (stop and stop()) or time.monotonic() >= deadline:
             return None
         time.sleep(interval)
+
+
+def record_failed_rebuild(state_dir: Path, *, retry_in: float) -> None:
+    """Note that regenerating the touched pages failed, and the next attempt."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    (Path(state_dir) / REBUILD_FAILED_NAME).write_text(
+        json.dumps({"at": now, "retry_at": now + retry_in}), encoding="utf-8")
+
+
+def failed_rebuild_since(state_dir: Path, since: float) -> Optional[dict]:
+    """The failure the curator recorded at or after `since`, or None."""
+    try:
+        record = json.loads((Path(state_dir) / REBUILD_FAILED_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return record if record.get("at", 0) >= since else None
 
 
 # ── The nightly sweep, on request ────────────────────────────────────────

@@ -70,6 +70,7 @@ from memory.lib import (  # noqa: E402
     SyncResult,
     _parse_frontmatter,
     authenticated_remote,
+    record_failed_rebuild,
     report_progress,
     brain_remote_url,
     is_auth_failure,
@@ -1064,6 +1065,7 @@ async def main() -> None:
             debounce.reset()
         else:
             debounce.retry_later(time.monotonic())
+            record_failed_rebuild(state_dir, retry_in=debounce.window())
             # Say the shape of the failure, not just that there was one. A
             # per-cycle line at the same interval reads as a heartbeat; a
             # widening gap with a count on it reads as an outage.
