@@ -1554,6 +1554,29 @@ class TestAnswersAreBounded:
         assert cap >= len(answer) / _CHARS_PER_TOKEN
 
 
+class TestTheClassifierWritesInTheHouseholdLanguage:
+    """Whatever language the source is in, the classifier asks for the
+    household language: a pasted photo has none of its own, and a Spanish
+    invoice is filed for a family that reads German."""
+
+    @staticmethod
+    def _german_household():
+        stub = _StubLLM()
+        return Classifier(stub, language="de"), stub  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_a_capture_is_written_in_the_household_language(self):
+        c, stub = self._german_household()
+        await c.classify_capture(text="", person_names=["Homer"])
+        assert "in German, whatever language" in stub.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_a_document_is_filed_in_the_household_language(self):
+        c, stub = self._german_household()
+        await c.classify(ocr_text="Factura", tags={}, doc_types={}, correspondents={})
+        assert "in German, whatever language" in stub.calls[0]["prompt"]
+
+
 # The recall-mode query rewrite used to be tested here. It now lives in
 # memory, which owns the vault it searches, and so do its tests:
 # tests/unit/stacklets/test_memory_query_rewrite.py.
