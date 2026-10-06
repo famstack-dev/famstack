@@ -185,6 +185,7 @@ class CapturePipeline:
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
         user_hint: str | None = None,
+        write_in: str | None = None,
     ) -> CaptureOutcome:
         """Fetch a URL and file it as a bookmark.
 
@@ -211,6 +212,10 @@ class CapturePipeline:
         the generated title and summary reflect the framing the user
         actually wrote, not just whatever the article extractor pulled
         out. Empty/None leaves the prompt unchanged.
+
+        ``write_in`` is the language the room chose for its captures
+        (`!config language`); None is the household language. The same
+        holds for every capture entry point below.
         """
         await notifier.acknowledge()
         outcome = await self._url_extractor.fetch(url)
@@ -231,7 +236,7 @@ class CapturePipeline:
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket, user_hint=user_hint,
+            bucket=bucket, user_hint=user_hint, write_in=write_in,
         )
         return replace(result, blocked_reason=blocked_reason) if blocked_reason else result
 
@@ -241,6 +246,7 @@ class CapturePipeline:
         seed_topics: list[str] | None = None,
         bucket: str | None = None,
         transcribed: bool = False,
+        write_in: str | None = None,
     ) -> CaptureOutcome:
         """File a message body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
@@ -265,7 +271,7 @@ class CapturePipeline:
             display_link=source.source_uri or origin,
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket, transcribed=transcribed,
+            bucket=bucket, transcribed=transcribed, write_in=write_in,
         )
 
     async def capture_email(
@@ -324,6 +330,7 @@ class CapturePipeline:
         bucket: str | None = None,
         default_person: bool = True,
         kept_media: dict | None = None,
+        write_in: str | None = None,
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -358,7 +365,7 @@ class CapturePipeline:
             images=images, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, default_person=default_person,
-            kept_media=kept_media,
+            kept_media=kept_media, write_in=write_in,
         )
 
     def _cap_pdf_body(self, source: SourceContent) -> SourceContent:
@@ -536,6 +543,7 @@ class CapturePipeline:
     async def reprocess(
         self, *, vault_path: str, user_hint: str, sender_mxid: str,
         initial_classification: dict | None = None,
+        write_in: str | None = None,
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -599,6 +607,7 @@ class CapturePipeline:
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
             kept_media=_kept_media_from(raw),
+            write_in=write_in,
         )
 
     async def _publish(
@@ -617,6 +626,7 @@ class CapturePipeline:
         default_person: bool = True,
         transcribed: bool = False,
         kept_media: dict | None = None,
+        write_in: str | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -653,6 +663,7 @@ class CapturePipeline:
             initial_classification=initial_classification,
             default_person=default_person,
             current_list=current_list,
+            write_in=write_in,
             # Todo extraction is opt-in per source kind: human-typed notes
             # only. Bookmarks (saved URLs/snippets) stay out — that's the
             # guard against a pasted thread manufacturing a household todo.
@@ -769,6 +780,7 @@ class CapturePipeline:
         default_person: bool = True,
         extract_action_items: bool = False,
         current_list: str = "",
+        write_in: str | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -802,6 +814,7 @@ class CapturePipeline:
                 initial_classification=initial_classification,
                 extract_action_items=extract_action_items,
                 current_list=current_list,
+                write_in=write_in,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

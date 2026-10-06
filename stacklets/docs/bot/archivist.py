@@ -61,6 +61,8 @@ from pdf_analysis import (
 from pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
+    DEFAULT_LANGUAGE,
+    SOURCE_LANGUAGE,
     PaperlessAPI,
     PaperlessDuplicateError,
 )
@@ -70,6 +72,7 @@ from stack.links import go_capture, go_docs, go_topic, public
 from stack.ai.client import (
     ModelCapabilities,
 )
+from stack.ai.language import LANGUAGES, language_name
 
 # Make sibling stacklets importable. In the bot-runner container,
 # `/stacklets/` is mounted read-only and holds all stacklets; locally
@@ -136,6 +139,17 @@ def _timed(operation: str):
     else:
         elapsed = time.monotonic() - t0
         logger.info("[archivist] {} completed in {:.1f}s", operation, elapsed)
+
+def _language_option(household: str) -> dict:
+    """The `!config language` entry: the household language by default,
+    any listed language, or the language of the source."""
+    describe = {
+        DEFAULT_LANGUAGE: f"the household language ({language_name(household)})",
+        SOURCE_LANGUAGE: "the language the content is written in",
+    }
+    describe.update(LANGUAGES)
+    return {"default": DEFAULT_LANGUAGE, "describe": describe}
+
 
 def _llm_error_for_chat(
     pipeline_error: tuple[str, str] | None,
@@ -333,6 +347,12 @@ class ArchivistBot(MicroBot):
         self.openai_url = os.environ.get("OPENAI_URL", "")
         self.openai_key = os.environ.get("OPENAI_KEY", "")
         self.language = os.environ.get("LANGUAGE", "en")
+        # `!config language`: the language a room's filings are written in.
+        # Built here because its description names the household language.
+        self.CONFIG_OPTIONS = {
+            **MicroBot.CONFIG_OPTIONS,
+            "language": _language_option(self.language),
+        }
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
@@ -837,6 +857,12 @@ class ArchivistBot(MicroBot):
         if len(humans) == 1:
             return humans[0].split(":")[0].lstrip("@").lower()
         return self.shared_bucket
+
+    async def _write_in(self, room_id: str) -> str | None:
+        """The language the room chose for its filings (`!config language`),
+        or None for the household language."""
+        choice = (await self.get_room_config(room_id)).get("language")
+        return None if choice in (None, "", DEFAULT_LANGUAGE) else choice
 
     async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
         """Read existing topic state, or bootstrap if the room name
@@ -1367,6 +1393,7 @@ class ArchivistBot(MicroBot):
         o = await self._services.pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
+            write_in=await self._write_in(room_id),
         )
         if o.status == "doc_missing":
             await self._answer(
@@ -1410,6 +1437,7 @@ class ArchivistBot(MicroBot):
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
+            write_in=await self._write_in(room_id),
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
@@ -1440,6 +1468,7 @@ class ArchivistBot(MicroBot):
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
             user_hint=user_hint,
+            write_in=await self._write_in(room_id),
         )
         if outcome.doc_id:
             for tag in extra_tags or []:
@@ -2302,6 +2331,7 @@ class ArchivistBot(MicroBot):
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
+            write_in=await self._write_in(room_id),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -2327,6 +2357,7 @@ class ArchivistBot(MicroBot):
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
+            write_in=await self._write_in(room_id),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -2433,6 +2464,7 @@ class ArchivistBot(MicroBot):
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
+            write_in=await self._write_in(room_id),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

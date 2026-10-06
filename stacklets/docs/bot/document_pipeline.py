@@ -169,8 +169,12 @@ class DocumentPipeline:
         date_filed: str | None = None,
         submitter_mxid: str | None = None,
         user_hint: str | None = None,
+        write_in: str | None = None,
     ) -> FilingOutcome:
         """Run the full pipeline and return a FilingOutcome.
+
+        ``write_in`` is the language the room chose for its filings
+        (`!config language`); None is the household language.
 
         Each step can fail independently; classification and reformat are
         *enrichment*, not gates — a filed doc is always mirrored before we
@@ -243,7 +247,7 @@ class DocumentPipeline:
         if self.classify_enabled and has_text:
             result = await self._enrich(
                 doc, ext, is_image, is_pdf_with_text, is_pdf_ocr_layer,
-                file_data, date_filed, submitter_mxid, user_hint,
+                file_data, date_filed, submitter_mxid, user_hint, write_in,
             )
         else:
             result = EnrichResult()
@@ -336,7 +340,7 @@ class DocumentPipeline:
 
     async def _enrich(
         self, doc, ext, is_image, is_pdf_with_text, is_pdf_ocr_layer,
-        file_data, date_filed, submitter_mxid, user_hint=None,
+        file_data, date_filed, submitter_mxid, user_hint=None, write_in=None,
     ) -> EnrichResult:
         """Classify the doc, attaching images when vision helps.
 
@@ -379,6 +383,7 @@ class DocumentPipeline:
             date_filed=date_filed,
             submitter_mxid=submitter_mxid,
             user_hint=user_hint,
+            write_in=write_in,
         )
 
     def _mirror_body(self, is_text, file_data, formatted, ocr_text, *, reformatted):
@@ -431,6 +436,7 @@ class DocumentPipeline:
     async def reprocess(
         self, *, doc_id: int, user_hint: str, date_filed: str | None = None,
         initial_classification: dict | None = None,
+        write_in: str | None = None,
     ) -> ReprocessOutcome:
         """Re-enrich an already-filed doc with the user's reply as a hint.
 
@@ -465,6 +471,7 @@ class DocumentPipeline:
             date_filed=date_filed,
             user_hint=user_hint,
             initial_classification=initial_classification,
+            write_in=write_in,
         )
         if result.llm_error:
             return ReprocessOutcome(

@@ -340,7 +340,7 @@ class StubClassifier:
                        images=None, ontology_section="",
                        correspondents_section="", persons_section="",
                        date_filed=None, user_hint=None,
-                       initial_classification=None):
+                       initial_classification=None, write_in=None):
         self.classify_calls.append({
             "ocr_text": ocr_text, "tags": tags,
             "doc_types": doc_types, "correspondents": correspondents,
@@ -350,6 +350,7 @@ class StubClassifier:
             "date_filed": date_filed,
             "user_hint": user_hint,
             "initial_classification": initial_classification,
+            "write_in": write_in,
         })
         if self.classify_raises:
             raise self.classify_raises
@@ -396,6 +397,17 @@ def _doc(doc_id=42, content="Invoice text from Duff Insurance for car insurance.
 
 class TestEnrichHappyPath:
     """A well-formed LLM classification flows through to Paperless."""
+
+    @pytest.mark.asyncio
+    async def test_the_rooms_language_reaches_the_classifier(self, seeded_paperless):
+        """The room a document was sent to can choose the language it is
+        filed in (`!config language`). Enrichment hands that choice on."""
+        classifier = StubClassifier(payload={"title": "t"})
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            write_in="en",
+        )
+        assert classifier.classify_calls[0]["write_in"] == "en"
 
     @pytest.mark.asyncio
     async def test_full_classification_applied(self, seeded_paperless):
@@ -1554,10 +1566,11 @@ class TestAnswersAreBounded:
         assert cap >= len(answer) / _CHARS_PER_TOKEN
 
 
-class TestTheClassifierWritesInTheHouseholdLanguage:
-    """Whatever language the source is in, the classifier asks for the
-    household language: a pasted photo has none of its own, and a Spanish
-    invoice is filed for a family that reads German."""
+class TestTheClassifierPicksTheLanguage:
+    """The classifier writes in the household language unless the room
+    chose another (`write_in`): a language code, or "source" to keep the
+    content's own language. "default" and no choice both mean the
+    household language."""
 
     @staticmethod
     def _german_household():
@@ -1571,10 +1584,39 @@ class TestTheClassifierWritesInTheHouseholdLanguage:
         assert "in German, whatever language" in stub.calls[0]["prompt"]
 
     @pytest.mark.asyncio
+    async def test_default_is_the_household_language(self):
+        c, stub = self._german_household()
+        await c.classify_capture(text="x", person_names=[], write_in="default")
+        assert "in German, whatever language" in stub.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_a_room_language_wins_and_brings_its_own_examples(self):
+        """English output with German examples would undo #86: a model
+        copies the examples it is shown."""
+        c, stub = self._german_household()
+        await c.classify_capture(text="x", person_names=[], write_in="en")
+        prompt = stub.calls[0]["prompt"]
+        assert "in English, whatever language" in prompt
+        assert "wäschesack" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_source_keeps_the_contents_language(self):
+        c, stub = self._german_household()
+        await c.classify_capture(text="x", person_names=[], write_in="source")
+        assert "the content's own language" in stub.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
     async def test_a_document_is_filed_in_the_household_language(self):
         c, stub = self._german_household()
         await c.classify(ocr_text="Factura", tags={}, doc_types={}, correspondents={})
         assert "in German, whatever language" in stub.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_a_document_room_can_choose_another_language(self):
+        c, stub = self._german_household()
+        await c.classify(ocr_text="Factura", tags={}, doc_types={},
+                         correspondents={}, write_in="en")
+        assert "in English, whatever language" in stub.calls[0]["prompt"]
 
 
 # The recall-mode query rewrite used to be tested here. It now lives in

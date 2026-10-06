@@ -20,6 +20,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from document_pipeline import DocumentPipeline  # noqa: E402
 from pipeline import PaperlessDuplicateError  # noqa: E402
+from vault_context import VaultContext  # noqa: E402
 
 
 class FakePaperless:
@@ -44,6 +45,17 @@ class FakePaperless:
     async def get_doc(self, doc_id):
         return self._doc
 
+    # The classify step reads the vocabulary first. An empty archive has
+    # none yet.
+    async def get_tags(self):
+        return {}
+
+    async def get_doc_types(self):
+        return {}
+
+    async def get_correspondents(self):
+        return {}
+
 
 class FakeMirror:
     def __init__(self):
@@ -67,10 +79,11 @@ class _FakeVault:
         return ""
 
 
-def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled=True):
+def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled=True,
+              classifier=None, vault=None):
     return DocumentPipeline(
         paperless=paperless,
-        classifier=FakeClassifier(),
+        classifier=classifier or FakeClassifier(),
         mirror=mirror,
         bot_name="archivist-bot",
         language="en",
@@ -82,7 +95,7 @@ def _pipeline(paperless, *, mirror=None, classify_enabled=True, reformat_enabled
         paperless_public_url="http://paperless",
         link_base_url="http://home.test/go",
         actor="@archivist-bot:test.local",
-        vault=_FakeVault(),
+        vault=vault or _FakeVault(),
     )
 
 
@@ -269,3 +282,48 @@ class TestEnrichedOutcomes:
         assert out.classify_enabled is False
         assert out.has_text is True
         assert out.classification == {}  # no classify ran
+
+
+class _LanguageRecordingClassifier(FakeClassifier):
+    def __init__(self):
+        self.write_in: list = []
+
+    async def classify(self, **kwargs):
+        self.write_in.append(kwargs.get("write_in"))
+        return {}
+
+
+SPANISH_INVOICE = {
+    "id": 5, "tags": [], "document_type": None,
+    "content": "Factura n.º 2026-118. Hotel Playa Sol, Calle Mayor 4, "
+               "Valencia. Total: 412,80 EUR. Gracias por su visita.",
+}
+
+
+class TestTheRoomsLanguageReachesTheClassifier:
+    """The room a document is sent to can choose the language it is
+    filed in (`!config language`); a correction in that room keeps it.
+
+    The vault is the real one with no vault directory: the shipped seed
+    ontology, which is what a classify step reads on a fresh install."""
+
+    @pytest.mark.asyncio
+    async def test_a_new_filing(self):
+        classifier = _LanguageRecordingClassifier()
+        pipeline = _pipeline(FakePaperless(doc_id=5, doc=SPANISH_INVOICE),
+                             mirror=FakeMirror(), classifier=classifier,
+                             vault=VaultContext(language="en", shared_bucket="family"))
+        await pipeline.process(filename="factura.txt", display_name="factura.txt",
+                               file_data=SPANISH_INVOICE["content"].encode(),
+                               write_in="en")
+        assert classifier.write_in == ["en"]
+
+    @pytest.mark.asyncio
+    async def test_a_correction(self):
+        classifier = _LanguageRecordingClassifier()
+        pipeline = _pipeline(FakePaperless(doc_id=5, doc=SPANISH_INVOICE),
+                             mirror=FakeMirror(), classifier=classifier,
+                             vault=VaultContext(language="en", shared_bucket="family"))
+        await pipeline.reprocess(doc_id=5, user_hint="Urlaub Valencia",
+                                 write_in="source")
+        assert classifier.write_in == ["source"]

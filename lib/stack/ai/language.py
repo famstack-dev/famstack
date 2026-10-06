@@ -5,7 +5,8 @@ English prompt in English unless the prompt names the language to write
 in. Prompts that write for the family name it with `language_name`.
 """
 
-# Language codes and the English name a prompt uses for each.
+# The codes a room may choose with `!config language`, and the English
+# name a prompt uses for each.
 LANGUAGES = {
     "de": "German",
     "en": "English",

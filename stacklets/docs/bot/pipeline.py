@@ -102,6 +102,12 @@ _DUPLICATE_RE = re.compile(r"duplicate of\s+(.+?)\s+\(#(\d+)\)", re.IGNORECASE)
 # enrichment functions further down the file consume the same value.
 DEFAULT_CLASSIFY_MAX_CHARS = 20000
 
+# A room's language choice (`!config language`) besides a language code:
+# "default" is the household language, "source" keeps the language the
+# content is written in.
+DEFAULT_LANGUAGE = "default"
+SOURCE_LANGUAGE = "source"
+
 # Output caps for each LLM call. Every answer has a size known in
 # advance, so every call is capped. An uncapped call that repeats itself
 # generates until the client timeout. A server that sizes its memory for
@@ -598,9 +604,25 @@ class Classifier:
 
     def __init__(self, llm: LLM, language: str = "en"):
         self._llm = llm
-        # The household's language: what every filing is written in, and
-        # the language of the worked examples. See `_language_rule`.
+        # The household's language: what every filing is written in
+        # unless the room chose another (`write_in`). See `_language_rule`.
         self._language = language
+
+    def _languages(self, write_in: str | None) -> tuple[str, str]:
+        """The language to write in, and the one the examples are in.
+
+        ``write_in`` is the room's choice: a language code,
+        `SOURCE_LANGUAGE` to keep the content's language, or None /
+        `DEFAULT_LANGUAGE` for the household language. The examples follow
+        the language written in, because a model copies the examples it is
+        shown; with `SOURCE_LANGUAGE` they stay in the household language, which is also what content
+        without words of its own is written in.
+        """
+        if not write_in or write_in == DEFAULT_LANGUAGE:
+            return self._language, self._language
+        if write_in == SOURCE_LANGUAGE:
+            return SOURCE_LANGUAGE, self._language
+        return write_in, write_in
 
     @classmethod
     def from_endpoint(cls, url: str, key: str = "", *,
@@ -668,6 +690,7 @@ class Classifier:
         date_filed: str | None = None,
         user_hint: str | None = None,
         initial_classification: dict | None = None,
+        write_in: str | None = None,
     ) -> dict:
         """Ask the LLM to classify a document based on its OCR text.
 
@@ -697,6 +720,7 @@ class Classifier:
         person_tags = [t for t in tags if t.startswith("Person: ")]
         person_names = [t.replace("Person: ", "") for t in person_tags]
         category_tags = [t for t in tags if not t.startswith("Person: ")]
+        target, examples = self._languages(write_in)
         prompt = _build_classify_prompt(
             ocr_text=ocr_text,
             person_names=person_names,
@@ -709,7 +733,8 @@ class Classifier:
             date_filed=date_filed,
             user_hint=user_hint,
             initial_classification=initial_classification,
-            lang=self._language,
+            lang=examples,
+            write_in=target,
         )
 
         valid_images = [
@@ -747,6 +772,7 @@ class Classifier:
         initial_classification: dict | None = None,
         extract_action_items: bool = False,
         current_list: str = "",
+        write_in: str | None = None,
     ) -> dict:
         """Capture-specific classification.
 
@@ -773,6 +799,7 @@ class Classifier:
         the model lacks vision, they are silently dropped and the
         caller's ``text`` becomes the sole signal.
         """
+        target, examples = self._languages(write_in)
         prompt = _build_capture_prompt(
             text=text,
             person_names=person_names,
@@ -782,7 +809,8 @@ class Classifier:
             today=date.today().isoformat(),
             extract_action_items=extract_action_items,
             current_list=current_list,
-            lang=self._language,
+            lang=examples,
+            write_in=target,
         )
         valid_images = [
             img for img in (images or [])
@@ -1006,12 +1034,13 @@ def _build_classify_prompt(*, ocr_text: str, person_names: list[str],
                            date_filed: str | None = None,
                            user_hint: str | None = None,
                            initial_classification: dict | None = None,
-                           lang: str = "en") -> str:
+                           lang: str = "en",
+                           write_in: str | None = None) -> str:
     """The classification prompt.
 
-    ``lang`` is the household language: the language the answer is
-    written in and the language of the worked examples. See
-    `_language_rule`.
+    ``lang`` picks the worked examples, ``write_in`` the language the
+    answer is written in (a code or `SOURCE_LANGUAGE`; the examples'
+    language when not given). See `_language_rule`.
 
     Simplified to three clear axes:
       topic         = what is this about?   "Insurance", "Shopping"
@@ -1117,7 +1146,7 @@ Rules:
   - When only a partial date is visible (no year), pick the year closest in time to `Date filed` — past for backward-looking documents (invoices, receipts, statements, letters confirming past events), future for forward-looking documents (booking confirmations, reservations, appointments, event tickets). A chalet booking confirmation filed in December 2025 mentioning "14 FEBRUAR" means 2026-02-14 (next February), not 2025-02-14 (last February). An invoice filed in December 2025 mentioning "14 FEBRUAR" means 2025-02-14 (this year's February).
   - Never invent a year that isn't visible and isn't derivable from `Date filed`. When even the month is unclear, return null (or omit the date from a fact).
   - Do NOT pull dates from sample texts, legal disclaimers, copyright footers, or unrelated logos.
-{_language_rule(lang, fields="title, summary, facts and action_items", subject="document")}
+{_language_rule(write_in or lang, lang, fields="title, summary, facts and action_items", subject="document")}
 - topics: the subject area(s), not the document format. An invoice from a shop is ["Shopping"], not ["Invoice"]. An invoice for insurance is ["Insurance"]. A health insurance claim is ["Insurance", "Medical"]. When the document uses a synonym of a listed topic (the list shows synonyms in parentheses), return the canonical name. Write a new topic tag in the language of the existing topic list. Most documents have one topic; use two only when clearly spanning two areas. EXCEPTION: when the human note block above explicitly assigns a topic ({ex['note_topic']}), that topic IS the right answer for this document regardless of what the OCR text would suggest. The human's intent overrides OCR-derived defaults for this field; pick the canonical that matches their term.
 - persons: return names that EXPLICITLY appear in the document text OR are explicitly attributed by the human note block above. Match by first name against the family members list. A marriage certificate naming "Homer Simpson" and "Marge Simpson": ["Homer", "Marge"]. A booking confirmation that says {ex['headcount']} with no actual names AND no human note: []. A health insurance bill in Marge's name only: ["Marge"]. A receipt with no printed customer name AND a human note attributing it to someone ({ex['note_attribution']}): that member — the human attribution stands in for a missing customer field. NEVER guess based on group counts (a headcount is not a name), document type (a paediatric bill doesn't mean a particular child unless the human note says so), or who you think the doc is "probably for". When neither the document nor the human note names anyone, return [] — the system attributes the doc to the uploader as a fallback.
 - correspondent: always the SENDER, never the addressee/customer/recipient. When the existing list shows aliases in parentheses, those are previous spellings of the same correspondent — use the canonical (the name OUTSIDE the parentheses). Strip regional/branch/legal-form suffixes for new correspondents. Use null if the sender is not clearly identifiable. Do not guess from fragments. EXCEPTION: when the human note block above explicitly names the correspondent ("File it under Leapter GmbH", "this is from Duff Insurance"), use that name as the canonical -- the human knows the institution better than the printed letterhead. Add any additional sender forms the human mentions ("Leapter GmbH" alongside "Leapter") to `correspondent_aliases` so the wiki grows the alias set.
@@ -1200,17 +1229,28 @@ def _examples_for(lang: str) -> dict[str, str]:
     return _PROMPT_EXAMPLES.get(language_code(lang or "en"), _PROMPT_EXAMPLES["en"])
 
 
-def _language_rule(language: str, *, fields: str, subject: str) -> str:
+def _language_rule(write_in: str, household: str, *, fields: str, subject: str) -> str:
     """The LANGUAGE rule of a classify prompt.
 
-    A filing is written in one language, the household's: the family
-    reads the wiki compiled from these entries in that language, and a
-    pasted photo has no language of its own to follow. Translating
+    A filing is written in one language, by default the household's: the
+    family reads the wiki compiled from these entries in that language,
+    and a pasted photo has no language of its own to follow. Translating
     applies to the prose. Names, amounts and established technical terms
     stay as they are, so a Spanish invoice keeps its hotel name and an IT
     bookmark keeps "Kubernetes".
+
+    With `SOURCE_LANGUAGE` the content decides, and content without words
+    falls back to ``household``.
     """
-    name = language_name(language)
+    if write_in == SOURCE_LANGUAGE:
+        return (
+            f"- LANGUAGE: write {fields} in the {subject}'s own language, "
+            f"whatever it is. Never translate. A {subject} with no words of its "
+            f"own (a photo, an image without text) is written in "
+            f"{language_name(household)}. The examples and lists above show "
+            "shape, not language."
+        )
+    name = language_name(write_in)
     return (
         f"- LANGUAGE: write {fields} in {name}, whatever language the "
         f"{subject} is in. Translate the meaning, not word for word. Keep "
@@ -1234,12 +1274,13 @@ def _build_capture_prompt(
     extract_action_items: bool = False,
     current_list: str = "",
     lang: str = "en",
+    write_in: str | None = None,
 ) -> str:
     """The capture prompt — smaller and focused on summary + tags.
 
-    ``lang`` is the household language: the language the answer is
-    written in and the language of the worked examples. See
-    `_language_rule`.
+    ``lang`` picks the worked examples, ``write_in`` the language the
+    answer is written in (a code or `SOURCE_LANGUAGE`; the examples'
+    language when not given). See `_language_rule`.
 
     Captures are bookmarks (URL pointers with a digest) and notes
     (pasted text with a digest). Unlike documents, they don't carry a
@@ -1324,7 +1365,7 @@ Return this exact JSON structure:
 }}
 
 Rules:
-{_language_rule(lang, fields="title, summary, facts and tags", subject="content")}
+{_language_rule(write_in or lang, lang, fields="title, summary, facts and tags", subject="content")}
 - summary: write a real digest, not a teaser. Match length to input — terse for short pastes, fuller for long-form. Do NOT include the source URL; it's surfaced separately in the vault entry.
 - facts: each fact carries an anchor (number, date, named entity, proper noun). "X is widely used" is not a fact; "X is used by 600K+ agents" is. Don't pad to hit a count; an empty list beats invented facts.
 - tags: 3-5 entries, no exceptions. Each tag must be content-specific: {ex['tag_rule']}. The retrieval test for a good tag: would the user, six months from now, type this word to search for this specific content? If no, replace it with a more specific one. Lowercase, hyphen-separated, 1-3 words. Follow the LANGUAGE rule.
@@ -1615,6 +1656,7 @@ async def enrich_document(
     user_hint: str | None = None,
     initial_classification: dict | None = None,
     submitter_mxid: str | None = None,
+    write_in: str | None = None,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -1663,6 +1705,7 @@ async def enrich_document(
             date_filed=date_filed,
             user_hint=user_hint,
             initial_classification=initial_classification,
+            write_in=write_in,
         )
     except LLMUnavailableError as e:
         logger.warning("[pipeline] doc #{} classify: AI unavailable: {}", doc.get("id"), e)

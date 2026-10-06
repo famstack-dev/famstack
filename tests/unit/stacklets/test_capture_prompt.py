@@ -393,6 +393,18 @@ class TestTheLanguageACaptureIsWrittenIn:
         assert "Keep names, product names, amounts" in prompt
         assert "technical terms" in prompt
 
+    def test_a_room_can_ask_for_another_language(self):
+        prompt = _build_capture_prompt(**COMMON, lang="en", write_in="en")
+        assert "in English, whatever language the content is in" in prompt
+        assert not [w for w in GERMAN_VOCAB if w.lower() in prompt.lower()]
+
+    def test_a_room_can_keep_the_language_of_the_source(self):
+        """`!config language source`: the content decides. Content with no
+        words of its own still needs a language, and gets the household's."""
+        prompt = _build_capture_prompt(**COMMON, lang="de", write_in="source")
+        assert "the content's own language" in prompt
+        assert "no words of its own" in prompt and "in German" in prompt
+
     def test_a_language_without_a_name_is_asked_for_by_its_code(self):
-        prompt = _build_capture_prompt(**COMMON, lang="sv")
+        prompt = _build_capture_prompt(**COMMON, lang="en", write_in="sv")
         assert "in sv, whatever language the content is in" in prompt
