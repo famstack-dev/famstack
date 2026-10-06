@@ -87,6 +87,7 @@ COPY quartz/components/FamilyHead.tsx ./quartz/components/FamilyHead.tsx
 COPY quartz/components/FamilyCrumbs.tsx ./quartz/components/FamilyCrumbs.tsx
 COPY quartz/components/scripts/familyNav.inline.ts ./quartz/components/scripts/familyNav.inline.ts
 COPY quartz/plugins/familyLists.tsx ./quartz/plugins/emitters/familyLists.tsx
+COPY quartz/plugins/vaultLinks.ts ./quartz/plugins/transformers/vaultLinks.ts
 # The shipped ontology, for the topic areas a vault installed earlier
 # does not name yet (see readOntology in familyModel.ts).
 COPY seeds/ontology.toml ./ontology.seed.toml
