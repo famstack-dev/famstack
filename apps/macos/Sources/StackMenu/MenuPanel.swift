@@ -122,9 +122,19 @@ struct MenuPanel: View {
     private func subtitle(_ status: StackStatus) -> String {
         let running = status.installed.filter { $0.online }.count
         var parts = ["\(running) of \(status.installed.count) running"]
-        if let up = store.host?.uptimeSeconds { parts.append("up \(up / 86400) days") }
+        if let up = store.host?.uptimeSeconds { parts.append("up \(Self.uptime(up))") }
         if let connection = store.connection, connection.isRemote { parts.append("on \(connection.label)") }
         return parts.joined(separator: " · ")
+    }
+
+    /// Hours for the first day, then days: "up 0 days" said nothing.
+    private static func uptime(_ seconds: Int) -> String {
+        let days = seconds / 86400
+        if days == 0 {
+            let hours = max(1, seconds / 3600)
+            return hours == 1 ? "1 hour" : "\(hours) hours"
+        }
+        return days == 1 ? "1 day" : "\(days) days"
     }
 
     // ── Overview ─────────────────────────────────────────────────────────
