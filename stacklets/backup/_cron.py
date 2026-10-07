@@ -49,16 +49,19 @@ def sync_command(stack_bin: Path, log_path: Path) -> str:
     """The shell command a cron entry runs for the nightly sync.
 
     Both paths are double-quoted so an install or data directory
-    containing spaces doesn't break cron's word-splitting. PATH is
-    prepended with the Homebrew bin so cron's minimal environment finds
-    the Homebrew Python (the system Python on macOS is too old). Output
+    containing spaces doesn't break cron's word-splitting. cron starts
+    with PATH=/usr/bin:/bin, so the Homebrew bin goes in front for the
+    Homebrew Python (the system Python on macOS is too old), and the
+    directories of the other tools the sync calls by name go after it:
+    ``/usr/local/bin`` for docker (OrbStack and Docker Desktop link it
+    there), ``/usr/sbin`` for diskutil, ``/sbin`` for mount. Output
     appends to ``log_path`` so a misbehaving scheduled run leaves a
     trail. Shared by on_install and on_start so the entry stays
     byte-identical across reinstalls.
     """
     homebrew_bin = _homebrew_prefix() / "bin"
     return (
-        f'PATH="{homebrew_bin}:$PATH" '
+        f'PATH="{homebrew_bin}:$PATH:/usr/local/bin:/usr/sbin:/sbin" '
         f'"{stack_bin}" backup sync >> "{log_path}" 2>&1'
     )
 
