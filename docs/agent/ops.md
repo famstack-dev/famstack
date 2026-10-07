@@ -132,6 +132,7 @@ A release is a git tag. `./stack update` moves the checkout to one and names wha
 - **Works from a branch or a fork.** On `main` it moves to the tag and says the branch is left behind (`git switch main` returns). Tags are fetched from every remote, so a fork needs the project added as a remote or there is nothing to update to.
 - **A tag checkout is a detached HEAD.** `git pull` fails there. Never suggest `git pull origin main` as the fix: it succeeds and silently moves the instance onto unreleased code while `./stack version` still reports the last release.
 - **`./stack version` now says what is running,** not what the source constant claims: `0.3.0-beta.3-104-g9a5bdc9-dirty` is the tag, the distance past it, the commit, and an unclean tree. `version`, `status`, `list`, `doctor` and `update` all print the same string. `./stack doctor` adds a warning when a newer release exists, without fetching, so that half is as fresh as the last `git fetch`.
+- **The menu bar app is not updated with the checkout.** If the admin uses it (`/Applications/famstack.app`), rebuild and copy it after an update: `apps/macos/build.sh && cp -R apps/macos/build/famstack.app /Applications/`. See the admin guide, "The menu bar app".
 - **The instance survives a tag switch.** Config, secrets, data and `~/<product>-extensions/` are all outside git.
 
 Full prose: [../admin-guide.md](../admin-guide.md) § Updating.

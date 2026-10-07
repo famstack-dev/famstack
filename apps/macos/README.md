@@ -1,4 +1,4 @@
-# Menu bar app (prototype)
+# Menu bar app (beta)
 
 A native macOS menu bar app for the stack on this Mac. **Overview** answers,
 in this order: is everything fine, what needs me, what is running, what
@@ -36,8 +36,12 @@ Needs macOS 14 and the Command Line Tools; no Xcode.
 
 ```bash
 apps/macos/build.sh          # prints the path of build/famstack.app
-open apps/macos/build/famstack.app
+cp -R apps/macos/build/famstack.app /Applications/
+open /Applications/famstack.app
 ```
+
+The build is signed ad hoc, for the Mac it was built on. After
+`./stack update`, build and copy it again.
 
 To check a layout change without opening the menu, render both tabs from the
 real data to PNG files (`<prefix>-overview.png`, `<prefix>-setup.png`):
