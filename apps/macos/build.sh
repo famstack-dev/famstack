@@ -26,7 +26,14 @@ rm -rf build/AppIcon.iconset
 ".build/$config/StackMenu" --icon build/AppIcon.iconset
 iconutil -c icns -o "$app/Contents/Resources/AppIcon.icns" build/AppIcon.iconset
 
-cat > "$app/Contents/Info.plist" <<'PLIST'
+# The app is versioned with the stack it ships with. macOS wants digits
+# only here, so a release candidate's label is left off: 0.4.0-rc.1 -> 0.4.0.
+# The build number tells a release candidate from the release: the commit
+# count, which only grows. The Setup tab shows the stack's full version.
+version="$(sed -n 's/^VERSION = "\([0-9.]*\).*"/\1/p' ../../lib/stack/cli.py)"
+build="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+
+cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -36,7 +43,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>     <string>StackMenu</string>
     <key>CFBundleIconFile</key>       <string>AppIcon</string>
     <key>CFBundlePackageType</key>    <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key> <string>${version}</string>
+    <key>CFBundleVersion</key>        <string>${build}</string>
     <key>LSMinimumSystemVersion</key> <string>14.0</string>
     <key>LSUIElement</key>            <true/>
 </dict>
