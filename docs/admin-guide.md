@@ -752,13 +752,14 @@ Install it from the checkout. It needs macOS 14 and the Command Line Tools,
 which Homebrew already installed:
 
 ```bash
-apps/macos/build.sh                              # builds apps/macos/build/famstack.app
-cp -R apps/macos/build/famstack.app /Applications/
-open /Applications/famstack.app
+./stack app install
 ```
 
-The app is signed for the Mac it was built on, so build it on the Mac that
-runs it. After `./stack update`, run both commands again to update the app.
+That builds the app (about a minute the first time), puts it in
+`/Applications` (or `~/Applications` when that is not writable) and opens it.
+The app is signed for the Mac it was built on, so install it on the Mac that
+runs it. After `./stack update`, run `./stack app install` again to update the
+app; `update` reminds you when the app is installed.
 
 **Which machine.** **Setup → Connection** switches between this Mac and
 another one:

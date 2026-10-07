@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
+from . import app as menubar_app
 from . import caddy
 from . import docker
 from . import doctor
@@ -1394,6 +1395,42 @@ def handle_errors(stck, args):
         print(f"     {DIM}more:{RESET} {TEAL}./stack logs {entry['stacklet']}{RESET}\n")
 
 
+APP_VERBS = {"install": "build the menu bar app from this checkout and put it in Applications"}
+
+
+def handle_app(stck, args):
+    """The menu bar app. `install` builds it here and installs it; running
+    it again after `stack update` updates it. Without a verb, the verbs."""
+    if not args.verb:
+        report = {"commands": APP_VERBS}
+        if args.json:
+            json.dump(report, sys.stdout, indent=2)
+            print()
+            return
+        print()
+        for verb, what in APP_VERBS.items():
+            print(f"  {TEAL}./stack app {verb}{RESET}  {DIM}{what}{RESET}")
+        print()
+        return
+    if args.verb not in APP_VERBS:
+        print_error({"error": f"Unknown verb '{args.verb}'. Use: {', '.join(APP_VERBS)}"})
+        sys.exit(1)
+
+    if not args.json:
+        print("\n  Building the menu bar app (about a minute)...")
+    result = menubar_app.install(stck.root, open_after=not args.json)
+    if "error" in result:
+        print_error(result)
+        sys.exit(1)
+    if args.json:
+        json.dump(result, sys.stdout, indent=2)
+        print()
+        return
+    print(f"  {GREEN}\u2713{RESET}  Installed {TEAL}{result['installed']}{RESET}")
+    print(f"  {DIM}It sits in the menu bar. Setup \u2192 Connection picks this Mac "
+          f"or another one over SSH.{RESET}\n")
+
+
 def _uptime_seconds() -> int | None:
     """Seconds since boot, from `sysctl kern.boottime` (`{ sec = 1727..., ...}`)."""
     try:
@@ -1911,6 +1948,11 @@ def handle_update(stck, args):
 
     print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")
     _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
+    # The app is built from the checkout, so moving the checkout leaves the
+    # installed one behind until it is built again.
+    if menubar_app.installed():
+        print(f"  {DIM}The menu bar app is built from the checkout:{RESET} "
+              f"{TEAL}./stack app install{RESET} {DIM}updates it.{RESET}\n")
 
 
 def print_restart_call_to_action(targets, framework=False) -> None:
@@ -2057,6 +2099,7 @@ DISPATCH = {
     "logs": handle_logs,
     "errors": handle_errors,
     "host": handle_host,
+    "app": handle_app,
     "version": handle_version,
     "update": handle_update,
 }
@@ -2083,6 +2126,7 @@ _HELP_COMMANDS = [
     ]),
     ("Setup", [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
+        ("app install",        "Build the menu bar app and put it in Applications"),
         ("install",            "Interactive setup wizard"),
         ("uninstall",          "Remove all services, config, and data"),
         ("init",               "Create Docker network and data directories"),
@@ -2205,6 +2249,9 @@ def main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("errors")
     p.add_argument("--since", default="24h", help="How far back to look: 30m, 24h, 168h")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("app")
+    p.add_argument("verb", nargs="?", default=None, help="install")
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("host")
     p.add_argument("--json", action="store_true", help="Output as JSON")

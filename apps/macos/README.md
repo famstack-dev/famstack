@@ -35,13 +35,12 @@ checkout older than those commands, the sections that need them are left out.
 Needs macOS 14 and the Command Line Tools; no Xcode.
 
 ```bash
-apps/macos/build.sh          # prints the path of build/famstack.app
-cp -R apps/macos/build/famstack.app /Applications/
-open /Applications/famstack.app
+./stack app install          # builds, puts it in /Applications, opens it
 ```
 
 The build is signed ad hoc, for the Mac it was built on. After
-`./stack update`, build and copy it again.
+`./stack update`, run `./stack app install` again. For development,
+`apps/macos/build.sh` builds `build/famstack.app` without installing it.
 
 To check a layout change without opening the menu, render both tabs from the
 real data to PNG files (`<prefix>-overview.png`, `<prefix>-setup.png`):
