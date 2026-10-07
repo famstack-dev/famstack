@@ -99,7 +99,7 @@ def check_env_drift(stacklet: str, container: str, drifted: list[str]) -> Findin
     )
 
 
-def check_exited(container: str, exit_code: int, since: str) -> Finding | None:
+def check_exited(stacklet: str, container: str, exit_code: int, since: str) -> Finding | None:
     """A container that stopped and stayed stopped.
 
     `stack status` reports the stacklet as failing without naming which
@@ -112,7 +112,7 @@ def check_exited(container: str, exit_code: int, since: str) -> Finding | None:
         level=ERROR,
         title=f"{container} exited ({exit_code})",
         detail=f"Stopped {since} and has not come back.",
-        fix=f"stack logs {container.split('-')[1] if '-' in container else container}",
+        fix=f"stack logs {stacklet}",
     )
 
 
@@ -315,7 +315,7 @@ def diagnose(stacklets, expected_env, containers_for, container_env,
         for container in containers:
             name = container["name"]
             if container["state"] != "running":
-                found = check_exited(name, container["exit_code"], container["since"])
+                found = check_exited(stacklet, name, container["exit_code"], container["since"])
                 if found:
                     findings.append(found)
                 # A stopped container's environment says nothing useful.
