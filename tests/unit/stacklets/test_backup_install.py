@@ -8,8 +8,11 @@ tests in test_backup_cron.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -80,6 +83,21 @@ class TestCronCommand:
         cmd = cron.sync_command(Path("/repo/stack"), Path("/data/backup/logs/cron.log"))
         assert cmd.startswith('PATH="')
         assert "/bin:$PATH" in cmd
+
+    @pytest.mark.skipif(not Path("/usr/sbin/diskutil").exists(), reason="macOS only")
+    def test_finds_the_sync_tools_under_crons_path(self, tmp_path):
+        # cron on macOS starts with PATH=/usr/bin:/bin, and the sync calls
+        # diskutil, mount and docker by name. Run the line the way cron
+        # does, with a stand-in for the stack that looks each one up.
+        tools = ["diskutil", "mount"] + (["docker"] if Path("/usr/local/bin/docker").exists() else [])
+        stack = tmp_path / "stack"
+        stack.write_text("#!/bin/sh\n" + "".join(f"command -v {t}\n" for t in tools))
+        stack.chmod(0o755)
+        log = tmp_path / "cron.log"
+        cmd = cron.sync_command(stack, log)
+        subprocess.run(["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "/bin/sh", "-c", cmd], check=False)
+        found = log.read_text().split()
+        assert [Path(f).name for f in found] == tools
 
     def test_uses_absolute_paths(self):
         # cron's PATH is minimal; relative paths break. The binary, the
