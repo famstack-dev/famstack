@@ -330,40 +330,126 @@ def project_states() -> dict[str, str]:
         return {}
 
 
-def containers_for(stacklet_id: str) -> list[dict]:
-    """Every container of a stacklet, running or not.
+_PROJECT_LABEL = "com.docker.compose.project"
+_PROJECT_PREFIX = "stack-"
 
-    Returns dicts with name, state, exit_code and a human "since" string.
-    `stack status` only reports the stacklet as a whole, so a single dead
-    sidecar shows up as "failing" with no clue which one died.
+
+def _parse_ps_line(line: str) -> dict | None:
+    """One `docker ps` row (name, project, state, status) as a container dict.
+
+    The stacklet id comes from the compose project, `stack-<id>`. A
+    container that belongs to another project yields None.
     """
+    parts = line.split("\t")
+    if len(parts) != 4:
+        return None
+    name, project, state, status = parts
+    if not project.startswith(_PROJECT_PREFIX):
+        return None
+    # "Exited (128) 3 weeks ago" -> code 128, "3 weeks ago"
+    code, since = 0, status
+    if status.startswith("Exited ("):
+        head, _, tail = status.partition(")")
+        try:
+            code = int(head[len("Exited ("):])
+        except ValueError:
+            code = 1
+        since = tail.strip()
+    return {"name": name, "stacklet": project[len(_PROJECT_PREFIX):],
+            "state": state, "exit_code": code, "since": since}
+
+
+def _ps(label_filter: str) -> list[dict]:
     try:
         r = _docker(
-            "ps", "-a", "--filter", f"name=^stack-{stacklet_id}-",
-            "--format", "{{.Names}}\t{{.State}}\t{{.Status}}",
+            "ps", "-a", "--filter", f"label={label_filter}",
+            "--format", f'{{{{.Names}}}}\t{{{{.Label "{_PROJECT_LABEL}"}}}}'
+                        "\t{{.State}}\t{{.Status}}",
             capture_output=True, text=True, timeout=10,
         )
         if r.returncode != 0:
             return []
-        out = []
-        for line in r.stdout.strip().splitlines():
-            parts = line.split("\t")
-            if len(parts) != 3:
-                continue
-            name, state, status = parts
-            # "Exited (128) 3 weeks ago" -> code 128, "3 weeks ago"
-            code, since = 0, status
-            if status.startswith("Exited ("):
-                head, _, tail = status.partition(")")
-                try:
-                    code = int(head[len("Exited ("):])
-                except ValueError:
-                    code = 1
-                since = tail.strip()
-            out.append({"name": name, "state": state, "exit_code": code, "since": since})
-        return out
+        rows = (_parse_ps_line(line) for line in r.stdout.strip().splitlines())
+        return [row for row in rows if row]
     except Exception:
         return []
+
+
+def containers_for(stacklet_id: str) -> list[dict]:
+    """Every container of a stacklet, running or not.
+
+    Returns dicts with name, stacklet, state, exit_code and a human "since"
+    string. `stack status` only reports the stacklet as a whole, so a single
+    dead sidecar shows up as "failing" with no clue which one died.
+
+    Matched by compose project rather than by name: a stacklet with one
+    service is named `stack-<id>`, without the `-<service>` suffix a name
+    pattern would need.
+    """
+    return _ps(f"{_PROJECT_LABEL}={_PROJECT_PREFIX}{stacklet_id}")
+
+
+def stack_containers() -> list[dict]:
+    """Every container of every stacklet, in one query. Same dicts as
+    `containers_for`. Projects of other tools on the same Docker are left
+    out; a `stack-` project whose stacklet no longer exists is not, so
+    callers filter by the stacklets they know."""
+    return _ps(_PROJECT_LABEL)
+
+
+def container_logs(name: str, since: str) -> str:
+    """A container's log since `since` (a docker duration such as `24h`),
+    stdout and stderr together, each line prefixed with its timestamp so
+    the two streams can be put back in order."""
+    try:
+        r = _docker("logs", "--since", since, "--timestamps", name,
+                    capture_output=True, text=True, timeout=60)
+        return r.stdout + r.stderr
+    except Exception:
+        return ""
+
+
+_SIZE_UNITS = {"b": 1, "kb": 1000, "mb": 1000 ** 2, "gb": 1000 ** 3, "tb": 1000 ** 4,
+               "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4}
+
+
+def parse_size(text: str) -> int:
+    """`docker stats` sizes (`512MiB`, `1.2GiB`, `0B`) as bytes; 0 if unreadable."""
+    text = text.strip()
+    digits = text.rstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    unit = text[len(digits):].lower()
+    try:
+        return int(float(digits) * _SIZE_UNITS[unit])
+    except (ValueError, KeyError):
+        return 0
+
+
+def container_stats() -> dict[str, dict]:
+    """Memory and CPU of every running container, keyed by name.
+
+    `docker stats --no-stream` samples for about two seconds, so this is
+    for a command someone asked for, not for anything run on every poll.
+    """
+    try:
+        r = _docker("stats", "--no-stream", "--format",
+                    "{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}",
+                    capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return {}
+    except Exception:
+        return {}
+    stats = {}
+    for line in r.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        name, mem, cpu = parts
+        try:
+            cpu_pct = float(cpu.strip().rstrip("%"))
+        except ValueError:
+            cpu_pct = 0.0
+        stats[name] = {"memory_bytes": parse_size(mem.split("/")[0]), "cpu_pct": cpu_pct}
+    return stats
 
 
 def _parse_env(text: str) -> dict:

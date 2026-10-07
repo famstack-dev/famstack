@@ -249,17 +249,25 @@ def test_no_drift_produces_no_finding():
 
 
 def test_clean_exit_is_not_a_finding():
-    assert check_exited("stack-core-job", 0, "2 minutes ago") is None
+    assert check_exited("core", "stack-core-job", 0, "2 minutes ago") is None
 
 
 def test_nonzero_exit_names_the_container_and_code():
     # The real case: watchtower Exited(128) three weeks ago, while status
     # only said the stacklet was failing.
-    finding = check_exited("stack-core-watchtower", 128, "3 weeks ago")
+    finding = check_exited("core", "stack-core-watchtower", 128, "3 weeks ago")
     assert finding.is_error
     assert "stack-core-watchtower" in finding.title
     assert "128" in finding.title
     assert "3 weeks ago" in finding.detail
+
+
+def test_the_fix_reads_the_logs_of_the_containers_stacklet():
+    # A container left from an older version of a stacklet keeps its old
+    # name ("famstack-wiki-preview-de" in the memory project); the name says
+    # nothing about which stacklet's logs to read.
+    finding = check_exited("memory", "famstack-wiki-preview-de", 1, "11 days ago")
+    assert finding.fix == "stack logs memory"
 
 
 # ── missing credentials ──────────────────────────────────────────────────

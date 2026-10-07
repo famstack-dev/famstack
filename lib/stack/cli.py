@@ -22,14 +22,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
+import time
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
+from . import app as menubar_app
 from . import caddy
 from . import docker
 from . import doctor
 from . import global_command
+from . import logscan
 from .commands import COMMANDS
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack
@@ -1140,6 +1147,17 @@ def handle_doctor(stck, args):
     if release:
         findings.insert(0, release)
 
+    if args.json:
+        json.dump({
+            "version": running_version_of(stck),
+            "summary": doctor.summarise(findings),
+            "findings": [asdict(f) for f in findings],
+        }, sys.stdout, indent=2)
+        print()
+        if any(f.is_error for f in findings):
+            sys.exit(1)
+        return
+
     print()
     if position:
         print(f"  {ORANGE}{BOLD}{stck.product_name()}{RESET} "
@@ -1170,13 +1188,59 @@ def handle_list(stck, args):
     print_list(stck.list(), stck)
 
 
+# A key named like a credential. Matched on the name, not the value, so a
+# secret added to stack.toml or users.toml later is hidden without a change here.
+_SECRET_KEY = re.compile(r"(key|password|passwd|secret|token)$", re.IGNORECASE)
+_HIDDEN = "(hidden)"
+
+
+def _redact(value):
+    """`value` with every credential replaced by a marker. An empty one stays
+    empty, so the reader can still tell set from unset."""
+    if isinstance(value, dict):
+        return {k: (_HIDDEN if _SECRET_KEY.search(k) and v not in ("", None) else _redact(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    return value
+
+
+def _read_toml(path: Path) -> dict:
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def config_report(instance_dir: Path) -> dict:
+    """stack.toml and users.toml as written, without their credentials.
+
+    The raw files, not resolved values: a key the admin left out is absent
+    here and its default applies. Both paths are included so a reader can
+    open the file to change it.
+    """
+    stack_toml = instance_dir / "stack.toml"
+    users_toml = instance_dir / "users.toml"
+    return {
+        "stack_toml": str(stack_toml),
+        "users_toml": str(users_toml),
+        "config": _redact(_read_toml(stack_toml)),
+        "users": _redact(_read_toml(users_toml).get("users", [])),
+    }
+
+
 def handle_config(stck, args):
     """Config subcommands. Bare 'stack config' prints stack.toml."""
     action = getattr(args, "config_action", None)
     if action == "admin":
         _config_admin(stck)
         return
-    path = stck.root / "stack.toml"
+    if getattr(args, "json", False):
+        json.dump(config_report(stck.instance_dir), sys.stdout, indent=2, default=str)
+        print()
+        return
+    path = stck.instance_dir / "stack.toml"
     if not path.exists():
         print("  No stack.toml found.")
         return
@@ -1282,6 +1346,147 @@ def handle_logs(stck, args):
         print(json.dumps({"ok": True, "lines": output.splitlines() if output else [], "count": len(output.splitlines()) if output else 0}))
     else:
         print(output)
+
+
+# ── errors, host: what an admin checks first ──────────────────────────────
+
+_DURATION = re.compile(r"^\d+[smh]$")
+
+
+def handle_errors(stck, args):
+    """Error lines from every stacklet's containers over a recent window.
+
+    One question across the whole stack, so a failure in a sidecar nobody
+    watches is seen without opening each stacklet's log. What counts as an
+    error lives in logscan.py; this is the I/O around it.
+    """
+    since = args.since
+    if not _DURATION.match(since):
+        print_error({"error": f"--since takes a duration such as 30m or 24h, not '{since}'"})
+        sys.exit(1)
+
+    known = {s["id"] for s in stck.discover()}
+    containers = [c for c in docker.stack_containers() if c["stacklet"] in known]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        scans = list(pool.map(
+            lambda c: logscan.scan(docker.container_logs(c["name"], since)), containers))
+
+    found = [{"stacklet": c["stacklet"], "container": c["name"], **scan}
+             for c, scan in zip(containers, scans) if scan["count"]]
+    found.sort(key=lambda e: e["last_at"] or "", reverse=True)
+    report = {"since": since, "scanned": len(containers), "containers": found}
+
+    if args.json:
+        json.dump(report, sys.stdout, indent=2)
+        print()
+        return
+
+    print()
+    if not found:
+        print(f"  {GREEN}✓{RESET}  No errors in the last {since} "
+              f"across {len(containers)} containers.\n")
+        return
+    for entry in found:
+        noun = "error" if entry["count"] == 1 else "errors"
+        print(f"  {RED}✗{RESET}  {BOLD}{entry['container']}{RESET}  "
+              f"{entry['count']} {noun} in the last {since}")
+        for line in entry["lines"][-3:]:
+            print(f"     {DIM}{line['text'][:160]}{RESET}")
+        print(f"     {DIM}more:{RESET} {TEAL}./stack logs {entry['stacklet']}{RESET}\n")
+
+
+APP_VERBS = {"install": "build the menu bar app from this checkout and put it in Applications"}
+
+
+def handle_app(stck, args):
+    """The menu bar app. `install` builds it here and installs it; running
+    it again after `stack update` updates it. Without a verb, the verbs."""
+    if not args.verb:
+        report = {"commands": APP_VERBS}
+        if args.json:
+            json.dump(report, sys.stdout, indent=2)
+            print()
+            return
+        print()
+        for verb, what in APP_VERBS.items():
+            print(f"  {TEAL}./stack app {verb}{RESET}  {DIM}{what}{RESET}")
+        print()
+        return
+    if args.verb not in APP_VERBS:
+        print_error({"error": f"Unknown verb '{args.verb}'. Use: {', '.join(APP_VERBS)}"})
+        sys.exit(1)
+
+    if not args.json:
+        print("\n  Building the menu bar app (about a minute)...")
+    result = menubar_app.install(stck.root, open_after=not args.json)
+    if "error" in result:
+        print_error(result)
+        sys.exit(1)
+    if args.json:
+        json.dump(result, sys.stdout, indent=2)
+        print()
+        return
+    print(f"  {GREEN}\u2713{RESET}  Installed {TEAL}{result['installed']}{RESET}")
+    print(f"  {DIM}It sits in the menu bar. Setup \u2192 Connection picks this Mac "
+          f"or another one over SSH.{RESET}\n")
+
+
+def _uptime_seconds() -> int | None:
+    """Seconds since boot, from `sysctl kern.boottime` (`{ sec = 1727..., ...}`)."""
+    try:
+        r = subprocess.run(["sysctl", "-n", "kern.boottime"],
+                           capture_output=True, text=True, timeout=5)
+        match = re.search(r"sec = (\d+)", r.stdout)
+        return int(time.time()) - int(match.group(1)) if match else None
+    except Exception:
+        return None
+
+
+def handle_host(stck, args):
+    """The machine: memory, disk, uptime, and what each stacklet uses.
+
+    Stacklet figures come from `docker stats`, so a stacklet that runs on
+    the host itself (the AI server) has none: its processes are not
+    containers.
+    """
+    known = {s["id"] for s in stck.discover()}
+    stats = docker.container_stats()
+    per_stacklet: dict[str, dict] = {}
+    for c in docker.stack_containers():
+        if c["stacklet"] not in known or c["name"] not in stats:
+            continue
+        entry = per_stacklet.setdefault(
+            c["stacklet"], {"id": c["stacklet"], "memory_bytes": 0, "cpu_pct": 0.0, "containers": 0})
+        entry["memory_bytes"] += stats[c["name"]]["memory_bytes"]
+        entry["cpu_pct"] = round(entry["cpu_pct"] + stats[c["name"]]["cpu_pct"], 1)
+        entry["containers"] += 1
+
+    report = {
+        **stck._host_stats(),
+        "uptime_seconds": _uptime_seconds(),
+        "stacklets": sorted(per_stacklet.values(), key=lambda e: e["memory_bytes"], reverse=True),
+    }
+
+    if args.json:
+        json.dump(report, sys.stdout, indent=2)
+        print()
+        return
+
+    print(f"\n  {BOLD}Host{RESET}")
+    if "memory_total_gb" in report:
+        print(f"    Memory   {report.get('memory_used_gb', '?')} of {report['memory_total_gb']} GB used")
+    if "disk_total_gb" in report:
+        print(f"    Disk     {report['disk_free_gb']} GB free of {report['disk_total_gb']} GB "
+              f"({report['disk_used_pct']}% used)")
+    if report["uptime_seconds"] is not None:
+        days, rest = divmod(report["uptime_seconds"], 86400)
+        print(f"    Up       {days} days, {rest // 3600} hours")
+    if report["stacklets"]:
+        print(f"\n  {BOLD}Stacklets by memory{RESET}")
+        for e in report["stacklets"]:
+            print(f"    {e['id']:<12}{e['memory_bytes'] / 1024 ** 3:>6.2f} GB"
+                  f"   {e['cpu_pct']:>5.1f}% CPU   {DIM}{e['containers']} containers{RESET}")
+    print()
 
 
 def handle_restart(stck, args):
@@ -1743,6 +1948,11 @@ def handle_update(stck, args):
 
     print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")
     _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
+    # The app is built from the checkout, so moving the checkout leaves the
+    # installed one behind until it is built again.
+    if menubar_app.installed():
+        print(f"  {DIM}The menu bar app is built from the checkout:{RESET} "
+              f"{TEAL}./stack app install{RESET} {DIM}updates it.{RESET}\n")
 
 
 def print_restart_call_to_action(targets, framework=False) -> None:
@@ -1887,6 +2097,9 @@ DISPATCH = {
     "restart": handle_restart,
     "setup": handle_setup,
     "logs": handle_logs,
+    "errors": handle_errors,
+    "host": handle_host,
+    "app": handle_app,
     "version": handle_version,
     "update": handle_update,
 }
@@ -1908,9 +2121,12 @@ _HELP_COMMANDS = [
         ("config admin",       "Print tech admin credentials"),
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
+        ("errors [--since 24h]", "Recent error lines across every stacklet"),
+        ("host",               "Memory, disk, uptime, and what each stacklet uses"),
     ]),
     ("Setup", [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
+        ("app install",        "Build the menu bar app and put it in Applications"),
         ("install",            "Interactive setup wizard"),
         ("uninstall",          "Remove all services, config, and data"),
         ("init",               "Create Docker network and data directories"),
@@ -1990,9 +2206,12 @@ def main():
     )
     sub.add_parser("init")
     sub.add_parser("status")
-    sub.add_parser("doctor")
+    p = sub.add_parser("doctor")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
     sub.add_parser("list")
     p = sub.add_parser("config")
+    p.add_argument("--json", action="store_true",
+                   help="stack.toml and users.toml as JSON, credentials hidden")
     config_sub = p.add_subparsers(dest="config_action")
     config_sub.add_parser("admin")
     sub.add_parser("help")
@@ -2027,6 +2246,14 @@ def main():
     p.add_argument("stacklet")
     p.add_argument("--tail", default=200, type=int)
     p.add_argument("--grep", default=None, help="Filter log lines with grep pattern")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("errors")
+    p.add_argument("--since", default="24h", help="How far back to look: 30m, 24h, 168h")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("app")
+    p.add_argument("verb", nargs="?", default=None, help="install")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("host")
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
     # Stacklet CLI plugins

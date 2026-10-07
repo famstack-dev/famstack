@@ -739,6 +739,42 @@ Key things to know:
 
 All commands output JSON when piped. Use `--json` to force it, `--pretty` to force human output.
 
+### The menu bar app (beta)
+
+A macOS menu bar app shows the stack at a glance: what needs you (with the
+command that fixes it), each stacklet with start, stop, restart, open and
+logs, errors from the last 24 hours, and the Mac's disk and memory. A
+**Setup** tab shows the family, address mode, language, AI and data dir, and
+opens `stack.toml` and `users.toml` for editing. It runs the `stack` CLI and
+nothing else, so it starts no services and keeps no state of its own.
+
+Install it from the checkout. It needs macOS 14 and the Command Line Tools,
+which Homebrew already installed:
+
+```bash
+./stack app install
+```
+
+That builds the app (about a minute the first time), puts it in
+`/Applications` (or `~/Applications` when that is not writable) and opens it.
+The app is signed for the Mac it was built on, so install it on the Mac that
+runs it. After `./stack update`, run `./stack app install` again to update the
+app; `update` reminds you when the app is installed.
+
+**Which machine.** **Setup → Connection** switches between this Mac and
+another one:
+
+- **This Mac**: the checkout you run `./stack` from (`~/famstack` unless you
+  choose another with **Change…**).
+- **Remote**: the server Mac over SSH, from a laptop for example. Give its
+  SSH host (an alias from `~/.ssh/config` or `user@host`) and its checkout
+  path. The server needs **Remote Login** on (System Settings → General →
+  Sharing), and your SSH key must work without a password prompt. Logs and
+  editing open Terminal with an SSH session to the server.
+
+Against a checkout older than 0.4.0 the app leaves out the sections that need
+newer commands (doctor, errors, memory, setup) and says so.
+
 ---
 
 ## Backups

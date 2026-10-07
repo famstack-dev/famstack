@@ -39,6 +39,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack logs <id>` | yes | no | tail container logs |
 | `./stack errors` | yes | no | recent error logs (24h) |
 | `./stack host` | yes | no | disk / memory / uptime |
+| `./stack app install` | yes | no | builds the menu bar app from the checkout, puts it in `/Applications` and opens it; again after an update |
 | `./stack config [--secrets]` | yes | no | prints resolved config |
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
@@ -132,6 +133,7 @@ A release is a git tag. `./stack update` moves the checkout to one and names wha
 - **Works from a branch or a fork.** On `main` it moves to the tag and says the branch is left behind (`git switch main` returns). Tags are fetched from every remote, so a fork needs the project added as a remote or there is nothing to update to.
 - **A tag checkout is a detached HEAD.** `git pull` fails there. Never suggest `git pull origin main` as the fix: it succeeds and silently moves the instance onto unreleased code while `./stack version` still reports the last release.
 - **`./stack version` now says what is running,** not what the source constant claims: `0.3.0-beta.3-104-g9a5bdc9-dirty` is the tag, the distance past it, the commit, and an unclean tree. `version`, `status`, `list`, `doctor` and `update` all print the same string. `./stack doctor` adds a warning when a newer release exists, without fetching, so that half is as fresh as the last `git fetch`.
+- **The menu bar app is not updated with the checkout.** If the admin uses it (`/Applications/famstack.app`), run `./stack app install` again after an update; `update` reminds the admin when the app is installed. See the admin guide, "The menu bar app".
 - **The instance survives a tag switch.** Config, secrets, data and `~/<product>-extensions/` are all outside git.
 
 Full prose: [../admin-guide.md](../admin-guide.md) § Updating.
