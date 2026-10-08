@@ -488,7 +488,8 @@ Pre-tag gate, in order. A published tag is never moved; anything missed here shi
 3b. Every commit since the previous tag parses as a changelog entry. An unclassified subject blocks the tag: it would be missing from the release notes and from the website. Reword it if it has not shipped, add the entry by hand if it has. `script/release-notes` shows such a subject under Unclassified.
 4. Fresh-instance install verified.
 5. Stale references updated: README version callouts, docs links, blog "Try it" instructions.
-6. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with Highlights and an "Upgrading from" section, followed by the change list from `script/release-notes --latest`.
+6. Write the notes with the `release-notes` skill (`.claude/skills/release-notes/`): it generates the change list with `script/release-notes`, merges and drops entries, and writes Highlights and an "Upgrading from" section, with an audit that accounts for every generated entry. The generated list is its input, never the published text.
+7. Tag (`vX.Y.Z` / `vX.Y.Z-beta.N`, annotated), push main + tag, publish the GitHub release with those notes.
 
 **The tag format is load-bearing.** `stack update` parses `v?MAJOR.MINOR.PATCH[-label.N]` and ignores anything else, so a tag spelled `v0.3.0.beta1` is invisible: `stack update` would keep offering the previous release and never mention it. Hyphen before the label, dot before its number, as SemVer has it. The prerelease sorts below the release it leads to, and label numbers compare as numbers, so `beta.10` is newer than `beta.9`.
 
