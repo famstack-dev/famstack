@@ -52,6 +52,11 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **Email into the family brain**: point a mailbox at a chat room and new mail (with its attachments) lands there for the archivist to file, newsletters and marketing filtered out (IMAP, read-only, private).
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
 
+<p align="center">
+  <img src="docs/assets/memory-wiki-family.webp" width="720" alt="The start page of the family wiki in the Simpsons demo: the address, a link to the family diary, then the members, broader family, home and vehicles, each line with the numbers of the documents it came from.">
+  <br><em>The family wiki: what your documents say about the family, every line with its sources</em>
+</p>
+
 <table align="center">
   <tr>
     <td align="center" width="38%">
