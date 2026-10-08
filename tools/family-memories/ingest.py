@@ -157,12 +157,15 @@ def main():
     ap.add_argument("--login", action="append", required=True,
                     metavar="USER:PASSWORD")
     ap.add_argument("--locale", choices=["de", "en"], default="de")
+    ap.add_argument("--corpus", default=None,
+                    help="replay out/<corpus>/ (from generate.py --corpus) "
+                         "instead of out/<locale>/")
     ap.add_argument("--delay", type=float, default=2.0,
                     help="seconds between non-burst items")
     ap.add_argument("--force-i-know", action="store_true")
     args = ap.parse_args()
     global OUT
-    OUT = OUT / args.locale
+    OUT = OUT / (args.corpus or args.locale)
 
     household = configured_household(REPO_ROOT)
     if not args.force_i_know and \

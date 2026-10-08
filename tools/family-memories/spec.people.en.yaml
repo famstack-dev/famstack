@@ -1,0 +1,637 @@
+# spec.people.en.yaml: two and a half years of a memories room, for
+# measuring how the people around a family show up in it.
+#
+# The base corpus (spec.en.yaml) covers four weeks and exercises dating
+# and threading. This one spreads ordinary memories from March 2024 to
+# September 2026 and lets the people outside the household come and go
+# the way they do in a real room: grandparents rarely but for years, a
+# best friend all the time, a teacher for one school year, a doctor for
+# one month, a bully often without being close.
+#
+# Render and replay:
+#   FAMSTACK_TTS_URL=https://<speech-host>/v1/audio/speech \
+#     python tools/family-memories/generate.py --corpus people.en
+#   python tools/family-memories/ingest.py --corpus people.en ...
+#
+# Every item states its date in its text, with the year, because a
+# replay lands on the day it runs (see README). Compile with the default
+# burst window: items go out --delay apart and none of them is a burst.
+#
+# Ground truth
+# ------------
+# `people` is the answer key, written before any pipeline ran. `tier`
+# follows who these people are to the Simpsons in the show, not how
+# often this corpus names them, so a counting rule can be scored against
+# it rather than confirmed by it:
+#   family          the household
+#   broader_family  relatives outside the household
+#   close           people the family has a lasting personal bond with
+#   other           everyone else, however often they come up
+# `names` lists the variants the corpus uses for each person.
+#
+# `mentions` on each item lists the people it refers to outside the
+# household, by key, including references without a name ("my sisters").
+
+voices:
+  marge: alloy
+  homer: alloy
+
+people:
+  homer:      {tier: family, names: [Homer, Homie, Dad]}
+  marge:      {tier: family, names: [Marge, Mom]}
+  bart:       {tier: family, names: [Bart]}
+  lisa:       {tier: family, names: [Lisa]}
+  maggie:     {tier: family, names: [Maggie]}
+  abe:        {tier: broader_family, names: [Grampa, Abe, Grandpa Simpson, my dad]}
+  jacqueline: {tier: broader_family, names: [Grandma Bouvier, Mom, my mother]}
+  patty:      {tier: broader_family, names: [Patty, Aunt Patty]}
+  selma:      {tier: broader_family, names: [Selma, Aunt Selma]}
+  herb:       {tier: broader_family, names: [Herb]}
+  ling:       {tier: broader_family, names: [Ling]}
+  milhouse:   {tier: close, names: [Milhouse]}
+  ned:        {tier: close, names: [Ned, Flanders, Ned Flanders]}
+  lenny:      {tier: close, names: [Lenny]}
+  carl:       {tier: close, names: [Carl]}
+  moe:        {tier: close, names: [Moe]}
+  janey:      {tier: close, names: [Janey]}
+  krabappel:  {tier: other, names: [Mrs. Krabappel, Edna Krabappel]}
+  hoover:     {tier: other, names: [Ms. Hoover]}
+  skinner:    {tier: other, names: [Skinner, Principal Skinner]}
+  hibbert:    {tier: other, names: [Dr. Hibbert, Hibbert]}
+  nelson:     {tier: other, names: [Nelson]}
+  largo:      {tier: other, names: [Mr. Largo]}
+  burns:      {tier: other, names: [Mr. Burns]}
+  krusty:     {tier: other, names: [Krusty]}
+  apu:        {tier: other, names: [Apu]}
+  lovejoy:    {tier: other, names: [Reverend Lovejoy]}
+
+items:
+  - id: people-2024-03-grampa-dinner
+    true_date: 2024-03-09
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [abe]
+    text: >
+      Saturday, March 9th 2024. Grampa came for dinner and told the
+      story about his war years again, the one with the hat. Bart
+      pretended to fall asleep in his mashed potatoes, but Lisa asked
+      him three questions and he lit up like a Christmas tree.
+
+  - id: people-2024-03-ramp
+    true_date: 2024-03-23
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: homer
+    mentions: [milhouse]
+    text: >
+      Hi Bart, today is March twenty-third, 2024. You and Milhouse built
+      a ramp out of the old garage door. Milhouse went first, because
+      you said it was an honor. His glasses are fine. The garage door is
+      not. Your mother doesn't know yet.
+
+  - id: people-2024-04-aunts
+    true_date: 2024-04-14
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [patty, selma]
+    text: >
+      April 14th 2024. Patty and Selma came over for Sunday lunch and
+      brought their iguana. Homer spent the whole afternoon in the
+      garage. Lisa played her new piece for her aunts, and Aunt Selma
+      said it was the first thing all year that didn't bore her.
+
+  - id: people-2024-05-sleepover
+    true_date: 2024-05-05
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [janey]
+    text: >
+      May 5th 2024. Lisa's first sleepover here, with Janey. They
+      giggled until two in the morning and made a newspaper about our
+      street. Headline: Local Dad Snores.
+
+  - id: people-2024-05-hedge
+    true_date: 2024-05-19
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: homer
+    mentions: [ned]
+    text: >
+      Hey Lisa, today is May nineteenth, 2024. Ned Flanders lent me his
+      hedge trimmer again. Fourth time this year. You made me bring it
+      back before dinner, and he gave me a lemonade for it. That man is
+      impossible to stay mad at.
+
+  - id: people-2024-06-grandma
+    true_date: 2024-06-08
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [jacqueline]
+    text: >
+      June 8th 2024. Mom's birthday. Grandma Bouvier taught Lisa how to
+      play bridge and beat her four times in a row. Maggie fell asleep
+      on her lap and she didn't move for an hour.
+
+  - id: people-2024-06-bowling
+    true_date: 2024-06-22
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [lenny, carl]
+    text: >
+      June 22nd 2024. Took Bart bowling with Lenny and Carl for the
+      first time. He bowled a 63 and Carl let him keep the score sheet.
+      Lenny says he has my form. I'm choosing to take that as a
+      compliment.
+
+  - id: people-2024-07-fireworks
+    true_date: 2024-07-04
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [ned]
+    text: >
+      July 4th 2024. Fireworks at the Flanders' barbecue next door. Ned
+      let Bart light one sparkler and Bart behaved for a whole evening.
+      Homer ate eleven hot dogs.
+
+  - id: people-2024-07-retirement-castle
+    true_date: 2024-07-20
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: marge
+    mentions: [abe]
+    text: >
+      Hi Maggie, today is July twentieth, 2024. We visited Grampa at the
+      retirement home, and he held you the whole afternoon. You fell
+      asleep on him and then he fell asleep too, and the nurses tiptoed
+      around the two of you.
+
+  - id: people-2024-08-game-night
+    true_date: 2024-08-10
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [moe]
+    text: >
+      August 10th 2024. Moe closed the bar early and came over to watch
+      the game on our couch. He brought pretzels and stayed until Marge
+      started vacuuming around him.
+
+  - id: people-2024-08-squishee
+    true_date: 2024-08-24
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [apu]
+    text: >
+      August 24th 2024. Hottest day of the year. Apu gave Maggie a free
+      Squishee at the Kwik-E-Mart. Her whole face was blue until
+      bedtime.
+
+  - id: people-2024-09-fourth-grade
+    true_date: 2024-09-03
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [krabappel]
+    text: >
+      September 3rd 2024. First day of fourth grade for Bart. His new
+      teacher is Mrs. Krabappel. She called at noon. On the first day.
+
+  - id: people-2024-09-lunch-money
+    true_date: 2024-09-14
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [nelson]
+    text: >
+      September 14th 2024. Nelson took Bart's lunch money again. Bart
+      says it doesn't matter and that he has a plan. I am worried about
+      both.
+
+  - id: people-2024-10-robot
+    true_date: 2024-10-05
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: homer
+    mentions: [milhouse]
+    text: >
+      Hi Bart, today is October fifth, 2024. Milhouse slept over and you
+      two tried to build a robot out of the vacuum cleaner. It works
+      better now than before. I don't know how, and I don't want to
+      know.
+
+  - id: people-2024-10-conference
+    true_date: 2024-10-26
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [krabappel]
+    text: >
+      October 26th 2024. Parent-teacher conference with Edna Krabappel.
+      She says Bart is clever but bored, and that he corrected her
+      spelling on the board. She didn't sound angry. She sounded tired.
+
+  - id: people-2024-11-saxophone
+    true_date: 2024-11-02
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [largo]
+    text: >
+      November 2nd 2024. Mr. Largo moved Lisa up to first saxophone. She
+      practiced on the porch until the neighbors applauded.
+
+  - id: people-2024-11-thanksgiving
+    true_date: 2024-11-28
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [abe, patty, selma, jacqueline]
+    text: >
+      Thanksgiving, November 28th 2024. Everybody at our table: Grampa,
+      Patty and Selma, and Mom. Homer carved the turkey without injuring
+      anyone. Grampa fell asleep before dessert and Patty put a napkin
+      over his face.
+
+  - id: people-2024-12-bonus
+    true_date: 2024-12-15
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [burns, lenny]
+    text: >
+      December 15th 2024. Mr. Burns cancelled the Christmas bonus again.
+      Lenny says next year for sure. We still got the tree, the kids
+      decorated it, and Bart put a picture of Burns at the top.
+
+  - id: people-2024-12-christmas-eve
+    true_date: 2024-12-24
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: marge
+    mentions: [ned, jacqueline]
+    text: >
+      Hi kids, today is Christmas Eve, 2024. Ned came over with a plate
+      of cookies shaped like the three wise men, and Grandma Bouvier
+      read you the Christmas story. Bart, you didn't interrupt once. I
+      want you to know I noticed.
+
+  - id: people-2025-01-snow-fort
+    true_date: 2025-01-11
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [milhouse, nelson]
+    text: >
+      January 11th 2025. Snow day. Bart and Milhouse built a snow fort in
+      the front yard. Nelson knocked it over, and then, to everyone's
+      surprise, helped them build it again.
+
+  - id: people-2025-02-arm
+    true_date: 2025-02-03
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [hibbert]
+    text: >
+      February 3rd 2025. Bart broke his arm falling off the garage roof.
+      Dr. Hibbert set it at the hospital and laughed that laugh of his
+      the whole time. Bart was brave. Homer fainted.
+
+  - id: people-2025-02-xray
+    true_date: 2025-02-10
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [hibbert, krabappel]
+    text: >
+      February 10th 2025. Back at Dr. Hibbert's for the X-ray. The bone
+      is healing. Bart got the whole school to sign the cast, even Mrs.
+      Krabappel, who wrote "finally sitting still".
+
+  - id: people-2025-02-cast-check
+    true_date: 2025-02-24
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [hibbert]
+    text: >
+      February 24th 2025. Cast check with Hibbert. Two more weeks. Bart
+      has been using it as a drum.
+
+  - id: people-2025-03-cast-off
+    true_date: 2025-03-03
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: homer
+    mentions: [hibbert]
+    text: >
+      Hey Bart, today is March third, 2025. Dr. Hibbert took the cast
+      off this morning. Your arm looks like a noodle and smells worse,
+      but you can climb things again. Please don't climb things again.
+
+  - id: people-2025-03-science-fair
+    true_date: 2025-03-22
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [janey]
+    text: >
+      March 22nd 2025. School science fair. Lisa and Janey built a model
+      of the water cycle that actually rained. Second place, behind a
+      volcano. Lisa says the judges were biased toward explosions.
+
+  - id: people-2025-04-birthday-party
+    true_date: 2025-04-01
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [krusty, milhouse, nelson]
+    text: >
+      April 1st 2025, Bart's birthday. Homer booked Krusty for the party.
+      He came an hour late and left after twenty minutes, but Bart will
+      talk about it for years. Milhouse cried when the balloon animal
+      popped. Nelson came too, and brought a present.
+
+  - id: people-2025-04-dads-birthday
+    true_date: 2025-04-12
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [abe]
+    text: >
+      April 12th 2025. My dad's birthday. We took Abe out of the
+      retirement castle for lunch at the diner. He told the waitress
+      three times that he was 29. She gave him a free pie.
+
+  - id: people-2025-05-patty
+    true_date: 2025-05-18
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [patty, selma]
+    text: >
+      May 18th 2025. Patty came alone this time, Selma has a cold. She
+      and Lisa watched MacGyver all afternoon and quoted it at dinner.
+
+  - id: people-2025-06-last-day
+    true_date: 2025-06-13
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [krabappel]
+    text: >
+      June 13th 2025. Last day of school. Bart gave Mrs. Krabappel a
+      card he made himself. She cried a little, I think. He says she
+      had something in her eye.
+
+  - id: people-2025-06-summer-concert
+    true_date: 2025-06-28
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: marge
+    mentions: [largo]
+    text: >
+      Hi Lisa, today is June twenty-eighth, 2025. Your summer concert
+      with Mr. Largo's band. You played your solo a little faster than
+      he wanted, and it was the best part of the evening.
+
+  - id: people-2025-07-camping
+    true_date: 2025-07-19
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [ned]
+    text: >
+      July 19th 2025. Camping at Lake Springfield with Ned and his boys.
+      Ned brought a tent for each of us, labeled. Ours collapsed anyway.
+      We slept in his.
+
+  - id: people-2025-08-roof
+    true_date: 2025-08-16
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [lenny, carl, moe]
+    text: >
+      August 16th 2025. Lenny and Carl helped me fix the roof, the part
+      Bart fell off. Moe sent a case of beer and a note saying he
+      doesn't do ladders.
+
+  - id: people-2025-09-school
+    true_date: 2025-09-02
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [hoover, milhouse]
+    text: >
+      September 2nd 2025. School again. Bart has Ms. Hoover this year.
+      Milhouse is in his class again, so I give it a week.
+
+  - id: people-2025-09-herb
+    true_date: 2025-09-20
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [herb]
+    text: >
+      September 20th 2025. Herb, Homer's half-brother, called for the
+      first time in years. They talked for an hour. Homer was quiet
+      afterwards, in a good way.
+
+  - id: people-2025-10-halloween
+    true_date: 2025-10-31
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: homer
+    mentions: [ned]
+    text: >
+      Hi Maggie, today is Halloween, 2025. You went as a pacifier. Ned
+      gave out apples again and Bart egged nobody, which I count as
+      growth.
+
+  - id: people-2025-11-thanksgiving
+    true_date: 2025-11-27
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [abe, patty, selma, jacqueline]
+    text: >
+      Thanksgiving, November 27th 2025. Grampa, my sisters and Mom all
+      came. Grampa and Mom argued about the gravy and both lost. Maggie
+      said "turkey" for the first time, or something close.
+
+  - id: people-2025-12-carols
+    true_date: 2025-12-24
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [jacqueline, janey, lovejoy]
+    text: >
+      Christmas Eve 2025. Mom stayed over. Lisa and Janey sang carols at
+      church, and Reverend Lovejoy let them do a second verse. Homer
+      stayed awake for all of it.
+
+  - id: people-2026-01-detention
+    true_date: 2026-01-17
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [milhouse, skinner]
+    text: >
+      January 17th 2026. Bart and Milhouse got detention together for
+      the thing with the school bell. Skinner called both families. I
+      told Bart I was disappointed and then asked him how they did it.
+
+  - id: people-2026-02-valentine
+    true_date: 2026-02-14
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [moe]
+    text: >
+      Valentine's Day 2026. Moe gave me advice for Marge. I ignored all
+      of it and made her pancakes shaped like hearts. Mostly like
+      hearts.
+
+  - id: people-2026-03-war-stories
+    true_date: 2026-03-01
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: marge
+    mentions: [abe]
+    text: >
+      Hi Bart, today is March first, 2026. Grampa told you about the war
+      again, and this time you listened all the way to the end. He told
+      me afterwards that you are the only one who does.
+
+  - id: people-2026-04-janeys
+    true_date: 2026-04-25
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [janey]
+    text: >
+      April 25th 2026. Lisa slept over at Janey's for the first time.
+      She called at nine to say goodnight and at nine thirty to say she
+      was fine.
+
+  - id: people-2026-05-ling
+    true_date: 2026-05-09
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [selma, ling]
+    text: >
+      May 9th 2026. Selma visited with her daughter Ling. Ling and
+      Maggie played with the blocks all afternoon without a single
+      fight, which is more than I can say for their mothers.
+
+  - id: people-2026-06-room
+    true_date: 2026-06-20
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: homer
+    mentions: [abe]
+    text: >
+      June 20th 2026. Grandpa Simpson moved to a room with a window on
+      the garden side. We brought his old armchair. He says it smells
+      like home, and that home smelled terrible.
+
+  - id: people-2026-07-nelson-dinner
+    true_date: 2026-07-11
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [nelson]
+    text: >
+      July 11th 2026. Nelson came over for dinner. He said please twice
+      and thank you once. Bart says they are not friends, they just
+      have an arrangement.
+
+  - id: people-2026-08-barbecue
+    true_date: 2026-08-08
+    date_source: spoken
+    pattern: people-mention
+    kind: voice
+    sender: homer
+    mentions: [lenny, carl]
+    text: >
+      Hey Lisa, today is August eighth, 2026. Lenny and Carl came over
+      for a barbecue and you explained to them why you don't eat meat.
+      Carl had a veggie burger. Lenny had three regular ones, out of
+      respect.
+
+  - id: people-2026-08-milhouse-moves
+    true_date: 2026-08-29
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [milhouse]
+    text: >
+      August 29th 2026. Milhouse's family is moving to Capital City.
+      Bart went to his room and didn't come down for dinner. Later he
+      asked if we could visit them in the fall.
+
+  - id: people-2026-09-mom-fall
+    true_date: 2026-09-05
+    date_source: written
+    pattern: people-mention
+    kind: text
+    sender: marge
+    mentions: [jacqueline]
+    text: >
+      September 5th 2026. My mother fell in her kitchen. She's fine, a
+      bruise and a lot of opinions. Lisa made her a get-well card with
+      a saxophone on it.

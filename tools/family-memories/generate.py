@@ -177,8 +177,14 @@ def main() -> None:
     ap.add_argument("--only", default=None, help="substring filter on item id")
     ap.add_argument("--locale", choices=["de", "en"], default=None,
                     help="render one locale (default: all)")
+    ap.add_argument("--corpus", default=None,
+                    help="render spec.<corpus>.yaml into out/<corpus>/ "
+                         "instead of the locale specs, e.g. people.en")
     args = ap.parse_args()
-    locales = [args.locale] if args.locale else ["de", "en"]
+    if args.corpus:
+        locales = [args.corpus]
+    else:
+        locales = [args.locale] if args.locale else ["de", "en"]
     for locale in locales:
         render_locale(locale, args)
 
