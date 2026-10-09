@@ -42,6 +42,7 @@ from matching import (
     MAX_TITLE_LENGTH,
     _is_empty,
     fuzzy_match_entity,
+    declared_person_names,
     match_persons,
     match_topics,
     submitter_person_tag,
@@ -78,6 +79,7 @@ from memory.lib import rewrite_query as memory_rewrite_query  # noqa: E402
 ImageAttachment = LLMImage
 
 if TYPE_CHECKING:
+    from stack.people import Person
     from stack.ontology import Ontology
 
 
@@ -1637,6 +1639,8 @@ def extract_bot_summary(doc: dict) -> str:
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _NEW_TOPIC_COLOR = "#4caf50"
+# Same colour `seed.py` gives the person tags it creates for accounts.
+_PERSON_TAG_COLOR = "#2196f3"
 
 
 async def enrich_document(
@@ -1657,6 +1661,7 @@ async def enrich_document(
     initial_classification: dict | None = None,
     submitter_mxid: str | None = None,
     write_in: str | None = None,
+    people: "list[Person] | None" = None,
 ) -> EnrichResult:
     """Classify a doc, reconcile entities, PATCH Paperless. Pure data out.
 
@@ -1758,6 +1763,19 @@ async def enrich_document(
     # tag name; we strip the prefix for the resolved-name list callers
     # want to render.
     persons_raw = classification.get("persons") or classification.get("person")
+    if people is not None:
+        # The person files name who the family knows, accounts or not:
+        # each name resolves through the person's aliases, and a person
+        # who has no `Person:` tag yet (no account, so none was seeded)
+        # gets one the first time a document names them.
+        persons_raw = declared_person_names(persons_raw, people)
+        firsts = {p.first_name for p in people}
+        for name in persons_raw:
+            tag = f"Person: {name}"
+            if name in firsts and tag not in tags:
+                if new_id := await paperless.create_tag(tag, _PERSON_TAG_COLOR):
+                    tags[tag] = new_id
+                    result.created_new.append(f'tag "{tag}"')
     for pt in match_persons(persons_raw, tags):
         tag_ids.append(tags[pt])
         result.resolved_persons.append(pt.replace("Person: ", ""))

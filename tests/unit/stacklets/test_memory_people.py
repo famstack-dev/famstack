@@ -289,3 +289,60 @@ class TestTheCuratorRebuildsOnAChange:
         argv = member_selection(["homer/notes/2026/10/x.md"], lambda path: {},
                                 shared_bucket="family")
         assert argv == ["--home", "--member", "homer"]
+
+
+# ── What the archivist is told ───────────────────────────────────────────
+
+class TestTheClassifierIsToldThePeople:
+    """The document classifier's persons block comes from the files once they exist."""
+
+    @staticmethod
+    def _vault_context(tmp_path, monkeypatch):
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
+        from vault_context import VaultContext
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path))
+        (tmp_path / "family").mkdir(exist_ok=True)
+        return VaultContext(language="en", shared_bucket="family")
+
+    def test_every_person_with_every_name(self, tmp_path, monkeypatch):
+        """Maggie has no account and is listed like anyone else."""
+        vault = self._vault_context(tmp_path, monkeypatch)
+        _declare(tmp_path, homer=HOMER, maggie=MAGGIE)
+        assert vault.persons_section() == (
+            "Family members (canonical first name; synonyms in parens):\n"
+            "  - Homer (Homer Simpson)\n"
+            "  - Maggie (Maggie Simpson, Margaret)")
+
+    def test_without_the_files_the_old_block(self, tmp_path, monkeypatch):
+        """No files, no person pages in the vault: empty, and the prompt
+        falls back to the Person tags as before."""
+        vault = self._vault_context(tmp_path, monkeypatch)
+        assert vault.people() is None
+        assert vault.persons_section() == ""
+
+
+class TestThePromptCommandShowsThePeople:
+    """`stack memory prompt` is where an admin looks when a name is not recognised."""
+
+    @staticmethod
+    def _prompt(tmp_path, capsys) -> str:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "memory_cli_prompt", _REPO_ROOT / "stacklets" / "memory" / "cli" / "prompt.py")
+        prompt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(prompt)
+        prompt.run([], None, {"data_dir": str(tmp_path)})
+        return capsys.readouterr().out
+
+    def test_the_block_the_classifier_receives(self, tmp_path, capsys):
+        _declare(tmp_path / "memory" / "vault", homer=HOMER, maggie=MAGGIE)
+        out = self._prompt(tmp_path, capsys)
+        assert "  - Maggie (Maggie Simpson, Margaret)" in out
+        assert "Used by: document classifier" in out
+
+    def test_a_skipped_file_is_named_with_the_reason(self, tmp_path, capsys):
+        _declare(tmp_path / "memory" / "vault", homer=HOMER,
+                 maggie="---\ntype: person\ntitle: Maggie Simpson\naliases: Margaret\n---\n")
+        out = self._prompt(tmp_path, capsys)
+        assert "Skipped, fix these files:" in out
+        assert "family/people/maggie.md: field `aliases` must be a list" in out

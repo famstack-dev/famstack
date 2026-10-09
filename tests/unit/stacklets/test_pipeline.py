@@ -18,6 +18,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
+from stack.people import Person  # noqa: E402
 from pipeline import (  # noqa: E402
     LLMModelNotFoundError,
     LLMTimeoutError,
@@ -634,6 +635,64 @@ class TestEnrichCreateNew:
 
 
 # ── Fresh-reprocess semantics ─────────────────────────────────────────────
+
+class TestEnrichWithThePersonFiles:
+    """With person files, people are filed by who they are, not by spelling.
+
+    The files declare everyone the family knows, accounts or not, with
+    the names the family uses. A name resolves through those; a person
+    who has no `Person:` tag yet (no account, so none was seeded) gets
+    one the first time a document names them. Without the files nothing
+    changes.
+    """
+
+    PEOPLE = [
+        Person("homer", "Homer Simpson", account="homer"),
+        Person("marge", "Marge Simpson", account="marge"),
+        Person("bart", "Bart Simpson", ("Bartholomew",), account="bart"),
+        Person("maggie", "Maggie Simpson", ("Margaret",)),
+    ]
+
+    @pytest.mark.asyncio
+    async def test_an_alias_files_under_the_persons_tag(self, seeded_paperless):
+        classifier = StubClassifier(payload={"title": "t", "persons": ["Bartholomew"]})
+        result = await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            people=self.PEOPLE,
+        )
+        assert result.resolved_persons == ["Bart"]
+
+    @pytest.mark.asyncio
+    async def test_a_person_without_an_account_gets_a_tag_when_first_named(
+            self, seeded_paperless):
+        """Maggie has no account and so no seeded tag; she is still family."""
+        classifier = StubClassifier(payload={"title": "t", "persons": ["Margaret"]})
+        result = await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            people=self.PEOPLE,
+        )
+        assert result.resolved_persons == ["Maggie"]
+        assert ("Person: Maggie", "#2196f3") in seeded_paperless.created_tags
+        assert 'tag "Person: Maggie"' in result.created_new
+
+    @pytest.mark.asyncio
+    async def test_a_name_nobody_answers_to_gets_no_person_tag(self, seeded_paperless):
+        classifier = StubClassifier(payload={"title": "t", "persons": ["Simpson"]})
+        result = await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+            people=self.PEOPLE,
+        )
+        assert result.resolved_persons == []
+        assert not seeded_paperless.created_tags
+
+    @pytest.mark.asyncio
+    async def test_without_person_files_no_tag_is_created(self, seeded_paperless):
+        classifier = StubClassifier(payload={"title": "t", "persons": ["Margaret"]})
+        await enrich_document(
+            paperless=seeded_paperless, classifier=classifier, doc=_doc(),
+        )
+        assert not seeded_paperless.created_tags
+
 
 class TestEnrichFreshReprocess:
     """enrich_document treats each run as a full fresh classification:

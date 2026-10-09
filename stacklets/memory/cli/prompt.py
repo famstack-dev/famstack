@@ -29,9 +29,11 @@ from lib import (  # noqa: E402
     get_ontology,
     load_correspondents_from_vault,
     load_persons_from_vault,
+    people_prompt_section,
     persons_prompt_section,
     vault_path_for,
 )
+from stack.people import load_people  # noqa: E402
 
 HELP = "Show the vocabulary the models are fed: topics, family, correspondents"
 
@@ -65,8 +67,22 @@ def run(args, stacklet, config):
     # Person pages are generated projections and live in the brain.
     data_dir = (config or {}).get("data_dir")
     brain = brain_path_for(Path(data_dir)) if data_dir else None
-    persons = persons_prompt_section(
-        load_persons_from_vault(brain, bucket) if brain and brain.exists() else [])
+    # The person files are what the classifier and the diary are given
+    # once they exist; the person pages are the fallback before. A file
+    # the readers skip is listed under the block, since this is where an
+    # admin looks when a name is not recognised.
+    problems: list[str] = []
+    people = load_people(vault, bucket, report=problems.append)
+    if people is not None:
+        persons = people_prompt_section(people)
+        persons_used_by = "document classifier, captures, diary cards and transcription"
+    else:
+        persons = persons_prompt_section(
+            load_persons_from_vault(brain, bucket) if brain and brain.exists() else [])
+        persons_used_by = ("diary cards (the document classifier looks in the vault "
+                           "and finds none)")
+    if problems:
+        persons += "\n\nSkipped, fix these files:\n" + "\n".join(f"  - {p}" for p in problems)
     # So are correspondent pages.
     correspondents = correspondents_prompt_section(
         load_correspondents_from_vault(brain, bucket) if brain and brain.exists() else [])
@@ -75,12 +91,11 @@ def run(args, stacklet, config):
         _block("Topics and document types",
                "document classifier, search query rewrite, diary cards",
                ontology, "(the ontology is empty)"),
-        # The document classifier reads both of these from the vault,
+        # The document classifier reads correspondents from the vault,
         # where generated pages no longer are, so today it receives
-        # neither. The labels say so until it reads the brain.
-        _block("Family members",
-               "diary cards (the document classifier looks in the vault and finds none)",
-               persons, "(no person pages yet)"),
+        # none. The label says so until it reads the brain.
+        _block("Family members", persons_used_by,
+               persons, "(no person files and no person pages yet)"),
         _block("Correspondents",
                "nothing yet (the document classifier looks in the vault and finds none)",
                correspondents, "(no correspondent pages yet)"),
