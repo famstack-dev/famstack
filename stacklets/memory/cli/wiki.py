@@ -5,6 +5,7 @@
     stack memory wiki update --all             the whole wiki, as at night: diary, sources, every page
     stack memory wiki update --home            just the household home page
     stack memory wiki update --member homer    just one member's page
+    stack memory wiki update --members         every person's page, as the person files declare them
     stack memory wiki update --topic camping   just one topic's page
     stack memory wiki update --topics          every topic page, no home or members
     stack memory wiki update --dry-run         preview home, member and topic pages, write nothing
@@ -37,12 +38,12 @@ HELP = "The family wiki: update it (the latest filings, a page, or all of it), o
 
 VERBS = {
     "update": "bring the latest filings into the wiki; --all rebuilds all of it, "
-              "--home/--member/--topic/--topics regenerate those pages",
+              "--home/--member/--members/--topic/--topics regenerate those pages",
     "clean": "delete every generated page (asks first)",
 }
 
 # Flags that name pages to regenerate directly, rather than asking the curator.
-PAGE_FLAGS = ("--home", "--member", "--topic", "--topics", "--dry-run", "--dry")
+PAGE_FLAGS = ("--home", "--member", "--members", "--topic", "--topics", "--dry-run", "--dry")
 
 
 def run(args, stacklet, config):

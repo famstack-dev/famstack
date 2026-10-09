@@ -13,7 +13,7 @@ The spec defines three contracts:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -40,9 +40,10 @@ TYPES = RECORD_TYPES | PROJECTION_TYPES
 
 @dataclass
 class TypeSchema:
-    """Schema for a single type: required fields and optional list fields."""
+    """Schema for a single type: required fields, list fields, single-value fields."""
     required: set[str]
     list_fields: set[str]
+    scalar_fields: set[str] = field(default_factory=set)
 
 
 # Build the type-to-schema mapping from §5 of the spec.
@@ -82,6 +83,18 @@ SCHEMAS: dict[str, TypeSchema] = {
     "index": TypeSchema(
         required={"type", "generated"},
         list_fields=set(),
+    ),
+}
+
+
+# Types the family may also declare by hand, as a state document without
+# `generated`: the family's own file for an entity, which the generated
+# page of the same type is compiled from (§5, `person` (declared)).
+DECLARED_SCHEMAS: dict[str, TypeSchema] = {
+    "person": TypeSchema(
+        required={"type", "title"},
+        list_fields={"aliases"},
+        scalar_fields={"title", "account"},
     ),
 }
 
@@ -323,7 +336,9 @@ def validate(fm: dict) -> list[str]:
       - `type` is present and in the closed vocabulary
       - Required fields for the type are present
       - List fields are actually lists (or can be coerced)
-      - `generated` presence matches record vs. projection class
+      - Single-value fields are not lists
+      - `generated` presence matches record vs. projection class; a
+        declarable type without it is checked as the family's own file
 
     Args:
         fm: Parsed frontmatter dict
@@ -349,7 +364,11 @@ def validate(fm: dict) -> list[str]:
         )
         return errors
 
-    schema = SCHEMAS[entry_type]
+    # A declarable type without the marker is the family's own file.
+    is_projection = entry_type in PROJECTION_TYPES
+    has_generated = fm.get("generated") is True
+    declared = entry_type in DECLARED_SCHEMAS and not has_generated
+    schema = DECLARED_SCHEMAS[entry_type] if declared else SCHEMAS[entry_type]
 
     # Check required fields
     for req_field in schema.required:
@@ -365,11 +384,13 @@ def validate(fm: dict) -> list[str]:
                     f"field `{list_field}` must be a list, got {type(val).__name__}"
                 )
 
-    # Check `generated` invariant (§6)
-    is_projection = entry_type in PROJECTION_TYPES
-    has_generated = fm.get("generated") is True
+    # Check single-value fields are not lists
+    for scalar_field in schema.scalar_fields:
+        if isinstance(fm.get(scalar_field), list):
+            errors.append(f"field `{scalar_field}` must be a single value, not a list")
 
-    if is_projection and not has_generated:
+    # Check `generated` invariant (§6)
+    if is_projection and not has_generated and not declared:
         errors.append(
             f"projection type `{entry_type}` must have `generated: true`"
         )

@@ -6,6 +6,7 @@ and asks the LLM to compose the browsable pages a family lands on:
     (no flags)             home + members + topics: the curator's nightly pass
     --home                 just the household home page
     --member homer         just Homer's page
+    --members              every person's page
     --topic camping        just one topic's page
     --topics               every topic page, no home/members
     --dry-run              preview to stdout, no writes
@@ -72,6 +73,7 @@ from memory.lib import (  # noqa: E402
     extract_summary_callout,
 )
 from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
+from stack.people import Person, find_people, members, resolve  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 
@@ -114,11 +116,11 @@ _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_share
 
 # Within-bucket reserved subdirectories. A child folder of a known
 # bucket with one of these names is part of the bucket's own shape
-# (capture-type folder, correspondent index, rescue folder), not a
-# topic. The topic-discovery walker skips these names.
+# (capture-type folder, correspondent index, person files, rescue
+# folder), not a topic. The topic-discovery walker skips these names.
 _RESERVED_BUCKET_SUBDIRS = {
     "notes", "bookmarks", "documents",
-    "correspondents", "_unfiled",
+    "correspondents", "people", "_unfiled",
 }
 
 # Subdir names a topic folder must contain at least one of to be
@@ -243,6 +245,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     home_sel = "--home" in argv
     topics_only = "--topics" in argv
     members_sel = _arg_values(argv, "--member")
+    members_all = "--members" in argv
     topics_sel = _arg_values(argv, "--topic")
     correspondents_sel = _arg_values(argv, "--correspondent")
 
@@ -272,10 +275,20 @@ async def run(llm: LLM, argv: list[str]) -> int:
         _err("no documents with summary callouts found in vault")
         return 1
 
-    # The roster the home page links into and the default --members loop
-    # walks. Computed once: bucket dirs on disk plus everyone named in
-    # document frontmatter.
-    roster = _member_slugs(vault, index, shared_bucket)
+    # The people the wiki carries a page for, and the members among them
+    # the home page lists: the person files once the family has them, the
+    # old guess (bucket dirs plus names in frontmatter) until
+    # `stack up memory` has written them. A person file that does not
+    # read is reported, and while any is, no page is retired: a typo in
+    # a file must not delete a page.
+    problems: list[str] = []
+    people = _people(shared_bucket, problems)
+    if people is not None:
+        _resolve_persons(index, people)
+    roster = _roster(vault, index, shared_bucket, people)
+    member_ids = [p.id for p in members(people or [])] or roster
+    persons = {p.id: p for p in people or []}
+    retire = people is not None and not problems
 
     # Topic locations are discovered against the roster: a topic under
     # a bucket whose owner the wiki doesn't generate a page for would
@@ -295,20 +308,21 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # and slugs both land on the bucket. Unknown selections warn and skip —
     # an auto-run fed a name with no match must not sink the batch — and the
     # run fails only when NOTHING in the selection matched.
-    if home_sel or topics_only or members_sel or topics_sel or correspondents_sel:
+    if (home_sel or topics_only or members_sel or members_all
+            or topics_sel or correspondents_sel):
         generated = 0
 
         if home_sel:
             rc = await _generate_home(
-                llm, index, roster=roster,
+                llm, index, roster=member_ids, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
                 generated += 1
 
-        member_slugs: list[str] = []
+        member_slugs: list[str] = list(roster) if members_all else []
         for raw in members_sel:
-            slug = slugify_person(raw)
+            slug = _member_id(raw, people)
             if slug and slug not in member_slugs:
                 member_slugs.append(slug)
         for slug in member_slugs:
@@ -316,11 +330,13 @@ async def run(llm: LLM, argv: list[str]) -> int:
                 _err(f"no member bucket for '{slug}' — skipping")
                 continue
             rc = await _generate_member(
-                llm, slug, index, vault,
+                llm, slug, index, vault, person=persons.get(slug),
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
                 generated += 1
+        if members_all and retire:
+            _retire_undeclared(roster, shared_bucket, write=not dry_run)
 
         # Correspondents match by canonical name or slug against the roster
         # discovered from document frontmatter.
@@ -366,11 +382,13 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # ── Default loop ──────────────────────────────────────────────────
     # Bare invocation: home, every member, every correspondent, every topic.
     rc = await _generate_home(
-        llm, index, roster=roster,
+        llm, index, roster=member_ids, people=persons,
         shared_bucket=shared_bucket, lang=lang, write=not dry_run,
     )
     if rc != 0:
         return rc
+    if retire:
+        _retire_undeclared(roster, shared_bucket, write=not dry_run)
 
     # A member with no content is skipped (not an error) so one
     # empty bucket doesn't sink the whole run. `_generate_member`
@@ -378,7 +396,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # here -- the overall run still succeeds.
     for member_slug in roster:
         await _generate_member(
-            llm, member_slug, index, vault,
+            llm, member_slug, index, vault, person=persons.get(member_slug),
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
 
@@ -400,16 +418,19 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
 async def _generate_home(
     llm: LLM, index: list[dict], *,
-    roster: list[str], shared_bucket: str, lang: str, write: bool,
+    roster: list[str], people: dict[str, Person],
+    shared_bucket: str, lang: str, write: bool,
 ) -> int:
     """Compose the household home page from every filed summary.
 
     The roster (every member that has a page) is woven into the Members
-    section so each name links to that person's page. Quartz turns those
+    section so each name links to that person's page; `people` gives
+    the declared full names. Quartz turns those
     links into backlinks and graph edges for free, so the home page and
     the member pages become navigable in both directions.
     """
-    prompt = _build_home_prompt(index, roster=roster, lang=lang)
+    names = {slug: p.name for slug, p in people.items()}
+    prompt = _build_home_prompt(index, roster=roster, names=names, lang=lang)
     try:
         page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
     except LLMUnavailableError as e:
@@ -454,15 +475,26 @@ async def _generate_home(
 
 async def _generate_member(
     llm: LLM, slug: str, index: list[dict], vault: Path, *,
+    person: Person | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
-    """Compose one member's page from their slice of the vault."""
+    """Compose one person's page from their slice of the vault.
+
+    `person` is their declared file; without person files the name comes
+    from the slug, as before.
+    """
     entries = _member_entries(index, slug)
+    if not entries and person is not None:
+        # A declared person always has a page: the home page and the
+        # People menu link to it. Nothing filed yet means nothing for the
+        # model to write, so the page says so without asking it.
+        return _publish_person(
+            _empty_person_body(person), slug, person, [], write=write)
     if not entries:
         _err(f"no content involving '{slug}' — skipping")
         return 1
 
-    display = slug.capitalize()
+    display = person.name if person else slug.capitalize()
     facts = _load_facts(vault, slug)
 
     # Anchored regen: renumber the existing page's citations to the
@@ -512,17 +544,17 @@ async def _generate_member(
             shared_bucket=shared_bucket, write=write,
         )
         return 0
-    rc = _publish(
-        page, target_path=f"{slug}/about.md",
-        # First-creation frontmatter seeds the person entity registry on
-        # the page itself: `canonical` is the longest synonym (usually
-        # the formal first name when the family also uses a nickname),
-        # `synonyms` are the other variants seen in document
-        # frontmatter. The splice keeps everything outside the markers
-        # on re-runs, so a hand edit or a future deriver pass takes
-        # ownership of the registry from here.
-        default_preamble=_member_preamble(slug, display, _member_synonyms(index, slug)),
-    )
+    learned = _member_synonyms(index, slug)
+    if person is None:
+        # No person files: first-creation frontmatter seeds the names
+        # on the page itself (`canonical` the longest synonym seen in
+        # documents) and the splice keeps them from then on.
+        rc = _publish(
+            page, target_path=f"{slug}/about.md",
+            default_preamble=_member_preamble(slug, display, learned),
+        )
+    else:
+        rc = _publish_person(page, slug, person, learned, write=True)
     _publish_capture_indexes(
         index, page_dir=slug, display=display,
         shared_bucket=shared_bucket, write=write,
@@ -688,6 +720,163 @@ def _norm_str_list(value) -> list[str]:
     if not isinstance(value, list):
         return []
     return [v.strip() for v in value if isinstance(v, str) and v.strip()]
+
+
+def _publish_person(page: str, slug: str, person: Person, learned: list[str], *,
+                    write: bool) -> int:
+    """Publish a declared person's page under the names their file gives.
+
+    The file owns the names: the full name is canonical, the family's
+    aliases come first, the variants documents used follow. Refreshed on
+    every rebuild, so an alias added to the file reaches the page the
+    next time.
+    """
+    names = _distinct([*person.aliases, person.first_name, *learned], exclude=person.name)
+    if not write:
+        print(f"\n<!-- {slug}/about.md -->\n{page}")
+        return 0
+    return _publish(
+        page, target_path=f"{slug}/about.md",
+        transform=lambda prior: _with_member_names(
+            _splice_generated(prior, page, default_preamble=_member_preamble(
+                slug, person.name, [person.name, *names])),
+            canonical=person.name, synonyms=names,
+        ),
+    )
+
+
+def _empty_person_body(person: Person) -> str:
+    """The page of a person nothing has been filed about yet."""
+    return (f"# {person.name}\n\n"
+            f"Nothing filed about {person.first_name} yet. Documents, notes and "
+            f"memories that name {person.first_name} will show up here.")
+
+
+def _people(shared_bucket: str, problems: list[str]) -> list[Person] | None:
+    """The declared people, or None while there are no person files.
+
+    Read from the vault working copy (`MEMORY_VAULT_DIR`) when this
+    process has one: an edit to a file is on disk there before the
+    curator has mirrored it into the brain. The brain is the fallback.
+    Every file that does not read is logged and added to `problems`.
+    """
+    def report(problem: str) -> None:
+        problems.append(problem)
+        _err(f"person file skipped: {problem}")
+
+    return find_people(
+        (os.environ.get("MEMORY_VAULT_DIR"), os.environ.get("BRAIN_REPO_DIR")),
+        shared_bucket, report=report,
+    )
+
+
+def _roster(vault: Path, index: list[dict], shared_bucket: str,
+            people: list[Person] | None) -> list[str]:
+    """The ids the wiki carries person pages for, in the order it shows them."""
+    if people is not None:
+        return [p.id for p in people]
+    return _member_slugs(vault, index, shared_bucket)
+
+
+def _member_id(raw: str, people: list[Person] | None) -> str:
+    """The person a `--member` value or a `persons:` name means.
+
+    Through every name the person files give ("Margaret" is Maggie),
+    by first word otherwise, the way buckets are named.
+    """
+    if people is not None and (person := resolve(raw, people)):
+        return person.id
+    return slugify_person(raw)
+
+
+def _resolve_persons(index: list[dict], people: list[Person]) -> None:
+    """Point every `persons:` name in the index at its declared person.
+
+    The index slugs names by first word, which files "Margaret" under a
+    bucket of her own. With person files the names resolve through the
+    family's aliases instead. Names no person answers to keep their
+    first-word slug, as before.
+    """
+    for entry in index:
+        entry["persons"] = [
+            _member_id(name, people) for name in entry.get("person_names", [])
+        ]
+
+
+def _retire_undeclared(roster: list[str], shared_bucket: str, *,
+                       write: bool) -> list[str]:
+    """Delete generated person pages for anyone no person file declares.
+
+    Before the person files, a vault folder or a surname could become a
+    member page (`media/about.md`). Only pages the wiki generated as a
+    person are removed; anything a person wrote is left alone, and so is
+    the folder's other content.
+    """
+    try:
+        brain = _brain_dir()
+    except RuntimeError:
+        return []
+    skip = _NON_MEMBER_DIRS | {shared_bucket}
+    retired: list[str] = []
+    for about in sorted(brain.glob("*/about.md")):
+        slug = about.parent.name
+        if slug in roster or slug in skip or slug.startswith("."):
+            continue
+        try:
+            text = about.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _parse_frontmatter(text).get("type") != "person" or not _is_generated_page(text):
+            continue
+        rel = f"{slug}/about.md"
+        if write:
+            about.unlink()
+            _err(f"retired {rel}: no person file declares {slug}")
+        else:
+            _err(f"would retire {rel}: no person file declares {slug}")
+        retired.append(rel)
+    return retired
+
+
+def _distinct(names: list[str], *, exclude: str = "") -> list[str]:
+    """Names in order, each once (case-insensitive), without `exclude`."""
+    seen = {exclude.lower()} if exclude else set()
+    out: list[str] = []
+    for name in names:
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            out.append(name)
+    return out
+
+
+def _with_member_names(content: str, *, canonical: str, synonyms: list[str]) -> str:
+    """Set a member page's `title`, `canonical` and `synonyms` frontmatter.
+
+    Every other frontmatter line is kept as it is. A page without
+    frontmatter is returned unchanged; the splice always gives a member
+    page one.
+    """
+    if not content.startswith("---\n"):
+        return content
+    end = content.find("\n---\n", 4)
+    if end < 0:
+        return content
+    kept: list[str] = []
+    skipping_list = False
+    for line in content[4:end].splitlines():
+        if skipping_list and line.startswith((" ", "\t")):
+            continue
+        skipping_list = False
+        key = line.partition(":")[0].strip()
+        if not line.startswith((" ", "\t")) and key in ("title", "canonical", "synonyms"):
+            skipping_list = key == "synonyms"
+            continue
+        kept.append(line)
+    names = [f"title: {_yaml_str(canonical)}", f"canonical: {_yaml_str(canonical)}"]
+    if synonyms:
+        names.append("synonyms:")
+        names.extend(f"  - {_yaml_str(s)}" for s in synonyms)
+    return "---\n" + "\n".join(names + kept) + content[end:]
 
 
 def _member_slugs(vault: Path, index: list[dict], shared_bucket: str) -> list[str]:
@@ -1429,7 +1618,8 @@ def _arg_values(argv: list[str], flag: str) -> list[str]:
 
 # ── Prompts ──────────────────────────────────────────────────────────────
 
-def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str) -> str:
+def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str,
+                       names: dict[str, str] | None = None) -> str:
     """Single-shot prompt: feed all summaries, ask for one home page.
 
     The section layout is fixed -- we want the same headings every time
@@ -1439,8 +1629,10 @@ def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str) -> 
     closed set of page paths so the Members section can link each name
     to a member page that actually exists -- the model resolves identity
     (the baby "Margaret" maps to the `maggie/` page), but it can only
-    pick from the paths we give it.
+    pick from the paths we give it. With person files, `names` carries
+    each member's full name too, and the model fills in only the detail.
     """
+    names = names or {}
     evidence = _format_evidence(entries)
     if roster:
         # Closed enumeration: the model copies this list instead of
@@ -1448,7 +1640,8 @@ def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str) -> 
         # small models split one person into two ("Maggie" and
         # "Margaret") or drop the page links.
         skeleton = "\n".join(
-            f"- **[<full name of {slug.capitalize()}>]({slug}/about)** — <detail>. [N]"
+            f"- **[{names[slug]}]({slug}/about)** — <detail>. [N]" if slug in names
+            else f"- **[<full name of {slug.capitalize()}>]({slug}/about)** — <detail>. [N]"
             for slug in roster
         )
         member_links = (

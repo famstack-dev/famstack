@@ -322,15 +322,34 @@ class TestValidator:
         assert any("must not carry `generated`" in e for e in errors)
 
     def test_projection_missing_generated_error(self):
-        """Validator rejects projection type (person) missing generated marker."""
+        """Validator rejects projection type (correspondent) missing generated marker."""
         fm = {
-            "type": "person",
-            "title": "Homer",
-            "slug": "homer",
-            "canonical": "Homer",
+            "type": "correspondent",
+            "title": "Duff Insurance",
+            "canonical": "Duff Insurance",
         }
         errors = validate(fm)
         assert any("must have `generated: true`" in e for e in errors)
+
+    def test_a_person_without_the_marker_is_the_familys_own_file(self):
+        """vault-format §5, `person` (declared): type and title, nothing generated."""
+        fm = {"type": "person", "title": "Maggie Simpson",
+              "aliases": ["Margaret"], "account": "maggie"}
+        assert validate(fm) == []
+
+    def test_a_declared_person_needs_a_title(self):
+        errors = validate({"type": "person", "aliases": ["Margaret"]})
+        assert errors == ["missing required field for `person`: `title`"]
+
+    def test_a_declared_persons_aliases_are_a_list(self):
+        """`aliases: Margaret` is one name where the format asks for a list."""
+        errors = validate({"type": "person", "title": "Maggie Simpson",
+                           "aliases": "Margaret"})
+        assert any("`aliases` must be a list" in e for e in errors)
+
+    def test_a_declared_persons_name_is_one_value(self):
+        errors = validate({"type": "person", "title": ["Maggie", "Margaret"]})
+        assert any("`title` must be a single value" in e for e in errors)
 
     def test_list_field_not_list(self):
         """Validator rejects list field that is a scalar."""

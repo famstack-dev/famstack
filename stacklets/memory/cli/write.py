@@ -62,6 +62,7 @@ from lib import update_memory  # noqa: E402
 
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
+from stack.people import PEOPLE_DIR, PersonError, read_person  # noqa: E402
 from stack.list_doc import diff  # noqa: E402
 from stack.page_patch import apply_edits  # noqa: E402
 
@@ -92,6 +93,24 @@ def _check_frontmatter(before: str, after: str, page: str) -> None:
         raise ValueError(
             f"{page}: frontmatter does not parse ({e}). Keep the "
             "frontmatter block exactly as you read it.") from e
+
+
+def _check_person(after: str, page: str) -> None:
+    """Reject a person file the readers would skip.
+
+    Every reader leaves out a file that breaks the person schema, so
+    the write is where the family hears about it, not a log.
+    """
+    parts = page.split("/")
+    if len(parts) != 3 or parts[1] != PEOPLE_DIR:
+        return
+    try:
+        read_person(Path(page).stem, after)
+    except PersonError as e:
+        raise ValueError(
+            f"{page} is a person file and {e}. It needs `type: person`, "
+            "a `title` with the full name and, optionally, `aliases` as a "
+            "list.") from e
 
 
 def run(args, stacklet, config):
@@ -149,6 +168,7 @@ def run(args, stacklet, config):
         # seam sees every mutation, so the check lives here. ValueError
         # becomes the error message the caller relays to the model.
         _check_frontmatter(seen["before"], seen["after"], repo_path)
+        _check_person(seen["after"], repo_path)
         # A whole-page rewrite of a list is a restructure. A restructure
         # never legitimately reopens or removes an item (measured
         # 2026-09-15: rewrites drop [x] marks, and prompt rules do not

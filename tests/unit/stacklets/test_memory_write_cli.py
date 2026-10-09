@@ -321,3 +321,26 @@ def test_a_write_the_readers_have_not_caught_up_with_is_still_done(store, tmp_pa
     assert result["mirrored"] is False
     out = capsys.readouterr().out
     assert "Wrote" in out and "catch up" in out
+
+
+# ── person files ─────────────────────────────────────────────────────────
+
+def test_a_person_file_the_readers_would_skip_is_refused(store, tmp_path):
+    """Every reader leaves out a broken person file; the write says so first.
+
+    `aliases: Margaret` is one name where the format asks for a list
+    (vault-format §5, `person` (declared)).
+    """
+    result = _run(store, "---\ntype: person\ntitle: Maggie Simpson\naliases: Margaret\n---\n",
+                  path="family/people/maggie.md", tmp=tmp_path)
+
+    assert "error" in result
+    assert "`aliases` must be a list" in result["error"]
+    assert store.commits == []
+
+
+def test_a_person_file_in_the_format_is_written(store, tmp_path):
+    result = _run(store, "---\ntype: person\ntitle: Maggie Simpson\naliases:\n"
+                         "  - Margaret\n---\n", path="family/people/maggie.md", tmp=tmp_path)
+
+    assert result["committed"] is True
