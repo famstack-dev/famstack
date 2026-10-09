@@ -930,12 +930,12 @@ The famstack code is a git checkout, and a release is a tag. Updating means movi
 ./stack update
 ```
 
-That is the whole thing from v0.3.0-beta.4 onward. It fetches the releases, shows what the jump changes, moves the checkout, and sets your local edits aside and puts them back.
+That is the whole thing from v0.4.0-rc.1 onward. It fetches the releases, shows what the jump changes, moves the checkout, and sets your local edits aside and puts them back.
 
 It does not restart anything. New code on disk is not new code running: a stacklet picks up a release when its containers are recreated, and when your family loses a service for thirty seconds is your call, not a side effect of updating. So the command works out which restarts the release actually earns and prints them:
 
 ```
-  ✓  Updated to v0.3.0-beta.4
+  ✓  Updated to v0.4.0-rc.2
 
   Restart to pick it up
     ./stack restart docs
@@ -944,7 +944,7 @@ It does not restart anything. New code on disk is not new code running: a stackl
 
 ```bash
 ./stack update --dry-run         # show the plan, change nothing
-./stack update v0.3.0-beta.4     # a specific release instead of the newest
+./stack update v0.4.0-rc.2       # a specific release instead of the newest
 ./stack update --yes             # skip the confirmation
 ```
 
@@ -953,30 +953,30 @@ would only be as fresh as your last fetch. It opens with the version and,
 once it knows, the move it is proposing:
 
 ```
-  famstack 0.3.0-beta.3
+  famstack 0.4.0-rc.1
   Fetching releases...
 
-  Update  v0.3.0-beta.3 → v0.3.0-beta.4
+  Update  v0.4.0-rc.1 → v0.4.0-rc.2
 ```
 
 A stacklet is named only if the release changed files inside it and it is running, so a documentation release asks for nothing. If the release changed anything under `lib/`, every running stacklet is named, because that is the code they all share.
 
 ### Updating by hand
 
-`stack update` ships in v0.3.0-beta.4. Moving *to* that release, or moving between older ones, is the same steps typed out:
+`stack update` ships in v0.4.0-rc.1. Moving *to* that release, or moving between older ones, is the same steps typed out:
 
 ```bash
 cd ~/famstack
 git fetch --tags
 git tag | tail -5              # what is available
-git checkout v0.3.0-beta.4     # the one you want
+git checkout v0.4.0-rc.1       # the one you want
 ./stack doctor
 ```
 
 Then restart what the release touched. This prints the list:
 
 ```bash
-git diff --name-only v0.3.0-beta.3 v0.3.0-beta.4 -- stacklets/ | cut -d/ -f2 | sort -u
+git diff --name-only v0.3.0-beta.3 v0.4.0-rc.1 -- stacklets/ | cut -d/ -f2 | sort -u
 ```
 
 Restart any of those you run. If the same command against `lib/` prints anything, the framework itself changed and everything wants a restart:
@@ -994,8 +994,8 @@ Nothing in the update touches your instance. `stack.toml`, `users.toml`, `.stack
 If they collide, it winds the whole update back: you end up on the release you started from, with your edits exactly where they were and nothing left in the stash. Then it tells you how to go ahead deliberately:
 
 ```
-  ⚠  Your edits collide with v0.3.0-beta.4. Nothing changed.
-      Back on v0.3.0-beta.3 with your edits where they were.
+  ⚠  Your edits collide with v0.4.0-rc.2. Nothing changed.
+      Back on v0.4.0-rc.1 with your edits where they were.
       The collision is in:
       • stacklets/docs/docker-compose.yml
       To take the release anyway, deal with that file first:
