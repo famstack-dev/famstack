@@ -1,6 +1,15 @@
 # Family ontology: declared entities priming classification
 
-Status: design draft, 2026-06-12. Implementation slice of
+Status: design draft, 2026-06-12. Partly superseded 2026-10-09: the
+people pages below are built (`vault-format.md` §5, `person`
+(declared)), with `type: person` and `title` instead of a folder-derived
+kind and `canonical`; membership is derived (an account, in the first
+iteration), not a `member:` field; people outside the household are
+compiled from the `mentions` on records into the person registry
+(`domain-model.md`, EntityRegistry); relations are a `relation_kind`
+plus words, not a `role`. Onboarding, the write-path contract and
+experiment round 6
+still stand. Implementation slice of
 `ontology-design.md` (2026-04-14), which designs the full living ontology
 (persons, organizations, relations, growth loop, dream-cycle maintenance,
 search expansion). Companion to `wiki-page-anatomy.md` and
