@@ -81,12 +81,14 @@ from stack.ai.language import LANGUAGES, language_code  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
 from stack import media  # noqa: E402
+from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
 
 from memory.lib import (  # noqa: E402
     BOT_EMAIL,
     BOT_USERNAME,
     REPO_NAME,
     REPO_OWNER,
+    Person,
     get_ontology,
     load_persons_from_vault,
     persons_prompt_section,
@@ -290,15 +292,55 @@ def _length(ms: int | None) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-def _household_people() -> list[str]:
-    """The household's names: everyone in users.toml, then the wiki's person pages.
+def _declared() -> list[DeclaredPerson] | None:
+    """The family's person files; None until `stack up memory` wrote them.
 
-    The pages carry the family's own spelling of each name and its
-    variants. Best-effort: no brain means the users.toml names alone.
+    A file that does not read is logged with its path and left out.
+    """
+    return find_people(
+        (os.environ.get("MEMORY_VAULT_DIR"), os.environ.get("BRAIN_REPO_DIR")),
+        os.environ.get("SHARED_BUCKET") or "family",
+        report=lambda problem: _err(f"person file skipped: {problem}"),
+    )
+
+
+def _household_people() -> list[str]:
+    """The household's names: the person files, then the wiki's person pages.
+
+    The person files declare everyone the family knows, a baby without
+    an account too, with every name the family uses for them. Until they
+    exist the accounts stand in (FAMILY_NAMES, from users.toml). The
+    pages add the spellings documents used. Best-effort: no brain means
+    the declared names alone.
     """
     brain = Path(os.environ.get("BRAIN_REPO_DIR", ""))
     pages = [_frontmatter(about) for about in sorted(brain.glob("*/about.md"))] if brain.is_dir() else []
-    return diary.household(os.environ.get("FAMILY_NAMES", ""), pages)
+    declared = _declared()
+    if declared is None:
+        return diary.household(os.environ.get("FAMILY_NAMES", ""), pages)
+    ids = {p.id for p in declared}
+    names = ",".join(n for p in declared for n in p.all_names())
+    return diary.household(names, [p for p in pages if p.get("slug") in ids])
+
+
+def _declared_persons(declared: list[DeclaredPerson], learned: list[Person]) -> list[Person]:
+    """The person files as the classifier's persons: first name canonical.
+
+    The first name is the name cards carry and the `Person:` tag the
+    archivist files under, so a card about "Margaret" lists Maggie the
+    same way a document about her is tagged. The full name, the
+    family's aliases and the spellings documents used are the synonyms.
+    """
+    by_slug = {p.slug: p for p in learned}
+    persons = []
+    for d in declared:
+        names = [n for n in d.all_names() if n != d.first_name]
+        seen = by_slug.get(d.id)
+        for n in seen.all_known_names() if seen else []:
+            if n.lower() not in {x.lower() for x in [d.first_name, *names]}:
+                names.append(n)
+        persons.append(Person(canonical=d.first_name, slug=d.id, synonyms=names))
+    return persons
 
 
 def _household_vocabulary() -> str:
@@ -1314,6 +1356,9 @@ def _vocabulary(bucket: str):
     # Person pages are generated, so they live in the brain, not the vault.
     brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
     persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
+    declared = _declared()
+    if declared is not None:
+        persons = _declared_persons(declared, persons)
     people = diary.card_people(persons, _household_people())
     # The pages describe the people they know; the rest of the household
     # joins the list by name, so the model can still say a note is about them.
