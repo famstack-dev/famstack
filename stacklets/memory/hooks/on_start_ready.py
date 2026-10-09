@@ -25,6 +25,7 @@ from lib import (  # noqa: E402
     authenticated_remote,
     brain_path_for,
     ensure_brain_projection_admin,
+    ensure_people,
     ensure_vault_cloned,
     host_code_url,
     point_remote_at,
@@ -35,6 +36,30 @@ from lib import (  # noqa: E402
     vault_path_for,
     vault_remote_url,
 )
+from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
+from stack.vault import DEFAULT_SHARED_BUCKET  # noqa: E402
+
+
+def _ensure_people(ctx, code_url: str, token: str) -> None:
+    """Add a person file for every account that has none.
+
+    Runs before the clone or pull, so the files are on disk when this
+    hook returns. A failure is reported and never blocks startup: every
+    reader keeps its previous behaviour until the files exist, and the
+    next `stack up memory` tries again.
+    """
+    if not (code_url and token):
+        return
+    bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
+    try:
+        added = ensure_people(
+            ForgejoClient(url=code_url, token=token), ctx.users, shared_bucket=bucket)
+    except (ForgejoError, OSError) as e:
+        # OSError: urllib's URLError when Forgejo is not reachable.
+        ctx.warn(f"Memory: could not write the person files: {e}")
+        return
+    if added:
+        ctx.step(f"Memory: added {', '.join(added)} to {bucket}/people/")
 
 
 def run(ctx):
@@ -83,10 +108,13 @@ def run(ctx):
     if reason:
         if fresh := reissue_write_token(code_url, admin_user, admin_password):
             ctx.secret("MEMORY_BOT_TOKEN", fresh)
+            token = fresh
             remote = remote_for(fresh)
             ctx.step(f"{reason}; issued a new one")
         else:
             ctx.step(f"{reason} and it could not be replaced")
+
+    _ensure_people(ctx, code_url, token)
 
     # If the vault never got cloned (install hook ran before code
     # stacklet was reachable, for example), try once more here. This

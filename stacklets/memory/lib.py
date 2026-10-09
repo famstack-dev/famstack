@@ -1568,6 +1568,49 @@ def install_seeds(
     return {"created": created, "skipped": skipped}
 
 
+def ensure_people(
+    client: ForgejoClient,
+    users: list[dict],
+    *,
+    shared_bucket: str = DEFAULT_SHARED_BUCKET,
+) -> list[str]:
+    """Add a person file for every account that has none; return their ids.
+
+    The family's people are one file each under `<shared_bucket>/people/`
+    (`stack.people`). Every account holder gets one, marked with their
+    account, which makes them a member. An existing file is never read
+    or rewritten here, so a family edit (an alias, a corrected name)
+    survives every restart; a new account gets its file on the next
+    `stack up memory`.
+
+    That makes this the whole upgrade path for an existing install: a
+    restart of the memory stacklet writes the files, and every reader
+    switches from its old guess to them as soon as they appear.
+    """
+    from stack.forgejo import FileChange
+    from stack.people import PEOPLE_DIR, people_from_accounts, person_id, person_path, render_person
+
+    accounts = people_from_accounts(users)
+    if not accounts:
+        return []
+    listing = client.list_dir(REPO_OWNER, REPO_NAME, f"{shared_bucket}/{PEOPLE_DIR}")
+    existing = {
+        person_id(Path(entry["path"]).stem)
+        for entry in listing
+        if entry.get("type") == "file" and str(entry.get("path", "")).endswith(".md")
+    }
+    new = [p for p in accounts if p.id not in existing]
+    if not new:
+        return []
+    client.change_files(
+        REPO_OWNER, REPO_NAME,
+        [FileChange("create", person_path(p.id, shared_bucket), render_person(p)) for p in new],
+        message="people: add a file for each chat account",
+        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+    )
+    return [p.id for p in new]
+
+
 # Seed paths beginning with `_shared/` get retargeted to the
 # configured bucket slug. Everything else lands at the vault root
 # verbatim — keeps `ontology.toml`, `facts.toml`, `README.md` at the

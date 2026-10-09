@@ -80,6 +80,7 @@ from memory.lib import (  # noqa: E402
 )
 
 from wiki import COMMIT_PREFIX  # noqa: E402
+from stack.people import PEOPLE_DIR  # noqa: E402
 
 POLL_SECS = int(os.environ.get("CURATOR_POLL_SECS", "30"))
 QUIET_SECS = int(os.environ.get("WIKI_REBUILD_QUIET_SECS", "180"))
@@ -211,11 +212,15 @@ def member_selection(
     folders touched by captures. Returns e.g. `["--home", "--member",
     "Homer Simpson", "--topic", "camping"]`, or `[]` when nothing
     relevant changed (only generated pages or skipped dirs). Home is
-    included whenever anything relevant changed at all.
+    included whenever anything relevant changed at all. A change to a
+    person file adds `--members`: who the family knows changed, so every
+    person page is rebuilt and pages for people no file declares are
+    retired.
     """
     members: list[str] = []
     topics: list[str] = []
     relevant = False
+    people_changed = False
 
     for path in paths:
         parts = [p for p in path.split("/") if p]
@@ -225,6 +230,9 @@ def member_selection(
         if _has_generated_marker(fm):
             continue
         relevant = True
+        if path.startswith(f"{shared_bucket}/{PEOPLE_DIR}/"):
+            people_changed = True
+            continue
         if parts[0] != shared_bucket and len(parts) > 1 and parts[0] not in members:
             members.append(parts[0])
         topic = _topic_slug_from_capture_path(parts, shared_bucket=shared_bucket)
@@ -241,6 +249,8 @@ def member_selection(
     if not relevant:
         return []
     argv = ["--home"]
+    if people_changed:
+        argv.append("--members")
     for member in members:
         argv += ["--member", member]
     for topic in topics:

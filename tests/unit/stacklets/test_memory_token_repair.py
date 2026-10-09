@@ -106,8 +106,9 @@ class _RecordingCtx:
     """The slice of hook context `on_start_ready` actually reads.
 
     A real `StackContext` wants an instance on disk, a parsed config and
-    a Docker runtime. The hook wants four things: the data dir, the
-    rendered env, the secret store, and somewhere to log progress and warnings.
+    a Docker runtime. The hook wants five things: the data dir, the
+    rendered env, the secret store, the accounts, and somewhere to log
+    progress and warnings.
     Standing up only those four is what lets the hook be driven end to
     end here, which matters because the bug this file guards lived in
     `run()` itself and not in any helper it calls.
@@ -117,6 +118,7 @@ class _RecordingCtx:
         self.stack = SimpleNamespace(data=data_dir)
         self.env = env
         self.secrets = secrets
+        self.users: list[dict] = []
         self.steps: list[str] = []
 
     def secret(self, name, value=None):
