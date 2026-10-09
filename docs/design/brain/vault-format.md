@@ -82,9 +82,18 @@ cheap).
 - `diary` — one entry from the memories room (a recording, photo or note,
   with its joined fragments and replies).
 
+**State documents** (the family's current truth; mutable through the
+CLI or by hand; never carry `generated`; see §7):
+- `todos` — a topic's todo list.
+- `person` (declared) — someone the family knows, one file each under
+  `<shared_bucket>/people/`.
+
 **Entities & structure** (generated projections; MUST carry
 `generated: true`):
-- `person` — a household member or known person page.
+- `person` — the wiki page for a person: the declared file compiled
+  with what the records say, and later anyone the records mention (the
+  person registry). `person` is the one type that is both: declared in
+  `people/`, generated everywhere else, told apart by `generated`.
 - `correspondent` — an external party page.
 - `topic` — a topic overview page.
 - `index` — a folder navigation page.
@@ -96,6 +105,14 @@ Reserved for future (declare before use): `pet`, `vehicle`, `place`.
 Legend: **R** required, **O** optional (present-when-nonempty — absence
 is a signal, so never emit an empty list/string). List fields are
 one-deep string lists per §2.
+
+Two person fields recur on records and mean different things:
+`persons` lists the household members the record belongs to, by
+display name; `mentions` lists the people outside the household it
+names, each by the most specific name the record gives, or a
+description through a member when it gives none ("Marge's mother").
+Both come from the call that classifies the record. The person
+registry is compiled from `mentions`; the record never links to it.
 
 ### `document`
 | Field | | Notes |
@@ -111,6 +128,7 @@ one-deep string lists per §2.
 | `document_type` | O | Paperless subtype (invoice, contract) — a different axis from `type`. |
 | `category` | O | |
 | `persons` | O | list. |
+| `mentions` | O | list. |
 | `tags` | O | list. |
 | `paperless_url` | O | base URL. |
 | `processing` | O | `ai_formatted` \| `ocr` \| `original`. |
@@ -124,6 +142,7 @@ one-deep string lists per §2.
 | `title` | R | |
 | `timestamp` | R | |
 | `persons` | O | list. |
+| `mentions` | O | list. |
 | `filed_by` | O | Matrix localpart of the filer (mirrors the git author). |
 | `tags` | O | list. |
 | `resource` | O | source URL (OKF `resource`; bookmarks always have one). |
@@ -160,6 +179,7 @@ commit (`correct: <title>`, authored by whoever wrote it), not on the
 card; its event id joins `event_ids`.
 | `description` | O | one sentence. |
 | `persons` | O | list. |
+| `mentions` | O | list. |
 | `tags` | O | list. |
 | `filed_by` | O | Matrix localpart of the sender. |
 | `addressee` | O | who the message is spoken to, as it names them; a correction can change it. |
@@ -177,16 +197,51 @@ and last the family's own words under `## Transcript`, `## Text` or
 `## Caption`. The words come last so nothing in them can be mistaken
 for a section.
 
+### `person` (declared)
+The family's file for one person, `<shared_bucket>/people/<id>.md`. The
+file name is the id.
+
+| Field | | Notes |
+|---|---|---|
+| `type` | R | `person` |
+| `title` | R | the full name (OKF `title`). |
+| `aliases` | O | list; every other name the family uses (Obsidian reads the same key). |
+| `account` | O | the person's chat user name (Matrix localpart), when they have one. |
+
+```
+---
+type: person
+title: Maggie Simpson
+aliases:
+  - Margaret
+---
+```
+
+A member of the household is a person with an `account` (first
+iteration; `domain-model.md`, Member). Membership is derived, never a
+field the family sets. A file that breaks the §2 subset or this table
+is reported by path and left out, and the wiki retires no member page
+while any file is reported.
+
 ### `person` (generated)
 | Field | | Notes |
 |---|---|---|
 | `type` | R | `person` |
 | `generated` | R | `true` |
 | `title` | R | canonical display name (OKF `title`). |
-| `slug` | R | bucket slug (== Matrix localpart for members). |
+| `slug` | R | the person's id: the declared file's name (== Matrix localpart and bucket slug for a member); otherwise derived from the canonical name. |
 | `canonical` | R | canonical name (our H1/canonicalization logic). |
 | `aliases` | O | list of known surface forms (the EntityRegistry coupling field). |
-| `role`, `member`, `birthday`, `employer`, `owners`, `relation` | O | family-semantic custom fields. |
+| `relation_kind` | O | `relative` \| `friend` \| `neighbor` \| `teacher` \| `doctor` \| `employer` \| `colleague` \| `service` \| `other`; absent for members. |
+| `relation` | O | the relation in words, through a member ("Marge's sister"). |
+| `first_seen`, `last_seen` | O | dates of the first and last record that mentions the person. |
+| `sources` | O | list of the vault paths of the records it cites. |
+| `birthday`, `employer`, `owners` | O | family-semantic custom fields. |
+
+Whether someone is a member is never a field: it is derived from the
+declared file's `account`. The tier the wiki shows (broader family, close, other) is
+not stored either; the wiki derives it from `relation_kind` and
+presence.
 
 ### `correspondent` (generated)
 | Field | | Notes |
@@ -224,6 +279,16 @@ current truth (a tick is information), lives in memory source, and never
 carries `generated`. It is a markdown checklist; frontmatter is optional
 and, if present, uses `type: todos`. State documents get read-your-writes
 through the CLI (ADR-011); they are not regenerated.
+
+`<shared_bucket>/people/<id>.md` is a declared person (§5): the
+family's own facts about someone, starting with their names. On every
+start `stack up memory` adds one for each account that has none, as
+a commit by the memory bot, and never rewrites an existing file.
+A family member adds a person without an account (a baby) or an alias
+by writing the file in Obsidian, Forgejo or with `stack memory write`;
+a hand edit is a commit like every other. The family's corrections to
+what the registry compiles ("Ed is Ned", "Grampa is Homer's father")
+go into the same file when the registry is built.
 
 `ontology.toml` / `facts.toml` are TOML config at the vault root, outside
 this markdown-frontmatter spec.

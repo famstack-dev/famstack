@@ -118,3 +118,28 @@ room) or edited by hand is theirs: the compile never overwrites it, and
 the vault commit that changed it names who did. The diary is therefore
 the one chat filing not rebuilt by replaying its thread (see
 `docs/agent/dev.md`, "Reprocessing replays the source").
+
+## Update 2026-10-09: compiled projections are the agent's fast path
+
+The rule above keeps the agent off projections so that a stale page
+never becomes a wrong answer. It assumed the agent could afford to
+read the records for every question. With a local model it cannot:
+reading dozens of records per question is slow, and the compiled pages
+exist precisely to have read them once.
+
+The vault stays the truth. The agent may answer from a compiled
+projection when two things hold:
+
+- every statement it uses cites the records it came from, as the home
+  page's numbered references and the person pages' `sources` do, so
+  the answer can name its source and a person can check it;
+- it also reads the records filed since that projection was last
+  compiled, so nothing newer is missed.
+
+What this does not remove is a projection that is wrong rather than
+stale. The citations make that checkable, family corrections fix it,
+and a nightly plausibility pass (the "dream cycle" in
+`docs/design/brain/domain-model.md`) is meant to find it.
+
+The agent already reads the brain (`MEMORY_VAULT_DIR` points at it),
+so this update describes what it does and puts conditions on it.
