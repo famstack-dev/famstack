@@ -1290,6 +1290,25 @@ def persons_prompt_section(persons: List[Person]) -> str:
     return "\n".join(lines)
 
 
+def people_prompt_section(people) -> str:
+    """The persons block from the person files, in the shape above.
+
+    The canonical name is the person's first name, the name their
+    `Person:` tag carries; the full name and every alias the family
+    listed follow in parens, so "Margaret" on a birth certificate is
+    recognised as Maggie. A person without a chat account is listed like
+    any other.
+    """
+    if not people:
+        return ""
+    lines = ["Family members (canonical first name; synonyms in parens):"]
+    for p in people:
+        others = [n for n in p.all_names() if n != p.first_name]
+        lines.append(f"  - {p.first_name} ({', '.join(others)})" if others
+                     else f"  - {p.first_name}")
+    return "\n".join(lines)
+
+
 def get_ontology(vault_path: Optional[Path] = None) -> Ontology:
     """Return the live ontology from the vault, else the shipped seed.
 

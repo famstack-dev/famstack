@@ -15,13 +15,17 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from loguru import logger
+
 from memory.lib import (
     correspondents_prompt_section,
     get_ontology,
     load_correspondents_from_vault,
     load_persons_from_vault,
+    people_prompt_section,
     persons_prompt_section,
 )
+from stack.people import Person, load_people
 
 
 class VaultContext:
@@ -65,15 +69,30 @@ class VaultContext:
         correspondents = load_correspondents_from_vault(path, self.shared_bucket)
         return correspondents_prompt_section(correspondents)
 
-    def persons_section(self) -> str:
-        """Build the persons block from `<slug>/about.md` across the vault.
+    def people(self) -> list[Person] | None:
+        """The family's declared people; None until a person file exists.
 
-        Empty when the vault isn't seeded yet — the prompt then falls back
-        to the flat Paperless Person roster (canonical first names only,
-        no synonym signal).
+        A file that does not read is logged with its path and left out.
+        """
+        return load_people(
+            self._vault_path(), self.shared_bucket,
+            report=lambda problem: logger.warning("[vault] person file skipped: {}", problem),
+        )
+
+    def persons_section(self) -> str:
+        """The persons block: the person files, else `<slug>/about.md` pages.
+
+        With person files the block lists every declared person with every
+        name they go by, accounts or not. Without them it is built from
+        person pages in the vault, and empty when there are none -- the prompt
+        then falls back to the flat Paperless Person roster (canonical
+        first names only, no synonym signal).
         """
         path = self._vault_path()
         if path is None:
             return ""
+        people = self.people()
+        if people is not None:
+            return people_prompt_section(people)
         persons = load_persons_from_vault(path, self.shared_bucket)
         return persons_prompt_section(persons)

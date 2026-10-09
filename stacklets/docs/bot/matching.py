@@ -188,6 +188,38 @@ def match_persons(names: str | list | None, tags: dict[str, Any]) -> list[str]:
     return matched_tags
 
 
+def declared_person_names(names: str | list | None, people) -> list[str]:
+    """LLM-returned person names, each as its declared person's first name.
+
+    The first name is what a person's `Person:` tag carries. A name the
+    family declared under any spelling ("Margaret", "Maggie Simpson",
+    "Person: Maggie") becomes that person's first name; any other name
+    is passed on unchanged for `match_persons` to try, so a document
+    still matches by the tags alone, as it did before the person files.
+
+    >>> from stack.people import Person
+    >>> people = [Person("maggie", "Maggie Simpson", ("Margaret",))]
+    >>> declared_person_names(["Margaret", "Homer"], people)
+    ['Maggie', 'Homer']
+    """
+    from stack.people import resolve
+
+    if isinstance(names, str):
+        names = [names]
+    if not isinstance(names, list):
+        return []
+    out: list[str] = []
+    for name in names:
+        if not isinstance(name, str) or _is_empty(name):
+            continue
+        clean = name.replace("Person: ", "").strip()
+        person = resolve(clean, people)
+        resolved = person.first_name if person else clean
+        if resolved and resolved not in out:
+            out.append(resolved)
+    return out
+
+
 def submitter_person_tag(
     mxid: str | None, tags: dict[str, Any],
 ) -> str | None:

@@ -557,6 +557,7 @@ class ArchivistBot(MicroBot):
             capture_tag_prompt_size=self.capture_tag_prompt_size,
             vision_max_pdf_pages=self.vision_max_pdf_pages,
             llm=classifier.llm if classifier is not None else None,
+            vault=vault,
         )
         return ArchivistServices(
             paperless=paperless,

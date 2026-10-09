@@ -165,8 +165,12 @@ class CapturePipeline:
         capture_tag_prompt_size: int,
         vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
         llm=None,
+        vault=None,
     ):
         self._url_extractor = url_extractor
+        # The memory vault, for the person files. None in callers
+        # that run without one; the Person tags stand in for them then.
+        self._vault = vault
         self._text_extractor = text_extractor
         self._classifier = classifier
         self._mirror = mirror
@@ -772,6 +776,17 @@ class CapturePipeline:
             scope=entity_slug,
         )
 
+    async def _family_names(self) -> list[str]:
+        """The family's first names: the person files, else the Person tags."""
+        people = self._vault.people() if self._vault is not None else None
+        if people is not None:
+            return [p.first_name for p in people]
+        person_tags = await self._paperless.get_tags()
+        return [
+            t.replace("Person: ", "") for t in person_tags
+            if t.startswith("Person: ")
+        ]
+
     async def _classify(
         self, source, sender_name: str,
         *, images: list[ImageAttachment] | None = None,
@@ -795,11 +810,7 @@ class CapturePipeline:
             # Bot was brought up without AI configured; fall through to the
             # minimal classification below so the capture still files.
             return {}
-        person_tags = await self._paperless.get_tags()
-        person_names = [
-            t.replace("Person: ", "") for t in person_tags
-            if t.startswith("Person: ")
-        ]
+        person_names = await self._family_names()
         existing_tags = (
             self._capture_tags.top(self.capture_tag_prompt_size)
             if self._capture_tags else []
