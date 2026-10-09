@@ -63,6 +63,7 @@ const LABELS = {
     topic: "Topic",
     sender: "Sender",
     filedBy: "filed by",
+    alsoKnownAs: "Also known as",
     updated: "updated",
     familyWiki: "family wiki",
     welcome: "Everything the family has kept: documents, notes, the diary, and the people they belong to.",
@@ -106,6 +107,7 @@ const LABELS = {
     topic: "Thema",
     sender: "Absender",
     filedBy: "abgelegt von",
+    alsoKnownAs: "Auch bekannt als",
     updated: "aktualisiert",
     familyWiki: "Familienwiki",
     welcome: "Alles, was die Familie aufbewahrt: Dokumente, Notizen, das Tagebuch und die Menschen, zu denen sie gehören.",
@@ -294,6 +296,26 @@ interface Topic {
 
 const fm = (f: QuartzPluginData) => (f.frontmatter ?? {}) as Record<string, any>
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : [])
+
+// The other names a person or sender goes by: `synonyms` on a person page
+// (the household page's aliases, then what documents called them),
+// `aliases` on a correspondent. A name made only of words already in the
+// title says nothing new ("Maggie" under "Maggie Simpson") and is left out.
+const otherNames = (m: Record<string, any>): string[] => {
+  const title = String(m.title ?? m.canonical ?? "").toLowerCase()
+  const titleWords = new Set(title.split(/\s+/).filter(Boolean))
+  const seen = new Set<string>()
+  return [...asList(m.synonyms), ...asList(m.aliases)].filter((name) => {
+    const key = name.trim().toLowerCase()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return !key.split(/\s+/).every((w) => titleWords.has(w))
+  })
+}
+const alsoKnownAs = (m: Record<string, any>): string[] => {
+  const names = otherNames(m)
+  return names.length ? [`${L.alsoKnownAs} ${names.join(", ")}`] : []
+}
 
 function parseDate(v: unknown): Date | undefined {
   if (!v) return undefined
@@ -726,8 +748,8 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       }
     }
     const updated = f?.dates?.modified
-    if (m.type === "person") return { kicker: [L.person], meta: [], date: updated, chips: [] }
-    if (m.type === "correspondent") return { kicker: [L.sender], meta: [], date: updated, chips: [] }
+    if (m.type === "person") return { kicker: [L.person], meta: alsoKnownAs(m), date: updated, chips: [] }
+    if (m.type === "correspondent") return { kicker: [L.sender], meta: alsoKnownAs(m), date: updated, chips: [] }
     if (m.type === "topic") {
       const t = [...topics.values()].find((x) => x.slug === slug)
       const area = onto.areas.find((a) => a.id === t?.area)
