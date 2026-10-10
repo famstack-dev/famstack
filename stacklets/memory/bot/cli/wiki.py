@@ -73,7 +73,7 @@ from memory.lib import (  # noqa: E402
     extract_summary_callout,
 )
 from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
-from stack.people import Person, find_people, members, resolve  # noqa: E402
+from stack.people import Person, find_people, resolve  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 
@@ -275,8 +275,8 @@ async def run(llm: LLM, argv: list[str]) -> int:
         _err("no documents with summary callouts found in vault")
         return 1
 
-    # The people the wiki carries a page for, and the members among them
-    # the home page lists: the person files once the family has them, the
+    # The people the wiki carries a page for, all of whom the home page
+    # lists: the person files once the family has them, the
     # old guess (bucket dirs plus names in frontmatter) until
     # `stack up memory` has written them. A person file that does not
     # read is reported, and while any is, no page is retired: a typo in
@@ -285,8 +285,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
     people = _people(shared_bucket, problems)
     if people is not None:
         _resolve_persons(index, people)
+    # Every declared person has a page and a line on the home page,
+    # account holders first: the baby has no chat account and is still
+    # the first person a reader looks for.
     roster = _roster(vault, index, shared_bucket, people)
-    member_ids = [p.id for p in members(people or [])] or roster
     persons = {p.id: p for p in people or []}
     retire = people is not None and not problems
 
@@ -314,7 +316,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
         if home_sel:
             rc = await _generate_home(
-                llm, index, roster=member_ids, people=persons,
+                llm, index, roster=roster, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
@@ -382,7 +384,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # ── Default loop ──────────────────────────────────────────────────
     # Bare invocation: home, every member, every correspondent, every topic.
     rc = await _generate_home(
-        llm, index, roster=member_ids, people=persons,
+        llm, index, roster=roster, people=persons,
         shared_bucket=shared_bucket, lang=lang, write=not dry_run,
     )
     if rc != 0:
@@ -1670,9 +1672,9 @@ def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str,
             for slug in roster
         )
         member_links = (
-            f"\nThe household has EXACTLY these {len(roster)} members, one bullet "
-            "each, in this order — fill in the full name and detail, keep the "
-            "link target as given:\n"
+            f"\nThe family has EXACTLY these {len(roster)} people, one bullet "
+            "each, in this order (it replaces oldest first) — fill in the full "
+            "name and detail, keep the link target as given:\n"
             f"{skeleton}\n"
             "A person can appear under different name variants in the sources "
             "(the baby Margaret is the same person as Maggie) — never list "
