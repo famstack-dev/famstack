@@ -17,6 +17,7 @@ to its month page, so several entries share one link.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 from pathlib import Path
@@ -50,11 +51,11 @@ HALLOWEEN = _entry("family/diary/entries/2025/10/2025-10-31-cc33.md",
 
 
 class _Model:
-    """Writes one line per source the first time, then keeps the baseline.
+    """Writes one "loves" line per source the first time, then keeps the page.
 
-    Keeping the baseline untouched is what the prompt asks for when
-    nothing contradicts it, and what a model at temperature 0 mostly
-    does. Every number on the page is therefore the compiler's.
+    Keeping the page's wording is what the prompt asks for when nothing
+    contradicts it, and what a model at temperature 0 mostly does.
+    Every number on the page is therefore the compiler's.
     """
 
     def __init__(self) -> None:
@@ -62,13 +63,13 @@ class _Model:
 
     async def complete(self, role, prompt, **kwargs) -> str:
         self.prompts.append(prompt)
-        if "CURRENT PAGE (baseline):\n" in prompt:
-            baseline = prompt.split("CURRENT PAGE (baseline):\n", 1)[1]
-            return baseline.split("\nProduce a markdown page", 1)[0].strip()
-        lines = ["# Homer Simpson", "", "## Recent Activity"]
-        for n, title in re.findall(r"^\[(\d+)\] [\d-]+ · (.+?)(?:  \(|$)", prompt, re.M):
-            lines.append(f"- {title}. [{n}]")
-        return "\n".join(lines)
+        if "THE PAGE AS IT IS NOW:\n" in prompt:
+            page = prompt.split("THE PAGE AS IT IS NOW:\n", 1)[1]
+            loves = re.findall(r"^- ([^*].*\[\d+\])$", page.split("## Lately")[0], re.M)
+        else:
+            loves = [f"{title}. [{n}]" for n, title in
+                     re.findall(r"^\[(\d+)\] [\d-]+ · (.+?)(?:  \(|$)", prompt, re.M)]
+        return json.dumps({"tagline": "Dad.", "about": "Homer is Homer.", "loves": loves})
 
 
 @pytest.fixture
@@ -87,11 +88,12 @@ def _build(model: _Model, brain: Path, entries: list[dict]) -> str:
 
 
 def _cited(page: str) -> dict[str, str]:
-    """Each sentence's subject, mapped to the title its reference names."""
+    """Each line the model wrote, mapped to the title its reference names."""
     refs = dict(re.findall(r"^- \[(\d+)\] \[([^\]]+)\]", page, re.M))
+    loves = page.split("## What Homer loves", 1)[1].split("\n## ", 1)[0]
     return {
         sentence: refs.get(n, f"(no reference {n})")
-        for sentence, n in re.findall(r"^- (.+?)\. \[(\d+)\]$", page, re.M)
+        for sentence, n in re.findall(r"^- (.+?)\. \[(\d+)\]$", loves, re.M)
     }
 
 
@@ -116,8 +118,8 @@ class TestARebuildKeepsEveryCitationOnItsSource:
 
         _build(model, brain, [HALLOWEEN, PANCAKES, SLEDDING, INSURANCE])
 
-        new = model.prompts[-1].split("NEW since the baseline", 1)[1]
-        new = new.split("CURRENT PAGE", 1)[0]
+        new = model.prompts[-1].split("New since the page was written:", 1)[1]
+        new = new.split("THE PAGE AS IT IS NOW", 1)[0]
         assert re.findall(r"^\[\d+\] .+$", new, re.M) == ["[1] 2025-10-31 · Halloween costumes"]
 
     def test_a_rebuild_with_nothing_new_changes_no_number(self, brain):
@@ -126,7 +128,7 @@ class TestARebuildKeepsEveryCitationOnItsSource:
         first = _build(model, brain, [PANCAKES, SLEDDING, INSURANCE])
 
         assert _build(model, brain, [PANCAKES, SLEDDING, INSURANCE]) == first
-        assert "Nothing is new since the baseline" in model.prompts[-1]
+        assert "Nothing is new since then." in model.prompts[-1]
 
 
 class TestAPageFromBeforeTheFixIsRebuiltOnce:
@@ -149,7 +151,7 @@ class TestAPageFromBeforeTheFixIsRebuiltOnce:
 
         page = _build(model, brain, [PANCAKES, SLEDDING])
 
-        assert "CURRENT PAGE (baseline)" not in model.prompts[-1]
+        assert "THE PAGE AS IT IS NOW" not in model.prompts[-1]
         assert _cited(page) == {
             "Heart-shaped pancakes": "Heart-shaped pancakes",
             "Sledding on Mount Springfield": "Sledding on Mount Springfield",
@@ -162,4 +164,4 @@ class TestAPageFromBeforeTheFixIsRebuiltOnce:
 
         _build(model, brain, [PANCAKES, SLEDDING])
 
-        assert "CURRENT PAGE (baseline)" in model.prompts[-1]
+        assert "THE PAGE AS IT IS NOW" in model.prompts[-1]
