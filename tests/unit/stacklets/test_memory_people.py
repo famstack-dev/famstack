@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -268,6 +269,31 @@ class TestPersonPageNames:
             "slug": "maggie", "type": "person", "birthday": "2025-01-12",
         }
         assert updated.endswith("---\n\nbody\n")
+
+    def test_the_home_page_lists_everyone_declared_account_holders_first(
+        self, instance, monkeypatch,
+    ):
+        """The baby has no chat account and is still family: the home
+        page is where a reader looks for her."""
+        vault, brain, index = instance
+        _declare(vault, homer=HOMER, marge=MARGE, maggie=MAGGIE)
+        for entry in index:
+            entry.update(date="2025-01-18", summary=entry["title"])
+        prompts: list[str] = []
+
+        class _Model:
+            async def complete(self, role, prompt, **kwargs):
+                prompts.append(prompt)
+                return "# The Simpsons\n"
+        monkeypatch.setattr(wiki, "_index_vault", lambda vault: index)
+        monkeypatch.setattr(wiki, "_brain_dir", lambda: brain)
+        (brain / "index.md").write_text("---\ntitle: Family Memory\n---\n")
+
+        asyncio.run(wiki.run(_Model(), ["--home"]))
+
+        listed = re.findall(r"^- \*\*\[([^\]]+)\]\((\w+)/about\)\*\*", prompts[0], re.M)
+        assert listed == [("Homer Simpson", "homer"), ("Marge Simpson", "marge"),
+                          ("Maggie Simpson", "maggie")]
 
     def test_the_home_page_is_told_the_full_names(self):
         prompt = wiki._build_home_prompt(
