@@ -1063,3 +1063,23 @@ class TestReferences:
         }]
         section = _build_references_section(page, entries, page_dir="")
         assert "(/family/documents/2009/06/2009-06-15-mortgage-p23.md)" in section
+
+    def test_a_german_household_reads_quellen(self):
+        page = "Maggie sagte ihr erstes Wort. [1]"
+        entries = [{"title": "Maggies erstes Wort", "date": "2026-09-22",
+                    "rel": "family/documents/2026/09/2026-09-22-wort-p1.md"}]
+        section = _build_references_section(page, entries, page_dir="", lang="de")
+        assert section.startswith("## Quellen\n")
+
+
+class TestAChangedLanguageLeavesNoOldBlock:
+    def test_a_rebuild_finds_the_block_under_either_heading(self, tmp_path: Path) -> None:
+        """A household that switches language keeps one block, not two."""
+        p = tmp_path / "about.md"
+        p.write_text(
+            "<!-- begin: generated -->\n\n# Homer\n\nFakt [1].\n\n## Quellen\n\n"
+            "- [1] [Notiz](/homer/notes/n.md) - 2026-06-12\n\n<!-- end: generated -->\n",
+            encoding="utf-8")
+        body, refs = _previous_generated(p)
+        assert body == "# Homer\n\nFakt [1]."
+        assert refs == {("Notiz", "/homer/notes/n.md"): 1}
