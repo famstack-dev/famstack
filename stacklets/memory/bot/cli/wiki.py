@@ -80,9 +80,11 @@ from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 # The diary compiler owns the diary's path and its reader-facing words;
 # the home page only places the pointer it renders. Imported by bare
 # name, the way `cli/diary.py` imports it, so the two commands share one
-# module object and therefore one selected language.
+# module object and therefore one selected language. The person page's
+# template and prose live beside it, in `person_page`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import diary  # noqa: E402
+import person_page  # noqa: E402
 
 HELP = "Regenerate the family wiki's home and member pages"
 
@@ -475,11 +477,12 @@ async def _generate_home(
     return rc
 
 
-# Stamped on every person page the compiler writes. A page without it
-# was compiled before diary citations were renumbered by the source the
-# References block shows; its text may cite the wrong entry, so it is
-# rebuilt from the evidence once instead of kept as the baseline.
-_PERSON_PAGE_STAMP = "<!-- person page: 2 -->"
+# Stamped on every person page the compiler writes, with the layout it
+# follows. A page without the current stamp is rebuilt from the evidence
+# once instead of kept as the baseline: it has the previous layout, or
+# predates the fix that renumbers diary citations by the source the
+# References block shows, so its text may cite the wrong entry.
+_PERSON_PAGE_STAMP = "<!-- person page: 3 -->"
 
 
 async def _generate_member(
@@ -516,18 +519,32 @@ async def _generate_member(
     previous = previous.replace(_PERSON_PAGE_STAMP, "").strip()
     previous, new_evidence = _anchor_to_evidence(previous, prev_refs, entries)
 
-    prompt = _build_member_prompt(
-        display, slug, entries, facts, lang=lang,
-        previous=previous, new_evidence=new_evidence,
+    # The template carries the layout; the model writes only the prose,
+    # as JSON. Dates, the latest entries and the documents come from the
+    # index, so the model cannot misdate them or invent one.
+    first_name = person.first_name if person else display.split()[0]
+    lately = person_page.latest(entries)
+    prompt = person_page.prompt(
+        display=display, first_name=first_name,
+        evidence=_format_evidence(entries, with_persons=True), facts=facts,
+        lately=lately, lang=lang, previous=previous, new_evidence=new_evidence,
     )
     try:
-        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
+        raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
+        parts = person_page.read_answer(raw, lately=lately)
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
+    except person_page.AnswerError as e:
+        _err(f"{slug}: the model's answer is unusable ({e}); the page stays as it was")
+        return 1
+    docs = person_page.documents(entries)
+    page = person_page.render(
+        parts, name=display, first_name=first_name, entries=entries,
+        lately=lately, docs=docs,
+        links={n: _reference(entries[n - 1])[1] for n in docs}, lang=lang,
+    )
 
-    # Member page lives at `<slug>/about.md`; links climb one level to
-    # reach the shared bucket and stay relative within the member's own.
     page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug, lang=lang)
 
     if not write:
@@ -678,6 +695,7 @@ def _index_vault(vault: Path) -> list[dict]:
         _fb = fm.get("filed_by")
         out.append({
             "title": fm.get("title") or md.stem,
+            "type": fm.get("type") or "",
             "date": fm.get("date") or "",
             "summary": summary,
             "rel": rel,
@@ -1739,112 +1757,6 @@ Rules:
 - Use ONLY what the source summaries support. A section with no source material is omitted entirely — never invent, never write placeholder lines.
 - Cite the document that established each fact as [N] inline. Multiple sources: [1, 3].
 - Keep entries dense and skimmable. One bullet per member; one bullet per item elsewhere.
-- Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
-"""
-
-
-def _build_member_prompt(
-    display: str, slug: str, entries: list[dict],
-    facts: list[tuple[str, str]], *, lang: str,
-    previous: str = "", new_evidence: list[str] | None = None,
-) -> str:
-    """Prompt for one member's profile card: summaries plus facts.
-
-    The page is a curated overview for assistants and browsing family,
-    not an archive (docs/design/brain/wiki-page-anatomy.md): recency-
-    weighted About, themed interests, capped activity, no ledger
-    content. Curated facts ride in as ground truth (the family typed
-    them); the document summaries are the cited evidence. Section
-    layout is fixed for the same reason the home page's is.
-
-    ``previous`` is the page's current generated body (sans rendered
-    references): with it the prompt anchors the regen to the existing
-    wording so a new document produces a reviewable diff instead of a
-    full resample — temp 0 alone does NOT give that (evidence+1 changes
-    the input, and everything redraws; measured 2026-06-12).
-
-    The evidence slice is shared by design: Lisa's birth certificate is
-    on Lisa's page AND describes her parents. Small models conflate
-    those roles onto the page's subject ("Lisa ... her husband Homer"),
-    so the prompt names who each document involves and carries explicit
-    attribution rules. Weakest-model-first: every rule here earned its
-    place by a 9B failure.
-    """
-    evidence = _format_evidence(entries, with_persons=True)
-    if facts:
-        fact_lines = "\n".join(f"- ({kind}) {text}" for kind, text in facts)
-        facts_block = (
-            f"Hand-curated facts about {display} "
-            f"(ground truth the family typed in):\n{fact_lines}"
-        )
-    else:
-        facts_block = f"No hand-curated facts on file for {display}."
-
-    if previous:
-        if new_evidence:
-            fresh = "\n".join(new_evidence)
-            fresh_block = (
-                "NEW since the baseline (not yet on the page) — work it "
-                "into the right sections, citing its [N]:\n" + fresh
-            )
-        else:
-            fresh_block = (
-                "Nothing is new since the baseline — reproduce it, "
-                "applying corrections only where it contradicts the "
-                "evidence above."
-            )
-        anchor_block = f"""
-The page already exists. Its current version is below — treat it as the baseline, not as something to rewrite:
-- Keep its wording, section names, themes, and bullet order EXACTLY wherever the evidence still supports them.
-- The baseline's [N] citations already match the evidence numbering above. Do not change them.
-- Touch existing lines only where new evidence forces it (e.g. the Recent Activity cap pushing out the oldest entry).
-- Drop a line only when its evidence no longer appears above.
-- Never rephrase, restyle, or reorganize anything else.
-
-{fresh_block}
-
-CURRENT PAGE (baseline):
-{previous}
-"""
-    else:
-        anchor_block = ""
-
-    return f"""You are composing the profile page for one member of a family's private, self-hosted memory wiki. It is an OVERVIEW, not an archive: the card a family member (or the family's assistant) reads to get a feel for who this person is right now — their role, their current life, their interests and quirks. Detail lives in the cited documents, one click away.
-
-This page is about: {display} (vault slug: {slug}).
-
-{facts_block}
-
-Source summaries involving {display} (cite as [N] inline where the fact came from a specific document):
-
-{evidence}
-{anchor_block}
-Produce a markdown page with this EXACT structure and section order (omit a section entirely when nothing supports it):
-
-# {display}
-> <one short line: who they are in the family, only if a source states it explicitly — omit the blockquote otherwise>
-
-## About
-One short paragraph: who {display} is TODAY — role in the family, occupation or school, current life context. When sources span years, prefer the most recent picture; old contracts and certificates are background, not news. [N]
-
-## Interests & Preferences
-Themed bullets that give a feel for the person: hobbies, habits, favorite places, pets, preferences, quirks. Merge the hand-curated facts above with what the documents reveal (a league membership, a regular haunt). Format: **<Theme>:** <detail>. [N]
-
-## Recent Activity
-The most recent events involving them, newest first, AT MOST 8 bullets: <date> — <what happened>. [N]
-
-## Key Documents
-The load-bearing documents naming them (identity, contracts, insurance, medical, school, financial). One bullet each. [N] Receipts and everyday ephemera stay out — they remain reachable through Recent Activity citations.
-
-Rules:
-- The whole page stays under roughly 300 words. It is a profile card, not a ledger: never copy line items, account numbers, or ID numbers onto the page — the citations carry that detail.
-- The H1 is the person's full name as it appears in the documents; fall back to "{display}".
-- The documents above also involve OTHER family members (see each entry's "involves:" list). A birth certificate is mostly about the parents; school papers name a parent. State a fact about {display} ONLY when the source ties it to {display} by name. Never give {display} another person's role, profession, or relationship (mother/father, spouse, caretaker, employer).
-- When a summary says "the mother", "her husband", or similar without naming {display}, that fact belongs to someone else — leave it off this page.
-- Unsure who a fact is about? Leave it out. A short page is correct; a wrong page is not.
-- Respond in: {lang}.
-- Use ONLY what the sources and facts above support. Never invent. Omit empty sections — no placeholder lines.
-- Cite the source document as [N] inline. Multiple sources: [1, 3].
 - Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
 """
 

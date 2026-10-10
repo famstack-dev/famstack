@@ -79,6 +79,36 @@ their keep, spokes.
 4. **Links.** Timeline, todos, interests, documents, related entities.
    The link graph is the API for agents that need to go deeper.
 
+### The person page template (built)
+
+A person's `about.md` is filled from a Markdown template per language,
+`stacklets/memory/bot/templates/person.<lang>.md` (English and German).
+The template's headings are what the family reads; each `{{slot}}` is
+filled by one side:
+
+| Slot | Filled by | What it holds |
+|---|---|---|
+| `name`, `first_name` | compiler | the person's file |
+| `tagline` | model | one warm line: who they are in the family |
+| `about` | model | two to four sentences about them today |
+| `loves` | model | up to five things, people, places or pastimes they love |
+| `more` | model, optional | one section of its own choosing, with its own heading |
+| `lately` | compiler, one line each by the model | the six newest entries naming them (not documents), with their real dates |
+| `documents` | compiler | the documents naming them, newest first, linked |
+
+The model answers in JSON, one field per slot, and writes in the
+household's voice: warm, concrete, the way a family member would
+describe someone to a visiting relative. It never writes a date, never
+lists a document, and cannot credit an entry to the wrong day, because
+those slots are not its to fill. A paragraph whose slot is empty is
+left out with its heading, so a page never says "nothing recorded". An
+answer that is not the JSON object keeps the page as it was.
+
+Each page carries a stamp with the layout it follows. A page with an
+older stamp is regenerated from the evidence once instead of being
+kept as the baseline for the next rebuild, so a layout change reaches
+every page by the next nightly sweep.
+
 ### Entity types and slot templates
 
 The ontology defines which pages exist; each entity type brings a
@@ -154,7 +184,8 @@ command), whether todos are also assigned to non-capturing members
 
 1. **Profile-card prompt** for person about pages: curated, recency-
    weighted, anti-conflation, token-capped, trivia-if-present. The
-   35B batch run is the quality reference.
+   35B batch run is the quality reference. Built as the person page
+   template above (2026-10).
 2. **One non-person entity page** (the car). Forces entity types and
    slot templates to become real instead of theoretical.
 3. **Todos**: capture → render → nag, in that order; render alone is
