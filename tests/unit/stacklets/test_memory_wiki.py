@@ -591,7 +591,8 @@ class TestPreviousGenerated:
         body, refs = _previous_generated(p)
         assert "## References" not in body
         assert body.startswith("# Homer")
-        assert refs == {"../family/documents/bc.md": 1, "notes/n.md": 2}
+        assert refs == {("Birth Cert", "../family/documents/bc.md"): 1,
+                        ("Note", "notes/n.md"): 2}
 
 
 class TestRenumberCitations:

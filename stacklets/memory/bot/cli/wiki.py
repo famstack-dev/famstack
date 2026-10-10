@@ -473,6 +473,13 @@ async def _generate_home(
     return rc
 
 
+# Stamped on every person page the compiler writes. A page without it
+# was compiled before diary citations were renumbered by the source the
+# References block shows; its text may cite the wrong entry, so it is
+# rebuilt from the evidence once instead of kept as the baseline.
+_PERSON_PAGE_STAMP = "<!-- person page: 2 -->"
+
+
 async def _generate_member(
     llm: LLM, slug: str, index: list[dict], vault: Path, *,
     person: Person | None = None,
@@ -500,28 +507,12 @@ async def _generate_member(
     # Anchored regen: renumber the existing page's citations to the
     # current evidence order, and name what's new since that page was
     # generated. Both jobs are mechanical here so the model carries
-    # neither (it fails silently at both — see _previous_generated).
+    # neither (it fails silently at both, see _previous_generated).
     previous, prev_refs = _previous_generated(vault / slug / "about.md")
-    new_evidence: list[str] = []
-    if previous:
-        link_to_n = {
-            _relative_link(e["rel"], slug): n
-            for n, e in enumerate(entries, start=1)
-            if e.get("rel")
-        }
-        remap = {
-            old: link_to_n[link]
-            for link, old in prev_refs.items()
-            if link in link_to_n
-        }
-        previous = _renumber_citations(previous, remap)
-        for n, e in enumerate(entries, start=1):
-            link = _relative_link(e.get("rel") or "", slug)
-            if link not in prev_refs:
-                meta = " · ".join(
-                    x for x in (e.get("date"), e.get("title")) if x
-                )
-                new_evidence.append(f"[{n}] {meta}")
+    if _PERSON_PAGE_STAMP not in previous:
+        previous, prev_refs = "", {}
+    previous = previous.replace(_PERSON_PAGE_STAMP, "").strip()
+    previous, new_evidence = _anchor_to_evidence(previous, prev_refs, entries)
 
     prompt = _build_member_prompt(
         display, slug, entries, facts, lang=lang,
@@ -535,7 +526,7 @@ async def _generate_member(
 
     # Member page lives at `<slug>/about.md`; links climb one level to
     # reach the shared bucket and stay relative within the member's own.
-    page = _with_references(page, entries, page_dir=slug)
+    page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug)
 
     if not write:
         print(f"\n<!-- {slug}/about.md -->\n{page}")
@@ -1229,15 +1220,49 @@ def _build_references_section(
         if not (1 <= n <= len(entries)):
             continue
         s = entries[n - 1]
-        title = (s.get("title") or "").strip() or "(untitled)"
+        title, link = _reference(s)
         date = (s.get("date") or "").strip()
-        rel = s.get("rel") or ""
-        link = _relative_link(_published_path(rel), page_dir) if rel else ""
         head = f"- [{n}] [{title}]({link})" if link else f"- [{n}] **{title}**"
         if date:
             head += f" - {date}"
         rows.append(head)
     return "\n".join(rows)
+
+
+def _reference(entry: dict) -> tuple[str, str]:
+    """The title and link a source's row in `## References` shows.
+
+    The pair is also how a rebuilt page finds its old citations again
+    (`_anchor_to_evidence`), so both read it from here. The link alone
+    is not enough: every diary entry of a month links to the same month
+    page.
+    """
+    title = (entry.get("title") or "").strip() or "(untitled)"
+    rel = entry.get("rel") or ""
+    return title, _relative_link(_published_path(rel), "") if rel else ""
+
+
+def _anchor_to_evidence(
+    previous: str, prev_refs: dict[tuple[str, str], int], entries: list[dict],
+) -> tuple[str, list[str]]:
+    """Renumber a page's previous body to `entries`, and list what is new.
+
+    `prev_refs` is the previous References block, (title, link) to
+    number. A citation whose source is still in `entries` takes that
+    source's current number; one whose source is gone keeps its number
+    and the prompt tells the model to drop it. New evidence is every
+    entry the previous page did not reference, as `[N] date · title`.
+    """
+    if not previous:
+        return previous, []
+    current = {_reference(e): n for n, e in enumerate(entries, start=1)}
+    remap = {old: current[ref] for ref, old in prev_refs.items() if ref in current}
+    new_evidence = [
+        f"[{n}] " + " · ".join(x for x in (e.get("date"), e.get("title")) if x)
+        for n, e in enumerate(entries, start=1)
+        if _reference(e) not in prev_refs
+    ]
+    return _renumber_citations(previous, remap), new_evidence
 
 
 # Diary entries are the source the month pages are compiled from, and the
@@ -1357,12 +1382,12 @@ def _publish_capture_indexes(
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
 
-def _previous_generated(page_path: Path) -> tuple[str, dict[str, int]]:
+def _previous_generated(page_path: Path) -> tuple[str, dict[tuple[str, str], int]]:
     """The current generated body of a page, for prompt anchoring.
 
     Returns ``(body, refs)``: the content between the regenerate
     markers with the rendered References section stripped, and the
-    reference map that section carried (link path → citation number).
+    reference map that section carried ((title, link) → citation number).
     The map lets the caller renumber the baseline's citations to the
     CURRENT evidence order before prompting — new evidence shifts the
     numbering, and a model asked to renumber silently doesn't
@@ -1380,9 +1405,9 @@ def _previous_generated(page_path: Path) -> tuple[str, dict[str, int]]:
         return "", {}
     body = text[start + len(_BEGIN):end].strip()
     refs_map = {
-        m.group(2): int(m.group(1))
+        (m.group(2), m.group(3)): int(m.group(1))
         for m in re.finditer(
-            r"^- \[(\d+)\] \[[^\]]*\]\(([^)]+)\)", body, re.M,
+            r"^- \[(\d+)\] \[([^\]]*)\]\(([^)]+)\)", body, re.M,
         )
     }
     refs = body.find("## References")
