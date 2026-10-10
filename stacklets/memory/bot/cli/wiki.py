@@ -86,6 +86,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import diary  # noqa: E402
 import home_page  # noqa: E402
 import person_page  # noqa: E402
+import topic_page  # noqa: E402
+
+# One module owns what a todo line is; `stack memory topic` reads
+# through it the same way, by bare name from this folder.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from todo_list import read_todos  # noqa: E402
 
 HELP = "Regenerate the family wiki's home and member pages"
 
@@ -373,7 +379,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
             topic_set = [t for t in topics if t[1] in wanted]
         for bucket_prefix, topic_slug in topic_set:
             rc = await _generate_topic(
-                llm, bucket_prefix, topic_slug, index,
+                llm, bucket_prefix, topic_slug, index, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
@@ -414,7 +420,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
     for bucket_prefix, topic_slug in topics:
         await _generate_topic(
-            llm, bucket_prefix, topic_slug, index,
+            llm, bucket_prefix, topic_slug, index, people=persons,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
     return 0
@@ -585,6 +591,7 @@ async def _generate_member(
 
 async def _generate_topic(
     llm: LLM, bucket_prefix: str, topic_slug: str, index: list[dict], *,
+    people: dict[str, Person] | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
     """Compose one topic's `about.md` from its slice plus cross-refs.
@@ -612,19 +619,28 @@ async def _generate_topic(
     scope = "shared" if bucket_prefix == shared_bucket else "personal"
     display = topic_slug.replace("-", " ").title()
 
-    prompt = _build_topic_prompt(
-        display, topic_slug, scope, entries, cross_refs, lang=lang,
+    # The template carries the layout; the model reads the facts and the
+    # state out of the sources, as JSON. The todo items and the lists of
+    # what was filed come from disk and the index, as they are.
+    page_dir = f"{bucket_prefix}/{topic_slug}"
+    sources = _topic_sources(entries, cross_refs, topic_slug, people or {})
+    todos = _open_todos(page_dir)
+    prompt = topic_page.prompt(
+        display=display, scope=scope, lang=lang, todos=todos,
+        evidence_text=topic_page.evidence(
+            sources, {n: e.get("summary") or "" for n, e in enumerate(entries + cross_refs, 1)}),
     )
     try:
-        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
+        raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
+        answer = topic_page.read_answer(raw)
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
+    except topic_page.AnswerError as e:
+        _err(f"{page_dir}: the model's answer is unusable ({e}); the page stays as it was")
+        return 1
+    page = topic_page.render(answer, display=display, sources=sources, todos=todos, lang=lang)
 
-    # Topic about.md lives at `<bucket>/<slug>/about.md`; citations climb
-    # two levels (out of <slug>/, out of <bucket>/) to reach files in
-    # other buckets.
-    page_dir = f"{bucket_prefix}/{topic_slug}"
     page = _with_references(page, entries + cross_refs, page_dir=page_dir, lang=lang)
 
     if not write:
@@ -644,6 +660,35 @@ async def _generate_topic(
         shared_bucket=shared_bucket, write=write,
     )
     return rc
+
+def _topic_sources(entries: list[dict], cross_refs: list[dict], topic_slug: str,
+                   people: dict[str, Person]) -> list["topic_page.Source"]:
+    """The topic's captures as the page lists them, numbered as cited.
+
+    The topic's own captures come first, then the ones filed elsewhere,
+    the same order the References block numbers them in.
+    """
+    def filer(localpart: str) -> str:
+        person = people.get(localpart)
+        return person.first_name if person else localpart.capitalize()
+
+    sources = []
+    for n, e in enumerate(entries + cross_refs, start=1):
+        kind = _entry_kind(e.get("rel", ""), topic_slug) if n <= len(entries) else "elsewhere"
+        title, link = _reference(e)
+        sources.append(topic_page.Source(
+            n, kind, title, link, e.get("date") or "", filer(e.get("filed_by") or "")))
+    return sources
+
+
+def _open_todos(page_dir: str) -> list[str]:
+    """The open items of a topic's `todos.md`, as the family keeps them."""
+    try:
+        doc = (_brain_dir() / page_dir / "todos.md").read_text(encoding="utf-8")
+    except (OSError, RuntimeError):
+        return []
+    return read_todos(doc)[0]
+
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
     """Frontmatter for a freshly-created member page.
@@ -1701,148 +1746,6 @@ def _entry_kind(rel: str, slug: str) -> str:
     return {
         "bookmarks": "bookmark", "notes": "note", "documents": "document",
     }.get(folder, "note")
-
-
-def _format_topic_evidence(entries: list[dict], slug: str) -> str:
-    """Number entries `[N]` in list order, grouped under their kind.
-
-    The `[N]` index matches each entry's position in `entries`, so the
-    deterministic References section (which maps `[N]` back to
-    `entries[N-1]`) stays aligned no matter how the LLM orders the page.
-    Grouping by kind tells the model which captures are saved links vs.
-    the family's own notes, so it can split them into the right sections.
-    """
-    groups: dict[str, list[str]] = {}
-    for n, s in enumerate(entries, start=1):
-        kind = _entry_kind(s.get("rel", ""), slug)
-        parts = [s["date"]] if s.get("date") else []
-        parts.append(s.get("title") or "(untitled)")
-        who = (s.get("filed_by") or "").strip()
-        if who:
-            parts.append(f"filed by {who}")
-        meta = " · ".join(parts)
-        block = f"[{n}] {meta}\n    " + (s.get("summary") or "").replace("\n", "\n    ")
-        groups.setdefault(kind, []).append(block)
-    out: list[str] = []
-    for kind in _TOPIC_KIND_ORDER:
-        if groups.get(kind):
-            out.append(f"{_KIND_LABEL[kind]}:")
-            out.append("\n\n".join(groups[kind]))
-            out.append("")
-    return "\n".join(out).rstrip()
-
-
-def _build_topic_prompt(
-    display: str, slug: str, scope: str,
-    entries: list[dict], cross_refs: list[dict], *, lang: str,
-) -> str:
-    """Prompt for one topic's `about.md` page.
-
-    Two surfaces feed the LLM: `entries` are captures filed under
-    the topic's own folder (the household's direct material on this
-    subject); `cross_refs` are captures elsewhere whose taxonomy
-    fields cited the slug (insurance docs that mention camping,
-    Marge's gear list that tagged camping, etc.). Both are numbered
-    `[N]` evidence; the LLM cites by number.
-
-    Scope branches the tone: a shared topic reads as the family's
-    common interest; a personal topic frames it as one person's.
-
-    Captures are grouped by kind so the page separates saved links
-    (Bookmarks) from the household's own notes (Notes) and filed
-    documents (Documents) instead of flattening everything into one
-    feed. About is a recency-weighted overview, not a changelog — the
-    latest developments are folded into the prose.
-    """
-
-    main_evidence = _format_topic_evidence(entries, slug)
-    if cross_refs:
-        # Numbering continues from main_evidence so a single citation
-        # space spans the whole prompt -- the LLM and the rendered
-        # references section stay aligned.
-        offset = len(entries)
-        cross_block_lines: list[str] = []
-        for n, s in enumerate(cross_refs, start=offset + 1):
-            meta_bits = [s["date"]] if s.get("date") else []
-            meta = " · ".join(meta_bits + [s.get("title") or "(untitled)"])
-            cross_block_lines.append(f"[{n}] {meta}")
-            cross_block_lines.append(
-                "    " + (s.get("summary") or "").replace("\n", "\n    "),
-            )
-            cross_block_lines.append("")
-        cross_block = "\n".join(cross_block_lines).rstrip()
-        cross_section = (
-            "\nThe household also has material on this topic filed elsewhere "
-            "(insurance docs, personal notes, other members' captures). "
-            "Treat these as cross-references — surface them in a "
-            "`## Cross-references` section, one bullet each, citing as "
-            f"`[N]`:\n\n{cross_block}\n"
-        )
-    else:
-        cross_section = (
-            "\n(No cross-references on file yet — when other captures "
-            "tag this topic, they will appear in a `## Cross-references` "
-            "section. Omit the section entirely for now.)\n"
-        )
-
-    if scope == "shared":
-        framing = (
-            f"This topic is a shared household interest. Frame the "
-            f"`## About` section as the family's collective material on "
-            f"{display.lower()} — what the household uses this topic for, "
-            f"what shows up in the captures."
-        )
-    else:
-        framing = (
-            f"This topic is a personal interest. Frame the `## About` "
-            f"section from the perspective of the one household member who "
-            f"keeps these notes — what they care about, what they're "
-            f"tracking on {display.lower()}."
-        )
-
-    # Only emit a typed section for a kind that actually has captures, so a
-    # topic with no bookmarks doesn't carry an empty Bookmarks heading.
-    present = [
-        _KIND_LABEL[kind]
-        for kind in _TOPIC_KIND_ORDER
-        if any(_entry_kind(e.get("rel", ""), slug) == kind for e in entries)
-    ]
-    section_specs = "\n\n".join(
-        f"## {label}\nEvery {label[:-1].lower()} from above, newest first, one "
-        f"bullet each: `<what it is> — <who filed it, if known> [N]`."
-        for label in present
-    )
-
-    return f"""You are composing the landing page for a topic folder in a family's private, self-hosted memory wiki. It is an OVERVIEW someone (or the family's assistant) reads to understand what this topic is about and what has happened in it lately — not an archive. Detail lives in the cited captures, one click away. The vault is private — identifying details (full names, places, prices) are fine to include when documents reveal them.
-
-This page is about the topic: {display} (vault slug: {slug}, scope: {scope}).
-
-{framing}
-
-Captures filed directly under this topic (cite as [N] inline where a fact came from a specific capture):
-
-{main_evidence}
-{cross_section}
-Produce a markdown page with this EXACT structure and section order:
-
-# {display}
-> <one short line: what this topic is, in the household's voice — omit the blockquote if not derivable>
-
-## About
-One paragraph that reads as a CURRENT overview of the topic — what it is and where it stands right now — weighting recent captures more heavily than older ones. Fold the latest developments into the prose; do not list them as a separate changelog. [N]
-
-{section_specs}
-
-## Cross-references
-{"Captures filed in other buckets that mention this topic. One bullet each: `<date> — <what it was> [from <bucket>]`. [N]" if cross_refs else "(omit this section)"}
-
-Rules:
-- Respond in: {lang}.
-- Use ONLY what the sources above support. Never invent. Omit empty sections — no placeholder lines.
-- Cite the source capture as [N] inline. Multiple sources: [1, 3].
-- Keep entries dense and skimmable.
-- Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
-"""
 
 
 def _format_evidence(entries: list[dict], *, with_persons: bool = False) -> str:

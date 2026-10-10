@@ -109,16 +109,27 @@ older stamp is regenerated from the evidence once instead of being
 kept as the baseline for the next rebuild, so a layout change reaches
 every page by the next nightly sweep.
 
-### The home page template (built)
+### The home and topic page templates (built)
 
-The home page follows the same split, from its own template
-(`home.<lang>.md`, shared code in `page_template.py`). The compiler
-lists everyone the person files declare, linked and never dropped, in
-the order the model gives (oldest first). The model writes the welcome
-and one line per person, and reads relatives, friends and neighbours,
-the people who help the family, and the household facts (home,
-vehicles, insurance, subscriptions, memberships) out of the sources.
-The welcome is warm; the facts are plain.
+The home page and every topic page follow the same split, each from its
+own template (`home.<lang>.md`, `topic.<lang>.md`, shared code in
+`page_template.py`):
+
+- **Home.** The compiler lists everyone the person files declare, linked
+  and never dropped, in the order the model gives (oldest first). The
+  model writes the welcome and one line per person, and reads relatives,
+  friends and neighbours, the people who help the family, and the
+  household facts (home, vehicles, insurance, subscriptions,
+  memberships) out of the sources. The welcome is warm; the facts are
+  plain.
+- **Topic.** Facts and state, no prose: the model gives the key facts as
+  label and value and what has happened (booked, bought, decided), with
+  who did it. The compiler lists the open items of the topic's todo
+  list as the family keeps it, and everything filed under the topic
+  with who filed it and when.
+
+Correspondent pages stay as they are: facts the compiler renders from
+the documents, no model prose.
 
 ### Entity types and slot templates
 

@@ -6,9 +6,9 @@ bucket-shape signal, slicing the index, finding cross-references in
 other buckets via `topics:` or `tags:` frontmatter, and building the
 first-creation frontmatter for each topic's `about.md`.
 
-The LLM-call paths (`_generate_topic`, `_build_topic_prompt`) stay
-covered by the e2e rig — these tests pin the pure data shaping that
-the deriver and future wiki rebuilds will keep working over.
+The topic page itself is pinned in `test_memory_topic_page.py`; these
+tests pin the pure data shaping that the deriver and future wiki
+rebuilds will keep working over.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from wiki import (  # noqa: E402
     _build_references_section,
-    _build_topic_prompt,
     _capture_index_pages,
     _clean_generated,
     _correspondent_body,
@@ -32,7 +31,6 @@ from wiki import (  # noqa: E402
     _correspondent_preamble,
     _correspondent_roster,
     _entry_kind,
-    _format_topic_evidence,
     _frontmatter_error,
     _generated_pages_on_disk,
     _index_vault,
@@ -608,13 +606,7 @@ class TestRenumberCitations:
         assert _renumber_citations("Kept [7].", {1: 2}) == "Kept [7]."
 
 
-# ── Topic page: typed sections (bookmarks vs notes) + living About ──────────
-
-def _topic_entry(rel: str, title: str, *, date: str = "2026-06-10",
-                 summary: str = "a summary", filed_by: str = "") -> dict:
-    return {"rel": rel, "title": title, "date": date,
-            "summary": summary, "filed_by": filed_by}
-
+# ── Topic page: the kind of each capture ────────────────────────────────────
 
 class TestEntryKind:
     """A capture's kind is read from the folder after the topic slug."""
@@ -629,72 +621,6 @@ class TestEntryKind:
 
     def test_slug_absent_defaults_to_note(self):
         assert _entry_kind("family/other/notes/x.md", "camping") == "note"
-
-
-class TestFormatTopicEvidence:
-    """Evidence is grouped by kind, but [N] tracks list order so the
-    deterministic References mapping ([N] -> entries[N-1]) stays aligned."""
-
-    def test_grouped_by_kind_with_list_order_citations(self):
-        # note first in the list, bookmark second -> bookmark keeps [2]
-        entries = [
-            _topic_entry("family/camping/notes/2026/06/n.md", "Checkliste"),
-            _topic_entry("family/camping/bookmarks/2026/06/b.md", "Fenstertasche"),
-        ]
-        ev = _format_topic_evidence(entries, "camping")
-        assert "Bookmarks:" in ev and "Notes:" in ev
-        assert ev.index("Bookmarks:") < ev.index("Notes:")  # section order by kind
-        assert "[2] 2026-06-10 · Fenstertasche" in ev        # bookmark kept its index
-        assert "[1] 2026-06-10 · Checkliste" in ev
-
-    def test_filer_surfaced_in_evidence(self):
-        entries = [_topic_entry("family/camping/bookmarks/2026/06/b.md",
-                                "Fenstertasche", filed_by="marge")]
-        ev = _format_topic_evidence(entries, "camping")
-        assert "filed by marge" in ev
-
-
-class TestBuildTopicPrompt:
-    """The page separates bookmarks from notes and frames About as a
-    living, recency-weighted overview rather than a flat activity feed."""
-
-    BOOKMARK = _topic_entry("family/camping/bookmarks/2026/06/b.md", "Fenstertasche")
-    NOTE = _topic_entry("family/camping/notes/2026/06/n.md", "Checkliste")
-
-    def test_typed_sections_for_present_kinds_only(self):
-        prompt = _build_topic_prompt(
-            "Camping", "camping", "shared", [self.BOOKMARK, self.NOTE], [], lang="de",
-        )
-        assert "## Bookmarks" in prompt
-        assert "## Notes" in prompt
-        assert "## Documents" not in prompt   # no document capture present
-
-    def test_no_flat_recent_activity_section(self):
-        prompt = _build_topic_prompt(
-            "Camping", "camping", "shared", [self.BOOKMARK], [], lang="de",
-        )
-        assert "Recent Activity" not in prompt
-
-    def test_about_is_recency_weighted_overview(self):
-        prompt = _build_topic_prompt(
-            "Camping", "camping", "shared", [self.NOTE], [], lang="de",
-        )
-        lower = prompt.lower()
-        assert "weighting recent captures" in lower
-        assert "current overview" in lower
-
-    def test_cross_references_section_when_present(self):
-        cross = [_topic_entry("family/insurance/documents/2026/06/d.md", "Police")]
-        prompt = _build_topic_prompt(
-            "Camping", "camping", "shared", [self.NOTE], cross, lang="de",
-        )
-        assert "## Cross-references" in prompt
-
-    def test_sections_request_attribution(self):
-        prompt = _build_topic_prompt(
-            "Camping", "camping", "shared", [self.BOOKMARK], [], lang="de",
-        )
-        assert "who filed it" in prompt.lower()
 
 
 class TestIndexFiledBy:
