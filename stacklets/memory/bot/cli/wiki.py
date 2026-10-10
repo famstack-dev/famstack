@@ -448,7 +448,7 @@ async def _generate_home(
     # leads somewhere a reader browses rather than looks something up.
     page = _with_diary_link(page, shared_bucket=shared_bucket)
 
-    page = _with_references(page, index, page_dir="")
+    page = _with_references(page, index, page_dir="", lang=lang)
 
     # Index pages for the shared bucket's own captures (notes dropped in the
     # main family room, not under a topic). The `<shared>/notes/` prefix won't
@@ -528,7 +528,7 @@ async def _generate_member(
 
     # Member page lives at `<slug>/about.md`; links climb one level to
     # reach the shared bucket and stay relative within the member's own.
-    page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug)
+    page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug, lang=lang)
 
     if not write:
         print(f"\n<!-- {slug}/about.md -->\n{page}")
@@ -597,7 +597,7 @@ async def _generate_topic(
     # two levels (out of <slug>/, out of <bucket>/) to reach files in
     # other buckets.
     page_dir = f"{bucket_prefix}/{topic_slug}"
-    page = _with_references(page, entries + cross_refs, page_dir=page_dir)
+    page = _with_references(page, entries + cross_refs, page_dir=page_dir, lang=lang)
 
     if not write:
         print(f"\n<!-- {page_dir}/about.md -->\n{page}")
@@ -1195,16 +1195,25 @@ def _with_diary_link(page: str, *, shared_bucket: str) -> str:
     return page.rstrip() + "\n\n" + link
 
 
-def _with_references(page: str, entries: list[dict], *, page_dir: str) -> str:
+# The References heading in the household's language. A rebuild finds
+# the block under any of them, so a language change does not leave the
+# old block inside the page body.
+_REFERENCES = {"en": "References", "de": "Quellen"}
+_REFERENCES_HEADING = re.compile(
+    r"^## (?:" + "|".join(map(re.escape, _REFERENCES.values())) + r")\s*$", re.M)
+
+
+def _with_references(page: str, entries: list[dict], *, page_dir: str,
+                     lang: str = "en") -> str:
     """Append a `## References` block for the citations the page used."""
-    section = _build_references_section(page, entries, page_dir=page_dir)
+    section = _build_references_section(page, entries, page_dir=page_dir, lang=lang)
     if section:
         return page.rstrip() + "\n\n" + section
     return page
 
 
 def _build_references_section(
-    page: str, entries: list[dict], *, page_dir: str,
+    page: str, entries: list[dict], *, page_dir: str, lang: str = "en",
 ) -> str:
     """Render a `## References` block listing the cited source documents.
 
@@ -1217,7 +1226,8 @@ def _build_references_section(
     citations = _extract_citations(page)
     if not citations:
         return ""
-    rows: list[str] = ["## References", ""]
+    heading = _REFERENCES.get((lang or "").strip().lower()[:2], _REFERENCES["en"])
+    rows: list[str] = [f"## {heading}", ""]
     for n in citations:
         if not (1 <= n <= len(entries)):
             continue
@@ -1412,9 +1422,9 @@ def _previous_generated(page_path: Path) -> tuple[str, dict[tuple[str, str], int
             r"^- \[(\d+)\] \[([^\]]*)\]\(([^)]+)\)", body, re.M,
         )
     }
-    refs = body.find("## References")
-    if refs != -1:
-        body = body[:refs].rstrip()
+    refs = _REFERENCES_HEADING.search(body)
+    if refs:
+        body = body[:refs.start()].rstrip()
     return body, refs_map
 
 
