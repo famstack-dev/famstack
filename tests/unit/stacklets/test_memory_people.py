@@ -298,7 +298,7 @@ class TestPersonPageNames:
 
     def test_the_home_page_is_told_the_full_names(self):
         prompt = wiki.home_page.prompt(
-            evidence="", ids=["homer", "marge"], lang="en",
+            evidence="", ids=["homer", "marge"], lang="en", recent=[],
             names={"homer": "Homer Simpson", "marge": "Marge Simpson"})
         assert "- marge: Marge Simpson" in prompt
         assert "(full name from the sources)" not in prompt

@@ -7,6 +7,8 @@ slot is empty is left out whole, heading included.
   family          the family's name ("The Simpsons"), from the model
   address         where the family lives, from the model
   welcome         two or three warm sentences, from the model
+  lately          a short paragraph on the last month, from the model,
+                  written from that month's diary and notes only
   glance          the household facts a newcomer wants first (the home,
                   the cars, the doctor, the school), from the model
   people          everyone the person files declare, linked to their page,
@@ -23,6 +25,9 @@ This comment is not published.
 > {{address}}
 
 {{welcome}}
+
+## Lately
+{{lately}}
 
 ## At a glance
 {{glance}}
