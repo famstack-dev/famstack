@@ -8,6 +8,8 @@ these tests promise:
   model forgot is still there, a person it made up is not.
 - The household facts a newcomer wants first sit at the top, and the
   pets are listed with the family.
+- What the family did in the last month is told as a short paragraph,
+  from that month's filings only; a quiet month has no such section.
 - A section with nothing in it is not on the page, heading included.
 - A German household gets German headings.
 - An answer the compiler cannot read leaves the page as it was.
@@ -19,6 +21,7 @@ import asyncio
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -38,7 +41,13 @@ PEOPLE = {
 ROSTER = ["bart", "homer", "maggie"]
 DEED = {"rel": "family/documents/2009/06/deed-p1.md", "type": "document", "title": "Deed",
         "date": "2009-06-15", "summary": "742 Evergreen Terrace, bought by Homer and Marge."}
+CAMPING = {"rel": "family/diary/entries/2026/10/2026-10-04-aa11.md", "type": "diary",
+           "title": "Camping at the lake", "date": "2026-10-04",
+           "summary": "Homer's tent collapsed in the rain; Lisa counted owls."}
+INVOICE = {"rel": "family/documents/2026/10/vet-p2.md", "type": "document", "title": "Vet invoice",
+           "date": "2026-10-06", "summary": "Santa's Little Helper, vaccination."}
 INDEX = [DEED]
+TODAY = date(2026, 10, 11)
 
 ANSWER = {
     "family": "The Simpsons",
@@ -52,6 +61,7 @@ ANSWER = {
     "friends": [{"name": "Ned Flanders", "detail": "the neighbour", "cite": [1]}],
     "glance": [{"label": "Home", "value": "Owned since 2009", "cite": [1]}],
     "pets": [{"name": "Santa's Little Helper", "detail": "our greyhound", "cite": [1]}],
+    "lately": "The family went camping at the lake. [2]",
     "insurance": [],
 }
 
@@ -78,7 +88,7 @@ def _home(brain: Path, answer, lang: str = "en", index: list[dict] = INDEX,
           model: _Model | None = None) -> str:
     rc = asyncio.run(wiki._generate_home(
         model or _Model(answer), index, roster=ROSTER, people=PEOPLE,
-        shared_bucket="family", lang=lang, write=True))
+        shared_bucket="family", lang=lang, write=True, today=TODAY))
     assert rc == 0
     return (brain / "index.md").read_text(encoding="utf-8")
 
@@ -115,9 +125,9 @@ class TestTheSectionsAroundThem:
         assert "## At a glance" not in page and "## Insurance" not in page
 
     def test_a_german_household_reads_german_headings(self, brain):
-        page = _home(brain, ANSWER, lang="de")
+        page = _home(brain, ANSWER, lang="de", index=[DEED, CAMPING])
         assert "## Auf einen Blick" in page and "## Familie" in page and "## Verwandte" in page
-        assert "## Freunde und Nachbarn" in page
+        assert "## Freunde und Nachbarn" in page and "## Zuletzt" in page
 
 
 class TestTheHouseholdAtAGlance:
@@ -130,6 +140,23 @@ class TestTheHouseholdAtAGlance:
         page = _home(brain, ANSWER)
         assert ("- **[Maggie Simpson](maggie/about)**\n"
                 "- **Santa's Little Helper** · our greyhound. [1]\n") in page
+
+
+class TestTheLastMonth:
+    def test_is_told_right_after_the_welcome(self, brain):
+        page = _home(brain, ANSWER, index=[DEED, CAMPING])
+        assert "## Lately\nThe family went camping at the lake. [2]" in page
+        assert page.index("## Lately") < page.index("## At a glance") < page.index("## Family")
+
+    def test_the_model_reads_only_this_months_diary_and_notes_for_it(self, brain):
+        """A deed from 2009 or a vet invoice is not what the family did lately."""
+        model = _Model(ANSWER)
+        _home(brain, ANSWER, index=[DEED, CAMPING, INVOICE], model=model)
+        assert "only the sources 2" in model.prompts[0]
+
+    def test_a_quiet_month_has_no_such_section(self, brain):
+        page = _home(brain, ANSWER, index=[DEED])
+        assert "## Lately" not in page and "camping" not in page
 
 
 class TestAnAnswerThatCannotBeRead:
@@ -146,7 +173,7 @@ class TestTheModelIsToldWhoIsWho:
     def test_every_name_a_person_goes_by(self):
         """A birth certificate says "Margaret"; she is Maggie, not a twin."""
         prompt = wiki.home_page.prompt(
-            evidence="", ids=["maggie"], names={"maggie": "Maggie Simpson"}, lang="en",
+            evidence="", ids=["maggie"], names={"maggie": "Maggie Simpson"}, lang="en", recent=[],
             aliases={"maggie": ["Margaret", "Mags"]})
         assert "- maggie: Maggie Simpson (also called Margaret, Mags)" in prompt
 

@@ -1,16 +1,18 @@
 """The wiki's home page: a Markdown template, the model reads the sources.
 
-The home page is the family's front door: who lives here, who is
-around them, and the household facts worth
+The home page is the family's front door: who lives here, what they
+have been up to, who is around them, and the household facts worth
 finding at a glance (the home, the cars, the insurance). It is filled
 from `templates/home.<lang>.md` (see `page_template`).
 
 - **The compiler** lists everyone the person files declare, each linked
   to their page, in the order the model gives (oldest first) and never
-  without someone: nobody is dropped, nobody appears twice.
+  without someone: nobody is dropped, nobody appears twice. It also
+  picks the filings of the last month the "lately" paragraph is written
+  from, so the model cannot retell an old story as news.
 - **The model** answers in JSON: the family's name and address, a short
-  welcome, the key household facts, one line per person, the pets, the
-  relatives and the friends around
+  welcome, the key household facts, one line per person, the pets, a
+  paragraph on the last month, the relatives and the friends around
   them, and the household facts it found, each with the sources it
   cites as numbers. The compiler formats them, so the page has one
   style whatever the model writes.
@@ -25,6 +27,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 from page_template import LANGUAGE_NAMES, cites, fact, fill, language, sentence, template, text
 
@@ -33,6 +36,11 @@ FACT_SECTIONS = ("insurance", "subscriptions", "memberships")
 # What a newcomer takes in before scrolling: the home, the cars, the
 # doctor, the school. Past that it is a list, not a glance.
 GLANCE_MAX = 6
+
+# "Lately" is the last month, and only what the family did or wrote
+# down: a diary entry or a note, not a bill that arrived.
+LATELY_DAYS = 31
+LATELY_MAX = 8
 
 # The friends a reader takes in at a glance. Past that, the list stops
 # being the people closest to the family.
@@ -75,6 +83,7 @@ class Answer:
     helpers: list[Item] = field(default_factory=list)
     glance: list[Item] = field(default_factory=list)
     pets: list[Item] = field(default_factory=list)
+    lately: str = ""
     facts: dict[str, list[Item]] = field(default_factory=dict)
 
 
@@ -82,11 +91,12 @@ class AnswerError(ValueError):
     """The model's answer is not the JSON object the prompt asked for."""
 
 
-def read_answer(raw: str, *, ids: list[str]) -> Answer:
+def read_answer(raw: str, *, ids: list[str], recent: list[int]) -> Answer:
     """The model's JSON answer, or `AnswerError`.
 
     A field of the wrong shape is dropped rather than guessed at, and a
-    person the roster does not know is ignored.
+    person the roster does not know is ignored. Without `recent` sources
+    there is no "lately", whatever the model wrote.
     """
     try:
         data = json.loads(raw)
@@ -115,6 +125,7 @@ def read_answer(raw: str, *, ids: list[str]) -> Answer:
         helpers=_items(data.get("helpers")),
         glance=_items(data.get("glance"), name="label", detail="value")[:GLANCE_MAX],
         pets=_items(data.get("pets")),
+        lately=text(data.get("lately")) if recent else "",
         facts={s: _items(data.get(s)) for s in FACT_SECTIONS},
     )
 
@@ -125,6 +136,14 @@ def _items(value, *, name: str = "name", detail: str = "detail") -> list[Item]:
     items = [Item(text(v.get(name)), text(v.get(detail)), cites(v.get("cite")))
              for v in value if isinstance(v, dict)]
     return [i for i in items if i.name]
+
+
+def recent(entries: list[dict], today: date) -> list[int]:
+    """The evidence numbers of the last month's diary entries and notes, newest first."""
+    since = (today - timedelta(days=LATELY_DAYS)).isoformat()
+    found = [(e.get("date") or "", n) for n, e in enumerate(entries, start=1)
+             if e.get("type") != "document" and since <= (e.get("date") or "") <= today.isoformat()]
+    return [n for _, n in sorted(found, reverse=True)][:LATELY_MAX]
 
 
 # ── The page ─────────────────────────────────────────────────────────────
@@ -145,6 +164,7 @@ def render(answer: Answer, *, ids: list[str], names: dict[str, str], lang: str) 
         "welcome": answer.welcome,
         "glance": "\n".join(fact(i.name, i.detail, i.cites) for i in answer.glance),
         "people": "\n".join(people),
+        "lately": answer.lately,
         "relatives": "\n".join(i.render() for i in answer.relatives),
         "friends": "\n".join(i.render() for i in answer.friends),
         "helpers": "\n".join(i.render() for i in answer.helpers),
@@ -156,12 +176,14 @@ def render(answer: Answer, *, ids: list[str], names: dict[str, str], lang: str) 
 # ── The prompt ───────────────────────────────────────────────────────────
 
 def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
-           aliases: dict[str, list[str]] | None = None) -> str:
+           recent: list[int], aliases: dict[str, list[str]] | None = None) -> str:
     """The instructions for the home page, asking for a JSON object.
 
-    `aliases` are the other names the family uses for a person. Without
-    them a model reads "Margaret" on a birth certificate as a stranger,
-    and lists Maggie's twin sister among the relatives.
+    `recent` are the sources of the last month (see `recent`); without
+    them the model is not asked for a "lately" paragraph. `aliases` are
+    the other names the family uses for a person. Without them a model
+    reads "Margaret" on a birth certificate as a stranger, and lists
+    Maggie's twin sister among the relatives.
     """
     aliases = aliases or {}
 
@@ -169,6 +191,10 @@ def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
         other = aliases.get(pid) or []
         return f" (also called {', '.join(other)})" if other else ""
 
+    lately = ""
+    if recent:
+        lately = (f'\n  "lately": "three or four warm sentences on what the family did in the last month: what happened, '
+                  f'was decided or booked, in the past tense, from only the sources {", ".join(map(str, recent))}, with citations like [3]",')
     roster = "\n".join(f"- {pid}: {names.get(pid) or '(full name from the sources)'}{known_as(pid)}"
                        for pid in ids)
     return f"""You write the home page of a family's private wiki. It is the first page the family sees when they open it: who they are, who is around them, and the household facts they want to find at a glance. The wiki is private and runs on the family's own server, so full names and addresses are fine.
@@ -192,7 +218,7 @@ Answer with one JSON object and nothing else:
   "glance": [{{"label": "one or two words in {LANGUAGE_NAMES[language(lang)]}: Home, Car, Doctor, School", "value": "the fact, short and exact: owned or rented and the lender, make and model, name", "cite": [2]}}],
   "order": ["every id above, oldest first: parents before their children, older children before younger ones"],
   "people": {{"<id>": {{"name": "the full name, only for a person listed without one", "line": "who they are, warmly and specifically, in under fifteen words: their place in the family and what they are like or busy with. No citation."}}}},
-  "pets": [{{"name": "the pet's name", "detail": "what animal, and whose", "cite": [4]}}],
+  "pets": [{{"name": "the pet's name", "detail": "what animal, and whose", "cite": [4]}}],{lately}
   "relatives": [{{"name": "full name", "detail": "how they are related to ONE of the family's people, in a few words, like \"Homer's father\"", "cite": [1]}}],
   "friends": [{{"name": "full name", "detail": "who they are to the family, in a few words", "cite": [5]}}],
   "helpers": [{{"name": "name", "detail": "what they do for the family: family doctor, Bart's teacher, the school, the corner shop", "cite": [9]}}],
@@ -207,6 +233,7 @@ Rules:
 - "relatives" are family by blood or marriage who are not among the people above: parents, grandparents, siblings and half-siblings, aunts, uncles, cousins, in-laws. Friends, neighbours, classmates and colleagues go in "friends", at most {FRIENDS_MAX}, the closest first. Doctors, teachers, schools, shops, tradespeople and others who serve the family go in "helpers".
 - The family's people above go by every name listed for them. Nobody from that list appears in "relatives", "friends" or "helpers", under any of their names.
 - "glance" holds the household facts someone new to the family wants first, at most {GLANCE_MAX}: the home (owned or rented, the mortgage lender), each car, the family doctor, the children's school. Pets go in "pets", not here.
+- "lately" tells a story, not a list: no packing lists or to-dos, at most one open question.
 - Each person or place appears in one section only: a shop owner who is a friend is a friend, not also a helper.
 - No account numbers, policy numbers or IDs; the documents carry those.
 """

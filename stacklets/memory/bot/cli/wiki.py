@@ -61,6 +61,7 @@ import re
 import sys
 import tomllib
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -430,7 +431,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 async def _generate_home(
     llm: LLM, index: list[dict], *,
     roster: list[str], people: dict[str, Person],
-    shared_bucket: str, lang: str, write: bool,
+    shared_bucket: str, lang: str, write: bool, today: date | None = None,
 ) -> int:
     """Compose the household home page from every filed summary.
 
@@ -444,12 +445,13 @@ async def _generate_home(
     # answers in JSON. Everyone on the roster gets a line, linked to their
     # page, whatever the model wrote about them.
     names = {slug: p.name for slug, p in people.items()}
+    recent = home_page.recent(index, today or date.today())
     prompt = home_page.prompt(
-        evidence=_format_evidence(index), ids=roster, names=names, lang=lang,
+        evidence=_format_evidence(index), ids=roster, names=names, lang=lang, recent=recent,
         aliases={slug: list(p.aliases) for slug, p in people.items()})
     try:
         raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
-        answer = home_page.read_answer(raw, ids=roster)
+        answer = home_page.read_answer(raw, ids=roster, recent=recent)
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
