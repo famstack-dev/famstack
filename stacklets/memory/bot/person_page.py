@@ -156,7 +156,7 @@ def render(parts: Parts, *, name: str, first_name: str, entries: list[dict],
 # ── The prompt ───────────────────────────────────────────────────────────
 
 def prompt(*, display: str, first_name: str, evidence: str, facts: list[tuple[str, str]],
-           lately: list[int], lang: str, previous: str = "",
+           lately: list[int], lang: str, family: list[str] | None = None, previous: str = "",
            new_evidence: list[str] | None = None) -> str:
     """The instructions for one person's prose, asking for a JSON object.
 
@@ -184,11 +184,16 @@ THE PAGE AS IT IS NOW:
 {previous}
 """
 
+    family_block = ""
+    if family:
+        family_block = ("\nThe family, with every name each one goes by (a source may use any of them):\n"
+                        + "\n".join(f"- {line}" for line in family) + "\n")
+
     lately_list = ", ".join(str(n) for n in lately) or "(none)"
     return f"""You write the page about one person in a family's private wiki. Family members open it to see who {display} is right now, and they should enjoy reading it.
 
 This page is about: {display}.
-
+{family_block}
 {facts_block}
 
 What the family has filed that involves {display}. Each source is numbered; cite it as [N] after the sentence it supports:
@@ -214,6 +219,8 @@ Rules:
 - Use only what the sources and the facts say. Never invent. A field with nothing to say is left out or empty.
 - The sources also involve other people (see "involves:"). A birth certificate is mostly about the parents; a school letter names a parent. Say something about {first_name} only when the source ties it to {first_name} by name. Never give {first_name} another person's role, job, costume, words or relationship.
 - When a source says "the mother" or "her husband" without naming {first_name}, that is about someone else: leave it out.
+- Who did something is who filed the source or who the source names as doing it. Never credit {first_name} with what another person did.
+- A family member under another of their names is the same person, never a new child, sibling or twin.
 - No dates, numbers of accounts or IDs, and no source titles in the prose. The page lists the documents itself.
 - Several sources for one sentence are cited together: [1, 3].
 - Count people only from the sources: who the children, siblings and grandparents are comes from what the sources name.
