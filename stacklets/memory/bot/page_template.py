@@ -77,3 +77,9 @@ def sentence(line: str) -> str:
     line = line.strip()
     return line if not line or line[-1] in ".!?…" else line + "."
 
+
+def cites(value) -> str:
+    """` [1, 3]` for a model's list of citation numbers, "" for none."""
+    nums = [n for n in value if isinstance(n, int) and not isinstance(n, bool)] \
+        if isinstance(value, list) else []
+    return f" [{', '.join(map(str, nums))}]" if nums else ""

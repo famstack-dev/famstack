@@ -80,10 +80,11 @@ from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 # The diary compiler owns the diary's path and its reader-facing words;
 # the home page only places the pointer it renders. Imported by bare
 # name, the way `cli/diary.py` imports it, so the two commands share one
-# module object and therefore one selected language. The person page's
-# template and prose live beside it, in `person_page`.
+# module object and therefore one selected language. The home and
+# person pages' templates and prompts live beside it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import diary  # noqa: E402
+import home_page  # noqa: E402
 import person_page  # noqa: E402
 
 HELP = "Regenerate the family wiki's home and member pages"
@@ -433,13 +434,23 @@ async def _generate_home(
     links into backlinks and graph edges for free, so the home page and
     the member pages become navigable in both directions.
     """
+    # The template carries the layout; the model reads the sources and
+    # answers in JSON. Everyone on the roster gets a line, linked to their
+    # page, whatever the model wrote about them.
     names = {slug: p.name for slug, p in people.items()}
-    prompt = _build_home_prompt(index, roster=roster, names=names, lang=lang)
+    prompt = home_page.prompt(
+        evidence=_format_evidence(index), ids=roster, names=names, lang=lang,
+        aliases={slug: list(p.aliases) for slug, p in people.items()})
     try:
-        page = (await llm.complete("overview", prompt, temperature=_TEMPERATURE)).strip()
+        raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
+        answer = home_page.read_answer(raw, ids=roster)
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
+    except home_page.AnswerError as e:
+        _err(f"home: the model's answer is unusable ({e}); the page stays as it was")
+        return 1
+    page = home_page.render(answer, ids=roster, names=names, lang=lang)
 
     # Append References using the citations the LLM actually used. Built
     # deterministically from the index rather than asked of the model --
@@ -1672,94 +1683,6 @@ def _arg_values(argv: list[str], flag: str) -> list[str]:
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────
-
-def _build_home_prompt(entries: list[dict], *, roster: list[str], lang: str,
-                       names: dict[str, str] | None = None) -> str:
-    """Single-shot prompt: feed all summaries, ask for one home page.
-
-    The section layout is fixed -- we want the same headings every time
-    so re-runs produce comparable output and a future deriver can read
-    the page back into structured form. The model still decides what
-    facts land in each section. The roster is handed in as an explicit,
-    closed set of page paths so the Members section can link each name
-    to a member page that actually exists -- the model resolves identity
-    (the baby "Margaret" maps to the `maggie/` page), but it can only
-    pick from the paths we give it. With person files, `names` carries
-    each member's full name too, and the model fills in only the detail.
-    """
-    names = names or {}
-    evidence = _format_evidence(entries)
-    if roster:
-        # Closed enumeration: the model copies this list instead of
-        # deriving the household from the evidence. Deriving is where
-        # small models split one person into two ("Maggie" and
-        # "Margaret") or drop the page links.
-        skeleton = "\n".join(
-            f"- **[{names[slug]}]({slug}/about)** — <detail>. [N]" if slug in names
-            else f"- **[<full name of {slug.capitalize()}>]({slug}/about)** — <detail>. [N]"
-            for slug in roster
-        )
-        member_links = (
-            f"\nThe family has EXACTLY these {len(roster)} people, one bullet "
-            "each, in this order (it replaces oldest first) — fill in the full "
-            "name and detail, keep the link target as given:\n"
-            f"{skeleton}\n"
-            "A person can appear under different name variants in the sources "
-            "(the baby Margaret is the same person as Maggie) — never list "
-            "anyone twice, never add a person that is not in the list above.\n"
-        )
-    else:
-        member_links = ""
-    return f"""You are composing the home page for a family's private, self-hosted memory wiki. It is the first page someone sees when they open the wiki, so this page is the family's "about" surface. The vault is private — never shared publicly — so identifying details (full names, addresses, vehicle plates, account numbers) are fine to include when documents reveal them.
-
-Source summaries (each is one document the archivist filed; cite as [N] inline where the fact came from a specific document):
-
-{evidence}
-
-Produce a markdown page with this EXACT structure and section order:
-
-# The <Family Surname>
-> <Primary Address>
-
-## Members
-One bullet per person living in the household, oldest first. Format each as exactly:
-- **[<Full Name>](<member page>)** — <their role or occupation, stated about them in a source>. [N]
-{member_links}Nothing else in the bullet: no birthdates, no nicknames, no placeholders. The member pages carry those details.
-
-## Broader Family
-Relatives outside the household who appear in the documents: parents, in-laws, grandparents, siblings. One bullet per person:
-- <Full Name> — <relationship to a household member> [N]
-
-## Home
-Two or three lines about the dwelling itself: ownership/rental, year acquired or moved in, anything structurally noted (mortgage, deed). Skip if nothing on record.
-
-## Real Estate
-Other properties owned (rentals, second homes, plots). One bullet per property.
-
-## Vehicles
-One bullet per vehicle: year, make/model, owner.
-
-## Insurance
-One bullet per policy: name / provider — what it covers — owner.
-
-## Subscriptions
-Recurring paid services (streaming, software, subscriptions to physical goods). One bullet each:
-- <Service name> — <cadence and amount if known> — <owner>
-
-## Memberships
-Clubs, teams, associations, professional bodies. One bullet each:
-- <Org name> — <role / sport / purpose> — <member>
-
-Rules:
-- The H1 is the family surname prefixed with "The" (e.g. "# The Simpsons"). Pick the surname most frequently associated with household members; if multiple appear (blended family), use the dominant one.
-- The blockquote line below the H1 is the current primary address. Omit the blockquote entirely if no address is on file.
-- Respond in: {lang}.
-- Use ONLY what the source summaries support. A section with no source material is omitted entirely — never invent, never write placeholder lines.
-- Cite the document that established each fact as [N] inline. Multiple sources: [1, 3].
-- Keep entries dense and skimmable. One bullet per member; one bullet per item elsewhere.
-- Do NOT add a "References" section — it is appended programmatically after your response. Don't list source paths or URLs in your output.
-"""
-
 
 def _entry_kind(rel: str, slug: str) -> str:
     """The capture kind of an entry, read from its vault path.

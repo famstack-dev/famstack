@@ -109,6 +109,17 @@ older stamp is regenerated from the evidence once instead of being
 kept as the baseline for the next rebuild, so a layout change reaches
 every page by the next nightly sweep.
 
+### The home page template (built)
+
+The home page follows the same split, from its own template
+(`home.<lang>.md`, shared code in `page_template.py`). The compiler
+lists everyone the person files declare, linked and never dropped, in
+the order the model gives (oldest first). The model writes the welcome
+and one line per person, and reads relatives, friends and neighbours,
+the people who help the family, and the household facts (home,
+vehicles, insurance, subscriptions, memberships) out of the sources.
+The welcome is warm; the facts are plain.
+
 ### Entity types and slot templates
 
 The ontology defines which pages exist; each entity type brings a
