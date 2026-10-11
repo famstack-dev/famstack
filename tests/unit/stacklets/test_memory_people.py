@@ -284,23 +284,24 @@ class TestPersonPageNames:
         class _Model:
             async def complete(self, role, prompt, **kwargs):
                 prompts.append(prompt)
-                return "# The Simpsons\n"
+                return "{}"
         monkeypatch.setattr(wiki, "_index_vault", lambda vault: index)
         monkeypatch.setattr(wiki, "_brain_dir", lambda: brain)
-        (brain / "index.md").write_text("---\ntitle: Family Memory\n---\n")
+        (brain / "index.md").write_text("---\ntitle: Family Memory\ngenerated: true\n---\n")
 
         asyncio.run(wiki.run(_Model(), ["--home"]))
 
-        listed = re.findall(r"^- \*\*\[([^\]]+)\]\((\w+)/about\)\*\*", prompts[0], re.M)
+        page = (brain / "index.md").read_text()
+        listed = re.findall(r"^- \*\*\[([^\]]+)\]\((\w+)/about\)\*\*", page, re.M)
         assert listed == [("Homer Simpson", "homer"), ("Marge Simpson", "marge"),
                           ("Maggie Simpson", "maggie")]
 
     def test_the_home_page_is_told_the_full_names(self):
-        prompt = wiki._build_home_prompt(
-            [], roster=["homer", "marge"], lang="en",
+        prompt = wiki.home_page.prompt(
+            evidence="", ids=["homer", "marge"], lang="en",
             names={"homer": "Homer Simpson", "marge": "Marge Simpson"})
-        assert "- **[Marge Simpson](marge/about)**" in prompt
-        assert "<full name of" not in prompt
+        assert "- marge: Marge Simpson" in prompt
+        assert "(full name from the sources)" not in prompt
 
 
 # ── Rebuilding on a change ───────────────────────────────────────────────
