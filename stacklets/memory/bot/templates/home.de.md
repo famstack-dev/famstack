@@ -7,12 +7,14 @@ Absatz mit leerem Platzhalter fällt ganz weg, samt Überschrift.
   family          der Name der Familie („Familie Simpson“), vom Modell
   address         wo die Familie wohnt, vom Modell
   welcome         zwei oder drei warme Sätze, vom Modell
+  glance          was jemand Neues über den Haushalt zuerst wissen will
+                  (das Zuhause, die Autos, der Arzt, die Schule), vom Modell
   people          alle Personen aus den Personendateien, verlinkt,
-                  mit je einer Zeile vom Modell
+                  mit je einer Zeile vom Modell, danach die Haustiere
   relatives       Verwandte außerhalb des Haushalts, vom Modell
   friends         Freunde, Nachbarn und Klassenkameraden, die engsten zuerst
   helpers         Arzt, Schule, Lehrer und andere, die für die Familie da sind
-  home, vehicles, insurance, subscriptions, memberships
+  insurance, subscriptions, memberships
                   Fakten, die das Modell aus den Dokumenten gelesen hat
 
 Dieser Kommentar wird nicht veröffentlicht.
@@ -21,6 +23,9 @@ Dieser Kommentar wird nicht veröffentlicht.
 > {{address}}
 
 {{welcome}}
+
+## Auf einen Blick
+{{glance}}
 
 ## Familie
 {{people}}
@@ -33,12 +38,6 @@ Dieser Kommentar wird nicht veröffentlicht.
 
 ## Wer uns hilft
 {{helpers}}
-
-## Zuhause
-{{home}}
-
-## Fahrzeuge
-{{vehicles}}
 
 ## Versicherungen
 {{insurance}}

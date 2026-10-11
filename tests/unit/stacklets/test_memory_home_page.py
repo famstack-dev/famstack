@@ -6,6 +6,8 @@ these tests promise:
 - Everyone the person files declare is on the page, linked to their
   page, once, in the order the model gives (oldest first); a person the
   model forgot is still there, a person it made up is not.
+- The household facts a newcomer wants first sit at the top, and the
+  pets are listed with the family.
 - A section with nothing in it is not on the page, heading included.
 - A German household gets German headings.
 - An answer the compiler cannot read leaves the page as it was.
@@ -34,8 +36,9 @@ PEOPLE = {
     "maggie": Person("maggie", "Maggie Simpson"),
 }
 ROSTER = ["bart", "homer", "maggie"]
-INDEX = [{"rel": "family/documents/2009/06/deed-p1.md", "title": "Deed", "date": "2009-06-15",
-          "summary": "742 Evergreen Terrace, bought by Homer and Marge."}]
+DEED = {"rel": "family/documents/2009/06/deed-p1.md", "type": "document", "title": "Deed",
+        "date": "2009-06-15", "summary": "742 Evergreen Terrace, bought by Homer and Marge."}
+INDEX = [DEED]
 
 ANSWER = {
     "family": "The Simpsons",
@@ -47,16 +50,19 @@ ANSWER = {
                "flanders": {"line": "Not ours"}},
     "relatives": [{"name": "Abraham Simpson", "detail": "Homer's father", "cite": [1]}],
     "friends": [{"name": "Ned Flanders", "detail": "the neighbour", "cite": [1]}],
-    "home": "Owned since 2009. [1]",
-    "vehicles": [], "insurance": [],
+    "glance": [{"label": "Home", "value": "Owned since 2009", "cite": [1]}],
+    "pets": [{"name": "Santa's Little Helper", "detail": "our greyhound", "cite": [1]}],
+    "insurance": [],
 }
 
 
 class _Model:
     def __init__(self, answer) -> None:
         self.answer = answer
+        self.prompts: list[str] = []
 
     async def complete(self, role, prompt, **kwargs) -> str:
+        self.prompts.append(prompt)
         return self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
 
 
@@ -68,9 +74,10 @@ def brain(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _home(brain: Path, answer, lang: str = "en") -> str:
+def _home(brain: Path, answer, lang: str = "en", index: list[dict] = INDEX,
+          model: _Model | None = None) -> str:
     rc = asyncio.run(wiki._generate_home(
-        _Model(answer), INDEX, roster=ROSTER, people=PEOPLE,
+        model or _Model(answer), index, roster=ROSTER, people=PEOPLE,
         shared_bucket="family", lang=lang, write=True))
     assert rc == 0
     return (brain / "index.md").read_text(encoding="utf-8")
@@ -104,13 +111,25 @@ class TestTheSectionsAroundThem:
         assert "## Friends and neighbours\n- **Ned Flanders** · the neighbour. [1]" in page
 
     def test_an_empty_section_is_not_on_the_page(self, brain):
-        page = _home(brain, ANSWER)
-        assert "## Vehicles" not in page and "## Insurance" not in page
+        page = _home(brain, {**ANSWER, "glance": []})
+        assert "## At a glance" not in page and "## Insurance" not in page
 
     def test_a_german_household_reads_german_headings(self, brain):
         page = _home(brain, ANSWER, lang="de")
-        assert "## Familie" in page and "## Verwandte" in page
-        assert "## Freunde und Nachbarn" in page and "## Zuhause" in page
+        assert "## Auf einen Blick" in page and "## Familie" in page and "## Verwandte" in page
+        assert "## Freunde und Nachbarn" in page
+
+
+class TestTheHouseholdAtAGlance:
+    def test_the_key_facts_come_right_after_the_welcome(self, brain):
+        page = _home(brain, ANSWER)
+        assert "## At a glance\n- **Home** · Owned since 2009 [1]" in page
+        assert page.index("## At a glance") < page.index("## Family")
+
+    def test_the_pets_are_listed_with_the_family(self, brain):
+        page = _home(brain, ANSWER)
+        assert ("- **[Maggie Simpson](maggie/about)**\n"
+                "- **Santa's Little Helper** · our greyhound. [1]\n") in page
 
 
 class TestAnAnswerThatCannotBeRead:
