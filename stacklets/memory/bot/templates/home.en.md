@@ -7,12 +7,14 @@ slot is empty is left out whole, heading included.
   family          the family's name ("The Simpsons"), from the model
   address         where the family lives, from the model
   welcome         two or three warm sentences, from the model
+  glance          the household facts a newcomer wants first (the home,
+                  the cars, the doctor, the school), from the model
   people          everyone the person files declare, linked to their page,
-                  with one line each from the model
+                  with one line each from the model, then the pets
   relatives       relatives outside the household, from the model
   friends         friends, neighbours and classmates, the closest first
   helpers         the doctor, the school, teachers and others who serve the family
-  home, vehicles, insurance, subscriptions, memberships
+  insurance, subscriptions, memberships
                   facts the model read from the family's documents
 
 This comment is not published.
@@ -21,6 +23,9 @@ This comment is not published.
 > {{address}}
 
 {{welcome}}
+
+## At a glance
+{{glance}}
 
 ## Family
 {{people}}
@@ -33,12 +38,6 @@ This comment is not published.
 
 ## The people who help us
 {{helpers}}
-
-## Home
-{{home}}
-
-## Vehicles
-{{vehicles}}
 
 ## Insurance
 {{insurance}}
