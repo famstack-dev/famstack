@@ -24,7 +24,7 @@ import json
 from dataclasses import dataclass, field
 
 from page_template import (
-    LANGUAGE_NAMES, cites, fill, format_date, language, sentence, template, text,
+    LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
 
 FACTS_MAX = 8
@@ -92,7 +92,7 @@ def render(answer: Answer, *, display: str, sources: list[Source],
     slots = {
         "title": answer.title or display,
         "summary": answer.summary,
-        "facts": "\n".join(f"- **{label}** · {value}{c}" for label, value, c in answer.facts),
+        "facts": "\n".join(fact(label, value, c) for label, value, c in answer.facts),
         "state": "\n".join(f"- {sentence(t)}{c}" for t, c in answer.state),
         "todos": "\n".join(f"- [ ] {item}" for item in todos),
         "notes": listed("note"),

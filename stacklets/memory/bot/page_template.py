@@ -78,6 +78,11 @@ def sentence(line: str) -> str:
     return line if not line or line[-1] in ".!?…" else line + "."
 
 
+def fact(label: str, value: str, cited: str = "") -> str:
+    """One "at a glance" line: `- **Born** · 18 Jan 2025 [3]`. A fact, not a sentence."""
+    return f"- **{label}** · {value}{cited}"
+
+
 def cites(value) -> str:
     """` [1, 3]` for a model's list of citation numbers, "" for none."""
     nums = [n for n in value if isinstance(n, int) and not isinstance(n, bool)] \

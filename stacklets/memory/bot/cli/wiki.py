@@ -499,7 +499,7 @@ async def _generate_home(
 # once instead of kept as the baseline: it has the previous layout, or
 # predates the fix that renumbers diary citations by the source the
 # References block shows, so its text may cite the wrong entry.
-_PERSON_PAGE_STAMP = "<!-- person page: 3 -->"
+_PERSON_PAGE_STAMP = "<!-- person page: 4 -->"
 
 
 async def _generate_member(

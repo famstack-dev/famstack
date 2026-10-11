@@ -5,6 +5,8 @@ What these tests promise (docs/design/brain/wiki-page-anatomy.md):
 
 - Dates, the latest entries and the documents come from what was filed,
   so a page never shows a made-up date or a diary entry as a document.
+- The facts a relative looks up (born, school or job, doctor) sit right
+  under the About text, each with its source.
 - A section with nothing in it is not on the page at all, heading
   included. No "nothing recorded".
 - A German household gets German headings and German dates.
@@ -114,6 +116,20 @@ class TestAnEmptySectionIsNotThere:
     def test_the_templates_own_notes_are_not_published(self, brain):
         page = _page(brain, ANSWER, [FIRST_WORD])
         assert "Slots in double braces" not in page and "{{" not in page
+
+
+class TestTheFactsAtAGlance:
+    FACTS = {**ANSWER, "facts": [{"label": "Born", "value": "18 January 2025", "cite": [2]},
+                                 {"label": "Doctor", "value": "Dr. Hibbert"}]}
+
+    def test_sit_under_the_about_text_with_their_sources(self, brain):
+        page = _page(brain, self.FACTS, [FIRST_WORD, BIRTH])
+        assert ("watches everything. [1]\n\n## At a glance\n"
+                "- **Born** · 18 January 2025 [2]\n- **Doctor** · Dr. Hibbert\n\n"
+                "## What Maggie loves") in page
+
+    def test_a_german_household_reads_a_german_heading(self, brain):
+        assert "## Auf einen Blick\n- **Born**" in _page(brain, self.FACTS, [FIRST_WORD, BIRTH], lang="de")
 
 
 class TestAGermanHousehold:

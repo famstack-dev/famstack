@@ -35,7 +35,7 @@ import json
 from dataclasses import dataclass, field
 
 from page_template import (
-    LANGUAGE_NAMES, fill, format_date, language, sentence, template, text,
+    LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
 
 # A card, not an archive: what fits on a phone screen above the fold
@@ -43,6 +43,7 @@ from page_template import (
 LATELY_MAX = 6
 DOCUMENTS_MAX = 6
 LOVES_MAX = 5
+FACTS_MAX = 5
 
 
 # ── What the compiler knows ──────────────────────────────────────────────
@@ -77,6 +78,7 @@ class Parts:
 
     tagline: str = ""
     about: str = ""
+    facts: list[tuple[str, str, str]] = field(default_factory=list)
     loves: list[str] = field(default_factory=list)
     more_heading: str = ""
     more_text: str = ""
@@ -107,10 +109,15 @@ def read_answer(raw: str, *, lately: list[int]) -> Parts:
     lines = lines if isinstance(lines, dict) else {}
     loves = data.get("loves")
     loves = loves if isinstance(loves, list) else []
+    facts = data.get("facts")
+    facts = facts if isinstance(facts, list) else []
     more_text = more.get("text")
     return Parts(
         tagline=text(data.get("tagline")),
         about=text(data.get("about")),
+        facts=[(text(f.get("label")), text(f.get("value")), cites(f.get("cite")))
+               for f in facts
+               if isinstance(f, dict) and text(f.get("label")) and text(f.get("value"))][:FACTS_MAX],
         loves=[t for t in map(text, loves) if t][:LOVES_MAX],
         more_heading=text(more.get("heading")),
         more_text=more_text.strip() if isinstance(more_text, str) else "",
@@ -145,6 +152,7 @@ def render(parts: Parts, *, name: str, first_name: str, entries: list[dict],
         "first_name": first_name,
         "tagline": parts.tagline,
         "about": parts.about,
+        "facts": "\n".join(fact(label, value, c) for label, value, c in parts.facts),
         "loves": "\n".join(f"- {line}" for line in parts.loves),
         "more": more,
         "lately": "\n".join(lately_lines),
@@ -208,6 +216,7 @@ Answer with one JSON object and nothing else:
 {{
   "tagline": "one short line that says who {first_name} is in the family, the way a relative would put it",
   "about": "two to four sentences about {first_name} today: where they are in life, what fills their days, what makes them them. Cite [N].",
+  "facts": [{{"label": "one or two words in {LANGUAGE_NAMES[language(lang)]}: Born, School, Job, Doctor, Car", "value": "short and exact", "cite": [2]}}],
   "loves": ["up to {LOVES_MAX} short lines, each a thing, person, food, place or pastime {first_name} loves, cited [N]. Not an event or an achievement."],
   "lately": {{"<N>": "for each of the sources {lately_list}: one line saying what {first_name} did or what happened to them, without the date, in the past tense, starting with the verb rather than the name or a pronoun. Cite nothing in it."}},
   "more": {{"heading": "a heading of your own", "text": "one theme about {first_name}, at most three sentences, cited [N]"}}
@@ -221,6 +230,7 @@ Rules:
 - When a source says "the mother" or "her husband" without naming {first_name}, that is about someone else: leave it out.
 - Who did something is who filed the source or who the source names as doing it. Never credit {first_name} with what another person did.
 - A family member under another of their names is the same person, never a new child, sibling or twin.
+- "facts" are what a relative would look up, at most {FACTS_MAX}: when {first_name} was born, their school and class or their job and employer, their doctor, the car they drive. Only from a source that names {first_name}, plain and exact, never a guess. No account, policy or ID numbers.
 - No dates, numbers of accounts or IDs, and no source titles in the prose. The page lists the documents itself.
 - Several sources for one sentence are cited together: [1, 3].
 - Count people only from the sources: who the children, siblings and grandparents are comes from what the sources name.
