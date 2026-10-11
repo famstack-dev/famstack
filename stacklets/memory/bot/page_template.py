@@ -50,6 +50,19 @@ def format_date(iso: str, lang: str) -> str:
     return f"{day}. {name} {year}" if language(lang) == "de" else f"{day} {name} {year}"
 
 
+def format_span(start: str, end: str, lang: str) -> str:
+    """A span of days, short: `14–16 Oct 2026`, `30 Oct – 2 Nov 2026`, `14.–16. Okt. 2026`."""
+    if not end or end <= start:
+        return format_date(start, lang)
+    first, last = format_date(start, lang), format_date(end, lang)
+    if start[:7] == end[:7]:
+        day = first.split(" ", 1)[0]
+        return f"{day}–{last}"
+    if start[:4] == end[:4]:
+        return f"{first.rsplit(' ', 1)[0]} – {last}"
+    return f"{first} – {last}"
+
+
 def template(kind: str, lang: str) -> str:
     """The template text for a page kind and language, without its comment."""
     text = (TEMPLATES / f"{kind}.{language(lang)}.md").read_text(encoding="utf-8")

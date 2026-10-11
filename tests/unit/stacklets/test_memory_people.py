@@ -25,6 +25,7 @@ import base64
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -298,7 +299,7 @@ class TestPersonPageNames:
 
     def test_the_home_page_is_told_the_full_names(self):
         prompt = wiki.home_page.prompt(
-            evidence="", ids=["homer", "marge"], lang="en", recent=[],
+            evidence="", ids=["homer", "marge"], lang="en", recent=[], today=date(2026, 10, 11),
             names={"homer": "Homer Simpson", "marge": "Marge Simpson"})
         assert "- marge: Marge Simpson" in prompt
         assert "(full name from the sources)" not in prompt

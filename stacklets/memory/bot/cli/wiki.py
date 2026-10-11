@@ -445,13 +445,15 @@ async def _generate_home(
     # answers in JSON. Everyone on the roster gets a line, linked to their
     # page, whatever the model wrote about them.
     names = {slug: p.name for slug, p in people.items()}
-    recent = home_page.recent(index, today or date.today())
+    today = today or date.today()
+    recent = home_page.recent(index, today)
     prompt = home_page.prompt(
-        evidence=_format_evidence(index), ids=roster, names=names, lang=lang, recent=recent,
+        evidence=_format_evidence(index), ids=roster, names=names, lang=lang,
+        recent=recent, today=today,
         aliases={slug: list(p.aliases) for slug, p in people.items()})
     try:
         raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
-        answer = home_page.read_answer(raw, ids=roster, recent=recent)
+        answer = home_page.read_answer(raw, ids=roster, recent=recent, today=today)
     except LLMUnavailableError as e:
         _err(f"LLM unavailable: {e}")
         return 1
