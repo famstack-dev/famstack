@@ -144,6 +144,29 @@ class TestASectionOfTheModelsOwn:
         assert headings == ["## What Maggie loves", "## Lately", "## References"]
 
 
+class TestWhatTheModelIsTold:
+    """What the prompt carries so the prose credits the right person."""
+
+    MARGE = Person("marge", "Marge Simpson", account="marge")
+
+    def _prompt(self, brain, entries) -> str:
+        model = _Model(ANSWER)
+        asyncio.run(wiki._generate_member(
+            model, "maggie", entries, brain, person=MAGGIE,
+            people={"maggie": MAGGIE, "marge": self.MARGE},
+            shared_bucket="family", lang="en", write=True))
+        return model.prompts[0]
+
+    def test_who_filed_each_source(self, brain):
+        """Without it Homer's page says he booked the lodge Marge booked."""
+        entry = {**FIRST_WORD, "filed_by": "marge"}
+        assert "[1] 2025-11-27 · Maggie's first word, filed by Marge" in self._prompt(brain, [entry])
+
+    def test_every_name_a_family_member_goes_by(self, brain):
+        """Without it a birth certificate for Margaret reads as a new daughter."""
+        assert "- Maggie Simpson (also called Margaret)" in self._prompt(brain, [BIRTH])
+
+
 class TestAnAnswerThatCannotBeRead:
     def test_the_page_stays_as_it_was(self, brain):
         before = _page(brain, ANSWER, [FIRST_WORD])

@@ -341,7 +341,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
                 _err(f"no member bucket for '{slug}' — skipping")
                 continue
             rc = await _generate_member(
-                llm, slug, index, vault, person=persons.get(slug),
+                llm, slug, index, vault, person=persons.get(slug), people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
@@ -407,7 +407,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # here -- the overall run still succeeds.
     for member_slug in roster:
         await _generate_member(
-            llm, member_slug, index, vault, person=persons.get(member_slug),
+            llm, member_slug, index, vault, person=persons.get(member_slug), people=persons,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
 
@@ -504,13 +504,16 @@ _PERSON_PAGE_STAMP = "<!-- person page: 3 -->"
 
 async def _generate_member(
     llm: LLM, slug: str, index: list[dict], vault: Path, *,
-    person: Person | None = None,
+    person: Person | None = None, people: dict[str, Person] | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
     """Compose one person's page from their slice of the vault.
 
     `person` is their declared file; without person files the name comes
-    from the slug, as before.
+    from the slug, as before. `people` is every declared person: the
+    model is told who filed each source and every name each of them
+    goes by, so it credits the right person and never takes an alias
+    for someone new.
     """
     entries = _member_entries(index, slug)
     if not entries and person is not None:
@@ -543,7 +546,8 @@ async def _generate_member(
     lately = person_page.latest(entries)
     prompt = person_page.prompt(
         display=display, first_name=first_name,
-        evidence=_format_evidence(entries, with_persons=True), facts=facts,
+        evidence=_format_evidence(entries, with_persons=True, people=people or {}),
+        facts=facts, family=_family_names(people or {}),
         lately=lately, lang=lang, previous=previous, new_evidence=new_evidence,
     )
     try:
@@ -668,17 +672,25 @@ def _topic_sources(entries: list[dict], cross_refs: list[dict], topic_slug: str,
     The topic's own captures come first, then the ones filed elsewhere,
     the same order the References block numbers them in.
     """
-    def filer(localpart: str) -> str:
-        person = people.get(localpart)
-        return person.first_name if person else localpart.capitalize()
-
     sources = []
     for n, e in enumerate(entries + cross_refs, start=1):
         kind = _entry_kind(e.get("rel", ""), topic_slug) if n <= len(entries) else "elsewhere"
         title, link = _reference(e)
         sources.append(topic_page.Source(
-            n, kind, title, link, e.get("date") or "", filer(e.get("filed_by") or "")))
+            n, kind, title, link, e.get("date") or "", _filer(e.get("filed_by") or "", people)))
     return sources
+
+
+def _filer(localpart: str, people: dict[str, Person]) -> str:
+    """Who filed an entry, by the first name the family uses."""
+    person = people.get(localpart)
+    return person.first_name if person else localpart.capitalize()
+
+
+def _family_names(people: dict[str, Person]) -> list[str]:
+    """Each declared person with every other name they go by."""
+    return [p.name + (f" (also called {', '.join(p.aliases)})" if p.aliases else "")
+            for p in people.values()]
 
 
 def _open_todos(page_dir: str) -> list[str]:
@@ -1748,7 +1760,8 @@ def _entry_kind(rel: str, slug: str) -> str:
     }.get(folder, "note")
 
 
-def _format_evidence(entries: list[dict], *, with_persons: bool = False) -> str:
+def _format_evidence(entries: list[dict], *, with_persons: bool = False,
+                     people: dict[str, Person] | None = None) -> str:
     """Number the summaries as `[N]` evidence blocks for a prompt.
 
     ``with_persons`` appends each entry's `persons:` list to its header
@@ -1756,11 +1769,16 @@ def _format_evidence(entries: list[dict], *, with_persons: bool = False) -> str:
     husband" has no referent on its own, and a small model will happily
     pin those roles on whoever the page is about. Naming who a document
     involves gives the model an anchor to attribute against.
+
+    ``people`` names who filed each entry, so a booking Marge filed is
+    not credited to whoever else it mentions.
     """
     lines: list[str] = []
     for n, s in enumerate(entries, start=1):
         meta_bits = [s["date"]] if s["date"] else []
         meta = " · ".join(meta_bits + [s["title"]])
+        if people is not None and s.get("filed_by"):
+            meta += f", filed by {_filer(s['filed_by'], people)}"
         if with_persons and s.get("persons"):
             meta += "  (involves: " + ", ".join(s["persons"]) + ")"
         lines.append(f"[{n}] {meta}")
