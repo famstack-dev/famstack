@@ -9,6 +9,9 @@ Absatz mit leerem Platzhalter fällt ganz weg, samt Überschrift.
   welcome         zwei oder drei warme Sätze, vom Modell
   lately          ein kurzer Absatz über den letzten Monat, vom Modell,
                   nur aus dem Tagebuch und den Notizen dieses Monats
+  schedule        was in den nächsten drei Monaten ansteht, nach Datum, vom
+                  Modell, dann was sich wiederholt; der Compiler streicht
+                  Vergangenes, Fernes und Geratenes
   glance          was jemand Neues über den Haushalt zuerst wissen will
                   (das Zuhause, die Autos, der Arzt, die Schule), vom Modell
   people          alle Personen aus den Personendateien, verlinkt,
@@ -28,6 +31,9 @@ Dieser Kommentar wird nicht veröffentlicht.
 
 ## Zuletzt
 {{lately}}
+
+## Termine
+{{schedule}}
 
 ## Auf einen Blick
 {{glance}}

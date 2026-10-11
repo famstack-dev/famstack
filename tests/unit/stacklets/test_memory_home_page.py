@@ -10,6 +10,10 @@ these tests promise:
   pets are listed with the family.
 - What the family did in the last month is told as a short paragraph,
   from that month's filings only; a quiet month has no such section.
+- The schedule lists what is coming up in the next three months by
+  date, soonest first, then what recurs (practice every Tuesday, the
+  yearly renewal), each with its source. A date already past, too far
+  ahead or not a date at all never reaches the page.
 - A section with nothing in it is not on the page, heading included.
 - A German household gets German headings.
 - An answer the compiler cannot read leaves the page as it was.
@@ -173,7 +177,7 @@ class TestTheModelIsToldWhoIsWho:
     def test_every_name_a_person_goes_by(self):
         """A birth certificate says "Margaret"; she is Maggie, not a twin."""
         prompt = wiki.home_page.prompt(
-            evidence="", ids=["maggie"], names={"maggie": "Maggie Simpson"}, lang="en", recent=[],
+            evidence="", ids=["maggie"], names={"maggie": "Maggie Simpson"}, lang="en", recent=[], today=date(2026, 10, 11),
             aliases={"maggie": ["Margaret", "Mags"]})
         assert "- maggie: Maggie Simpson (also called Margaret, Mags)" in prompt
 
@@ -193,3 +197,51 @@ class TestOneStyleWhateverTheModelWrites:
         answer = {**ANSWER, "helpers": [{"name": "Dr. Hibbert", "detail": "family doctor", "cite": [1]}]}
         page = _home(brain, answer)
         assert "## The people who help us\n- **Dr. Hibbert** · family doctor. [1]" in page
+
+
+class TestTheSchedule:
+    LODGE = {"date": "2026-10-14", "end": "2026-10-16", "what": "Lodge at the park, two rooms", "cite": [1]}
+    DENTIST = {"date": "2026-10-12", "what": "Bart at the dentist", "cite": [1]}
+
+    def _schedule(self, brain, *events, lang="en") -> str:
+        return _home(brain, {**ANSWER, "schedule": list(events)}, lang=lang)
+
+    def test_lists_what_is_coming_soonest_first(self, brain):
+        page = self._schedule(brain, self.LODGE, self.DENTIST)
+        assert ("## Schedule\n- **12 Oct 2026** · Bart at the dentist [1]\n"
+                "- **14–16 Oct 2026** · Lodge at the park, two rooms [1]\n") in page
+
+    def test_sits_between_the_last_month_and_the_facts(self, brain):
+        page = _home(brain, {**ANSWER, "schedule": [self.DENTIST]}, index=[DEED, CAMPING])
+        assert page.index("## Lately") < page.index("## Schedule") < page.index("## At a glance")
+
+    def test_what_recurs_follows_the_dates(self, brain):
+        band = {"when": "Every Tuesday", "what": "Lisa's band practice", "cite": [1]}
+        page = _home(brain, {**ANSWER, "schedule": [self.DENTIST], "recurring": [band]})
+        assert ("- **12 Oct 2026** · Bart at the dentist [1]\n"
+                "- **Every Tuesday** · Lisa's band practice [1]\n") in page
+
+    def test_what_recurs_is_a_schedule_on_its_own(self, brain):
+        rent = {"when": "Monthly", "what": "Mortgage payment", "cite": [1]}
+        assert "## Schedule\n- **Monthly** · Mortgage payment [1]" in _home(brain, {**ANSWER, "recurring": [rent]})
+
+    def test_something_still_running_stays(self, brain):
+        trip = {"date": "2026-10-09", "end": "2026-10-12", "what": "Camping", "cite": [1]}
+        assert "- **9–12 Oct 2026** · Camping [1]" in self._schedule(brain, trip)
+
+    def test_past_far_off_or_guessed_dates_are_left_out(self, brain):
+        page = self._schedule(
+            brain,
+            {"date": "2026-10-01", "what": "Already happened"},
+            {"date": "2027-06-01", "what": "Next summer"},
+            {"date": "next Friday", "what": "A guess"})
+        assert "## Schedule" not in page
+
+    def test_a_german_household_reads_german_dates(self, brain):
+        page = self._schedule(brain, self.LODGE, lang="de")
+        assert "## Termine\n- **14.–16. Okt. 2026** · Lodge at the park, two rooms [1]" in page
+
+    def test_the_model_knows_what_day_it_is(self, brain):
+        model = _Model(ANSWER)
+        _home(brain, ANSWER, model=model)
+        assert "Today is 2026-10-11." in model.prompts[0]

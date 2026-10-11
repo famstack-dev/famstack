@@ -9,6 +9,9 @@ slot is empty is left out whole, heading included.
   welcome         two or three warm sentences, from the model
   lately          a short paragraph on the last month, from the model,
                   written from that month's diary and notes only
+  schedule        what is ahead in the next three months, by date, from the
+                  model, then what recurs; the compiler drops past, far-off
+                  and guessed dates
   glance          the household facts a newcomer wants first (the home,
                   the cars, the doctor, the school), from the model
   people          everyone the person files declare, linked to their page,
@@ -28,6 +31,9 @@ This comment is not published.
 
 ## Lately
 {{lately}}
+
+## Schedule
+{{schedule}}
 
 ## At a glance
 {{glance}}
