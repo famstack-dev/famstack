@@ -34,7 +34,6 @@ MAX_HITS = 8
             nullable=True,
         ),
         limit=IntegerSchema(
-            5,
             description="Maximum number of results to return (at most 8).",
             minimum=1,
             maximum=8,

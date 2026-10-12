@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import subprocess
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 # Strip footnote/citation markers the curator leaves in generated pages, e.g.
@@ -151,6 +152,17 @@ def topic_for_room_label(raw: str, vault: Path) -> str:
 def _topic_slug(msg, vault: Path) -> str:
     raw = (getattr(msg, "metadata", {}) or {}).get("room", "")
     return topic_for_room_label(raw, vault)
+
+
+def when_sent(now: datetime) -> str:
+    """When this message was sent, in the household's clock.
+
+    nanobot 0.3 states no date or time anywhere in the prompt, so without
+    this line "by Friday" or "tomorrow" cannot become a date. The block it
+    sits in stays with its message in the history, which also dates every
+    earlier message for "what did we say yesterday".
+    """
+    return f"Sent {now:%A, %Y-%m-%d %H:%M} ({now.tzname()})."
 
 
 # Who the agent is currently talking to, refreshed each turn by
