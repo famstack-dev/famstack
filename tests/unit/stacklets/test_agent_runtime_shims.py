@@ -26,7 +26,7 @@ import pytest
 SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
-                   "list_tool", "tool_trim")
+                   "list_tool", "tool_trim", "voice_trigger")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -282,6 +282,91 @@ def test_an_invite_produces_a_greeting_turn(nanobot):
     # The briefing resolves the topic from this label, so a greeting that
     # loses it cannot mention what the room is about — the whole point.
     assert turn["metadata"]["room"] == "Topic: Camping"
+
+
+# ── a voice message is addressed by what was said ────────────────────────
+
+def _voice(event_id="$voice"):
+    class _Event:
+        sender = "@homer:simpson"
+        body = "Voice message"
+        pill_mention = False
+        source = {"content": {"msgtype": "m.audio", "body": "Voice message"}}
+    event = _Event()
+    event.event_id = event_id
+    return event
+
+
+def _hand_over(channel, transcript, event_id="$voice"):
+    import asyncio
+    asyncio.run(channel._handle_message(
+        sender_id="@homer:simpson", chat_id="!kitchen", media=["/tmp/voice.ogg"],
+        content=f"Voice message\n[transcription: {transcript}]",
+        metadata={"event_id": event_id, "room": "Küche"}))
+
+
+def test_a_voice_message_that_names_the_agent_reaches_it(nanobot, monkeypatch):
+    """In a shared room the agent hears what was said, not "Voice message"."""
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    assert channel._should_process_message(None, _voice()), "let through to be transcribed"
+    _hand_over(channel, "Stacky, wir brauchen Milch und Eier.")
+
+    assert [h["content"] for h in channel.handled] == [
+        "Voice message\n[transcription: Stacky, wir brauchen Milch und Eier.]"]
+
+
+def test_the_answer_to_a_voice_message_starts_with_what_was_heard(nanobot, monkeypatch):
+    """A word Whisper got wrong shows next to what the agent did with it."""
+    import asyncio
+    import dataclasses
+
+    @dataclasses.dataclass
+    class _Outbound:
+        chat_id: str
+        content: str
+        metadata: dict
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    channel._should_process_message(None, _voice())
+    _hand_over(channel, "Stacky please add bread to the shopping list.")
+
+    asyncio.run(channel.send(_Outbound("!kitchen", "Brot steht jetzt auf der Einkaufsliste.",
+                                       {"event_id": "$voice"})))
+    asyncio.run(channel.send(_Outbound("!kitchen", "Sonst noch was?", {"event_id": "$voice"})))
+
+    assert [m.content for m in channel.sent] == [
+        "> Stacky please add bread to the shopping list.\n\n"
+        "Brot steht jetzt auf der Einkaufsliste.",
+        "Sonst noch was?"]
+
+
+def test_a_voice_message_for_someone_else_gets_no_answer(nanobot, monkeypatch):
+    """The same rule as typed text: no name, no answer, and no typing left on."""
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    channel._should_process_message(None, _voice())
+    _hand_over(channel, "Marge, holst du Bart vom Training ab?")
+
+    assert channel.handled == []
+    assert channel.typing_stopped == ["!kitchen"]
+
+
+def test_a_typed_message_is_not_held_for_a_transcript(nanobot, monkeypatch):
+    """Only voice gets past the gate unaddressed; text still needs the name."""
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    class _Text:
+        sender = "@homer:simpson"
+        body = "wir brauchen Milch"
+        pill_mention = False
+        source = {"content": {"msgtype": "m.text", "body": "wir brauchen Milch"}}
+
+    assert not channel._should_process_message(None, _Text())
 
 
 # ── failure is contained, and visible ────────────────────────────────────
