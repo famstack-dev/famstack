@@ -46,6 +46,11 @@ Third, one shim that widens when the agent is allowed to answer at all:
 8. join_greeting (join_greeting.py) — on being invited, take one turn and
    introduce the room's topic instead of joining in silence.
 
+9. voice_trigger (voice_trigger.py) — a voice message in a shared room goes
+   through nanobot's gate, is transcribed, and reaches the agent only if the
+   transcript addresses it by name, like typed text. The answer starts with
+   what was heard, quoted.
+
 WHY SHIMS AND NOT A FORK
     nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
     keeps a session per Matrix thread, which retired the two shims that needed
@@ -81,6 +86,13 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `MatrixChannel.client` (nio AsyncClient), `MatrixChannel.config.user_id`
                  — and that `groupPolicy: mention` still routes through
                  `_is_bot_mentioned` (config.json sets that policy)
+    voice_trigger: `MatrixChannel._should_process_message(self, room, event) -> bool` (sync),
+                 `MatrixChannel._handle_message(sender_id, chat_id, content, ..., metadata=)`
+                 with `metadata["event_id"]`, `MatrixChannel._stop_typing_keepalive(room_id,
+                 clear_typing=True)`, `MatrixChannel.is_allowed(sender)`, and that
+                 `_on_media_message` passes the transcript as `[transcription: <text>]`;
+                 `MatrixChannel.send(self, msg: OutboundMessage)` (async, a dataclass whose
+                 `metadata["event_id"]` is the message being answered)
     join_greeting: `nanobot.channels.matrix.runtime.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
@@ -270,6 +282,65 @@ try:
     _log.info("thread-trigger mention shim active")
 except Exception:
     _log.exception("thread-trigger shim could not attach (nanobot internals changed?)")
+
+
+# ── voice_trigger: a voice message is addressed by what was said ─────────────
+# nanobot's gate runs before transcription, and a voice message's text is
+# "Voice message", so in a shared room it never reached the agent. Let it
+# through the gate, and once nanobot has transcribed it, hold the transcript
+# to the rule typed text meets: it has to address the agent by name. See
+# voice_trigger.py.
+try:
+    import dataclasses as _dataclasses_voice
+    import os as _os_voice
+
+    import nanobot.channels.matrix.runtime as _matrix_voice
+    from name_trigger import addressed_by_name as _addressed_by_name_voice
+    from voice_trigger import PendingVoice as _PendingVoice
+    from voice_trigger import is_voice as _is_voice
+    from voice_trigger import quoted as _quoted
+    from voice_trigger import spoken_text as _spoken_text
+
+    _pending_voice = _PendingVoice()
+    _orig_should_process = _matrix_voice.MatrixChannel._should_process_message
+    _orig_handle_voice = _matrix_voice.MatrixChannel._handle_message
+
+    def _should_process_message(self, room, event):
+        if _orig_should_process(self, room, event):
+            return True
+        if not (_is_voice(event) and self.is_allowed(event.sender)):
+            return False
+        _pending_voice.hold(getattr(event, "event_id", "") or "")
+        return True
+
+    async def _handle_message(self, sender_id, chat_id, content, *args, **kwargs):
+        event_id = (kwargs.get("metadata") or {}).get("event_id", "")
+        spoken = _spoken_text(content)
+        if _pending_voice.release(event_id) and not _addressed_by_name_voice(
+                spoken, _os_voice.environ.get("AGENT_NAME", "")):
+            # Not for the agent: no answer, and no typing indicator left on.
+            await self._stop_typing_keepalive(chat_id, clear_typing=True)
+            return None
+        _pending_voice.heard(event_id, spoken)
+        return await _orig_handle_voice(self, sender_id, chat_id, content, *args, **kwargs)
+
+    _orig_send_voice = _matrix_voice.MatrixChannel.send
+
+    async def _send(self, msg):
+        # The answer carries the voice message's event id for threading; the
+        # first one with text gets what was heard in front of it.
+        heard = _pending_voice.answering((msg.metadata or {}).get("event_id", "")) \
+            if msg.content else ""
+        if heard:
+            msg = _dataclasses_voice.replace(msg, content=_quoted(heard, msg.content))
+        return await _orig_send_voice(self, msg)
+
+    _matrix_voice.MatrixChannel._should_process_message = _should_process_message
+    _matrix_voice.MatrixChannel._handle_message = _handle_message
+    _matrix_voice.MatrixChannel.send = _send
+    _log.info("voice-trigger shim active")
+except Exception:
+    _log.exception("voice-trigger shim could not attach (nanobot internals changed?)")
 
 
 # ── join_greeting: say something useful the moment you are invited ───────────

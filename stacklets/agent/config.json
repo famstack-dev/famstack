@@ -3,7 +3,15 @@
     "custom": {
       "api_base": "${AGENT_OPENAI_URL}",
       "api_key": "${AGENT_OPENAI_KEY}"
+    },
+    "openai": {
+      "api_base": "${AGENT_WHISPER_URL}",
+      "api_key": "${AGENT_WHISPER_KEY}"
     }
+  },
+  "transcription": {
+    "provider": "openai",
+    "model": "${AGENT_WHISPER_MODEL}"
   },
   "model_presets": {
     "primary": {
