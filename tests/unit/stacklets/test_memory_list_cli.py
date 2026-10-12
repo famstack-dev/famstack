@@ -263,6 +263,41 @@ class TestTickingOff:
         assert "- [x]" not in store.text(stocked)
 
 
+class TestTickingWithoutNamingTheList:
+    """"I signed the permission slip" ticks it on whichever list the archivist put it."""
+
+    @pytest.fixture
+    def school(self, run, groceries):
+        run("create", "education", "--title", "Education", "--as", "marge")
+        run("add", "education", "Sign the permission slip", "Pay the trip fee", "--as", "marge")
+        run("add", "einkaufsliste", "Milch", "--as", "marge")
+
+    def test_an_item_is_found_on_its_list(self, run, store, school):
+        result = run("tick", "permission slip", "--as", "marge")
+        assert result["summary"] == "ticked off Sign the permission slip on Education"
+        assert "- [x] Sign the permission slip" in store.text("family/lists/education.md")
+
+    def test_items_on_different_lists_are_each_ticked_there(self, run, school):
+        result = run("tick", "trip fee", "Milch", "--as", "homer")
+        assert [r["summary"] for r in result["lists"]] == [
+            "ticked off Pay the trip fee on Education", "ticked off Milch on Einkaufsliste"]
+
+    def test_the_open_one_is_ticked_when_another_list_has_it_ticked(self, run, store, school):
+        run("add", "education", "Milch", "--as", "marge")
+        run("tick", "education", "Milch", "--as", "marge")
+        run("tick", "Milch", "--as", "homer")
+        assert "- [x] Milch" in store.text(GROCERIES)
+
+    def test_an_item_open_on_two_lists_is_refused_with_both(self, run, school):
+        run("add", "education", "Milch", "--as", "marge")
+        result = run("tick", "Milch", "--as", "homer")
+        assert result["error"] == ("'Milch' is on several lists (education: Milch; "
+                                   "einkaufsliste: Milch). Name the list.")
+
+    def test_an_item_on_no_list_is_refused(self, run, school):
+        assert run("tick", "Kaffee", "--as", "homer")["error"] == "no item matching 'Kaffee' on any list"
+
+
 class TestRemovingAndMoving:
     def test_removing_the_last_item_of_a_section_removes_its_heading(self, run, store, groceries):
         run("add", "einkaufsliste", "Äpfel", "--section", "Gemüse & Obst", "--as", "marge")

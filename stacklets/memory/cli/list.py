@@ -71,6 +71,7 @@ USAGE = """\
     stack memory list add schule "Sign the field trip form" --for homer --for marge \\
         --due 2026-10-20 --as marge
     stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
+    stack memory list tick "Erlaubniszettel" --as marge   on whichever list it is
     stack memory list move einkaufsliste Eier --to markt --as marge
     stack memory list create packliste --title Packliste --recurring --as marge
                                                     ticked items stay until a reset
@@ -122,9 +123,10 @@ def _parser() -> argparse.ArgumentParser:
     add.add_argument("--for", dest="people", action="append", default=[])
     add.add_argument("--due", default="")
 
+    # As for `add`, the list is optional: a first word naming a list is
+    # the list, and without one the item is looked up on every list.
     for verb in ("tick", "untick", "remove"):
         one = verbs.add_parser(verb, add_help=False)
-        one.add_argument("slug")
         one.add_argument("items", nargs="+")
 
     move = verbs.add_parser("move", add_help=False)
@@ -325,10 +327,7 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     One commit per list.
     """
     lists = _all_lists_at(vault)
-    names = [" ".join(n.split()) for n in ns.items if n.strip()]
-    slug = names.pop(0) if names and any(lst.slug == names[0] for _, lst in lists) else ""
-    if not names:
-        raise Refusal("name at least one item to add")
+    slug, names = _list_and_items(lists, ns.items)
     if slug:
         candidates = [(p, lst) for p, lst in lists if lst.slug == slug]
     else:
@@ -352,12 +351,8 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     if due and not _ISO_DAY.match(due):
         raise Refusal(f"--due {due!r} is not a date like 2026-10-14")
     people = _people(vault, config, ns.people)
-    results = [_add_to(config, *by_slug[target], entries, people, due, actor)
-               for target, entries in plan.items()]
-    if len(results) == 1:
-        return results[0]
-    errors = [r["error"] for r in results if "error" in r]
-    return {"error": "; ".join(errors)} if errors else {"ok": True, "lists": results}
+    return _combined([_add_to(config, *by_slug[target], entries, people, due, actor)
+                      for target, entries in plan.items()])
 
 
 def _add_to(config, path: str, lst: FamilyList, entries: list[tuple[str, str]],
@@ -382,21 +377,80 @@ def _which_list(name: str, candidates: list[tuple[str, FamilyList]], topic: str)
 
 
 def change(vault: Path, config, ns, actor: str) -> dict:
-    """tick, untick, remove or reset on one list, in one commit."""
-    path, lst = _find_list(vault, ns.slug)
+    """tick, untick, remove or reset; one commit per list it touches.
+
+    Without a list, each item is looked up on every list, so "I signed the
+    permission slip" ticks it on whichever list the archivist put it.
+    """
+    if ns.verb == "reset":
+        return _change_list(config, *_find_list(vault, ns.slug), "reset", [], actor)
+    lists = _all_lists_at(vault)
+    slug, names = _list_and_items(lists, ns.items)
+    if slug:
+        return _change_list(config, *_find_list(vault, slug), ns.verb, names, actor)
+    plan: dict[str, tuple[FamilyList, list[str]]] = {}
+    for name in names:
+        path, lst = _locate(lists, name, ns.verb)
+        plan.setdefault(path, (lst, []))[1].append(name)
+    return _combined([_change_list(config, path, lst, ns.verb, found, actor)
+                      for path, (lst, found) in plan.items()])
+
+
+def _change_list(config, path: str, lst: FamilyList, verb: str, names: list[str],
+                 actor: str) -> dict:
+    """One verb on one list, in one commit."""
     today = date.today().isoformat()
     outcome: dict = {}
 
     def _apply(prior: str) -> str:
         current = read_list(prior, path=path)
-        if ns.verb == "reset":
+        if verb == "reset":
             new, said = _reset(prior, current, today, path)
         else:
-            new, said = _each(prior, current.title, ns.verb, ns.items, today, path)
+            new, said = _each(prior, current.title, verb, names, today, path)
         outcome["said"] = said
         return new
 
     return _commit(config, path, _apply, actor, lambda: outcome.get("said", "changed the list"))
+
+
+def _locate(lists: list[tuple[str, FamilyList]], name: str, verb: str) -> tuple[str, FamilyList]:
+    """The list holding the item `name` means, when the caller named none.
+
+    An item open on one list and ticked on another is the one the verb
+    would change; anything still on several lists is refused with each
+    list and its matches, so the caller names the list.
+    """
+    found = [(path, lst) for path, lst in lists if find(lst, name)]
+    if len(found) > 1:
+        wanted_done = verb == "untick"
+        changeable = [(path, lst) for path, lst in found
+                      if any(i.done == wanted_done for i in find(lst, name))]
+        found = changeable if len(changeable) == 1 else found
+    if not found:
+        raise Refusal(f"no item matching {name!r} on any list")
+    if len(found) > 1:
+        where = "; ".join(f"{lst.slug}: {', '.join(i.text for i in find(lst, name))}"
+                          for _, lst in found)
+        raise Refusal(f"{name!r} is on several lists ({where}). Name the list.")
+    return found[0]
+
+
+def _list_and_items(lists: list[tuple[str, FamilyList]], words: list[str]) -> tuple[str, list[str]]:
+    """The list a command names first, if any, and the items after it."""
+    names = [" ".join(w.split()) for w in words if w.strip()]
+    slug = names.pop(0) if names and any(lst.slug == names[0] for _, lst in lists) else ""
+    if not names:
+        raise Refusal("name at least one item")
+    return slug, names
+
+
+def _combined(results: list[dict]) -> dict:
+    """One answer for changes to several lists: each list's, or every error."""
+    if len(results) == 1:
+        return results[0]
+    errors = [r["error"] for r in results if "error" in r]
+    return {"error": "; ".join(errors)} if errors else {"ok": True, "lists": results}
 
 
 def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) -> dict:

@@ -178,6 +178,7 @@ def test_the_allowlist_stays_read_only(api):
      {"op": "add", "items": ["Joghurt"], "topic": "einkaeufe-besorgungen"}),
     ("list_edit", "list",
      {"op": "create", "title": "Baumarkt", "items": ["Schrauben"]}),
+    ("list_edit", "list", {"op": "tick", "items": ["Erlaubniszettel"]}),
     ("list_edit", "list",
      {"list": "einkaufsliste", "op": "set", "topic": "einkauf"}),
     ("list_edit", "list",
