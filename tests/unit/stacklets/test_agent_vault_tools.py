@@ -174,6 +174,8 @@ def test_the_allowlist_stays_read_only(api):
     ("list_edit", "list",
      {"list": "einkaufsliste", "op": "move", "items": ["Eier"], "to": "markt"}),
     ("list_edit", "list", {"list": "packliste", "op": "reset", "items": ["ignored"]}),
+    ("list_edit", "list",
+     {"op": "add", "items": ["Joghurt"], "topic": "einkaeufe-besorgungen"}),
 ])
 def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
         memory_cli, vault_tools, tool_name, command, kwargs):

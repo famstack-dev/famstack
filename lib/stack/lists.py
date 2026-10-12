@@ -499,6 +499,34 @@ def archive_ticked(text: str, archives: dict[str, str], *, path: str, today: str
     return text, changed, moving
 
 
+# ── Known items ──────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Known:
+    """Where an item was last seen: the list, its section and its spelling."""
+
+    slug: str
+    section: str
+    text: str
+
+
+def known_items(lists: list[tuple[str, FamilyList]]) -> dict[str, Known]:
+    """Every item the household has had on these lists, by its text in any case.
+
+    `lists` pairs a list's slug with a list or one of its archive files.
+    An item open on a list now is where it lives; otherwise the most
+    recent tick wins, so an item bought somewhere else lately follows.
+    """
+    seen: dict[str, tuple[str, Known]] = {}
+    for slug, lst in lists:
+        for item in lst.items:
+            rank = "9999-99-99" if not item.done else (item.done_on or "0000-00-00")
+            key = item.text.casefold()
+            if key not in seen or rank > seen[key][0]:
+                seen[key] = (rank, Known(slug, item.section, item.text))
+    return {key: known for key, (_, known) in seen.items()}
+
+
 # ── File text ────────────────────────────────────────────────────────────
 
 def _split(text: str) -> tuple[str, str]:
