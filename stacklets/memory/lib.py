@@ -2473,10 +2473,10 @@ def move_todos_to_lists(client: ForgejoClient, *,
                 if not any(i.text.casefold() == item.text.casefold()
                            for i in read_list(content, path=new_path).items):
                     content = insert_item(content, item, path=new_path)
-            changes.append(FileChange("update", new_path, content, sha=current.get("sha")))
+            changes.append(FileChange("update", new_path, content, sha=current.get("sha") or ""))
         else:
             changes.append(FileChange("create", new_path, converted))
-        changes.append(FileChange("delete", old_path, sha=old.get("sha")))
+        changes.append(FileChange("delete", old_path, sha=old.get("sha") or ""))
         moved.append(topic)
     if changes:
         client.change_files(
