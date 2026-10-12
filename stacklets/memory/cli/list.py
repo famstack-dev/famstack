@@ -79,9 +79,11 @@ USAGE = """\
     stack memory list set einkaufsliste --topic einkauf --as marge
                                                     the list's title, description, topics
                                                     or walking order (--section, in order)
+    stack memory list delete baumarkt [--yes] --as marge
+                                                    --yes: even with items still open
 """
 
-VERBS = ("show", "create", "add", "tick", "untick", "remove", "move", "reset", "set")
+VERBS = ("show", "create", "add", "tick", "untick", "remove", "move", "reset", "set", "delete")
 
 # A commit subject's length, as git and Forgejo show it without wrapping.
 _SUBJECT_MAX = 72
@@ -147,7 +149,12 @@ def _parser() -> argparse.ArgumentParser:
     reset = verbs.add_parser("reset", add_help=False)
     reset.add_argument("slug")
 
-    for sub in (create, add, move, reset, details, *[verbs.choices[v] for v in ("tick", "untick", "remove")]):
+    delete = verbs.add_parser("delete", add_help=False)
+    delete.add_argument("slug")
+    delete.add_argument("--yes", action="store_true")
+
+    for sub in (create, add, move, reset, details, delete,
+                *[verbs.choices[v] for v in ("tick", "untick", "remove")]):
         sub.add_argument("--as", dest="actor", default="")
     return parser
 
@@ -180,6 +187,8 @@ def run(args, stacklet, config):
             return change_details(vault, config, ns, actor)
         if ns.verb == "move":
             return move(vault, config, ns.slug, ns.items, ns.to, actor)
+        if ns.verb == "delete":
+            return delete(vault, config, ns.slug, actor, even_open=ns.yes)
         if ns.verb == "add":
             return add(vault, config, ns, actor)
         return change(vault, config, ns, actor)
@@ -453,6 +462,29 @@ def _combined(results: list[dict]) -> dict:
     return {"error": "; ".join(errors)} if errors else {"ok": True, "lists": results}
 
 
+def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool) -> dict:
+    """Delete a list, so a list nobody needs is gone instead of left empty.
+
+    Open items are what someone still meant to do, so a list with any is
+    deleted only with `--yes`; the refusal names them, for the caller to
+    ask whoever wanted the list gone. The archive stays: it is the record
+    of what was bought, and a list started again under the same name
+    finds its known items there.
+    """
+    path, lst = _find_list(vault, slug)
+
+    def _delete(prior: str) -> None:
+        current = read_list(prior, path=path)
+        if current.open_items and not even_open:
+            open_items = current.open_items
+            count = "1 open item" if len(open_items) == 1 else f"{len(open_items)} open items"
+            raise ValueError(f"{current.title} still has {count}: "
+                             f"{'; '.join(i.text for i in open_items)}. "
+                             "Delete it with them: add --yes")
+        return None
+    return _commit(config, path, _delete, actor, f"deleted the list {lst.title}")
+
+
 def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) -> dict:
     """Move items to another list: added there first, so a failure never loses one."""
     path, lst = _find_list(vault, slug)
@@ -582,7 +614,13 @@ def _commit(config, path: str, transform, actor: str,
     """
     def _said() -> str:
         return said() if callable(said) else said
-    result = update_memory(config, path, transform, actor=actor,
+
+    written: dict = {}
+
+    def _recorded(prior: str) -> str | None:
+        written["after"] = transform(prior)
+        return written["after"]
+    result = update_memory(config, path, _recorded, actor=actor,
                            message=lambda before, after: _commit_message(actor, path, _said()))
     if "error" in result or quiet:
         return result
@@ -591,7 +629,9 @@ def _commit(config, path: str, transform, actor: str,
         return {"ok": True, "committed": False, "path": path, "summary": _said()}
     lag = "" if result.get("mirrored") else "\n  The wiki and the vault mount catch up shortly."
     home_url = (config or {}).get("home_url", "")
-    url = public(go_page(path), f"{home_url}/go" if home_url else "")
+    # A transform answering None deleted the list: there is no page to link.
+    deleted = written.get("after", "") is None
+    url = "" if deleted else public(go_page(path), f"{home_url}/go" if home_url else "")
     link = f"\n  {url}" if url else ""
     print(f"{_said()} (by {actor}){link}{lag}")
     return {"ok": True, "committed": True, "path": path, "by": actor, "summary": _said()}
