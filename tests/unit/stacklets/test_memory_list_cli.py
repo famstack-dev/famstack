@@ -110,6 +110,10 @@ class TestStartingAList:
         result = run("create", "einkaufsliste", "--title", "Noch eine", "--as", "homer")
         assert "already exists" in result["error"]
 
+    def test_a_list_named_by_its_title_alone_gets_a_slug_from_it(self, run, store):
+        result = run("create", "--title", "Garage aufräumen", "--as", "homer")
+        assert result["path"] == "family/lists/garage-aufraumen.md"
+
     def test_a_slug_is_lowercase_words_and_dashes(self, run):
         assert "not a slug" in run("create", "Einkauf Liste", "--title", "x", "--as", "marge")["error"]
 
