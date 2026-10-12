@@ -170,21 +170,8 @@ def run(args, stacklet, config):
         # becomes the error message the caller relays to the model.
         _check_frontmatter(seen["before"], seen["after"], repo_path)
         _check_person(seen["after"], repo_path)
-        # A whole-page rewrite of a list is a restructure. A restructure
-        # never legitimately reopens or removes an item (measured
-        # 2026-09-15: rewrites drop [x] marks, and prompt rules do not
-        # reliably repair them). Targeted edits go through --patch or
-        # `stack memory list`, which stay allowed.
-        if not as_patch and _is_list(repo_path):
-            change = diff(seen["before"], seen["after"])
-            lost = list(change.reopened) + list(change.removed)
-            if lost:
-                raise ValueError(
-                    f"this rewrite reopens or removes items: "
-                    f"{'; '.join(lost)}. A restructure keeps every item "
-                    "and every [x]. Resend the full page with them "
-                    "unchanged. To reopen or remove an item on purpose, "
-                    "use list_edit.")
+        if _is_list(repo_path):
+            _check_list_write(diff(seen["before"], seen["after"]), as_patch=as_patch)
         # A preview still wants the *current* page to compare against, so it
         # takes the same trip and then hands back what was already there:
         # an unchanged file is a no-op, and a no-op does not commit.
@@ -238,6 +225,34 @@ def run(args, stacklet, config):
         "destructive": bool(change and change.destructive()),
         "removed": list(change.removed) if change else [],
     }
+
+
+def _check_list_write(change, *, as_patch: bool) -> None:
+    """Refuse a write to a list page that does what only `list_edit` should.
+
+    Writing a list page is for restructuring it: rewording an item, moving
+    it under another heading, renaming a section. Adding or ticking off an
+    item through it skips what the list commands do (the duplicate check,
+    the item's section, the day of the tick), and an agent that took this
+    route put Joghurt on a list twice and its coffee under bread. A whole-
+    page rewrite also never legitimately reopens or removes an item
+    (measured 2026-09-15: rewrites drop [x] marks, and prompt rules do not
+    reliably repair them); a patch may, on purpose.
+    """
+    items = [i.text for i in change.added] + list(change.struck)
+    if items:
+        raise ValueError(
+            f"this write adds or ticks off items: {'; '.join(items)}. Item "
+            "changes go through list_edit (add, tick), which keeps their "
+            "sections and finds duplicates. Write a list page only to "
+            "restructure it.")
+    lost = list(change.reopened) + list(change.removed)
+    if lost and not as_patch:
+        raise ValueError(
+            f"this rewrite reopens or removes items: {'; '.join(lost)}. A "
+            "restructure keeps every item and every [x]. Resend the full "
+            "page with them unchanged. To reopen or remove an item on "
+            "purpose, use list_edit.")
 
 
 def _is_list(repo_path: str) -> bool:
