@@ -84,7 +84,6 @@ cheap).
 
 **State documents** (the family's current truth; mutable through the
 CLI or by hand; never carry `generated`; see §7):
-- `todos` — a topic's todo list (moves to `list`, see §7).
 - `list`: a family list, such as groceries, a store or things to do (§5, §7).
 - `person` (declared) — someone the family knows, one file each under
   `<shared_bucket>/people/`.
@@ -332,13 +331,12 @@ used wherever an item appears, also in a record's summary.
 
 `<bucket>/lists/<slug>.md` is a state document (§5, `list`): a tick is
 information, so a list is never regenerated, and a command changes only
-the lines it is about. Each topic's `todos.md` below moves to a list.
+the lines it is about.
 
-`todos.md` is a state document, not a generated page: it is mutable
-current truth (a tick is information), lives in memory source, and never
-carries `generated`. It is a markdown checklist; frontmatter is optional
-and, if present, uses `type: todos`. State documents get read-your-writes
-through the CLI (ADR-011); they are not regenerated.
+Before lists, each topic kept its todos in `<bucket>/<topic>/todos.md`.
+`stack up memory` moves every one of them to `<bucket>/lists/<topic>.md`,
+in one commit by the memory bot, keeping each line and tick and turning
+the old due date into `📅`. Nothing writes `todos.md` any more.
 
 `<shared_bucket>/people/<id>.md` is a declared person (§5): the
 family's own facts about someone, starting with their names. On every

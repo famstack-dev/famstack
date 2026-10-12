@@ -142,6 +142,29 @@ def person_link(person_id: str, label: str, *, bucket: str) -> Link:
     return Link(label, person_path(person_id, bucket))
 
 
+def action_item(ai, *, source: Link | None = None) -> Item | None:
+    """An action item the classifier extracted, as a list item; None for an empty one.
+
+    The classifier answers `{"action": ..., "due": ...}` or a plain
+    string. A due date that is not a day ("next week") stays in the text,
+    because `📅` takes only a day. `source` links the record it came from.
+    """
+    if isinstance(ai, str):
+        action, due = ai.strip(), ""
+    elif isinstance(ai, dict):
+        action = str(ai.get("action") or "").strip()
+        due = str(ai.get("due") or "").strip()
+    else:
+        return None
+    if not action:
+        return None
+    if due.lower() in ("null", "none", "n/a"):
+        due = ""
+    if due and not re.fullmatch(_ISO_DAY, due):
+        action, due = f"{action} ({due})", ""
+    return Item(" ".join(action.split()), due=due, links=(source,) if source else ())
+
+
 def parse_item(line: str, *, path: str) -> Item | None:
     """The item on a checkbox line, or None for any other line.
 
@@ -215,6 +238,23 @@ class FamilyList:
     @property
     def open_items(self) -> list[Item]:
         return [i for i in self.items if not i.done]
+
+
+_TOPIC_LIST_DESCRIPTION = {
+    "de": "Was für {title} noch zu tun ist",
+    "en": "What is still to do for {title}",
+}
+
+
+def topic_list_description(title: str, language: str) -> str:
+    """The description of a list started for a topic, in the household language.
+
+    A list the archivist or the move from `todos.md` starts has no
+    description a person wrote, and a list picked by its name alone
+    gets items that belong elsewhere.
+    """
+    code = (language or "").strip().lower()[:2]
+    return _TOPIC_LIST_DESCRIPTION.get(code, _TOPIC_LIST_DESCRIPTION["en"]).format(title=title)
 
 
 def list_path(slug: str, *, bucket: str) -> str:
@@ -379,6 +419,23 @@ def remove_item(text: str, item: Item) -> str:
         if not any(ln.strip() for ln in lines[start + 1:end]):
             del lines[start:end]
     return _edit_body(text, edit)
+
+
+def relink(text: str, old: str, new: str, *, path: str) -> str:
+    """The list text with every link to vault path `old` pointing at `new`.
+
+    A record is renamed when a refile gives it a better title; the items
+    it put on a list keep linking to it.
+    """
+    for item in read_list(text, path=path).items:
+        if old in (link.target for link in item.links):
+            moved = replace(item, links=tuple(replace(link, target=new) if link.target == old
+                                              else link for link in item.links))
+
+            def edit(lines: list[str], at: int = item.line, line: str = format_item(moved, path=path)) -> None:
+                lines[at] = line
+            text = _edit_body(text, edit)
+    return text
 
 
 # ── File text ────────────────────────────────────────────────────────────

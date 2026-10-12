@@ -38,7 +38,7 @@ from urllib.parse import quote
 # or a person, so the resolver never has to guess. They come in two
 # families, and which one a new kind belongs to is the whole design:
 #
-#   entities, addressed by NAME  — `topic`, `person`
+#   entities, addressed by NAME  — `topic`, `person`, `list`
 #       A name a person could type, for something that has an identity
 #       beyond any one file. A trailing leaf (`todo`) selects a
 #       sub-page instead of the overview.
@@ -108,6 +108,15 @@ def go_person(slug: str, leaf: str | None = None) -> str:
     return _entity_path("person", slug, leaf)
 
 
+def go_list(slug: str) -> str:
+    """`/list/<slug>` — one of the family's lists, by its name.
+
+    >>> go_list("einkaufsliste")
+    '/list/einkaufsliste'
+    """
+    return _entity_path("list", slug, None)
+
+
 def go_page(repo_path: str) -> str:
     """Logical link for a vault page path, or "" when no stable route exists.
 
@@ -116,8 +125,8 @@ def go_page(repo_path: str) -> str:
     resolver route get a link; anything else returns "" rather than a
     path-keyed link that breaks on the next rename.
 
-    >>> go_page("family/camping/todos.md")
-    '/topic/family/camping/todo'
+    >>> go_page("family/lists/einkaufsliste.md")
+    '/list/einkaufsliste'
     >>> go_page("family/camping/about.md")
     '/topic/family/camping'
     >>> go_page("homer/about.md")
@@ -128,9 +137,9 @@ def go_page(repo_path: str) -> str:
     parts = [p for p in repo_path.strip("/").split("/") if p]
     if len(parts) < 2:
         return ""
-    if parts[-1] == "todos.md":
-        leaf = "todo"
-    elif parts[-1] == "about.md":
+    if parts[:2] == ["family", "lists"] and len(parts) == 3 and parts[2].endswith(".md"):
+        return go_list(parts[2].removesuffix(".md"))
+    if parts[-1] == "about.md":
         leaf = None
     else:
         return ""

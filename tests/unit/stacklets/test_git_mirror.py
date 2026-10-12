@@ -324,8 +324,8 @@ class TestBriefingBlock:
         assert "> - Total: EUR 340.00" in out
         assert "> - Policy: KH-2026-987" in out
         assert "> **Action items**" in out
-        assert "> - [ ] Confirm SEPA balance — 2026-03-14" in out
-        assert "> - [ ] File for tax" in out
+        assert "> - Confirm SEPA balance 📅 2026-03-14" in out
+        assert "> - File for tax" in out
 
     def test_briefing_appears_before_body(self, mirror):
         out = mirror._render(
@@ -368,7 +368,7 @@ class TestBriefingBlock:
             summary=None, facts=None,
             action_items=["Just a string item"],
         )
-        assert "> - [ ] Just a string item" in out
+        assert "> - Just a string item" in out
 
     def test_null_string_due_is_treated_as_no_due(self, mirror):
         # LLMs sometimes return the string "null" instead of true null.
@@ -380,7 +380,7 @@ class TestBriefingBlock:
             action_items=[{"action": "Pay bill", "due": "null"}],
         )
         # No trailing "— null"
-        assert "> - [ ] Pay bill" in out
+        assert "> - Pay bill" in out
         assert "null" not in out.split("**Action items**")[1]
 
     def test_skips_blank_facts_and_empty_actions(self, mirror):
@@ -394,7 +394,7 @@ class TestBriefingBlock:
         )
         # Only the real fact + real action survive.
         assert "> - Real fact" in out
-        assert "> - [ ] Real action" in out
+        assert "> - Real action" in out
         # No empty bullets / checkboxes.
         assert "- \n" not in out
         assert "- [ ] \n" not in out
@@ -451,11 +451,11 @@ class _FakeTodoClient:
         })
 
 
-class TestTodoStateDocumentFold:
-    """Action items are folded into source `todos.md` by the filing writer."""
+class TestActionItemsOnTheTopicsList:
+    """A record's action items land on its topic's list, linked back to the record."""
 
     @pytest.mark.asyncio
-    async def test_document_topics_receive_action_items(self, mirror):
+    async def test_a_document_starts_the_topics_list(self, mirror):
         client = _FakeTodoClient()
         await mirror._fold_document_todos(
             client,
@@ -466,39 +466,65 @@ class TestTodoStateDocumentFold:
                     "pack stove",
                 ],
             },
+            record_path="family/documents/2026/03/2026-03-02-campsite-p12.md",
+            record_title="Campsite booking",
         )
 
-        written = client.files["family/camping/todos.md"]["content"]
-        assert "# Camping" in written
-        assert "- [ ] book pitch" in written
-        assert "- [ ] pack stove" in written
+        written = client.files["family/lists/camping.md"]["content"]
+        assert written.startswith("---\ntype: list\ntitle: Camping\n"
+                                  "description: What is still to do for Camping\n"
+                                  "topics:\n  - camping\n")
+        assert ("- [ ] book pitch [Campsite booking]"
+                "(../documents/2026/03/2026-03-02-campsite-p12.md) 📅 2026-04-01") in written
+        assert "- [ ] pack stove [Campsite booking]" in written
         assert client.puts[0]["author_name"] == BOT_USERNAME
 
     @pytest.mark.asyncio
-    async def test_capture_in_shared_topic_updates_that_topic_todos(self, mirror):
+    async def test_a_ticked_item_is_never_reopened_by_a_refiling(self, mirror):
         client = _FakeTodoClient({
-            "family/camping/todos.md": {
-                "content": "# Camping\n\n- [x] book pitch\n",
+            "family/lists/camping.md": {
+                "content": "---\ntype: list\ntitle: Camping\n---\n\n- [x] book pitch ✅ 2026-03-03\n",
                 "sha": "old-sha",
             },
         })
         await mirror._fold_capture_todos(
             client,
             target_path="family/camping/notes/2026/07/packing-a1b2c3.md",
-            classification={"action_items": ["pack stove", "book pitch"]},
+            classification={"title": "Packing", "action_items": ["pack stove", "Book pitch"]},
             author_name="homer",
             author_email="homer@simpson",
         )
 
-        written = client.files["family/camping/todos.md"]["content"]
-        assert "- [x] book pitch" in written
-        assert "- [ ] pack stove" in written
-        assert written.count("book pitch") == 1
+        written = client.files["family/lists/camping.md"]["content"]
+        assert "- [x] book pitch ✅ 2026-03-03" in written
+        assert "- [ ] pack stove [Packing](../camping/notes/2026/07/packing-a1b2c3.md)" in written
+        assert written.lower().count("book pitch") == 1
         assert client.puts[0]["sha"] == "old-sha"
         assert client.puts[0]["author_name"] == "homer"
 
     @pytest.mark.asyncio
-    async def test_personal_capture_bucket_does_not_create_personal_todos(self, mirror):
+    async def test_a_refiled_record_adds_nothing_and_its_items_follow_a_rename(self, mirror):
+        """The model words a refile's items differently; the list keeps the family's."""
+        old = "family/documents/2026/10/2026-10-09-permission-slip-p72.md"
+        new = "family/documents/2026/10/2026-10-09-school-notice-p72.md"
+        client = _FakeTodoClient()
+        await mirror._fold_document_todos(
+            client, classification={"topics": ["Education"],
+                                    "action_items": [{"action": "Sign the slip", "due": "2026-10-23"}]},
+            record_path=old, record_title="Permission slip")
+        await mirror._fold_document_todos(
+            client, classification={"topics": ["Education"],
+                                    "action_items": [{"action": "Sign and return the slip",
+                                                      "due": "2026-10-23"}]},
+            record_path=new, record_title="School notice", previous_path=old)
+
+        written = client.files["family/lists/education.md"]["content"]
+        assert "Sign and return" not in written
+        assert ("- [ ] Sign the slip [Permission slip]"
+                "(../documents/2026/10/2026-10-09-school-notice-p72.md) 📅 2026-10-23") in written
+
+    @pytest.mark.asyncio
+    async def test_a_personal_capture_adds_to_no_list(self, mirror):
         client = _FakeTodoClient()
         await mirror._fold_capture_todos(
             client,

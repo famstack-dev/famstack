@@ -46,16 +46,12 @@ import asyncio
 import json
 import os
 import secrets
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "memory" / "bot" / "cli"))
-from todo_list import update_todo_doc  # noqa: E402
 
 from vault_entry import (
     slug,
@@ -70,7 +66,18 @@ from vault_entry import (
     render_email_message_section,
     fold_email_message,
 )
-from stack.briefing import format_action_item  # noqa: E402
+from stack.lists import (  # noqa: E402
+    LISTS_DIR,
+    Link,
+    ListError,
+    action_item,
+    insert_item,
+    list_path,
+    new_list,
+    read_list,
+    relink,
+    topic_list_description,
+)
 
 
 # The shared family knowledge vault. The memory stacklet creates and
@@ -499,66 +506,76 @@ class GitMirror:
             lines.append(f"Model: {model}")
         return "\n".join(lines)
 
-    def _action_item_texts(self, action_items: list | None) -> list[str]:
-        """Action items in the same text form rendered into capture callouts."""
-        texts: list[str] = []
-        for item in action_items or []:
-            line = format_action_item(item)
-            if not line:
-                continue
-            texts.append(line.removeprefix("- [ ] ").strip())
-        return texts
-
-    def _todo_doc_path_for_topic(self, topic: str) -> tuple[str, str] | None:
-        topic = (topic or "").strip()
-        if not topic:
-            return None
-        topic_slug = self._slug(topic)
-        title = topic.replace("-", " ").title()
-        return f"{self.shared_bucket}/{topic_slug}/todos.md", title
-
-    def _todo_doc_path_for_capture(self, target_path: str) -> tuple[str, str] | None:
+    def _topic_of_capture(self, target_path: str) -> str:
+        """The topic slug a capture was filed under, or "" outside a shared topic."""
         parts = target_path.split("/")
         if len(parts) < 3 or parts[0] != self.shared_bucket:
-            return None
+            return ""
         topic_slug = parts[1]
-        if topic_slug in {"documents", "notes", "bookmarks", "emails", "_unfiled"}:
-            return None
-        return f"{self.shared_bucket}/{topic_slug}/todos.md", topic_slug.replace("-", " ").title()
+        if topic_slug in {"documents", "notes", "bookmarks", "emails", "_unfiled", LISTS_DIR}:
+            return ""
+        return topic_slug
 
-    async def _fold_action_items_into_todos(
+    async def _fold_action_items_into_list(
         self,
         client: ForgejoClient,
         *,
-        target_path: str,
-        title: str,
+        topic: str,
+        record_path: str,
+        record_title: str,
         action_items: list | None,
         message: str,
         author_name: str,
         author_email: str,
+        previous_path: str = "",
     ) -> bool:
-        """Merge extracted action items into a source `todos.md` document."""
-        items = self._action_item_texts(action_items)
-        if not items:
+        """Put a record's action items on its topic's list, `lists/<topic>.md`.
+
+        The list is started when the topic has none. Each item links the
+        record it came from. A record's items go on the list once: when
+        the list already has items from it, a refile adds none, because
+        the model words them differently each time and the family may
+        have ticked, reworded or removed them since. When a refile renamed
+        the record (`previous_path`), those items are linked to its new
+        path instead. An item whose text is already on the list is left
+        alone too.
+        """
+        source = Link(record_title, record_path) if record_path else None
+        items = [i for ai in action_items or [] if (i := action_item(ai, source=source))]
+        if not (topic and items):
             return False
+        path = list_path(topic, bucket=self.shared_bucket)
         try:
             existing = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, target_path,
+                client.get_file, self.repo_owner, REPO_NAME, path,
             )
-            prior = (existing.get("content") if existing else None) or None
-            content = update_todo_doc(prior, title, items)
+            prior = (existing or {}).get("content") or ""
+            title = topic.replace("-", " ").title()
+            content = prior or new_list(
+                title, topics=[topic],
+                description=topic_list_description(title, os.environ.get("LANGUAGE", "")))
+            if previous_path and previous_path != record_path:
+                content = relink(content, previous_path, record_path, path=path)
+            already = {s for i in read_list(content, path=path).items for s in i.sources}
+            for item in items if record_path not in already else []:
+                on_list = read_list(content, path=path).items
+                if not any(i.text.casefold() == item.text.casefold() for i in on_list):
+                    content = insert_item(content, item, path=path)
             if content == prior:
                 return False
             await asyncio.to_thread(
                 client.put_file,
-                self.repo_owner, REPO_NAME, target_path,
+                self.repo_owner, REPO_NAME, path,
                 content=content, message=message,
                 sha=existing["sha"] if existing else None,
                 author_name=author_name, author_email=author_email,
             )
             return True
+        except ListError as e:
+            logger.warning("[git-mirror] {} is not a list, action items not added: {}", path, e)
+            return False
         except ForgejoError as e:
-            logger.warning("[git-mirror] Todo fold failed for {}: {}", target_path, e)
+            logger.warning("[git-mirror] Action items not added to {}: {}", path, e)
             return False
 
     async def _fold_document_todos(
@@ -566,23 +583,24 @@ class GitMirror:
         client: ForgejoClient,
         *,
         classification: dict,
+        record_path: str,
+        record_title: str,
+        previous_path: str = "",
     ) -> None:
         topics = classification.get("topics") or classification.get("topic") or []
         if isinstance(topics, str):
             topics = [topics]
         for topic in topics:
-            if not isinstance(topic, str):
+            if not isinstance(topic, str) or not topic.strip():
                 continue
-            target = self._todo_doc_path_for_topic(topic)
-            if target is None:
-                continue
-            path, title = target
-            await self._fold_action_items_into_todos(
+            await self._fold_action_items_into_list(
                 client,
-                target_path=path,
-                title=title,
+                topic=self._slug(topic),
+                record_path=record_path,
+                record_title=record_title,
+                previous_path=previous_path,
                 action_items=classification.get("action_items") or [],
-                message=f"chore(todos): archivist added action items to {self._slug(topic)}",
+                message=f"chore(lists): archivist added action items to {self._slug(topic)}",
                 author_name=BOT_USERNAME,
                 author_email=BOT_EMAIL,
             )
@@ -595,17 +613,18 @@ class GitMirror:
         classification: dict,
         author_name: str,
         author_email: str,
+        previous_path: str = "",
     ) -> None:
-        target = self._todo_doc_path_for_capture(target_path)
-        if target is None:
-            return
-        path, title = target
-        await self._fold_action_items_into_todos(
+        topic = self._topic_of_capture(target_path)
+        await self._fold_action_items_into_list(
             client,
-            target_path=path,
-            title=title,
+            topic=topic,
+            record_path=target_path,
+            previous_path=previous_path,
+            record_title=str(classification.get("title") or "").strip()
+            or Path(target_path).stem,
             action_items=classification.get("action_items") or [],
-            message=f"chore(todos): {author_name} added action items to {title.lower()}",
+            message=f"chore(lists): {author_name} added action items to {topic}",
             author_name=author_name,
             author_email=author_email,
         )
@@ -749,7 +768,9 @@ class GitMirror:
 
         self._cache[paperless_id] = target_path
         self._save_cache()
-        await self._fold_document_todos(client, classification=classification)
+        await self._fold_document_todos(client, classification=classification,
+                                        record_path=target_path, record_title=title,
+                                        previous_path=existing_path or "")
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
         return True
 
@@ -1028,6 +1049,7 @@ class GitMirror:
             classification=classification,
             author_name=author_name,
             author_email=author_email,
+            previous_path=existing_path or "",
         )
         return target_path
 

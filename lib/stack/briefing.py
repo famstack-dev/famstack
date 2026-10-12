@@ -11,6 +11,8 @@ Stdlib only: the host CLI and every container import it.
 
 from __future__ import annotations
 
+from .lists import DUE, action_item
+
 
 def render_briefing(
     *,
@@ -83,28 +85,18 @@ def action_item_lines(items: list) -> list[str]:
 
 
 def format_action_item(ai) -> str | None:
-    """``{action, due}`` → ``- [ ] action — YYYY-MM-DD`` or ``- [ ] action``.
+    """An action item as a line of the summary: `- action 📅 YYYY-MM-DD`.
 
-    Args:
-        ai: Action item as a dict (with "action" and optional "due")
-            or a plain string.
-
-    Returns:
-        Formatted checkbox line, or None when the item is empty/invalid.
+    The same text and due date the item gets on the topic's list
+    (`stack.lists.action_item`), without the checkbox: the list holds
+    whether it is done, and a box here would never be ticked. Obsidian
+    reads only checkbox lines as tasks, so this copy is not counted
+    twice. None for an empty or invalid item.
     """
-    if isinstance(ai, str):
-        return f"- [ ] {ai.strip()}" if ai.strip() else None
-    if not isinstance(ai, dict):
+    item = action_item(ai)
+    if item is None:
         return None
-    action = (ai.get("action") or "").strip()
-    if not action:
-        return None
-    due = ai.get("due")
-    if isinstance(due, str):
-        due_clean = due.strip()
-        if due_clean and due_clean.lower() not in ("null", "none", "n/a"):
-            return f"- [ ] {action} — {due_clean}"
-    return f"- [ ] {action}"
+    return f"- {item.text} {DUE} {item.due}" if item.due else f"- {item.text}"
 
 
 def read_briefing(text: str) -> tuple[str, list[str]]:
