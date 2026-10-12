@@ -52,6 +52,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 from .frontmatter import FrontmatterError, dump, parse, validate
+from .people import person_path
 
 LISTS_DIR = "lists"
 
@@ -94,6 +95,12 @@ class Link:
     label: str
     target: str
 
+    @property
+    def person(self) -> str:
+        """The id of the person the link names, or "" for a record."""
+        m = _PERSON_PATH.match(self.target)
+        return m[1] if m else ""
+
 
 @dataclass(frozen=True)
 class Item:
@@ -122,17 +129,17 @@ class Item:
     @property
     def people(self) -> tuple[str, ...]:
         """The ids of the people the item is assigned to, in the order written."""
-        return tuple(m[1] for link in self.links if (m := _PERSON_PATH.match(link.target)))
+        return tuple(link.person for link in self.links if link.person)
 
     @property
     def sources(self) -> tuple[str, ...]:
         """The vault paths of the records the item came from."""
-        return tuple(link.target for link in self.links if not _PERSON_PATH.match(link.target))
+        return tuple(link.target for link in self.links if not link.person)
 
 
 def person_link(person_id: str, label: str, *, bucket: str) -> Link:
     """The link that assigns an item to a declared person."""
-    return Link(label, f"{bucket}/people/{person_id}.md")
+    return Link(label, person_path(person_id, bucket))
 
 
 def parse_item(line: str, *, path: str) -> Item | None:
@@ -337,6 +344,43 @@ def _after(order: list[str], section: str) -> list[str]:
     return order[folded.index(section.casefold()) + 1:]
 
 
+# ── Changing an item ─────────────────────────────────────────────────────
+
+def find(lst: FamilyList, name: str) -> list[Item]:
+    """The items `name` means: the one with exactly that text, else every one containing it.
+
+    Case does not count. Several matches are the caller's to resolve,
+    by asking for more of the item's words; a guess would tick the
+    wrong thing.
+    """
+    wanted = name.strip().casefold()
+    exact = [i for i in lst.items if i.text.casefold() == wanted]
+    return exact or [i for i in lst.items if wanted and wanted in i.text.casefold()]
+
+
+def set_done(text: str, item: Item, *, done: bool, today: str, path: str) -> str:
+    """The list text with `item` ticked on `today`, or opened again."""
+    changed = replace(item, done=done, status="x" if done else " ",
+                      done_on=today if done else "")
+
+    def edit(lines: list[str]) -> None:
+        lines[item.line] = format_item(changed, path=path)
+    return _edit_body(text, edit)
+
+
+def remove_item(text: str, item: Item) -> str:
+    """The list text without `item`'s line, and without a heading it leaves empty."""
+    def edit(lines: list[str]) -> None:
+        del lines[item.line]
+        start = next((n for n in range(item.line - 1, -1, -1) if _HEADING.match(lines[n])), None)
+        if start is None:
+            return
+        end = _section_end(lines, start)
+        if not any(ln.strip() for ln in lines[start + 1:end]):
+            del lines[start:end]
+    return _edit_body(text, edit)
+
+
 # ── File text ────────────────────────────────────────────────────────────
 
 def _split(text: str) -> tuple[str, str]:
@@ -354,6 +398,16 @@ def _body(text: str) -> str:
     return _split(text)[1]
 
 
+def _edit_body(text: str, edit) -> str:
+    """`text` with its body lines changed in place by `edit`."""
+    head, body = _split(text)
+    lines = body.splitlines()
+    edit(lines)
+    return _join(head, lines)
+
+
 def _join(head: str, lines: list[str]) -> str:
     body = "\n".join(lines).strip("\n")
+    if not body:
+        return head
     return f"{head}\n{body}\n" if head else f"{body}\n"

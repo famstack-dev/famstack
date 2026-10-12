@@ -64,6 +64,7 @@ from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # no
 from stack.links import go_page, public  # noqa: E402
 from stack.people import PEOPLE_DIR, PersonError, read_person  # noqa: E402
 from stack.list_doc import diff  # noqa: E402
+from stack.lists import LISTS_DIR  # noqa: E402
 from stack.page_patch import apply_edits  # noqa: E402
 
 # Where the agent leaves a page it wants written. Its data dir is bind-mounted
@@ -174,7 +175,7 @@ def run(args, stacklet, config):
         # 2026-09-15: rewrites drop [x] marks, and prompt rules do not
         # reliably repair them). Targeted edits go through --patch or
         # the list-edit verb, which stay allowed.
-        if not as_patch and repo_path.endswith("todos.md"):
+        if not as_patch and _is_list(repo_path):
             change = diff(seen["before"], seen["after"])
             lost = list(change.reopened) + list(change.removed)
             if lost:
@@ -204,7 +205,7 @@ def run(args, stacklet, config):
         return result
 
     before, after = seen.get("before", ""), seen.get("after", "")
-    change = diff(before, after) if repo_path.endswith("todos.md") else None
+    change = diff(before, after) if _is_list(repo_path) else None
     told = describe(before, after, repo_path)
 
     if preview:
@@ -239,6 +240,11 @@ def run(args, stacklet, config):
     }
 
 
+def _is_list(repo_path: str) -> bool:
+    """A list page: a topic's `todos.md`, or a file under `<bucket>/lists/`."""
+    return repo_path.endswith("todos.md") or f"/{LISTS_DIR}/" in repo_path
+
+
 def describe(before: str, after: str, repo_path: str) -> str:
     """One line saying what this edit did to this page.
 
@@ -247,7 +253,7 @@ def describe(before: str, after: str, repo_path: str) -> str:
     general answer rather than a fabricated one: how much text went each way.
     Vague beats wrong in a commit subject somebody will read back later.
     """
-    if repo_path.endswith("todos.md"):
+    if _is_list(repo_path):
         return diff(before, after).summary()
     plus, minus = _line_delta(before, after)
     if not (plus or minus):
