@@ -1,88 +1,87 @@
-"""stack memory topic <name> todo — a topic's todos, first-class like its link.
+"""stack memory topic <name>: a topic's overview, its wiki page.
 
-Topics are first-class entities: the CLI noun and the `/go/topic/<name>` link
-share one model (`docs`, `topic`, `person`), so `stack memory topic camping
-todo` mirrors `/go/topic/camping/todo`. The todos read is host-native — straight
-off the vault on disk, no LLM, no bot-runner — so it works even when the model
-is down.
+Topics are first-class entities: the CLI noun and the `/go/topic/<name>`
+link share one model, so `stack memory topic camping` mirrors
+`/go/topic/camping`. The read is host-native, straight off the brain
+projection on disk, so it works even when the model is down.
 
-Examples:
+    stack memory topic camping     the topic's overview, as prose
+    stack memory topic             the topics that have a page
 
-    stack memory topic itchy-scratchy-land todo
-      family/itchy-scratchy-land — 3 open, 1 done
-      - [ ] pick up the wristbands
-      - [ ] charge the camera
-      - [ ] pack a change of clothes for Maggie
-
-    stack memory topic itchy-scratchy-land todo --all   # include done items
-    stack memory topic                                  # topics that have a list
-
-Todos are also mutable, attributed to the person who acted:
-
-    stack memory topic itchy-scratchy-land todo add      "book the campsite"  --by homer
-    stack memory topic itchy-scratchy-land todo strike   "charge the camera"  --by homer
-    stack memory topic itchy-scratchy-land todo unstrike "charge the camera"  --by homer
-
-`add` appends a new item (starting the list if the topic has none), `strike`/
-`unstrike` toggle a task's box; each commits to Forgejo (the vault's store) as
-that person via `update_memory`, while the read stays host-native. `todo` is the
-only resource today; the noun leaves room for more (notes, about) without
-reshaping the command.
+A topic's lists are read and changed with `stack memory list`.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _todos  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib import brain_path_for, refresh_vault_if_stale  # noqa: E402
 
-HELP = "Inspect a topic (e.g. its todos)"
+HELP = "Show a topic's overview"
 
 
 def run(args, stacklet, config):
-    argv = args or []
-    by, argv = _extract_opt(argv, "--by")
-    show_all = "--all" in argv
-    positionals = [a for a in argv if not a.startswith("-")]
-
-    # Grammar: `<name...> todo [strike|unstrike <item...>]`. The `todo` keyword
-    # splits the scope name from the verb+item; bare `topic` lists the topics
-    # that have a list.
-    if "todo" not in positionals:
-        if not positionals:
-            return _todos.list_todos("", show_all=show_all, config=config)
-        # `topic <slug>` (no verb) shows the topic's about page, its overview.
-        return _todos.show_topic(" ".join(positionals).strip(), config=config)
-
-    ti = positionals.index("todo")
-    scope = " ".join(positionals[:ti]).strip()
-    after = positionals[ti + 1:]
-    if not after:
-        return _todos.list_todos(scope, show_all=show_all, config=config)
-
-    verb, item = after[0], " ".join(after[1:]).strip()
-    if verb in ("strike", "unstrike"):
-        return _todos.strike_todo(scope, item, done=(verb == "strike"),
-                                  actor=by or "someone", config=config)
-    if verb == "add":
-        return _todos.add_todo(scope, item, actor=by or "someone", config=config)
-    return {"error": f"unknown todo verb {verb!r}; use add, strike or unstrike"}
+    words = [a for a in (args or []) if not a.startswith("-")]
+    if len(words) > 1 and words[1] in ("todo", "todos"):
+        return {"error": f"a topic's todos are a list now: "
+                         f"stack memory list show {words[0]}"}
+    scope = " ".join(words).strip()
+    brain = _brain(config)
+    if brain is None or not brain.exists():
+        return {"error": "no brain projection found; is the memory stacklet installed?"}
+    if not scope:
+        topics = _known_topics(brain)
+        print("\n".join(topics) if topics else "No topic pages yet.")
+        return {"topics": topics}
+    return show_topic(scope, config=config)
 
 
-def _extract_opt(argv, flag):
-    """Pull `--flag value` out of argv, returning (value, remaining_argv).
+def _brain(config) -> Path | None:
+    data_dir = config.get("data_dir") if config else None
+    return brain_path_for(Path(data_dir)) if data_dir else None
 
-    Needed because `--by <person>` carries a value, so the plain "non-dash
-    token is a positional" rule would otherwise treat the person as scope text.
+
+def _known_topics(brain: Path) -> list[str]:
+    """Every topic slug that currently has an about.md in brain."""
+    return sorted({
+        p.parent.name for p in brain.glob("*/*/about.md")
+        if p.parent.parent != brain
+    })
+
+
+# Strip the machine bits so the about reads as prose: the frontmatter block, the
+# generated-section markers the wiki writes, and citation markers like [8].
+_FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
+_GEN_MARKER = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->\n?")
+_CITE = re.compile(r"\[\d+(?:,\s*\d+)*\]")
+
+
+def show_topic(scope: str, *, config) -> dict:
+    """Print a topic's brain about page -- its curated overview.
+
+    `stack memory topic <slug>` gives the topic's summary, so the agent can
+    answer "what is this / summarise it" without guessing the vault
+    path. Strips frontmatter, the generated-section markers, and citation markers
+    for a clean read; the raw page is `brain/<bucket>/<slug>/about.md`.
     """
-    out, value, i = [], None, 0
-    while i < len(argv):
-        if argv[i] == flag and i + 1 < len(argv):
-            value = argv[i + 1]
-            i += 2
-            continue
-        out.append(argv[i])
-        i += 1
-    return value, out
+    brain = _brain(config)
+    if brain is None or not brain.exists():
+        return {"error": "no brain projection found; is the memory stacklet installed?"}
+    scope = (scope or "").strip()
+
+    refresh_vault_if_stale(brain)
+    matches = sorted(brain.glob(f"*/{scope}/about.md"))
+    if not matches:
+        known = _known_topics(brain)
+        hint = ("  topics: " + ", ".join(known)) if known else ""
+        return {"error": f"no page for topic {scope!r}\n{hint}".rstrip()}
+
+    text = matches[0].read_text(encoding="utf-8")
+    text = _FRONTMATTER.sub("", text)
+    text = _GEN_MARKER.sub("", text)
+    text = _CITE.sub("", text)
+    print(text.strip())
+    return {"ok": True, "scope": scope, "bucket": matches[0].parent.parent.name}

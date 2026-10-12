@@ -58,7 +58,7 @@ def _roots(config, override: str | None) -> list[Path]:
     Reading source alone therefore answered "no profile" for every
     member who had one, which is the state this command shipped in.
     Source is still checked first: a hand-curated page beats rebuildable
-    output. `_todos.py` consults both roots for the same reason.
+    output.
     """
     if override:
         return [Path(override)]
