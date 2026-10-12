@@ -524,6 +524,15 @@ class TestActionItemsOnTheTopicsList:
                 "(../documents/2026/10/2026-10-09-school-notice-p72.md) 📅 2026-10-23") in written
 
     @pytest.mark.asyncio
+    async def test_a_new_list_is_titled_with_the_topics_name(self, mirror):
+        client = _FakeTodoClient()
+        await mirror._fold_document_todos(
+            client, classification={"topics": ["Haus & Garten"], "action_items": ["Hecke schneiden"]},
+            record_path="family/documents/2026/10/hecke-p9.md", record_title="Hecke")
+        written = client.files["family/lists/haus-garten.md"]["content"]
+        assert "title: Haus & Garten\n" in written
+
+    @pytest.mark.asyncio
     async def test_a_personal_capture_adds_to_no_list(self, mirror):
         client = _FakeTodoClient()
         await mirror._fold_capture_todos(

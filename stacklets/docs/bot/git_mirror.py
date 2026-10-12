@@ -521,6 +521,7 @@ class GitMirror:
         client: ForgejoClient,
         *,
         topic: str,
+        topic_name: str = "",
         record_path: str,
         record_title: str,
         action_items: list | None,
@@ -531,7 +532,9 @@ class GitMirror:
     ) -> bool:
         """Put a record's action items on its topic's list, `lists/<topic>.md`.
 
-        The list is started when the topic has none. Each item links the
+        The list is started when the topic has none, titled with the
+        topic's name as classified (`topic_name`, "Haus & Garten"), else
+        with its slug made readable. Each item links the
         record it came from. A record's items go on the list once: when
         the list already has items from it, a refile adds none, because
         the model words them differently each time and the family may
@@ -550,7 +553,7 @@ class GitMirror:
                 client.get_file, self.repo_owner, REPO_NAME, path,
             )
             prior = (existing or {}).get("content") or ""
-            title = topic.replace("-", " ").title()
+            title = topic_name or topic.replace("-", " ").title()
             content = prior or new_list(
                 title, topics=[topic],
                 description=topic_list_description(title, os.environ.get("LANGUAGE", "")))
@@ -596,6 +599,7 @@ class GitMirror:
             await self._fold_action_items_into_list(
                 client,
                 topic=self._slug(topic),
+                topic_name=topic.strip(),
                 record_path=record_path,
                 record_title=record_title,
                 previous_path=previous_path,
