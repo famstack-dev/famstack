@@ -59,15 +59,15 @@ _STYLE = (
 _TOPIC_GREETING = (
     "Introduce yourself in one short line, then say what this room's "
     "topic '{topic}' is about, in your own words, from its page in the "
-    "vault. If it has open todos, say how many and name one or two, then "
-    "say you can add items, tick them off, or change them."
+    "vault. If its lists have open items, say how many and name one or "
+    "two, then say you can add items, tick them off, or change them."
 )
 
 _PLAIN_GREETING = (
     "This room has no topic page, so do not describe one and do not go "
     "looking for it. Introduce yourself in one short line and say "
     "plainly what you can do: answer questions from the family's own "
-    "notes and documents, and keep topic todo lists."
+    "notes and documents, and keep the family's lists."
 )
 
 

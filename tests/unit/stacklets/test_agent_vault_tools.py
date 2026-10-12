@@ -36,7 +36,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 MEMORY_DIR = REPO_ROOT / "stacklets" / "memory"
 
-TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "sitecustomize")
+TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "list_tool", "sitecustomize")
 
 
 # ── loading the real components under test ───────────────────────────
@@ -72,7 +72,7 @@ def memory_cli():
     return {
         name: _load_from_path(f"memory_cli_{name}",
                               MEMORY_DIR / "cli" / f"{name}.py")
-        for name in ("search", "person")
+        for name in ("search", "person", "list")
     }
 
 
@@ -88,6 +88,7 @@ def vault_tools(monkeypatch, nanobot_stub):
         "memory_search": importlib.import_module("memory_tool").MemorySearchTool,
         "memory_person": importlib.import_module("person_tool").MemoryPersonTool,
         "memory_history": importlib.import_module("history_tool").MemoryHistoryTool,
+        "list_edit": importlib.import_module("list_tool").ListEditTool,
     }
     yield tools
     for name in TOOL_MODULES:
@@ -126,6 +127,7 @@ def argv_of(tool_cls, **kwargs) -> list[str]:
 @pytest.mark.parametrize("tool_name,kwargs", [
     ("memory_search", {"query": "Homer"}),
     ("memory_person", {"name": "homer"}),
+    ("list_edit", {"list": "einkaufsliste", "op": "tick", "items": ["Milch"]}),
 ])
 def test_the_command_a_tool_runs_is_allowed_by_the_api(api, vault_tools,
                                                        tool_name, kwargs):
@@ -166,6 +168,12 @@ def test_the_allowlist_stays_read_only(api):
      {"query": "Homer", "limit": 10, "person": "homer", "tag": "Insurance",
       "scope": "family"}),
     ("memory_person", "person", {"name": "homer"}),
+    ("list_edit", "list",
+     {"list": "einkaufsliste", "op": "add", "items": ["Joghurt", "Eier"],
+      "section": "Milchprodukte & Eier", "people": ["Marge"], "due": "2026-10-14"}),
+    ("list_edit", "list",
+     {"list": "einkaufsliste", "op": "move", "items": ["Eier"], "to": "markt"}),
+    ("list_edit", "list", {"list": "packliste", "op": "reset", "items": ["ignored"]}),
 ])
 def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
         memory_cli, vault_tools, tool_name, command, kwargs):

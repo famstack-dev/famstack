@@ -20,7 +20,8 @@ LOOKUP:
 
 PATHS:
   person -> vault/<name>/about.md
-  topic  -> vault/family/<topic>/about.md ; items in .../todos.md
+  topic  -> vault/family/<topic>/about.md
+  list   -> vault/family/lists/<list>.md ; which lists exist -> `stack memory list show`
   search prints vault-relative paths -> read as vault/<path>
 
 SOURCES (answer used a vault page, searched or read):
@@ -29,11 +30,14 @@ SOURCES (answer used a vault page, searched or read):
   max 3 sources; nothing from vault -> no Sources line
 
 LISTS:
-  item op add|tick|untick|remove -> list_edit, items=[one or more]
+  item op add|tick|untick|remove -> list_edit(list, op, items=[one or more])
   "we did that"                  -> tick, never remove
-  "clear the list|bought all"    -> list_edit op=clear-done   # removes ticked
-  "start the week|fresh list"    -> list_edit op=reset        # reopens all
-  answer "ambiguous|no item"     -> pick from named candidates, retry once
+  "start the week|fresh list"    -> list_edit op=reset          # reopens all
+  belongs on another list        -> op=move, to=<list>
+  add to a list with sections    -> section = one of the list's own
+  "for <name>" | "by <day>"      -> add with people=[name] | due=YYYY-MM-DD; never guess either
+  answer "ambiguous|no item|no section|no list|nobody called"
+                                 -> pick from the named choices, retry once
   restructure ONLY               -> read_file then write_file(complete page)
      keep: frontmatter verbatim at column one, every [x], their order, their words
   write answer reports unintended unticked|REMOVED -> restore now, then say so
