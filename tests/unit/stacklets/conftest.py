@@ -58,7 +58,12 @@ def nanobot_stub():
             pass
 
         def tool_parameters(schema):
-            return lambda cls: cls
+            # nanobot attaches the schema to the class it decorates; a tool
+            # without it is abstract and nanobot cannot register it.
+            def attach(cls):
+                cls.parameters_schema = schema
+                return cls
+            return attach
 
         # nanobot's own signature: `required`, `description` and
         # `additional_properties` are the schema's, everything else is a
@@ -207,6 +212,8 @@ def nanobot_stub():
             BooleanSchema=_Schema,
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
+        # nanobot 0.3: the request a tool runs in. `turn_id` is unique per turn.
+        mod("nanobot.agent.tools.context", current_request_context=lambda: None)
         mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
         mod("nanobot.agent.tools.filesystem",
             WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)

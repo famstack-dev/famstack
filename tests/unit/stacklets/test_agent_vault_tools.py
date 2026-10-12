@@ -25,6 +25,7 @@ components that judge them.
 from __future__ import annotations
 
 import asyncio
+import types
 import importlib
 import importlib.machinery
 import importlib.util
@@ -120,6 +121,20 @@ def argv_of(tool_cls, **kwargs) -> list[str]:
     finally:
         monkey.undo()
     return captured
+
+
+# ── gate 0: every tool carries its parameters ────────────────────────
+
+@pytest.mark.parametrize("tool_name", ["memory_search", "memory_person", "memory_history",
+                                       "list_edit"])
+def test_every_tool_carries_its_own_parameters(vault_tools, tool_name):
+    """A tool nanobot cannot instantiate is missing from the model's list.
+
+    On the rig a helper class landed between `@tool_parameters(...)` and
+    `ListEditTool`: the schema went to the helper, `list_edit` was
+    abstract, and the agent answered that it had no list tool.
+    """
+    assert "parameters_schema" in vars(vault_tools[tool_name])
 
 
 # ── gate 1: the core API allowlist ───────────────────────────────────
@@ -236,24 +251,77 @@ def test_search_sends_no_backend_flag(vault_tools):
     assert "--backend" not in argv
 
 
-def test_a_list_with_open_items_is_deleted_only_once_the_person_said_yes(vault_tools):
-    """The store refuses to delete a list with open items unless told `--yes`.
+REFUSED = (b"  \xe2\x9c\x97  Partyliste still has 2 open items: Luftballons; Girlanden. "
+           b"Delete it with them: add --yes\n")
 
-    The model decides nothing here: `--yes` is sent only when it says the
-    person confirmed, so a misheard "delete" meets the refusal that names
-    the open items, and the person is asked.
+
+def deletes(tool_cls, turns, monkeypatch) -> list[bool]:
+    """Run delete calls turn by turn; for each, whether `--yes` was sent.
+
+    `turns` holds (turn id, confirmed, what the store answers). The store's
+    answer is fed back to the tool as the CLI's output, as on the rig.
     """
-    asked = argv_of(vault_tools["list_edit"], list="baumarkt", op="delete")
-    confirmed = argv_of(vault_tools["list_edit"], list="baumarkt", op="delete",
-                        confirmed=True)
+    import sys as _sys
 
-    unclear = argv_of(vault_tools["list_edit"], list="baumarkt", op="delete",
-                      confirmed="maybe")
+    context = _sys.modules["nanobot.agent.tools.context"]
+    sent: list[bool] = []
+    tool = tool_cls()
+    for turn, confirmed, answer in turns:
+        monkeypatch.setattr(context, "current_request_context",
+                            lambda turn=turn: types.SimpleNamespace(turn_id=turn))
 
-    assert "--yes" not in asked
-    assert "--yes" not in unclear, "only a real yes deletes open items"
-    assert confirmed[:5] == ["stack", "memory", "list", "delete", "baumarkt"]
-    assert "--yes" in confirmed
+        class _Proc:
+            returncode = 1 if answer == REFUSED else 0
+
+            async def communicate(self, answer=answer):
+                return answer, b""
+
+        async def _fake_exec(*args, **_kwargs):
+            sent.append("--yes" in args)
+            return _Proc()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        asyncio.run(tool.execute(op="delete", list="partyliste", confirmed=confirmed))
+    return sent
+
+
+def test_a_list_with_open_items_is_deleted_only_after_the_person_said_yes(vault_tools, monkeypatch):
+    """The model cannot confirm for the person.
+
+    On the rig (2026-10-12) the store refused a delete because of open
+    items and the model sent `confirmed` itself in the same turn, so the
+    list went without anyone being asked. A yes counts only in a later
+    message than the refusal.
+    """
+    sent = deletes(vault_tools["list_edit"], [
+        ("turn-1", None, REFUSED),        # "delete the party list"
+        ("turn-1", True, REFUSED),        # the model confirming on its own
+        ("turn-2", True, b"deleted the list Partyliste (by homer)"),   # "Ja, die können weg."
+    ], monkeypatch)
+    assert sent == [False, False, True]
+
+
+def test_a_refused_delete_tells_the_model_to_ask_naming_what_is_open(vault_tools, monkeypatch):
+    import sys as _sys
+    monkeypatch.setattr(_sys.modules["nanobot.agent.tools.context"], "current_request_context",
+                        lambda: types.SimpleNamespace(turn_id="turn-1"))
+    answer = result_of(vault_tools["list_edit"], returncode=1, stdout=REFUSED,
+                       op="delete", list="partyliste")
+    assert answer.startswith("Not deleted: Partyliste still has 2 open items: Luftballons; "
+                             "Girlanden. Ask the person whether these go too")
+    assert "--yes" not in answer
+
+
+def test_a_yes_without_a_refusal_before_it_deletes_nothing_open(vault_tools, monkeypatch):
+    sent = deletes(vault_tools["list_edit"], [("turn-1", True, REFUSED)], monkeypatch)
+    assert sent == [False]
+
+
+def test_only_a_real_yes_counts(vault_tools, monkeypatch):
+    """nanobot casts "true"/"false" but passes any other string through."""
+    sent = deletes(vault_tools["list_edit"], [
+        ("turn-1", None, REFUSED), ("turn-2", "maybe", REFUSED)], monkeypatch)
+    assert sent == [False, False]
 
 
 def result_of(tool_cls, *, returncode: int, stdout: bytes = b"",

@@ -23,6 +23,49 @@ from nanobot.agent.tools.schema import (
 )
 
 
+class AwaitingYes:
+    """Lists whose delete the store refused because of open items, by turn.
+
+    The person has to say yes, the model cannot: on the rig (2026-10-12)
+    the store refused a delete and the model sent `confirmed` itself in
+    the same turn. So a yes counts only in a later turn than the refusal,
+    which is a message from the person after they were told what is open.
+
+        awaiting = AwaitingYes()
+        awaiting.refused("partyliste", turn="t1")
+        awaiting.allows("partyliste", turn="t1")    # False: same turn
+        awaiting.allows("partyliste", turn="t2")    # True
+    """
+
+    def __init__(self) -> None:
+        self._refused_in: dict[str, str] = {}
+
+    def refused(self, slug: str, *, turn: str) -> None:
+        if turn:
+            self._refused_in[slug] = turn
+
+    def allows(self, slug: str, *, turn: str) -> bool:
+        refused_in = self._refused_in.get(slug, "")
+        return bool(refused_in and turn and turn != refused_in)
+
+    def done(self, slug: str) -> None:
+        self._refused_in.pop(slug, None)
+
+
+# What the store says when a list to delete still has open items.
+_NEEDS_YES = "add --yes"
+
+_awaiting_yes = AwaitingYes()
+
+
+def _current_turn() -> str:
+    """The id of the turn this tool call belongs to, "" if nanobot has none."""
+    from nanobot.agent.tools.context import current_request_context
+
+    request = current_request_context()
+    return str(getattr(request, "turn_id", "") or "")
+
+
 @tool_parameters(
     tool_parameters_schema(
         list=StringSchema(
@@ -134,10 +177,12 @@ class ListEditTool(Tool):
         if op in ("create", "set"):
             args = _details_args(op, list, title, about, topic, sections)
         elif op == "delete":
-            args = ["stack", "memory", "list", "delete", (list or "").strip()]
-            # Only a real yes: nanobot casts "true"/"false" but passes any
-            # other string through, and a stray string is not a person's yes.
-            args += ["--yes"] if confirmed is True else []
+            slug, turn = (list or "").strip(), _current_turn()
+            args = ["stack", "memory", "list", "delete", slug]
+            # Only a real yes, in a later message than the refusal: nanobot
+            # casts "true"/"false" but passes any other string through.
+            if confirmed is True and _awaiting_yes.allows(slug, turn=turn):
+                args.append("--yes")
         else:
             args = _item_args(op, list, items, topic, section, people, due, to)
         args += ["--as", actor]
@@ -155,7 +200,25 @@ class ListEditTool(Tool):
         # and retries once.
         if proc.returncode not in (0, 1):
             return f"Error: list edit failed with exit {proc.returncode}: {err or out}"
+        if op == "delete":
+            if _NEEDS_YES in out + err:
+                _awaiting_yes.refused(slug, turn=turn)
+                return _ask_first(out or err)
+            if proc.returncode == 0:
+                _awaiting_yes.done(slug)
         return out or err or "(no answer from the list store)"
+
+
+def _ask_first(refusal: str) -> str:
+    """The store's refusal, as what the model has to do next.
+
+    The store answers for a person at a terminal ("add --yes"). The model
+    read that as a step it could not take and went looking for another
+    way to delete the file; what it has to do is ask.
+    """
+    what = refusal.strip().lstrip("✗ ").split(" Delete it with them")[0]
+    return (f"Not deleted: {what} Ask the person whether these go too, naming them. "
+            "If they say yes in their next message, call delete again with confirmed=true.")
 
 
 def _item_args(op, slug, items, topic, section, people, due, to) -> "list[str]":
