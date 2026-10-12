@@ -142,8 +142,21 @@ def nanobot_stub():
                     user_id="@stacky-bot:home.local", group_policy="mention",
                 )
                 self.handled = []
+                self.typing_stopped = []
+                self.sent = []
                 self.joined = []
                 self.processed = []
+
+            def is_allowed(self, sender):
+                return True
+
+            async def send(self, msg):
+                # nanobot 0.3 channels/matrix/runtime.py: an OutboundMessage,
+                # whose metadata carries the event id of the message answered.
+                self.sent.append(msg)
+
+            async def _stop_typing_keepalive(self, room_id, clear_typing=False):
+                self.typing_stopped.append(room_id)
 
             def _is_bot_mentioned(self, event):
                 # Stock nanobot: only an autocompleted pill counts.

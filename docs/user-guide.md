@@ -140,6 +140,8 @@ Say what goes on a list when you start it ("the farmers' market on Saturday: veg
 
 **Then just say what you need.** "Stacky, we need milk, eggs and toothpaste." Each item lands in its section. Something you have bought before goes back to the list and the section it had, so after the first week nobody has to say where.
 
+**Or say it.** Hold the mic button and say "Stacky, we need milk and eggs." Stacky's answer starts with what it heard, so a misheard word shows. In a room with others, a voice message that does not start with Stacky's name is not for Stacky, the same as typed text.
+
 **Tick off as you shop.** "Stacky, I got the milk and the bread." You don't have to say which list. A ticked item stays visible for the rest of the day, so "did we get eggs?" still has an answer, and moves to the list's archive overnight. The list then shows only what is still open.
 
 More you can say:
@@ -154,7 +156,7 @@ More you can say:
 
 **A list belongs to a topic.** In a topic room, Stacky uses that topic's lists. To tie an existing list to a room: "Stacky, the supermarket list belongs to this room."
 
-Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown checklist, so you can also tick items in Obsidian or in Forgejo's editor. Stacky does not hear voice messages or see photos yet: a screenshot of a list has to be typed in for now.
+Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown checklist, so you can also tick items in Obsidian or in Forgejo's editor.
 
 ---
 

@@ -14,6 +14,19 @@ mkdir -p "$NB/workspace"
 
 cp -f /app/config.json "$NB/config.json"
 
+# The household language goes into the config as a value, not a ${VAR}:
+# nanobot checks transcription.language against ^[a-z]{2,3}$ before it
+# resolves variables, and refuses to start. Two letters, as the archivist
+# sends it; none at all lets Whisper detect the language.
+python3 - "$NB/config.json" "${AGENT_LANGUAGE:-}" <<'PY'
+import json, sys
+path, language = sys.argv[1], sys.argv[2].strip().lower()[:2]
+config = json.load(open(path))
+if language.isalpha():
+    config.setdefault("transcription", {})["language"] = language
+json.dump(config, open(path, "w"), indent=2)
+PY
+
 NAME="${AGENT_NAME:-Stacky}"
 for f in SOUL.md AGENTS.md; do
     [ -f "$NB/workspace/$f" ] || sed "s/__AGENT_NAME__/$NAME/g" "/app/workspace-seed/$f" > "$NB/workspace/$f"
@@ -29,6 +42,10 @@ if [ -d /app/workspace-seed/skills ]; then
     mkdir -p "$NB/workspace/skills"
     cp -r /app/workspace-seed/skills/. "$NB/workspace/skills/"
 fi
+
+# nanobot transcribes only with a key set; a Whisper on this Mac needs none and
+# ignores whatever it is sent.
+export AGENT_WHISPER_KEY="${AGENT_WHISPER_KEY:-none}"
 
 SECRETS="/setup-state/secrets.toml"
 if [ -f "$SECRETS" ]; then

@@ -29,6 +29,10 @@ SOURCES (answer used a vault page, searched or read):
   only pages I read; never shorten|reuse|invent a link; no link line -> title only
   max 3 sources; nothing from vault -> no Sources line
 
+VOICE:
+  "[transcription: …]"       -> what they said aloud; act on it like typed text
+     unclear or empty         -> ask; change nothing      # my answer shows the transcript itself
+
 LISTS:
   "what is on X|which lists"     -> exec `stack memory list show [<list>]`; never read_file to show a list
   item op add|tick|untick|remove -> list_edit(list, op, items=[one or more])

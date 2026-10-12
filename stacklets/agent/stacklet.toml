@@ -53,6 +53,12 @@ AGENT_VERBOSE = "1"
 AGENT_OPENAI_URL = "{ai_openai_url_docker}"
 AGENT_OPENAI_KEY = "{ai_openai_key}"
 AGENT_MODEL      = "{ai_default_model}"
+# Speech to text for voice messages: the stack's Whisper, as the archivist uses
+# it, in the household's language.
+AGENT_WHISPER_URL   = "{ai_whisper_url_docker}"
+AGENT_WHISPER_KEY   = "{ai_whisper_key}"
+AGENT_WHISPER_MODEL = "{ai_whisper_model}"
+AGENT_LANGUAGE      = "{language}"
 # Matrix — nanobot logs in as @<agent_handle> against Synapse on the stack network.
 AGENT_MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
 AGENT_MATRIX_SERVER_NAME = "{messages_server_name}"
