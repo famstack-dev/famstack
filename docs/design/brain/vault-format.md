@@ -275,6 +275,7 @@ name is the slug. A state document (§7), changed by hand or with
 | `description` | O | what goes on it ("Was wir im Supermarkt brauchen"); the agent picks a list by it. |
 | `topics` | O | list; the topics the list belongs to, by slug. |
 | `sections` | O | list; the sections in the order the family walks through the store. |
+| `recurring` | O | `true` for a list used again and again (a packing list, the weekly chores): its ticked items stay until it is reset. |
 
 ```
 ---
@@ -316,7 +317,15 @@ the end of the line:
 
 Only the trailing run of these counts. A link inside the sentence, a
 web link and any other field stay part of the text. The same line is
-used wherever an item appears, also in a record's summary.
+used wherever an item appears; a record's summary writes it without the
+checkbox, because the list holds whether it is done.
+
+A ticked item stays on its list for the rest of the day. The night after,
+the curator moves it to the list's archive,
+`<bucket>/lists/archive/<slug>/<YYYY-MM>.md` for the month it was ticked:
+a list file of its own (`title: Einkaufsliste, 2026-10`, no topics), with
+the line and its section as they were. A tick without a date gets the
+day's date first. A `recurring` list is left alone.
 
 ## 6. The `generated` invariant (from B3 / ADR-011)
 

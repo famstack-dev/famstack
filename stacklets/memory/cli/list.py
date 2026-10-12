@@ -66,6 +66,8 @@ USAGE = """\
         --due 2026-10-20 --as marge
     stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
     stack memory list move einkaufsliste Eier --to markt --as marge
+    stack memory list create packliste --title Packliste --recurring --as marge
+                                                    ticked items stay until a reset
     stack memory list reset packliste --as marge     reopen every ticked item
 """
 
@@ -98,6 +100,7 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--description", default="")
     create.add_argument("--topic", action="append", default=[])
     create.add_argument("--section", action="append", default=[])
+    create.add_argument("--recurring", action="store_true")
 
     add = verbs.add_parser("add", add_help=False)
     add.add_argument("slug")
@@ -238,7 +241,7 @@ def create(vault: Path, config, ns, actor: str) -> dict:
         raise Refusal(f"the list {slug!r} already exists")
     path = list_path(slug, bucket=_shared_bucket(config))
     text = new_list(ns.title.strip(), description=ns.description.strip(),
-                    topics=ns.topic, sections=ns.section)
+                    topics=ns.topic, sections=ns.section, recurring=ns.recurring)
 
     def _create(prior: str) -> str:
         if (prior or "").strip():

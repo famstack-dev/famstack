@@ -55,6 +55,7 @@ from .frontmatter import FrontmatterError, dump, parse, validate
 from .people import person_path
 
 LISTS_DIR = "lists"
+ARCHIVE_DIR = "archive"
 
 DUE = "📅"
 DONE = "✅"
@@ -234,6 +235,7 @@ class FamilyList:
     topics: list[str] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
     items: list[Item] = field(default_factory=list)
+    recurring: bool = False
 
     @property
     def open_items(self) -> list[Item]:
@@ -288,14 +290,22 @@ def read_list(text: str, *, path: str) -> FamilyList:
         topics=list(fm.get("topics") or []),
         sections=list(fm.get("sections") or []),
         items=items,
+        recurring=fm.get("recurring") is True,
     )
 
 
 def new_list(title: str, *, description: str = "", topics: list[str] | None = None,
-             sections: list[str] | None = None) -> str:
-    """The text of a new, empty list file."""
+             sections: list[str] | None = None, recurring: bool = False) -> str:
+    """The text of a new, empty list file.
+
+    A recurring list (a packing list, the weekly chores) keeps its ticked
+    items, so it can be reopened whole; every other list hands them to
+    its archive the night after.
+    """
     fm = {"type": "list", "title": title, "description": description,
           "topics": list(topics or []), "sections": list(sections or [])}
+    if recurring:
+        fm["recurring"] = True
     return f"---\n{dump(fm)}\n---\n"
 
 
@@ -436,6 +446,57 @@ def relink(text: str, old: str, new: str, *, path: str) -> str:
                 lines[at] = line
             text = _edit_body(text, edit)
     return text
+
+
+# ── The archive ──────────────────────────────────────────────────────────
+#
+# A ticked item stays on its list for the rest of the day ("did we get
+# eggs?") and moves to the list's archive the night after, one file per
+# month: `<bucket>/lists/archive/<slug>/<YYYY-MM>.md`. The list then holds
+# only what is still open. The archive keeps the line as it was, section
+# included, and is where the household's known items come from.
+
+def archive_path(slug: str, month: str, *, bucket: str) -> str:
+    """The archive file for the items of list `slug` ticked in `month` (`YYYY-MM`)."""
+    return f"{bucket}/{LISTS_DIR}/{ARCHIVE_DIR}/{slug}/{month}.md"
+
+
+def stamp_ticks(text: str, *, path: str, today: str) -> str:
+    """The list text with today's date on every ticked item that has none.
+
+    An item ticked by hand in Obsidian or Forgejo carries no `✅` date;
+    stamping it on the first night gives it the day after on the list,
+    like any other tick.
+    """
+    for item in read_list(text, path=path).items:
+        if item.done and not item.done_on:
+            text = set_done(text, item, done=True, today=today, path=path)
+    return text
+
+
+def archive_ticked(text: str, archives: dict[str, str], *, path: str, today: str,
+                   bucket: str) -> tuple[str, dict[str, str], list[Item]]:
+    """Move the items ticked before `today` from a list into its archive.
+
+    `archives` maps an archive path to its current text ("" or missing
+    for a month with no file yet). Returns the list text, the archive
+    texts that changed, and the items moved. An item ticked today stays,
+    and a recurring list keeps every tick until it is reset.
+    """
+    lst = read_list(text, path=path)
+    if lst.recurring:
+        return text, {}, []
+    moving = [i for i in lst.items if i.done and i.done_on and i.done_on < today]
+    changed: dict[str, str] = {}
+    for item in moving:
+        target = archive_path(lst.slug, item.done_on[:7], bucket=bucket)
+        current = changed.get(target) or archives.get(target) or \
+            new_list(f"{lst.title}, {item.done_on[:7]}", sections=lst.sections)
+        changed[target] = insert_item(current, item, path=target)
+    # Last line first, so removing one item never moves the lines of the next.
+    for item in sorted(moving, key=lambda i: i.line, reverse=True):
+        text = remove_item(text, item)
+    return text, changed, moving
 
 
 # ── File text ────────────────────────────────────────────────────────────
