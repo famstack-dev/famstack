@@ -144,11 +144,23 @@ def nanobot_stub():
                 self.handled = []
                 self.typing_stopped = []
                 self.sent = []
+                self.room_contents = []
                 self.joined = []
                 self.processed = []
 
             def is_allowed(self, sender):
                 return True
+
+            async def _send_room_content(self, room_id, content):
+                # nanobot 0.3: m.room.message with E2EE handled; the response
+                # carries the new event's id.
+                self.room_contents.append((room_id, content))
+                return types.SimpleNamespace(event_id=f"$notice{len(self.room_contents)}")
+
+            @staticmethod
+            def _build_thread_relates_to(metadata):
+                root = (metadata or {}).get("thread_root_event_id")
+                return {"rel_type": "m.thread", "event_id": root} if root else None
 
             async def send(self, msg):
                 # nanobot 0.3 channels/matrix/runtime.py: an OutboundMessage,
@@ -203,6 +215,24 @@ def nanobot_stub():
         mod("nanobot.agent")
         mod("nanobot.agent.context", ContextBuilder=ContextBuilder)
         mod("nanobot.agent.loop", AgentLoop=AgentLoop)
+
+        @dataclasses.dataclass(frozen=True)
+        class ProgressEvent:
+            # nanobot 0.3 bus/outbound_events.py: a tool hint carries the
+            # calls it announces in `tool_events`.
+            content: str = ""
+            tool_hint: bool = False
+            tool_events: list | None = None
+
+        @dataclasses.dataclass(frozen=True)
+        class ContextCompactionEvent:
+            # nanobot 0.3 events.py; a channel shows it as "Compressing context…".
+            compaction_id: str = ""
+            phase: str = "started"
+
+        mod("nanobot.events", ContextCompactionEvent=ContextCompactionEvent)
+        mod("nanobot.bus")
+        mod("nanobot.bus.outbound_events", ProgressEvent=ProgressEvent)
         mod("nanobot.runtime_context", RuntimeContextBlock=RuntimeContextBlock,
             wrap_runtime_context_lines=wrap_runtime_context_lines)
         mod("nanobot.agent.tools")

@@ -37,7 +37,7 @@
   },
   "channels": {
     "sendProgress": false,
-    "sendToolHints": false,
+    "sendToolHints": true,
     "showReasoning": false,
     "matrix": {
       "enabled": true,
