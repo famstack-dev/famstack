@@ -793,6 +793,11 @@ async def compile_diary(state_dir: Path | None = None) -> bool:
     return await _run_command("diary", [], "compiling the diary", state_dir)
 
 
+async def archive_lists(state_dir: Path | None = None) -> bool:
+    """Move yesterday's ticked list items into each list's archive."""
+    return await _run_command("lists", [], "archiving ticked list items", state_dir)
+
+
 async def rebuild(selection: list[str], state_dir: Path | None = None) -> bool:
     """One wiki generation pass via the CLI entrypoint — the same code
     path `stack memory wiki update` execs, in a subprocess so a wedged
@@ -1028,7 +1033,11 @@ async def main() -> None:
             _progress(state_dir, "reconciling the source vault with the brain")
             if await mirror_reconcile():
                 mirror_sha = _write(mirror_file, head)
-            # Diary first: it writes pages into the same working tree,
+            # Lists first: the night's archive commit then reaches brain
+            # with the next mirror, and the pages built below read lists
+            # that hold only what is open.
+            await archive_lists(state_dir)
+            # Diary next: it writes pages into the same working tree,
             # and the commit below should carry both nights' work.
             await compile_diary(state_dir)
             rebuilt = await rebuild([], state_dir)

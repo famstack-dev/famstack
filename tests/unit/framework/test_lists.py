@@ -22,6 +22,9 @@ import pytest
 from stack.lists import (
     Item,
     Link,
+    archive_path,
+    archive_ticked,
+    stamp_ticks,
     ListError,
     format_item,
     insert_item,
@@ -199,3 +202,64 @@ def test_a_renamed_record_keeps_its_items_linked():
     assert read_list(moved, path=GROCERIES).items[0].sources == (new,)
     assert "📅 2026-10-30" in moved
 
+
+class TestTheArchive:
+    """Ticked items leave the list the night after, into a file per month."""
+
+    TODAY = "2026-10-12"
+
+    def _shopped(self) -> str:
+        text = _groceries()
+        for name, section, done_on in [("Äpfel", "Gemüse & Obst", "2026-10-11"),
+                                       ("Birnen", "Gemüse & Obst", ""),
+                                       ("Joghurt", "Milchprodukte & Eier", "2026-09-30"),
+                                       ("Eier", "Milchprodukte & Eier", "2026-10-12")]:
+            text = _add(text, name, section, done=bool(done_on), done_on=done_on)
+        return text
+
+    def test_the_list_keeps_what_is_open_and_what_was_ticked_today(self):
+        text, _, moved = archive_ticked(self._shopped(), {}, path=GROCERIES,
+                                        today=self.TODAY, bucket="family")
+        assert [i.text for i in moved] == ["Äpfel", "Joghurt"]
+        assert [(i.text, i.done) for i in read_list(text, path=GROCERIES).items] == \
+            [("Birnen", False), ("Eier", True)]
+
+    def test_each_item_goes_to_the_month_it_was_ticked_in_its_section(self):
+        _, archives, _ = archive_ticked(self._shopped(), {}, path=GROCERIES,
+                                        today=self.TODAY, bucket="family")
+        october = archive_path("einkaufsliste", "2026-10", bucket="family")
+        assert sorted(archives) == [archive_path("einkaufsliste", "2026-09", bucket="family"),
+                                    october]
+        lst = read_list(archives[october], path=october)
+        assert lst.title == "Einkaufsliste, 2026-10" and lst.topics == []
+        assert [(i.text, i.section, i.done_on) for i in lst.items] == \
+            [("Äpfel", "Gemüse & Obst", "2026-10-11")]
+
+    def test_an_emptied_section_loses_its_heading(self):
+        text, _, _ = archive_ticked(self._shopped(), {}, path=GROCERIES,
+                                    today="2026-10-13", bucket="family")
+        assert "Milchprodukte" not in text.split("---\n", 2)[2]
+
+    def test_a_month_already_archived_gains_the_new_items(self):
+        october = archive_path("einkaufsliste", "2026-10", bucket="family")
+        earlier = insert_item(new_list("Einkaufsliste, 2026-10", sections=STORE),
+                              Item("Milch", done=True, done_on="2026-10-02",
+                                   section="Milchprodukte & Eier"), path=october)
+        _, archives, _ = archive_ticked(self._shopped(), {october: earlier}, path=GROCERIES,
+                                        today=self.TODAY, bucket="family")
+        assert [i.text for i in read_list(archives[october], path=october).items] == \
+            ["Äpfel", "Milch"]
+
+    def test_a_recurring_list_keeps_its_ticks_for_the_next_reset(self):
+        packing = new_list("Packliste", recurring=True) + "\n- [x] Zelt ✅ 2026-10-01\n"
+        path = "family/lists/packliste.md"
+        assert read_list(packing, path=path).recurring
+        assert archive_ticked(packing, {}, path=path, today=self.TODAY,
+                              bucket="family") == (packing, {}, [])
+
+    def test_a_tick_made_by_hand_gets_a_date_first(self):
+        text = _groceries().rstrip("\n") + "\n\n- [x] Batterien\n"
+        stamped = stamp_ticks(text, path=GROCERIES, today=self.TODAY)
+        assert "- [x] Batterien ✅ 2026-10-12" in stamped
+        assert archive_ticked(stamped, {}, path=GROCERIES, today=self.TODAY,
+                              bucket="family")[2] == []

@@ -32,6 +32,7 @@ SOURCES (answer used a vault page, searched or read):
 LISTS:
   item op add|tick|untick|remove -> list_edit(list, op, items=[one or more])
   "we did that"                  -> tick, never remove
+  "bought all|clear the list"    -> tick what they got; ticked items leave the list overnight
   "start the week|fresh list"    -> list_edit op=reset          # reopens all
   belongs on another list        -> op=move, to=<list>
   add to a list with sections    -> section = one of the list's own
