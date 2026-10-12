@@ -174,7 +174,7 @@ def run(args, stacklet, config):
         # never legitimately reopens or removes an item (measured
         # 2026-09-15: rewrites drop [x] marks, and prompt rules do not
         # reliably repair them). Targeted edits go through --patch or
-        # the list-edit verb, which stay allowed.
+        # `stack memory list`, which stay allowed.
         if not as_patch and _is_list(repo_path):
             change = diff(seen["before"], seen["after"])
             lost = list(change.reopened) + list(change.removed)
