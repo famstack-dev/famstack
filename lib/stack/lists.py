@@ -1,0 +1,359 @@
+"""The family's lists: one Markdown file each, one checkbox per item.
+
+A list lives at `<bucket>/lists/<slug>.md`. The file name is the slug;
+the frontmatter says what the list is and, for a store, the order of
+its sections, which is the order the family walks through the store:
+
+    ---
+    type: list
+    title: Einkaufsliste
+    description: Was wir im Supermarkt brauchen
+    topics:
+      - einkaeufe-besorgungen
+    sections:
+      - Gemüse & Obst
+      - Milchprodukte & Eier
+    ---
+
+    ## Gemüse & Obst
+    - [ ] Äpfel
+
+    ## Milchprodukte & Eier
+    - [ ] Joghurt [Marge](../people/marge.md) 📅 2026-10-14
+
+Every item, on a list or in a record's summary, is the same line: a
+checkbox, what the family wrote, then the fields at the end. A link to
+someone in `<bucket>/people/` assigns the item to them, any other link
+into the vault names the record the item came from, `📅` is the day it
+is due and `✅` the day it was ticked. Those two are the Obsidian Tasks
+plugin's fields, so its queries work on these files as they are. Links
+are relative Markdown links, the one syntax Obsidian, Forgejo and the
+wiki all follow (vault-format.md §1).
+
+Only the trailing run of links and dates are fields. A link inside the
+sentence ("Call [Homer](...) about the car") stays part of the text,
+and an unknown field (another Tasks emoji) ends the run, so nothing the
+family wrote is reinterpreted or dropped.
+
+Edits are line edits. A family member may write anything else into a
+list file in Obsidian or Forgejo, a note under a heading or a sub-item,
+and inserting an item touches only the lines it adds.
+
+Pure functions, no I/O: the memory stacklet reads and commits the
+files. Lives in the framework because the readers span stacklets: the
+archivist files action items, the memory commands change lists, the
+wiki renders them.
+"""
+
+from __future__ import annotations
+
+import posixpath
+import re
+from dataclasses import dataclass, field, replace
+
+from .frontmatter import FrontmatterError, dump, parse, validate
+
+LISTS_DIR = "lists"
+
+DUE = "📅"
+DONE = "✅"
+
+_ISO_DAY = r"\d{4}-\d{2}-\d{2}"
+
+# A checkbox line, open or done, at any indentation: Obsidian keeps
+# sub-items as indented lines. Group 3 is the status character, " " for
+# open and "x" for done; Obsidian Tasks has more (`-` cancelled, `/` in
+# progress), which are kept as they are.
+_ITEM = re.compile(r"^(\s*)([-*+]) \[(.)\] (.*?)\s*$")
+
+# The trailing fields, matched one at a time from the end of the line.
+_TRAILING_LINK = re.compile(r"\s*\[([^\]]+)\]\(([^)\s]+)\)$")
+_TRAILING_DUE = re.compile(rf"\s*{DUE}\s*({_ISO_DAY})$")
+_TRAILING_DONE = re.compile(rf"\s*{DONE}\s*({_ISO_DAY})$")
+
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+
+# `<bucket>/people/<id>.md`: a declared person (stack.people).
+_PERSON_PATH = re.compile(r"^[^/]+/people/([^/]+)\.md$")
+
+
+class ListError(ValueError):
+    """A file that is not a list, or whose frontmatter does not parse."""
+
+
+# ── Items ────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Link:
+    """A link in an item's fields: what it reads as, and the vault path it names.
+
+    `target` is relative to the vault root (`family/people/homer.md`),
+    so an item keeps its links when it moves to another file.
+    """
+
+    label: str
+    target: str
+
+
+@dataclass(frozen=True)
+class Item:
+    """One checkbox line.
+
+        >>> item = parse_item("- [ ] Joghurt [Marge](../people/marge.md) 📅 2026-10-14",
+        ...                   path="family/lists/einkaufsliste.md")
+        >>> item.text, item.people, item.due
+        ('Joghurt', ('marge',), '2026-10-14')
+
+    `section` is the heading the item sits under ("" above the first
+    one) and `line` its line number in the body it was read from; both
+    are set by `read_list`, not by `parse_item`.
+    """
+
+    text: str
+    done: bool = False
+    links: tuple[Link, ...] = ()
+    due: str = ""
+    done_on: str = ""
+    section: str = ""
+    status: str = " "
+    indent: str = ""
+    line: int = -1
+
+    @property
+    def people(self) -> tuple[str, ...]:
+        """The ids of the people the item is assigned to, in the order written."""
+        return tuple(m[1] for link in self.links if (m := _PERSON_PATH.match(link.target)))
+
+    @property
+    def sources(self) -> tuple[str, ...]:
+        """The vault paths of the records the item came from."""
+        return tuple(link.target for link in self.links if not _PERSON_PATH.match(link.target))
+
+
+def person_link(person_id: str, label: str, *, bucket: str) -> Link:
+    """The link that assigns an item to a declared person."""
+    return Link(label, f"{bucket}/people/{person_id}.md")
+
+
+def parse_item(line: str, *, path: str) -> Item | None:
+    """The item on a checkbox line, or None for any other line.
+
+    `path` is the vault path of the file the line is in, so a relative
+    link resolves to the vault path it names.
+    """
+    m = _ITEM.match(line)
+    if not m:
+        return None
+    indent, status, rest = m[1], m[3], m[4]
+    links: list[Link] = []
+    due = done_on = ""
+    while True:
+        if (f := _TRAILING_DUE.search(rest)) and not due:
+            due = f[1]
+        elif (f := _TRAILING_DONE.search(rest)) and not done_on:
+            done_on = f[1]
+        elif (f := _TRAILING_LINK.search(rest)) and (target := _vault_target(f[2], path)):
+            links.insert(0, Link(f[1], target))
+        else:
+            break
+        rest = rest[:f.start()]
+    return Item(text=rest.strip(), done=status in "xX", links=tuple(links),
+                due=due, done_on=done_on, status=status, indent=indent)
+
+
+def format_item(item: Item, *, path: str) -> str:
+    """The checkbox line for an item in the file at vault path `path`."""
+    status = item.status if item.status not in " xX" else ("x" if item.done else " ")
+    parts = [f"{item.indent}- [{status}] {item.text}"]
+    parts += [f"[{link.label}]({_relative(link.target, path)})" for link in item.links]
+    if item.due:
+        parts.append(f"{DUE} {item.due}")
+    if item.done_on:
+        parts.append(f"{DONE} {item.done_on}")
+    return " ".join(parts)
+
+
+def _vault_target(href: str, path: str) -> str:
+    """The vault path a link names, or "" for a link out of the vault.
+
+    A link to a web page (an online shop) stays part of the item's text.
+    `/family/...` is the wiki's way of writing a vault path and is read
+    the same as a relative one.
+    """
+    if "://" in href or href.startswith(("mailto:", "#")) or not href.endswith(".md"):
+        return ""
+    joined = href.lstrip("/") if href.startswith("/") \
+        else posixpath.join(posixpath.dirname(path), href)
+    target = posixpath.normpath(joined)
+    return "" if target.startswith("..") else target
+
+
+def _relative(target: str, path: str) -> str:
+    return posixpath.relpath(target, posixpath.dirname(path) or ".")
+
+
+# ── Lists ────────────────────────────────────────────────────────────────
+
+@dataclass
+class FamilyList:
+    """What a list file says: its frontmatter and its items, in file order."""
+
+    slug: str
+    title: str
+    description: str = ""
+    topics: list[str] = field(default_factory=list)
+    sections: list[str] = field(default_factory=list)
+    items: list[Item] = field(default_factory=list)
+
+    @property
+    def open_items(self) -> list[Item]:
+        return [i for i in self.items if not i.done]
+
+
+def list_path(slug: str, *, bucket: str) -> str:
+    """The vault path of the list `slug` in `bucket`."""
+    return f"{bucket}/{LISTS_DIR}/{slug}.md"
+
+
+def read_list(text: str, *, path: str) -> FamilyList:
+    """The list in a file's text, or `ListError` when it is not one."""
+    try:
+        fm = parse(text)
+    except FrontmatterError as e:
+        raise ListError(f"{path}: frontmatter does not parse: {e}") from e
+    if fm.get("type") != "list":
+        raise ListError(f"{path}: not a list (type: {fm.get('type') or 'missing'})")
+    errors = validate(fm)
+    if errors:
+        raise ListError(f"{path}: {'; '.join(errors)}")
+
+    items: list[Item] = []
+    section = ""
+    for n, line in enumerate(_body(text).splitlines()):
+        if h := _HEADING.match(line):
+            section = h[2] if len(h[1]) > 1 else ""
+        elif item := parse_item(line, path=path):
+            items.append(replace(item, section=section, line=n))
+    return FamilyList(
+        slug=posixpath.splitext(posixpath.basename(path))[0],
+        title=str(fm.get("title") or ""),
+        description=str(fm.get("description") or ""),
+        topics=list(fm.get("topics") or []),
+        sections=list(fm.get("sections") or []),
+        items=items,
+    )
+
+
+def new_list(title: str, *, description: str = "", topics: list[str] | None = None,
+             sections: list[str] | None = None) -> str:
+    """The text of a new, empty list file."""
+    fm = {"type": "list", "title": title, "description": description,
+          "topics": list(topics or []), "sections": list(sections or [])}
+    return f"---\n{dump(fm)}\n---\n"
+
+
+# ── Adding an item ───────────────────────────────────────────────────────
+
+def insert_item(text: str, item: Item, *, path: str) -> str:
+    """The list text with `item` added at the end of its section.
+
+    A section that has no heading yet gets one, placed in the order the
+    list's `sections` give; a section the list does not name goes after
+    all the others. An item without a section goes above the first
+    heading, where nothing has to be named to find it. Every other line
+    stays as it is.
+    """
+    head, body = _split(text)
+    lines = body.splitlines()
+    line = format_item(item, path=path)
+    sections = list(parse(text).get("sections") or [])
+
+    if not item.section:
+        first = next((n for n, ln in enumerate(lines) if _HEADING.match(ln)), len(lines))
+        at = _after_last_content(lines, 0, first)
+        return _join(head, lines[:at] + [line] + _gap_before(lines, at))
+
+    start = _heading_line(lines, item.section)
+    if start is not None:
+        end = _section_end(lines, start)
+        at = _after_last_content(lines, start + 1, end)
+        return _join(head, lines[:at] + [line] + lines[at:])
+
+    at = _new_heading_position(lines, item.section, sections)
+    block = [f"## {item.section}", line]
+    before = [""] if at > 0 and lines[at - 1].strip() else []
+    after = [""] if at < len(lines) else []
+    return _join(head, lines[:at] + before + block + after + lines[at:])
+
+
+def _heading_line(lines: list[str], section: str) -> int | None:
+    want = section.casefold()
+    for n, ln in enumerate(lines):
+        h = _HEADING.match(ln)
+        if h and len(h[1]) > 1 and h[2].casefold() == want:
+            return n
+    return None
+
+
+def _section_end(lines: list[str], start: int) -> int:
+    """The line after the section that starts at heading `start`."""
+    for n in range(start + 1, len(lines)):
+        if _HEADING.match(lines[n]):
+            return n
+    return len(lines)
+
+
+def _after_last_content(lines: list[str], start: int, end: int) -> int:
+    """The position after the last non-blank line in `lines[start:end]`."""
+    at = end
+    while at > start and not lines[at - 1].strip():
+        at -= 1
+    return at
+
+
+def _gap_before(lines: list[str], at: int) -> list[str]:
+    """The lines from `at` on, with one blank line before a heading that follows."""
+    rest = lines[at:]
+    if rest and _HEADING.match(rest[0]):
+        return [""] + rest
+    return rest
+
+
+def _new_heading_position(lines: list[str], section: str, order: list[str]) -> int:
+    """Where a new heading for `section` goes: before the next section in `order`."""
+    later = [s.casefold() for s in _after(order, section)]
+    for n, ln in enumerate(lines):
+        h = _HEADING.match(ln)
+        if h and len(h[1]) > 1 and h[2].casefold() in later:
+            return n
+    return len(lines)
+
+
+def _after(order: list[str], section: str) -> list[str]:
+    """The sections that come after `section` in `order`; [] if it is not there."""
+    folded = [s.casefold() for s in order]
+    if section.casefold() not in folded:
+        return []
+    return order[folded.index(section.casefold()) + 1:]
+
+
+# ── File text ────────────────────────────────────────────────────────────
+
+def _split(text: str) -> tuple[str, str]:
+    """(frontmatter block with its delimiters and blank line, body)."""
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return "", text
+    head = text[:end + len("\n---\n")]
+    return head, text[len(head):].lstrip("\n")
+
+
+def _body(text: str) -> str:
+    return _split(text)[1]
+
+
+def _join(head: str, lines: list[str]) -> str:
+    body = "\n".join(lines).strip("\n")
+    return f"{head}\n{body}\n" if head else f"{body}\n"
