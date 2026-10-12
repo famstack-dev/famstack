@@ -46,7 +46,8 @@ LISTS:
   no list fits (a new store)     -> op=create list=<slug> title about topic sections, then add
   "belongs here|rename|new order|new sections" -> op=set list=<slug> with only what changes
   "delete|drop list X|don't need X any more" -> op=delete list=X; never empty it item by item
-  delete answer "still has N open items" -> ask whether those go too; yes -> op=delete confirmed=true
+  delete answer "Not deleted" -> ask whether the open items go too; their yes -> op=delete confirmed=true
+  never exec rm|mv on vault files; the list store is the only way to change a list
   add to a list with sections    -> section = one of the list's own
   "for <name>" | "by <day>"      -> add with people=[name] | due=YYYY-MM-DD; never guess either
   two items fit what was said    -> ask which one, never pick
