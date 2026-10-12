@@ -1,9 +1,11 @@
-"""The open items of the family's lists, as a topic page shows them.
+"""The open items of the family's lists, as a topic page and a person page show them.
 
 A list is a file of its own (`<bucket>/lists/<slug>.md`, format in
 `stack.lists`) that names its topics and links its items to people. The
 wiki shows them where the family already looks: a topic's page lists the
-open items of every list naming the topic, under the list's name.
+open items of every list naming the topic, under the list's name; a
+person's page lists the open items linked to them, from every list,
+soonest due first.
 
 The items are copied as they are, never through the model, and a done
 item is never shown: the page says what is still to do. A due day reads
@@ -12,6 +14,7 @@ date format.
 
     lists = [("family/lists/trip.md", read_list(text, path="family/lists/trip.md"))]
     topic_items(lists, "trip", "en")
+    person_items(lists, "homer", "en")
 """
 
 from __future__ import annotations
@@ -31,6 +34,16 @@ def topic_items(lists: Lists, topic: str, lang: str) -> str:
         lines = [_line(item, lang, _people(item)) for item in lst.open_items]
         groups.append("\n".join([f"**{_link(path, lst)}**", *lines]))
     return "\n\n".join(groups)
+
+
+def person_items(lists: Lists, person: str, lang: str) -> str:
+    """The open items linked to `person`, soonest due first, each naming its list."""
+    theirs = [(item, path, lst) for path, lst in lists for item in lst.open_items
+              if person in item.people]
+    # Undated items come after every dated one, in the order of their lists.
+    theirs.sort(key=lambda found: (not found[0].due, found[0].due))
+    return "\n".join(f"{_line(item, lang)} · {_link(path, lst)}"
+                     for item, path, lst in theirs)
 
 
 def topic_texts(lists: Lists, topic: str) -> list[str]:

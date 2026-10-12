@@ -569,6 +569,7 @@ async def _generate_member(
         parts, name=display, first_name=first_name, entries=entries,
         lately=lately, docs=docs,
         links={n: _reference(entries[n - 1])[1] for n in docs}, lang=lang,
+        open_items=open_items.person_items(_family_lists(shared_bucket), slug, lang),
     )
 
     page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug, lang=lang)
