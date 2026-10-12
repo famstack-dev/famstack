@@ -26,9 +26,10 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema(
         list=StringSchema(
             "The list's name, such as einkaufsliste. `stack memory list "
-            "show` names every list with its description. For add it may "
-            "be left out: an item the family had before goes to the list "
-            "it was last bought from.",
+            "show` names every list with its description. Leave it out "
+            "when nobody said which list: add puts a known item where it "
+            "was last bought, and tick, untick or remove find the item on "
+            "whichever list it is.",
             nullable=True,
         ),
         topic=StringSchema(
