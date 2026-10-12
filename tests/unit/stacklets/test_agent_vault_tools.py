@@ -179,6 +179,8 @@ def test_the_allowlist_stays_read_only(api):
     ("list_edit", "list",
      {"op": "create", "title": "Baumarkt", "items": ["Schrauben"]}),
     ("list_edit", "list", {"op": "tick", "items": ["Erlaubniszettel"]}),
+    ("list_edit", "list", {"list": "baumarkt", "op": "delete", "items": ["ignored"]}),
+    ("list_edit", "list", {"list": "baumarkt", "op": "delete", "confirmed": True}),
     ("list_edit", "list",
      {"list": "einkaufsliste", "op": "set", "topic": "einkauf"}),
     ("list_edit", "list",
@@ -232,6 +234,26 @@ def test_search_sends_no_backend_flag(vault_tools):
     argv = argv_of(vault_tools["memory_search"], query="Homer")
 
     assert "--backend" not in argv
+
+
+def test_a_list_with_open_items_is_deleted_only_once_the_person_said_yes(vault_tools):
+    """The store refuses to delete a list with open items unless told `--yes`.
+
+    The model decides nothing here: `--yes` is sent only when it says the
+    person confirmed, so a misheard "delete" meets the refusal that names
+    the open items, and the person is asked.
+    """
+    asked = argv_of(vault_tools["list_edit"], list="baumarkt", op="delete")
+    confirmed = argv_of(vault_tools["list_edit"], list="baumarkt", op="delete",
+                        confirmed=True)
+
+    unclear = argv_of(vault_tools["list_edit"], list="baumarkt", op="delete",
+                      confirmed="maybe")
+
+    assert "--yes" not in asked
+    assert "--yes" not in unclear, "only a real yes deletes open items"
+    assert confirmed[:5] == ["stack", "memory", "list", "delete", "baumarkt"]
+    assert "--yes" in confirmed
 
 
 def result_of(tool_cls, *, returncode: int, stdout: bytes = b"",

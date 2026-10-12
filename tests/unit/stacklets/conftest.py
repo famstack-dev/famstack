@@ -168,6 +168,7 @@ def nanobot_stub():
         mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
         mod("nanobot.agent.tools.schema",
             StringSchema=_Schema, IntegerSchema=_Schema, ArraySchema=_Schema,
+            BooleanSchema=_Schema,
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
         mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
