@@ -31,7 +31,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
 
-from thread_trigger import AgentThreads, thread_root  # noqa: E402
+from thread_trigger import AgentMessages, AgentThreads, replied_to, thread_root  # noqa: E402
 
 AGENT = "@stacky-bot:home.local"
 ROOM = "!family:home.local"
@@ -253,3 +253,68 @@ class TestWhenTheHomeserverIsUnhappy:
     async def test_an_unknown_root_is_not_addressed(self):
         # The homeserver answers, it just has nothing for that id.
         assert not await AgentThreads().observe(_FakeClient(), ROOM, "$gone", AGENT)
+
+
+# ── replies ──────────────────────────────────────────────────────────────
+
+def _reply_to(target: str):
+    """A message a family member sent with the client's Reply, outside a thread."""
+    return SimpleNamespace(sender="@marge:home.local", source={"content": {
+        "body": "> <@stacky-bot:home.local> Which milk?\n\nthe oat one",
+        "m.relates_to": {"m.in_reply_to": {"event_id": target}},
+    }})
+
+
+class TestRepliesToTheAgent:
+    """A reply names the message it answers, which is as clear an address as a name.
+
+    Whether the client also marks the agent as mentioned in a reply
+    differs between apps, so the reply itself is the signal: a reply to
+    one of the agent's messages is for the agent; a reply to a person or
+    to another bot is not.
+    """
+
+    def test_a_reply_names_the_message_it_answers(self):
+        assert replied_to(_reply_to("$question:home.local")) == "$question:home.local"
+
+    def test_a_threaded_message_is_the_thread_rules_not_a_reply(self):
+        assert replied_to(_in_thread("$root:home.local")) is None
+
+    def test_a_plain_message_replies_to_nothing(self):
+        assert replied_to(SimpleNamespace(source={"content": {"body": "hi"}})) is None
+
+    @pytest.mark.asyncio
+    async def test_a_reply_to_the_agents_message_is_for_the_agent(self):
+        client = _FakeClient()
+        client.events["$question:home.local"] = _said_by(AGENT)
+        messages = AgentMessages()
+
+        assert await messages.observe(client, ROOM, "$question:home.local", AGENT)
+        assert messages.includes("$question:home.local")
+
+    @pytest.mark.asyncio
+    async def test_a_reply_to_a_person_or_another_bot_is_not(self):
+        client = _FakeClient()
+        client.events["$marge:home.local"] = _said_by("@marge:home.local")
+        client.events["$filed:home.local"] = _said_by("@archivist-bot:home.local")
+        messages = AgentMessages()
+
+        assert not await messages.observe(client, ROOM, "$marge:home.local", AGENT)
+        assert not await messages.observe(client, ROOM, "$filed:home.local", AGENT)
+
+    @pytest.mark.asyncio
+    async def test_a_known_message_is_never_looked_up_twice(self):
+        client = _FakeClient()
+        client.events["$question:home.local"] = _said_by(AGENT)
+        messages = AgentMessages()
+        await messages.observe(client, ROOM, "$question:home.local", AGENT)
+        await messages.observe(client, ROOM, "$question:home.local", AGENT)
+
+        assert client.event_lookups == ["$question:home.local"]
+
+    @pytest.mark.asyncio
+    async def test_a_homeserver_failure_reads_as_not_the_agents(self):
+        client = _FakeClient()
+        client.get_event_raises = RuntimeError("homeserver down")
+
+        assert not await AgentMessages().observe(client, ROOM, "$question:home.local", AGENT)

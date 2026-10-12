@@ -41,7 +41,8 @@ Third, one shim that widens when the agent is allowed to answer at all:
 7. thread_trigger (thread_trigger.py) — a message inside a thread the agent is
    part of counts as a mention too. A thread is a conversation; nobody repeats
    the name on every line of one. Scoped to threads the agent participates in,
-   because the archivist and mail bot thread in the same rooms.
+   because the archivist and mail bot thread in the same rooms. A plain reply
+   to one of the agent's own messages counts too.
 
 8. join_greeting (join_greeting.py) — on being invited, take one turn and
    introduce the room's topic instead of joining in silence.
@@ -233,7 +234,7 @@ except Exception:
     _log.exception("name-trigger shim could not attach (nanobot internals changed?)")
 
 
-# ── thread_trigger: a reply inside the agent's own thread is addressed to it ──
+# ── thread_trigger: a message in the agent's thread, or a reply to it, is for it ──
 # The threaded half of the same gate, in two parts because nanobot's gate is
 # synchronous and the question is not: `_on_message` (async) settles whether the
 # thread is ours and remembers it, `_is_bot_mentioned` (sync) reads that answer.
@@ -242,20 +243,28 @@ except Exception:
 # name-trigger that failed to attach costs only itself.
 try:
     import nanobot.channels.matrix.runtime as _matrix_thread
+    from thread_trigger import AgentMessages as _AgentMessages
     from thread_trigger import AgentThreads as _AgentThreads
+    from thread_trigger import replied_to as _replied_to
     from thread_trigger import thread_root as _thread_root
 
     _agent_threads = _AgentThreads()
+    _agent_messages = _AgentMessages()
 
     def _learn_threads(orig):
-        """Settle the thread question before nanobot's gate asks it."""
+        """Settle the thread and reply questions before nanobot's gate asks them."""
         async def _wrapped(self, room, event):
+            # Both swallow their own failures; a homeserver hiccup must not
+            # stop the message being routed by the other rules.
             root = _thread_root(event)
             if root and not _agent_threads.includes(root):
-                # Swallows its own failures; a homeserver hiccup must not
-                # stop the message being routed by the other rules.
                 await _agent_threads.observe(
                     self.client, room.room_id, root, self.config.user_id,
+                )
+            target = _replied_to(event)
+            if target and not _agent_messages.includes(target):
+                await _agent_messages.observe(
+                    self.client, room.room_id, target, self.config.user_id,
                 )
             return await orig(self, room, event)
         return _wrapped
@@ -266,8 +275,9 @@ try:
         if _orig_mentioned_pre_thread(self, event):
             return True
         try:
-            root = _thread_root(event)
-            return bool(root and _agent_threads.includes(root))
+            root, target = _thread_root(event), _replied_to(event)
+            return bool(root and _agent_threads.includes(root)
+                        or target and _agent_messages.includes(target))
         except Exception:
             _log.exception("thread trigger failed; addressing by name still works")
             return False
