@@ -344,3 +344,10 @@ def test_a_person_file_in_the_format_is_written(store, tmp_path):
                          "  - Margaret\n---\n", path="family/people/maggie.md", tmp=tmp_path)
 
     assert result["committed"] is True
+
+
+def test_a_list_file_is_guarded_like_a_todo_page(store, tmp_path):
+    """Lists under `lists/` hold ticks too, so a rewrite may not drop one."""
+    result = _run(store, "# Camping\n\n- [ ] Wetter checken\n",
+                  path="family/lists/camping.md", tmp=tmp_path)
+    assert "Kühlbox mitbringen" in result["error"]
