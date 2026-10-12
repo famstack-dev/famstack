@@ -212,3 +212,25 @@ Two shims removed; history size is left to nanobot's own settings.
 
 `config.json` sets the primary preset's `context_window_tokens` to 32768, so nanobot's token
 consolidation and history snip act at a size that keeps prefill short.
+
+## Update 2026-10-12
+
+The agent moved to nanobot 0.3.5. Two of the seams this ADR wanted a fork for
+now exist upstream, and the fork is not needed for them:
+
+| Shim | Change | Reason |
+|---|---|---|
+| `brief` | a runtime-context provider (`AgentLoop.register_runtime_context_provider`) instead of a patched `runtime_lines` | upstream seam; nanobot keeps the block with the message in the history, which keeps the prompt prefix cached across turns |
+| `thread_session` | removed | the Matrix channel keys a session per thread itself |
+| `compact_tools` | removed | microcompact is gone; the runner compacts the history under context pressure |
+
+What still patches internals: the Matrix addressing gate (`name_trigger`,
+`thread_trigger`, `join_greeting`, on `channels.matrix.runtime.MatrixChannel`),
+the three write tools (`vault_write`) and tool registration (`tool_trim`). The
+fork question is now about those five and stays open: a group-policy or
+addressing hook upstream would retire the first three.
+
+Measured on the rig, same four list turns in a long room session: the first
+model call of a turn reused 8192 of about 12,300 prompt tokens on 0.2.2
+(the previous user message was replayed in a different form than it was
+sent), and close to the whole previous prompt on 0.3.5.

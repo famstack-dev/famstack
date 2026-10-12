@@ -7,15 +7,15 @@ alike — with no fork.
 
 Two kinds of patch live here, each a thin monkeypatch over a pure module.
 
-First, the context shims. History length and old tool results are left to
-nanobot's own mechanisms (replay window, idle autocompact, microcompact, token
-consolidation); see config.json and compact_tools.py.
+First, the context. History length and old tool results are left to
+nanobot's own context compaction; see config.json.
 
-1. brief (brief.py) — prepends a per-turn family briefing (who is speaking, the
-   topic) to nanobot's runtime lines. Injected late (after the stable prompt and
-   the user's text) so it stays KV-cache-friendly: measured 4096/4746 prompt
-   tokens cached with late injection vs 0 injecting the same content early via
-   USER.md.
+1. brief (brief.py) — a per-turn family briefing (who is speaking, the topic),
+   registered as one of nanobot's runtime-context providers. nanobot appends it
+   to the user's message and keeps it with that message in the history, so the
+   prompt prefix stays the same from one turn to the next: measured 4096/4746
+   prompt tokens cached with late injection vs 0 injecting the same content
+   early via USER.md.
 
 2. state_log (state_log.py) — with AGENT_STATE_LOG=1, writes the message list
    of each turn to ~/.nanobot/llm-state.log. Off by default. It does not change
@@ -32,57 +32,56 @@ instead and never ran it once.
 5. history_tool (history_tool.py) — a `memory_history` tool for questions with
    time in them. Search ranks pages by what they say now, so "lately", "since
    when" and "who changed this" are unanswerable by it, silently.
-6. compact_tools (compact_tools.py) — adds the vault read tools to nanobot's
-   microcompact set, so their old results are shortened like nanobot's own.
-
 Third, one shim that widens when the agent is allowed to answer at all:
 
-7. name_trigger (name_trigger.py) — a group-room message that addresses the
+6. name_trigger (name_trigger.py) — a group-room message that addresses the
    agent by its configured name counts as a mention, not just an autocompleted
    pill. Families type "Stacky, what's on our list?".
 
-8. thread_trigger (thread_trigger.py) — a message inside a thread the agent is
+7. thread_trigger (thread_trigger.py) — a message inside a thread the agent is
    part of counts as a mention too. A thread is a conversation; nobody repeats
    the name on every line of one. Scoped to threads the agent participates in,
    because the archivist and mail bot thread in the same rooms.
 
-9. join_greeting (join_greeting.py) — on being invited, take one turn and
+8. join_greeting (join_greeting.py) — on being invited, take one turn and
    introduce the room's topic instead of joining in silence.
 
 WHY SHIMS AND NOT A FORK
-    nanobot has no plugin seam for per-turn context injection or state shaping.
-    Shims keep us on upstream `nanobot-ai` (updates included) with the change
-    contained in this stacklet. Tradeoff: they patch internals, so a nanobot
-    refactor breaks them — loudly, since we log on failure. When these grow past
-    a couple of hooks, fold the pure modules into a fork (each is already a clean
-    function) and upstream real context-provider / state-shaping APIs.
+    nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
+    keeps a session per Matrix thread, which retired the two shims that needed
+    one most. What still patches internals is the Matrix addressing gate and the
+    write tools. See docs/adr/adr-012-nanobot-fork.md, update 2026-10-12.
 
 TO REMOVE
     Delete this stacklet's `runtime/` dir and drop `PYTHONPATH` from the
     Dockerfile. nanobot reverts to stock behaviour with no other change.
 
 PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
-    brief:       `nanobot.agent.context.runtime_lines(state, msg, workspace, *, skip=False) -> list[str]`
+    brief:       `nanobot.agent.loop.AgentLoop.__init__` (wrapped to register a provider),
+                 `AgentLoop.register_runtime_context_provider(provider)`, where a provider is
+                 `async (RequestContext) -> RuntimeContextBlock | None` and RequestContext
+                 carries `sender_id`, `metadata`, `workspace`;
+                 `nanobot.runtime_context.{RuntimeContextBlock, wrap_runtime_context_lines}`
     state_log:   `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
     memory_tool: `nanobot.agent.tools.loader.ToolLoader.discover(self) -> list[type[Tool]]`
                  `nanobot.agent.tools.base.Tool`, `nanobot.agent.tools.base.tool_parameters`
                  `nanobot.agent.tools.schema.{StringSchema, IntegerSchema, tool_parameters_schema}`
+                 (IntegerSchema takes keyword arguments only)
     person_tool: same symbols as memory_tool
     history_tool: same symbols as memory_tool
-    compact_tools: `nanobot.agent.runner._COMPACTABLE_TOOLS` (frozenset of tool names)
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
                  `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
                  `nanobot.agent.tools.apply_patch.ApplyPatchTool.execute(self, edits, ...) -> str`
                  (all three are `async def`; a sync replacement returns a str
                  into the loop's `await` and the tool call dies with TypeError)
-    name_trigger: `nanobot.channels.matrix.MatrixChannel._is_bot_mentioned(self, event) -> bool`
+    name_trigger: `nanobot.channels.matrix.runtime.MatrixChannel._is_bot_mentioned(self, event) -> bool`
     thread_trigger: `MatrixChannel._is_bot_mentioned` (same symbol, wrapped after it)
                  `MatrixChannel._on_message(self, room, event)` (async)
                  `MatrixChannel._on_media_message(self, room, event)` (async)
                  `MatrixChannel.client` (nio AsyncClient), `MatrixChannel.config.user_id`
                  — and that `groupPolicy: mention` still routes through
                  `_is_bot_mentioned` (config.json sets that policy)
-    join_greeting: `nanobot.channels.matrix.MatrixChannel._on_room_invite(self, room, event)`
+    join_greeting: `nanobot.channels.matrix.runtime.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
     `tests/unit/stacklets/test_agent_runtime_shims.py` asserts every one of these is
@@ -104,25 +103,31 @@ import logging
 _log = logging.getLogger("agent.runtime.shim")
 
 try:
-    import nanobot.agent.context as _ctx
+    import datetime as _datetime
+
+    import nanobot.agent.loop as _loop
     from brief import brief_lines as _brief_lines
+    from brief import when_sent as _when_sent
+    from nanobot.runtime_context import RuntimeContextBlock as _Block
+    from nanobot.runtime_context import wrap_runtime_context_lines as _wrap
 
-    _orig_runtime_lines = _ctx.runtime_lines
-
-    def _runtime_lines(state, msg, workspace, *, skip=False):
-        base = _orig_runtime_lines(state, msg, workspace, skip=skip)
-        if skip:  # subagents skip runtime context; respect that
-            return base
+    async def _family_brief(request):
+        lines = [_when_sent(_datetime.datetime.now().astimezone())]
         try:
-            extra = _brief_lines(msg, workspace)
+            lines += _brief_lines(request, request.workspace)
         except Exception:
             # A briefing is an optimisation, never a dependency — never break a turn.
             _log.exception("brief failed; continuing without a briefing")
-            extra = []
-        return list(extra) + list(base)
+        return _Block(source="famstack-brief", content=_wrap(lines))
 
-    _ctx.runtime_lines = _runtime_lines
-    _log.info("brief runtime-context shim active")
+    _orig_loop_init = _loop.AgentLoop.__init__
+
+    def _loop_init(self, *args, **kwargs):
+        _orig_loop_init(self, *args, **kwargs)
+        self.register_runtime_context_provider(_family_brief)
+
+    _loop.AgentLoop.__init__ = _loop_init
+    _log.info("brief runtime-context provider active")
 except Exception:
     # If the internal symbol moved (nanobot upgrade), fail loudly in the log but
     # do not stop the agent from starting.
@@ -176,8 +181,6 @@ for _module_name, _what in (
     ("vault_write", "write_file on a vault page -> stack memory write"),
     ("list_tool", "list_edit item tool -> stack memory list"),
     ("tool_trim", "unused-tool trim (AGENT_TOOL_TRIM=0 to disable)"),
-    ("compact_tools", "vault tools in nanobot's microcompact set"),
-    ("thread_session", "thread-scoped sessions (AGENT_THREAD_SESSIONS=0 to disable)"),
 ):
     try:
         importlib.import_module(_module_name).install()
@@ -194,7 +197,7 @@ for _module_name, _what in (
 try:
     import os as _os
 
-    import nanobot.channels.matrix as _matrix
+    import nanobot.channels.matrix.runtime as _matrix
     from name_trigger import addressed_by_name as _addressed_by_name
 
     _orig_is_bot_mentioned = _matrix.MatrixChannel._is_bot_mentioned
@@ -226,7 +229,7 @@ except Exception:
 # matcher keep working and this only gets a say when both said no — and so a
 # name-trigger that failed to attach costs only itself.
 try:
-    import nanobot.channels.matrix as _matrix_thread
+    import nanobot.channels.matrix.runtime as _matrix_thread
     from thread_trigger import AgentThreads as _AgentThreads
     from thread_trigger import thread_root as _thread_root
 
@@ -278,7 +281,7 @@ try:
     import os.path as _ospath
     from pathlib import Path as _Path
 
-    import nanobot.channels.matrix as _matrix_join
+    import nanobot.channels.matrix.runtime as _matrix_join
     from brief import topic_for_room_label as _topic_for_room_label
     from join_greeting import greeting_prompt as _greeting_prompt
 

@@ -57,7 +57,7 @@ MAX_CHANGES = 10
             nullable=True,
         ),
         limit=IntegerSchema(
-            "Optional. How many changes to return (default and at most 10).",
+            description="Optional. How many changes to return (default and at most 10).",
             nullable=True,
         ),
     )

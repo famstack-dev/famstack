@@ -1,6 +1,7 @@
 # Dockerfile — the agent runtime: the nanobot harness.
 #
-# nanobot from PyPI with the Matrix extra (matrix-nio[e2e], which needs libolm).
+# nanobot from PyPI plus its Matrix channel's dependencies (matrix-nio[e2e],
+# which needs libolm).
 # config.json and the personality seeds are copied to /app and installed into
 # the mounted ~/.nanobot by entrypoint.sh at start, so the bind-mounted volume
 # never shadows them and config is refreshed from stack.toml-derived env.
@@ -22,7 +23,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # Bump this deliberately, in its own change, and re-verify every symbol in
 # sitecustomize.py's PIN / RECHECK list against the new release.
-RUN uv pip install --system --no-cache "nanobot-ai[matrix]==0.2.2"
+RUN uv pip install --system --no-cache "nanobot-ai==0.3.5"
+
+# Since 0.3 a channel declares its own dependencies in its plugin manifest and
+# `nanobot plugins enable` installs them at runtime. Installed here instead,
+# from that same list, so the image is complete before it starts and the list
+# moves with the pinned release.
+RUN python -c "from nanobot.channels.matrix.manifest import PLUGIN; \
+print('\n'.join(PLUGIN.dependencies))" > /tmp/matrix-requirements.txt \
+    && uv pip install --system --no-cache -r /tmp/matrix-requirements.txt \
+    && rm /tmp/matrix-requirements.txt
 
 # Non-root, matching nanobot's own image (uid 1000, HOME=/home/nanobot).
 RUN useradd -m -u 1000 -s /bin/bash nanobot
