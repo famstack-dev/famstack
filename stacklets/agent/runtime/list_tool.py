@@ -17,6 +17,7 @@ import asyncio
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import (
     ArraySchema,
+    BooleanSchema,
     StringSchema,
     tool_parameters_schema,
 )
@@ -43,8 +44,10 @@ from nanobot.agent.tools.schema import (
             "list. reset reopens every ticked item. create starts a new "
             "list when none fits, such as a store the family has no list "
             "for yet. set changes a list's title, description, topic or "
-            "sections, such as linking it to this room's topic.",
-            enum=("add", "tick", "untick", "remove", "move", "reset", "create", "set"),
+            "sections, such as linking it to this room's topic. delete "
+            "removes a whole list nobody needs any more.",
+            enum=("add", "tick", "untick", "remove", "move", "reset", "create", "set",
+                  "delete"),
         ),
         items=ArraySchema(
             StringSchema("One item's text, as it appears on the list."),
@@ -78,6 +81,11 @@ from nanobot.agent.tools.schema import (
                         "walks through it. Leave out for a list without sections.",
             nullable=True,
         ),
+        confirmed=BooleanSchema(
+            description="For delete: true only after the person said yes to "
+                        "deleting a list that still has open items.",
+            nullable=True,
+        ),
     )
 )
 class ListEditTool(Tool):
@@ -93,7 +101,7 @@ class ListEditTool(Tool):
     def description(self) -> str:
         return (
             "Add, tick, untick, remove or move items on a family list, by "
-            "name, or start a new list. The store matches each item and answers with what "
+            "name, or start or delete a list. The store matches each item and answers with what "
             "actually changed. Use this for every item change; use "
             "write_file only to restructure a whole list."
         )
@@ -115,6 +123,7 @@ class ListEditTool(Tool):
         title: str | None = None,
         about: str | None = None,
         sections: "list[str] | None" = None,
+        confirmed: bool | None = None,
     ) -> str:
         try:
             import brief
@@ -124,6 +133,11 @@ class ListEditTool(Tool):
 
         if op in ("create", "set"):
             args = _details_args(op, list, title, about, topic, sections)
+        elif op == "delete":
+            args = ["stack", "memory", "list", "delete", (list or "").strip()]
+            # Only a real yes: nanobot casts "true"/"false" but passes any
+            # other string through, and a stray string is not a person's yes.
+            args += ["--yes"] if confirmed is True else []
         else:
             args = _item_args(op, list, items, topic, section, people, due, to)
         args += ["--as", actor]

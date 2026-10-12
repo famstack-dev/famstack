@@ -148,12 +148,13 @@ More you can say:
 - "Stacky, Homer should book the tickets by Friday" puts a name and a day on an item.
 - "Stacky, what's on the supermarket list?" shows what is still open.
 - "Stacky, we're back from camping, reset the packing list." Start a list you use again and again (packing, the weekly chores) as a recurring list: its ticks stay until you reset it.
+- "Stacky, we don't need the hardware store list any more" deletes it. If it still has open items, Stacky names them and asks first. What was bought stays in the archive, so a list started again under the same name still knows where things go.
 
 **Letters and notes put their to-dos on lists too.** When a letter in **#Documents** asks you to do something ("sign the permission slip by 23 October"), the archivist puts it on the list of the letter's topic, with the day and a link back to the letter. A short note in your own words, pinned with 📌 in a [topic room](#topic-rooms) ("we should take out the trash by Friday"), does the same. Long pasted text and links never turn into to-dos: someone else's tips are not your chores. Tick these off with Stacky like anything else.
 
 **A list belongs to a topic.** In a topic room, Stacky uses that topic's lists. To tie an existing list to a room: "Stacky, the supermarket list belongs to this room."
 
-Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown checklist in the vault, so you can also tick items in Obsidian or in Forgejo's editor. Stacky does not hear voice messages or see photos yet: a screenshot of a list has to be typed in for now.
+Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown checklist, so you can also tick items in Obsidian or in Forgejo's editor. Stacky does not hear voice messages or see photos yet: a screenshot of a list has to be typed in for now.
 
 ---
 
