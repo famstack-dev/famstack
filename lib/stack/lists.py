@@ -309,6 +309,49 @@ def new_list(title: str, *, description: str = "", topics: list[str] | None = No
     return f"---\n{dump(fm)}\n---\n"
 
 
+# ── Changing a list ──────────────────────────────────────────────────────
+
+def set_details(text: str, *, title: str | None = None, description: str | None = None,
+                topics: list[str] | None = None, sections: list[str] | None = None) -> str:
+    """The list text with its frontmatter changed; `None` leaves a field as it is.
+
+    New `sections` are the new walking order: the body's section blocks
+    are put in that order, a block the order does not name after them.
+    Everything inside a block stays as it is.
+    """
+    fm = parse(text)
+    for key, value in (("title", title), ("description", description),
+                       ("topics", topics), ("sections", sections)):
+        if value is not None:
+            fm[key] = value
+    lines = _body(text).splitlines()
+    if sections is not None:
+        lines = _in_walking_order(lines, sections)
+    return _join(f"---\n{dump(fm)}\n---\n", lines)
+
+
+def _in_walking_order(lines: list[str], order: list[str]) -> list[str]:
+    """Body lines with their `##` blocks sorted by `order`, the preamble first."""
+    starts = [n for n, ln in enumerate(lines) if (h := _HEADING.match(ln)) and len(h[1]) > 1]
+    if not starts:
+        return lines
+    preamble = lines[:starts[0]]
+    blocks = [lines[a:b] for a, b in zip(starts, [*starts[1:], len(lines)])]
+    rank = {name.casefold(): n for n, name in enumerate(order)}
+
+    def position(block: list[str]) -> int:
+        return rank.get(_HEADING.match(block[0])[2].casefold(), len(rank))
+    out = _trimmed(preamble)
+    for block in sorted(blocks, key=position):
+        out += ([""] if out else []) + _trimmed(block)
+    return out
+
+
+def _trimmed(lines: list[str]) -> list[str]:
+    """`lines` without the blank lines at their end."""
+    return lines[:_after_last_content(lines, 0, len(lines))]
+
+
 # ── Adding an item ───────────────────────────────────────────────────────
 
 def insert_item(text: str, item: Item, *, path: str) -> str:

@@ -53,6 +53,7 @@ from stack.lists import (  # noqa: E402
     person_link,
     read_list,
     remove_item,
+    set_details,
     set_done,
 )
 from stack.people import load_people, resolve  # noqa: E402
@@ -74,9 +75,12 @@ USAGE = """\
     stack memory list create packliste --title Packliste --recurring --as marge
                                                     ticked items stay until a reset
     stack memory list reset packliste --as marge     reopen every ticked item
+    stack memory list set einkaufsliste --topic einkauf --as marge
+                                                    the list's title, description, topics
+                                                    or walking order (--section, in order)
 """
 
-VERBS = ("show", "create", "add", "tick", "untick", "remove", "move", "reset")
+VERBS = ("show", "create", "add", "tick", "untick", "remove", "move", "reset", "set")
 
 # A commit subject's length, as git and Forgejo show it without wrapping.
 _SUBJECT_MAX = 72
@@ -128,10 +132,20 @@ def _parser() -> argparse.ArgumentParser:
     move.add_argument("items", nargs="+")
     move.add_argument("--to", required=True)
 
+    # `set` changes what is given and keeps the rest. `--topic` and
+    # `--section` replace the whole list of them: sections are a walking
+    # order, which only means something complete.
+    details = verbs.add_parser("set", add_help=False)
+    details.add_argument("slug")
+    details.add_argument("--title")
+    details.add_argument("--description")
+    details.add_argument("--topic", action="append")
+    details.add_argument("--section", action="append")
+
     reset = verbs.add_parser("reset", add_help=False)
     reset.add_argument("slug")
 
-    for sub in (create, add, move, reset, *[verbs.choices[v] for v in ("tick", "untick", "remove")]):
+    for sub in (create, add, move, reset, details, *[verbs.choices[v] for v in ("tick", "untick", "remove")]):
         sub.add_argument("--as", dest="actor", default="")
     return parser
 
@@ -160,6 +174,8 @@ def run(args, stacklet, config):
         actor = _actor(ns.actor)
         if ns.verb == "create":
             return create(vault, config, ns, actor)
+        if ns.verb == "set":
+            return change_details(vault, config, ns, actor)
         if ns.verb == "move":
             return move(vault, config, ns.slug, ns.items, ns.to, actor)
         if ns.verb == "add":
@@ -263,6 +279,26 @@ def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
 
 
 # ── Writing ──────────────────────────────────────────────────────────────
+
+def change_details(vault: Path, config, ns, actor: str) -> dict:
+    """Change a list's title, description, topics or walking order."""
+    path, lst = _find_list(vault, ns.slug)
+    given = {"title": ns.title, "description": ns.description,
+             "topics": _named(ns.topic), "sections": _named(ns.section)}
+    changed = [name for name, value in given.items() if value is not None]
+    if not changed:
+        raise Refusal("name what to change: --title, --description, --topic or --section")
+
+    def _apply(prior: str) -> str:
+        return set_details(prior, **given)
+    return _commit(config, path, _apply, actor,
+                   f"changed the {', '.join(changed)} of {lst.title}")
+
+
+def _named(values: list[str] | None) -> list[str] | None:
+    """The non-empty values given, so `--topic ""` leaves a list in no topic."""
+    return None if values is None else [v.strip() for v in values if v.strip()]
+
 
 def create(vault: Path, config, ns, actor: str) -> dict:
     """Start a new, empty list in the shared bucket."""

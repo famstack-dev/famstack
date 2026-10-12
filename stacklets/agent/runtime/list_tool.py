@@ -34,15 +34,16 @@ from nanobot.agent.tools.schema import (
         topic=StringSchema(
             "The room's topic as the brief names it, never a list's name. "
             "For add without a list, only that topic's lists are "
-            "considered; for create, the new list belongs to it.",
+            "considered; for create or set, the list belongs to it.",
             nullable=True,
         ),
         op=StringSchema(
             "Item operation: add, tick, untick, remove, or move to another "
             "list. reset reopens every ticked item. create starts a new "
             "list when none fits, such as a store the family has no list "
-            "for yet.",
-            enum=("add", "tick", "untick", "remove", "move", "reset", "create"),
+            "for yet. set changes a list's title, description, topic or "
+            "sections, such as linking it to this room's topic.",
+            enum=("add", "tick", "untick", "remove", "move", "reset", "create", "set"),
         ),
         items=ArraySchema(
             StringSchema("One item's text, as it appears on the list."),
@@ -63,16 +64,16 @@ from nanobot.agent.tools.schema import (
         ),
         due=StringSchema("For add: the day it is due, YYYY-MM-DD.", nullable=True),
         to=StringSchema("For move: the list the items go to.", nullable=True),
-        title=StringSchema("For create: the list's name as the family says it, "
+        title=StringSchema("For create or set: the list's name as the family says it, "
                            "such as Baumarkt.", nullable=True),
         # Not `description`: the schema builder takes that keyword for the
         # tool's own description, and a parameter by that name breaks every
         # request the agent makes.
-        about=StringSchema("For create: what goes on the list, so the next "
+        about=StringSchema("For create or set: what goes on the list, so the next "
                            "item finds it.", nullable=True),
         sections=ArraySchema(
             StringSchema("A section, such as Obst & Gemüse."),
-            description="For create: a store's sections in the order the family "
+            description="For create or set: a store's sections in the order the family "
                         "walks through it. Leave out for a list without sections.",
             nullable=True,
         ),
@@ -120,8 +121,8 @@ class ListEditTool(Tool):
         except Exception:
             actor = "someone"
 
-        if op == "create":
-            args = _create_args(list, title, about, topic, sections)
+        if op in ("create", "set"):
+            args = _details_args(op, list, title, about, topic, sections)
         else:
             args = _item_args(op, list, items, topic, section, people, due, to)
         args += ["--as", actor]
@@ -163,12 +164,17 @@ def _item_args(op, slug, items, topic, section, people, due, to) -> "list[str]":
     return args
 
 
-def _create_args(slug, title, about, topic, sections) -> "list[str]":
-    """`stack memory list create [<list>] --title ...`; the store derives a missing slug."""
-    args = ["stack", "memory", "list", "create"]
+def _details_args(op, slug, title, about, topic, sections) -> "list[str]":
+    """`stack memory list create|set [<list>] --title ...`: a list's own details.
+
+    `create` makes a missing slug from the title; `set` changes only what is
+    given, so linking a list to this room is `set` with just the topic.
+    """
+    args = ["stack", "memory", "list", op]
     if slug and slug.strip():
         args.append(slug.strip())
-    args += ["--title", (title or slug or "").strip()]
+    if title or op == "create":
+        args += ["--title", (title or slug or "").strip()]
     if about:
         args += ["--description", about]
     if topic:

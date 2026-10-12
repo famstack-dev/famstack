@@ -36,6 +36,7 @@ from stack.lists import (
     person_link,
     read_list,
     relink,
+    set_details,
 )
 
 GROCERIES = list_path("einkaufsliste", bucket="family")
@@ -288,4 +289,35 @@ class TestKnownItems:
         known = known_items([("einkaufsliste", current),
                              self._archive("markt", ("Eier", "Eier & Käse", "2026-10-11"))])
         assert known["eier"].slug == "einkaufsliste"
+
+
+class TestChangingAList:
+    """A list's details change after the fact; its items never move or change."""
+
+    def test_a_list_joins_a_topic_room(self):
+        text = set_details(_add(_groceries(), "Milch", "Milchprodukte & Eier"), topics=["einkauf"])
+        lst = read_list(text, path=GROCERIES)
+        assert lst.topics == ["einkauf"] and [i.text for i in lst.items] == ["Milch"]
+
+    def test_title_and_description_change_alone(self):
+        lst = read_list(set_details(_groceries(), title="Supermarkt", description="Rewe"),
+                        path=GROCERIES)
+        assert (lst.title, lst.description, lst.sections) == ("Supermarkt", "Rewe", STORE)
+
+    def test_no_topics_leaves_none(self):
+        assert read_list(set_details(_groceries(), topics=[]), path=GROCERIES).topics == []
+
+    def test_a_new_walking_order_moves_the_sections_with_their_items(self):
+        text = _groceries()
+        for name, section in [("Batterien", ""), ("Äpfel", "Gemüse & Obst"),
+                              ("Joghurt", "Milchprodukte & Eier"), ("Kerzen", "Deko")]:
+            text = _add(text, name, section)
+        text = text.replace("- [ ] Joghurt\n", "- [ ] Joghurt\nDer griechische!\n")
+        moved = set_details(text, sections=["Milchprodukte & Eier", "Gemüse & Obst"])
+        assert _body(moved) == (
+            "\n- [ ] Batterien\n"
+            "\n## Milchprodukte & Eier\n- [ ] Joghurt\nDer griechische!\n"
+            "\n## Gemüse & Obst\n- [ ] Äpfel\n"
+            "\n## Deko\n- [ ] Kerzen\n")
+        assert read_list(moved, path=GROCERIES).sections == ["Milchprodukte & Eier", "Gemüse & Obst"]
 
