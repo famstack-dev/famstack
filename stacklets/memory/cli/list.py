@@ -56,6 +56,7 @@ from stack.lists import (  # noqa: E402
     set_done,
 )
 from stack.people import load_people, resolve  # noqa: E402
+from stack.vault import slug as vault_slug  # noqa: E402
 
 USAGE = """\
     stack memory list show                          every list, with its open items counted
@@ -99,7 +100,9 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("--all", action="store_true")
 
     create = verbs.add_parser("create", add_help=False)
-    create.add_argument("slug")
+    # The slug is optional: a family names a list, and `Baumarkt` makes
+    # `baumarkt` the way a topic's name makes its folder.
+    create.add_argument("slug", nargs="?", default="")
     create.add_argument("--title", required=True)
     create.add_argument("--description", default="")
     create.add_argument("--topic", action="append", default=[])
@@ -263,7 +266,7 @@ def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
 
 def create(vault: Path, config, ns, actor: str) -> dict:
     """Start a new, empty list in the shared bucket."""
-    slug = ns.slug.strip()
+    slug = ns.slug.strip() or vault_slug(ns.title)
     if not _SLUG.match(slug):
         raise Refusal(f"{slug!r} is not a slug: lowercase letters, digits and dashes")
     if list(vault.glob(f"*/{LISTS_DIR}/{slug}.md")):

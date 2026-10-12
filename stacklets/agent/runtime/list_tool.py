@@ -32,14 +32,17 @@ from nanobot.agent.tools.schema import (
             nullable=True,
         ),
         topic=StringSchema(
-            "For add without a list: the room's topic, so only its lists "
-            "are considered.",
+            "The room's topic as the brief names it, never a list's name. "
+            "For add without a list, only that topic's lists are "
+            "considered; for create, the new list belongs to it.",
             nullable=True,
         ),
         op=StringSchema(
             "Item operation: add, tick, untick, remove, or move to another "
-            "list. reset reopens every ticked item.",
-            enum=("add", "tick", "untick", "remove", "move", "reset"),
+            "list. reset reopens every ticked item. create starts a new "
+            "list when none fits, such as a store the family has no list "
+            "for yet.",
+            enum=("add", "tick", "untick", "remove", "move", "reset", "create"),
         ),
         items=ArraySchema(
             StringSchema("One item's text, as it appears on the list."),
@@ -60,6 +63,19 @@ from nanobot.agent.tools.schema import (
         ),
         due=StringSchema("For add: the day it is due, YYYY-MM-DD.", nullable=True),
         to=StringSchema("For move: the list the items go to.", nullable=True),
+        title=StringSchema("For create: the list's name as the family says it, "
+                           "such as Baumarkt.", nullable=True),
+        # Not `description`: the schema builder takes that keyword for the
+        # tool's own description, and a parameter by that name breaks every
+        # request the agent makes.
+        about=StringSchema("For create: what goes on the list, so the next "
+                           "item finds it.", nullable=True),
+        sections=ArraySchema(
+            StringSchema("A section, such as Obst & Gemüse."),
+            description="For create: a store's sections in the order the family "
+                        "walks through it. Leave out for a list without sections.",
+            nullable=True,
+        ),
     )
 )
 class ListEditTool(Tool):
@@ -75,7 +91,7 @@ class ListEditTool(Tool):
     def description(self) -> str:
         return (
             "Add, tick, untick, remove or move items on a family list, by "
-            "name. The store matches each item and answers with what "
+            "name, or start a new list. The store matches each item and answers with what "
             "actually changed. Use this for every item change; use "
             "write_file only to restructure a whole list."
         )
@@ -94,6 +110,9 @@ class ListEditTool(Tool):
         people: "list[str] | None" = None,
         due: str | None = None,
         to: str | None = None,
+        title: str | None = None,
+        about: str | None = None,
+        sections: "list[str] | None" = None,
     ) -> str:
         try:
             import brief
@@ -101,22 +120,10 @@ class ListEditTool(Tool):
         except Exception:
             actor = "someone"
 
-        args = ["stack", "memory", "list", op]
-        if list and list.strip():
-            args.append(list.strip())
-        if op != "reset":
-            args += [i for i in (items or []) if i and i.strip()]
-        if op == "add":
-            if topic and not list:
-                args += ["--topic", topic]
-            if section:
-                args += ["--section", section]
-            for person in people or []:
-                args += ["--for", person]
-            if due:
-                args += ["--due", due]
-        if op == "move" and to:
-            args += ["--to", to]
+        if op == "create":
+            args = _create_args(list, title, about, topic, sections)
+        else:
+            args = _item_args(op, list, items, topic, section, people, due, to)
         args += ["--as", actor]
 
         proc = await asyncio.create_subprocess_exec(
@@ -133,6 +140,42 @@ class ListEditTool(Tool):
         if proc.returncode not in (0, 1):
             return f"Error: list edit failed with exit {proc.returncode}: {err or out}"
         return out or err or "(no answer from the list store)"
+
+
+def _item_args(op, slug, items, topic, section, people, due, to) -> "list[str]":
+    """`stack memory list <op> [<list>] <items>... [flags]` for an item operation."""
+    args = ["stack", "memory", "list", op]
+    if slug and slug.strip():
+        args.append(slug.strip())
+    if op != "reset":
+        args += [i for i in (items or []) if i and i.strip()]
+    if op == "add":
+        if topic and not slug:
+            args += ["--topic", topic]
+        if section:
+            args += ["--section", section]
+        for person in people or []:
+            args += ["--for", person]
+        if due:
+            args += ["--due", due]
+    if op == "move" and to:
+        args += ["--to", to]
+    return args
+
+
+def _create_args(slug, title, about, topic, sections) -> "list[str]":
+    """`stack memory list create [<list>] --title ...`; the store derives a missing slug."""
+    args = ["stack", "memory", "list", "create"]
+    if slug and slug.strip():
+        args.append(slug.strip())
+    args += ["--title", (title or slug or "").strip()]
+    if about:
+        args += ["--description", about]
+    if topic:
+        args += ["--topic", topic]
+    for section in sections or []:
+        args += ["--section", section]
+    return args
 
 
 def install() -> None:

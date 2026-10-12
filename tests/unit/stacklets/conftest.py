@@ -62,8 +62,16 @@ def nanobot_stub():
         def tool_parameters(schema):
             return lambda cls: cls
 
-        def tool_parameters_schema(**kwargs):
-            return dict(kwargs)
+        # nanobot's own signature: `required`, `description` and
+        # `additional_properties` are the schema's, everything else is a
+        # parameter. A tool parameter named after one of them breaks
+        # every request on the real agent, so it fails here too.
+        def tool_parameters_schema(*, required=None, description="",
+                                   additional_properties=False, **properties):
+            if not isinstance(description, str):
+                raise TypeError("a tool parameter is named `description`, which "
+                                "the schema builder takes as its own")
+            return dict(properties)
 
         class _Schema:
             def __init__(self, *args, **kwargs):

@@ -36,6 +36,7 @@ LISTS:
   "bought all|clear the list"    -> tick what they got; ticked items leave the list overnight
   "start the week|fresh list"    -> list_edit op=reset          # reopens all
   belongs on another list        -> op=move, to=<list>
+  no list fits (a new store)     -> op=create list=<slug> title about topic sections, then add
   add to a list with sections    -> section = one of the list's own
   "for <name>" | "by <day>"      -> add with people=[name] | due=YYYY-MM-DD; never guess either
   answer "ambiguous|no item|no section|no list|nobody called"
