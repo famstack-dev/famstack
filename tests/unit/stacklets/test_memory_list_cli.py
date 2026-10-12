@@ -290,6 +290,30 @@ class TestRemovingAndMoving:
         assert result["error"] == "no list 'baumarkt'. Lists: einkaufsliste"
 
 
+class TestChangingAList:
+    def test_a_list_joins_a_topic_room_after_the_fact(self, run, store, groceries):
+        run("add", "einkaufsliste", "Milch", "--as", "marge")
+        result = run("set", "einkaufsliste", "--topic", "einkauf", "--as", "marge")
+        assert result["summary"] == "changed the topics of Einkaufsliste"
+        assert "topics:\n  - einkauf\n" in store.text(groceries)
+        assert "- [ ] Milch" in store.text(groceries)
+
+    def test_an_empty_topic_leaves_it_in_none(self, run, store, groceries):
+        run("set", "einkaufsliste", "--topic", "", "--as", "marge")
+        assert "topics:" not in store.text(groceries)
+
+    def test_a_new_walking_order_reorders_the_sections(self, run, store, groceries):
+        run("add", "einkaufsliste", "Äpfel", "--section", "Gemüse & Obst", "--as", "marge")
+        run("add", "einkaufsliste", "Milch", "--section", "Milchprodukte & Eier", "--as", "marge")
+        run("set", "einkaufsliste", "--section", "Milchprodukte & Eier", "--section", "Gemüse & Obst",
+            "--as", "marge")
+        body = store.text(groceries).split("---\n", 2)[2]
+        assert body.index("Milchprodukte") < body.index("Gemüse")
+
+    def test_nothing_to_change_is_refused(self, run, groceries):
+        assert run("set", "einkaufsliste", "--as", "marge")["error"].startswith("name what to change")
+
+
 class TestShowingAList:
     def test_items_appear_under_their_sections_with_who_and_when(self, run, groceries, capsys):
         run("add", "einkaufsliste", "Joghurt", "--section", "Milchprodukte & Eier",

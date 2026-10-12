@@ -37,11 +37,13 @@ LISTS:
   "start the week|fresh list"    -> list_edit op=reset          # reopens all
   belongs on another list        -> op=move, to=<list>
   no list fits (a new store)     -> op=create list=<slug> title about topic sections, then add
+  "belongs here|rename|new order|new sections" -> op=set list=<slug> with only what changes
   add to a list with sections    -> section = one of the list's own
   "for <name>" | "by <day>"      -> add with people=[name] | due=YYYY-MM-DD; never guess either
   answer "ambiguous|no item|no section|no list|nobody called"
                                  -> pick from the named choices, retry once
-  restructure ONLY               -> read_file then write_file(complete page)
+  restructure set cannot do (merge two lists, split a section)
+                                 -> read_file then write_file(complete page)
      keep: frontmatter verbatim at column one, every [x], their order, their words
   write answer reports unintended unticked|REMOVED -> restore now, then say so
   edit answer = the truth -> relay it in one line
