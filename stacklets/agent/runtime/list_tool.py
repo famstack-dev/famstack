@@ -26,8 +26,15 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema(
         list=StringSchema(
             "The list's name, such as einkaufsliste. `stack memory list "
-            "show` names every list with its description.",
-            min_length=1,
+            "show` names every list with its description. For add it may "
+            "be left out: an item the family had before goes to the list "
+            "it was last bought from.",
+            nullable=True,
+        ),
+        topic=StringSchema(
+            "For add without a list: the room's topic, so only its lists "
+            "are considered.",
+            nullable=True,
         ),
         op=StringSchema(
             "Item operation: add, tick, untick, remove, or move to another "
@@ -79,8 +86,9 @@ class ListEditTool(Tool):
 
     async def execute(
         self,
-        list: str,
         op: str,
+        list: str | None = None,
+        topic: str | None = None,
         items: "list[str] | None" = None,
         section: str | None = None,
         people: "list[str] | None" = None,
@@ -93,10 +101,14 @@ class ListEditTool(Tool):
         except Exception:
             actor = "someone"
 
-        args = ["stack", "memory", "list", op, list.strip()]
+        args = ["stack", "memory", "list", op]
+        if list and list.strip():
+            args.append(list.strip())
         if op != "reset":
             args += [i for i in (items or []) if i and i.strip()]
         if op == "add":
+            if topic and not list:
+                args += ["--topic", topic]
             if section:
                 args += ["--section", section]
             for person in people or []:

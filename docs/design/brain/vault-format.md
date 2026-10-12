@@ -325,7 +325,9 @@ the curator moves it to the list's archive,
 `<bucket>/lists/archive/<slug>/<YYYY-MM>.md` for the month it was ticked:
 a list file of its own (`title: Einkaufsliste, 2026-10`, no topics), with
 the line and its section as they were. A tick without a date gets the
-day's date first. A `recurring` list is left alone.
+day's date first. A `recurring` list is left alone. The archive is where
+`stack memory list add` learns where an item was last bought, its
+section and its spelling.
 
 ## 6. The `generated` invariant (from B3 / ADR-011)
 

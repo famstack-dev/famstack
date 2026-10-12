@@ -40,12 +40,14 @@ from lib import (  # noqa: E402
 
 from stack.links import go_page, public  # noqa: E402
 from stack.lists import (  # noqa: E402
+    ARCHIVE_DIR,
     LISTS_DIR,
     FamilyList,
     Item,
     ListError,
     find,
     insert_item,
+    known_items,
     list_path,
     new_list,
     person_link,
@@ -62,6 +64,8 @@ USAGE = """\
         --description "Was wir im Supermarkt brauchen" --topic einkaeufe-besorgungen \\
         --section "Gemüse & Obst" --section "Milchprodukte & Eier" --as marge
     stack memory list add einkaufsliste Joghurt Eier --section "Milchprodukte & Eier" --as marge
+    stack memory list add Joghurt Eier --topic einkaeufe-besorgungen --as marge
+                                                    each where it was last bought
     stack memory list add schule "Sign the field trip form" --for homer --for marge \\
         --due 2026-10-20 --as marge
     stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
@@ -103,8 +107,10 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--recurring", action="store_true")
 
     add = verbs.add_parser("add", add_help=False)
-    add.add_argument("slug")
+    # The list is optional: `add Joghurt` puts a known item where it was
+    # last bought. A first word naming a list is the list.
     add.add_argument("items", nargs="+")
+    add.add_argument("--topic", default="")
     add.add_argument("--section", default="")
     add.add_argument("--for", dest="people", action="append", default=[])
     add.add_argument("--due", default="")
@@ -153,6 +159,8 @@ def run(args, stacklet, config):
             return create(vault, config, ns, actor)
         if ns.verb == "move":
             return move(vault, config, ns.slug, ns.items, ns.to, actor)
+        if ns.verb == "add":
+            return add(vault, config, ns, actor)
         return change(vault, config, ns, actor)
     except Refusal as e:
         return {"error": str(e)}
@@ -205,13 +213,34 @@ def _as_dict(item: Item) -> dict:
 
 
 def _all_lists(vault: Path) -> list[FamilyList]:
+    return [lst for _, lst in _all_lists_at(vault)]
+
+
+def _all_lists_at(vault: Path) -> list[tuple[str, FamilyList]]:
+    """Every list with its vault path; a file that is not a list is skipped."""
     found = []
     for file in sorted(vault.glob(f"*/{LISTS_DIR}/*.md")):
+        path = _rel(vault, file)
         try:
-            found.append(read_list(file.read_text(encoding="utf-8"), path=_rel(vault, file)))
+            found.append((path, read_list(file.read_text(encoding="utf-8"), path=path)))
         except (ListError, OSError, UnicodeDecodeError):
             continue
     return found
+
+
+def _history(vault: Path, lists: list[tuple[str, FamilyList]]) -> list[tuple[str, FamilyList]]:
+    """These lists and every archived month of them, each paired with its list's slug."""
+    pairs = [(lst.slug, lst) for _, lst in lists]
+    for path, lst in lists:
+        bucket = path.split("/", 1)[0]
+        folder = vault / bucket / LISTS_DIR / ARCHIVE_DIR / lst.slug
+        for file in sorted(folder.glob("*.md")):
+            try:
+                pairs.append((lst.slug, read_list(file.read_text(encoding="utf-8"),
+                                                  path=_rel(vault, file))))
+            except (ListError, OSError, UnicodeDecodeError):
+                continue
+    return pairs
 
 
 def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
@@ -250,24 +279,78 @@ def create(vault: Path, config, ns, actor: str) -> dict:
     return _commit(config, path, _create, actor, f"started the list {ns.title.strip()}")
 
 
-def change(vault: Path, config, ns, actor: str) -> dict:
-    """add, tick, untick, remove or reset on one list, in one commit."""
-    path, lst = _find_list(vault, ns.slug)
-    people = _people(vault, config, getattr(ns, "people", []))
-    section = _section(lst, getattr(ns, "section", ""))
-    due = getattr(ns, "due", "")
+def add(vault: Path, config, ns, actor: str) -> dict:
+    """Add items, each to its list: the one named, or where it was last bought.
+
+    An item the household had before keeps its spelling and its section.
+    One commit per list.
+    """
+    lists = _all_lists_at(vault)
+    names = [" ".join(n.split()) for n in ns.items if n.strip()]
+    slug = names.pop(0) if names and any(lst.slug == names[0] for _, lst in lists) else ""
+    if not names:
+        raise Refusal("name at least one item to add")
+    if slug:
+        candidates = [(p, lst) for p, lst in lists if lst.slug == slug]
+    else:
+        candidates = [(p, lst) for p, lst in lists if not ns.topic or ns.topic in lst.topics]
+    known = known_items(_history(vault, candidates))
+    by_slug = {lst.slug: (p, lst) for p, lst in candidates}
+
+    plan: dict[str, list[tuple[str, str]]] = {}
+    for name in names:
+        seen = known.get(name.casefold())
+        target = slug or (seen.slug if seen else "")
+        if target not in by_slug:
+            raise Refusal(_which_list(name, candidates, ns.topic))
+        lst = by_slug[target][1]
+        here = seen if seen and seen.slug == target else None
+        section = _section(lst, ns.section) if ns.section else \
+            (here.section if here and (not lst.sections or here.section in lst.sections) else "")
+        plan.setdefault(target, []).append((here.text if here else name, section))
+
+    due = ns.due
     if due and not _ISO_DAY.match(due):
         raise Refusal(f"--due {due!r} is not a date like 2026-10-14")
-    today = date.today().isoformat()
+    people = _people(vault, config, ns.people)
+    results = [_add_to(config, *by_slug[target], entries, people, due, actor)
+               for target, entries in plan.items()]
+    if len(results) == 1:
+        return results[0]
+    errors = [r["error"] for r in results if "error" in r]
+    return {"error": "; ".join(errors)} if errors else {"ok": True, "lists": results}
+
+
+def _add_to(config, path: str, lst: FamilyList, entries: list[tuple[str, str]],
+            people: list, due: str, actor: str) -> dict:
     bucket = path.split("/", 1)[0]
+    links = tuple(person_link(p.id, p.first_name, bucket=bucket) for p in people)
+    outcome: dict = {}
+
+    def _apply(prior: str) -> str:
+        new, outcome["said"] = _add(prior, read_list(prior, path=path), entries, links, due, path)
+        return new
+    return _commit(config, path, _apply, actor, lambda: outcome.get("said", "added"))
+
+
+def _which_list(name: str, candidates: list[tuple[str, FamilyList]], topic: str) -> str:
+    """The refusal for an item no list has had: every list it could go on."""
+    if not candidates:
+        return f"no list names the topic {topic!r}. Start one with `stack memory list create`."
+    lists = "; ".join(f"{lst.slug} ({lst.description})" if lst.description else lst.slug
+                      for _, lst in candidates)
+    return f"no list has had {name!r} before; name the list. Lists: {lists}"
+
+
+def change(vault: Path, config, ns, actor: str) -> dict:
+    """tick, untick, remove or reset on one list, in one commit."""
+    path, lst = _find_list(vault, ns.slug)
+    today = date.today().isoformat()
     outcome: dict = {}
 
     def _apply(prior: str) -> str:
         current = read_list(prior, path=path)
-        if ns.verb == "add":
-            links = tuple(person_link(p.id, p.first_name, bucket=bucket) for p in people)
-            new, said = _add(prior, current, ns.items, section, links, due, path)
-        elif ns.verb == "reset":
+        if ns.verb == "reset":
             new, said = _reset(prior, current, today, path)
         else:
             new, said = _each(prior, current.title, ns.verb, ns.items, today, path)
@@ -307,19 +390,18 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) 
     return _commit(config, path, _remove_all, actor, said)
 
 
-def _add(text: str, lst: FamilyList, names: list[str], section: str,
+def _add(text: str, lst: FamilyList, entries: list[tuple[str, str]],
          links: tuple, due: str, path: str) -> tuple[str, str]:
     added, already = [], []
-    for name in names:
-        name = " ".join(name.split())
+    for name, section in entries:
         if any(i.text.casefold() == name.casefold() and not i.done for i in lst.items):
             already.append(name)
             continue
         text = insert_item(text, Item(name, links=links, due=due, section=section), path=path)
         lst = read_list(text, path=path)
         added.append(name)
-    said = [f"added {'; '.join(added)}"] if added else []
-    said += [f"{name!r} is already on the list" for name in already]
+    said = [f"added {'; '.join(added)} to {lst.title}"] if added else []
+    said += [f"{name!r} is already on {lst.title}" for name in already]
     return text, "; ".join(said)
 
 

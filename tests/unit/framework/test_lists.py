@@ -22,8 +22,10 @@ import pytest
 from stack.lists import (
     Item,
     Link,
+    Known,
     archive_path,
     archive_ticked,
+    known_items,
     stamp_ticks,
     ListError,
     format_item,
@@ -263,3 +265,27 @@ class TestTheArchive:
         assert "- [x] Batterien ✅ 2026-10-12" in stamped
         assert archive_ticked(stamped, {}, path=GROCERIES, today=self.TODAY,
                               bucket="family")[2] == []
+
+
+class TestKnownItems:
+    def _archive(self, slug, *items) -> tuple[str, object]:
+        path = archive_path(slug, "2026-10", bucket="family")
+        text = new_list(f"{slug}, 2026-10")
+        for name, section, day in items:
+            text = insert_item(text, Item(name, done=True, done_on=day, section=section),
+                               path=path)
+        return slug, read_list(text, path=path)
+
+    def test_an_item_is_known_by_its_last_list_section_and_spelling(self):
+        known = known_items([
+            self._archive("markt", ("Eier", "Eier & Käse", "2026-10-03")),
+            self._archive("einkaufsliste", ("Eier", "Milchprodukte & Eier", "2026-10-10")),
+        ])
+        assert known["eier"] == Known("einkaufsliste", "Milchprodukte & Eier", "Eier")
+
+    def test_an_item_open_on_a_list_lives_there(self):
+        current = read_list(_add(_groceries(), "Eier", "Milchprodukte & Eier"), path=GROCERIES)
+        known = known_items([("einkaufsliste", current),
+                             self._archive("markt", ("Eier", "Eier & Käse", "2026-10-11"))])
+        assert known["eier"].slug == "einkaufsliste"
+

@@ -75,6 +75,7 @@ def store(monkeypatch, tmp_path):
             return {"ok": True, "committed": True, "path": repo_path, "mirrored": True}
 
     fake = _Store()
+    fake.vault = vault
     monkeypatch.setattr(list_cli, "update_memory", fake.update_memory)
     return fake
 
@@ -136,14 +137,15 @@ class TestAddingItems:
     def test_several_items_are_one_commit(self, run, store, groceries):
         commits = len(store.commits)
         result = run("add", "einkaufsliste", "Milch", "Eier", "--as", "marge")
-        assert result["summary"] == "added Milch; Eier"
+        assert result["summary"] == "added Milch; Eier to Einkaufsliste"
         assert len(store.commits) == commits + 1
 
     def test_an_item_already_open_is_not_added_twice(self, run, store, groceries):
         run("add", "einkaufsliste", "Milch", "--as", "marge")
         commits = len(store.commits)
         result = run("add", "einkaufsliste", "milch", "--as", "homer")
-        assert result["committed"] is False and "already on the list" in result["summary"]
+        assert result["committed"] is False
+        assert result["summary"] == "'Milch' is already on Einkaufsliste"
         assert len(store.commits) == commits
 
     def test_people_and_a_due_date_are_written_as_fields(self, run, store, groceries):
@@ -159,6 +161,52 @@ class TestAddingItems:
     def test_a_due_date_is_a_day(self, run, groceries):
         result = run("add", "einkaufsliste", "Milch", "--due", "Friday", "--as", "marge")
         assert "not a date" in result["error"]
+
+
+class TestKnownItems:
+    """An item the household had before goes where it was last bought."""
+
+    @pytest.fixture
+    def shops(self, run, store, groceries):
+        run("create", "markt", "--title", "Wochenmarkt", "--description", "Samstags: Gemüse, Käse",
+            "--section", "Käse", "--as", "marge")
+        archive = "family/lists/archive/einkaufsliste/2026-10.md"
+        (store.vault / archive).parent.mkdir(parents=True)
+        (store.vault / archive).write_text(
+            "---\ntype: list\ntitle: Einkaufsliste, 2026-10\n---\n\n"
+            "## Milchprodukte & Eier\n- [x] Joghurt ✅ 2026-10-03\n- [x] Eier ✅ 2026-10-03\n")
+        markt = "family/lists/archive/markt/2026-10.md"
+        (store.vault / markt).parent.mkdir(parents=True)
+        (store.vault / markt).write_text(
+            "---\ntype: list\ntitle: Wochenmarkt, 2026-10\n---\n\n- [x] Eier ✅ 2026-10-10\n")
+
+    def test_a_known_item_lands_on_its_list_in_its_section_and_spelling(self, run, store, shops):
+        result = run("add", "joghurt", "--as", "marge")
+        assert result["summary"] == "added Joghurt to Einkaufsliste"
+        assert "## Milchprodukte & Eier\n- [ ] Joghurt\n" in store.text(GROCERIES)
+
+    def test_the_latest_purchase_decides_the_list(self, run, store, shops):
+        run("add", "Eier", "--as", "marge")
+        assert "- [ ] Eier" in store.text("family/lists/markt.md")
+
+    def test_items_known_on_different_lists_go_to_each(self, run, store, shops):
+        result = run("add", "Joghurt", "Eier", "--as", "marge")
+        assert [r["summary"] for r in result["lists"]] == \
+            ["added Joghurt to Einkaufsliste", "added Eier to Wochenmarkt"]
+
+    def test_a_named_list_wins_over_where_it_was_bought(self, run, store, shops):
+        run("add", "einkaufsliste", "Eier", "--as", "marge")
+        assert "## Milchprodukte & Eier\n- [ ] Eier" in store.text(GROCERIES)
+
+    def test_an_unknown_item_without_a_list_names_every_list(self, run, shops):
+        result = run("add", "Kerzen", "--as", "marge")
+        assert result["error"] == (
+            "no list has had 'Kerzen' before; name the list. Lists: einkaufsliste "
+            "(Was wir im Supermarkt brauchen); markt (Samstags: Gemüse, Käse)")
+
+    def test_a_topic_narrows_the_lists(self, run, shops):
+        result = run("add", "Kerzen", "--topic", "garten", "--as", "marge")
+        assert "no list names the topic 'garten'" in result["error"]
 
 
 class TestTickingOff:

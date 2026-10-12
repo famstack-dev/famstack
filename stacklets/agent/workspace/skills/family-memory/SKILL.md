@@ -31,6 +31,7 @@ SOURCES (answer used a vault page, searched or read):
 
 LISTS:
   item op add|tick|untick|remove -> list_edit(list, op, items=[one or more])
+  add, list not said             -> leave list out (topic room: topic=<topic>); known items find their list
   "we did that"                  -> tick, never remove
   "bought all|clear the list"    -> tick what they got; ticked items leave the list overnight
   "start the week|fresh list"    -> list_edit op=reset          # reopens all
