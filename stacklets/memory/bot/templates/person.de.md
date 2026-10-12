@@ -9,6 +9,7 @@ keine Dokumente hat, bekommt keine Überschrift „Dokumente“.
   tagline            eine warme Zeile, vom Modell geschrieben
   about              ein kurzer Absatz, vom Modell geschrieben
   facts              geboren, Schule oder Beruf, Arzt, Auto: Bezeichnung und Wert, vom Modell
+  todos              die offenen Listenpunkte für sie, nächster Termin zuerst, vom Compiler übernommen
   loves              Aufzählung, vom Modell geschrieben
   more               ein Abschnitt, den das Modell mit eigener Überschrift ergänzen kann
   lately             die neuesten Einträge über die Person, vom Compiler datiert
@@ -23,6 +24,9 @@ Dieser Kommentar wird nicht veröffentlicht.
 
 ## Auf einen Blick
 {{facts}}
+
+## Noch zu tun
+{{todos}}
 
 ## Was {{first_name}} liebt
 {{loves}}

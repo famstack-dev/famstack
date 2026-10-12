@@ -128,12 +128,14 @@ def read_answer(raw: str, *, lately: list[int]) -> Parts:
 # ── The page ─────────────────────────────────────────────────────────────
 
 def render(parts: Parts, *, name: str, first_name: str, entries: list[dict],
-           lately: list[int], docs: list[int], links: dict[int, str], lang: str) -> str:
+           lately: list[int], docs: list[int], links: dict[int, str], lang: str,
+           open_items: str = "") -> str:
     """The page body, from the template for `lang`.
 
     `links` maps a citation number to the published path of its source,
     for the Documents list. Entries the model wrote no line for fall
-    back to their title, so Lately never loses an entry.
+    back to their title, so Lately never loses an entry. `open_items`
+    are the list items linked to the person, already written out.
     """
     lang = language(lang)
     lately_lines = [
@@ -157,6 +159,7 @@ def render(parts: Parts, *, name: str, first_name: str, entries: list[dict],
         "more": more,
         "lately": "\n".join(lately_lines),
         "documents": "\n".join(doc_lines),
+        "todos": open_items,
     }
     return fill(template("person", lang), slots)
 
