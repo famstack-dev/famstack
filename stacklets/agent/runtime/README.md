@@ -1,19 +1,17 @@
 # Agent runtime shims — per-turn briefing
 
 This directory is a **contained modification of nanobot**, loaded into the agent
-container. It exists because nanobot has no plugin seam for shaping per-turn
-context, and we did not want to fork nanobot for a couple of hooks. Everything
-here lives in the stacklet; upstream `nanobot-ai` is installed unchanged.
+container. Everything here lives in the stacklet; upstream `nanobot-ai` is
+installed unchanged.
 
-The main context shim is **brief** (what the agent knows going in). History
-size is left to nanobot's own settings in `config.json`:
+The main context shim is **brief** (what the agent knows going in), registered
+through nanobot's runtime-context provider seam. History size is left to
+nanobot's own settings in `config.json`:
 
 | Mechanism | Setting | Value | Effect |
 |---|---|---|---|
-| Replay window | `max_messages` | 40 | Older messages move to `history.jsonl` and the `# Recent History` section |
-| Token budget | `model_presets.primary.context_window_tokens` | 32768 | Budget = window - 8192 output - 1024 = 23.5k; consolidation trims to 50% of it, history snip cuts at it |
-| Idle autocompact | `idleCompactAfterMinutes` | 15 (default) | Idle session: summary plus the last turn |
-| Microcompact | `_COMPACTABLE_TOOLS` | nanobot's read tools + vault tools (`compact_tools.py`) | Keeps the 10 newest tool results, older ones (>= 500 chars) become `[<tool> result omitted from context]` |
+| Context window | `model_presets.primary.context_window_tokens` | 32768 | nanobot compacts the history into a summary checkpoint when a request comes close to it |
+| Idle compaction | `idleCompactAfterMinutes` | 15 (default) | An idle session is summarised before its next turn |
 
 A small window keeps prefill short on the local model. `AGENT_STATE_LOG=1`
 writes the message list of each turn to `~/.nanobot/llm-state.log`.
@@ -58,28 +56,25 @@ plus pointers; it reads full pages with its file tools only if it needs depth.
   topic page, open todos, recent *human* git activity). Compact, read-only,
   never raises.
 - `sitecustomize.py` — auto-loaded by Python at startup (this dir is on
-  `PYTHONPATH`; see the stacklet `Dockerfile`). It wraps
-  `nanobot.agent.context.runtime_lines` to prepend our lines. nanobot appends
-  the runtime block **after** the stable prompt + user text, which is the
-  KV-cache-safe position.
+  `PYTHONPATH`; see the stacklet `Dockerfile`). It registers the briefing as a
+  runtime-context provider on every `AgentLoop`. nanobot appends the block to
+  the user's message and keeps it with that message in the history, so the
+  next turn replays exactly what the model saw: the prompt prefix stays cached.
 
 ```
 Dockerfile:  COPY runtime/ /app/runtime  +  ENV PYTHONPATH=/app/runtime
-startup:     python imports sitecustomize -> patches context.runtime_lines
-every turn:  build_messages() -> runtime_lines() -> [our briefing] + [nanobot's]
-             -> appended after the user text -> cache-hot prefix preserved
+startup:     python imports sitecustomize -> AgentLoop registers the brief provider
+every turn:  provider(request) -> RuntimeContextBlock -> appended to the user text,
+             stored with it -> the next turn's prefix is this turn's prompt
 ```
 
 ## Maintenance
 
-- **Patched symbol:** `nanobot.agent.context.runtime_lines`,
-  signature `(state, msg, workspace, *, skip=False) -> list[str]`.
-- **On every `nanobot-ai` bump:** re-verify that symbol and signature. If they
-  moved, the shim logs `brief shim could not attach` at startup and the
-  agent runs with stock behaviour (no crash) — check the container logs.
+- **Seam:** `AgentLoop.register_runtime_context_provider`, called from a wrapped
+  `AgentLoop.__init__`. A provider is `async (RequestContext) -> RuntimeContextBlock`.
+- **On every `nanobot-ai` bump:** re-verify the PIN list in `sitecustomize.py`.
+  A shim that no longer attaches logs `... could not attach` at startup and the
+  agent runs with stock behaviour (no crash): check the container logs.
 - **To remove entirely:** delete this `runtime/` dir and the `PYTHONPATH` line
   from the `Dockerfile`.
-- **When to graduate to a fork:** once we accumulate several nanobot changes
-  (candidates already in view: the coding-flavoured tool contract, the
-  single-user `USER.md` model, the `M_UNKNOWN_TOKEN` no-reauth bug), fold them
-  into a fork and upstream a proper context-provider API so we can un-fork.
+- **Fork or not:** see `docs/adr/adr-012-nanobot-fork.md`.

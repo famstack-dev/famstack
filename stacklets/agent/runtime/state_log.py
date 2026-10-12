@@ -5,7 +5,7 @@ The transcript is the Matrix room. The state is the message list that
 formats that list as one line per message, so the two can be compared.
 
 The log shows the list before nanobot's per-call steps in
-`AgentRunner` (microcompact, tool-result budget, history snip). Those
+`AgentRunner` (context compaction, tool-result budget). Those
 steps change only tool results and the oldest messages.
 """
 

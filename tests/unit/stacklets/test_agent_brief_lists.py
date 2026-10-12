@@ -18,7 +18,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from brief import brief_lines, topic_for_room_label  # noqa: E402
+from brief import brief_lines, topic_for_room_label, when_sent  # noqa: E402
 from topic_rooms import parse_topic_name  # noqa: E402
 
 PACKING = "---\ntype: list\ntitle: Packliste\ntopics:\n  - camping\n---\n\n- [ ] Zelt\n"
@@ -84,3 +84,9 @@ def test_the_brief_offers_no_overview_a_topic_does_not_have(tmp_path):
     lines = brief_lines(SimpleNamespace(metadata={"room": "Thema: Einkauf"}, sender_id=""), tmp_path)
     assert lines[0] == "This room's topic is 'einkauf'."
     assert "einkaufsliste" in lines[1]
+
+
+def test_a_message_says_when_it_was_sent_so_by_friday_becomes_a_date():
+    from datetime import datetime, timedelta, timezone
+    sent = datetime(2026, 10, 12, 18, 55, tzinfo=timezone(timedelta(hours=2), "CEST"))
+    assert when_sent(sent) == "Sent Monday, 2026-10-12 18:55 (CEST)."

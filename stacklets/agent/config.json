@@ -16,7 +16,6 @@
     "defaults": {
       "model_preset": "primary",
       "max_tool_iterations": 12,
-      "max_messages": 40,
       "disabled_skills": ["memory", "my"]
     }
   },
@@ -29,6 +28,9 @@
     "image_generation": {"enable": false}
   },
   "channels": {
+    "sendProgress": false,
+    "sendToolHints": false,
+    "showReasoning": false,
     "matrix": {
       "enabled": true,
       "homeserver": "${AGENT_MATRIX_HOMESERVER}",
@@ -37,6 +39,7 @@
       "e2eeEnabled": true,
       "allowFrom": ["*"],
       "groupPolicy": "mention"
-    }
+    },
+    "websocket": {"enabled": false}
   }
 }

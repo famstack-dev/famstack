@@ -1,6 +1,6 @@
 """Drop unused nanobot tools from the model's tool list.
 
-nanobot 0.2.2 has no config gate for these tools. They enable with the
+nanobot 0.3.5 has no config gate for these tools. They enable with the
 gateway services and put their JSON schemas into every request. The
 family agent does not use them. Fewer schemas make a shorter and more
 stable prompt prefix.
@@ -15,12 +15,19 @@ import os
 # Tool names, as the model sees them. `message` stays: the gateway can
 # send mid-turn channel messages through it.
 TRIMMED = {
-    "cron",                # agent-set reminders, not used yet
-    "long_task",           # background goal loop, not used
-    "complete_goal",       # pairs with long_task
-    "spawn",               # subagents, not used
-    "write_stdin",         # interactive exec sessions, agent runs one-shot CLI
-    "list_exec_sessions",  # same group
+    "cron",                  # agent-set reminders, not used yet
+    "create_goal",           # long-running goals, not used
+    "update_goal",           # same group
+    "spawn",                 # subagents, not used
+    "exec_session",          # interactive exec sessions, agent runs one-shot CLI
+    "list_exec_sessions",    # same group
+    # Other conversations. A session is a room or a thread, and some are
+    # one person's: reading or writing one from another room would carry
+    # what was said there to people who were not in it.
+    "list_sessions",
+    "read_session",
+    "search_sessions",
+    "send_session_message",
 }
 
 

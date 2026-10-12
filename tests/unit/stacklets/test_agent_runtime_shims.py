@@ -26,7 +26,7 @@ import pytest
 SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
-                   "list_tool", "tool_trim", "thread_session", "compact_tools")
+                   "list_tool", "tool_trim")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -93,24 +93,36 @@ def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
     assert "MemoryHistoryTool" in _discovered(mods)
 
 
-def test_vault_tool_results_are_microcompacted(nanobot):
-    """nanobot shortens old results of the tools in this set only.
+def test_the_briefing_is_one_of_nanobots_runtime_context_providers(nanobot, tmp_path):
+    """Every turn, nanobot asks its providers for context and appends it.
 
-    Without our names in it, every memory_search result stays in the
-    context in full for as long as the session replays it.
+    The briefing is how a shared room knows who is speaking. Through the
+    provider seam it rides on the user's message, and nanobot keeps it
+    with that message in the history, so the prompt the model cached last
+    turn is still the start of this one.
     """
-    mods = nanobot()
-    tools = mods["nanobot.agent.runner"]._COMPACTABLE_TOOLS
-    assert {"memory_search", "memory_person", "memory_history"} <= tools
-    assert {"read_file", "exec", "grep"} <= tools, "nanobot's own set must stay"
+    import asyncio
+    import types as _types
+
+    profile = tmp_path / "vault" / "homer" / "about.md"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("> Safety inspector at the plant\n")
+    loop = nanobot()["nanobot.agent.loop"].AgentLoop()
+    request = _types.SimpleNamespace(sender_id="@homer:simpson", metadata={},
+                                     workspace=tmp_path)
+
+    [provider] = loop._runtime_context_providers
+    block = asyncio.run(provider(request))
+
+    assert block.source == "famstack-brief"
+    assert block.content.splitlines()[1].startswith("Sent "), "the date comes first"
+    assert "You are speaking with homer (@homer). Safety inspector at the plant" in block.content
+    assert block.content.startswith("[Runtime Context")
 
 
-def test_context_shims_are_attached(nanobot):
-    """The briefing attaches; the message list is nanobot's own."""
+def test_the_message_list_stays_nanobots_own(nanobot):
     mods = nanobot()
-    ctx = mods["nanobot.agent.context"]
-    assert ctx.runtime_lines.__name__ == "_runtime_lines"
-    assert ctx.ContextBuilder.build_messages.__name__ == "build_messages"
+    assert mods["nanobot.agent.context"].ContextBuilder.build_messages.__name__ == "build_messages"
 
 
 def test_state_log_is_opt_in(nanobot, monkeypatch):
@@ -129,7 +141,7 @@ def test_being_named_counts_as_a_mention(nanobot, monkeypatch):
     """
     monkeypatch.setenv("AGENT_NAME", "Stacky")
     mods = nanobot()
-    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
 
     class _Event:
         pill_mention = False
@@ -146,7 +158,7 @@ def test_a_pill_mention_still_wins_on_the_original_path(nanobot, monkeypatch):
     """
     monkeypatch.setenv("AGENT_NAME", "Stacky")
     mods = nanobot()
-    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
 
     class _Event:
         pill_mention = True
@@ -195,7 +207,7 @@ def test_a_reply_in_the_agents_own_thread_is_processed(nanobot):
     import asyncio
 
     mods = nanobot()
-    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
     room = _room_with_thread(channel, root_sender=channel.config.user_id)
     event = _threaded("$stacky-answer")
 
@@ -215,7 +227,7 @@ def test_another_bots_thread_is_left_alone(nanobot):
     import asyncio
 
     mods = nanobot()
-    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
     room = _room_with_thread(
         channel, root_sender="@archivist-bot:home.local",
         replies=["@homer:home.local"],
@@ -233,7 +245,7 @@ def test_a_top_level_message_still_needs_addressing(nanobot):
     import types as _types
 
     mods = nanobot()
-    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
     room = _types.SimpleNamespace(room_id="!family:home.local")
     event = _types.SimpleNamespace(
         sender="@marge:home.local", body="dinner at seven",
@@ -256,7 +268,7 @@ def test_an_invite_produces_a_greeting_turn(nanobot):
     import types as _types
 
     mods = nanobot()
-    channel = mods["nanobot.channels.matrix"].MatrixChannel()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
     room = _types.SimpleNamespace(room_id="!r:simpson", display_name="Topic: Camping")
     channel.client.rooms = {"!r:simpson": room}
     event = _types.SimpleNamespace(sender="@homer:simpson")
@@ -278,10 +290,10 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     """One missing nanobot symbol must cost only its own tool.
 
     This is why each install runs in its own try. Sharing one block would
-    mean a renamed runner constant silently removed memory_search too, and
+    mean a moved agent loop silently removed memory_search too, and
     the agent would lose vault access over an unrelated upgrade.
     """
-    mods = nanobot(drop="nanobot.agent.runner._COMPACTABLE_TOOLS")
+    mods = nanobot(drop="nanobot.agent.loop.AgentLoop")
 
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
                                  "MemoryHistoryTool", "ListEditTool"}
@@ -299,10 +311,9 @@ def test_the_stub_can_actually_express_a_detached_shim(nanobot):
     tools = mods["nanobot.agent.tools.loader"]
     assert not hasattr(tools, "ToolLoader"), "the drop hook must really remove it"
 
-    # Nothing to append to, so neither tool can have registered anywhere.
-    tools = mods["nanobot.agent.runner"]._COMPACTABLE_TOOLS
-    assert "memory_search" in tools, (
-        "compact_tools is independent of the loader and should still attach"
+    # The briefing does not depend on the loader and still attaches.
+    assert mods["nanobot.agent.loop"].AgentLoop.__init__.__name__ == "_loop_init", (
+        "the briefing is independent of the loader and should still attach"
     )
 
 

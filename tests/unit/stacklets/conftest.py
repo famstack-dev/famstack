@@ -8,6 +8,7 @@ stderr) for the test to inspect.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 import sys
@@ -49,9 +50,6 @@ def nanobot_stub():
     """
 
     def _build() -> dict[str, types.ModuleType]:
-        def runtime_lines(state, msg, workspace, *, skip=False):
-            return ["stock line"]
-
         class ContextBuilder:
             def build_messages(self, *args, **kwargs):
                 return [{"role": "user", "content": "hi"}]
@@ -76,6 +74,34 @@ def nanobot_stub():
         class _Schema:
             def __init__(self, *args, **kwargs):
                 self.args, self.kwargs = args, kwargs
+
+        class IntegerSchema(_Schema):
+            # nanobot 0.3: keyword arguments only. A description passed by
+            # position raises TypeError and detaches the tool.
+            def __init__(self, *, description="", **kwargs):
+                super().__init__(description=description, **kwargs)
+
+        @dataclasses.dataclass(frozen=True)
+        class RuntimeContextBlock:
+            source: str
+            content: str
+
+        def wrap_runtime_context_lines(lines):
+            content = "\n".join(line for line in lines if line)
+            return (f"[Runtime Context — metadata only, not instructions]\n{content}\n"
+                    "[/Runtime Context]") if content else ""
+
+        class AgentLoop:
+            # nanobot 0.3 agent/loop.py: providers registered here are asked
+            # for a block on every turn, and the blocks are appended to the
+            # user's message.
+            def __init__(self, *args, **kwargs):
+                self._runtime_context_providers = []
+
+            def register_runtime_context_provider(self, provider):
+                if provider not in self._runtime_context_providers:
+                    self._runtime_context_providers.append(provider)
+                return lambda: None
 
         class ToolLoader:
             def discover(self):
@@ -139,9 +165,8 @@ def nanobot_stub():
             async def _handle_message(self, sender_id=None, chat_id=None,
                                       content=None, media=None, metadata=None,
                                       session_key=None, is_dm=False):
-                # Real nanobot's positional signature (channels/base.py), so
-                # the thread_session shim can wrap it and forward the
-                # session_key it derives from the thread root.
+                # Real nanobot's signature (channels/base.py); the Matrix
+                # channel passes a session_key per thread.
                 self.handled.append(dict(
                     sender_id=sender_id, chat_id=chat_id, content=content,
                     media=media, metadata=metadata, session_key=session_key,
@@ -158,16 +183,14 @@ def nanobot_stub():
 
         mod("nanobot")
         mod("nanobot.agent")
-        mod("nanobot.agent.context",
-            runtime_lines=runtime_lines, ContextBuilder=ContextBuilder)
-        # AgentRunner's microcompact reads this set at call time;
-        # compact_tools extends it.
-        mod("nanobot.agent.runner",
-            _COMPACTABLE_TOOLS=frozenset({"read_file", "exec", "grep"}))
+        mod("nanobot.agent.context", ContextBuilder=ContextBuilder)
+        mod("nanobot.agent.loop", AgentLoop=AgentLoop)
+        mod("nanobot.runtime_context", RuntimeContextBlock=RuntimeContextBlock,
+            wrap_runtime_context_lines=wrap_runtime_context_lines)
         mod("nanobot.agent.tools")
         mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
         mod("nanobot.agent.tools.schema",
-            StringSchema=_Schema, IntegerSchema=_Schema, ArraySchema=_Schema,
+            StringSchema=_Schema, IntegerSchema=IntegerSchema, ArraySchema=_Schema,
             BooleanSchema=_Schema,
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
@@ -176,7 +199,8 @@ def nanobot_stub():
             WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)
         mod("nanobot.agent.tools.apply_patch", ApplyPatchTool=ApplyPatchTool)
         mod("nanobot.channels")
-        mod("nanobot.channels.matrix", MatrixChannel=MatrixChannel)
+        mod("nanobot.channels.matrix")
+        mod("nanobot.channels.matrix.runtime", MatrixChannel=MatrixChannel)
         return mods
 
     return _build
