@@ -3,8 +3,8 @@
 Read from the outside, as the family reads the published page. What
 these tests promise:
 
-- The open items are the family's own todo list, exactly, and done
-  items are not shown.
+- The open items are the family's own lists naming the topic, exactly,
+  under each list's name, and done items are not shown.
 - Everything filed under the topic is listed under its kind with who
   filed it and when, newest first; what was filed elsewhere has a
   section of its own.
@@ -88,9 +88,24 @@ def _section(page: str, heading: str) -> str:
 
 
 class TestWhatTheCompilerLists:
-    def test_the_open_todos_as_the_family_keeps_them(self, brain):
+    def test_the_open_items_under_their_lists_name_as_the_family_keeps_them(self, brain):
         assert _section(_topic(brain, ANSWER), "Still to do") == (
-            "- [ ] Pack sunscreen\n- [ ] Find a dog sitter")
+            "**[Trip](/family/lists/trip.md)**\n- [ ] Pack sunscreen\n- [ ] Find a dog sitter")
+
+    def test_every_list_naming_the_topic_with_who_and_by_when(self, brain):
+        (brain / "family" / "lists" / "packing.md").write_text(
+            "---\ntype: list\ntitle: Packing\ntopics:\n  - trip\n---\n\n"
+            "- [ ] Tent [Homer](../people/homer.md) 📅 2026-10-13\n", encoding="utf-8")
+        page = _topic(brain, ANSWER)
+        still = page.split("## Still to do\n", 1)[1].split("\n## ", 1)[0].strip()
+        assert still == (
+            "**[Packing](/family/lists/packing.md)**\n- [ ] Tent · Homer · 📅 13 Oct 2026\n\n"
+            "**[Trip](/family/lists/trip.md)**\n- [ ] Pack sunscreen\n- [ ] Find a dog sitter")
+
+    def test_the_model_reads_the_open_items_but_does_not_write_them(self, brain):
+        model = _Model(ANSWER)
+        _topic(brain, ANSWER, model=model)
+        assert "Pack sunscreen" in model.prompts[0] and "Book the lodge" not in model.prompts[0]
 
     def test_notes_newest_first_with_who_and_when(self, brain):
         assert _section(_topic(brain, ANSWER), "Notes") == (
