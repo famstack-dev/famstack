@@ -946,7 +946,7 @@ def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
 
 
 def update_memory(config: dict, repo_path: str,
-                  transform: Callable[[str], str], *,
+                  transform: Callable[[str], str | None], *,
                   actor: str,
                   message: str | Callable[[str, str], str]) -> dict:
     """Commit a transform of one vault file to Forgejo, attributed to `actor`.
@@ -962,6 +962,8 @@ def update_memory(config: dict, repo_path: str,
     that can only describe its own edit once the transform has met the
     current file. The vault's history is read by people and by the agent, so
     a subject that names what changed is worth the indirection.
+
+    A transform answering `None` deletes the file (`ForgejoClient.edit_file`).
 
     Returns the framework envelope: `{"ok": True, "committed": bool}` on
     success (committed=False when the transform was a no-op, so nothing was

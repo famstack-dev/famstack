@@ -347,7 +347,7 @@ class ForgejoClient:
         )
 
     def edit_file(self, owner: str, repo: str, path: str,
-                  transform: Callable[[str], str], *,
+                  transform: Callable[[str], str | None], *,
                   message: str | Callable[[str, str], str], branch: str = "main",
                   author_name: str | None = None,
                   author_email: str | None = None) -> dict | None:
@@ -371,14 +371,25 @@ class ForgejoClient:
         Passing the function instead is what lets a commit subject say "ticked
         off Kühlbox" rather than "updated todos.md", and a history worth
         reading is the difference.
+
+        A transform answering `None` deletes the file, against the hash it
+        was read at and authored like any other edit, so removing a page is
+        the same decision on the same current text as changing it. Deleting
+        a file that is not there commits nothing.
         """
         existing = self.get_file(owner, repo, path, ref=branch)
         prior = existing.get("content", "") if existing else ""
         sha = existing.get("sha") if existing else None
         merged = transform(prior)
-        if merged == prior:
+        if merged == prior or (merged is None and not existing):
             return None
-        subject = message(prior, merged) if callable(message) else message
+        subject = message(prior, merged or "") if callable(message) else message
+        if merged is None:
+            return self.change_files(
+                owner, repo, [FileChange("delete", path, sha=sha or "")],
+                message=subject, branch=branch,
+                author_name=author_name, author_email=author_email,
+            )
         return self.put_file(
             owner, repo, path,
             content=merged, message=subject, branch=branch, sha=sha,

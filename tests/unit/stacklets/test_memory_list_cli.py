@@ -10,8 +10,9 @@ the family never declared, a list that does not exist.
 The `update_memory` seam is substituted, because the real one talks to
 Forgejo. The stand-in keeps what the command depends on: the transform
 gets the current file, a `ValueError` becomes an error envelope, an
-unchanged file commits nothing, and a commit reaches the vault on disk
-the way the real write-through pull does.
+unchanged file commits nothing, a `None` answer deletes the file, and a
+commit reaches the vault on disk the way the real write-through pull
+does.
 """
 
 from __future__ import annotations
@@ -67,11 +68,14 @@ def store(monkeypatch, tmp_path):
                 after = transform(before)
             except ValueError as e:
                 return {"error": str(e)}
-            if after == before:
+            if after == before or (after is None and not before):
                 return {"ok": True, "committed": False}
-            (vault / repo_path).parent.mkdir(parents=True, exist_ok=True)
-            (vault / repo_path).write_text(after, encoding="utf-8")
-            self.commits.append((repo_path, actor, message(before, after)))
+            if after is None:
+                (vault / repo_path).unlink()
+            else:
+                (vault / repo_path).parent.mkdir(parents=True, exist_ok=True)
+                (vault / repo_path).write_text(after, encoding="utf-8")
+            self.commits.append((repo_path, actor, message(before, after or "")))
             return {"ok": True, "committed": True, "path": repo_path, "mirrored": True}
 
     fake = _Store()
@@ -323,6 +327,49 @@ class TestRemovingAndMoving:
     def test_a_list_that_does_not_exist_is_refused_with_the_lists(self, run, groceries):
         result = run("move", "einkaufsliste", "Eier", "--to", "baumarkt", "--as", "marge")
         assert result["error"] == "no list 'baumarkt'. Lists: einkaufsliste"
+
+
+class TestDeletingAList:
+    """A list nobody needs any more is deleted, never emptied and left behind.
+
+    Deleting a list that still has open items needs `--yes`: the refusal
+    names them, so whoever asked can be asked whether those go too.
+    """
+
+    def test_a_list_with_nothing_open_is_deleted_in_one_commit(self, run, store, groceries):
+        result = run("delete", "einkaufsliste", "--as", "marge")
+        assert result["committed"] and not store.text(groceries)
+        assert store.commits[-1][1:] == ("marge", "chore(lists): marge deleted the list Einkaufsliste")
+
+    def test_the_answer_links_no_page_that_is_gone(self, run, groceries, capsys, monkeypatch):
+        monkeypatch.setattr(list_cli, "public", lambda page, base: f"https://home.example/go/{page}")
+        run("delete", "einkaufsliste", "--as", "marge")
+        assert capsys.readouterr().out.splitlines()[-1] == \
+            "deleted the list Einkaufsliste (by marge)"
+
+    def test_open_items_are_named_and_kept_without_yes(self, run, store, groceries):
+        run("add", "einkaufsliste", "Milch", "Äpfel", "--as", "marge")
+        result = run("delete", "einkaufsliste", "--as", "marge")
+        assert result["error"] == ("Einkaufsliste still has 2 open items: Milch; Äpfel. "
+                                   "Delete it with them: add --yes")
+        assert "Milch" in store.text(groceries)
+
+    def test_yes_deletes_it_with_its_open_items(self, run, store, groceries):
+        run("add", "einkaufsliste", "Milch", "--as", "marge")
+        assert run("delete", "einkaufsliste", "--yes", "--as", "marge")["committed"]
+        assert not store.text(groceries)
+        assert run("show")["lists"] == []
+
+    def test_its_archive_stays_as_the_history_of_what_was_bought(self, run, store, groceries):
+        archive = store.vault / "family" / "lists" / "archive" / "einkaufsliste" / "2026-09.md"
+        archive.parent.mkdir(parents=True)
+        archive.write_text("---\ntype: list\ntitle: Einkaufsliste\n---\n\n- [x] Milch ✅ 2026-09-02\n")
+        run("delete", "einkaufsliste", "--as", "marge")
+        assert archive.exists()
+
+    def test_a_list_that_does_not_exist_is_refused_with_the_lists(self, run, groceries):
+        assert run("delete", "baumarkt", "--as", "marge")["error"] == \
+            "no list 'baumarkt'. Lists: einkaufsliste"
 
 
 class TestTheHistory:
