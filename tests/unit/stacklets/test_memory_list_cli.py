@@ -325,6 +325,15 @@ class TestRemovingAndMoving:
         assert result["error"] == "no list 'baumarkt'. Lists: einkaufsliste"
 
 
+class TestTheHistory:
+    def test_a_long_change_counts_its_items_in_the_subject(self, run, store, groceries):
+        names = ["Hafermilch ohne Zucker", "Vollkornbrot vom Bäcker", "Bio-Joghurt Natur"]
+        run("add", "einkaufsliste", *names, "--as", "marge")
+        subject, _, body = store.commits[-1][2].partition("\n\n")
+        assert subject == "chore(lists): marge added 3 items to Einkaufsliste"
+        assert body == f"added {'; '.join(names)} to Einkaufsliste"
+
+
 class TestChangingAList:
     def test_a_list_joins_a_topic_room_after_the_fact(self, run, store, groceries):
         run("add", "einkaufsliste", "Milch", "--as", "marge")

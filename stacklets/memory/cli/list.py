@@ -598,11 +598,37 @@ def _commit(config, path: str, transform, actor: str,
 
 
 def _commit_message(actor: str, path: str, said: str) -> str:
-    """`chore(lists): marge added Joghurt to Einkaufsliste`; a long one moves to the body."""
+    """`chore(lists): marge added Joghurt to Einkaufsliste`, short enough for a subject.
+
+    When the sentence is too long, the subject counts the items instead of
+    naming them and the whole sentence moves to the body, so the history
+    still says what changed and to which list.
+    """
     line = f"chore(lists): {actor} {said}"
     if len(line) <= _SUBJECT_MAX:
         return line
-    return f"chore(lists): {actor} changed {path}\n\n{said}"
+    return f"chore(lists): {actor} {_counted(said, path)}\n\n{said}"
+
+
+# "moved A; B from Einkaufsliste to Wochenmarkt", "ticked off A; B on Einkaufsliste"
+_MOVED = re.compile(r"^moved (?P<items>.+) from (?P<a>.+) to (?P<b>[^;]+)$")
+_CHANGED = re.compile(r"^(?P<verb>added|ticked off|reopened|removed) (?P<items>.+) "
+                      r"(?P<prep>to|on|from) (?P<list>[^;]+)$")
+
+
+def _counted(said: str, path: str) -> str:
+    """The first clause of an answer with its items counted: `ticked off 3 items on Einkaufsliste`."""
+    clause = said.split("; '")[0]
+    if m := _MOVED.match(clause):
+        return f"moved {_items(m['items'])} from {m['a']} to {m['b']}"
+    if m := _CHANGED.match(clause):
+        return f"{m['verb']} {_items(m['items'])} {m['prep']} {m['list']}"
+    return f"changed {path}"
+
+
+def _items(names: str) -> str:
+    count = len(names.split("; "))
+    return "1 item" if count == 1 else f"{count} items"
 
 
 # ── Small things ─────────────────────────────────────────────────────────
