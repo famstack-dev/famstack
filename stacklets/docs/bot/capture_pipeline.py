@@ -28,6 +28,7 @@ from document_pipeline import utc_now_isoformat
 from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from notifier import Notifier
+from own_words import in_own_words
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
     has_ocr_text_layer,
@@ -43,6 +44,7 @@ from pipeline import (
     LLMUnavailableError,
 )
 from stack import resolve_model
+from stack.lists import list_path
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -260,9 +262,10 @@ class CapturePipeline:
         through; see ``capture_url``.
 
         ``transcribed`` marks a body that whisper produced rather than a
-        keyboard. It changes nothing about how the note is filed — only
-        whether the reply quotes the words back, which is the sender's
-        one chance to catch a mishearing.
+        keyboard. It decides whether the reply quotes the words back, the
+        sender's one chance to catch a mishearing, and counts the note as
+        the speaker's own words, the only notes that become todos (see
+        `own_words`).
         """
         source = await self._text_extractor.extract(text)
         if source is None:
@@ -276,6 +279,7 @@ class CapturePipeline:
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, transcribed=transcribed, write_in=write_in,
+            extract_action_items=in_own_words(text, spoken=transcribed),
         )
 
     async def capture_email(
@@ -631,8 +635,14 @@ class CapturePipeline:
         transcribed: bool = False,
         kept_media: dict | None = None,
         write_in: str | None = None,
+        extract_action_items: bool = False,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
+
+        ``extract_action_items`` asks the classifier for the todos in the
+        source. Only a note in the writer's own words does (`capture_text`);
+        links, files, emails and refiles never do, because their text is
+        somebody else's, or the model's own summary of it.
 
         ``existing_path`` + ``captured_at`` are the reprocess inputs --
         when re-classifying an already-filed capture we keep its
@@ -653,14 +663,7 @@ class CapturePipeline:
         localpart = sender_mxid.split(":")[0].lstrip("@")
         sender_name = localpart.capitalize()
         entity_slug = bucket or localpart.lower()
-        # A topic room's capture merges into that topic's list, so show the
-        # classifier the list it is about to add to. Extraction in isolation
-        # cannot tell a repeat from a new item, which is how re-posting one
-        # list six times grew it instead of leaving it alone.
-        current_list = ""
-        if kind == "note" and "/" in entity_slug:
-            current_list = await self._mirror.read_capture(
-                f"{entity_slug}/todos.md") or ""
+        current_list = await self._current_list(entity_slug) if extract_action_items else ""
 
         classification = await self._classify(
             source, sender_name, images=images, user_hint=user_hint,
@@ -668,10 +671,7 @@ class CapturePipeline:
             default_person=default_person,
             current_list=current_list,
             write_in=write_in,
-            # Todo extraction is opt-in per source kind: human-typed notes
-            # only. Bookmarks (saved URLs/snippets) stay out — that's the
-            # guard against a pasted thread manufacturing a household todo.
-            extract_action_items=(kind == "note"),
+            extract_action_items=extract_action_items,
         )
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
@@ -775,6 +775,18 @@ class CapturePipeline:
             transcript=transcript,
             scope=entity_slug,
         )
+
+    async def _current_list(self, entity_slug: str) -> str:
+        """The list a topic room's note adds to, for the classifier to see.
+
+        Extraction in isolation cannot tell a repeat from a new item, which
+        is how re-posting one list six times grew it instead of leaving it
+        alone. Only a topic room (`<bucket>/<topic>`) has a list to show.
+        """
+        bucket, _, topic = entity_slug.partition("/")
+        if not topic:
+            return ""
+        return await self._mirror.read_capture(list_path(topic, bucket=bucket)) or ""
 
     async def _family_names(self) -> list[str]:
         """The family's first names: the person files, else the Person tags."""
