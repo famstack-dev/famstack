@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
 
 # Strip footnote/citation markers the curator leaves in generated pages, e.g.
@@ -55,20 +56,24 @@ def _lead(path: Path, maxwords: int = 32) -> str:
 
 
 def _lists_with_open_items(vault: Path, topic: str) -> list[str]:
-    """Slugs of the lists that name `topic` and have an open item.
+    """Slugs of the lists that name `topic` and have an open item."""
+    return [path.stem for path in _lists_naming(vault, topic)
+            if re.search(r"^\s*[-*+] \[ \] ", path.read_text(errors="ignore"), re.M)]
 
-    Read off the list files (`family/lists/<slug>.md`) without the
-    framework, which this container does not carry: the `topics:` block
-    of the frontmatter and the open checkboxes are all it needs.
+
+def _lists_naming(vault: Path, topic: str) -> list[Path]:
+    """The list files (`family/lists/<slug>.md`) whose `topics:` name `topic`.
+
+    Read without the framework, which this container does not carry: the
+    `topics:` block of the frontmatter is all it needs.
     """
     found = []
     for path in sorted((vault / "family" / "lists").glob("*.md")):
-        text = path.read_text(errors="ignore")
-        head, _, body = text.partition("\n---\n")
-        topics = re.search(r"^topics:\n((?:  - .*\n?)+)", head, re.M)
-        named = [ln.strip()[2:].strip().strip('"') for ln in topics[1].splitlines()] if topics else []
-        if topic in named and re.search(r"^\s*[-*+] \[ \] ", body, re.M):
-            found.append(path.stem)
+        head = path.read_text(errors="ignore").partition("\n---\n")[0]
+        block = re.search(r"^topics:\n((?:  - .*\n?)+)", head, re.M)
+        named = [ln.strip()[2:].strip().strip('"') for ln in block[1].splitlines()] if block else []
+        if topic in named:
+            found.append(path)
     return found
 
 
@@ -85,19 +90,50 @@ def _recent(vault: Path, topic: str, n: int = 3) -> list[str]:
     return [s for s in out if "docs(memory): refresh" not in s][:n]
 
 
-def _slug_candidates(raw: str) -> list[str]:
-    """Map a Matrix room label to a vault topic slug, best-effort.
+# The archivist binds a room named "Thema: <Name>" or "Topic: <Name>" to the
+# topic it derives from the name (stacklets/docs/bot/topic_rooms.py). This
+# container cannot import that module, so the rule is restated here, and a
+# unit test holds the two to the same answers. A room renamed after it was
+# bound keeps its first slug, which a name cannot tell; such a room is missed.
+_TOPIC_ROOM = re.compile(r"^\s*(?:thema|topic)\s*:\s*(?P<body>\S.*?)\s*$", re.IGNORECASE)
+_MAX_SLUG_CHARS = 40
 
-    Topic rooms are named 'Topic: <Title>' with alias '#topic-<slug>'; bot-runner
-    rooms are '<Name> Room'. Strip those markers, then kebab-case. (Titles with
-    non-ASCII characters won't round-trip cleanly here - the canonical alias is
-    the robust source; using it is a follow-up.)
+
+def topic_slug(display: str) -> str:
+    """The slug the archivist gives a topic room named `display`: `Einkäufe` → `einkaufe`."""
+    folded = unicodedata.normalize("NFKD", display)
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch)).lower()
+    folded = re.sub(r"[^a-z0-9]+", "-", folded).strip("-")
+    if len(folded) > _MAX_SLUG_CHARS:
+        folded = folded[:_MAX_SLUG_CHARS]
+        if (cut := folded.rfind("-")) > 0:
+            folded = folded[:cut]
+        folded = folded.strip("-")
+    return folded
+
+
+def _slug_candidates(raw: str) -> list[str]:
+    """The topic slugs a room label could stand for, the archivist's first.
+
+    Besides `Thema: …` and `Topic: …`, a label can be a room's alias
+    (`#topic-camping`) or a bot-runner room's name (`Camping Room`).
     """
-    s = str(raw).strip().lstrip("#").strip()
-    s = re.sub(r"^topic[:\-\s]+", "", s, flags=re.I)  # "Topic: X" or "topic-x"
-    s = re.sub(r"\s+Room$", "", s, flags=re.I)
-    base = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
-    return [base] if base else []
+    label = str(raw).strip()
+    candidates = []
+    if room := _TOPIC_ROOM.match(label):
+        candidates.append(topic_slug(room["body"]))
+    alias = re.sub(r"^topic[-\s]+", "", label.lstrip("#").strip(), flags=re.I)
+    candidates.append(topic_slug(re.sub(r"\s+Room$", "", alias, flags=re.I)))
+    return [c for c in dict.fromkeys(candidates) if c]
+
+
+def _topic_known(vault: Path, slug: str) -> bool:
+    """A topic the vault knows: it has a page, or a list belongs to it.
+
+    A room kept only for lists, such as a shopping room, has no page until
+    something is filed there, and is still the place its lists belong.
+    """
+    return (vault / "family" / slug / "about.md").exists() or bool(_lists_naming(vault, slug))
 
 
 def topic_for_room_label(raw: str, vault: Path) -> str:
@@ -109,10 +145,7 @@ def topic_for_room_label(raw: str, vault: Path) -> str:
     guessing wrong produces a bot that promises to describe a topic
     that does not exist.
     """
-    for cand in _slug_candidates(raw):
-        if (vault / "family" / cand / "about.md").exists():
-            return cand
-    return ""
+    return next((c for c in _slug_candidates(raw) if _topic_known(vault, c)), "")
 
 
 def _topic_slug(msg, vault: Path) -> str:
@@ -155,8 +188,9 @@ def brief_lines(msg, workspace) -> list[str]:
         # Pointers, not data: name the topic and how to fetch its overview, so the
         # model reads the real page instead of reciting a stale snippet (the trap
         # the todo list was). Consistent with the todos pointer just below.
-        lines.append(f"This room's topic is '{topic}'; run "
-                     f"`stack memory topic {topic}` for its overview.")
+        overview = (vault / "family" / topic / "about.md").exists()
+        lines.append(f"This room's topic is '{topic}'"
+                     + (f"; run `stack memory topic {topic}` for its overview." if overview else "."))
         lists = _lists_with_open_items(vault, topic)
         if lists:
             # Presence, not the data, and not even the count: a number is still
@@ -167,6 +201,7 @@ def brief_lines(msg, workspace) -> list[str]:
         recent = _recent(vault, topic)
         if recent:
             lines.append("Recently: " + "; ".join(recent))
-        lines.append(f"(Full topic: vault/family/{topic}/)")
+        if overview:
+            lines.append(f"(Full topic: vault/family/{topic}/)")
 
     return lines

@@ -1,8 +1,9 @@
-"""The agent's brief names the topic's lists that have something open.
+"""What the agent's brief says about the room's topic and its lists.
 
 A pointer, not the items: the brief goes stale within the turn, so it
 says which lists to fetch and how, and the agent reads the live list
-when someone asks.
+when someone asks. Which topic a room is follows the archivist's rule
+for topic rooms, `Thema: Einkauf` or `Topic: Camping`.
 """
 
 from __future__ import annotations
@@ -11,10 +12,14 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from brief import brief_lines  # noqa: E402
+from brief import brief_lines, topic_for_room_label  # noqa: E402
+from topic_rooms import parse_topic_name  # noqa: E402
 
 PACKING = "---\ntype: list\ntitle: Packliste\ntopics:\n  - camping\n---\n\n- [ ] Zelt\n"
 DONE = "---\ntype: list\ntitle: Erledigt\ntopics:\n  - camping\n---\n\n- [x] Gas\n"
@@ -36,3 +41,46 @@ def _brief(tmp_path) -> list[str]:
 def test_names_only_the_topics_lists_with_open_items(tmp_path):
     assert ("This topic's lists with open items: packliste; run "
             "`stack memory list show <list>` to see one.") in _brief(tmp_path)
+
+
+# ── Which topic a room is ────────────────────────────────────────────────
+
+ROOM_NAMES = ["Thema: Einkauf", "Thema: Einkäufe & Besorgungen", "Topic: Itchy & Scratchy Land",
+              "thema:Café Müller", "Topic: " + "Ein sehr langer Name für ein Thema " * 3]
+
+
+def _vault_with_list(tmp_path, topic: str) -> Path:
+    lists = tmp_path / "family" / "lists"
+    lists.mkdir(parents=True)
+    (lists / "einkaufsliste.md").write_text(
+        f"---\ntype: list\ntitle: Einkaufsliste\ntopics:\n  - {topic}\n---\n\n- [ ] Milch\n")
+    return tmp_path
+
+
+def test_a_german_topic_room_is_the_topic_the_archivist_bound_it_to(tmp_path):
+    assert topic_for_room_label("Thema: Einkauf", _vault_with_list(tmp_path, "einkauf")) == "einkauf"
+
+
+def test_a_room_kept_only_for_lists_is_known_by_its_lists(tmp_path):
+    """No page yet, because nothing was filed there; its list makes it a topic."""
+    vault = _vault_with_list(tmp_path, "einkaufe-besorgungen")
+    assert topic_for_room_label("Thema: Einkäufe & Besorgungen", vault) == "einkaufe-besorgungen"
+
+
+def test_a_room_no_topic_knows_is_none(tmp_path):
+    assert topic_for_room_label("Thema: Garten", _vault_with_list(tmp_path, "einkauf")) == ""
+
+
+@pytest.mark.parametrize("name", ROOM_NAMES)
+def test_the_agent_and_the_archivist_derive_the_same_topic(tmp_path, name):
+    """The agent cannot import the archivist's rule, so it restates it; this holds them together."""
+    slug = parse_topic_name(name).slug
+    assert topic_for_room_label(name, _vault_with_list(tmp_path, slug)) == slug
+
+
+def test_the_brief_offers_no_overview_a_topic_does_not_have(tmp_path):
+    vault = tmp_path / "vault"
+    _vault_with_list(vault, "einkauf")
+    lines = brief_lines(SimpleNamespace(metadata={"room": "Thema: Einkauf"}, sender_id=""), tmp_path)
+    assert lines[0] == "This room's topic is 'einkauf'."
+    assert "einkaufsliste" in lines[1]
