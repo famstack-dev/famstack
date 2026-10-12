@@ -216,6 +216,35 @@ def test_a_reply_in_the_agents_own_thread_is_processed(nanobot):
     assert channel.processed == [event]
 
 
+def test_a_reply_to_the_agents_message_is_processed(nanobot):
+    """Reply to Stacky's question, no name, no pill: the reply is the address."""
+    import asyncio
+    import types as _types
+
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    room = _room_with_thread(channel, root_sender=channel.config.user_id)
+    event = _types.SimpleNamespace(sender="@marge:home.local", source={"content": {
+        "body": "the oat one", "m.relates_to": {"m.in_reply_to": {"event_id": "$which"}}}})
+
+    asyncio.run(channel._on_message(room, event))
+
+    assert channel.processed == [event]
+
+
+def test_a_reply_to_someone_else_is_left_alone(nanobot):
+    import asyncio
+    import types as _types
+
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    room = _room_with_thread(channel, root_sender="@homer:home.local")
+    event = _types.SimpleNamespace(sender="@marge:home.local", source={"content": {
+        "body": "the oat one", "m.relates_to": {"m.in_reply_to": {"event_id": "$homers"}}}})
+
+    asyncio.run(channel._on_message(room, event))
+
+    assert channel.processed == []
+
+
 def test_another_bots_thread_is_left_alone(nanobot):
     """The shim widens the gate; it must not open it.
 

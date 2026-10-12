@@ -14,7 +14,9 @@ root, and nobody says the other person's name on every line of one.
          put those on the list too           <- addressed, no name
 
 So this module supplies the other half of the gate: a message in a
-thread the agent is part of counts as being spoken to.
+thread the agent is part of counts as being spoken to. So does a plain
+reply to one of the agent's own messages (`replied_to`, `AgentMessages`):
+whoever taps Reply on the agent's question is answering the agent.
 
 WHICH THREADS
 
@@ -90,6 +92,54 @@ def thread_root(event) -> str | None:
         return None
     root = relation.get("event_id")
     return root if isinstance(root, str) and root else None
+
+
+def replied_to(event) -> str | None:
+    """The id of the message `event` replies to, or None if it is no plain reply.
+
+    A message inside a thread carries an `m.in_reply_to` too, as the
+    fallback for clients without threads; that one is the thread rule's
+    business (`thread_root`), not a reply.
+    """
+    source = getattr(event, "source", None)
+    content = source.get("content") if isinstance(source, dict) else None
+    relation = content.get("m.relates_to") if isinstance(content, dict) else None
+    if not isinstance(relation, dict) or relation.get("rel_type") == "m.thread":
+        return None
+    reply = relation.get("m.in_reply_to")
+    target = reply.get("event_id") if isinstance(reply, dict) else None
+    return target if isinstance(target, str) and target else None
+
+
+class AgentMessages:
+    """The agent's own messages that someone replied to.
+
+    A reply names the message it answers, which is as clear an address as
+    the agent's name, and it does not depend on the family's app marking
+    the agent as mentioned. A reply to a person's message, or to another
+    bot's, is theirs. Same shape as `AgentThreads`: `observe` asks the
+    homeserver once and remembers a yes, `includes` is the gate's lookup.
+    """
+
+    def __init__(self) -> None:
+        self._ours: set[str] = set()
+
+    def includes(self, event_id: str) -> bool:
+        return event_id in self._ours
+
+    async def observe(self, client, room_id: str, event_id: str, agent_user_id: str) -> bool:
+        """Settle whether `event_id` is the agent's message; any failure reads as no."""
+        if event_id in self._ours:
+            return True
+        try:
+            resp = await client.room_get_event(room_id, event_id)
+        except Exception:
+            _log.debug("replied-to event fetch failed for %s", event_id, exc_info=True)
+            return False
+        if getattr(getattr(resp, "event", None), "sender", None) != agent_user_id:
+            return False
+        self._ours.add(event_id)
+        return True
 
 
 class AgentThreads:
