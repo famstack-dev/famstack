@@ -21,6 +21,7 @@ import pytest
 
 from stack.lists import (
     Item,
+    Link,
     ListError,
     format_item,
     insert_item,
@@ -29,6 +30,7 @@ from stack.lists import (
     parse_item,
     person_link,
     read_list,
+    relink,
 )
 
 GROCERIES = list_path("einkaufsliste", bucket="family")
@@ -187,3 +189,13 @@ def test_link_targets_are_vault_paths():
     """A link outside the vault is not a field: it could never be resolved."""
     item = parse_item("- [ ] Milch [x](../../../etc/passwd.md)", path=GROCERIES)
     assert item.links == ()
+
+
+def test_a_renamed_record_keeps_its_items_linked():
+    old, new = "family/documents/2026/10/a-p1.md", "family/documents/2026/10/b-p1.md"
+    text = insert_item(_groceries(), Item("Pay", links=(Link("Bill", old),), due="2026-10-30"),
+                       path=GROCERIES)
+    moved = relink(text, old, new, path=GROCERIES)
+    assert read_list(moved, path=GROCERIES).items[0].sources == (new,)
+    assert "📅 2026-10-30" in moved
+

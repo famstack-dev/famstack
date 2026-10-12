@@ -55,6 +55,9 @@ DOMAIN_ALLOW = [
     # One item on a list, by name. The store matches the item and keeps
     # the rest of the page intact, so a tick cannot lose other state.
     ["memory", "list-edit"],
+    # The family's lists: which exist, what is open on one, and the same
+    # item verbs `list_edit` uses.
+    ["memory", "list"],
     # What changed, when, and who did it. The vault is a git repo and has
     # always known this; nothing read it back until now.
     ["memory", "history"],

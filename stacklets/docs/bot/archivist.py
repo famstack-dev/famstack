@@ -742,8 +742,8 @@ class ArchivistBot(MicroBot):
         slug only has to avoid collisions with within-bucket reserved
         directories: the capture-type folders the mirror writes
         (`notes`, `bookmarks`, `documents`), the correspondent index
-        used in the shared bucket, the `_unfiled` rescue folder, and
-        the derived `about` page.
+        used in the shared bucket, the family's `lists`, the `_unfiled`
+        rescue folder, and the derived `about` page.
 
         Top-level vault names (`family`, `homer`, `marge`, `meta`,
         `wiki`, `archive`) no longer need to appear here -- the new
@@ -753,7 +753,7 @@ class ArchivistBot(MicroBot):
 
         return {
             "notes", "bookmarks", "documents",
-            "correspondents", "_unfiled", "about",
+            "correspondents", "lists", "_unfiled", "about",
         }
 
     async def _read_topic_state(self, room_id: str) -> dict | None:

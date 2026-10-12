@@ -389,11 +389,12 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     # nothing unless the writer is plainly keeping a list, and a note that
     # read like a test ticket was filed as information about half the time.
     # The model words the item itself, so the check is on the one phrase it
-    # keeps; todos.md is under this run's own topic, which makes it unique.
+    # keeps; the topic's list is named after this run's own topic, which
+    # makes it unique.
     captured_item = "pick up the dry cleaning"
     captured_phrase = "dry cleaning"
     token = f"demo-rig-capture-todo-{scope.uid}"
-    path = f"{MEMORY_OWNER}/{topic}/todos.md"
+    path = f"{MEMORY_OWNER}/lists/{topic}.md"
     about_path = f"{MEMORY_OWNER}/{topic}/about.md"
     bot_mxid = f"@archivist-bot:{server_name}"
     marge_creds = demo_matrix["marge"]
@@ -501,7 +502,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
             ),
         )
 
-        bdd.then("The capture action item is folded into memory todos.md")
+        bdd.then("The capture action item lands on the topic's list")
         memory_todos = await _wait_for_repo_file_containing(
             demo_code, MEMORY_REPO, path, captured_phrase, timeout=120,
         )
@@ -509,7 +510,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
 
         # `stack memory sync` triggers the curator to mirror source AND
         # rebuild the wiki now, bypassing its 180s batching debounce.
-        # One call makes both the source (todos.md) and the generated
+        # One call makes both the source (the list) and the generated
         # page (about.md) current in LLM-time — the rig's fast path.
         bdd.and_("An explicit sync makes source and wiki current now")
         synced = _run_stack("memory", "sync")
