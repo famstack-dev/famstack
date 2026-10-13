@@ -312,6 +312,19 @@ def test_a_refused_delete_tells_the_model_to_ask_naming_what_is_open(vault_tools
     assert "--yes" not in answer
 
 
+def test_a_list_change_is_committed_as_whoever_sent_the_message(vault_tools, monkeypatch):
+    """Two rooms answered at once each commit as their own sender.
+
+    The sender used to be a module global set by the latest briefing, so
+    a briefing for Bart's message could put his name on Homer's change.
+    """
+    import sys as _sys
+    monkeypatch.setattr(_sys.modules["nanobot.agent.tools.context"], "current_request_context",
+                        lambda: types.SimpleNamespace(turn_id="turn-1", sender_id="@marge:simpson"))
+    argv = argv_of(vault_tools["list_edit"], op="add", list="einkaufsliste", items=["Eier"])
+    assert argv[argv.index("--as") + 1] == "marge"
+
+
 def test_a_yes_without_a_refusal_before_it_deletes_nothing_open(vault_tools, monkeypatch):
     sent = deletes(vault_tools["list_edit"], [("turn-1", True, REFUSED)], monkeypatch)
     assert sent == [False]
