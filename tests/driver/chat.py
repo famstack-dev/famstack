@@ -27,8 +27,9 @@ def speak(instance: Instance, who: str, room: str, text: str, recording: str | N
     return send(instance, who, room, audio)
 
 
-def send(instance: Instance, who: str, room: str, path: Path) -> dict:
-    return instance.stack("messages", "upload", room, instance.put(path), "--as", who)
+def send(instance: Instance, who: str, room: str, path: Path, caption: str = "") -> dict:
+    extra = ("--caption", caption) if caption else ()
+    return instance.stack("messages", "upload", room, instance.put(path), "--as", who, *extra)
 
 
 def react(instance: Instance, who: str, room: str, event: str, emoji: str) -> dict:
