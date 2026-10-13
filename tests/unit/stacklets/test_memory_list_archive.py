@@ -77,3 +77,23 @@ def test_a_quiet_night_changes_nothing(httpserver):
     client = ForgejoClient(url=httpserver.url_for(""), token="bottoken")
 
     assert nightly.archive_lists(client, bucket="family", today="2026-10-12") == ([], 0)
+
+
+def test_the_morning_after_an_appointment_it_is_off_the_calendar(httpserver):
+    calendar = ("---\ntype: list\ntitle: Termine\nkind: calendar\n---\n\n"
+                "- [ ] Theater 📅 2026-11-03\n- [ ] Elternabend 📅 2026-11-17\n")
+    httpserver.expect_request(f"{CONTENTS}/family/lists", method="GET").respond_with_json(
+        [{"type": "file", "path": "family/lists/termine.md"}])
+    httpserver.expect_request(f"{CONTENTS}/family/lists/termine.md", method="GET") \
+        .respond_with_json(_file(calendar, "cal-sha"))
+    httpserver.expect_request(f"{CONTENTS}/family/lists/archive/termine/2026-11.md",
+                              method="GET").respond_with_data("", status=404)
+    client = ForgejoClient(url=httpserver.url_for(""), token="bottoken")
+
+    changes, moved = nightly.archive_lists(client, bucket="family", today="2026-11-04")
+
+    assert moved == 1
+    by_path = {c.path: c for c in changes}
+    left = read_list(by_path["family/lists/termine.md"].content, path="family/lists/termine.md")
+    assert [i.text for i in left.items] == ["Elternabend"]
+    assert by_path["family/lists/archive/termine/2026-11.md"].operation == "create"

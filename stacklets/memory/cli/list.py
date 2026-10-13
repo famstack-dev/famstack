@@ -41,7 +41,9 @@ from lib import (  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
 from stack.lists import (  # noqa: E402
     ARCHIVE_DIR,
+    CALENDAR,
     KINDS,
+    TODO,
     LISTS_DIR,
     FamilyList,
     Item,
@@ -76,6 +78,9 @@ USAGE = """\
     stack memory list move einkaufsliste Eier --to markt --as marge
     stack memory list create packliste --title Packliste --kind checklist --as marge
                                                     ticked items stay until a reset
+    stack memory list create termine --title Termine --kind calendar --as marge
+                                                    in date order, each entry gone
+                                                    the day after its date
     stack memory list reset packliste --as marge     reopen every ticked item
     stack memory list set einkaufsliste --topic einkauf --as marge
                                                     the list's title, description, topics,
@@ -209,9 +214,11 @@ def show(vault: Path, slug: str | None, *, show_all: bool) -> dict:
             print("No lists yet. Start one with `stack memory list create`.")
         for lst in lists:
             about = f"  ({lst.description})" if lst.description else ""
-            print(f"{lst.slug}: {lst.title}, {len(lst.open_items)} open{about}")
+            kind = f" ({lst.kind})" if lst.kind != TODO else ""
+            print(f"{lst.slug}: {lst.title}{kind}, {len(lst.open_items)} open{about}")
         return {"lists": [{"slug": x.slug, "title": x.title, "description": x.description,
-                           "topics": x.topics, "open": len(x.open_items)} for x in lists]}
+                           "kind": x.kind, "topics": x.topics, "open": len(x.open_items)}
+                          for x in lists]}
 
     path, lst = _find_list(vault, slug)
     items = lst.items if show_all else lst.open_items
@@ -361,6 +368,9 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     due = ns.due
     if due and not _ISO_DAY.match(due):
         raise Refusal(f"--due {due!r} is not a date like 2026-10-14")
+    undated = [by_slug[t][1].title for t in plan if by_slug[t][1].kind == CALENDAR and not due]
+    if undated:
+        raise Refusal(f"an entry on {undated[0]} needs its date: --due YYYY-MM-DD")
     people = _people(vault, config, ns.people)
     return _combined([_add_to(config, *by_slug[target], entries, people, due, actor)
                       for target, entries in plan.items()])
