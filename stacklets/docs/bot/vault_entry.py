@@ -445,6 +445,7 @@ def render_capture(
     action_items: list | None = None,
     kept_media: dict | None = None,
     caption: str = "",
+    replies: "list[tuple[str, str]] | tuple" = (),
 ) -> str:
     """Assemble the mirror file for a capture entry (kind=note|bookmark).
 
@@ -481,6 +482,8 @@ def render_capture(
             be downloaded rather than displayed.
         caption: What the sender wrote with an upload, kept as written.
             The summary is the model's reading of it; this is the record.
+        replies: ``(author, words)`` for each reply in the capture's thread,
+            in the order they came, kept as written for the same reason.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -544,10 +547,17 @@ def render_capture(
                 parts.append(f"> {ln}" if ln else ">")
             parts.append("")
 
-    # Last on the page, so a correction can read it back as everything
-    # after its heading (`capture_pipeline._caption_from`).
+    # The family's own words close the page, so a correction can read
+    # them back by their headings (`capture_pipeline._caption_from`,
+    # `_replies_from`). Replies look as they do on a diary card.
     if caption.strip():
         parts.extend(["## Caption", "", caption.strip(), ""])
+    if replies:
+        parts.extend(["## Replies", ""])
+        for who, words in replies:
+            parts.append(f"**{who}**")
+            parts.extend(f"> {ln}" if ln else ">" for ln in words.strip().splitlines())
+            parts.append("")
 
     return "\n".join(parts)
 

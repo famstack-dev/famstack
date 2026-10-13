@@ -1222,6 +1222,61 @@ class TestAPhotosCaption:
         assert self.CAPTION in classifier.saw_text
 
 
+class TestARepliesWordsStayOnTheEntry:
+    """A reply in a capture's thread refiles it with the reply as the
+    sender's note. The model works the reply into the summary in its own
+    words; the entry also keeps the reply as it was written, with whoever
+    wrote it, so nothing the family said about the item is lost to a
+    paraphrase. Each reply adds to the ones before it."""
+
+    PATH = "family/painting/bookmarks/test-capture.md"
+
+    def _entry(self, **over) -> str:
+        args = dict(
+            frontmatter=capture_frontmatter(
+                title="Raku-Schale", captured_at="2026-10-13", kind="bookmark",
+                source_uri="mxc://home.test/x", persons=["Marge"],
+                tags=["keramik"], model=None, capture_id="$img:home.test",
+            ),
+            body="", kind="bookmark", captured_at="2026-10-13",
+            source_uri="mxc://home.test/x", persons=["Marge"],
+            from_path=self.PATH, shared_bucket="family",
+            summary="Eine Raku-Schale.", facts=[],
+        )
+        args.update(over)
+        return render_capture(**args)
+
+    async def _reply(self, entry: str, text: str, sender: str = "@marge:s"):
+        mirror = FakeMirror()
+        mirror._stored = {self.PATH: entry}
+        await _pipeline(mirror=mirror).reprocess(
+            vault_path=self.PATH, user_hint=text, sender_mxid=sender,
+            reply_text=text,
+        )
+        return mirror.captures[-1]
+
+    @pytest.mark.asyncio
+    async def test_a_reply_is_kept_with_its_author(self):
+        published = await self._reply(self._entry(), "950 Grad war zu heiß, nächstes Mal 900.")
+        assert published["replies"] == [("Marge", "950 Grad war zu heiß, nächstes Mal 900.")]
+
+    @pytest.mark.asyncio
+    async def test_a_second_reply_joins_the_first_and_the_caption_stays(self):
+        entry = self._entry(caption="Raku im Garten",
+                            replies=[("Marge", "Glasur dünner auftragen.")])
+        published = await self._reply(entry, "Sofort ins Sägemehl.", sender="@homer:s")
+        assert published["replies"] == [
+            ("Marge", "Glasur dünner auftragen."), ("Homer", "Sofort ins Sägemehl."),
+        ]
+        assert published["caption"] == "Raku im Garten"
+
+    @pytest.mark.asyncio
+    async def test_the_same_reply_twice_is_kept_once(self):
+        entry = self._entry(replies=[("Marge", "Glasur dünner auftragen.")])
+        published = await self._reply(entry, "Glasur dünner auftragen.")
+        assert published["replies"] == [("Marge", "Glasur dünner auftragen.")]
+
+
 class TestTheRoomsLanguageReachesTheClassifier:
     """A room can choose the language its captures are written in
     (`!config language`). Every capture entry point hands that choice to

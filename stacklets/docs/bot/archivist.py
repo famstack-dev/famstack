@@ -1269,6 +1269,7 @@ class ArchivistBot(MicroBot):
                 room_id, capture_path, hint, event.sender, reply_to,
                 initial_classification=initial,
                 capture_id=envelope.get("data", {}).get("capture_id"),
+                reply_text=_strip_reply_fallback(event.body or ""),
             )
             return True
         return False
@@ -1430,6 +1431,7 @@ class ArchivistBot(MicroBot):
         sender_mxid: str, reply_to: str,
         *, initial_classification: dict | None = None,
         capture_id: str | None = None,
+        reply_text: str = "",
     ) -> None:
         """Re-classify a capture with the user's reply as a hint.
 
@@ -1440,7 +1442,8 @@ class ArchivistBot(MicroBot):
 
         ``capture_id`` is the event the capture was filed from. Its
         caption is read off that event again, so a correction restores
-        a caption an earlier filing dropped.
+        a caption an earlier filing dropped. ``reply_text`` is the words
+        of this reply, which the entry keeps as written.
         """
         upload = await self._fetch_event(room_id, capture_id)
         caption = (
@@ -1453,6 +1456,7 @@ class ArchivistBot(MicroBot):
             initial_classification=initial_classification,
             write_in=await self._write_in(room_id),
             caption=caption,
+            reply_text=reply_text,
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
