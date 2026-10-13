@@ -232,7 +232,13 @@ def nanobot_stub():
 
         mod("nanobot.events", ContextCompactionEvent=ContextCompactionEvent)
         mod("nanobot.bus")
-        mod("nanobot.bus.outbound_events", ProgressEvent=ProgressEvent)
+        @dataclasses.dataclass(frozen=True)
+        class StreamedResponseEvent:
+            # nanobot 0.3 bus/outbound_events.py: marks a final answer that was streamed.
+            pass
+
+        mod("nanobot.bus.outbound_events", ProgressEvent=ProgressEvent,
+            StreamedResponseEvent=StreamedResponseEvent)
         mod("nanobot.runtime_context", RuntimeContextBlock=RuntimeContextBlock,
             wrap_runtime_context_lines=wrap_runtime_context_lines)
         mod("nanobot.agent.tools")
