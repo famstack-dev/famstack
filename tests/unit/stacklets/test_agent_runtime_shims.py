@@ -420,38 +420,6 @@ def test_a_typed_message_is_not_held_for_a_transcript(nanobot, monkeypatch):
 
 # ── the answer to the agent's own question ───────────────────────────────
 
-def test_the_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
-    """"Sollen die auch weg?" "Ja, die können weg." reaches the agent; once."""
-    import asyncio
-    import dataclasses
-    import types as _types
-
-    @dataclasses.dataclass
-    class _Outbound:
-        chat_id: str
-        content: str
-        metadata: dict
-        event: object = None
-
-    class _Text:
-        sender = "@homer:simpson"
-        body = "Ja, die können weg."
-        pill_mention = False
-        source = {"content": {"msgtype": "m.text", "body": "Ja, die können weg."}}
-
-    monkeypatch.setenv("AGENT_NAME", "Stacky")
-    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
-    kitchen = _types.SimpleNamespace(room_id="!kitchen")
-    asyncio.run(channel._handle_message(
-        sender_id="@homer:simpson", chat_id="!kitchen",
-        content="Stacky, lösch die Partyliste", metadata={"event_id": "$ask"}))
-    asyncio.run(channel.send(_Outbound(
-        "!kitchen", "Die Partyliste hat noch 2 offene Punkte. Sollen die auch weg?", {})))
-
-    assert channel._should_process_message(kitchen, _Text())
-    assert not channel._should_process_message(kitchen, _Text()), "only the first answer"
-
-
 def _said(text, sender="@homer:simpson"):
     class _Text:
         body = text
@@ -471,6 +439,72 @@ def _asks_homer(channel, *, event_id="$ask"):
     asyncio.run(channel.send(_outbound(
         "Die Partyliste hat noch 2 offene Punkte. Sollen die auch weg?",
         metadata={"event_id": event_id})))
+
+
+def test_the_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
+    """"Sollen die auch weg?" "Ja, die können weg." reaches the agent; once."""
+    import types as _types
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    _asks_homer(channel)
+
+    kitchen = _types.SimpleNamespace(room_id="!kitchen")
+    assert channel._should_process_message(kitchen, _said("Ja, die können weg."))
+    assert not channel._should_process_message(kitchen, _said("Ja, die können weg.")), \
+        "only the first answer"
+
+
+def test_a_notice_from_nanobot_leaves_the_question_open(nanobot, monkeypatch):
+    """nanobot's notices carry text ("Compressing context…") but are not the agent speaking."""
+    import asyncio
+    import types as _types
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+    _asks_homer(channel)
+    compaction = mods["nanobot.events"].ContextCompactionEvent
+    asyncio.run(channel.send(_outbound("Context compacted.",
+                                       event=compaction(phase="succeeded"))))
+
+    kitchen = _types.SimpleNamespace(room_id="!kitchen")
+    assert channel._should_process_message(kitchen, _said("Ja, die können weg."))
+
+
+def test_a_spoken_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
+    import types as _types
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    _asks_homer(channel)
+
+    kitchen = _types.SimpleNamespace(room_id="!kitchen")
+    assert channel._should_process_message(kitchen, _voice())
+    _hand_over(channel, "Ja, die können weg.")
+
+    assert channel.handled[-1]["content"] == "Voice message\n[transcription: Ja, die können weg.]"
+
+
+def test_the_question_is_for_the_person_whose_message_it_answers(nanobot, monkeypatch):
+    """Bart writing while Homer's answer is on its way does not make it Bart's question."""
+    import asyncio
+    import types as _types
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    asyncio.run(channel._handle_message(
+        sender_id="@homer:simpson", chat_id="!kitchen",
+        content="Stacky, lösch die Partyliste", metadata={"event_id": "$homer"}))
+    asyncio.run(channel._handle_message(
+        sender_id="@bart:simpson", chat_id="!kitchen",
+        content="Stacky, was gibt es heute?", metadata={"event_id": "$bart"}))
+    asyncio.run(channel.send(_outbound("Die Partyliste hat noch offene Punkte. Sollen die weg?",
+                                       metadata={"event_id": "$homer"})))
+
+    kitchen = _types.SimpleNamespace(room_id="!kitchen")
+    assert not channel._should_process_message(kitchen, _said("Ja", "@bart:simpson"))
+    assert channel._should_process_message(kitchen, _said("Ja"))
 
 
 def test_a_notice_from_nanobot_does_not_take_the_quote(nanobot, monkeypatch):
