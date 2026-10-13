@@ -121,6 +121,24 @@ def _save_session(repo_root, username, token, device_id, user_id):
 
 # ── Matrix client ────────────────────────────────────────────────────────────
 
+def file_content(mxc_uri, filename, mime, *, msgtype="m.file", size=0, caption=""):
+    """The content of a file message, with its caption when there is one.
+
+    A caption goes in `body` and the file's name moves to `filename`, as
+    the spec has it since v1.10 and as Element X sends it. Without a
+    caption, `body` is the name, which is what every client sends then.
+    """
+    content = {
+        "msgtype": msgtype,
+        "body": caption or filename,
+        "url": mxc_uri,
+        "info": {"mimetype": mime, "size": size},
+    }
+    if caption:
+        content["filename"] = filename
+    return content
+
+
 class MatrixClient:
     """Minimal Matrix client for the famstack CLI.
 
@@ -550,7 +568,8 @@ class MatrixClient:
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
             return None
 
-    def send_file(self, room, mxc_uri, filename, mime, *, msgtype="m.file", size=0):
+    def send_file(self, room, mxc_uri, filename, mime, *, msgtype="m.file", size=0,
+                  caption=""):
         """Post a file/image message referencing an already-uploaded mxc URI.
 
         `msgtype` is "m.file" for documents or "m.image" for pictures —
@@ -561,12 +580,8 @@ class MatrixClient:
             return False, f"Room '{room}' not found"
 
         txn = f"{int(time.time() * 1000)}_{random.randint(0, 0xFFFFFFFF):08x}"
-        body = {
-            "msgtype": msgtype,
-            "body": filename,
-            "url": mxc_uri,
-            "info": {"mimetype": mime, "size": size},
-        }
+        body = file_content(mxc_uri, filename, mime, msgtype=msgtype, size=size,
+                            caption=caption)
         status, resp = _put(
             self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn}"),
             body,

@@ -1,5 +1,5 @@
 """
-stack messages upload <room> <path> [--as <user>] — post a file to a room
+stack messages upload <room> <path> [--as <user>] [--caption <text>] — post a file to a room
 
 Uploads a local file (PDF, image, anything) to a Matrix room as a file or
 image message. This is the file counterpart to `stack messages send`, and
@@ -10,6 +10,9 @@ By default the file is posted as stacker-bot (the system account). Pass
 `--as <user>` to post as a family member instead, e.g.
 
     stack messages upload documents payslip.pdf --as homer
+
+`--caption <text>` posts the file with a caption, as a phone does when
+the sender types something under the picture.
 
 The user's password is read from the secrets store (the same place the
 account was created), so the sender shows up correctly in the timeline and
@@ -48,23 +51,26 @@ _MIME = {
 }
 
 
+_USAGE = "Usage: stack messages upload <room> <path> [--as <user>] [--caption <text>]"
+
+
 def _parse_argv(argv):
-    """Pull (room, path, sender) out of argv. sender is None unless --as."""
-    sender = None
+    """Pull (room, path, sender, caption) out of argv, then an error or None."""
+    options = {"--as": None, "--caption": ""}
     rest = []
     i = 0
     while i < len(argv):
-        if argv[i] == "--as":
+        if argv[i] in options:
             if i + 1 >= len(argv):
-                return None, None, None, "--as needs a username"
-            sender = argv[i + 1]
+                return None, None, None, "", f"{argv[i]} needs a value"
+            options[argv[i]] = argv[i + 1]
             i += 2
             continue
         rest.append(argv[i])
         i += 1
     if len(rest) < 2:
-        return None, None, None, 'Usage: stack messages upload <room> <path> [--as <user>]'
-    return rest[0], rest[1], sender, None
+        return None, None, None, "", _USAGE
+    return rest[0], rest[1], options["--as"], options["--caption"], None
 
 
 def run(args, stacklet, config):
@@ -72,7 +78,7 @@ def run(args, stacklet, config):
         return {"error": "Messages is not running — start it with 'stack up messages'"}
 
     # sys.argv: ['stack', 'messages', 'upload', <room>, <path>, ...]
-    room, path_str, sender, err = _parse_argv(sys.argv[3:])
+    room, path_str, sender, caption, err = _parse_argv(sys.argv[3:])
     if err:
         return {"error": err}
 
@@ -110,6 +116,7 @@ def run(args, stacklet, config):
 
     ok, detail = client.send_file(
         room, mxc, path.name, mime, msgtype=msgtype, size=len(data),
+        caption=caption,
     )
     if ok:
         return {"ok": True, "room": room, "as": username,
