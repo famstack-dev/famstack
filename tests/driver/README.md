@@ -45,6 +45,7 @@ driver as marge say picnic "and the grill?" --thread <root-id>
 driver as marge voice picnic "Stacky, add sunscreen to the list"
 driver as marge voice picnic --file memo.ogg
 driver as lisa send documents report-card.pdf
+driver as marge send camping tent.jpg --caption "the new tent, pitched in 10 minutes"
 driver as marge react picnic <id> 📌
 
 driver read picnic [--limit 20]                   # recent messages, with ids

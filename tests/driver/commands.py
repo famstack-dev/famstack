@@ -32,7 +32,8 @@ def as_member(args, instance: Instance) -> None:
         "say": lambda: chat.say(instance, args.who, args.room, args.text,
                                 thread=args.thread, reply_to=args.reply_to),
         "voice": lambda: chat.speak(instance, args.who, args.room, args.text, args.file),
-        "send": lambda: chat.send(instance, args.who, args.room, Path(args.file)),
+        "send": lambda: chat.send(instance, args.who, args.room, Path(args.file),
+                                  args.caption),
         "react": lambda: chat.react(instance, args.who, args.room, args.event, args.emoji),
     }[args.action]
     answer = action()
@@ -180,6 +181,7 @@ def _member_actions(sub) -> list:
     send = acts.add_parser("send", help="send a file: photo, PDF, audio")
     send.add_argument("room")
     send.add_argument("file")
+    send.add_argument("--caption", default="", help="words posted with the file")
     react = acts.add_parser("react", help="react to a message")
     react.add_argument("room")
     react.add_argument("event")
