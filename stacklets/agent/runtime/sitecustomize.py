@@ -49,12 +49,12 @@ Third, one shim that widens when the agent is allowed to answer at all:
 
 9. voice_trigger (voice_trigger.py) — a voice message in a shared room goes
    through nanobot's gate, is transcribed, and reaches the agent only if the
-   transcript addresses it by name, like typed text. The answer starts with
-   what was heard, quoted.
+   transcript addresses it by name, like typed text, or answers the agent's
+   question (10). The answer starts with what was heard, quoted.
 
 10. open_question (open_question.py) — while the agent's last message in a room
-   is a question, the asked person's next message there reaches it without
-   its name.
+   is a question, the person whose message it answers reaches it with their
+   next message there, typed or spoken, without its name.
 
 11. status_trace (status_trace.py) — a slow turn gets one status notice that
    grows a line as the agent moves on (looking, looking closer, writing it
@@ -429,6 +429,47 @@ except Exception:
     _log.exception("status-trace shim could not attach (nanobot internals changed?)")
 
 
+# ── open_question: the answer to the agent's own question needs no name ─────
+# While the agent's last message in a room asks someone something, that
+# person's next message there reaches the agent without its name. The
+# question is for whoever sent the message it answers. Installed inside the
+# voice gate, so a spoken answer passes the way a typed one does. See
+# open_question.py.
+try:
+    import time as _time_question
+
+    import nanobot.channels.matrix.runtime as _matrix_question
+    from open_question import OpenQuestions as _OpenQuestions
+
+    _open_questions = _OpenQuestions()
+    _orig_should_process_q = _matrix_question.MatrixChannel._should_process_message
+    _orig_handle_q = _matrix_question.MatrixChannel._handle_message
+    _orig_send_q = _matrix_question.MatrixChannel.send
+
+    def _should_process_or_answer(self, room, event):
+        if _orig_should_process_q(self, room, event):
+            return True
+        return _open_questions.answers(getattr(room, "room_id", ""), event.sender,
+                                       at=_time_question.monotonic())
+
+    async def _handle_and_remember(self, sender_id, chat_id, content, *args, **kwargs):
+        _open_questions.heard((kwargs.get("metadata") or {}).get("event_id", ""), sender_id)
+        return await _orig_handle_q(self, sender_id, chat_id, content, *args, **kwargs)
+
+    async def _send_and_remember(self, msg):
+        if _is_answer(msg):
+            _open_questions.replied(msg.chat_id, (msg.metadata or {}).get("event_id", ""),
+                                    msg.content, at=_time_question.monotonic())
+        return await _orig_send_q(self, msg)
+
+    _matrix_question.MatrixChannel._should_process_message = _should_process_or_answer
+    _matrix_question.MatrixChannel._handle_message = _handle_and_remember
+    _matrix_question.MatrixChannel.send = _send_and_remember
+    _log.info("open-question shim active")
+except Exception:
+    _log.exception("open-question shim could not attach (nanobot internals changed?)")
+
+
 # ── voice_trigger: a voice message is addressed by what was said ─────────────
 # nanobot's gate runs before transcription, and a voice message's text is
 # "Voice message", so in a shared room it never reached the agent. Let it
@@ -486,51 +527,6 @@ try:
     _log.info("voice-trigger shim active")
 except Exception:
     _log.exception("voice-trigger shim could not attach (nanobot internals changed?)")
-
-
-# ── open_question: the answer to the agent's own question needs no name ─────
-# While the agent's last message in a room asks someone something, that
-# person's next message there reaches the agent without its name. Who the
-# agent is talking to comes from the message it handles, the question from
-# the message it sends. See open_question.py.
-try:
-    import time as _time_question
-
-    import nanobot.channels.matrix.runtime as _matrix_question
-    from open_question import OpenQuestions as _OpenQuestions
-    from open_question import asks as _asks
-
-    _open_questions = _OpenQuestions()
-    _talking_to: dict[str, str] = {}
-    _orig_should_process_q = _matrix_question.MatrixChannel._should_process_message
-    _orig_handle_q = _matrix_question.MatrixChannel._handle_message
-    _orig_send_q = _matrix_question.MatrixChannel.send
-
-    def _should_process_or_answer(self, room, event):
-        if _orig_should_process_q(self, room, event):
-            return True
-        return _open_questions.answers(getattr(room, "room_id", ""), event.sender,
-                                       at=_time_question.monotonic())
-
-    async def _handle_and_remember(self, sender_id, chat_id, content, *args, **kwargs):
-        _talking_to[chat_id] = sender_id
-        return await _orig_handle_q(self, sender_id, chat_id, content, *args, **kwargs)
-
-    async def _send_and_remember(self, msg):
-        if _is_answer(msg):
-            if _asks(msg.content):
-                _open_questions.asked(msg.chat_id, _talking_to.get(msg.chat_id, ""),
-                                      at=_time_question.monotonic())
-            else:
-                _open_questions.closed(msg.chat_id)
-        return await _orig_send_q(self, msg)
-
-    _matrix_question.MatrixChannel._should_process_message = _should_process_or_answer
-    _matrix_question.MatrixChannel._handle_message = _handle_and_remember
-    _matrix_question.MatrixChannel.send = _send_and_remember
-    _log.info("open-question shim active")
-except Exception:
-    _log.exception("open-question shim could not attach (nanobot internals changed?)")
 
 
 # ── join_greeting: say something useful the moment you are invited ───────────
