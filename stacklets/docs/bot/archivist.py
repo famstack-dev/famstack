@@ -1268,6 +1268,7 @@ class ArchivistBot(MicroBot):
             await self._handle_reply_capture_reprocess(
                 room_id, capture_path, hint, event.sender, reply_to,
                 initial_classification=initial,
+                capture_id=envelope.get("data", {}).get("capture_id"),
             )
             return True
         return False
@@ -1428,6 +1429,7 @@ class ArchivistBot(MicroBot):
         self, room_id: str, vault_path: str, user_hint: str,
         sender_mxid: str, reply_to: str,
         *, initial_classification: dict | None = None,
+        capture_id: str | None = None,
     ) -> None:
         """Re-classify a capture with the user's reply as a hint.
 
@@ -1435,12 +1437,22 @@ class ArchivistBot(MicroBot):
         the pipeline, render via the shared reprocessed presenter,
         attach the fresh `capture.reclassified` envelope so the user
         can chain another correction by replying to THIS message.
+
+        ``capture_id`` is the event the capture was filed from. Its
+        caption is read off that event again, so a correction restores
+        a caption an earlier filing dropped.
         """
+        upload = await self._fetch_event(room_id, capture_id)
+        caption = (
+            _attachment_caption(upload.source.get("content", {}))
+            if upload is not None else ""
+        )
         outcome = await self._services.capture.reprocess(
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
             write_in=await self._write_in(room_id),
+            caption=caption,
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
@@ -1616,6 +1628,7 @@ class ArchivistBot(MicroBot):
         # prompt as user_hint -- "neue Personalausweise für Marge und
         # Bart" steers the LLM the same way a reply-to-correct does,
         # without the user having to wait for a bad classification first.
+        # A capture also keeps the caption on its entry, as written.
         raw_filename = content.get("filename") or content.get("body") or "document"
         caption = _attachment_caption(content)
         display_name = _clean_filename(raw_filename, msgtype)
@@ -1686,6 +1699,7 @@ class ArchivistBot(MicroBot):
                 default_person=not bot_attachment,
                 extra_seed_topics=extra_seed_topics,
                 captured_ts=getattr(event, "server_timestamp", 0) or 0,
+                caption=caption,
             )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
@@ -2422,6 +2436,7 @@ class ArchivistBot(MicroBot):
         default_person: bool = True,
         extra_seed_topics: list[str] | None = None,
         captured_ts: int = 0,
+        caption: str = "",
     ) -> None:
         """Capture a PDF or image as a visual bookmark.
 
@@ -2439,6 +2454,7 @@ class ArchivistBot(MicroBot):
         attachment): the sender is a bot, not the owner, so don't fall
         it in as the person. ``extra_seed_topics`` prepend provenance
         tags (Sender, ``email``) on top of any topic-room seeds.
+        ``caption`` is what the sender wrote with the upload.
         """
         room = self._room_by_id(room_id)
         binding = await self._topic_binding(room, sender_mxid)
@@ -2468,6 +2484,7 @@ class ArchivistBot(MicroBot):
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
             write_in=await self._write_in(room_id),
+            caption=caption,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

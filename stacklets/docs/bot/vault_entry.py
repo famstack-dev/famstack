@@ -444,6 +444,7 @@ def render_capture(
     facts: list | None = None,
     action_items: list | None = None,
     kept_media: dict | None = None,
+    caption: str = "",
 ) -> str:
     """Assemble the mirror file for a capture entry (kind=note|bookmark).
 
@@ -478,6 +479,8 @@ def render_capture(
             bytes live in the site; ``embed`` is the version worth
             putting on the page and is empty for anything that should
             be downloaded rather than displayed.
+        caption: What the sender wrote with an upload, kept as written.
+            The summary is the model's reading of it; this is the record.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -540,6 +543,11 @@ def render_capture(
             for ln in body_stripped.split("\n"):
                 parts.append(f"> {ln}" if ln else ">")
             parts.append("")
+
+    # Last on the page, so a correction can read it back as everything
+    # after its heading (`capture_pipeline._caption_from`).
+    if caption.strip():
+        parts.extend(["## Caption", "", caption.strip(), ""])
 
     return "\n".join(parts)
 
