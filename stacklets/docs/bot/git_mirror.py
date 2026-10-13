@@ -405,9 +405,9 @@ class GitMirror:
         per URL/body, the slug is not. So the same link re-pasted with different
         framing, or content re-classified to a different title, would otherwise
         fork a near-duplicate. Match on the `<entity>/<kind>s/` folder + the
-        `-<hash>.md` suffix instead: return the exact path when it exists
-        (in-place update), else a same-hash file under a different slug (so the
-        caller renames it), else None.
+        `-<hash>.md` suffix instead: return the exact path when it exists,
+        else a same-hash file under a different slug (which the caller then
+        updates where it is), else None.
         """
         parts = target_path.split("/")
         if len(parts) < 2:
@@ -428,7 +428,7 @@ class GitMirror:
             if path.startswith(prefix) and path.endswith(suffix):
                 if path == target_path:
                     return path        # exact identity + title → update in place
-                match = path           # same identity, different title → rename
+                match = path           # same identity, different title
         return match
 
     # ── Filename, frontmatter, body ──────────────────────────────────────
@@ -1036,11 +1036,8 @@ class GitMirror:
         ``caption`` is what the sender wrote with an upload; the entry
         keeps it word for word.
 
-        ``existing_path`` is the reprocess hook: when supplied, the
-        write deletes the old file if the new title-derived path
-        differs (a rename) and re-uses the same identity otherwise.
-        The doc-mirror's `publish` already does this for renamed
-        Paperless docs; captures pick up the same shape.
+        ``existing_path`` is the reprocess hook: the entry is rewritten
+        where it is, whatever its new title.
 
         Returns the path where the capture landed (relative to the
         repo root) on success, None when Forgejo is unreachable or
@@ -1071,30 +1068,21 @@ class GitMirror:
 
         # Dedup on identity, not filename: if this URL/body already lives under
         # a different title (a re-paste with new framing, an older differently-
-        # titled capture), find it by its hash so we update/rename that entry
-        # instead of forking a duplicate. The reprocess caller already knows the
-        # path, so only look when it didn't pass one.
+        # titled capture), find it by its hash so we update that entry instead
+        # of forking a duplicate. The reprocess caller already knows the path,
+        # so only look when it didn't pass one.
         if existing_path is None:
             existing_path = await self._lookup_capture_path(client, target_path)
 
-        # Reprocess path: read the previous file at its old path. When
-        # the title changes the slug changes too, so we'll delete the
-        # old entry after writing the new one (same as the doc
-        # mirror's rename handling).
-        existing = None
-        if existing_path and existing_path != target_path:
-            existing = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, existing_path,
-            )
-            existing_at_new = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, target_path,
-            )
-        else:
-            lookup_path = existing_path or target_path
-            existing = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, lookup_path,
-            )
-            existing_at_new = existing if lookup_path == target_path else None
+        # A capture keeps the path it was first filed under. Topic pages,
+        # list items and the link in the chat point at it, so a new title
+        # or a correction from someone else in the room changes what the
+        # entry says, never where it is.
+        if existing_path:
+            target_path = existing_path
+        existing = await asyncio.to_thread(
+            client.get_file, self.repo_owner, REPO_NAME, target_path,
+        )
 
         # Attribute the capture to whoever filed it: the localpart goes in
         # `filed_by` frontmatter, and the same identity becomes the git commit
@@ -1151,18 +1139,9 @@ class GitMirror:
                 client.put_file,
                 self.repo_owner, REPO_NAME, target_path,
                 content=content, message=message,
-                sha=existing_at_new["sha"] if existing_at_new else None,
+                sha=existing["sha"] if existing else None,
                 author_name=author_name, author_email=author_email,
             )
-            # Title rename on reprocess: remove the prior file after
-            # the new one is in place so the vault never has both.
-            if existing_path and existing_path != target_path and existing:
-                await asyncio.to_thread(
-                    client.delete_file,
-                    self.repo_owner, REPO_NAME, existing_path,
-                    sha=existing["sha"],
-                    message=f"rename: {existing_path} → {target_path}",
-                )
         except ForgejoError as e:
             logger.warning(
                 "[git-mirror] Capture publish failed for {}: {}",

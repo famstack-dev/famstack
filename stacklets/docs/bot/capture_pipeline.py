@@ -570,8 +570,7 @@ class CapturePipeline:
         Mirrors ``DocumentPipeline.reprocess`` -- read the prior entry,
         rebuild a SourceContent from its persisted summary, run the
         classifier again with the reply chain as ``user_hint``, and
-        rewrite the mirror in place (renaming the slug when the new
-        title shifts). Captures don't have a separate Paperless
+        rewrite the entry where it is, whatever its new title. Captures don't have a separate Paperless
         backing store, so the prior summary IS the source the LLM
         re-reads; this stays cheap (no vision round-trip, no re-fetch
         of the original binary) at the cost of corrections having to
@@ -668,8 +667,8 @@ class CapturePipeline:
 
         ``existing_path`` + ``captured_at`` are the reprocess inputs --
         when re-classifying an already-filed capture we keep its
-        original capture date and hand the prior path to publish_capture
-        so the rewrite either updates in place or renames the slug.
+        original capture date and hand the prior path to publish_capture,
+        which rewrites the entry where it is.
         ``reclassified`` flips the envelope type to ``capture.reclassified``
         so the reply-chain walker treats it as a chain-link, not a
         boundary.
