@@ -45,6 +45,10 @@ GAP = 10.0
 STILL_AFTER = 20.0
 # A status longer than this stops growing; the answer is what matters.
 MAX_LINES = 5
+# Every turn ends in an answer, even a failed one ("Sorry, I encountered an
+# error."), except one that is cancelled. Far longer than any turn takes,
+# so the status of such a turn stops at some point instead of never.
+GIVE_UP_AFTER = 600.0
 
 LOOK, CHECK, WRITE, THINK, STILL, TIDY = "look", "check", "write", "think", "still", "tidy"
 
@@ -90,7 +94,8 @@ class Trace:
     """The lines of one turn's status, and when they change.
 
     `tools` records what the agent started doing; `due` answers, at a given
-    time, the whole status to show if it should change now, or None.
+    time, the whole status to show if it should change now, or None; `over`
+    says when it will not change again.
     """
 
     def __init__(self, *, started: float, lang: str,
@@ -113,8 +118,12 @@ class Trace:
         """nanobot started compacting the conversation, which can take a while."""
         self._pending = TIDY
 
+    def over(self, *, at: float) -> bool:
+        """True once the status is full, or the turn has run past all patience."""
+        return len(self._lines) >= MAX_LINES or at - self._started >= GIVE_UP_AFTER
+
     def due(self, *, at: float) -> list[str] | None:
-        if at - self._started < FIRST_AFTER or len(self._lines) >= MAX_LINES:
+        if at - self._started < FIRST_AFTER or self.over(at=at):
             return None
         if not self._lines:
             return self._add(self._pending, at)

@@ -361,19 +361,26 @@ try:
     class _Running:
         """One turn's trace: its status notice in Matrix, and the loop keeping it current."""
 
-        def __init__(self, channel, room_id: str, metadata: dict) -> None:
+        def __init__(self, channel, room_id: str, metadata: dict, key: tuple[str, str]) -> None:
             self.trace = _status_trace.Trace(started=_time_trace.monotonic(),
                                              lang=_os_trace.environ.get("AGENT_LANGUAGE", ""))
-            self.channel, self.room_id, self.metadata = channel, room_id, metadata
+            self.channel, self.room_id, self.metadata, self.key = channel, room_id, metadata, key
             self.notice_id = ""
             self.task = _asyncio_trace.create_task(self._keep_current())
 
         async def _keep_current(self) -> None:
-            while True:
+            while not self.trace.over(at=_time_trace.monotonic()):
                 await _asyncio_trace.sleep(_TRACE_TICK)
                 lines = self.trace.due(at=_time_trace.monotonic())
                 if lines:
                     await self._show("\n".join(lines))
+            self.stop()
+
+        def stop(self) -> None:
+            """Let go of the room; the notice stays as it is."""
+            if _traces.get(self.key) is self:
+                del _traces[self.key]
+            self.task.cancel()
 
         async def _show(self, text: str) -> None:
             notice = {"msgtype": "m.notice", "body": text}
@@ -400,9 +407,13 @@ try:
         metadata = kwargs.get("metadata") or {}
         key = _trace_key(chat_id, metadata)
         if key in _traces:
-            _traces.pop(key).task.cancel()
-        _traces[key] = _Running(self, chat_id, metadata)
-        return await _orig_handle_trace(self, sender_id, chat_id, content, *args, **kwargs)
+            _traces[key].stop()
+        running = _traces[key] = _Running(self, chat_id, metadata, key)
+        try:
+            return await _orig_handle_trace(self, sender_id, chat_id, content, *args, **kwargs)
+        except BaseException:
+            running.stop()
+            raise
 
     async def _send_traced(self, msg):
         key = _trace_key(msg.chat_id, msg.metadata)
@@ -419,7 +430,7 @@ try:
                 running.trace.tidying()
             return None
         if running and _is_answer(msg):
-            _traces.pop(key).task.cancel()
+            running.stop()
         return await _orig_send_trace(self, msg)
 
     _matrix_trace.MatrixChannel._handle_message = _handle_and_trace

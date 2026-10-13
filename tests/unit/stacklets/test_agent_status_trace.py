@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "stacklets" / "agent" / "runtime"))
 
 from status_trace import (  # noqa: E402
-    FIRST_AFTER, GAP, PHRASES, STILL_AFTER, Trace, phase_of,
+    FIRST_AFTER, GAP, GIVE_UP_AFTER, PHRASES, STILL_AFTER, Trace, phase_of,
 )
 
 DE = PHRASES["de"]
@@ -98,3 +98,22 @@ def test_compacting_the_conversation_is_a_line_in_the_familys_words():
     trace = _trace()
     trace.tidying()
     assert trace.due(at=FIRST_AFTER) == [DE["tidy"][0]]
+
+
+
+def test_a_turn_that_never_answers_ends_its_status_by_itself():
+    """A cancelled turn sends nothing, so the status cannot wait for an answer forever."""
+    trace = _trace()
+    assert not trace.over(at=GIVE_UP_AFTER - 1)
+    assert trace.over(at=GIVE_UP_AFTER)
+
+
+def test_a_full_status_is_over_before_the_turn_gives_up():
+    trace = _trace()
+    at = FIRST_AFTER
+    for tools in (["memory_search"], ["list_edit"], ["memory_search"], ["list_edit"],
+                  ["memory_search"]):
+        trace.tools(tools)
+        assert trace.due(at=at)
+        at += GAP
+    assert trace.over(at=at)
