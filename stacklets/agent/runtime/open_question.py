@@ -13,8 +13,12 @@ needed again. A message from anyone else, or one that comes later, is
 treated as before. Whatever else the agent says in the room closes the
 question, since it is no longer the last thing asked.
 
+The question is for whoever sent the message it answers, which is not
+always the last person to write in the room.
+
     questions = OpenQuestions()
-    questions.asked("!kitchen", "@homer:simpson", at=100.0)
+    questions.heard("$ask", "@homer:simpson")
+    questions.replied("!kitchen", "$ask", "Sollen die auch weg?", at=100.0)
     questions.answers("!kitchen", "@marge:simpson", at=110.0)   # False
     questions.answers("!kitchen", "@homer:simpson", at=120.0)   # True, once
 """
@@ -27,6 +31,10 @@ import re
 # answer, short enough that a message an hour later about something else
 # is not taken for one.
 WINDOW_SECONDS = 300
+
+# Senders of messages the agent handled, kept for their answers. Far more
+# than are ever in flight at once in a household.
+_REMEMBERED = 100
 
 # The end of a message, past trailing quotes, brackets, emoji and spaces.
 _TRAILING = re.compile(r"[\s\"'”“»«)\]*_~\U0001F300-\U0001FAFF☀-➿]+$")
@@ -43,6 +51,22 @@ class OpenQuestions:
     def __init__(self, window: float = WINDOW_SECONDS) -> None:
         self._window = window
         self._open: dict[str, tuple[str, float]] = {}
+        self._senders: dict[str, str] = {}
+
+    def heard(self, event_id: str, person: str) -> None:
+        """The agent is handling `event_id`, sent by `person`."""
+        if event_id and person:
+            self._senders[event_id] = person
+        while len(self._senders) > _REMEMBERED:
+            del self._senders[next(iter(self._senders))]
+
+    def replied(self, room: str, event_id: str, text: str, *, at: float) -> None:
+        """The agent said `text` in answer to `event_id`: a question opens, anything else closes."""
+        person = self._senders.get(event_id, "")
+        if asks(text) and person:
+            self.asked(room, person, at=at)
+        else:
+            self.closed(room)
 
     def asked(self, room: str, person: str, *, at: float) -> None:
         if room and person:
