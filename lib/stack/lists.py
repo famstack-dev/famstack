@@ -271,6 +271,30 @@ def topic_list_description(title: str, language: str) -> str:
     return _TOPIC_LIST_DESCRIPTION.get(code, _TOPIC_LIST_DESCRIPTION["en"]).format(title=title)
 
 
+# The calendar the archivist starts when the family has none, in the
+# household language.
+_CALENDAR = {
+    "de": ("termine", "Termine", "Termine der Familie, jeder mit Datum"),
+    "en": ("dates", "Dates", "The family's dates, each with its day"),
+}
+
+
+def _calendar_names(language: str) -> tuple[str, str, str]:
+    return _CALENDAR.get((language or "").strip().lower()[:2], _CALENDAR["en"])
+
+
+def calendar_slug(language: str) -> str:
+    return _calendar_names(language)[0]
+
+
+def calendar_title(language: str) -> str:
+    return _calendar_names(language)[1]
+
+
+def calendar_description(language: str) -> str:
+    return _calendar_names(language)[2]
+
+
 def list_path(slug: str, *, bucket: str) -> str:
     """The vault path of the list `slug` in `bucket`."""
     return f"{bucket}/{LISTS_DIR}/{slug}.md"

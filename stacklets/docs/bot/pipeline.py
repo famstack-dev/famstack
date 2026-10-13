@@ -1138,7 +1138,8 @@ Return this exact JSON structure:
   "correspondent_facts": ["STABLE facts about the SENDER organization that are useful on every future document from them: address, phone, email, website, IBAN, your customer/membership/policy number with them. NOT facts about THIS document (totals, invoice numbers, dates — those go in facts). Empty list if none visible."],
   "summary": "2-3 sentence summary. Lead with the document type ({ex['doc_types']}, or its equivalent) and the correspondent; include the document's date and any total amount; name the person(s) involved (use the human note when the document doesn't name them). Examples show the shape, not the wording: {ex['doc_summaries']} Omit a field only when the document genuinely lacks it; never invent.",
   "facts": ["key structured facts about THIS document, one bullet per fact. Top-level facts: totals, account/invoice/policy numbers, dates, plan/tariff names, deadlines — e.g. 'Total: EUR 90.00', 'Invoice: #12345', 'Plan: Premium'. Line items: when the document lists individual purchases or services, include each one as its own bullet with quantity/unit-price/total — e.g. 'Donuts 5x EUR 5.00', 'Cola 1x EUR 2.42', 'Reparatur Bremsbeläge EUR 240.00'. Don't fabricate line items the document doesn't print; a one-line receipt has no line items, only a total."],
-  "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}]
+  "action_items": [{{"action": "what needs to happen", "due": "YYYY-MM-DD or null"}}],
+  "dates": [{{"what": "the event, in a few words", "date": "YYYY-MM-DD"}}]
 }}
 
 Rules:
@@ -1156,6 +1157,7 @@ Rules:
 - correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
 - facts: concrete numbers, dates, account numbers, amounts that describe THIS document. When the document itemises purchases or services, each line item is its own fact bullet alongside the top-level totals. Empty list if none.
 - action_items: manual family tasks only (pay by transfer, sign/return form, book, cancel by date). NOT: direct debit, SEPA mandate, card on file, standing order, info or confirmation only. [] if none.
+- dates: events someone in the family may attend (appointment, school event, performance, parents' evening, trip). Range: its last day as date, the range in what. NOT: deadlines (action_items), payments, opening hours. [] if none.
 
 Document text:
 ---
