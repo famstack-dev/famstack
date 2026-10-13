@@ -610,6 +610,44 @@ def test_the_status_stops_with_the_answer(nanobot, monkeypatch):
     assert len(channel.room_contents) == shown
 
 
+def test_a_status_whose_answer_never_comes_stops_by_itself(nanobot, monkeypatch):
+    """A cancelled turn sends nothing; its status stops and lets go of the room."""
+    import asyncio
+    import sys as _sys
+
+    mods = nanobot()
+    trace, shim = _sys.modules["status_trace"], _sys.modules["sitecustomize"]
+    monkeypatch.setattr(trace, "FIRST_AFTER", 0.0)
+    monkeypatch.setattr(trace, "GIVE_UP_AFTER", 0.1)
+    monkeypatch.setattr(shim, "_TRACE_TICK", 0.01)
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    async def _run():
+        await channel._handle_message(sender_id="@homer:simpson", chat_id="!kitchen",
+                                      content="Stacky, was fehlt noch?", metadata={})
+        await asyncio.sleep(0.2)
+        return dict(shim._traces)
+
+    assert asyncio.run(_run()) == {}
+    assert len(channel.room_contents) == 1, "the status it showed stays, nothing more"
+
+
+def test_a_message_that_fails_to_reach_the_agent_starts_no_status(nanobot, monkeypatch):
+    import asyncio
+    import sys as _sys
+
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    async def _broken(*_args, **_kwargs):
+        raise RuntimeError("bus closed")
+    monkeypatch.setattr(_sys.modules["sitecustomize"], "_orig_handle_trace", _broken)
+    with pytest.raises(RuntimeError):
+        asyncio.run(channel._handle_message(sender_id="@homer:simpson", chat_id="!kitchen",
+                                            content="Stacky, was fehlt noch?", metadata={}))
+    assert _sys.modules["sitecustomize"]._traces == {}
+
+
 # ── failure is contained, and visible ────────────────────────────────────
 
 def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
