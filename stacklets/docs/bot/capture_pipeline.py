@@ -564,6 +564,7 @@ class CapturePipeline:
         initial_classification: dict | None = None,
         write_in: str | None = None,
         caption: str = "",
+        reply_text: str = "",
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -587,6 +588,10 @@ class CapturePipeline:
         from, when the caller could read it there. It wins over the
         entry's, which an older filing may have left out; without it,
         the entry's caption is kept.
+
+        ``reply_text`` is the words of the reply that asked for this
+        refile. The entry keeps them under the replier's name, after the
+        replies it already had.
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -595,6 +600,7 @@ class CapturePipeline:
             return CaptureOutcome(status="capture_missing")
         meta, summary_text = _parse_capture_markdown(raw)
         caption = caption or _caption_from(raw)
+        replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
         # The summary callout doesn't carry the frontmatter tag list,
         # so the classifier would otherwise have to re-derive tags
         # from prose alone -- they drift on each pass. Append them as
@@ -635,7 +641,7 @@ class CapturePipeline:
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
             kept_media=_kept_media_from(raw),
-            caption=caption,
+            caption=caption, replies=replies,
             write_in=write_in,
         )
 
@@ -658,6 +664,7 @@ class CapturePipeline:
         write_in: str | None = None,
         extract_action_items: bool = False,
         caption: str = "",
+        replies: "list[tuple[str, str]] | tuple" = (),
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -750,6 +757,7 @@ class CapturePipeline:
                 submitter=sender_mxid,
                 kept_media=kept_media,
                 caption=caption,
+                replies=replies,
             )
 
         # Feed topic tags (not the derived Person: X) back into the
@@ -998,8 +1006,12 @@ def _kept_media_from(raw: str) -> dict | None:
     }
 
 
-# The caption section `vault_entry.render_capture` closes an entry with.
-_CAPTION_SECTION = re.compile(r"^## Caption\n\n(.*)\Z", re.M | re.S)
+# The sections `vault_entry.render_capture` closes an entry with: the
+# caption, then the replies, each reply an author line and its words
+# quoted below it.
+_CAPTION_SECTION = re.compile(r"^## Caption\n\n(.*?)(?=^## Replies\n|\Z)", re.M | re.S)
+_REPLIES_SECTION = re.compile(r"^## Replies\n(.*)\Z", re.M | re.S)
+_REPLY_AUTHOR = re.compile(r"^\*\*(.+)\*\*$")
 
 
 def _caption_from(raw: str) -> str:
@@ -1010,6 +1022,28 @@ def _caption_from(raw: str) -> str:
     """
     found = _CAPTION_SECTION.search(raw)
     return found.group(1).strip() if found else ""
+
+
+def _replies_from(raw: str) -> list[tuple[str, str]]:
+    """The ``(author, words)`` of each reply an entry keeps, in order."""
+    found = _REPLIES_SECTION.search(raw)
+    replies: list[tuple[str, list[str]]] = []
+    for line in (found.group(1) if found else "").splitlines():
+        if author := _REPLY_AUTHOR.match(line.strip()):
+            replies.append((author.group(1), []))
+        elif line.startswith(">") and replies:
+            replies[-1][1].append(line[2:] if line.startswith("> ") else line[1:])
+    return [(who, "\n".join(words).strip()) for who, words in replies]
+
+
+def _with_reply(replies, sender_mxid: str, words: str) -> list[tuple[str, str]]:
+    """``replies`` with this one added, unless the entry already has it,
+    so a correction handled twice is kept once."""
+    words = words.strip()
+    reply = (sender_mxid.split(":")[0].lstrip("@").capitalize(), words)
+    if not words or reply in replies:
+        return list(replies)
+    return [*replies, reply]
 
 
 def _parse_yaml_frontmatter(text: str) -> dict:
