@@ -194,7 +194,7 @@ famstack comes with a lightweight bot runtime. The bots are tiny helpers that au
 | docs     | working | Paperless-ngx          | Document archive with OCR                                |
 | ai       | working | TTS, Whisper, oMLX     | Turns your Mac into an AI Machine                        |
 | memory   | working | Forgejo, Quartz        | Family wiki, diary and lists, kept as plain files        |
-| backup   | working | rsync                  | Append-only backups to an attached disk                  |
+| backup   | beta    | rsync                  | Append-only backups to an attached disk                  |
 | agent    | beta    | nanobot                | Stacky, the family agent in your chat                    |
 | chatai   | beta    | Open WebUI             | ChatGPT-like chat interface                              |
 | code     | beta    | Forgejo                | Private Git server                                       |
