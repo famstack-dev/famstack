@@ -29,3 +29,30 @@ def test_the_context_window_is_set_on_the_active_preset():
 def test_no_context_window_where_nanobot_ignores_it():
     """A second value under defaults would read as the one in effect."""
     assert "context_window_tokens" not in _config()["agents"]["defaults"]
+
+
+def _blocked_by_exec(command: str) -> bool:
+    """Whether nanobot's exec tool refuses `command` under this config.
+
+    nanobot 0.3.5 searches each deny pattern in the lowercased command
+    (`ExecTool._guard_command`).
+    """
+    import re
+    patterns = _config()["tools"]["exec"].get("deny_patterns", [])
+    return any(re.search(p, command.lower()) for p in patterns)
+
+
+def test_the_shell_cannot_confirm_deleting_a_list():
+    """Only `list_edit` may delete a list with open items, after the person said yes.
+
+    The store takes `--yes` from whoever runs it, and the agent's shell can
+    run it too. Without this, the model could skip asking the person.
+    """
+    assert _blocked_by_exec("stack memory list delete partyliste --yes --as homer")
+    assert _blocked_by_exec("stack memory list delete --yes partyliste")
+    assert _blocked_by_exec("stack memory list delete partyliste --ye")
+
+
+def test_the_shell_still_shows_and_deletes_lists_the_store_allows():
+    assert not _blocked_by_exec("stack memory list show partyliste")
+    assert not _blocked_by_exec("stack memory list delete partyliste --as homer")
