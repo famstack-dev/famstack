@@ -77,6 +77,11 @@ def transcribed_source(source: dict, transcript: str) -> dict:
         provenance["url"] = url
     if filename := (content.get("filename") or content.get("body")):
         provenance["filename"] = filename
+    # The upload's own `body` beside its `filename`, as sent: when they
+    # differ, `body` is the sender's caption, which the transcript is
+    # about to replace.
+    if body := content.get("body"):
+        provenance["body"] = body
     info = content.get("info")
     if isinstance(info, dict):
         if (duration := info.get("duration")) is not None:

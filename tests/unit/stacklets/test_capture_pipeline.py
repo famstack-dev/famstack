@@ -1188,6 +1188,16 @@ class TestAPhotosCaption:
         assert not published["caption"]
 
     @pytest.mark.asyncio
+    async def test_a_recordings_caption_is_kept_like_a_photos(self):
+        mirror, classifier = FakeMirror(), FakeClassifier()
+        await _pipeline(mirror=mirror, classifier=classifier).capture_text(
+            text="Die Glasur dünn auftragen.", sender_mxid="@marge:server",
+            transcribed=True, caption=self.CAPTION,
+        )
+        assert classifier.saw_user_hint == self.CAPTION
+        assert mirror.captures[0]["caption"] == self.CAPTION
+
+    @pytest.mark.asyncio
     async def test_a_correction_keeps_the_caption(self):
         path = "marge/bookmarks/test-capture.md"
         entry = render_capture(

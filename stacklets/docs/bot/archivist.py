@@ -1926,6 +1926,9 @@ class ArchivistBot(MicroBot):
             await self._handle_text_capture(
                 room.room_id, query, event.sender, reply_to,
                 capture_id=event.event_id, transcribed=transcribed,
+                caption=_attachment_caption(
+                    event.source.get("content", {}).get(voice.TRANSCRIPT_KEY) or {}
+                ),
             )
 
         else:
@@ -2355,7 +2358,7 @@ class ArchivistBot(MicroBot):
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
-        transcribed: bool = False,
+        transcribed: bool = False, caption: str = "",
     ) -> None:
         # 👀 before the work, like every other capture shape: a link gets
         # it from the pipeline's notifier, an upload from the handler. A
@@ -2375,6 +2378,7 @@ class ArchivistBot(MicroBot):
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
             write_in=await self._write_in(room_id),
+            caption=caption,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

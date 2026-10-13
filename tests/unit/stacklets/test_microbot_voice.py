@@ -376,6 +376,20 @@ class TestTranscribedSource:
         assert VOICE_SOURCE["content"]["msgtype"] == before
         assert "url" in VOICE_SOURCE["content"]
 
+    def test_the_uploads_own_words_survive_the_rewrite(self):
+        """An audio file can carry a caption: the file's name in
+        `filename`, the sender's words in `body`. The transcript takes
+        over `body`, so the provenance keeps both as the upload had them,
+        and a consumer reads the caption off it as off any upload."""
+        captioned = {**VOICE_SOURCE, "content": {
+            **VOICE_SOURCE["content"],
+            "filename": "kurs.m4a", "body": "Notizen vom Töpferkurs",
+        }}
+        out = voice.transcribed_source(captioned, "Die Glasur dünn auftragen.")
+        provenance = out["content"][voice.TRANSCRIPT_KEY]
+        assert provenance["filename"] == "kurs.m4a"
+        assert provenance["body"] == "Notizen vom Töpferkurs"
+
 
 class TestIsVoice:
     def test_audio_with_a_payload(self):
