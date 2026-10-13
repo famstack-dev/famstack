@@ -506,6 +506,7 @@ class GitMirror:
         action_items: list | None = None,
         kept_media: dict | None = None,
         caption: str = "",
+        replies: "list[tuple[str, str]] | tuple" = (),
     ) -> str:
         """Capture mirror markdown. Delegates to ``vault_entry.render_capture``."""
         return render_capture(
@@ -513,7 +514,7 @@ class GitMirror:
             captured_at=captured_at, source_uri=source_uri, persons=persons,
             from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts, action_items=action_items,
-            kept_media=kept_media, caption=caption,
+            kept_media=kept_media, caption=caption, replies=replies,
         )
 
     def _commit_message(
@@ -1010,6 +1011,7 @@ class GitMirror:
         submitter: str | None = None,
         kept_media: dict | None = None,
         caption: str = "",
+        replies: "list[tuple[str, str]] | tuple" = (),
     ) -> str | None:
         """Create or update a capture entry in the mirror.
 
@@ -1033,8 +1035,9 @@ class GitMirror:
         (a URL, a pasted note) and on a reprocess, which re-renders
         from the prior entry and never sees the original again.
 
-        ``caption`` is what the sender wrote with an upload; the entry
-        keeps it word for word.
+        ``caption`` is what the sender wrote with an upload, and
+        ``replies`` the ``(author, words)`` written in its thread; the
+        entry keeps both word for word.
 
         ``existing_path`` is the reprocess hook: when supplied, the
         write deletes the old file if the new title-derived path
@@ -1131,6 +1134,7 @@ class GitMirror:
             action_items=briefing_actions,
             kept_media=kept_media,
             caption=caption,
+            replies=replies,
         )
 
         verb = "update" if existing else "capture"

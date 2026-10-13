@@ -767,6 +767,21 @@ class TestTheCaptionStaysOnTheEntry:
         assert "## Caption" not in self._render(caption="")
         assert self._render(caption="") == self._render()
 
+    def test_replies_are_kept_word_for_word_with_their_author(self):
+        content = self._render(
+            caption="Wet on wet.",
+            replies=[("Marge", "The red bled into the sky.\nNext time: hairdryer."),
+                     ("Bart", "Ay caramba")],
+        )
+
+        replies = content[content.index("## Replies"):]
+        assert content.index("## Caption") < content.index("## Replies")
+        assert "**Marge**\n> The red bled into the sky.\n> Next time: hairdryer." in replies
+        assert "**Bart**\n> Ay caramba" in replies
+
+    def test_an_entry_nobody_replied_to_has_no_replies_section(self):
+        assert "## Replies" not in self._render(replies=[])
+
 
 class TestRenderEmailMessageSection:
 

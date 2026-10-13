@@ -187,7 +187,7 @@ def bot(tmp_path):
 
     async def _capture_reprocess(room_id, vault_path, user_hint, sender_mxid,
                                  reply_to, *, initial_classification=None,
-                                 capture_id=None):
+                                 capture_id=None, reply_text=""):
         bot.routed.append(("capture_reprocess", vault_path, user_hint))
 
     async def _text_capture(room_id, text, sender, reply_to=None, *,
@@ -448,6 +448,7 @@ class TestACorrectionRereadsTheCaption:
         ))
 
         assert seen["caption"] == caption
+        assert seen["reply_text"] == "das ist Keramik"
 
 
 # ── What must keep working ───────────────────────────────────────────────
