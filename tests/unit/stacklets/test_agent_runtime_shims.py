@@ -452,6 +452,46 @@ def test_the_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
     assert not channel._should_process_message(kitchen, _Text()), "only the first answer"
 
 
+def _said(text, sender="@homer:simpson"):
+    class _Text:
+        body = text
+        pill_mention = False
+        source = {"content": {"msgtype": "m.text", "body": text}}
+    event = _Text()
+    event.sender = sender
+    return event
+
+
+def _asks_homer(channel, *, event_id="$ask"):
+    """Homer asks the agent something, and the agent answers with a question."""
+    import asyncio
+    asyncio.run(channel._handle_message(
+        sender_id="@homer:simpson", chat_id="!kitchen",
+        content="Stacky, lösch die Partyliste", metadata={"event_id": event_id}))
+    asyncio.run(channel.send(_outbound(
+        "Die Partyliste hat noch 2 offene Punkte. Sollen die auch weg?",
+        metadata={"event_id": event_id})))
+
+
+def test_a_notice_from_nanobot_does_not_take_the_quote(nanobot, monkeypatch):
+    import asyncio
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+    channel._should_process_message(None, _voice())
+    _hand_over(channel, "Stacky, wir brauchen Milch.")
+
+    compaction = mods["nanobot.events"].ContextCompactionEvent
+    asyncio.run(channel.send(_outbound("Compressing context…", event=compaction(),
+                                       metadata={"event_id": "$voice"})))
+    asyncio.run(channel.send(_outbound("Milch steht jetzt auf der Einkaufsliste.",
+                                       metadata={"event_id": "$voice"})))
+
+    assert channel.sent[-1].content == \
+        "> Stacky, wir brauchen Milch.\n\nMilch steht jetzt auf der Einkaufsliste."
+
+
 # ── a slow turn shows what the agent is doing ────────────────────────────
 
 def _outbound(content, *, event=None, metadata=None):
@@ -462,7 +502,6 @@ def _outbound(content, *, event=None, metadata=None):
         chat_id: str
         content: str
         metadata: dict
-        event: object = None
         event: object = None
 
     return _Outbound("!kitchen", content, metadata or {}, event)

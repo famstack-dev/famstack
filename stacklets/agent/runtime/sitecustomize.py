@@ -103,6 +103,9 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `MatrixChannel.send(self, msg: OutboundMessage)` (async, a dataclass whose
                  `metadata["event_id"]` is the message being answered)
     open_question: the voice_trigger symbols, plus `room.room_id` and `event.sender` in the gate
+    answers:     an answer is an `OutboundMessage` with `event` None or
+                 `nanobot.bus.outbound_events.StreamedResponseEvent`; every notice
+                 (progress, compaction, retry wait) carries its own event (`_is_answer`)
     status_trace: `nanobot.bus.outbound_events.ProgressEvent` (`tool_hint`, `tool_events[].name`),
                  `nanobot.events.ContextCompactionEvent` (`phase`) reaching `MatrixChannel.send`,
                  reaching `MatrixChannel.send` when `sendToolHints` is on,
@@ -168,6 +171,25 @@ def _is_progress(msg) -> bool:
     except Exception:
         return False
     return isinstance(getattr(msg, "event", None), ProgressEvent)
+
+
+def _is_answer(msg) -> bool:
+    """True for the agent speaking to the family, not one of nanobot's notices.
+
+    A notice carries text too ("Compressing context…", a tool hint, a retry
+    wait), so text alone does not make an answer. An answer carries no
+    event, or the one that marks it as streamed.
+    """
+    if not msg.content:
+        return False
+    event = getattr(msg, "event", None)
+    if event is None:
+        return True
+    try:
+        from nanobot.bus.outbound_events import StreamedResponseEvent
+    except Exception:
+        return False
+    return isinstance(event, StreamedResponseEvent)
 
 
 # ── state_log: the message list per turn, for debugging (opt-in) ─────────────
@@ -396,7 +418,7 @@ try:
             if running and msg.event.phase == "started":
                 running.trace.tidying()
             return None
-        if running and msg.content and not _is_progress(msg):
+        if running and _is_answer(msg):
             _traces.pop(key).task.cancel()
         return await _orig_send_trace(self, msg)
 
@@ -451,10 +473,9 @@ try:
 
     async def _send(self, msg):
         # The answer carries the voice message's event id for threading; the
-        # first one with text gets what was heard in front of it. Progress
-        # (a tool hint, see status_trace) is not the answer.
+        # first answer gets what was heard in front of it, not a notice.
         heard = _pending_voice.answering((msg.metadata or {}).get("event_id", "")) \
-            if msg.content and not _is_progress(msg) else ""
+            if _is_answer(msg) else ""
         if heard:
             msg = _dataclasses_voice.replace(msg, content=_quoted(heard, msg.content))
         return await _orig_send_voice(self, msg)
@@ -496,7 +517,7 @@ try:
         return await _orig_handle_q(self, sender_id, chat_id, content, *args, **kwargs)
 
     async def _send_and_remember(self, msg):
-        if msg.content and not _is_progress(msg):
+        if _is_answer(msg):
             if _asks(msg.content):
                 _open_questions.asked(msg.chat_id, _talking_to.get(msg.chat_id, ""),
                                       at=_time_question.monotonic())
