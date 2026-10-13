@@ -32,6 +32,7 @@ const LABELS = {
     start: "Start",
     recent: "Recent",
     lists: "Lists",
+    list: "List",
     diary: "Diary",
     people: "People",
     topics: "Topics",
@@ -77,6 +78,7 @@ const LABELS = {
     start: "Start",
     recent: "Aktuell",
     lists: "Listen",
+    list: "Liste",
     diary: "Tagebuch",
     people: "Personen",
     topics: "Themen",
@@ -119,6 +121,11 @@ const LABELS = {
 } as const
 
 export const L = LABELS[lang]
+
+// A list is often named for what it is about ("Camping"), which reads as
+// the topic. Its title says it is a list, unless the family's name for it
+// already does ("Einkaufsliste", "Packing list").
+export const listTitle = (title: string) => (/list/i.test(title) ? title : `${title} ${L.list}`)
 
 export const locale = lang === "de" ? "de-DE" : "en-US"
 const dateFormat = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" })
