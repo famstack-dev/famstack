@@ -79,6 +79,16 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _PERSON_PATH = re.compile(r"^[^/]+/people/([^/]+)\.md$")
 
 
+# What a list is for decides what happens to an item over time
+# (`kind` in the frontmatter, the family memory's field for the variant
+# of a type). A todo list hands a ticked item to its archive the night
+# after; a checklist (packing, the weekly chores) keeps its ticks until
+# it is reset.
+TODO = "todo"
+CHECKLIST = "checklist"
+KINDS = (TODO, CHECKLIST)
+
+
 class ListError(ValueError):
     """A file that is not a list, or whose frontmatter does not parse."""
 
@@ -235,7 +245,7 @@ class FamilyList:
     topics: list[str] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
     items: list[Item] = field(default_factory=list)
-    recurring: bool = False
+    kind: str = TODO
 
     @property
     def open_items(self) -> list[Item]:
@@ -275,6 +285,9 @@ def read_list(text: str, *, path: str) -> FamilyList:
     errors = validate(fm)
     if errors:
         raise ListError(f"{path}: {'; '.join(errors)}")
+    kind = str(fm.get("kind") or TODO)
+    if kind not in KINDS:
+        raise ListError(f"{path}: kind is {kind!r}, not one of {', '.join(KINDS)}")
 
     items: list[Item] = []
     section = ""
@@ -290,29 +303,25 @@ def read_list(text: str, *, path: str) -> FamilyList:
         topics=list(fm.get("topics") or []),
         sections=list(fm.get("sections") or []),
         items=items,
-        recurring=fm.get("recurring") is True,
+        kind=kind,
     )
 
 
 def new_list(title: str, *, description: str = "", topics: list[str] | None = None,
-             sections: list[str] | None = None, recurring: bool = False) -> str:
-    """The text of a new, empty list file.
-
-    A recurring list (a packing list, the weekly chores) keeps its ticked
-    items, so it can be reopened whole; every other list hands them to
-    its archive the night after.
-    """
+             sections: list[str] | None = None, kind: str = TODO) -> str:
+    """The text of a new, empty list file; a todo list leaves `kind` out."""
     fm = {"type": "list", "title": title, "description": description,
           "topics": list(topics or []), "sections": list(sections or [])}
-    if recurring:
-        fm["recurring"] = True
+    if kind != TODO:
+        fm["kind"] = kind
     return f"---\n{dump(fm)}\n---\n"
 
 
 # ── Changing a list ──────────────────────────────────────────────────────
 
 def set_details(text: str, *, title: str | None = None, description: str | None = None,
-                topics: list[str] | None = None, sections: list[str] | None = None) -> str:
+                topics: list[str] | None = None, sections: list[str] | None = None,
+                kind: str | None = None) -> str:
     """The list text with its frontmatter changed; `None` leaves a field as it is.
 
     New `sections` are the new walking order: the body's section blocks
@@ -324,6 +333,10 @@ def set_details(text: str, *, title: str | None = None, description: str | None 
                        ("topics", topics), ("sections", sections)):
         if value is not None:
             fm[key] = value
+    if kind == TODO:
+        fm.pop("kind", None)
+    elif kind is not None:
+        fm["kind"] = kind
     lines = _body(text).splitlines()
     if sections is not None:
         lines = _in_walking_order(lines, sections)
@@ -524,10 +537,10 @@ def archive_ticked(text: str, archives: dict[str, str], *, path: str, today: str
     `archives` maps an archive path to its current text ("" or missing
     for a month with no file yet). Returns the list text, the archive
     texts that changed, and the items moved. An item ticked today stays,
-    and a recurring list keeps every tick until it is reset.
+    and a checklist keeps every tick until it is reset.
     """
     lst = read_list(text, path=path)
-    if lst.recurring:
+    if lst.kind == CHECKLIST:
         return text, {}, []
     moving = [i for i in lst.items if i.done and i.done_on and i.done_on < today]
     changed: dict[str, str] = {}
