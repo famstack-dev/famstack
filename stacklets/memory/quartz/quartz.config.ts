@@ -15,6 +15,7 @@ import { QuartzConfig } from "./quartz/cfg"
 import * as Plugin from "./quartz/plugins"
 import { FamilyLists } from "./quartz/plugins/emitters/familyLists"
 import { VaultLinks } from "./quartz/plugins/transformers/vaultLinks"
+import { ListTitles } from "./quartz/plugins/transformers/listTitles"
 
 // Runtime env. `WIKI_HOST` is "memory.<domain>" in domain mode and
 // the empty-domain rendering "memory." in port mode — we treat the
@@ -123,6 +124,8 @@ const config: QuartzConfig = {
   plugins: {
     transformers: [
       Plugin.FrontMatter(),
+      // A list page's title says it is a list; needs the frontmatter read.
+      ListTitles(),
       // The vault is a git repo — let git timestamps win over
       // filesystem mtime so a fresh clone shows real commit dates.
       Plugin.CreatedModifiedDate({
