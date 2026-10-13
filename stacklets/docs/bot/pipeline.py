@@ -1155,7 +1155,7 @@ Rules:
 - correspondent_aliases: only when the printed sender name on THIS document differs from your canonical answer. Single-element list is fine.
 - correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
 - facts: concrete numbers, dates, account numbers, amounts that describe THIS document. When the document itemises purchases or services, each line item is its own fact bullet alongside the top-level totals. Empty list if none.
-- action_items: deadlines, payments due, forms to return. Empty list if none.
+- action_items: manual family tasks only (pay by transfer, sign/return form, book, cancel by date). NOT: direct debit, SEPA mandate, card on file, standing order, info or confirmation only. [] if none.
 
 Document text:
 ---
