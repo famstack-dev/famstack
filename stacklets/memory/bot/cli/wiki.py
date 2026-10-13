@@ -113,6 +113,14 @@ COMMIT_PREFIX = "docs(memory): refresh"
 # override exists for experiments and unusual models.
 _TEMPERATURE = float(os.environ.get("WIKI_TEMPERATURE", "0.0"))
 
+# The longest answer a page needs, in tokens. The home page is the
+# longest, measured at about 1,800 for a family of five; this leaves
+# room for a family several times that. A model caught in a loop
+# otherwise writes until the client timeout (15 minutes) and holds the
+# AI server the whole time; capped, its answer is cut off, fails to
+# parse, and the page stays as it was.
+_ANSWER_TOKENS = 8192
+
 # Bracketed regenerate markers. Match the correspondent-page convention
 # verbatim so the same human contract holds across every generated page:
 # edits outside the brackets are preserved, inside is ours to rewrite.
@@ -453,7 +461,8 @@ async def _generate_home(
         recent=recent, today=today,
         aliases={slug: list(p.aliases) for slug, p in people.items()})
     try:
-        raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
+        raw = await llm.complete("overview", prompt, json_mode=True,
+                                 temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
         answer = home_page.read_answer(raw, ids=roster, recent=recent, today=today)
     except LLMError as e:
         _err(f"home: no answer from the model ({e}); the page stays as it was")
@@ -556,7 +565,8 @@ async def _generate_member(
         lately=lately, lang=lang, previous=previous, new_evidence=new_evidence,
     )
     try:
-        raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
+        raw = await llm.complete("overview", prompt, json_mode=True,
+                                 temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
         parts = person_page.read_answer(raw, lately=lately)
     except LLMError as e:
         _err(f"{slug}: no answer from the model ({e}); the page stays as it was")
@@ -642,7 +652,8 @@ async def _generate_topic(
             sources, {n: e.get("summary") or "" for n, e in enumerate(entries + cross_refs, 1)}),
     )
     try:
-        raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
+        raw = await llm.complete("overview", prompt, json_mode=True,
+                                 temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
         answer = topic_page.read_answer(raw)
     except LLMError as e:
         _err(f"{page_dir}: no answer from the model ({e}); the page stays as it was")
