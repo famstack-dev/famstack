@@ -771,6 +771,15 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     }
     const updated = f?.dates?.modified
     if (m.type === "person") return { kicker: [L.person], meta: alsoKnownAs(m), date: updated, chips: [] }
+    // A list names the topics it belongs to; its page links back to them.
+    if (m.type === "list") {
+      const named = asList(m.topics).map((t) => topicIdx.get(fold(t)) ?? t)
+      const chips = named
+        .map((e) => (typeof e === "string" ? topics.get("room:" + e) : topics.get(e.id)))
+        .filter((t): t is Topic => !!t?.slug)
+        .map((t) => ({ label: t.label, slug: t.slug }))
+      return { kicker: [L.list], meta: [], date: updated, chips }
+    }
     if (m.type === "correspondent") return { kicker: [L.sender], meta: alsoKnownAs(m), date: updated, chips: [] }
     if (m.type === "topic") {
       const t = [...topics.values()].find((x) => x.slug === slug)
