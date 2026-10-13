@@ -28,6 +28,8 @@ description = "Append-only backup of stacklet data to attached disks"
 version     = "0.1.0"
 category    = "infrastructure"
 type        = "host"
+# Beta: its configuration can still change between releases.
+stage       = "beta"
 
 # Backup runs once per night via a host-installed cron entry. The cron
 # command invokes ``stack backup sync`` directly. macOS sandboxes cron
