@@ -151,6 +151,20 @@ class TestAList:
         assert text == "---\ntype: list\ntitle: Garage aufräumen\n---\n"
         assert read_list(text, path="family/lists/garage.md").items == []
 
+    def test_a_list_is_a_todo_list_unless_its_kind_says_otherwise(self):
+        """`kind` is the family memory's field for the variant of a type."""
+        path = "family/lists/packliste.md"
+        assert read_list(new_list("Garage aufräumen"), path=path).kind == "todo"
+        checklist = new_list("Packliste", kind="checklist")
+        assert "kind: checklist\n" in checklist
+        assert read_list(checklist, path=path).kind == "checklist"
+
+    def test_a_kind_it_does_not_know_is_refused_with_the_ones_it_does(self):
+        """A family member editing the file by hand learns what to write."""
+        with pytest.raises(ListError, match="todo, checklist"):
+            read_list("---\ntype: list\ntitle: Packliste\nkind: packing\n---\n",
+                      path="family/lists/packliste.md")
+
     def test_a_file_that_is_not_a_list_is_refused(self):
         with pytest.raises(ListError, match="not a list"):
             read_list("---\ntype: note\ntitle: Einkauf\ntimestamp: x\n---\n",
@@ -253,10 +267,9 @@ class TestTheArchive:
         assert [i.text for i in read_list(archives[october], path=october).items] == \
             ["Äpfel", "Milch"]
 
-    def test_a_recurring_list_keeps_its_ticks_for_the_next_reset(self):
-        packing = new_list("Packliste", recurring=True) + "\n- [x] Zelt ✅ 2026-10-01\n"
+    def test_a_checklist_keeps_its_ticks_for_the_next_reset(self):
+        packing = new_list("Packliste", kind="checklist") + "\n- [x] Zelt ✅ 2026-10-01\n"
         path = "family/lists/packliste.md"
-        assert read_list(packing, path=path).recurring
         assert archive_ticked(packing, {}, path=path, today=self.TODAY,
                               bucket="family") == (packing, {}, [])
 
@@ -303,6 +316,12 @@ class TestChangingAList:
         lst = read_list(set_details(_groceries(), title="Supermarkt", description="Rewe"),
                         path=GROCERIES)
         assert (lst.title, lst.description, lst.sections) == ("Supermarkt", "Rewe", STORE)
+
+    def test_a_list_becomes_a_checklist_and_back(self):
+        """A todo list is the default, so turning back leaves no `kind` behind."""
+        checklist = set_details(_groceries(), kind="checklist")
+        assert read_list(checklist, path=GROCERIES).kind == "checklist"
+        assert "kind:" not in set_details(checklist, kind="todo")
 
     def test_no_topics_leaves_none(self):
         assert read_list(set_details(_groceries(), topics=[]), path=GROCERIES).topics == []

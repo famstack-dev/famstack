@@ -118,6 +118,16 @@ class TestStartingAList:
         result = run("create", "--title", "Garage aufräumen", "--as", "homer")
         assert result["path"] == "family/lists/garage-aufraumen.md"
 
+    def test_a_packing_list_is_started_as_a_checklist(self, run, store):
+        """Its ticks stay for the next trip; a todo list would archive them overnight."""
+        result = run("create", "packliste", "--title", "Packliste", "--kind", "checklist",
+                     "--as", "marge")
+        assert "kind: checklist\n" in store.text(result["path"])
+
+    def test_a_list_turns_into_a_checklist(self, run, store, groceries):
+        run("set", "einkaufsliste", "--kind", "checklist", "--as", "marge")
+        assert "kind: checklist\n" in store.text("family/lists/einkaufsliste.md")
+
     def test_a_slug_is_lowercase_words_and_dashes(self, run):
         assert "not a slug" in run("create", "Einkauf Liste", "--title", "x", "--as", "marge")["error"]
 
