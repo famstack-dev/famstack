@@ -324,6 +324,30 @@ class TestRemovingAndMoving:
         assert store.text(groceries).endswith("  - Milchprodukte & Eier\n---\n"), \
             "the old list is empty again, with no heading left behind"
 
+    def test_an_item_whose_name_is_part_of_another_still_arrives(self, run, store, groceries):
+        """A move removes the item from the old list, so the new one must hold it."""
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Bio-Eier", "--as", "marge")
+        run("add", "einkaufsliste", "Eier", "--section", "Milchprodukte & Eier", "--as", "marge")
+        run("move", "einkaufsliste", "Eier", "--to", "markt", "--as", "marge")
+        assert "- [ ] Eier\n" in store.text("family/lists/markt.md")
+
+    def test_an_item_ticked_on_the_other_list_arrives_open(self, run, store, groceries):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Eier", "--as", "marge")
+        run("tick", "markt", "Eier", "--as", "marge")
+        run("add", "einkaufsliste", "Eier", "--section", "Milchprodukte & Eier", "--as", "marge")
+        run("move", "einkaufsliste", "Eier", "--to", "markt", "--as", "marge")
+        assert "- [ ] Eier\n" in store.text("family/lists/markt.md")
+
+    def test_an_item_open_on_both_lists_is_kept_once(self, run, store, groceries):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Eier", "--as", "marge")
+        run("add", "einkaufsliste", "Eier", "--section", "Milchprodukte & Eier", "--as", "marge")
+        run("move", "einkaufsliste", "Eier", "--to", "markt", "--as", "marge")
+        assert store.text("family/lists/markt.md").count("Eier") == 1
+        assert "Eier\n" not in store.text(groceries).split("---\n", 2)[2]
+
     def test_a_list_that_does_not_exist_is_refused_with_the_lists(self, run, groceries):
         result = run("move", "einkaufsliste", "Eier", "--to", "baumarkt", "--as", "marge")
         assert result["error"] == "no list 'baumarkt'. Lists: einkaufsliste"

@@ -497,7 +497,7 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) 
 
     def _add_all(prior: str) -> str:
         for item in items:
-            if not find(read_list(prior, path=target_path), item.text):
+            if not _same_on(read_list(prior, path=target_path), item):
                 prior = insert_item(prior, item, path=target_path)
         return prior
     said = f"moved {'; '.join(i.text for i in items)} from {lst.title} to {target.title}"
@@ -507,19 +507,27 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) 
 
     def _remove_all(prior: str) -> str:
         for item in items:
-            current = read_list(prior, path=path)
-            match = [i for i in current.items if i.text == item.text]
-            if match:
-                prior = remove_item(prior, match[0])
+            if match := _same_on(read_list(prior, path=path), item):
+                prior = remove_item(prior, match)
         return prior
     return _commit(config, path, _remove_all, actor, said)
+
+
+def _same_on(lst: FamilyList, item: Item) -> Item | None:
+    """The item on `lst` that is `item` again: the same name, open or ticked alike.
+
+    Exact and tick-aware, unlike `find`: "Eier" is not "Bio-Eier", and a
+    ticked "Eier" is not the open one a move or an add brings.
+    """
+    return next((i for i in lst.items
+                 if i.text.casefold() == item.text.casefold() and i.done == item.done), None)
 
 
 def _add(text: str, lst: FamilyList, entries: list[tuple[str, str]],
          links: tuple, due: str, path: str) -> tuple[str, str]:
     added, already = [], []
     for name, section in entries:
-        if any(i.text.casefold() == name.casefold() and not i.done for i in lst.items):
+        if _same_on(lst, Item(name)):
             already.append(name)
             continue
         text = insert_item(text, Item(name, links=links, due=due, section=section), path=path)
