@@ -76,7 +76,7 @@ from memory.lib import (  # noqa: E402
 from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
 from stack.people import Person, find_people, resolve  # noqa: E402
 
-from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
+from stack.ai.client import LLM, LLMError  # noqa: E402
 
 # The diary compiler owns the diary's path and its reader-facing words;
 # the home page only places the pointer it renders. Imported by bare
@@ -455,8 +455,8 @@ async def _generate_home(
     try:
         raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
         answer = home_page.read_answer(raw, ids=roster, recent=recent, today=today)
-    except LLMUnavailableError as e:
-        _err(f"LLM unavailable: {e}")
+    except LLMError as e:
+        _err(f"home: no answer from the model ({e}); the page stays as it was")
         return 1
     except home_page.AnswerError as e:
         _err(f"home: the model's answer is unusable ({e}); the page stays as it was")
@@ -558,8 +558,8 @@ async def _generate_member(
     try:
         raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
         parts = person_page.read_answer(raw, lately=lately)
-    except LLMUnavailableError as e:
-        _err(f"LLM unavailable: {e}")
+    except LLMError as e:
+        _err(f"{slug}: no answer from the model ({e}); the page stays as it was")
         return 1
     except person_page.AnswerError as e:
         _err(f"{slug}: the model's answer is unusable ({e}); the page stays as it was")
@@ -644,8 +644,8 @@ async def _generate_topic(
     try:
         raw = await llm.complete("overview", prompt, json_mode=True, temperature=_TEMPERATURE)
         answer = topic_page.read_answer(raw)
-    except LLMUnavailableError as e:
-        _err(f"LLM unavailable: {e}")
+    except LLMError as e:
+        _err(f"{page_dir}: no answer from the model ({e}); the page stays as it was")
         return 1
     except topic_page.AnswerError as e:
         _err(f"{page_dir}: the model's answer is unusable ({e}); the page stays as it was")
