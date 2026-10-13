@@ -253,6 +253,7 @@ class CapturePipeline:
         bucket: str | None = None,
         transcribed: bool = False,
         write_in: str | None = None,
+        caption: str = "",
     ) -> CaptureOutcome:
         """File a message body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
@@ -266,6 +267,9 @@ class CapturePipeline:
         sender's one chance to catch a mishearing, and counts the note as
         the speaker's own words, the only notes that become todos (see
         `own_words`).
+
+        ``caption`` is what the sender wrote with a recording, handled as
+        an upload's caption is (`capture_binary`).
         """
         source = await self._text_extractor.extract(text)
         if source is None:
@@ -280,6 +284,7 @@ class CapturePipeline:
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, transcribed=transcribed, write_in=write_in,
             extract_action_items=in_own_words(text, spoken=transcribed),
+            user_hint=caption or None, caption=caption,
         )
 
     async def capture_email(
