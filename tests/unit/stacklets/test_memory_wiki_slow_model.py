@@ -2,7 +2,7 @@
 
 The wiki asks the model once per page, and the AI server is shared with
 everything else the household runs. A call that waits past the client's
-timeout must leave that page as
+timeout, or a model that will not stop writing, must leave that page as
 it was and let the rebuild go on to the next one: the nightly sweep
 covers every page in one run, and a run that stops at the first slow
 page leaves all the pages after it stale.
@@ -92,3 +92,14 @@ class TestAPageTheModelDoesNotAnswerInTime:
 
         assert rc == 0
 
+
+class TestAModelThatWillNotStop:
+    def test_every_page_asks_for_an_answer_of_bounded_length(self, simpsons):
+        """Without a cap, a model caught in a loop writes until the client
+        timeout (15 minutes) and holds the shared AI server all that time."""
+        model = _Model()
+
+        asyncio.run(wiki.run(model, ["--member", "homer", "--member", "marge"]))
+
+        assert model.calls
+        assert all(call.get("max_tokens") for call in model.calls)
