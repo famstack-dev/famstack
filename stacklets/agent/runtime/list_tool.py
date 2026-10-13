@@ -123,8 +123,10 @@ _awaiting_yes = AwaitingYes()
         ),
         kind=StringSchema(
             "For create or set: checklist for a list used again and again "
-            "(packing): ticks stay until reset. Leave out for a to-do list.",
-            enum=("todo", "checklist"),
+            "(packing): ticks stay until reset. calendar for appointments: "
+            "every add needs due, the entry leaves after its day. Leave out "
+            "for a to-do list.",
+            enum=("todo", "checklist", "calendar"),
             nullable=True,
         ),
         confirmed=BooleanSchema(

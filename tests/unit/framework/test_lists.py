@@ -24,7 +24,8 @@ from stack.lists import (
     Link,
     Known,
     archive_path,
-    archive_ticked,
+    archive_over,
+    over,
     known_items,
     stamp_ticks,
     ListError,
@@ -235,14 +236,14 @@ class TestTheArchive:
         return text
 
     def test_the_list_keeps_what_is_open_and_what_was_ticked_today(self):
-        text, _, moved = archive_ticked(self._shopped(), {}, path=GROCERIES,
+        text, _, moved = archive_over(self._shopped(), {}, path=GROCERIES,
                                         today=self.TODAY, bucket="family")
         assert [i.text for i in moved] == ["Äpfel", "Joghurt"]
         assert [(i.text, i.done) for i in read_list(text, path=GROCERIES).items] == \
             [("Birnen", False), ("Eier", True)]
 
     def test_each_item_goes_to_the_month_it_was_ticked_in_its_section(self):
-        _, archives, _ = archive_ticked(self._shopped(), {}, path=GROCERIES,
+        _, archives, _ = archive_over(self._shopped(), {}, path=GROCERIES,
                                         today=self.TODAY, bucket="family")
         october = archive_path("einkaufsliste", "2026-10", bucket="family")
         assert sorted(archives) == [archive_path("einkaufsliste", "2026-09", bucket="family"),
@@ -253,7 +254,7 @@ class TestTheArchive:
             [("Äpfel", "Gemüse & Obst", "2026-10-11")]
 
     def test_an_emptied_section_loses_its_heading(self):
-        text, _, _ = archive_ticked(self._shopped(), {}, path=GROCERIES,
+        text, _, _ = archive_over(self._shopped(), {}, path=GROCERIES,
                                     today="2026-10-13", bucket="family")
         assert "Milchprodukte" not in text.split("---\n", 2)[2]
 
@@ -262,7 +263,7 @@ class TestTheArchive:
         earlier = insert_item(new_list("Einkaufsliste, 2026-10", sections=STORE),
                               Item("Milch", done=True, done_on="2026-10-02",
                                    section="Milchprodukte & Eier"), path=october)
-        _, archives, _ = archive_ticked(self._shopped(), {october: earlier}, path=GROCERIES,
+        _, archives, _ = archive_over(self._shopped(), {october: earlier}, path=GROCERIES,
                                         today=self.TODAY, bucket="family")
         assert [i.text for i in read_list(archives[october], path=october).items] == \
             ["Äpfel", "Milch"]
@@ -270,15 +271,52 @@ class TestTheArchive:
     def test_a_checklist_keeps_its_ticks_for_the_next_reset(self):
         packing = new_list("Packliste", kind="checklist") + "\n- [x] Zelt ✅ 2026-10-01\n"
         path = "family/lists/packliste.md"
-        assert archive_ticked(packing, {}, path=path, today=self.TODAY,
+        assert archive_over(packing, {}, path=path, today=self.TODAY,
                               bucket="family") == (packing, {}, [])
 
     def test_a_tick_made_by_hand_gets_a_date_first(self):
         text = _groceries().rstrip("\n") + "\n\n- [x] Batterien\n"
         stamped = stamp_ticks(text, path=GROCERIES, today=self.TODAY)
         assert "- [x] Batterien ✅ 2026-10-12" in stamped
-        assert archive_ticked(stamped, {}, path=GROCERIES, today=self.TODAY,
+        assert archive_over(stamped, {}, path=GROCERIES, today=self.TODAY,
                               bucket="family")[2] == []
+
+
+class TestACalendar:
+    """The family's dates: next one on top, each gone the day after it."""
+
+    PATH = list_path("termine", bucket="family")
+
+    def _dates(self, *entries: tuple[str, str]) -> str:
+        text = new_list("Termine", kind="calendar")
+        for name, due in entries:
+            text = insert_item(text, Item(name, due=due), path=self.PATH)
+        return text
+
+    def test_entries_stay_in_date_order_whenever_they_come_in(self):
+        text = self._dates(("Elternabend", "2026-11-17"), ("Theater", "2026-11-03"),
+                           ("Zahnarzt", "2026-11-05"), ("Laternenumzug", "2026-11-11"))
+        assert [i.text for i in read_list(text, path=self.PATH).items] == \
+            ["Theater", "Zahnarzt", "Laternenumzug", "Elternabend"]
+
+    def test_an_entry_leaves_the_day_after_its_date_ticked_or_not(self):
+        text = self._dates(("Theater", "2026-11-03"), ("Zahnarzt", "2026-11-05"))
+        lst = read_list(text, path=self.PATH)
+        assert [i.text for i in over(lst, "2026-11-05")] == ["Theater"], \
+            "on its own day the appointment is still ahead"
+
+    def test_it_is_archived_under_the_month_of_its_date(self):
+        text = self._dates(("Theater", "2026-11-03"), ("Zahnarzt", "2026-11-05"))
+        kept, archives, moved = archive_over(text, {}, path=self.PATH,
+                                             today="2026-12-01", bucket="family")
+        assert [i.text for i in moved] == ["Theater", "Zahnarzt"]
+        assert list(archives) == [archive_path("termine", "2026-11", bucket="family")]
+        assert read_list(kept, path=self.PATH).items == []
+
+    def test_a_todo_past_its_due_date_stays_until_someone_ticks_it(self):
+        """A deadline missed is still a thing to do; only an appointment is simply over."""
+        text = _add(_groceries(), "Rezept abholen", due="2026-10-01")
+        assert over(read_list(text, path=GROCERIES), "2026-10-12") == []
 
 
 class TestKnownItems:
