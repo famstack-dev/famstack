@@ -21,6 +21,7 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from turn import current as current_turn
 
 
 class AwaitingYes:
@@ -168,11 +169,7 @@ class ListEditTool(Tool):
         sections: "list[str] | None" = None,
         confirmed: bool | None = None,
     ) -> str:
-        try:
-            import brief
-            actor = getattr(brief, "speaking_with", "") or "someone"
-        except Exception:
-            actor = "someone"
+        actor = current_turn().person or "someone"
 
         if op in ("create", "set"):
             args = _details_args(op, list, title, about, topic, sections)
