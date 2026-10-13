@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import yaml
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -968,3 +969,69 @@ class TestCaptureIdentityDedup:
         ])
         assert await mirror._lookup_capture_path(
             client, "homer/bookmarks/2026/06/y-449437.md") is None
+
+
+class _FakeVaultClient(_FakeTodoClient):
+    """The Forgejo file API a capture write uses, over an in-memory tree."""
+
+    def __init__(self, files=None):
+        super().__init__(files)
+        self.deleted: list[str] = []
+
+    def list_tree(self, owner, repo):
+        return [{"path": p, "type": "blob"} for p in self.files]
+
+    def delete_file(self, owner, repo, path, *, sha, message):
+        self.deleted.append(path)
+        self.files.pop(path, None)
+
+
+class TestACaptureKeepsItsPath:
+    """A capture's path is its address: the topic page, a list item and
+    the link in the chat all point at it. A correction that gives it a new
+    title, or comes from someone else in the room, changes what the page
+    says, never where it is."""
+
+    PATH = "family/painting/bookmarks/2026/10/bart-s-drawing-454811.md"
+
+    async def _refile(self, mirror, monkeypatch, *, entity, title):
+        client = _FakeVaultClient({self.PATH: {"content": "old", "sha": "s1"}})
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        path = await mirror.publish_capture(
+            entity=entity, kind="bookmark", source_uri="mxc://home.test/x",
+            title_hint=None, body_text="",
+            classification={"title": title, "summary": "s"},
+            captured_at="2026-10-13", model=None,
+            existing_path=self.PATH, capture_id="$x",
+        )
+        return path, client
+
+    async def test_a_new_title_keeps_the_file(self, mirror, monkeypatch):
+        path, client = await self._refile(
+            mirror, monkeypatch, entity="family/painting",
+            title="Bart's watercolour, wet on wet")
+        assert path == self.PATH
+        assert client.deleted == []
+        assert "# Bart's watercolour, wet on wet" in client.files[self.PATH]["content"]
+
+    async def test_a_reply_from_someone_else_keeps_it_in_its_topic(
+        self, mirror, monkeypatch,
+    ):
+        path, client = await self._refile(
+            mirror, monkeypatch, entity="marge", title="Bart's drawing")
+        assert path == self.PATH
+        assert list(client.files) == [self.PATH]
+
+    async def test_a_new_capture_is_named_after_its_title(self, mirror, monkeypatch):
+        client = _FakeVaultClient()
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        path = await mirror.publish_capture(
+            entity="family/painting", kind="bookmark", source_uri="mxc://home.test/y",
+            title_hint=None, body_text="", classification={"title": "Tent", "summary": "s"},
+            captured_at="2026-10-13", model=None,
+        )
+        assert path.startswith("family/painting/bookmarks/2026/10/tent-")
