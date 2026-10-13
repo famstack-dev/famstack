@@ -31,6 +31,7 @@ const LABELS = {
     menu: "Menu",
     start: "Start",
     recent: "Recent",
+    lists: "Lists",
     diary: "Diary",
     people: "People",
     topics: "Topics",
@@ -75,6 +76,7 @@ const LABELS = {
     menu: "Menü",
     start: "Start",
     recent: "Aktuell",
+    lists: "Listen",
     diary: "Tagebuch",
     people: "Personen",
     topics: "Themen",
@@ -392,6 +394,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
   const records: Rec[] = []
   const recTopics = new Map<string, Topic[]>()
   const people: NavNode[] = []
+  const familyLists: NavNode[] = []
   const diaryYears = new Map<string, { slug: string; label: string; months: NavNode[] }>()
   let diaryRoot: string | undefined
 
@@ -415,6 +418,16 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
         else if (/^\d{2}$/.test(segs[3] ?? ""))
           y.months.push({ label: String(meta.title ?? segs[3]).replace(/\s*\d{4}$/, ""), slug })
         diaryYears.set(segs[2], y)
+      }
+      continue
+    }
+
+    // family lists: <bucket>/lists/<slug>, counted by their open items;
+    // the archive of ticked items below it is not a list of its own
+    if (segs[0] === bucket && segs[1] === "lists") {
+      if (segs.length === 3 && meta.type === "list") {
+        const open = openTasks(readText(ctx, f)).length
+        familyLists.push({ label: String(meta.title ?? segs[2]), slug, count: open || undefined })
       }
       continue
     }
@@ -632,6 +645,8 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
   // ── assemble, in the agreed order ──
   const nav: NavNode[] = [{ key: "start", label: L.start, slug: "index" }]
   if (recent.length) nav.push({ key: "recent", label: L.recent, open: true, children: recent.map(topicNode) })
+  if (familyLists.length)
+    nav.push({ key: "lists", label: L.lists, children: familyLists.sort((a, b) => a.label.localeCompare(b.label, lang)) })
   if (diaryRoot || diaryYears.size) {
     const yearsDesc = [...diaryYears.values()].sort((a, b) => Number(b.label) - Number(a.label))
     nav.push({
