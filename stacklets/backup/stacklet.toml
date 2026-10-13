@@ -28,7 +28,11 @@ description = "Append-only backup of stacklet data to attached disks"
 version     = "0.1.0"
 category    = "infrastructure"
 type        = "host"
-# Beta: its configuration can still change between releases.
+# Beta: it does not back up every stacklet's data yet. Covered: photo
+# originals, the document files, the chat with its database and media, and
+# the files behind memory pages. Not yet: the Immich and Paperless
+# databases, and Forgejo, which holds the family memory with its diary and
+# lists. The configuration can still change between releases.
 stage       = "beta"
 
 # Backup runs once per night via a host-installed cron entry. The cron
