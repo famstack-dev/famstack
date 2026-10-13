@@ -25,6 +25,7 @@ from memory.lib import (
     people_prompt_section,
     persons_prompt_section,
 )
+from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people
 
 
@@ -68,6 +69,21 @@ class VaultContext:
             return ""
         correspondents = load_correspondents_from_vault(path, self.shared_bucket)
         return correspondents_prompt_section(correspondents)
+
+    def calendar(self) -> tuple[str, str] | None:
+        """(path, title) of the family's calendar list, the first by name; None without one."""
+        path = self._vault_path()
+        if path is None:
+            return None
+        for file in sorted((path / self.shared_bucket / LISTS_DIR).glob("*.md")):
+            rel = f"{self.shared_bucket}/{LISTS_DIR}/{file.name}"
+            try:
+                lst = read_list(file.read_text(encoding="utf-8"), path=rel)
+            except (OSError, ListError):
+                continue
+            if lst.kind == CALENDAR:
+                return rel, lst.title
+        return None
 
     def people(self) -> list[Person] | None:
         """The family's declared people; None until a person file exists.

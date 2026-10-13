@@ -517,6 +517,8 @@ class ArchivistBot(MicroBot):
         # returns None and logs the reason; writes become silent skips.
         mirror = self._build_mirror()
         vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
+        if mirror:
+            mirror.vault = vault
         pipeline = DocumentPipeline(
             paperless=paperless,
             classifier=classifier,

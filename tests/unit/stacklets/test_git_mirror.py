@@ -583,6 +583,89 @@ class TestActionItemsOnTheTopicsList:
         assert client.puts == []
 
 
+class TestDatesOnTheFamilysCalendar:
+    """A letter's dates go on the calendar: in date order, for the child, linked back."""
+
+    LETTER = "family/documents/2026/10/2026-10-07-elternbrief-p80.md"
+
+    @pytest.fixture
+    def family(self, tmp_path, monkeypatch, mirror):
+        """The Simpsons' family memory on disk, as the archivist's copy holds it."""
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))  # memory.lib, for VaultContext
+        from vault_context import VaultContext
+
+        vault = tmp_path / "vault"
+        (vault / "family" / "people").mkdir(parents=True)
+        (vault / "family" / "lists").mkdir()
+        (vault / "family" / "people" / "lisa.md").write_text(
+            "---\ntype: person\ntitle: Lisa Simpson\n---\n")
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(vault))
+        monkeypatch.setenv("LANGUAGE", "de")
+        mirror.vault = VaultContext(language="de", shared_bucket="family")
+        return vault
+
+    async def _file(self, mirror, client, dates, *, persons=("Lisa",), path=LETTER):
+        await mirror._fold_document_dates(
+            client, classification={"persons": list(persons), "dates": dates},
+            record_path=path, record_title="Elternbrief Grundschule", today="2026-10-13")
+
+    @pytest.mark.asyncio
+    async def test_a_school_letter_starts_the_calendar_with_its_dates(self, mirror, family):
+        client = _FakeTodoClient()
+        await self._file(mirror, client, [
+            {"what": "Elternabend", "date": "2026-11-17"},
+            {"what": "Theater", "date": "2026-11-03"},
+            {"what": "Interkulturelles Familienfest", "date": "2026-10-10"},
+        ])
+
+        written = client.files["family/lists/termine.md"]["content"]
+        assert "title: Termine\n" in written and "kind: calendar\n" in written
+        assert written.index("Theater") < written.index("Elternabend"), "next date on top"
+        assert ("- [ ] Theater [Lisa](../people/lisa.md) [Elternbrief Grundschule]"
+                "(../documents/2026/10/2026-10-07-elternbrief-p80.md) 📅 2026-11-03") in written
+        assert "Familienfest" not in written, "a date already past stays off"
+
+    @pytest.mark.asyncio
+    async def test_dates_join_the_calendar_the_family_already_has(self, mirror, family):
+        own = "---\ntype: list\ntitle: Kalender\nkind: calendar\n---\n\n- [ ] Zahnarzt 📅 2026-11-05\n"
+        (family / "family" / "lists" / "kalender.md").write_text(own)
+        client = _FakeTodoClient({"family/lists/kalender.md": {"content": own, "sha": "k1"}})
+
+        await self._file(mirror, client, [{"what": "Theater", "date": "2026-11-03"}])
+
+        assert "family/lists/termine.md" not in client.files
+        written = client.files["family/lists/kalender.md"]["content"]
+        assert written.index("Theater") < written.index("Zahnarzt")
+        assert client.puts[0]["sha"] == "k1"
+
+    @pytest.mark.asyncio
+    async def test_someone_the_family_has_not_declared_is_left_off_the_entry(self, mirror, family):
+        client = _FakeTodoClient()
+        await self._file(mirror, client, [{"what": "Theater", "date": "2026-11-03"}],
+                         persons=("Lisa", "Frau Krabappel"))
+
+        written = client.files["family/lists/termine.md"]["content"]
+        assert "[Lisa](../people/lisa.md)" in written and "Krabappel" not in written
+
+    @pytest.mark.asyncio
+    async def test_the_same_event_next_year_is_a_new_entry(self, mirror, family):
+        """Unlike a to-do, an appointment is told apart by its date as much as its name."""
+        client = _FakeTodoClient()
+        await self._file(mirror, client, [{"what": "Elternabend", "date": "2026-11-17"}])
+        await self._file(mirror, client, [{"what": "Elternabend", "date": "2027-03-09"}],
+                         path="family/documents/2027/02/2027-02-20-elternbrief-p91.md")
+
+        assert client.files["family/lists/termine.md"]["content"].count("Elternabend") == 2
+
+    @pytest.mark.asyncio
+    async def test_a_letter_without_dates_touches_no_list(self, mirror, family):
+        client = _FakeTodoClient()
+        await self._file(mirror, client, [])
+        await self._file(mirror, client, [{"what": "Theater", "date": "im November"}])
+
+        assert client.puts == []
+
+
 # ── Captures ─────────────────────────────────────────────────────────────
 #
 # A capture is a non-Paperless source (today: a pasted URL processed by

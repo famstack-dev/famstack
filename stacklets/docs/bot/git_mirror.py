@@ -45,15 +45,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
 
 from diary_room import household_now
+
+if TYPE_CHECKING:
+    from vault_context import VaultContext
 from vault_entry import (
     slug,
     capture_hash,
@@ -68,17 +73,24 @@ from vault_entry import (
     fold_email_message,
 )
 from stack.lists import (  # noqa: E402
+    CALENDAR,
     LISTS_DIR,
+    Item,
     Link,
     ListError,
     action_item,
+    calendar_description,
+    calendar_slug,
+    calendar_title,
     insert_item,
     list_path,
     new_list,
+    person_link,
     read_list,
     relink,
     topic_list_description,
 )
+from stack.people import resolve  # noqa: E402
 
 
 # The shared family knowledge vault. The memory stacklet creates and
@@ -90,6 +102,23 @@ REPO_NAME = "memory"
 
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
+
+
+# ── Dates ────────────────────────────────────────────────────────────────
+
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _dates(raw) -> list[tuple[str, str]]:
+    """The classifier's `dates` as (what, YYYY-MM-DD); anything malformed is left out."""
+    out = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        what, day = str(entry.get("what") or "").strip(), str(entry.get("date") or "").strip()
+        if what and _ISO_DAY.match(day):
+            out.append((what, day))
+    return out
 
 
 def _validate_on_write(frontmatter: dict) -> None:
@@ -168,6 +197,10 @@ class GitMirror:
     # SHARED_BUCKET → archivist → here.
     shared_bucket: str = "family"
     paperless_version: str = ""
+    # The family's people and calendar, read from the local copy of the
+    # family memory; without it, dates go on a calendar started here and
+    # name nobody.
+    vault: VaultContext | None = None
 
     _setup_done: bool = field(default=False, init=False)
     _creds: MirrorCreds | None = field(default=None, init=False)
@@ -536,17 +569,11 @@ class GitMirror:
 
         The list is started when the topic has none, titled with the
         topic's name as classified (`topic_name`, "Haus & Garten"), else
-        with its slug made readable. Each item links the
-        record it came from. A record's items go on the list once: when
-        the list already has items from it, a refile adds none, because
-        the model words them differently each time and the family may
-        have ticked, reworded or removed them since. When a refile renamed
-        the record (`previous_path`), those items are linked to its new
-        path instead. An item whose text is already on the list is left
-        alone too. An item due before `today` (the household's date when
-        not given) stays off the list: an old letter filed late, or a
-        refile of last year's bill, has nothing left to do. The record's
-        summary still names it.
+        with its slug made readable. Each item links the record it came
+        from and goes on as `_put_on_list` says. An item due before
+        `today` (the household's date when not given) stays off the list:
+        an old letter filed late, or a refile of last year's bill, has
+        nothing left to do. The record's summary still names it.
         """
         source = Link(record_title, record_path) if record_path else None
         today = today or household_now().date().isoformat()
@@ -554,22 +581,54 @@ class GitMirror:
                  and (not i.due or i.due >= today)]
         if not (topic and items):
             return False
-        path = list_path(topic, bucket=self.shared_bucket)
+        title = topic_name or topic.replace("-", " ").title()
+        return await self._put_on_list(
+            client, path=list_path(topic, bucket=self.shared_bucket),
+            start=new_list(title, topics=[topic], description=topic_list_description(
+                title, os.environ.get("LANGUAGE", ""))),
+            items=items, record_path=record_path, previous_path=previous_path,
+            message=message, author_name=author_name, author_email=author_email,
+        )
+
+    async def _put_on_list(
+        self,
+        client: ForgejoClient,
+        *,
+        path: str,
+        start: str,
+        items: list[Item],
+        record_path: str,
+        previous_path: str,
+        message: str,
+        author_name: str,
+        author_email: str,
+    ) -> bool:
+        """Add a record's `items` to the list at `path`, started as `start` if missing.
+
+        A record's items go on the list once: when the list already has
+        items from it, a refile adds none, because the model words them
+        differently each time and the family may have ticked, reworded or
+        removed them since. When a refile renamed the record
+        (`previous_path`), those items are linked to its new path instead.
+        An item already on the list is left alone: the same text, and on a
+        calendar the same date too, since the school's Elternabend comes
+        round again.
+        """
         try:
             existing = await asyncio.to_thread(
                 client.get_file, self.repo_owner, REPO_NAME, path,
             )
             prior = (existing or {}).get("content") or ""
-            title = topic_name or topic.replace("-", " ").title()
-            content = prior or new_list(
-                title, topics=[topic],
-                description=topic_list_description(title, os.environ.get("LANGUAGE", "")))
+            content = prior or start
             if previous_path and previous_path != record_path:
                 content = relink(content, previous_path, record_path, path=path)
-            already = {s for i in read_list(content, path=path).items for s in i.sources}
+            lst = read_list(content, path=path)
+
+            def key(i: Item) -> tuple[str, str]:
+                return i.text.casefold(), i.due if lst.kind == CALENDAR else ""
+            already = {s for i in lst.items for s in i.sources}
             for item in items if record_path not in already else []:
-                on_list = read_list(content, path=path).items
-                if not any(i.text.casefold() == item.text.casefold() for i in on_list):
+                if key(item) not in {key(i) for i in read_list(content, path=path).items}:
                     content = insert_item(content, item, path=path)
             if content == prior:
                 return False
@@ -582,10 +641,10 @@ class GitMirror:
             )
             return True
         except ListError as e:
-            logger.warning("[git-mirror] {} is not a list, action items not added: {}", path, e)
+            logger.warning("[git-mirror] {} is not a list, items not added: {}", path, e)
             return False
         except ForgejoError as e:
-            logger.warning("[git-mirror] Action items not added to {}: {}", path, e)
+            logger.warning("[git-mirror] Items not added to {}: {}", path, e)
             return False
 
     async def _fold_document_todos(
@@ -617,6 +676,51 @@ class GitMirror:
                 author_email=BOT_EMAIL,
                 today=today,
             )
+
+    async def _fold_document_dates(
+        self,
+        client: ForgejoClient,
+        *,
+        classification: dict,
+        record_path: str,
+        record_title: str,
+        previous_path: str = "",
+        today: str = "",
+    ) -> bool:
+        """Put a document's dates on the family's calendar.
+
+        Each entry is assigned to the people the document names, as far
+        as the family has declared them, and links the document. The
+        calendar is the family's list of `kind: calendar` (`VaultContext`),
+        started when there is none. A date already past stays off, as a
+        past action item does.
+        """
+        today = today or household_now().date().isoformat()
+        people = self._person_links(classification)
+        source = Link(record_title, record_path)
+        entries = [Item(what, due=day, links=(*people, source))
+                   for what, day in _dates(classification.get("dates")) if day >= today]
+        if not entries:
+            return False
+        language = os.environ.get("LANGUAGE", "")
+        path, title = (self.vault.calendar() if self.vault else None) or \
+            (list_path(calendar_slug(language), bucket=self.shared_bucket), calendar_title(language))
+        return await self._put_on_list(
+            client, path=path,
+            start=new_list(title, description=calendar_description(language), kind=CALENDAR),
+            items=entries, record_path=record_path, previous_path=previous_path,
+            message="chore(lists): archivist added dates to the calendar",
+            author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+        )
+
+    def _person_links(self, classification: dict) -> tuple[Link, ...]:
+        """Links to the declared people a classification names; unknown names are left out."""
+        names = classification.get("persons") or []
+        known = (self.vault.people() if self.vault else None) or []
+        found = [p for n in ([names] if isinstance(names, str) else names)
+                 if isinstance(n, str) and (p := resolve(n, known))]
+        return tuple(person_link(p.id, p.first_name, bucket=self.shared_bucket)
+                     for p in dict.fromkeys(found))
 
     async def _fold_capture_todos(
         self,
@@ -784,6 +888,9 @@ class GitMirror:
         self._cache[paperless_id] = target_path
         self._save_cache()
         await self._fold_document_todos(client, classification=classification,
+                                        record_path=target_path, record_title=title,
+                                        previous_path=existing_path or "")
+        await self._fold_document_dates(client, classification=classification,
                                         record_path=target_path, record_title=title,
                                         previous_path=existing_path or "")
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
