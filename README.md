@@ -27,7 +27,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> [**v0.4.0-rc.1**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0-rc.1) is the current Beta.
+> [**v0.4.0-rc.2**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0-rc.2) is the current Beta.
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
@@ -35,10 +35,10 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
 > [!TIP]
-> **New in 0.3: your family server gets a memory.**
-> The `memory` stacklet curates a wiki of your family life out of the documents, notes, and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources.
+> **New in 0.4: household lists, kept in the chat.**
+> The shopping list, the packing list for the camping trip, what still has to happen before the school trip: Stacky, the family agent, keeps them for you. Type it, say it in a voice message, or send a photo of a handwritten list with a caption. Every list is a plain Markdown checklist in your family's memory, and the wiki shows what is still open on each topic and person page. The agent is beta. [How lists work](docs/user-guide.md#lists).
 > **And a family diary.** famstack turns the voice messages and photos you post in the Memories room into a diary you read back month by month, in your own words. Each memory gets a card in the chat; reply to it to fix a name or a date.
-> It's in daily use on our own server, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1). [Read the introduction](https://famstack.dev/blog/famstack-0-3-beta/).
+> **0.3 gave your family server a memory**: a wiki of your family life, curated from the documents, notes and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources. [Read the introduction](https://famstack.dev/blog/famstack-0-3-beta/).
 
 ## What you get today
 
@@ -47,6 +47,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 - **Document archive with OCR** that you photograph from your phone and the local AI files for you (Paperless-ngx).
 - **Your family wiki**: an Obsidian-compatible second brain, generated from the documents, notes, and voice memos you file (memory).
 - **Your family diary**: voice messages, photos and notes from the Memories room, read back month by month in your own words. Correct any memory by replying to its card in the chat (memory).
+- **Household lists in the chat**: the shopping list, packing lists, a topic's to-dos. Tell Stacky, the family agent, by text, by voice or with a photo of a handwritten list (memory + agent, beta).
 - **Local AI engine** on Apple Metal GPU: voice transcription, text-to-speech, document classification (oMLX + Whisper + Piper).
 - **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
 - **Email into the family brain**: point a mailbox at a chat room and new mail (with its attachments) lands there for the archivist to file, newsletters and marketing filtered out (IMAP, read-only, private).
@@ -183,7 +184,7 @@ Each stacklet except core and messages is opt-in. You can mix and match them as 
 Messages is optional in theory (But without it, the whole point of famstack is a bit neglected).
 Messages allows you to operate the stack from your smartphone. 
 
-famstack comes with a lightweight bot runtime. The bots are tiny helpers that automate tasks in your family chat: filing documents, transcribing voice memos, managing your stack. Experimenting with [nanobot](https://github.com/HKUDS/nanobot)-based agent bots too.
+famstack comes with a lightweight bot runtime. The bots are tiny helpers that automate tasks in your family chat: filing documents, transcribing voice memos, managing your stack. The agent stacklet (beta) adds Stacky, a family agent built on [nanobot](https://github.com/HKUDS/nanobot) that keeps your lists and answers from your own notes.
 
 | Stacklet | Status  | Service                | What it does                                             |
 |----------|---------|------------------------|----------------------------------------------------------|
@@ -192,8 +193,12 @@ famstack comes with a lightweight bot runtime. The bots are tiny helpers that au
 | photos   | working | Immich                 | Family photo library and mobile backup                   |
 | docs     | working | Paperless-ngx          | Document archive with OCR                                |
 | ai       | working | TTS, Whisper, oMLX     | Turns your Mac into an AI Machine                        |
+| memory   | working | Forgejo, Quartz        | Family wiki, diary and lists, kept as plain files        |
+| backup   | working | rsync                  | Append-only backups to an attached disk                  |
+| agent    | beta    | nanobot                | Stacky, the family agent in your chat                    |
 | chatai   | beta    | Open WebUI             | ChatGPT-like chat interface                              |
 | code     | beta    | Forgejo                | Private Git server                                       |
+| infra    | beta    | Caddy, AdGuard         | Domain mode: your own names, with HTTPS                  |
 
 Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklets.md) takes about 15 minutes.
 
@@ -201,7 +206,7 @@ Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklet
 
 ## Roadmap
 
-Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)).
+Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). 0.4 adds household lists, the family agent and backups.
 
 | Feature                                                  | Status                       |
 |----------------------------------------------------------|------------------------------|
@@ -216,8 +221,9 @@ Document filing, photo backup, family chat with voice memos, and the family memo
 | Document Q&A with citations, in chat                     | :construction: 0.3-beta      |
 | Voice memos become searchable notes                      | :construction: 0.3-beta      |
 | Topic rooms: the room name is the filing system          | :construction: 0.3-beta      |
+| Household lists, kept by the family agent (agent)        | :construction: 0.4-rc        |
+| Backups (backup stacklet, append-only to attached disk)  | :construction: 0.4-rc        |
 | Nice domains setup e.g. `https://photos.home.domain.tld` | :construction: Beta          |
-| Backups (backup stacklet, append-only to attached disk)  | :dart: Next                  |
 | Bot interaction patterns (how a family talks to bots)    | :dart: Next                  |
 | Dream cycle (vault consolidation, richer wiki pages)     | :dart: Planned               |
 | Family memory bank (voice + photos matched by day)       | :dart: Planned               |
