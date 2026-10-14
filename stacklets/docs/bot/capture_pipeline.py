@@ -346,7 +346,7 @@ class CapturePipeline:
         write_in: str | None = None,
         caption: str = "",
     ) -> CaptureOutcome:
-        """File a PDF or image as a bookmark.
+        """File a PDF as a bookmark, or a photo as a note.
 
         Vision-driven by default: render the page(s) and let the LLM
         do extraction + summary + tags in one prompt. Long text-layer
@@ -463,10 +463,13 @@ class CapturePipeline:
         ``kind`` ("bookmark" or "note") drives whether the body is
         kept in the mirror: notes preserve the bytes verbatim, since
         a Markdown export or text file IS the artifact; bookmarks
-        keep only the summary, since the binary stays in Matrix.
+        keep only the summary, since the binary stays in Matrix. A
+        photo is a note with no body: the picture is the artifact.
         """
         title_hint = filename or None
         is_image = mime in IMAGE_MIMES
+        # A photo the family posts is their own record, like a note they
+        # type, not a pointer to something kept elsewhere.
         if is_image:
             return (
                 SourceContent(
@@ -474,7 +477,7 @@ class CapturePipeline:
                     title_hint=title_hint, source_uri=source_uri,
                 ),
                 [ImageAttachment(data=file_data, mime=mime)],
-                "bookmark",
+                "note",
             )
 
         # md / txt uploads land as notes: the bytes themselves are the

@@ -1667,9 +1667,9 @@ class ArchivistBot(MicroBot):
 
         # Documents room → full archivist pipeline (Paperless + classify
         # + entity reconciliation). Every other reacting room is a
-        # capture room: PDFs and images become visual bookmarks in the
-        # sender's bucket; Matrix already stores the binary, so we link
-        # to the mxc URL and don't re-archive the bytes.
+        # capture room: a PDF becomes a bookmark and a photo a note, in
+        # the room's topic or the sender's bucket, linked to the mxc URL
+        # and with a copy of the bytes in the media archive.
         if self._is_documents_room(ctx):
             await self._process_document(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
@@ -2446,7 +2446,7 @@ class ArchivistBot(MicroBot):
         captured_ts: int = 0,
         caption: str = "",
     ) -> None:
-        """Capture a PDF or image as a visual bookmark.
+        """Capture a PDF as a bookmark, or a photo as a note.
 
         Vision-driven by default (the classifier sees the rendered
         page(s) + any extractable text layer). The entry points back at
