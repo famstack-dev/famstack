@@ -341,7 +341,8 @@ class TestSourceFromBinary:
         return p
 
     def test_image_returns_single_image_no_text(self):
-        # Plain image -> one ImageAttachment, no extracted text, bookmark kind.
+        # Plain image -> one ImageAttachment, no extracted text, a note: a
+        # photo the family posts is their own record, not a pointer.
         pipe = self._pipe()
         source, images, kind = pipe._source_from_binary(
             file_data=b"\xff\xd8fake-jpeg-bytes",
@@ -355,7 +356,7 @@ class TestSourceFromBinary:
         assert source.text == ""
         assert len(images) == 1
         assert images[0].mime == "image/jpeg"
-        assert kind == "bookmark"
+        assert kind == "note"
 
     def test_unsupported_mime_returns_none(self):
         # Video and archives land here and fall through to None. (Audio
@@ -1180,6 +1181,13 @@ class TestAPhotosCaption:
     async def test_the_entry_keeps_the_caption(self):
         published, _ = await self._post(self.CAPTION)
         assert published["caption"] == self.CAPTION
+
+    @pytest.mark.asyncio
+    async def test_a_photo_is_filed_as_a_note(self):
+        """A photo the family posts is their own record, like a note they
+        type, not a pointer to something elsewhere like a saved link."""
+        published, _ = await self._post(self.CAPTION)
+        assert published["kind"] == "note"
 
     @pytest.mark.asyncio
     async def test_a_photo_without_a_caption_is_read_on_its_own(self):
