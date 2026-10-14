@@ -568,6 +568,7 @@ class CapturePipeline:
         write_in: str | None = None,
         caption: str = "",
         reply_text: str = "",
+        capture_id: str | None = None,
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -594,12 +595,17 @@ class CapturePipeline:
         ``reply_text`` is the words of the reply that asked for this
         refile. The entry keeps them under the replier's name, after the
         replies it already had.
+
+        ``capture_id`` names the capture for good; ``vault_path`` is where
+        the filing message saw it, which a move makes stale. The capture
+        is looked up by its id first (`_find_capture`).
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
-        raw = await self._mirror.read_capture(vault_path)
-        if raw is None:
+        found = await self._find_capture(capture_id, vault_path)
+        if found is None:
             return CaptureOutcome(status="capture_missing")
+        vault_path, raw = found
         meta, summary_text = _parse_capture_markdown(raw)
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
@@ -808,6 +814,23 @@ class CapturePipeline:
             transcript=transcript,
             scope=entity_slug,
         )
+
+    async def _find_capture(
+        self, capture_id: str | None, recorded_path: str,
+    ) -> tuple[str, str] | None:
+        """The path and text of a filed capture, by its id where it can be.
+
+        The local copy of the family memory says where the id lives now.
+        It can lag a write by minutes, so the path the filing message
+        recorded is tried after it.
+        """
+        by_id = (self._vault.capture_path(capture_id)
+                 if self._vault is not None and capture_id else None)
+        for path in dict.fromkeys(p for p in (by_id, recorded_path) if p):
+            raw = await self._mirror.read_capture(path)
+            if raw is not None:
+                return path, raw
+        return None
 
     async def _current_list(self, entity_slug: str) -> str:
         """The list a topic room's note adds to, for the classifier to see.

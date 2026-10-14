@@ -449,6 +449,7 @@ class TestACorrectionRereadsTheCaption:
 
         assert seen["caption"] == caption
         assert seen["reply_text"] == "das ist Keramik"
+        assert seen["capture_id"] == "$photo"
 
 
 # ── What must keep working ───────────────────────────────────────────────
