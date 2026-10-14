@@ -326,6 +326,12 @@ class GitMirror:
         self._save_creds(creds)
         return creds
 
+    async def vault_client(self) -> ForgejoClient | None:
+        """A client for the vault repo, or None while Forgejo is not set up."""
+        if not await self.ensure_setup():
+            return None
+        return ForgejoClient(url=self.code_url, token=self._setup_creds.token)
+
     @property
     def _setup_creds(self) -> MirrorCreds:
         """The credentials `ensure_setup()` loaded.
