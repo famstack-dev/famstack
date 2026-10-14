@@ -16,6 +16,7 @@ import * as Plugin from "./quartz/plugins"
 import { FamilyLists } from "./quartz/plugins/emitters/familyLists"
 import { VaultLinks } from "./quartz/plugins/transformers/vaultLinks"
 import { ListTitles } from "./quartz/plugins/transformers/listTitles"
+import { CalendarLookBack } from "./quartz/plugins/transformers/calendarLookBack"
 
 // Runtime env. `WIKI_HOST` is "memory.<domain>" in domain mode and
 // the empty-domain rendering "memory." in port mode — we treat the
@@ -126,6 +127,8 @@ const config: QuartzConfig = {
       Plugin.FrontMatter(),
       // A list page's title says it is a list; needs the frontmatter read.
       ListTitles(),
+      // A calendar's page ends with its last seven days, from the archive.
+      CalendarLookBack(),
       // The vault is a git repo — let git timestamps win over
       // filesystem mtime so a fresh clone shows real commit dates.
       Plugin.CreatedModifiedDate({

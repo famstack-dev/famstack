@@ -371,3 +371,9 @@ footer ul {
     white-space: nowrap;
   }
 }
+
+// A calendar's last seven days (calendarLookBack.ts): over, so greyed out.
+// Faded as a whole, so the 📅 fades with the words.
+ul.calendar-look-back {
+  opacity: 0.5;
+}
