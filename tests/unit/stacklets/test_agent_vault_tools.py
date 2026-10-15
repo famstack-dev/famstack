@@ -176,6 +176,12 @@ def test_the_allowlist_stays_read_only(api):
         assert not forbidden & set(path), f"{path} reaches a mutating command"
 
 
+def test_the_agent_cannot_add_a_person(api):
+    """Who the family is stays the family's to declare, not the model's to decide."""
+    args = ["memory", "person", "add", "Maggie Simpson", "--as", "marge"]
+    assert not any(args[:len(p)] == p for p in api.DOMAIN_ALLOW)
+
+
 # ── gate 2: the memory CLI's real parser ─────────────────────────────
 
 @pytest.mark.parametrize("tool_name,command,kwargs", [
@@ -670,7 +676,7 @@ def test_person_reads_generated_profiles(memory_cli, tmp_path):
         "# Homer\n\nSafety Inspector, Sector 7-G.\n", encoding="utf-8")
 
     result = memory_cli["person"].run(
-        ["homer", "--no-refresh"], None, {"data_dir": str(tmp_path)})
+        ["show", "homer", "--no-refresh"], None, {"data_dir": str(tmp_path)})
 
     assert result.get("path") == "homer/about.md", (
         f"expected the generated profile, got {result}"
@@ -694,7 +700,7 @@ def test_a_hand_written_source_page_wins(memory_cli, tmp_path, capsys):
             f"# Homer\n\n{marker}\n", encoding="utf-8")
 
     result = memory_cli["person"].run(
-        ["homer", "--no-refresh"], None, {"data_dir": str(tmp_path)})
+        ["show", "homer", "--no-refresh"], None, {"data_dir": str(tmp_path)})
 
     assert result.get("ok") is True
     assert "hand written" in capsys.readouterr().out
@@ -705,9 +711,9 @@ def test_missing_person_still_reports_cleanly(memory_cli, tmp_path):
     (tmp_path / "memory" / "brain").mkdir(parents=True)
 
     result = memory_cli["person"].run(
-        ["nobody", "--no-refresh"], None, {"data_dir": str(tmp_path)})
+        ["show", "nobody", "--no-refresh"], None, {"data_dir": str(tmp_path)})
 
-    assert "error" in result
+    assert result["error"].startswith("no profile for person 'nobody'")
 
 
 # ── the tree the agent's file tools actually see ─────────────────────

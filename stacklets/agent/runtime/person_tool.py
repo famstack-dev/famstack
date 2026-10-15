@@ -41,6 +41,7 @@ class MemoryPersonTool(Tool):
             "stack",
             "memory",
             "person",
+            "show",
             name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

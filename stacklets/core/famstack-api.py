@@ -41,7 +41,9 @@ NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 # commands above -- those stay on the JSON path used only by trusted core tools.
 DOMAIN_ALLOW = [
     ["memory", "search"],
-    ["memory", "person"],
+    # Reading a person only: `person add` writes the family's own
+    # declarations, which stay with the family.
+    ["memory", "person", "show"],
     ["memory", "topic"],
     ["memory", "lookup"],
     ["memory", "correspondents"],
