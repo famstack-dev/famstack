@@ -468,6 +468,7 @@ class TestActionItemsOnTheTopicsList:
             },
             record_path="family/documents/2026/03/2026-03-02-campsite-p12.md",
             record_title="Campsite booking",
+            today="2026-03-02",
         )
 
         written = client.files["family/lists/camping.md"]["content"]
@@ -511,17 +512,53 @@ class TestActionItemsOnTheTopicsList:
         await mirror._fold_document_todos(
             client, classification={"topics": ["Education"],
                                     "action_items": [{"action": "Sign the slip", "due": "2026-10-23"}]},
-            record_path=old, record_title="Permission slip")
+            record_path=old, record_title="Permission slip", today="2026-10-09")
         await mirror._fold_document_todos(
             client, classification={"topics": ["Education"],
                                     "action_items": [{"action": "Sign and return the slip",
                                                       "due": "2026-10-23"}]},
-            record_path=new, record_title="School notice", previous_path=old)
+            record_path=new, record_title="School notice", previous_path=old, today="2026-10-09")
 
         written = client.files["family/lists/education.md"]["content"]
         assert "Sign and return" not in written
         assert ("- [ ] Sign the slip [Permission slip]"
                 "(../documents/2026/10/2026-10-09-school-notice-p72.md) 📅 2026-10-23") in written
+
+    @pytest.mark.asyncio
+    async def test_an_item_already_past_its_due_date_stays_off_the_list(self, mirror):
+        """An old letter filed late, or last year's bill refiled, has nothing left to do.
+        The record's summary still names the item; only the list leaves it out."""
+        client = _FakeTodoClient()
+        await mirror._fold_document_todos(
+            client,
+            classification={"topics": ["Fahrzeug"], "action_items": [
+                {"action": "Rechnung überweisen", "due": "2026-08-14"},
+                {"action": "Unterlagen abholen", "due": "2026-10-13"},
+                "Reifen einlagern",
+            ]},
+            record_path="family/documents/2026/08/werkstatt-p40.md",
+            record_title="Werkstatt Rechnung",
+            today="2026-10-13",
+        )
+
+        written = client.files["family/lists/fahrzeug.md"]["content"]
+        assert "Rechnung überweisen" not in written
+        assert "Unterlagen abholen" in written, "due today is still ahead of the family"
+        assert "Reifen einlagern" in written, "an item without a date never runs out"
+
+    @pytest.mark.asyncio
+    async def test_a_record_with_only_past_items_starts_no_list(self, mirror):
+        client = _FakeTodoClient()
+        await mirror._fold_document_todos(
+            client,
+            classification={"topics": ["Fahrzeug"],
+                            "action_items": [{"action": "Rechnung überweisen", "due": "2026-08-14"}]},
+            record_path="family/documents/2026/08/werkstatt-p40.md",
+            record_title="Werkstatt Rechnung",
+            today="2026-10-13",
+        )
+
+        assert client.puts == []
 
     @pytest.mark.asyncio
     async def test_a_new_list_is_titled_with_the_topics_name(self, mirror):

@@ -784,11 +784,11 @@ class Classifier:
         captures are bookmarks/notes, not archives, and the user reads
         the summary later to remember what this was about.
 
-        ``extract_action_items`` opts a *note* into todo extraction
-        (the caller sets it only for human-authored notes, never
-        bookmarks). Off, the field is absent — a pasted snippet can't
-        manufacture a todo. On, it's hard-defaulted to [] so a note
-        with nothing to do stays empty.
+        ``extract_action_items`` opts a note into todo extraction. The
+        caller sets it only for a note in the writer's own words
+        (`own_words`); off, the field is absent, so copied text cannot
+        put its author's suggestions on the family's list. On, it
+        defaults to [] so a note with nothing to do stays empty.
 
         Existing tags are fed as a vocabulary hint so the LLM reuses
         what's already in the system ("LLMs" not "llm", "Apple
@@ -1155,7 +1155,7 @@ Rules:
 - correspondent_aliases: only when the printed sender name on THIS document differs from your canonical answer. Single-element list is fine.
 - correspondent_facts: stable across documents from the same sender. Address and customer numbers belong here; this month's total does not.
 - facts: concrete numbers, dates, account numbers, amounts that describe THIS document. When the document itemises purchases or services, each line item is its own fact bullet alongside the top-level totals. Empty list if none.
-- action_items: deadlines, payments due, forms to return. Empty list if none.
+- action_items: manual family tasks only (pay by transfer, sign/return form, book, cancel by date). NOT: direct debit, SEPA mandate, card on file, standing order, info or confirmation only. [] if none.
 
 Document text:
 ---
@@ -1305,10 +1305,13 @@ def _build_capture_prompt(
         f'("this Friday", "next week", "the 14th to 16th") into concrete dates.\n'
         if today else ""
     )
-    # Action items are off by default — the snippet-becomes-todo guard. The
-    # caller opts in only for human-authored notes (never bookmarks), and even
-    # then the field is hard-defaulted to [] so the model isn't pushed to
-    # manufacture a task from a note that has none.
+    # Action items are asked for only when the caller decided the note is in
+    # the writer's own words (`own_words`): copied text carries its author's
+    # suggestions, and a model asked for tasks finds them. Even then the
+    # field defaults to [] so a note with nothing to do stays empty. The
+    # items stay plain text: asked for a due date as well, the model merged
+    # a shopping list into one item or dropped it, so a deadline stays in
+    # the item's words ("Take out the trash by Friday").
     action_items_field = (
         ',\n  "action_items": ["ONLY if this note records something to DO — a '
         "task, errand, reminder, or a list the writer keeps (shopping, packing, "

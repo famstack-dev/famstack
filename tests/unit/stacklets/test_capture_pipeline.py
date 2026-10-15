@@ -73,6 +73,7 @@ class FakeClassifier:
         # thirteen items to twenty-seven.
         self.saw_current_list = current_list
         self.saw_write_in = write_in
+        self.saw_extract_action_items = extract_action_items
         if self._raises:
             raise self._raises
         return self._payload
@@ -1180,3 +1181,54 @@ class TestTheRoomsLanguageReachesTheClassifier:
             text="a note", sender_mxid="@homer:server",
         )
         assert classifier.saw_write_in is None
+
+
+class TestOnlyTheWritersOwnWordsBecomeTodos:
+    """The classifier is asked for todos only for a note in the writer's own words.
+
+    Copied text carries its author's suggestions; asked for tasks, the model
+    finds them. `own_words` holds the rule; these pin that every way into
+    the vault applies it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_short_typed_note_is_asked_for_todos(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_text(
+            text="wir sollten bis Freitag den Müll rausbringen", sender_mxid="@marge:s")
+        assert classifier.saw_extract_action_items is True
+
+    @pytest.mark.asyncio
+    async def test_a_voice_message_is_asked_for_todos(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_text(
+            text="Nicht vergessen, " + "die Fahrräder aufpumpen. " * 20,
+            sender_mxid="@marge:s", transcribed=True)
+        assert classifier.saw_extract_action_items is True
+
+    @pytest.mark.asyncio
+    async def test_a_pasted_article_is_not(self):
+        classifier = FakeClassifier()
+        article = "Why we moved to Bun\n\nTry it on your next project. " * 5
+        await _pipeline(classifier=classifier).capture_text(
+            text=article, sender_mxid="@homer:s")
+        assert classifier.saw_extract_action_items is False
+
+    @pytest.mark.asyncio
+    async def test_a_link_is_not(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_url(
+            url="https://example.com/framework", sender_mxid="@homer:s",
+            notifier=FakeNotifier())
+        assert classifier.saw_extract_action_items is False
+
+    @pytest.mark.asyncio
+    async def test_a_topic_rooms_note_is_shown_the_topics_list(self):
+        """Seeing the list keeps a re-posted list from growing in new wordings."""
+        mirror = FakeMirror()
+        mirror._stored = {"family/lists/camping.md": "- [ ] Kühlbox\n"}
+        classifier = FakeClassifier()
+        await _pipeline(mirror=mirror, classifier=classifier).capture_text(
+            text="Kühlbox mitnehmen", sender_mxid="@marge:s", bucket="family/camping")
+        assert classifier.saw_current_list == "- [ ] Kühlbox\n"
+
