@@ -1457,6 +1457,7 @@ class ArchivistBot(MicroBot):
             write_in=await self._write_in(room_id),
             caption=caption,
             reply_text=reply_text,
+            capture_id=capture_id,
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
