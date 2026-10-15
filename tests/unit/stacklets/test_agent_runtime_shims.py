@@ -26,7 +26,7 @@ import pytest
 SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
-                   "list_tool", "tool_trim", "voice_trigger")
+                   "list_tool", "tool_trim", "voice_trigger", "open_question")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -216,6 +216,35 @@ def test_a_reply_in_the_agents_own_thread_is_processed(nanobot):
     assert channel.processed == [event]
 
 
+def test_a_reply_to_the_agents_message_is_processed(nanobot):
+    """Reply to Stacky's question, no name, no pill: the reply is the address."""
+    import asyncio
+    import types as _types
+
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    room = _room_with_thread(channel, root_sender=channel.config.user_id)
+    event = _types.SimpleNamespace(sender="@marge:home.local", source={"content": {
+        "body": "the oat one", "m.relates_to": {"m.in_reply_to": {"event_id": "$which"}}}})
+
+    asyncio.run(channel._on_message(room, event))
+
+    assert channel.processed == [event]
+
+
+def test_a_reply_to_someone_else_is_left_alone(nanobot):
+    import asyncio
+    import types as _types
+
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    room = _room_with_thread(channel, root_sender="@homer:home.local")
+    event = _types.SimpleNamespace(sender="@marge:home.local", source={"content": {
+        "body": "the oat one", "m.relates_to": {"m.in_reply_to": {"event_id": "$homers"}}}})
+
+    asyncio.run(channel._on_message(room, event))
+
+    assert channel.processed == []
+
+
 def test_another_bots_thread_is_left_alone(nanobot):
     """The shim widens the gate; it must not open it.
 
@@ -367,6 +396,39 @@ def test_a_typed_message_is_not_held_for_a_transcript(nanobot, monkeypatch):
         source = {"content": {"msgtype": "m.text", "body": "wir brauchen Milch"}}
 
     assert not channel._should_process_message(None, _Text())
+
+
+# ── the answer to the agent's own question ───────────────────────────────
+
+def test_the_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
+    """"Sollen die auch weg?" "Ja, die können weg." reaches the agent; once."""
+    import asyncio
+    import dataclasses
+    import types as _types
+
+    @dataclasses.dataclass
+    class _Outbound:
+        chat_id: str
+        content: str
+        metadata: dict
+
+    class _Text:
+        sender = "@homer:simpson"
+        body = "Ja, die können weg."
+        pill_mention = False
+        source = {"content": {"msgtype": "m.text", "body": "Ja, die können weg."}}
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    kitchen = _types.SimpleNamespace(room_id="!kitchen")
+    asyncio.run(channel._handle_message(
+        sender_id="@homer:simpson", chat_id="!kitchen",
+        content="Stacky, lösch die Partyliste", metadata={"event_id": "$ask"}))
+    asyncio.run(channel.send(_Outbound(
+        "!kitchen", "Die Partyliste hat noch 2 offene Punkte. Sollen die auch weg?", {})))
+
+    assert channel._should_process_message(kitchen, _Text())
+    assert not channel._should_process_message(kitchen, _Text()), "only the first answer"
 
 
 # ── failure is contained, and visible ────────────────────────────────────
