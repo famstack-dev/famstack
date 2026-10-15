@@ -10,7 +10,8 @@ Absatz mit leerem Platzhalter fällt ganz weg, samt Überschrift.
   summary     eine Zeile: wofür das Thema der Familie dient, vom Modell
   facts       die wichtigsten Fakten als Bezeichnung und Wert, vom Modell
   state       was entschieden, erledigt oder geändert wurde, und von wem, vom Modell
-  todos       die offenen Punkte der Aufgabenliste, wie die Familie sie führt
+  todos       die offenen Punkte der Listen zum Thema, unter dem Namen der Liste,
+              vom Compiler übernommen
   notes, bookmarks, documents
               alles, was unter dem Thema abgelegt ist, das Neueste zuerst, vom Compiler
   elsewhere   Einträge an anderer Stelle, die das Thema nennen, vom Compiler

@@ -31,6 +31,8 @@ const LABELS = {
     menu: "Menu",
     start: "Start",
     recent: "Recent",
+    lists: "Lists",
+    list: "List",
     diary: "Diary",
     people: "People",
     topics: "Topics",
@@ -75,6 +77,8 @@ const LABELS = {
     menu: "Menü",
     start: "Start",
     recent: "Aktuell",
+    lists: "Listen",
+    list: "Liste",
     diary: "Tagebuch",
     people: "Personen",
     topics: "Themen",
@@ -117,6 +121,11 @@ const LABELS = {
 } as const
 
 export const L = LABELS[lang]
+
+// A list is often named for what it is about ("Camping"), which reads as
+// the topic. Its title says it is a list, unless the family's name for it
+// already does ("Einkaufsliste", "Packing list").
+export const listTitle = (title: string) => (/list/i.test(title) ? title : `${title} ${L.list}`)
 
 export const locale = lang === "de" ? "de-DE" : "en-US"
 const dateFormat = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" })
@@ -392,6 +401,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
   const records: Rec[] = []
   const recTopics = new Map<string, Topic[]>()
   const people: NavNode[] = []
+  const familyLists: NavNode[] = []
   const diaryYears = new Map<string, { slug: string; label: string; months: NavNode[] }>()
   let diaryRoot: string | undefined
 
@@ -415,6 +425,16 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
         else if (/^\d{2}$/.test(segs[3] ?? ""))
           y.months.push({ label: String(meta.title ?? segs[3]).replace(/\s*\d{4}$/, ""), slug })
         diaryYears.set(segs[2], y)
+      }
+      continue
+    }
+
+    // family lists: <bucket>/lists/<slug>, counted by their open items;
+    // the archive of ticked items below it is not a list of its own
+    if (segs[0] === bucket && segs[1] === "lists") {
+      if (segs.length === 3 && meta.type === "list") {
+        const open = openTasks(readText(ctx, f)).length
+        familyLists.push({ label: String(meta.title ?? segs[2]), slug, count: open || undefined })
       }
       continue
     }
@@ -632,6 +652,8 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
   // ── assemble, in the agreed order ──
   const nav: NavNode[] = [{ key: "start", label: L.start, slug: "index" }]
   if (recent.length) nav.push({ key: "recent", label: L.recent, open: true, children: recent.map(topicNode) })
+  if (familyLists.length)
+    nav.push({ key: "lists", label: L.lists, children: familyLists.sort((a, b) => a.label.localeCompare(b.label, lang)) })
   if (diaryRoot || diaryYears.size) {
     const yearsDesc = [...diaryYears.values()].sort((a, b) => Number(b.label) - Number(a.label))
     nav.push({
@@ -749,6 +771,15 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     }
     const updated = f?.dates?.modified
     if (m.type === "person") return { kicker: [L.person], meta: alsoKnownAs(m), date: updated, chips: [] }
+    // A list names the topics it belongs to; its page links back to them.
+    if (m.type === "list") {
+      const named = asList(m.topics).map((t) => topicIdx.get(fold(t)) ?? t)
+      const chips = named
+        .map((e) => (typeof e === "string" ? topics.get("room:" + e) : topics.get(e.id)))
+        .filter((t): t is Topic => !!t?.slug)
+        .map((t) => ({ label: t.label, slug: t.slug }))
+      return { kicker: [L.list], meta: [], date: updated, chips }
+    }
     if (m.type === "correspondent") return { kicker: [L.sender], meta: alsoKnownAs(m), date: updated, chips: [] }
     if (m.type === "topic") {
       const t = [...topics.values()].find((x) => x.slug === slug)

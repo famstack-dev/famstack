@@ -100,6 +100,42 @@ class TestWhatTheCompilerFillsIn:
             "(/family/documents/2025/01/2025-01-18-birth-certificate-p47.md) · 18 Jan 2025")
 
 
+class TestWhatIsStillToDo:
+    """The list items that are Maggie's, from every list, soonest due first."""
+
+    LISTS = {
+        "schule": ("---\ntype: list\ntitle: Schule\n---\n\n"
+                   "- [ ] Vaccination card [Maggie](../people/maggie.md)\n"
+                   "- [ ] Field trip form [Maggie](../people/maggie.md) 📅 2026-10-20\n"
+                   "- [x] Lunch money [Maggie](../people/maggie.md) 📅 2026-10-01\n"),
+        "einkauf": ("---\ntype: list\ntitle: Einkauf\n---\n\n"
+                    "- [ ] Pacifier [Maggie](../people/maggie.md) 📅 2026-10-14\n"
+                    "- [ ] Duff [Homer](../people/homer.md)\n"),
+    }
+
+    def _with_lists(self, brain):
+        (brain / "family" / "lists").mkdir(parents=True)
+        for slug, text in self.LISTS.items():
+            (brain / "family" / "lists" / f"{slug}.md").write_text(text, encoding="utf-8")
+
+    def test_open_ones_only_soonest_due_first_each_with_its_list(self, brain):
+        self._with_lists(brain)
+        page = _page(brain, ANSWER, [FIRST_WORD])
+        assert page.split("## Still to do\n", 1)[1].split("\n\n", 1)[0] == (
+            "- [ ] Pacifier · 📅 14 Oct 2026 · [Einkauf](/family/lists/einkauf.md)\n"
+            "- [ ] Field trip form · 📅 20 Oct 2026 · [Schule](/family/lists/schule.md)\n"
+            "- [ ] Vaccination card · [Schule](/family/lists/schule.md)")
+
+    def test_it_sits_under_the_facts_at_a_glance(self, brain):
+        self._with_lists(brain)
+        page = _page(brain, ANSWER, [FIRST_WORD], lang="de")
+        assert "## Noch zu tun\n- [ ] Pacifier · 📅 14. Okt. 2026" in page
+
+    def test_nothing_open_for_her_no_heading(self, brain):
+        page = _page(brain, ANSWER, [FIRST_WORD])
+        assert "## Still to do" not in page
+
+
 class TestAnEmptySectionIsNotThere:
     def test_no_documents_no_documents_heading(self, brain):
         page = _page(brain, ANSWER, [FIRST_WORD, SQUISHEE])

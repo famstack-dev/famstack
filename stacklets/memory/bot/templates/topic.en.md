@@ -9,7 +9,8 @@ slot is empty is left out whole, heading included.
   summary     one line: what the topic is for the family, from the model
   facts       the key facts as label and value, from the model
   state       what has been decided, done or changed, and by whom, from the model
-  todos       the open items of the topic's todo list, as the family keeps it
+  todos       the open items of the lists naming the topic, under each list's name,
+              copied by the compiler
   notes, bookmarks, documents
               everything filed under the topic, newest first, by the compiler
   elsewhere   pages filed elsewhere that mention the topic, by the compiler
