@@ -204,6 +204,8 @@ def test_the_allowlist_stays_read_only(api):
      {"list": "baumarkt", "op": "create", "title": "Baumarkt",
       "about": "Werkzeug und Material", "topic": "einkaeufe-besorgungen",
       "sections": ["Schrauben", "Farbe"], "items": ["ignored"]}),
+    ("list_edit", "list", {"op": "create", "title": "Packliste", "kind": "checklist"}),
+    ("list_edit", "list", {"list": "packliste", "op": "set", "kind": "todo"}),
 ])
 def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
         memory_cli, vault_tools, tool_name, command, kwargs):

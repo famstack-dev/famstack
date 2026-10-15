@@ -83,7 +83,7 @@ _awaiting_yes = AwaitingYes()
             "Item operation: add, tick, untick, remove, or move to another "
             "list. reset reopens every ticked item. create starts a new "
             "list when none fits, such as a store the family has no list "
-            "for yet. set changes a list's title, description, topic or "
+            "for yet. set changes a list's title, description, topic, kind or "
             "sections, such as linking it to this room's topic. delete "
             "removes a whole list nobody needs any more.",
             enum=("add", "tick", "untick", "remove", "move", "reset", "create", "set",
@@ -119,6 +119,14 @@ _awaiting_yes = AwaitingYes()
             StringSchema("A section, such as Obst & Gemüse."),
             description="For create or set: a store's sections in the order the family "
                         "walks through it. Leave out for a list without sections.",
+            nullable=True,
+        ),
+        kind=StringSchema(
+            "For create or set: checklist for a list used again and again "
+            "(packing): ticks stay until reset. calendar for appointments: "
+            "every add needs due, the entry leaves after its day. Leave out "
+            "for a to-do list.",
+            enum=("todo", "checklist", "calendar"),
             nullable=True,
         ),
         confirmed=BooleanSchema(
@@ -163,13 +171,14 @@ class ListEditTool(Tool):
         title: str | None = None,
         about: str | None = None,
         sections: "list[str] | None" = None,
+        kind: str | None = None,
         confirmed: bool | None = None,
     ) -> str:
         now = current_turn()
         actor = now.person or "someone"
 
         if op in ("create", "set"):
-            args = _details_args(op, list, title, about, topic, sections)
+            args = _details_args(op, list, title, about, topic, sections, kind)
         elif op == "delete":
             slug = (list or "").strip()
             args = ["stack", "memory", "list", "delete", slug]
@@ -236,7 +245,7 @@ def _item_args(op, slug, items, topic, section, people, due, to) -> "list[str]":
     return args
 
 
-def _details_args(op, slug, title, about, topic, sections) -> "list[str]":
+def _details_args(op, slug, title, about, topic, sections, kind=None) -> "list[str]":
     """`stack memory list create|set [<list>] --title ...`: a list's own details.
 
     `create` makes a missing slug from the title; `set` changes only what is
@@ -253,6 +262,8 @@ def _details_args(op, slug, title, about, topic, sections) -> "list[str]":
         args += ["--topic", topic]
     for section in sections or []:
         args += ["--section", section]
+    if kind:
+        args += ["--kind", kind]
     return args
 
 

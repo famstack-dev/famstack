@@ -79,6 +79,18 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _PERSON_PATH = re.compile(r"^[^/]+/people/([^/]+)\.md$")
 
 
+# What a list is for decides what happens to an item over time
+# (`kind` in the frontmatter, the family memory's field for the variant
+# of a type). A todo list hands a ticked item to its archive the night
+# after; a checklist (packing, the weekly chores) keeps its ticks until
+# it is reset; a calendar keeps its entries in date order, and an entry
+# leaves the day after its date, ticked or not.
+TODO = "todo"
+CHECKLIST = "checklist"
+CALENDAR = "calendar"
+KINDS = (TODO, CHECKLIST, CALENDAR)
+
+
 class ListError(ValueError):
     """A file that is not a list, or whose frontmatter does not parse."""
 
@@ -235,7 +247,7 @@ class FamilyList:
     topics: list[str] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
     items: list[Item] = field(default_factory=list)
-    recurring: bool = False
+    kind: str = TODO
 
     @property
     def open_items(self) -> list[Item]:
@@ -275,6 +287,9 @@ def read_list(text: str, *, path: str) -> FamilyList:
     errors = validate(fm)
     if errors:
         raise ListError(f"{path}: {'; '.join(errors)}")
+    kind = str(fm.get("kind") or TODO)
+    if kind not in KINDS:
+        raise ListError(f"{path}: kind is {kind!r}, not one of {', '.join(KINDS)}")
 
     items: list[Item] = []
     section = ""
@@ -290,29 +305,25 @@ def read_list(text: str, *, path: str) -> FamilyList:
         topics=list(fm.get("topics") or []),
         sections=list(fm.get("sections") or []),
         items=items,
-        recurring=fm.get("recurring") is True,
+        kind=kind,
     )
 
 
 def new_list(title: str, *, description: str = "", topics: list[str] | None = None,
-             sections: list[str] | None = None, recurring: bool = False) -> str:
-    """The text of a new, empty list file.
-
-    A recurring list (a packing list, the weekly chores) keeps its ticked
-    items, so it can be reopened whole; every other list hands them to
-    its archive the night after.
-    """
+             sections: list[str] | None = None, kind: str = TODO) -> str:
+    """The text of a new, empty list file; a todo list leaves `kind` out."""
     fm = {"type": "list", "title": title, "description": description,
           "topics": list(topics or []), "sections": list(sections or [])}
-    if recurring:
-        fm["recurring"] = True
+    if kind != TODO:
+        fm["kind"] = kind
     return f"---\n{dump(fm)}\n---\n"
 
 
 # ── Changing a list ──────────────────────────────────────────────────────
 
 def set_details(text: str, *, title: str | None = None, description: str | None = None,
-                topics: list[str] | None = None, sections: list[str] | None = None) -> str:
+                topics: list[str] | None = None, sections: list[str] | None = None,
+                kind: str | None = None) -> str:
     """The list text with its frontmatter changed; `None` leaves a field as it is.
 
     New `sections` are the new walking order: the body's section blocks
@@ -324,6 +335,10 @@ def set_details(text: str, *, title: str | None = None, description: str | None 
                        ("topics", topics), ("sections", sections)):
         if value is not None:
             fm[key] = value
+    if kind == TODO:
+        fm.pop("kind", None)
+    elif kind is not None:
+        fm["kind"] = kind
     lines = _body(text).splitlines()
     if sections is not None:
         lines = _in_walking_order(lines, sections)
@@ -360,16 +375,21 @@ def insert_item(text: str, item: Item, *, path: str) -> str:
     A section that has no heading yet gets one, placed in the order the
     list's `sections` give; a section the list does not name goes after
     all the others. An item without a section goes above the first
-    heading, where nothing has to be named to find it. Every other line
-    stays as it is.
+    heading, where nothing has to be named to find it; on a calendar,
+    before the first entry dated later, so the next date is on top.
+    Every other line stays as it is.
     """
     head, body = _split(text)
     lines = body.splitlines()
     line = format_item(item, path=path)
-    sections = list(parse(text).get("sections") or [])
+    fm = parse(text)
+    sections = list(fm.get("sections") or [])
 
     if not item.section:
         first = next((n for n, ln in enumerate(lines) if _HEADING.match(ln)), len(lines))
+        if fm.get("kind") == CALENDAR and item.due and \
+                (later := _first_dated_after(lines, first, item.due, path)) is not None:
+            return _join(head, lines[:later] + [line] + lines[later:])
         at = _after_last_content(lines, 0, first)
         return _join(head, lines[:at] + [line] + _gap_before(lines, at))
 
@@ -384,6 +404,15 @@ def insert_item(text: str, item: Item, *, path: str) -> str:
     before = [""] if at > 0 and lines[at - 1].strip() else []
     after = [""] if at < len(lines) else []
     return _join(head, lines[:at] + before + block + after + lines[at:])
+
+
+def _first_dated_after(lines: list[str], end: int, due: str, path: str) -> int | None:
+    """The first line before `end` with an item dated after `due`, or undated."""
+    for n in range(end):
+        other = parse_item(lines[n], path=path)
+        if other and (not other.due or other.due > due):
+            return n
+    return None
 
 
 def _heading_line(lines: list[str], section: str) -> int | None:
@@ -517,24 +546,42 @@ def stamp_ticks(text: str, *, path: str, today: str) -> str:
     return text
 
 
-def archive_ticked(text: str, archives: dict[str, str], *, path: str, today: str,
-                   bucket: str) -> tuple[str, dict[str, str], list[Item]]:
-    """Move the items ticked before `today` from a list into its archive.
+def over(lst: FamilyList, today: str) -> list[Item]:
+    """The items that leave the list tonight, for its archive.
+
+    An item ticked before `today`, and on a calendar also an entry dated
+    before `today`: the day after an appointment it is over, whether
+    anyone ticked it or not. An item ticked today stays, and a checklist
+    keeps every tick until it is reset.
+    """
+    if lst.kind == CHECKLIST:
+        return []
+    return [i for i in lst.items
+            if (i.done and i.done_on and i.done_on < today)
+            or (lst.kind == CALENDAR and i.due and i.due < today)]
+
+
+def archive_month(item: Item) -> str:
+    """The month (`YYYY-MM`) an item is archived under: when it was ticked, else its date."""
+    return (item.done_on or item.due)[:7]
+
+
+def archive_over(text: str, archives: dict[str, str], *, path: str, today: str,
+                 bucket: str) -> tuple[str, dict[str, str], list[Item]]:
+    """Move the items that are `over` from a list into its archive.
 
     `archives` maps an archive path to its current text ("" or missing
     for a month with no file yet). Returns the list text, the archive
-    texts that changed, and the items moved. An item ticked today stays,
-    and a recurring list keeps every tick until it is reset.
+    texts that changed, and the items moved.
     """
     lst = read_list(text, path=path)
-    if lst.recurring:
-        return text, {}, []
-    moving = [i for i in lst.items if i.done and i.done_on and i.done_on < today]
+    moving = over(lst, today)
     changed: dict[str, str] = {}
     for item in moving:
-        target = archive_path(lst.slug, item.done_on[:7], bucket=bucket)
+        month = archive_month(item)
+        target = archive_path(lst.slug, month, bucket=bucket)
         current = changed.get(target) or archives.get(target) or \
-            new_list(f"{lst.title}, {item.done_on[:7]}", sections=lst.sections)
+            new_list(f"{lst.title}, {month}", sections=lst.sections)
         changed[target] = insert_item(current, item, path=target)
     # Last line first, so removing one item never moves the lines of the next.
     for item in sorted(moving, key=lambda i: i.line, reverse=True):

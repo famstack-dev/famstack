@@ -41,6 +41,9 @@ from lib import (  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
 from stack.lists import (  # noqa: E402
     ARCHIVE_DIR,
+    CALENDAR,
+    KINDS,
+    TODO,
     LISTS_DIR,
     FamilyList,
     Item,
@@ -73,12 +76,15 @@ USAGE = """\
     stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
     stack memory list tick "Erlaubniszettel" --as marge   on whichever list it is
     stack memory list move einkaufsliste Eier --to markt --as marge
-    stack memory list create packliste --title Packliste --recurring --as marge
+    stack memory list create packliste --title Packliste --kind checklist --as marge
                                                     ticked items stay until a reset
+    stack memory list create termine --title Termine --kind calendar --as marge
+                                                    in date order, each entry gone
+                                                    the day after its date
     stack memory list reset packliste --as marge     reopen every ticked item
     stack memory list set einkaufsliste --topic einkauf --as marge
-                                                    the list's title, description, topics
-                                                    or walking order (--section, in order)
+                                                    the list's title, description, topics,
+                                                    kind or walking order (--section, in order)
     stack memory list delete baumarkt [--yes] --as marge
                                                     --yes: even with items still open
 """
@@ -114,7 +120,7 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--description", default="")
     create.add_argument("--topic", action="append", default=[])
     create.add_argument("--section", action="append", default=[])
-    create.add_argument("--recurring", action="store_true")
+    create.add_argument("--kind", choices=KINDS, default=KINDS[0])
 
     add = verbs.add_parser("add", add_help=False)
     # The list is optional: `add Joghurt` puts a known item where it was
@@ -145,6 +151,7 @@ def _parser() -> argparse.ArgumentParser:
     details.add_argument("--description")
     details.add_argument("--topic", action="append")
     details.add_argument("--section", action="append")
+    details.add_argument("--kind", choices=KINDS)
 
     reset = verbs.add_parser("reset", add_help=False)
     reset.add_argument("slug")
@@ -207,9 +214,11 @@ def show(vault: Path, slug: str | None, *, show_all: bool) -> dict:
             print("No lists yet. Start one with `stack memory list create`.")
         for lst in lists:
             about = f"  ({lst.description})" if lst.description else ""
-            print(f"{lst.slug}: {lst.title}, {len(lst.open_items)} open{about}")
+            kind = f" ({lst.kind})" if lst.kind != TODO else ""
+            print(f"{lst.slug}: {lst.title}{kind}, {len(lst.open_items)} open{about}")
         return {"lists": [{"slug": x.slug, "title": x.title, "description": x.description,
-                           "topics": x.topics, "open": len(x.open_items)} for x in lists]}
+                           "kind": x.kind, "topics": x.topics, "open": len(x.open_items)}
+                          for x in lists]}
 
     path, lst = _find_list(vault, slug)
     items = lst.items if show_all else lst.open_items
@@ -292,13 +301,13 @@ def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
 # ── Writing ──────────────────────────────────────────────────────────────
 
 def change_details(vault: Path, config, ns, actor: str) -> dict:
-    """Change a list's title, description, topics or walking order."""
+    """Change a list's title, description, topics, kind or walking order."""
     path, lst = _find_list(vault, ns.slug)
     given = {"title": ns.title, "description": ns.description,
-             "topics": _named(ns.topic), "sections": _named(ns.section)}
+             "topics": _named(ns.topic), "sections": _named(ns.section), "kind": ns.kind}
     changed = [name for name, value in given.items() if value is not None]
     if not changed:
-        raise Refusal("name what to change: --title, --description, --topic or --section")
+        raise Refusal("name what to change: --title, --description, --topic, --section or --kind")
 
     def _apply(prior: str) -> str:
         return set_details(prior, **given)
@@ -320,7 +329,7 @@ def create(vault: Path, config, ns, actor: str) -> dict:
         raise Refusal(f"the list {slug!r} already exists")
     path = list_path(slug, bucket=_shared_bucket(config))
     text = new_list(ns.title.strip(), description=ns.description.strip(),
-                    topics=ns.topic, sections=ns.section, recurring=ns.recurring)
+                    topics=ns.topic, sections=ns.section, kind=ns.kind)
 
     def _create(prior: str) -> str:
         if (prior or "").strip():
@@ -359,6 +368,9 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     due = ns.due
     if due and not _ISO_DAY.match(due):
         raise Refusal(f"--due {due!r} is not a date like 2026-10-14")
+    undated = [by_slug[t][1].title for t in plan if by_slug[t][1].kind == CALENDAR and not due]
+    if undated:
+        raise Refusal(f"an entry on {undated[0]} needs its date: --due YYYY-MM-DD")
     people = _people(vault, config, ns.people)
     return _combined([_add_to(config, *by_slug[target], entries, people, due, actor)
                       for target, entries in plan.items()])
