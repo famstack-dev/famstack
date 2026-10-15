@@ -27,6 +27,7 @@ generated text must never blend into quoted text.
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone, tzinfo
@@ -296,6 +297,9 @@ class Entry:
     # The card's title, when the entry comes from a card. Heads the entry
     # on the page.
     title: str = ""
+    # The card's entry id, when the entry comes from a card. Anchors the
+    # entry on the page, so `/go/diary/<entry_id>` lands on it.
+    entry_id: str = ""
 
 
 # ── What this household says ──────────────────────────────────────────
@@ -983,6 +987,10 @@ def _entry_block(entry: Entry, *, room_id: str,
     else:
         heading = f"### {who} — {_L['for']} {to}" if addressed else f"### {who}"
         lines = [heading, f"*{_kind_label(entry)}*", ""]
+    if entry.entry_id:
+        # The heading's own anchor follows the title, which a correction
+        # rewrites. This one is the card's id and does not change.
+        lines.insert(0, f'<a id="{html.escape(entry.entry_id)}"></a>')
 
     if entry.confidence == "uncertain":
         lines += [

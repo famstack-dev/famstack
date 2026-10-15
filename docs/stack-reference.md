@@ -430,7 +430,7 @@ agent) finds the card by that id. A stored path is only a hint.
 | document | `paperless_id` | `/go/docs/<paperless_id>`, opens Paperless |
 | note, bookmark | `capture_id`: the event id of the message it was filed from | `/go/capture/<capture_id>` |
 | email thread | `resource`: the `mid:` URI of the thread's first message | none yet |
-| diary card | `entry_id` | `/go/diary/<entry_id>` |
+| diary card | `entry_id` | `/go/diary/<entry_id>`, opens its month page at the card |
 | person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
 | topic | its folder, `<bucket>/<slug>/` | `/go/topic/<slug>` |
 | list | none yet: its file name is its name | `/go/list/<slug>` |

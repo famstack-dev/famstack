@@ -169,12 +169,23 @@ class TestResolvingACardLink:
             "http://wiki.example/family/camping/notes/2026/08/campsite-3a338e"
         )
 
-    def test_a_diary_link_redirects_to_the_wiki_page(self, tmp_path):
+    def test_a_diary_link_opens_the_card_on_its_month_page(self, tmp_path):
+        """The wiki does not publish a diary card as a page of its own:
+        the family reads the month, and each card on it is anchored by
+        its entry id."""
         _write(tmp_path, "family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
                DIARY_CARD)
 
         assert self._redirect("diary", ENTRY_ID, tmp_path) == (
-            "http://wiki.example/family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d"
+            "http://wiki.example/family/diary/2026/08#3f9a0c1b2d"
+        )
+
+    def test_a_diary_card_moved_to_another_month_opens_that_month(self, tmp_path):
+        _write(tmp_path, "family/diary/entries/2026/07/2026-07-30-3f9a0c1b2d.md",
+               DIARY_CARD)
+
+        assert self._redirect("diary", ENTRY_ID, tmp_path) == (
+            "http://wiki.example/family/diary/2026/07#3f9a0c1b2d"
         )
 
     def test_an_id_no_card_carries_is_a_404(self, tmp_path):

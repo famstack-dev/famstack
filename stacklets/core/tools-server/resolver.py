@@ -22,6 +22,7 @@ stdlib-only is what makes it unit-testable without standing up FastAPI.
 from __future__ import annotations
 
 from typing import Callable
+from urllib.parse import quote
 
 from stack.cards import CARD_ID_FIELDS
 
@@ -78,6 +79,31 @@ def resolve_person_target(segments: list[str]) -> str | None:
     return f"{scope[0]}/{page}"
 
 
+def card_page_target(kind: str, path: str, card_id: str) -> str | None:
+    """Wiki target for a card at vault `path`, or None.
+
+    A note or a bookmark is a page of its own: the wiki serves it at its
+    vault path without the suffix. A diary card is not published on its
+    own; the family reads the month, and the diary renders each card
+    there under an anchor named by its entry id. Its folder under
+    `entries/` is that month (`<bucket>/diary/entries/2026/08/...` is on
+    `<bucket>/diary/2026/08`).
+
+    >>> card_page_target("capture", "family/camping/notes/2026/08/tent-3a338e.md", "$e")
+    'family/camping/notes/2026/08/tent-3a338e'
+    >>> card_page_target("diary", "family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
+    ...                  "3f9a0c1b2d")
+    'family/diary/2026/08#3f9a0c1b2d'
+    """
+    if kind != "diary":
+        return path.removesuffix(".md")
+    parts = path.split("/")
+    if len(parts) < 5 or parts[-4] != "entries":
+        return None
+    month = "/".join(parts[:-4] + parts[-3:-1])
+    return f"{month}#{quote(card_id, safe='')}"
+
+
 def build_redirect(
     kind: str, rest: list[str], *,
     docs_base: str, wiki_base: str, shared_bucket: str,
@@ -107,8 +133,7 @@ def build_redirect(
         if len(rest) != 1 or find_card is None:
             return None
         path = find_card(kind, rest[0])
-        # The wiki serves a page at its vault path without the suffix.
-        target = path.removesuffix(".md") if path else None
+        target = card_page_target(kind, path, rest[0]) if path else None
     elif kind == "topic":
         target = resolve_topic_target(rest, shared_bucket=shared_bucket)
     elif kind == "person":
