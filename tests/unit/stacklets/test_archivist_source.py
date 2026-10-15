@@ -381,3 +381,33 @@ async def test_unmarked_file_keeps_sender_attribution(tmp_path):
     await bot._on_file(_room(), _file_event(content, sender="@homer:server"))
     assert captured["default_person"] is True
     assert captured["extra_seed_topics"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_photos_caption_reaches_the_capture(tmp_path):
+    """Element X sends a photo and its caption as one message: the file's
+    name in `filename`, the words in `body`. Outside the documents room
+    the photo is a capture, and the caption is what the sender said about
+    it, so it travels with the photo."""
+    bot = _bot(tmp_path)
+    captured = _wire_file(bot)
+    photo = {
+        "msgtype": "m.image", "url": "mxc://server/img",
+        "filename": "IMG_1.jpg", "body": "Bart, first time without training wheels",
+        "info": {"mimetype": "image/jpeg"},
+    }
+    await bot._on_file(_room(), _file_event(photo, sender="@marge:server"))
+    assert captured["caption"] == "Bart, first time without training wheels"
+
+
+@pytest.mark.asyncio
+async def test_a_photo_without_a_caption_has_none(tmp_path):
+    # Without a caption, clients put the file's name in `body`.
+    bot = _bot(tmp_path)
+    captured = _wire_file(bot)
+    photo = {
+        "msgtype": "m.image", "url": "mxc://server/img", "body": "IMG_1.jpg",
+        "info": {"mimetype": "image/jpeg"},
+    }
+    await bot._on_file(_room(), _file_event(photo, sender="@marge:server"))
+    assert captured["caption"] == ""
