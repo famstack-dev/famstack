@@ -201,13 +201,17 @@ def public(logical: str, base: str) -> str:
 
     `base` is `LINK_BASE_URL` — core's mode-correct home URL with the
     `/go` prefix already on it. Empty base means the namespace is not
-    reachable yet, so there is no honest link to post.
+    reachable yet, so there is no honest link to post. An empty logical
+    path (the page has no stable route) is no link
+    either, not the bare namespace.
 
     >>> public(go_docs(247), "https://home.example.org/go")
     'https://home.example.org/go/docs/247'
     >>> public(go_docs(247), "")
     ''
+    >>> public("", "https://home.example.org/go")
+    ''
     """
-    if not base:
+    if not (base and logical):
         return ""
     return f"{base.rstrip('/')}{logical}"

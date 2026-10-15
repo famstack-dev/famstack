@@ -352,6 +352,25 @@ def test_an_edited_note_answers_with_its_card_id_link(store, tmp_path, capsys):
     assert "/go/" in out and "campsite" not in out.split("/go/", 1)[1]
 
 
+
+def test_a_page_without_a_stable_link_answers_with_no_link(store, tmp_path, capsys):
+    """A document's mirror page has no card id and no name route. The
+    reply names the page and stops; the bare `/go` address opens nothing."""
+    page = NOTE.replace('capture_id: "$camp:home.test"\n', "")
+    store.page = page
+    buffer_file = tmp_path / "buffer"
+    buffer_file.write_text(page.replace("pitch 12", "pitch 14"), encoding="utf-8")
+
+    write_cli.run(
+        ["family/documents/2026/08/campsite-invoice.md", "--by", "homer",
+         "--from", str(buffer_file)],
+        None, {"data_dir": str(tmp_path), "home_url": "https://home.example.org"},
+    )
+
+    out = capsys.readouterr().out
+    assert "Wrote family/documents/2026/08/campsite-invoice.md" in out
+    assert "/go" not in out
+
 # ── person files ─────────────────────────────────────────────────────────
 
 def test_a_person_file_the_readers_would_skip_is_refused(store, tmp_path):
