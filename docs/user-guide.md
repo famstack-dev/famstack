@@ -32,6 +32,7 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 | Find a document again | [Ask questions](#ask-questions) |
 | Save a link, note or PDF for later | [Capture rooms](#save-anything-capture-rooms) |
 | Collect everything about one project | [Topic rooms](#topic-rooms) |
+| Keep the shopping list, or what is still to do | [Lists](#lists) |
 | Get email into the family chat | [Email](#email) |
 | Capture a thought without typing | [Voice memos](#voice-memos) |
 | Fix a wrong tag or title | [Correct bot mistakes](#correct-bot-mistakes) |
@@ -122,6 +123,38 @@ Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`), disable encryptio
 The room becomes the filing system. Plan the picnic in chat, drop the gear list, the location ideas, the photo of the flyer. When it's over you have a complete, searchable record of the project without ever having organized anything.
 
 Questions asked inside a topic room automatically search just that topic. Ask "Archivist, what did Lenny suggest?" in the picnic room and the answer comes from the picnic material, not from your tax documents.
+
+---
+
+## Lists
+
+> Needs the `memory` stacklet. Keeping lists by chat needs the `agent` stacklet (Stacky).
+
+The shopping list, the market, the camping packing list, what still has to happen for the school trip: every list the family keeps is a checklist that Stacky, the family agent, keeps for you. Talk to it in any room it is in, starting with its name. German works as well as English.
+
+**Start a list once, with the store in walking order.** The sections are the order you go through the shop, so the list reads top to bottom in the aisles:
+
+> Stacky, start a list "Supermarket" with the sections Fruit & Veg, Bread, Dairy, Frozen, Drugstore.
+
+Say what goes on a list when you start it ("the farmers' market on Saturday: vegetables, cheese, eggs"). That is how Stacky later knows where something new belongs. Changed your mind about the order? "Stacky, the drugstore comes first now."
+
+**Then just say what you need.** "Stacky, we need milk, eggs and toothpaste." Each item lands in its section. Something you have bought before goes back to the list and the section it had, so after the first week nobody has to say where.
+
+**Tick off as you shop.** "Stacky, I got the milk and the bread." You don't have to say which list. A ticked item stays visible for the rest of the day, so "did we get eggs?" still has an answer, and moves to the list's archive overnight. The list then shows only what is still open.
+
+More you can say:
+
+- "Stacky, I'll get the eggs at the market instead" moves them to the market list.
+- "Stacky, Homer should book the tickets by Friday" puts a name and a day on an item.
+- "Stacky, what's on the supermarket list?" shows what is still open.
+- "Stacky, we're back from camping, reset the packing list." Start a list you use again and again (packing, the weekly chores) as a recurring list: its ticks stay until you reset it.
+- "Stacky, we don't need the hardware store list any more" deletes it. If it still has open items, Stacky names them and asks first. What was bought stays in the archive, so a list started again under the same name still knows where things go.
+
+**Letters and notes put their to-dos on lists too.** When a letter in **#Documents** asks you to do something ("sign the permission slip by 23 October"), the archivist puts it on the list of the letter's topic, with the day and a link back to the letter. A short note in your own words, pinned with 📌 in a [topic room](#topic-rooms) ("we should take out the trash by Friday"), does the same. Long pasted text and links never turn into to-dos: someone else's tips are not your chores. Tick these off with Stacky like anything else.
+
+**A list belongs to a topic.** In a topic room, Stacky uses that topic's lists. To tie an existing list to a room: "Stacky, the supermarket list belongs to this room."
+
+Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown checklist, so you can also tick items in Obsidian or in Forgejo's editor. Stacky does not hear voice messages or see photos yet: a screenshot of a list has to be typed in for now.
 
 ---
 

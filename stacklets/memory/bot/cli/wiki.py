@@ -92,7 +92,7 @@ import topic_page  # noqa: E402
 # One module owns what a todo line is; `stack memory topic` reads
 # through it the same way, by bare name from this folder.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from todo_list import read_todos  # noqa: E402
+from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 
 HELP = "Regenerate the family wiki's home and member pages"
 
@@ -130,7 +130,7 @@ _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_share
 # folder), not a topic. The topic-discovery walker skips these names.
 _RESERVED_BUCKET_SUBDIRS = {
     "notes", "bookmarks", "documents",
-    "correspondents", "people", "_unfiled",
+    "correspondents", "people", "_unfiled", "lists",
 }
 
 # Subdir names a topic folder must contain at least one of to be
@@ -698,12 +698,18 @@ def _family_names(people: dict[str, Person]) -> list[str]:
 
 
 def _open_todos(page_dir: str) -> list[str]:
-    """The open items of a topic's `todos.md`, as the family keeps them."""
-    try:
-        doc = (_brain_dir() / page_dir / "todos.md").read_text(encoding="utf-8")
-    except (OSError, RuntimeError):
-        return []
-    return read_todos(doc)[0]
+    """The open items of the lists that name the topic at `page_dir`, in list order."""
+    bucket, _, topic = page_dir.rpartition("/")
+    items: list[str] = []
+    for file in sorted((_brain_dir() / bucket / LISTS_DIR).glob("*.md")):
+        path = f"{bucket}/{LISTS_DIR}/{file.name}"
+        try:
+            lst = read_list(file.read_text(encoding="utf-8"), path=path)
+        except (OSError, ListError):
+            continue
+        if topic in lst.topics:
+            items += [i.text for i in lst.open_items]
+    return items
 
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:

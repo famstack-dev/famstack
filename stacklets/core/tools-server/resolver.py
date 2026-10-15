@@ -41,15 +41,27 @@ def resolve_topic_target(segments: list[str], *, shared_bucket: str) -> str | No
     A lone segment is a shared topic under `shared_bucket`
     (`/topic/camping` → `family/camping/about`); a `<member>/<slug>` pair is a
     personal topic, taken as a literal vault path (`/topic/homer/gravel` →
-    `homer/gravel/about`). A `todo`/`todos` leaf selects the `todos` page.
+    `homer/gravel/about`). A `todo`/`todos` leaf selects the topic's list,
+    `family/lists/camping`.
     Deeper than two scope segments is not a valid topic path — None, so the
     HTTP layer 404s rather than pointing at a page that 404s anyway.
     """
     scope, page = _split_leaf(segments)
     if not scope or len(scope) > 2:
         return None
-    bucket_path = f"{shared_bucket}/{scope[0]}" if len(scope) == 1 else "/".join(scope)
-    return f"{bucket_path}/{page}"
+    bucket = shared_bucket if len(scope) == 1 else scope[0]
+    if page == "todos":
+        # A topic's todos moved to the list named after it; links posted to
+        # chat before the move still open it.
+        return f"{bucket}/lists/{scope[-1]}"
+    return f"{bucket}/{scope[-1]}/{page}"
+
+
+def resolve_list_target(segments: list[str], *, shared_bucket: str) -> str | None:
+    """Map `/list/<slug>` to the family's list of that name (`family/lists/<slug>`)."""
+    if len(segments) != 1 or not segments[0]:
+        return None
+    return f"{shared_bucket}/lists/{segments[0]}"
 
 
 def resolve_person_target(segments: list[str]) -> str | None:
@@ -71,7 +83,7 @@ def build_redirect(
 ) -> str | None:
     """Full redirect URL for a `/<prefix>/<kind>/<rest>` request, or None.
 
-    `kind` is `docs`, `topic`, `person`, or `capture`; `rest` is the remaining
+    `kind` is `docs`, `topic`, `person`, `list`, or `capture`; `rest` is the remaining
     path segments. `docs_base`/`wiki_base` are the public base URLs of Paperless
     and the wiki — already mode-correct, computed once by the HTTP layer from
     env, so this stays a pure string join. None (→ 404) for an unknown kind, a
@@ -95,6 +107,8 @@ def build_redirect(
         target = resolve_topic_target(rest, shared_bucket=shared_bucket)
     elif kind == "person":
         target = resolve_person_target(rest)
+    elif kind == "list":
+        target = resolve_list_target(rest, shared_bucket=shared_bucket)
     else:
         return None
     if target is None:

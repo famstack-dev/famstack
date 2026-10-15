@@ -60,10 +60,23 @@ def nanobot_stub():
             pass
 
         def tool_parameters(schema):
-            return lambda cls: cls
+            # nanobot attaches the schema to the class it decorates; a tool
+            # without it is abstract and nanobot cannot register it.
+            def attach(cls):
+                cls.parameters_schema = schema
+                return cls
+            return attach
 
-        def tool_parameters_schema(**kwargs):
-            return dict(kwargs)
+        # nanobot's own signature: `required`, `description` and
+        # `additional_properties` are the schema's, everything else is a
+        # parameter. A tool parameter named after one of them breaks
+        # every request on the real agent, so it fails here too.
+        def tool_parameters_schema(*, required=None, description="",
+                                   additional_properties=False, **properties):
+            if not isinstance(description, str):
+                raise TypeError("a tool parameter is named `description`, which "
+                                "the schema builder takes as its own")
+            return dict(properties)
 
         class _Schema:
             def __init__(self, *args, **kwargs):
@@ -160,8 +173,11 @@ def nanobot_stub():
         mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
         mod("nanobot.agent.tools.schema",
             StringSchema=_Schema, IntegerSchema=_Schema, ArraySchema=_Schema,
+            BooleanSchema=_Schema,
             tool_parameters_schema=tool_parameters_schema)
         mod("nanobot.agent.tools.loader", ToolLoader=ToolLoader)
+        # nanobot 0.3: the request a tool runs in. `turn_id` is unique per turn.
+        mod("nanobot.agent.tools.context", current_request_context=lambda: None)
         mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
         mod("nanobot.agent.tools.filesystem",
             WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)

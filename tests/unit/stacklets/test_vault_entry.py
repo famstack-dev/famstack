@@ -414,7 +414,7 @@ class TestRenderDocument:
         assert "Kfz-Versicherung renewal" in content
         assert "**Facts**" in content
         assert "**Action items**" in content
-        assert "- [ ] Pay invoice — 2025-04-01" in content
+        assert "- Pay invoice 📅 2025-04-01" in content
         assert "[Show Document](http://paperless:8000/documents/42/details)" in content
         assert "Vehicle registration insurance renewal" in content
 
@@ -501,7 +501,7 @@ class TestRenderDocument:
             action_items=["Pay the invoice"],
             source_link=None,
         )
-        assert "- [ ] Pay the invoice" in content
+        assert "- Pay the invoice" in content
 
     def test_action_item_with_null_due(self):
         fm = document_frontmatter(
@@ -521,7 +521,7 @@ class TestRenderDocument:
             action_items=[{"action": "Pay", "due": "null"}],
             source_link=None,
         )
-        assert "- [ ] Pay" in content
+        assert "- Pay" in content
         assert "— null" not in content
 
 
@@ -595,9 +595,9 @@ class TestRenderCapture:
         assert "> Action: review expenses." in content
 
     def test_note_renders_action_items(self):
-        """A note that opted into extraction surfaces its action items as
-        `- [ ]` task lines in the briefing callout — what the curator later
-        aggregates into todos.md."""
+        """A note that opted into extraction lists its action items in the
+        briefing callout, without checkboxes: the topic's list holds whether
+        they are done."""
         fm = capture_frontmatter(
             title="Ausflug", captured_at="2026-06-26", kind="note",
             source_uri=None, persons=["Marge"], tags=["ausflug"], model=None,
@@ -609,12 +609,12 @@ class TestRenderCapture:
             summary="Ausflugscheckliste.", facts=[],
             action_items=["Tickets buchen", "Snacks einpacken"],
         )
-        assert "- [ ] Tickets buchen" in content
-        assert "- [ ] Snacks einpacken" in content
+        assert "- Tickets buchen" in content
+        assert "- Snacks einpacken" in content
 
     def test_note_without_action_items_has_no_task_lines(self):
-        """An idle note (or any bookmark) carries no action items → no
-        checkboxes manufactured."""
+        """An idle note (or any bookmark) carries no action items, so none
+        are manufactured."""
         fm = capture_frontmatter(
             title="Schöner Tag", captured_at="2026-06-26", kind="note",
             source_uri=None, persons=[], tags=[], model=None,
@@ -625,7 +625,7 @@ class TestRenderCapture:
             captured_at="2026-06-26", source_uri=None, persons=[],
             summary="Ein schöner Tag.", facts=[], action_items=[],
         )
-        assert "- [ ]" not in content
+        assert "Action items" not in content
 
     def test_note_without_body(self):
         fm = capture_frontmatter(
@@ -748,7 +748,7 @@ class TestRenderEmailMessageSection:
         assert "## 2026-06-21 · office@springfield-school.example" in section
         # Per-message briefing callout + action item checkbox.
         assert "> [!summary]" in section
-        assert "- [ ] Return form — 2026-06-26" in section
+        assert "- Return form 📅 2026-06-26" in section
         # Verbatim body in a collapsible quote callout.
         assert "> [!quote]- Message" in section
         assert "> Bitte das Formular zurücksenden." in section

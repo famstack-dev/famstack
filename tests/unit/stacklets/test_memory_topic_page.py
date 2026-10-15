@@ -44,7 +44,8 @@ POLICY = {"rel": "family/documents/2026/03/travel-insurance-p9.md", "title": "Tr
           "date": "2026-03-15", "filed_by": "", "summary": "Covers trips abroad.",
           "topics": ["trip"], "tags": []}
 
-TODOS = "# Trip\n\n- [ ] Pack sunscreen\n- [x] Book the lodge\n- [ ] Find a dog sitter\n"
+TODOS = ("---\ntype: list\ntitle: Trip\ntopics:\n  - trip\n---\n\n"
+         "- [ ] Pack sunscreen\n- [x] Book the lodge\n- [ ] Find a dog sitter\n")
 
 ANSWER = {
     "title": "The Big Trip",
@@ -68,7 +69,8 @@ class _Model:
 def brain(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
     (tmp_path / "family" / "trip").mkdir(parents=True)
-    (tmp_path / "family" / "trip" / "todos.md").write_text(TODOS, encoding="utf-8")
+    (tmp_path / "family" / "lists").mkdir(parents=True)
+    (tmp_path / "family" / "lists" / "trip.md").write_text(TODOS, encoding="utf-8")
     return tmp_path
 
 

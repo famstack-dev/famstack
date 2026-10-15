@@ -174,7 +174,7 @@ for _module_name, _what in (
     ("person_tool", "memory_person tool"),
     ("history_tool", "memory_history tool"),
     ("vault_write", "write_file on a vault page -> stack memory write"),
-    ("list_tool", "list_edit item tool -> stack memory list-edit"),
+    ("list_tool", "list_edit item tool -> stack memory list"),
     ("tool_trim", "unused-tool trim (AGENT_TOOL_TRIM=0 to disable)"),
     ("compact_tools", "vault tools in nanobot's microcompact set"),
     ("thread_session", "thread-scoped sessions (AGENT_THREAD_SESSIONS=0 to disable)"),

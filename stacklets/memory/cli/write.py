@@ -64,6 +64,7 @@ from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # no
 from stack.links import go_page, public  # noqa: E402
 from stack.people import PEOPLE_DIR, PersonError, read_person  # noqa: E402
 from stack.list_doc import diff  # noqa: E402
+from stack.lists import LISTS_DIR  # noqa: E402
 from stack.page_patch import apply_edits  # noqa: E402
 
 # Where the agent leaves a page it wants written. Its data dir is bind-mounted
@@ -169,21 +170,8 @@ def run(args, stacklet, config):
         # becomes the error message the caller relays to the model.
         _check_frontmatter(seen["before"], seen["after"], repo_path)
         _check_person(seen["after"], repo_path)
-        # A whole-page rewrite of a list is a restructure. A restructure
-        # never legitimately reopens or removes an item (measured
-        # 2026-09-15: rewrites drop [x] marks, and prompt rules do not
-        # reliably repair them). Targeted edits go through --patch or
-        # the list-edit verb, which stay allowed.
-        if not as_patch and repo_path.endswith("todos.md"):
-            change = diff(seen["before"], seen["after"])
-            lost = list(change.reopened) + list(change.removed)
-            if lost:
-                raise ValueError(
-                    f"this rewrite reopens or removes items: "
-                    f"{'; '.join(lost)}. A restructure keeps every item "
-                    "and every [x]. Resend the full page with them "
-                    "unchanged. To reopen or remove an item on purpose, "
-                    "use list_edit.")
+        if _is_list(repo_path):
+            _check_list_write(diff(seen["before"], seen["after"]), as_patch=as_patch)
         # A preview still wants the *current* page to compare against, so it
         # takes the same trip and then hands back what was already there:
         # an unchanged file is a no-op, and a no-op does not commit.
@@ -204,7 +192,7 @@ def run(args, stacklet, config):
         return result
 
     before, after = seen.get("before", ""), seen.get("after", "")
-    change = diff(before, after) if repo_path.endswith("todos.md") else None
+    change = diff(before, after) if _is_list(repo_path) else None
     told = describe(before, after, repo_path)
 
     if preview:
@@ -239,6 +227,39 @@ def run(args, stacklet, config):
     }
 
 
+def _check_list_write(change, *, as_patch: bool) -> None:
+    """Refuse a write to a list page that does what only `list_edit` should.
+
+    Writing a list page is for restructuring it: rewording an item, moving
+    it under another heading, renaming a section. Adding or ticking off an
+    item through it skips what the list commands do (the duplicate check,
+    the item's section, the day of the tick), and an agent that took this
+    route put Joghurt on a list twice and its coffee under bread. A whole-
+    page rewrite also never legitimately reopens or removes an item
+    (measured 2026-09-15: rewrites drop [x] marks, and prompt rules do not
+    reliably repair them); a patch may, on purpose.
+    """
+    items = [i.text for i in change.added] + list(change.struck)
+    if items:
+        raise ValueError(
+            f"this write adds or ticks off items: {'; '.join(items)}. Item "
+            "changes go through list_edit (add, tick), which keeps their "
+            "sections and finds duplicates. Write a list page only to "
+            "restructure it.")
+    lost = list(change.reopened) + list(change.removed)
+    if lost and not as_patch:
+        raise ValueError(
+            f"this rewrite reopens or removes items: {'; '.join(lost)}. A "
+            "restructure keeps every item and every [x]. Resend the full "
+            "page with them unchanged. To reopen or remove an item on "
+            "purpose, use list_edit.")
+
+
+def _is_list(repo_path: str) -> bool:
+    """A list page: a topic's `todos.md`, or a file under `<bucket>/lists/`."""
+    return repo_path.endswith("todos.md") or f"/{LISTS_DIR}/" in repo_path
+
+
 def describe(before: str, after: str, repo_path: str) -> str:
     """One line saying what this edit did to this page.
 
@@ -247,7 +268,7 @@ def describe(before: str, after: str, repo_path: str) -> str:
     general answer rather than a fabricated one: how much text went each way.
     Vague beats wrong in a commit subject somebody will read back later.
     """
-    if repo_path.endswith("todos.md"):
+    if _is_list(repo_path):
         return diff(before, after).summary()
     plus, minus = _line_delta(before, after)
     if not (plus or minus):

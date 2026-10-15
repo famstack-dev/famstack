@@ -1,8 +1,8 @@
 """A list page, and what changed between two versions of one.
 
-A list lives in `todos.md`, and more than one thing writes it: the
-curator merging extracted action items, a person editing it in Forgejo's
-editor, and an agent asked to tidy it up. The interesting failure is not a
+A list lives in `<bucket>/lists/<slug>.md`, and more than one thing writes
+it: the archivist adding extracted action items, a person editing it in
+Forgejo's editor, and an agent asked to tidy it up. The interesting failure is not a
 malformed document. It is a quiet one: six of twenty-five items gone and a
 cheerful confirmation that everything went fine.
 
@@ -28,7 +28,7 @@ WHY REWORDING IS ITS OWN CATEGORY
 
 SEE ALSO
     docs/design/brain/write-layer.md   why this is the first piece
-    stacklets/memory/bot/cli/todo_list.py   the task-line grammar it shares
+    lib/stack/lists.py                 the list format; its item line is the grammar
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 # An Obsidian task line, open or done: group 1 is the box char, group 2 the
-# task text. Same grammar `todo_list.py` reads and writes, restated here
-# because this module is the one both sides will eventually share.
+# task text, fields included. A coarser read of the line `stack.lists`
+# writes, enough to tell what an edit added, removed or ticked.
 _TASK = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$")
 _SECTION = re.compile(r"^\s*##\s+(.+?)\s*$")
 

@@ -381,7 +381,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     server_name,
     scope,
 ):
-    """Topic todos read/write from memory and capture action items project."""
+    """A topic's list reads and writes through memory, and capture action items land on it."""
     topic = f"demo-rig-todo-{scope.uid}"
     item = f"verify B2 todo memory write {scope.uid}"
     fresh_item = f"verify B4 read-your-writes todo {scope.uid}"
@@ -389,11 +389,12 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     # nothing unless the writer is plainly keeping a list, and a note that
     # read like a test ticket was filed as information about half the time.
     # The model words the item itself, so the check is on the one phrase it
-    # keeps; todos.md is under this run's own topic, which makes it unique.
+    # keeps; the topic's list is named after this run's own topic, which
+    # makes it unique.
     captured_item = "pick up the dry cleaning"
     captured_phrase = "dry cleaning"
     token = f"demo-rig-capture-todo-{scope.uid}"
-    path = f"{MEMORY_OWNER}/{topic}/todos.md"
+    path = f"{MEMORY_OWNER}/lists/{topic}.md"
     about_path = f"{MEMORY_OWNER}/{topic}/about.md"
     bot_mxid = f"@archivist-bot:{server_name}"
     marge_creds = demo_matrix["marge"]
@@ -403,40 +404,41 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
     marge.user_id = marge_creds.user_id
 
     try:
-        bdd.given("A unique demo-rig topic with no todo list")
+        bdd.given("A unique demo-rig topic with no list")
         assert demo_code.get_file(MEMORY_OWNER, MEMORY_REPO, path) is None
 
-        bdd.when("Homer adds a todo through the live stack CLI")
-        add = _run_stack(
-            "memory", "topic", topic, "todo", "add", item, "--by", "homer",
+        bdd.when("Homer starts the topic's list and adds an item through the CLI")
+        create = _run_stack(
+            "memory", "list", "create", topic, "--title", topic, "--topic", topic,
+            "--as", "homer",
         )
+        assert create.returncode == 0, create.stderr or create.stdout
+        add = _run_stack("memory", "list", "add", topic, item, "--as", "homer")
         assert add.returncode == 0, add.stderr or add.stdout
-        assert "Added:" in add.stdout
+        assert "added" in add.stdout
 
-        bdd.then("family/memory contains the todo document")
+        bdd.then("family/memory contains the list with the item")
         f = demo_code.get_file(MEMORY_OWNER, MEMORY_REPO, path)
-        assert f, f"missing {path} after todo add"
+        assert f, f"missing {path} after list add"
         assert f"- [ ] {item}" in f["content"]
 
-        bdd.and_("The host-native todo reader lists the open item")
-        listed = _run_stack("memory", "topic", topic, "todo")
+        bdd.and_("The host-native reader lists the open item")
+        listed = _run_stack("memory", "list", "show", topic)
         assert listed.returncode == 0, listed.stderr or listed.stdout
         assert f"- [ ] {item}" in listed.stdout
 
-        bdd.when("Homer strikes the todo through the live stack CLI")
-        struck = _run_stack(
-            "memory", "topic", topic, "todo", "strike", item, "--by", "homer",
-        )
-        assert struck.returncode == 0, struck.stderr or struck.stdout
-        assert "Struck:" in struck.stdout
+        bdd.when("Homer ticks the item off through the CLI")
+        ticked = _run_stack("memory", "list", "tick", topic, item, "--as", "homer")
+        assert ticked.returncode == 0, ticked.stderr or ticked.stdout
+        assert "ticked off" in ticked.stdout
 
-        bdd.then("The canonical memory todo is checked off")
+        bdd.then("The canonical list has the item ticked")
         f = demo_code.get_file(MEMORY_OWNER, MEMORY_REPO, path)
-        assert f, f"missing {path} after todo strike"
+        assert f, f"missing {path} after tick"
         assert f"- [x] {item}" in f["content"]
 
-        bdd.and_("The reader can include done items")
-        listed_all = _run_stack("memory", "topic", topic, "todo", "--all")
+        bdd.and_("The reader can include ticked items")
+        listed_all = _run_stack("memory", "list", "show", topic, "--all")
         assert listed_all.returncode == 0, listed_all.stderr or listed_all.stdout
         assert f"- [x] {item}" in listed_all.stdout
 
@@ -501,7 +503,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
             ),
         )
 
-        bdd.then("The capture action item is folded into memory todos.md")
+        bdd.then("The capture action item lands on the topic's list")
         memory_todos = await _wait_for_repo_file_containing(
             demo_code, MEMORY_REPO, path, captured_phrase, timeout=120,
         )
@@ -509,7 +511,7 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
 
         # `stack memory sync` triggers the curator to mirror source AND
         # rebuild the wiki now, bypassing its 180s batching debounce.
-        # One call makes both the source (todos.md) and the generated
+        # One call makes both the source (the list) and the generated
         # page (about.md) current in LLM-time — the rig's fast path.
         bdd.and_("An explicit sync makes source and wiki current now")
         synced = _run_stack("memory", "sync")
@@ -534,12 +536,10 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
         assert "begin: generated" not in shown.stdout
         assert "generated: true" not in shown.stdout
 
-        bdd.and_("Topic todo still reflects an immediate memory write")
-        add_fresh = _run_stack(
-            "memory", "topic", topic, "todo", "add", fresh_item, "--by", "homer",
-        )
+        bdd.and_("The list still reflects an immediate memory write")
+        add_fresh = _run_stack("memory", "list", "add", topic, fresh_item, "--as", "homer")
         assert add_fresh.returncode == 0, add_fresh.stderr or add_fresh.stdout
-        listed_fresh = _run_stack("memory", "topic", topic, "todo")
+        listed_fresh = _run_stack("memory", "list", "show", topic)
         assert listed_fresh.returncode == 0, listed_fresh.stderr or listed_fresh.stdout
         assert f"- [ ] {fresh_item}" in listed_fresh.stdout
     finally:

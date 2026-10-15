@@ -42,16 +42,16 @@ class TestTopicResolution:
         assert _topic("homer", "gravel") == "homer/gravel/about"
 
     def test_topic_todos(self):
-        assert _topic("camping", "todo") == "family/camping/todos"
+        assert _topic("camping", "todo") == "family/lists/camping"
 
     def test_topic_todos_plural(self):
-        assert _topic("camping", "todos") == "family/camping/todos"
+        assert _topic("camping", "todos") == "family/lists/camping"
 
     def test_personal_topic_todos(self):
-        assert _topic("homer", "gravel", "todos") == "homer/gravel/todos"
+        assert _topic("homer", "gravel", "todos") == "homer/lists/gravel"
 
     def test_todo_leaf_is_case_insensitive(self):
-        assert _topic("camping", "TODO") == "family/camping/todos"
+        assert _topic("camping", "TODO") == "family/lists/camping"
 
     def test_empty(self):
         assert _topic() is None
@@ -113,7 +113,7 @@ class TestBuildRedirect:
         assert _b("topic", "camping") == "https://wiki.home.tld/family/camping/about"
 
     def test_topic_todos(self):
-        assert _b("topic", "camping", "todo") == "https://wiki.home.tld/family/camping/todos"
+        assert _b("topic", "camping", "todo") == "https://wiki.home.tld/family/lists/camping"
 
     def test_person_todos(self):
         assert _b("person", "homer", "todo") == "https://wiki.home.tld/homer/todos"
@@ -127,7 +127,7 @@ class TestBuildRedirect:
         assert build_redirect(
             "topic", ["camping", "todo"], docs_base="http://10.0.0.5:42000",
             wiki_base="http://10.0.0.5:42070", shared_bucket=_SHARED,
-        ) == "http://10.0.0.5:42070/family/camping/todos"
+        ) == "http://10.0.0.5:42070/family/lists/camping"
 
 
 # ── Round trip: what emitters build lands where it used to ──────────────
@@ -178,7 +178,7 @@ class TestEmittedLinksResolveWhereTheyUsedTo:
         # f"{base}/topic/{scope}/todo" — same path, same destination.
         assert go_topic("family/camping", "todo") == "/topic/family/camping/todo"
         assert _click(go_topic("family/camping", "todo")) == \
-            f"{_WIKI_BASE}/family/camping/todos"
+            f"{_WIKI_BASE}/family/lists/camping"
 
     def test_person_link_resolves_to_the_member_page(self):
         assert _click(go_person("homer")) == f"{_WIKI_BASE}/homer/about"
@@ -188,3 +188,13 @@ class TestEmittedLinksResolveWhereTheyUsedTo:
         # the emitted link is base + logical path, no separator surprises.
         assert public(go_docs(247), "https://home.example.org/go") == \
             "https://home.example.org/go/docs/247"
+
+
+class TestListResolution:
+    def test_a_list_opens_by_its_name(self):
+        assert build_redirect("list", ["einkaufsliste"], docs_base="", wiki_base="https://wiki.home.tld",
+                              shared_bucket="family") == "https://wiki.home.tld/family/lists/einkaufsliste"
+
+    def test_a_list_link_has_one_name(self):
+        assert build_redirect("list", ["a", "b"], docs_base="", wiki_base="https://wiki.home.tld",
+                              shared_bucket="family") is None
