@@ -26,11 +26,11 @@ class TestARoomWithATopic:
         prompt = greeting_prompt("camping")
         assert "camping" in prompt
 
-    def test_it_is_asked_for_the_todo_state(self):
+    def test_it_is_asked_for_what_is_open_on_its_lists(self):
         """The count and an item or two are the useful part of a topic
         greeting; without them it is just an introduction."""
         prompt = greeting_prompt("camping").lower()
-        assert "todo" in prompt
+        assert "lists have open items" in prompt
 
 
 class TestARoomWithoutATopic:

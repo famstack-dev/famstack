@@ -112,12 +112,12 @@ def _run(store, buffer_text, *flags, path="family/camping/todos.md", by="marge",
 
 def test_a_rewrite_replaces_the_page_and_says_what_it_did(store, tmp_path):
     """The receipt is the point: an opaque rewrite becomes a reviewable one."""
-    result = _run(store, PAGE.replace("- [ ] Wetter", "- [x] Wetter"), tmp=tmp_path)
+    result = _run(store, PAGE.replace("Wetter checken", "Wetterbericht checken"), tmp=tmp_path)
 
     assert result["committed"] is True
-    assert "ticked off" in result["summary"]
-    assert "Wetter checken" in result["summary"]
-    assert store.page.count("- [x] Wetter checken") == 1
+    assert "reworded" in result["summary"]
+    assert "Wetterbericht checken" in result["summary"]
+    assert store.page.count("- [ ] Wetterbericht checken") == 1
 
 
 def test_a_rewrite_that_drops_an_item_is_refused(store, tmp_path):
@@ -144,12 +144,12 @@ def _edits(*pairs):
 
 def test_a_patch_changes_only_what_it_names(store, tmp_path):
     """Everything the patch did not mention comes back untouched."""
-    result = _run(store, _edits(("- [ ] Wetter checken", "- [x] Wetter checken")),
+    result = _run(store, _edits(("- [ ] Wetter checken", "- [ ] Wetterbericht checken")),
                   "--patch", tmp=tmp_path)
 
     assert result["committed"] is True
-    assert store.page == PAGE.replace("- [ ] Wetter checken", "- [x] Wetter checken")
-    assert "ticked off" in result["summary"]
+    assert store.page == PAGE.replace("- [ ] Wetter checken", "- [ ] Wetterbericht checken")
+    assert "reworded" in result["summary"]
 
 
 def test_a_patch_is_matched_against_the_page_as_it_is_now(store, tmp_path):
@@ -199,12 +199,12 @@ def test_a_preview_reports_the_change_without_making_it(store, tmp_path):
     A dropped flag turns "show me what this would do" into a change to
     the family's list.
     """
-    result = _run(store, _edits(("- [ ] Wetter checken", "- [x] Wetter checken")),
+    result = _run(store, _edits(("- [ ] Wetter checken", "- [ ] Wetterbericht checken")),
                   "--patch", "--dry-run", tmp=tmp_path)
 
     assert result["preview"] is True
     assert result["committed"] is False
-    assert "ticked off" in result["summary"], "a preview still says what it would do"
+    assert "reworded" in result["summary"], "a preview still says what it would do"
     assert store.page == PAGE, "the page must be untouched"
     assert store.commits == []
 
@@ -230,12 +230,10 @@ def test_the_commit_says_what_the_edit_did(store, tmp_path):
     anyone actually asks. What changed is already known at the moment of
     writing, so it costs nothing to record it where it lasts.
     """
-    _run(store, _edits(("- [ ] Wetter checken", "- [x] Wetter checken")),
+    _run(store, _edits(("- [ ] Wetter checken", "- [ ] Wetterbericht checken")),
          "--patch", tmp=tmp_path)
 
-    assert store.last_subject == (
-        "chore(memory): marge ticked off 1: Wetter checken in camping"
-    )
+    assert "reworded 1: Wetter checken -> Wetterbericht checken" in store.last_subject
 
 
 def test_the_subject_names_the_topic_not_the_path(store, tmp_path):
@@ -315,7 +313,7 @@ def test_a_write_the_readers_already_show_reports_plainly(store, tmp_path, capsy
 def test_a_write_the_readers_have_not_caught_up_with_is_still_done(store, tmp_path,
                                                                    capsys):
     store.mirrored = False
-    result = _run(store, PAGE.replace("- [ ] Wetter", "- [x] Wetter"), tmp=tmp_path)
+    result = _run(store, PAGE.replace("Wetter checken", "Wetterbericht checken"), tmp=tmp_path)
 
     assert result["committed"] is True, "the commit landed; only the view lags"
     assert result["mirrored"] is False
@@ -344,3 +342,26 @@ def test_a_person_file_in_the_format_is_written(store, tmp_path):
                          "  - Margaret\n---\n", path="family/people/maggie.md", tmp=tmp_path)
 
     assert result["committed"] is True
+
+
+def test_a_list_file_is_guarded_like_a_todo_page(store, tmp_path):
+    """Lists under `lists/` hold ticks too, so a rewrite may not drop one."""
+    result = _run(store, "# Camping\n\n- [ ] Wetter checken\n",
+                  path="family/lists/camping.md", tmp=tmp_path)
+    assert "Kühlbox mitbringen" in result["error"]
+
+
+def test_adding_or_ticking_items_through_a_page_write_is_refused(store, tmp_path):
+    """Item changes go through list_edit, which keeps sections and finds duplicates.
+
+    An agent that rewrote the page to add groceries put one item on the list
+    twice and another under the wrong section.
+    """
+    added = _run(store, PAGE + "- [ ] Joghurt\n", tmp=tmp_path)
+    ticked = _run(store, _edits(("- [ ] Wetter checken", "- [x] Wetter checken")),
+                  "--patch", tmp=tmp_path)
+
+    assert "Joghurt" in added["error"] and "list_edit" in added["error"]
+    assert "Wetter checken" in ticked["error"]
+    assert store.commits == []
+

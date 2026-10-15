@@ -30,6 +30,11 @@ Commands:
         new costs anything. `--force` ignores those and reads
         everything again, for when the model has improved.
 
+    lists [--dry-run]
+        Move the items ticked before today from every list into its
+        archive, a file per month under `lists/archive/<slug>/`. The
+        curator runs it on the nightly sweep. No model involved.
+
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
         `--dry-run` previews to stdout. Bare invocation regenerates
@@ -50,12 +55,13 @@ sys.path.insert(0, "/app")  # stack.ai.client, stack.forgejo, stack.prompt
 
 from stack.ai.client import LLM, LLMUnavailableError
 
-from cli import answer, diary, rewrite, wiki
+from cli import answer, diary, lists, rewrite, wiki
 
 
 _HANDLERS = {
     "answer": answer.run,
     "diary": diary.run,
+    "lists": lists.run,
     "rewrite": rewrite.run,
     "wiki": wiki.run,
 }

@@ -32,8 +32,12 @@ RECORD_TYPES = {"document", "note", "bookmark", "email", "diary"}
 # Projections: generated wiki pages
 PROJECTION_TYPES = {"person", "correspondent", "topic", "index"}
 
+# State documents: the family's current truth, changed by hand or by a
+# command, never generated (§7)
+STATE_TYPES = {"list"}
+
 # All valid types
-TYPES = RECORD_TYPES | PROJECTION_TYPES
+TYPES = RECORD_TYPES | PROJECTION_TYPES | STATE_TYPES
 
 
 # ── Per-type field definitions (§5) ───────────────────────────────────
@@ -83,6 +87,11 @@ SCHEMAS: dict[str, TypeSchema] = {
     "index": TypeSchema(
         required={"type", "generated"},
         list_fields=set(),
+    ),
+    "list": TypeSchema(
+        required={"type", "title"},
+        list_fields={"topics", "sections"},
+        scalar_fields={"title", "description", "recurring"},
     ),
 }
 

@@ -84,7 +84,7 @@ cheap).
 
 **State documents** (the family's current truth; mutable through the
 CLI or by hand; never carry `generated`; see §7):
-- `todos` — a topic's todo list.
+- `list`: a family list, such as groceries, a store or things to do (§5, §7).
 - `person` (declared) — someone the family knows, one file each under
   `<shared_bucket>/people/`.
 
@@ -263,6 +263,72 @@ presence.
 ### `index` (generated)
 `type: index`, `generated: true`, `title` optional. Body is navigation.
 
+### `list`
+The family's file for one list, `<bucket>/lists/<slug>.md`. The file
+name is the slug. A state document (§7), changed by hand or with
+`stack memory list`, never generated.
+
+| Field | | Notes |
+|---|---|---|
+| `type` | R | `list` |
+| `title` | R | what the family calls the list. |
+| `description` | O | what goes on it ("Was wir im Supermarkt brauchen"); the agent picks a list by it. |
+| `topics` | O | list; the topics the list belongs to, by slug. |
+| `sections` | O | list; the sections in the order the family walks through the store. |
+| `recurring` | O | `true` for a list used again and again (a packing list, the weekly chores): its ticked items stay until it is reset. |
+
+```
+---
+type: list
+title: Einkaufsliste
+description: Was wir im Supermarkt brauchen
+topics:
+  - einkaeufe-besorgungen
+sections:
+  - Gemüse & Obst
+  - Milchprodukte & Eier
+---
+
+- [ ] Batterien
+
+## Gemüse & Obst
+- [ ] Äpfel
+
+## Milchprodukte & Eier
+- [ ] Joghurt [Marge](../people/marge.md) 📅 2026-10-14
+- [x] Milch ✅ 2026-10-10
+```
+
+The body holds one item per checkbox line. A section is a `##`
+heading, kept in the order of `sections`; one the list does not name
+comes after them, and an item without a section sits above the first
+heading. Anything else in the body (a note under a heading, an indented
+sub-item) belongs to the family and is left as it is.
+
+An item is what the family wrote, then its fields, in this order, at
+the end of the line:
+
+- a relative link to a person in `<bucket>/people/` assigns the item to
+  them; several links, several people, and one tick closes it for all;
+- any other relative link into the vault names the record the item came
+  from;
+- `📅 YYYY-MM-DD` is the day it is due, `✅ YYYY-MM-DD` the day it was
+  ticked: the Obsidian Tasks plugin's fields, so its queries read them.
+
+Only the trailing run of these counts. A link inside the sentence, a
+web link and any other field stay part of the text. The same line is
+used wherever an item appears; a record's summary writes it without the
+checkbox, because the list holds whether it is done.
+
+A ticked item stays on its list for the rest of the day. The night after,
+the curator moves it to the list's archive,
+`<bucket>/lists/archive/<slug>/<YYYY-MM>.md` for the month it was ticked:
+a list file of its own (`title: Einkaufsliste, 2026-10`, no topics), with
+the line and its section as they were. A tick without a date gets the
+day's date first. A `recurring` list is left alone. The archive is where
+`stack memory list add` learns where an item was last bought, its
+section and its spelling.
+
 ## 6. The `generated` invariant (from B3 / ADR-011)
 
 - A generated projection page MUST carry `generated: true`.
@@ -274,11 +340,14 @@ presence.
 
 ## 7. State documents
 
-`todos.md` is a state document, not a generated page: it is mutable
-current truth (a tick is information), lives in memory source, and never
-carries `generated`. It is a markdown checklist; frontmatter is optional
-and, if present, uses `type: todos`. State documents get read-your-writes
-through the CLI (ADR-011); they are not regenerated.
+`<bucket>/lists/<slug>.md` is a state document (§5, `list`): a tick is
+information, so a list is never regenerated, and a command changes only
+the lines it is about.
+
+Before lists, each topic kept its todos in `<bucket>/<topic>/todos.md`.
+`stack up memory` moves every one of them to `<bucket>/lists/<topic>.md`,
+in one commit by the memory bot, keeping each line and tick and turning
+the old due date into `📅`. Nothing writes `todos.md` any more.
 
 `<shared_bucket>/people/<id>.md` is a declared person (§5): the
 family's own facts about someone, starting with their names. On every

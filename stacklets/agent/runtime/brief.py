@@ -54,11 +54,22 @@ def _lead(path: Path, maxwords: int = 32) -> str:
     return " ".join(words[:maxwords]) + ("..." if len(words) > maxwords else "")
 
 
-def _open_todos(path: Path) -> list[str]:
-    if not path.exists():
-        return []
-    return [ln.split("]", 1)[1].strip() for ln in path.read_text(errors="ignore").splitlines()
-            if ln.strip().startswith("- [ ]")]
+def _lists_with_open_items(vault: Path, topic: str) -> list[str]:
+    """Slugs of the lists that name `topic` and have an open item.
+
+    Read off the list files (`family/lists/<slug>.md`) without the
+    framework, which this container does not carry: the `topics:` block
+    of the frontmatter and the open checkboxes are all it needs.
+    """
+    found = []
+    for path in sorted((vault / "family" / "lists").glob("*.md")):
+        text = path.read_text(errors="ignore")
+        head, _, body = text.partition("\n---\n")
+        topics = re.search(r"^topics:\n((?:  - .*\n?)+)", head, re.M)
+        named = [ln.strip()[2:].strip().strip('"') for ln in topics[1].splitlines()] if topics else []
+        if topic in named and re.search(r"^\s*[-*+] \[ \] ", body, re.M):
+            found.append(path.stem)
+    return found
 
 
 def _recent(vault: Path, topic: str, n: int = 3) -> list[str]:
@@ -146,12 +157,13 @@ def brief_lines(msg, workspace) -> list[str]:
         # the todo list was). Consistent with the todos pointer just below.
         lines.append(f"This room's topic is '{topic}'; run "
                      f"`stack memory topic {topic}` for its overview.")
-        if _open_todos(vault / "family" / topic / "todos.md"):
+        lists = _lists_with_open_items(vault, topic)
+        if lists:
             # Presence, not the data, and not even the count: a number is still
-            # recitable and still goes stale. Just that todos exist and how to
-            # fetch the live list when someone actually asks.
-            lines.append(f"This topic has open todos; run "
-                         f"`stack memory topic {topic} todo` to see them.")
+            # recitable and still goes stale. Just which lists have open items
+            # and how to fetch one when someone actually asks.
+            lines.append(f"This topic's lists with open items: {', '.join(lists)}; run "
+                         f"`stack memory list show <list>` to see one.")
         recent = _recent(vault, topic)
         if recent:
             lines.append("Recently: " + "; ".join(recent))

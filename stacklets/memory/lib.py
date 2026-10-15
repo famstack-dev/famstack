@@ -946,7 +946,7 @@ def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
 
 
 def update_memory(config: dict, repo_path: str,
-                  transform: Callable[[str], str], *,
+                  transform: Callable[[str], str | None], *,
                   actor: str,
                   message: str | Callable[[str, str], str]) -> dict:
     """Commit a transform of one vault file to Forgejo, attributed to `actor`.
@@ -962,6 +962,8 @@ def update_memory(config: dict, repo_path: str,
     that can only describe its own edit once the transform has met the
     current file. The vault's history is read by people and by the agent, so
     a subject that names what changed is worth the indirection.
+
+    A transform answering `None` deletes the file (`ForgejoClient.edit_file`).
 
     Returns the framework envelope: `{"ok": True, "committed": bool}` on
     success (committed=False when the transform was a no-op, so nothing was
@@ -2394,3 +2396,93 @@ def install_memory_to_forgejo_admin(
         "write_token": admin_token,
         "cloned_brain": cloned_brain,
     }
+
+
+# ─── Topic todo lists move to lists/ ─────────────────────────────────────
+#
+# Until lists became one kind of file, each topic kept its todos in
+# `<bucket>/<topic>/todos.md`: a title heading and checkbox lines, with a
+# due date written after a dash. They now live with every other list in
+# `<bucket>/lists/<topic>.md` (`stack.lists`). The move runs on every
+# `stack up memory` and finds nothing once it is done.
+
+# The old due date followed the item after a long dash (U+2014).
+_OLD_DUE = re.compile(r"^(.*?)\s+\u2014\s+(\d{4}-\d{2}-\d{2})$")
+_TITLE_LINE = re.compile(r"^#\s+(.+?)\s*$")
+
+
+def todos_as_list(text: str, topic: str, *, shared_bucket: str = DEFAULT_SHARED_BUCKET,
+                  language: str = "") -> str:
+    """A topic's old `todos.md` as a list file, every tick and line kept.
+
+    The title heading becomes the list's title, the due dates become
+    `📅` fields, and every other line stays as the family wrote it.
+    """
+    from dataclasses import replace
+
+    from stack.lists import format_item, list_path, new_list, parse_item, topic_list_description
+
+    path = list_path(topic, bucket=shared_bucket)
+    body = text.split("\n---\n", 1)[1] if text.startswith("---\n") and "\n---\n" in text else text
+    title, titled = topic.replace("-", " ").title(), False
+    lines: list[str] = []
+    for line in body.splitlines():
+        if not (titled or lines) and (heading := _TITLE_LINE.match(line)):
+            title, titled = heading[1], True
+            continue
+        item = parse_item(line, path=path)
+        if item and not item.due and (old := _OLD_DUE.match(item.text)):
+            line = format_item(replace(item, text=old[1], due=old[2]), path=path)
+        if line.strip() or lines:
+            lines.append(line)
+    head = new_list(title, topics=[topic],
+                    description=topic_list_description(title, language))
+    rest = "\n".join(lines).strip("\n")
+    return f"{head}\n{rest}\n" if rest else head
+
+
+def move_todos_to_lists(client: ForgejoClient, *,
+                        shared_bucket: str = DEFAULT_SHARED_BUCKET,
+                        language: str = "") -> list[str]:
+    """Move every topic's `todos.md` to `lists/<topic>.md`; return the topics moved.
+
+    One commit for all of them, by the memory bot, so the history reads
+    as one step. A topic that already has a list keeps it, and the old
+    file's items that are not on it yet are added.
+    """
+    from stack.forgejo import FileChange
+    from stack.lists import LISTS_DIR, insert_item, list_path, read_list
+
+    changes: list[FileChange] = []
+    moved: list[str] = []
+    for entry in client.list_dir(REPO_OWNER, REPO_NAME, shared_bucket):
+        topic = Path(str(entry.get("path", ""))).name
+        if entry.get("type") != "dir" or topic in (LISTS_DIR, "people"):
+            continue
+        old_path = f"{shared_bucket}/{topic}/todos.md"
+        old = client.get_file(REPO_OWNER, REPO_NAME, old_path)
+        if not old:
+            continue
+        new_path = list_path(topic, bucket=shared_bucket)
+        converted = todos_as_list(old.get("content") or "", topic, shared_bucket=shared_bucket,
+                                  language=language)
+        current = client.get_file(REPO_OWNER, REPO_NAME, new_path)
+        if current:
+            content = current.get("content") or ""
+            for item in read_list(converted, path=new_path).items:
+                if not any(i.text.casefold() == item.text.casefold()
+                           for i in read_list(content, path=new_path).items):
+                    content = insert_item(content, item, path=new_path)
+            changes.append(FileChange("update", new_path, content, sha=current.get("sha") or ""))
+        else:
+            changes.append(FileChange("create", new_path, converted))
+        changes.append(FileChange("delete", old_path, sha=old.get("sha") or ""))
+        moved.append(topic)
+    if changes:
+        client.change_files(
+            REPO_OWNER, REPO_NAME, changes,
+            message="lists: move each topic's todo list to lists/",
+            author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+        )
+    return moved
+

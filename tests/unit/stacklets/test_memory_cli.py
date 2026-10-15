@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
                        / "stacklets" / "memory" / "cli"))
 
-import _todos  # noqa: E402
+import topic as topic_cli  # noqa: E402
 
 
 class TestCheck:
@@ -121,10 +121,10 @@ class TestPrompt:
 
 
 class TestTopicReaderRouting:
-    """Bare topic reads brain; todo reads stay on source memory."""
+    """A topic's overview is read from the brain projection."""
 
     def test_bare_topic_reads_about_page_from_brain(self, tmp_path, capsys, monkeypatch):
-        monkeypatch.setattr(_todos, "refresh_vault_if_stale", lambda path: "up_to_date")
+        monkeypatch.setattr(topic_cli, "refresh_vault_if_stale", lambda path: "up_to_date")
         vault = tmp_path / "memory" / "vault" / "family" / "camping"
         brain = tmp_path / "memory" / "brain" / "family" / "camping"
         vault.mkdir(parents=True)
@@ -141,7 +141,7 @@ class TestTopicReaderRouting:
             encoding="utf-8",
         )
 
-        result = _todos.show_topic("camping", config={"data_dir": str(tmp_path)})
+        result = topic_cli.show_topic("camping", config={"data_dir": str(tmp_path)})
 
         assert result == {"ok": True, "scope": "camping", "bucket": "family"}
         out = capsys.readouterr().out
@@ -149,16 +149,8 @@ class TestTopicReaderRouting:
         assert "[1]" not in out
         assert "source memory should not be read" not in out
 
-    def test_todo_reader_still_reads_memory_source(self, tmp_path, capsys, monkeypatch):
-        monkeypatch.setattr(_todos, "refresh_vault_if_stale", lambda path: "up_to_date")
-        todos = tmp_path / "memory" / "vault" / "family" / "camping" / "todos.md"
-        todos.parent.mkdir(parents=True)
-        todos.write_text("# Camping\n\n- [ ] Pack the stove\n", encoding="utf-8")
+    def test_the_old_todo_verb_points_at_the_topics_list(self, tmp_path):
+        """`topic <slug> todo` was the way to a topic's todos; it says where they went."""
+        result = topic_cli.run(["camping", "todo"], None, {"data_dir": str(tmp_path)})
+        assert result == {"error": "a topic's todos are a list now: stack memory list show camping"}
 
-        result = _todos.list_todos(
-            "camping", show_all=False, config={"data_dir": str(tmp_path)},
-        )
-
-        assert result["ok"] is True
-        assert result["lists"][0]["open"] == ["Pack the stove"]
-        assert "- [ ] Pack the stove" in capsys.readouterr().out

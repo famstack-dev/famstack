@@ -25,6 +25,7 @@ components that judge them.
 from __future__ import annotations
 
 import asyncio
+import types
 import importlib
 import importlib.machinery
 import importlib.util
@@ -36,7 +37,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 MEMORY_DIR = REPO_ROOT / "stacklets" / "memory"
 
-TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "sitecustomize")
+TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "list_tool", "sitecustomize")
 
 
 # ── loading the real components under test ───────────────────────────
@@ -72,7 +73,7 @@ def memory_cli():
     return {
         name: _load_from_path(f"memory_cli_{name}",
                               MEMORY_DIR / "cli" / f"{name}.py")
-        for name in ("search", "person")
+        for name in ("search", "person", "list")
     }
 
 
@@ -88,6 +89,7 @@ def vault_tools(monkeypatch, nanobot_stub):
         "memory_search": importlib.import_module("memory_tool").MemorySearchTool,
         "memory_person": importlib.import_module("person_tool").MemoryPersonTool,
         "memory_history": importlib.import_module("history_tool").MemoryHistoryTool,
+        "list_edit": importlib.import_module("list_tool").ListEditTool,
     }
     yield tools
     for name in TOOL_MODULES:
@@ -121,11 +123,26 @@ def argv_of(tool_cls, **kwargs) -> list[str]:
     return captured
 
 
+# ── gate 0: every tool carries its parameters ────────────────────────
+
+@pytest.mark.parametrize("tool_name", ["memory_search", "memory_person", "memory_history",
+                                       "list_edit"])
+def test_every_tool_carries_its_own_parameters(vault_tools, tool_name):
+    """A tool nanobot cannot instantiate is missing from the model's list.
+
+    On the rig a helper class landed between `@tool_parameters(...)` and
+    `ListEditTool`: the schema went to the helper, `list_edit` was
+    abstract, and the agent answered that it had no list tool.
+    """
+    assert "parameters_schema" in vars(vault_tools[tool_name])
+
+
 # ── gate 1: the core API allowlist ───────────────────────────────────
 
 @pytest.mark.parametrize("tool_name,kwargs", [
     ("memory_search", {"query": "Homer"}),
     ("memory_person", {"name": "homer"}),
+    ("list_edit", {"list": "einkaufsliste", "op": "tick", "items": ["Milch"]}),
 ])
 def test_the_command_a_tool_runs_is_allowed_by_the_api(api, vault_tools,
                                                        tool_name, kwargs):
@@ -166,6 +183,27 @@ def test_the_allowlist_stays_read_only(api):
      {"query": "Homer", "limit": 10, "person": "homer", "tag": "Insurance",
       "scope": "family"}),
     ("memory_person", "person", {"name": "homer"}),
+    ("list_edit", "list",
+     {"list": "einkaufsliste", "op": "add", "items": ["Joghurt", "Eier"],
+      "section": "Milchprodukte & Eier", "people": ["Marge"], "due": "2026-10-14"}),
+    ("list_edit", "list",
+     {"list": "einkaufsliste", "op": "move", "items": ["Eier"], "to": "markt"}),
+    ("list_edit", "list", {"list": "packliste", "op": "reset", "items": ["ignored"]}),
+    ("list_edit", "list",
+     {"op": "add", "items": ["Joghurt"], "topic": "einkaeufe-besorgungen"}),
+    ("list_edit", "list",
+     {"op": "create", "title": "Baumarkt", "items": ["Schrauben"]}),
+    ("list_edit", "list", {"op": "tick", "items": ["Erlaubniszettel"]}),
+    ("list_edit", "list", {"list": "baumarkt", "op": "delete", "items": ["ignored"]}),
+    ("list_edit", "list", {"list": "baumarkt", "op": "delete", "confirmed": True}),
+    ("list_edit", "list",
+     {"list": "einkaufsliste", "op": "set", "topic": "einkauf"}),
+    ("list_edit", "list",
+     {"list": "einkaufsliste", "op": "set", "sections": ["Obst", "Milch"]}),
+    ("list_edit", "list",
+     {"list": "baumarkt", "op": "create", "title": "Baumarkt",
+      "about": "Werkzeug und Material", "topic": "einkaeufe-besorgungen",
+      "sections": ["Schrauben", "Farbe"], "items": ["ignored"]}),
 ])
 def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
         memory_cli, vault_tools, tool_name, command, kwargs):
@@ -211,6 +249,79 @@ def test_search_sends_no_backend_flag(vault_tools):
     argv = argv_of(vault_tools["memory_search"], query="Homer")
 
     assert "--backend" not in argv
+
+
+REFUSED = (b"  \xe2\x9c\x97  Partyliste still has 2 open items: Luftballons; Girlanden. "
+           b"Delete it with them: add --yes\n")
+
+
+def deletes(tool_cls, turns, monkeypatch) -> list[bool]:
+    """Run delete calls turn by turn; for each, whether `--yes` was sent.
+
+    `turns` holds (turn id, confirmed, what the store answers). The store's
+    answer is fed back to the tool as the CLI's output, as on the rig.
+    """
+    import sys as _sys
+
+    context = _sys.modules["nanobot.agent.tools.context"]
+    sent: list[bool] = []
+    tool = tool_cls()
+    for turn, confirmed, answer in turns:
+        monkeypatch.setattr(context, "current_request_context",
+                            lambda turn=turn: types.SimpleNamespace(turn_id=turn))
+
+        class _Proc:
+            returncode = 1 if answer == REFUSED else 0
+
+            async def communicate(self, answer=answer):
+                return answer, b""
+
+        async def _fake_exec(*args, **_kwargs):
+            sent.append("--yes" in args)
+            return _Proc()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        asyncio.run(tool.execute(op="delete", list="partyliste", confirmed=confirmed))
+    return sent
+
+
+def test_a_list_with_open_items_is_deleted_only_after_the_person_said_yes(vault_tools, monkeypatch):
+    """The model cannot confirm for the person.
+
+    On the rig (2026-10-12) the store refused a delete because of open
+    items and the model sent `confirmed` itself in the same turn, so the
+    list went without anyone being asked. A yes counts only in a later
+    message than the refusal.
+    """
+    sent = deletes(vault_tools["list_edit"], [
+        ("turn-1", None, REFUSED),        # "delete the party list"
+        ("turn-1", True, REFUSED),        # the model confirming on its own
+        ("turn-2", True, b"deleted the list Partyliste (by homer)"),   # "Ja, die können weg."
+    ], monkeypatch)
+    assert sent == [False, False, True]
+
+
+def test_a_refused_delete_tells_the_model_to_ask_naming_what_is_open(vault_tools, monkeypatch):
+    import sys as _sys
+    monkeypatch.setattr(_sys.modules["nanobot.agent.tools.context"], "current_request_context",
+                        lambda: types.SimpleNamespace(turn_id="turn-1"))
+    answer = result_of(vault_tools["list_edit"], returncode=1, stdout=REFUSED,
+                       op="delete", list="partyliste")
+    assert answer.startswith("Not deleted: Partyliste still has 2 open items: Luftballons; "
+                             "Girlanden. Ask the person whether these go too")
+    assert "--yes" not in answer
+
+
+def test_a_yes_without_a_refusal_before_it_deletes_nothing_open(vault_tools, monkeypatch):
+    sent = deletes(vault_tools["list_edit"], [("turn-1", True, REFUSED)], monkeypatch)
+    assert sent == [False]
+
+
+def test_only_a_real_yes_counts(vault_tools, monkeypatch):
+    """nanobot casts "true"/"false" but passes any other string through."""
+    sent = deletes(vault_tools["list_edit"], [
+        ("turn-1", None, REFUSED), ("turn-2", "maybe", REFUSED)], monkeypatch)
+    assert sent == [False, False]
 
 
 def result_of(tool_cls, *, returncode: int, stdout: bytes = b"",

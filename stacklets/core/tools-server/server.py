@@ -189,6 +189,12 @@ async def go_person(name: str):
     return _go("person", [s for s in name.split("/") if s])
 
 
+@app.get(f"/{LINK_PREFIX}/list/{{slug}}", summary="Resolve a list link")
+async def go_list(slug: str):
+    """Redirect a stable list link to the list's wiki page."""
+    return _go("list", [slug])
+
+
 @app.get(f"/{LINK_PREFIX}/capture/{{capture_id:path}}",
          summary="Resolve a capture link")
 async def go_capture(capture_id: str):
