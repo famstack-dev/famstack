@@ -38,6 +38,10 @@ class VaultContext:
         self.language = language
         self.shared_bucket = shared_bucket
 
+    def root(self) -> Path | None:
+        """The local copy of the vault, or None when there is none."""
+        return self._vault_path()
+
     def _vault_path(self) -> Path | None:
         """Current `MEMORY_VAULT_DIR`, read fresh; None when unset.
 

@@ -51,7 +51,9 @@ from nio import (
 
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
-from git_mirror import GitMirror
+from git_mirror import BOT_EMAIL, BOT_USERNAME, GitMirror
+from git_mirror import REPO_NAME as MEMORY_REPO
+from migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes
 import voice
 from microbot import CHECK, CROSS, EYES, MicroBot
 from pdf_analysis import (
@@ -465,9 +467,42 @@ class ArchivistBot(MicroBot):
         # first-sync hook runs once per install, not once per start.
         if self._diary_task is None:
             self._diary_task = asyncio.create_task(self._diary.loop())
+        asyncio.create_task(self._migrate_photos_to_notes())
         # The framework's start() owns the session loop and closes the
         # http session (via _aclose) on shutdown.
         await super().start()
+
+    async def _migrate_photos_to_notes(self) -> None:
+        """Run `migration_photos_to_notes` once per instance; remove with it.
+
+        Waits a minute like the diary loop: an old entry is placed by
+        downloading its upload, which needs the first sync done. A marker
+        in the session directory keeps it from running again; a failure
+        leaves no marker, so the next start tries again.
+        """
+        marker = Path(self._session_dir) / "migration-photos-to-notes.done"
+        mirror, root = self._services.mirror, self._services.vault.root()
+        if marker.exists() or mirror is None or root is None:
+            return
+        await asyncio.sleep(60)
+
+        async def is_picture(mxc: str) -> bool:
+            data = await self._download_media(mxc)
+            return bool(data) and is_picture_bytes(data)
+
+        try:
+            client = await mirror.vault_client()
+            if client is None:
+                return
+            await migrate_photos_to_notes(
+                client, mirror.repo_owner, MEMORY_REPO, root=root,
+                is_picture=is_picture,
+                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+            )
+        except Exception as e:  # noqa: BLE001 - a migration never stops the bot
+            logger.warning("[archivist] moving photos to notes failed: {}", e)
+            return
+        marker.touch()
 
     def _build_services(self) -> ArchivistServices:
         """Wire every service from the bot's config.
@@ -1668,9 +1703,9 @@ class ArchivistBot(MicroBot):
 
         # Documents room → full archivist pipeline (Paperless + classify
         # + entity reconciliation). Every other reacting room is a
-        # capture room: PDFs and images become visual bookmarks in the
-        # sender's bucket; Matrix already stores the binary, so we link
-        # to the mxc URL and don't re-archive the bytes.
+        # capture room: a PDF becomes a bookmark and a photo a note, in
+        # the room's topic or the sender's bucket, linked to the mxc URL
+        # and with a copy of the bytes in the media archive.
         if self._is_documents_room(ctx):
             await self._process_document(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
@@ -2447,7 +2482,7 @@ class ArchivistBot(MicroBot):
         captured_ts: int = 0,
         caption: str = "",
     ) -> None:
-        """Capture a PDF or image as a visual bookmark.
+        """Capture a PDF as a bookmark, or a photo as a note.
 
         Vision-driven by default (the classifier sees the rendered
         page(s) + any extractable text layer). The entry points back at
