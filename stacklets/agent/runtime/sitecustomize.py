@@ -41,7 +41,8 @@ Third, one shim that widens when the agent is allowed to answer at all:
 7. thread_trigger (thread_trigger.py) — a message inside a thread the agent is
    part of counts as a mention too. A thread is a conversation; nobody repeats
    the name on every line of one. Scoped to threads the agent participates in,
-   because the archivist and mail bot thread in the same rooms.
+   because the archivist and mail bot thread in the same rooms. A plain reply
+   to one of the agent's own messages counts too.
 
 8. join_greeting (join_greeting.py) — on being invited, take one turn and
    introduce the room's topic instead of joining in silence.
@@ -50,6 +51,10 @@ Third, one shim that widens when the agent is allowed to answer at all:
    through nanobot's gate, is transcribed, and reaches the agent only if the
    transcript addresses it by name, like typed text. The answer starts with
    what was heard, quoted.
+
+10. open_question (open_question.py) — while the agent's last message in a room
+   is a question, the asked person's next message there reaches it without
+   its name.
 
 WHY SHIMS AND NOT A FORK
     nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
@@ -93,6 +98,7 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `_on_media_message` passes the transcript as `[transcription: <text>]`;
                  `MatrixChannel.send(self, msg: OutboundMessage)` (async, a dataclass whose
                  `metadata["event_id"]` is the message being answered)
+    open_question: the voice_trigger symbols, plus `room.room_id` and `event.sender` in the gate
     join_greeting: `nanobot.channels.matrix.runtime.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
@@ -233,7 +239,7 @@ except Exception:
     _log.exception("name-trigger shim could not attach (nanobot internals changed?)")
 
 
-# ── thread_trigger: a reply inside the agent's own thread is addressed to it ──
+# ── thread_trigger: a message in the agent's thread, or a reply to it, is for it ──
 # The threaded half of the same gate, in two parts because nanobot's gate is
 # synchronous and the question is not: `_on_message` (async) settles whether the
 # thread is ours and remembers it, `_is_bot_mentioned` (sync) reads that answer.
@@ -242,20 +248,28 @@ except Exception:
 # name-trigger that failed to attach costs only itself.
 try:
     import nanobot.channels.matrix.runtime as _matrix_thread
+    from thread_trigger import AgentMessages as _AgentMessages
     from thread_trigger import AgentThreads as _AgentThreads
+    from thread_trigger import replied_to as _replied_to
     from thread_trigger import thread_root as _thread_root
 
     _agent_threads = _AgentThreads()
+    _agent_messages = _AgentMessages()
 
     def _learn_threads(orig):
-        """Settle the thread question before nanobot's gate asks it."""
+        """Settle the thread and reply questions before nanobot's gate asks them."""
         async def _wrapped(self, room, event):
+            # Both swallow their own failures; a homeserver hiccup must not
+            # stop the message being routed by the other rules.
             root = _thread_root(event)
             if root and not _agent_threads.includes(root):
-                # Swallows its own failures; a homeserver hiccup must not
-                # stop the message being routed by the other rules.
                 await _agent_threads.observe(
                     self.client, room.room_id, root, self.config.user_id,
+                )
+            target = _replied_to(event)
+            if target and not _agent_messages.includes(target):
+                await _agent_messages.observe(
+                    self.client, room.room_id, target, self.config.user_id,
                 )
             return await orig(self, room, event)
         return _wrapped
@@ -266,8 +280,9 @@ try:
         if _orig_mentioned_pre_thread(self, event):
             return True
         try:
-            root = _thread_root(event)
-            return bool(root and _agent_threads.includes(root))
+            root, target = _thread_root(event), _replied_to(event)
+            return bool(root and _agent_threads.includes(root)
+                        or target and _agent_messages.includes(target))
         except Exception:
             _log.exception("thread trigger failed; addressing by name still works")
             return False
@@ -341,6 +356,51 @@ try:
     _log.info("voice-trigger shim active")
 except Exception:
     _log.exception("voice-trigger shim could not attach (nanobot internals changed?)")
+
+
+# ── open_question: the answer to the agent's own question needs no name ─────
+# While the agent's last message in a room asks someone something, that
+# person's next message there reaches the agent without its name. Who the
+# agent is talking to comes from the message it handles, the question from
+# the message it sends. See open_question.py.
+try:
+    import time as _time_question
+
+    import nanobot.channels.matrix.runtime as _matrix_question
+    from open_question import OpenQuestions as _OpenQuestions
+    from open_question import asks as _asks
+
+    _open_questions = _OpenQuestions()
+    _talking_to: dict[str, str] = {}
+    _orig_should_process_q = _matrix_question.MatrixChannel._should_process_message
+    _orig_handle_q = _matrix_question.MatrixChannel._handle_message
+    _orig_send_q = _matrix_question.MatrixChannel.send
+
+    def _should_process_or_answer(self, room, event):
+        if _orig_should_process_q(self, room, event):
+            return True
+        return _open_questions.answers(getattr(room, "room_id", ""), event.sender,
+                                       at=_time_question.monotonic())
+
+    async def _handle_and_remember(self, sender_id, chat_id, content, *args, **kwargs):
+        _talking_to[chat_id] = sender_id
+        return await _orig_handle_q(self, sender_id, chat_id, content, *args, **kwargs)
+
+    async def _send_and_remember(self, msg):
+        if msg.content:
+            if _asks(msg.content):
+                _open_questions.asked(msg.chat_id, _talking_to.get(msg.chat_id, ""),
+                                      at=_time_question.monotonic())
+            else:
+                _open_questions.closed(msg.chat_id)
+        return await _orig_send_q(self, msg)
+
+    _matrix_question.MatrixChannel._should_process_message = _should_process_or_answer
+    _matrix_question.MatrixChannel._handle_message = _handle_and_remember
+    _matrix_question.MatrixChannel.send = _send_and_remember
+    _log.info("open-question shim active")
+except Exception:
+    _log.exception("open-question shim could not attach (nanobot internals changed?)")
 
 
 # ── join_greeting: say something useful the moment you are invited ───────────
