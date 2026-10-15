@@ -253,6 +253,7 @@ class CapturePipeline:
         bucket: str | None = None,
         transcribed: bool = False,
         write_in: str | None = None,
+        caption: str = "",
     ) -> CaptureOutcome:
         """File a message body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
@@ -266,6 +267,9 @@ class CapturePipeline:
         sender's one chance to catch a mishearing, and counts the note as
         the speaker's own words, the only notes that become todos (see
         `own_words`).
+
+        ``caption`` is what the sender wrote with a recording, handled as
+        an upload's caption is (`capture_binary`).
         """
         source = await self._text_extractor.extract(text)
         if source is None:
@@ -280,6 +284,7 @@ class CapturePipeline:
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, transcribed=transcribed, write_in=write_in,
             extract_action_items=in_own_words(text, spoken=transcribed),
+            user_hint=caption or None, caption=caption,
         )
 
     async def capture_email(
@@ -339,6 +344,7 @@ class CapturePipeline:
         default_person: bool = True,
         kept_media: dict | None = None,
         write_in: str | None = None,
+        caption: str = "",
     ) -> CaptureOutcome:
         """File a PDF or image as a bookmark.
 
@@ -356,6 +362,10 @@ class CapturePipeline:
         is the copy the wiki serves itself. The caller keeps it because
         it is the one that has the room, the sender and the event this
         upload arrived on, which is what the archive records.
+
+        ``caption`` is what the sender wrote with the upload. The model
+        reads it alongside the file, as it reads a note on a filed
+        document, and the entry keeps it as written.
         """
         source, images, kind = self._source_from_binary(
             file_data=file_data, mime=mime, filename=filename,
@@ -371,6 +381,7 @@ class CapturePipeline:
             source=source, kind=kind, sender_mxid=sender_mxid,
             display_link=display_link or source_uri or filename,
             images=images, actor=sender_mxid,
+            user_hint=caption or None, caption=caption,
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, default_person=default_person,
             kept_media=kept_media, write_in=write_in,
@@ -552,6 +563,7 @@ class CapturePipeline:
         self, *, vault_path: str, user_hint: str, sender_mxid: str,
         initial_classification: dict | None = None,
         write_in: str | None = None,
+        caption: str = "",
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -570,6 +582,11 @@ class CapturePipeline:
         The archived file is the one thing that cannot be recovered
         that way: the bytes are long gone from this path, so the
         reference is read back off the entry being replaced.
+
+        ``caption`` is the caption on the upload the capture was filed
+        from, when the caller could read it there. It wins over the
+        entry's, which an older filing may have left out; without it,
+        the entry's caption is kept.
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -577,6 +594,7 @@ class CapturePipeline:
         if raw is None:
             return CaptureOutcome(status="capture_missing")
         meta, summary_text = _parse_capture_markdown(raw)
+        caption = caption or _caption_from(raw)
         # The summary callout doesn't carry the frontmatter tag list,
         # so the classifier would otherwise have to re-derive tags
         # from prose alone -- they drift on each pass. Append them as
@@ -591,6 +609,8 @@ class CapturePipeline:
         body_parts: list[str] = []
         if summary_text:
             body_parts.append(summary_text)
+        if caption:
+            body_parts.append("The sender's caption: " + caption)
         if existing_tags:
             body_parts.append(
                 "Existing tags on this entry: " + ", ".join(existing_tags)
@@ -615,6 +635,7 @@ class CapturePipeline:
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
             kept_media=_kept_media_from(raw),
+            caption=caption,
             write_in=write_in,
         )
 
@@ -636,6 +657,7 @@ class CapturePipeline:
         kept_media: dict | None = None,
         write_in: str | None = None,
         extract_action_items: bool = False,
+        caption: str = "",
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -727,6 +749,7 @@ class CapturePipeline:
                 capture_id=capture_id,
                 submitter=sender_mxid,
                 kept_media=kept_media,
+                caption=caption,
             )
 
         # Feed topic tags (not the derived Person: X) back into the
@@ -973,6 +996,20 @@ def _kept_media_from(raw: str) -> dict | None:
         "original": named.group(2),
         "embed": shown.group(1) if shown else "",
     }
+
+
+# The caption section `vault_entry.render_capture` closes an entry with.
+_CAPTION_SECTION = re.compile(r"^## Caption\n\n(.*)\Z", re.M | re.S)
+
+
+def _caption_from(raw: str) -> str:
+    """The sender's caption an entry keeps, read back off the page.
+
+    A correction re-renders the entry from the prior one, so the caption
+    has to be read back, or the first reply to fix a tag would drop it.
+    """
+    found = _CAPTION_SECTION.search(raw)
+    return found.group(1).strip() if found else ""
 
 
 def _parse_yaml_frontmatter(text: str) -> dict:

@@ -72,6 +72,8 @@ class FakeClassifier:
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
         self.saw_current_list = current_list
+        self.saw_text = text
+        self.saw_user_hint = user_hint
         self.saw_write_in = write_in
         self.saw_extract_action_items = extract_action_items
         if self._raises:
@@ -1148,6 +1150,76 @@ class TestCorrectingAnEntryKeepsItsFile:
         published = await self._reprocess(self._entry())
 
         assert published["kept_media"] is None
+
+
+class TestAPhotosCaption:
+    """A photo posted with a caption ("Bart, first time without training
+    wheels") carries the only words about it the family wrote. The model
+    reads the caption with the picture, so the summary says what the
+    sender said; the entry keeps the caption word for word; and a later
+    correction, which re-reads the entry rather than the picture, still
+    has it."""
+
+    CAPTION = "Bart fährt zum ersten Mal ohne Stützräder"
+
+    async def _post(self, caption: str):
+        mirror, classifier = FakeMirror(), FakeClassifier()
+        await _pipeline(mirror=mirror, classifier=classifier).capture_binary(
+            file_data=b"\x89PNG\r\n", mime="image/png", filename="IMG_1.png",
+            source_uri="mxc://home.test/x", sender_mxid="@marge:server",
+            caption=caption,
+        )
+        return mirror.captures[0], classifier
+
+    @pytest.mark.asyncio
+    async def test_the_model_reads_the_caption_with_the_picture(self):
+        _, classifier = await self._post(self.CAPTION)
+        assert classifier.saw_user_hint == self.CAPTION
+
+    @pytest.mark.asyncio
+    async def test_the_entry_keeps_the_caption(self):
+        published, _ = await self._post(self.CAPTION)
+        assert published["caption"] == self.CAPTION
+
+    @pytest.mark.asyncio
+    async def test_a_photo_without_a_caption_is_read_on_its_own(self):
+        published, classifier = await self._post("")
+        assert classifier.saw_user_hint is None
+        assert not published["caption"]
+
+    @pytest.mark.asyncio
+    async def test_a_recordings_caption_is_kept_like_a_photos(self):
+        mirror, classifier = FakeMirror(), FakeClassifier()
+        await _pipeline(mirror=mirror, classifier=classifier).capture_text(
+            text="Die Glasur dünn auftragen.", sender_mxid="@marge:server",
+            transcribed=True, caption=self.CAPTION,
+        )
+        assert classifier.saw_user_hint == self.CAPTION
+        assert mirror.captures[0]["caption"] == self.CAPTION
+
+    @pytest.mark.asyncio
+    async def test_a_correction_keeps_the_caption(self):
+        path = "marge/bookmarks/test-capture.md"
+        entry = render_capture(
+            frontmatter=capture_frontmatter(
+                title="Fahrrad", captured_at="2026-03-14", kind="bookmark",
+                source_uri="mxc://home.test/x", persons=["Marge"],
+                tags=["familie"], model=None, capture_id="$img:home.test",
+            ),
+            body="", kind="bookmark", captured_at="2026-03-14",
+            source_uri="mxc://home.test/x", persons=["Marge"],
+            from_path=path, shared_bucket="family",
+            summary="Ein Kind auf einem Fahrrad.", facts=[],
+            caption=self.CAPTION,
+        )
+        mirror, classifier = FakeMirror(), FakeClassifier()
+        mirror._stored = {path: entry}
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=path, user_hint="das ist Bart", sender_mxid="@marge:s",
+        )
+
+        assert mirror.captures[-1]["caption"] == self.CAPTION
+        assert self.CAPTION in classifier.saw_text
 
 
 class TestTheRoomsLanguageReachesTheClassifier:

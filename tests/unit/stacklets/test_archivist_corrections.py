@@ -186,11 +186,12 @@ def bot(tmp_path):
         bot.routed.append(("reprocess", doc_id, user_hint, initial_classification))
 
     async def _capture_reprocess(room_id, vault_path, user_hint, sender_mxid,
-                                 reply_to, *, initial_classification=None):
+                                 reply_to, *, initial_classification=None,
+                                 capture_id=None):
         bot.routed.append(("capture_reprocess", vault_path, user_hint))
 
     async def _text_capture(room_id, text, sender, reply_to=None, *,
-                            capture_id=None, transcribed=False):
+                            capture_id=None, transcribed=False, caption=""):
         bot.routed.append(("capture_text", text))
 
     async def _send(room_id, text, *a, **kw):
@@ -399,6 +400,54 @@ class TestCorrectionInsideAThread:
             ("capture_reprocess", "homer/notes/x.md",
              "file this under school, not work"),
         ]
+
+
+class TestACorrectionRereadsTheCaption:
+    """A photo filed with a caption, before captions reached the entry,
+    lost the caption's words: the technique, the lessons learned. A
+    correction re-reads the upload the capture was filed from, so its
+    caption comes back, and the family has a way to repair an entry
+    without posting the photo again."""
+
+    @pytest.mark.asyncio
+    async def test_the_uploads_caption_reaches_the_reprocess(self, bot):
+        caption = "Raku-Brand. Gelernt: Glasur dünner auftragen."
+        client = bot._client
+        client.add(_message(
+            "$photo", HOMER, caption,
+            content={"msgtype": "m.image", "filename": "IMG_1.jpg",
+                     "url": "mxc://server/img"},
+        ))
+        client.add(
+            _message("$capfiled", BOT_ID, "Saved",
+                     content=_thread_relation("$photo"),
+                     envelope={"source": "docs", "type": "capture.filed",
+                               "data": {"vault_path": "family/hobby/x.md",
+                                        "capture_id": "$photo"}}),
+            thread_root="$photo",
+        )
+        seen: dict = {}
+
+        async def reprocess(**kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace()
+
+        async def _none(*_a, **_k):
+            return None
+
+        bot._services = SimpleNamespace(capture=SimpleNamespace(reprocess=reprocess))
+        bot._write_in = _none
+        bot._reply_for_capture = _none
+        bot._handle_reply_capture_reprocess = (
+            ArchivistBot._handle_reply_capture_reprocess.__get__(bot)
+        )
+
+        await bot._on_text(_docs_room(), _message(
+            "$correction", HOMER, "das ist Keramik",
+            content=_thread_relation("$photo"),
+        ))
+
+        assert seen["caption"] == caption
 
 
 # ── What must keep working ───────────────────────────────────────────────

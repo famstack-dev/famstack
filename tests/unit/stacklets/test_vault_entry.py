@@ -730,6 +730,44 @@ class TestCaptureKeepsTheFileItDescribes:
         vault with no brain, a full disk: same page as before."""
         assert self._render(None) == self._render({})
 
+
+class TestTheCaptionStaysOnTheEntry:
+    """A photo posted with a caption carries the sender's own words. The
+    summary is the model's reading of both; the caption itself is kept
+    as it was written, under the picture, as the diary's cards keep it."""
+
+    def _render(self, **over) -> str:
+        args = dict(
+            from_path="marge/bookmarks/2026/03/entry.md",
+            shared_bucket="family",
+            frontmatter=capture_frontmatter(
+                title="Bart's first bike", captured_at="2026-03-14",
+                kind="bookmark", source_uri="mxc://home.local/abcdef",
+                persons=[], tags=[], model=None,
+            ),
+            body="", kind="bookmark", captured_at="2026-03-14",
+            source_uri="mxc://home.local/abcdef", persons=[],
+            summary="Bart rides his first bike.", facts=[],
+            kept_media={"name": "IMG_1.jpg", "original": "/media/2026/03/evt.jpg",
+                        "embed": "/media/2026/03/evt.webp"},
+        )
+        args.update(over)
+        return render_capture(**args)
+
+    def test_the_caption_is_kept_word_for_word_under_the_picture(self):
+        caption = "Bart fährt zum ersten Mal ohne Stützräder!\nOpa hat geholfen."
+        content = self._render(caption=caption)
+
+        picture = content.index("![[/media/2026/03/evt.webp]]")
+        heading = content.index("## Caption")
+        assert picture < heading
+        assert content[heading:].split("\n", 2)[2].strip() == caption
+
+    def test_an_upload_without_a_caption_has_no_caption_section(self):
+        assert "## Caption" not in self._render(caption="")
+        assert self._render(caption="") == self._render()
+
+
 class TestRenderEmailMessageSection:
 
     def test_marker_heading_briefing_and_body(self):

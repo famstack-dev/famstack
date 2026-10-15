@@ -799,7 +799,8 @@ def bot_with_recorder(tmp_path):
         calls.append(("capture_url", url))
 
     async def _record_text_capture(room_id, text, sender, reply_to=None,
-                                   *, capture_id=None, transcribed=False):
+                                   *, capture_id=None, transcribed=False,
+                                   caption=""):
         calls.append(("capture_text", text))
 
     async def _record_url(room_id, url, reply_to=None, **kw):
@@ -1056,7 +1057,7 @@ class TestSpokenMessagesAreDeliberate:
         flags: list[bool] = []
 
         async def _record(room_id, text, sender, reply_to=None, *,
-                          capture_id=None, transcribed=False):
+                          capture_id=None, transcribed=False, caption=""):
             flags.append(transcribed)
 
         bot._handle_text_capture = _record
@@ -1064,6 +1065,27 @@ class TestSpokenMessagesAreDeliberate:
             self._shared_room(), self._event(self.SHORT, transcribed=True),
         )
         assert flags == [True]
+
+    @pytest.mark.asyncio
+    async def test_an_audio_files_caption_reaches_the_capture(
+        self, bot_with_recorder,
+    ):
+        """A recording posted with a caption is captured like a photo
+        posted with one: the caption travels with it."""
+        bot, _ = bot_with_recorder
+        captions: list[str] = []
+
+        async def _record(room_id, text, sender, reply_to=None, *,
+                          capture_id=None, transcribed=False, caption=""):
+            captions.append(caption)
+
+        bot._handle_text_capture = _record
+        event = self._event(self.SHORT, transcribed=True)
+        event.source["content"][voice.TRANSCRIPT_KEY].update(
+            filename="kurs.m4a", body="Notizen vom Töpferkurs",
+        )
+        await bot._on_text(self._shared_room(), event)
+        assert captions == ["Notizen vom Töpferkurs"]
 
     @pytest.mark.asyncio
     async def test_a_mention_still_asks_rather_than_files(
