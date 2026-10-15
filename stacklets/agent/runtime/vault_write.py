@@ -50,6 +50,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from turn import current as current_turn
+
 _log = logging.getLogger("agent.runtime.vault_write")
 
 # The page the model addresses as `vault/...` is the same relative path the
@@ -76,12 +78,8 @@ def vault_page(path: str | None) -> str:
 
 
 def _actor() -> str:
-    """Whoever the agent is speaking with this turn, for the commit."""
-    try:
-        import brief
-        return getattr(brief, "speaking_with", "") or "someone"
-    except Exception:
-        return "someone"
+    """Whoever sent the message this write belongs to, for the commit."""
+    return current_turn().person or "someone"
 
 
 def _run(page: str, payload: str, *flags: str) -> str:

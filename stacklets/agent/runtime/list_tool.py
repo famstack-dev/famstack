@@ -21,49 +21,46 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from turn import Turn, current as current_turn
 
 
 class AwaitingYes:
-    """Lists whose delete the store refused because of open items, by turn.
+    """Lists whose delete the store refused because of open items, and who was told.
 
     The person has to say yes, the model cannot: on the rig (2026-10-12)
     the store refused a delete and the model sent `confirmed` itself in
-    the same turn. So a yes counts only in a later turn than the refusal,
-    which is a message from the person after they were told what is open.
+    the same turn. So a yes counts only from the person who asked, in the
+    same conversation, in a later turn than the refusal: their message
+    after they were told what is open.
 
         awaiting = AwaitingYes()
-        awaiting.refused("partyliste", turn="t1")
-        awaiting.allows("partyliste", turn="t1")    # False: same turn
-        awaiting.allows("partyliste", turn="t2")    # True
+        awaiting.refused("partyliste", Turn("homer", "!kitchen", "t1"))
+        awaiting.allows("partyliste", Turn("homer", "!kitchen", "t1"))  # False: same turn
+        awaiting.allows("partyliste", Turn("bart", "!kitchen", "t2"))   # False: not asked
+        awaiting.allows("partyliste", Turn("homer", "!kitchen", "t2"))  # True
     """
 
     def __init__(self) -> None:
-        self._refused_in: dict[str, str] = {}
+        self._refused_in: dict[tuple[str, str, str], str] = {}
 
-    def refused(self, slug: str, *, turn: str) -> None:
-        if turn:
-            self._refused_in[slug] = turn
+    def refused(self, slug: str, turn: Turn) -> None:
+        if turn.id:
+            self._refused_in[(turn.conversation, turn.person, slug)] = turn.id
 
-    def allows(self, slug: str, *, turn: str) -> bool:
-        refused_in = self._refused_in.get(slug, "")
-        return bool(refused_in and turn and turn != refused_in)
+    def allows(self, slug: str, turn: Turn) -> bool:
+        refused_in = self._refused_in.get((turn.conversation, turn.person, slug), "")
+        return bool(refused_in and turn.id and turn.id != refused_in)
 
     def done(self, slug: str) -> None:
-        self._refused_in.pop(slug, None)
+        """The list is gone, for everyone who was waiting on it."""
+        for key in [k for k in self._refused_in if k[2] == slug]:
+            del self._refused_in[key]
 
 
 # What the store says when a list to delete still has open items.
 _NEEDS_YES = "add --yes"
 
 _awaiting_yes = AwaitingYes()
-
-
-def _current_turn() -> str:
-    """The id of the turn this tool call belongs to, "" if nanobot has none."""
-    from nanobot.agent.tools.context import current_request_context
-
-    request = current_request_context()
-    return str(getattr(request, "turn_id", "") or "")
 
 
 @tool_parameters(
@@ -168,20 +165,17 @@ class ListEditTool(Tool):
         sections: "list[str] | None" = None,
         confirmed: bool | None = None,
     ) -> str:
-        try:
-            import brief
-            actor = getattr(brief, "speaking_with", "") or "someone"
-        except Exception:
-            actor = "someone"
+        now = current_turn()
+        actor = now.person or "someone"
 
         if op in ("create", "set"):
             args = _details_args(op, list, title, about, topic, sections)
         elif op == "delete":
-            slug, turn = (list or "").strip(), _current_turn()
+            slug = (list or "").strip()
             args = ["stack", "memory", "list", "delete", slug]
             # Only a real yes, in a later message than the refusal: nanobot
             # casts "true"/"false" but passes any other string through.
-            if confirmed is True and _awaiting_yes.allows(slug, turn=turn):
+            if confirmed is True and _awaiting_yes.allows(slug, now):
                 args.append("--yes")
         else:
             args = _item_args(op, list, items, topic, section, people, due, to)
@@ -202,7 +196,7 @@ class ListEditTool(Tool):
             return f"Error: list edit failed with exit {proc.returncode}: {err or out}"
         if op == "delete":
             if _NEEDS_YES in out + err:
-                _awaiting_yes.refused(slug, turn=turn)
+                _awaiting_yes.refused(slug, now)
                 return _ask_first(out or err)
             if proc.returncode == 0:
                 _awaiting_yes.done(slug)

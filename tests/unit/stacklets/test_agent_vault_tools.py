@@ -255,10 +255,17 @@ REFUSED = (b"  \xe2\x9c\x97  Partyliste still has 2 open items: Luftballons; Gir
            b"Delete it with them: add --yes\n")
 
 
+def said(turn: str, *, by: str = "homer", room: str = "matrix:!kitchen"):
+    """nanobot's request context for a message `by` someone in `room`."""
+    return types.SimpleNamespace(turn_id=turn, sender_id=f"@{by}:simpson", session_key=room,
+                                 chat_id=room.split(":", 1)[-1])
+
+
 def deletes(tool_cls, turns, monkeypatch) -> list[bool]:
     """Run delete calls turn by turn; for each, whether `--yes` was sent.
 
-    `turns` holds (turn id, confirmed, what the store answers). The store's
+    `turns` holds (turn id or request, confirmed, what the store answers).
+    A bare turn id is a message from Homer in the kitchen. The store's
     answer is fed back to the tool as the CLI's output, as on the rig.
     """
     import sys as _sys
@@ -267,8 +274,8 @@ def deletes(tool_cls, turns, monkeypatch) -> list[bool]:
     sent: list[bool] = []
     tool = tool_cls()
     for turn, confirmed, answer in turns:
-        monkeypatch.setattr(context, "current_request_context",
-                            lambda turn=turn: types.SimpleNamespace(turn_id=turn))
+        request = said(turn) if isinstance(turn, str) else turn
+        monkeypatch.setattr(context, "current_request_context", lambda request=request: request)
 
         class _Proc:
             returncode = 1 if answer == REFUSED else 0
@@ -304,12 +311,41 @@ def test_a_list_with_open_items_is_deleted_only_after_the_person_said_yes(vault_
 def test_a_refused_delete_tells_the_model_to_ask_naming_what_is_open(vault_tools, monkeypatch):
     import sys as _sys
     monkeypatch.setattr(_sys.modules["nanobot.agent.tools.context"], "current_request_context",
-                        lambda: types.SimpleNamespace(turn_id="turn-1"))
+                        lambda: said("turn-1"))
     answer = result_of(vault_tools["list_edit"], returncode=1, stdout=REFUSED,
                        op="delete", list="partyliste")
     assert answer.startswith("Not deleted: Partyliste still has 2 open items: Luftballons; "
                              "Girlanden. Ask the person whether these go too")
     assert "--yes" not in answer
+
+
+def test_only_the_person_who_was_told_can_say_yes(vault_tools, monkeypatch):
+    sent = deletes(vault_tools["list_edit"], [
+        (said("turn-1", by="homer"), None, REFUSED),
+        (said("turn-2", by="bart"), True, REFUSED),
+    ], monkeypatch)
+    assert sent == [False, False]
+
+
+def test_a_yes_in_another_room_confirms_nothing(vault_tools, monkeypatch):
+    sent = deletes(vault_tools["list_edit"], [
+        (said("turn-1", room="matrix:!kitchen"), None, REFUSED),
+        (said("turn-2", room="matrix:!garage"), True, REFUSED),
+    ], monkeypatch)
+    assert sent == [False, False]
+
+
+def test_a_list_change_is_committed_as_whoever_sent_the_message(vault_tools, monkeypatch):
+    """Two rooms answered at once each commit as their own sender.
+
+    The sender used to be a module global set by the latest briefing, so
+    a briefing for Bart's message could put his name on Homer's change.
+    """
+    import sys as _sys
+    monkeypatch.setattr(_sys.modules["nanobot.agent.tools.context"], "current_request_context",
+                        lambda: said("turn-1", by="marge"))
+    argv = argv_of(vault_tools["list_edit"], op="add", list="einkaufsliste", items=["Eier"])
+    assert argv[argv.index("--as") + 1] == "marge"
 
 
 def test_a_yes_without_a_refusal_before_it_deletes_nothing_open(vault_tools, monkeypatch):
