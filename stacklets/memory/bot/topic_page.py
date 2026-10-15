@@ -82,8 +82,8 @@ class Source:
 
 
 def render(answer: Answer, *, display: str, sources: list[Source],
-           todos: list[str], lang: str) -> str:
-    """The topic page body. `todos` are the open items, in the list's order."""
+           open_items: str, lang: str) -> str:
+    """The topic page body. `open_items` are the topic's lists, already written out."""
     def listed(kind: str) -> str:
         rows = sorted((s for s in sources if s.kind == kind),
                       key=lambda s: s.date, reverse=True)
@@ -94,7 +94,7 @@ def render(answer: Answer, *, display: str, sources: list[Source],
         "summary": answer.summary,
         "facts": "\n".join(fact(label, value, c) for label, value, c in answer.facts),
         "state": "\n".join(f"- {sentence(t)}{c}" for t, c in answer.state),
-        "todos": "\n".join(f"- [ ] {item}" for item in todos),
+        "todos": open_items,
         "notes": listed("note"),
         "bookmarks": listed("bookmark"),
         "documents": listed("document"),

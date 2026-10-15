@@ -9,6 +9,7 @@ documents has no Documents heading.
   tagline            one warm line, written by the model
   about              a short paragraph, written by the model
   facts              born, school or job, doctor, car: label and value, from the model
+  todos              the open list items linked to them, soonest due first, copied by the compiler
   loves              bullets, written by the model
   more               a section the model may add, with its own heading
   lately             the latest entries naming them, dated by the compiler
@@ -23,6 +24,9 @@ This comment is not published.
 
 ## At a glance
 {{facts}}
+
+## Still to do
+{{todos}}
 
 ## What {{first_name}} loves
 {{loves}}

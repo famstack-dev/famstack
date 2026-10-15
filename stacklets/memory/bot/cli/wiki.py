@@ -86,13 +86,14 @@ from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import diary  # noqa: E402
 import home_page  # noqa: E402
+import open_items  # noqa: E402
 import person_page  # noqa: E402
 import topic_page  # noqa: E402
 
 # One module owns what a todo line is; `stack memory topic` reads
 # through it the same way, by bare name from this folder.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
+from stack.lists import LISTS_DIR, FamilyList, ListError, read_list  # noqa: E402
 
 HELP = "Regenerate the family wiki's home and member pages"
 
@@ -568,6 +569,7 @@ async def _generate_member(
         parts, name=display, first_name=first_name, entries=entries,
         lately=lately, docs=docs,
         links={n: _reference(entries[n - 1])[1] for n in docs}, lang=lang,
+        open_items=open_items.person_items(_family_lists(shared_bucket), slug, lang),
     )
 
     page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug, lang=lang)
@@ -632,9 +634,10 @@ async def _generate_topic(
     # what was filed come from disk and the index, as they are.
     page_dir = f"{bucket_prefix}/{topic_slug}"
     sources = _topic_sources(entries, cross_refs, topic_slug, people or {})
-    todos = _open_todos(page_dir)
+    lists = _family_lists(bucket_prefix)
     prompt = topic_page.prompt(
-        display=display, scope=scope, lang=lang, todos=todos,
+        display=display, scope=scope, lang=lang,
+        todos=open_items.topic_texts(lists, topic_slug),
         evidence_text=topic_page.evidence(
             sources, {n: e.get("summary") or "" for n, e in enumerate(entries + cross_refs, 1)}),
     )
@@ -647,7 +650,8 @@ async def _generate_topic(
     except topic_page.AnswerError as e:
         _err(f"{page_dir}: the model's answer is unusable ({e}); the page stays as it was")
         return 1
-    page = topic_page.render(answer, display=display, sources=sources, todos=todos, lang=lang)
+    page = topic_page.render(answer, display=display, sources=sources, lang=lang,
+                             open_items=open_items.topic_items(lists, topic_slug, lang))
 
     page = _with_references(page, entries + cross_refs, page_dir=page_dir, lang=lang)
 
@@ -697,19 +701,16 @@ def _family_names(people: dict[str, Person]) -> list[str]:
             for p in people.values()]
 
 
-def _open_todos(page_dir: str) -> list[str]:
-    """The open items of the lists that name the topic at `page_dir`, in list order."""
-    bucket, _, topic = page_dir.rpartition("/")
-    items: list[str] = []
+def _family_lists(bucket: str) -> list[tuple[str, FamilyList]]:
+    """Every list in `bucket` with its vault path; a file that does not read is skipped."""
+    lists = []
     for file in sorted((_brain_dir() / bucket / LISTS_DIR).glob("*.md")):
         path = f"{bucket}/{LISTS_DIR}/{file.name}"
         try:
-            lst = read_list(file.read_text(encoding="utf-8"), path=path)
+            lists.append((path, read_list(file.read_text(encoding="utf-8"), path=path)))
         except (OSError, ListError):
             continue
-        if topic in lst.topics:
-            items += [i.text for i in lst.open_items]
-    return items
+    return lists
 
 
 def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
