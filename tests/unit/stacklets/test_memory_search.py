@@ -447,6 +447,25 @@ class TestSourceLink:
         # allow "/" inside it.
         assert "/go/capture/%24EltEvt123" in out
 
+    def test_diary_card_hit_carries_its_go_link(self, stack_cli, vault):
+        # A correction can move a diary card to the day the family says
+        # it happened, and the day is its folder. The entry id stays.
+        _write(vault / "family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md", """
+            ---
+            type: diary
+            title: Barts erste Radtour
+            date: 2026-08-14
+            entry_id: "3f9a0c1b2d"
+            ---
+
+            Bart fuhr ohne Stuetzraeder bis ans Ende der Evergreen Terrace.
+        """)
+        code, out, _ = stack_cli(
+            "memory", "search", "Stuetzraeder", "--vault", str(vault),
+        )
+        assert code == 0
+        assert "/go/diary/3f9a0c1b2d" in out
+
     def test_hit_without_a_capture_id_prints_no_link(self, stack_cli, vault):
         # A hand-written wiki page has no id to key on. No honest
         # durable link exists, so the block stays as it was rather
@@ -695,7 +714,7 @@ class TestSearchMemoryLib:
         assert set(r.keys()) == {
             "path", "rel", "title", "date",
             "persons", "tags", "excerpt", "summary",
-            "paperless_id", "capture_id", "matched_terms",
+            "paperless_id", "capture_id", "entry_id", "matched_terms",
         }
         assert r["rel"].endswith("radlager.md")
         assert r["persons"] == ["Homer"]

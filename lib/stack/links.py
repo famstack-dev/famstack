@@ -113,6 +113,22 @@ def go_diary(entry_id: str) -> str:
     return _record_path("diary", entry_id)
 
 
+def go_card(fields: Mapping[str, object]) -> str:
+    """The link of a card, by the card id in its frontmatter, or "".
+
+    `fields` is the card's frontmatter, or a search hit carrying the same
+    fields. "" for a page with no card id: a topic, a person, a list, a
+    hand-written page.
+
+    >>> go_card({"type": "diary", "entry_id": "3f9a0c1b2d"})
+    '/diary/3f9a0c1b2d'
+    >>> go_card({"type": "topic"})
+    ''
+    """
+    card = card_id_of(fields)
+    return _record_path(*card) if card else ""
+
+
 def go_person(slug: str, leaf: str | None = None) -> str:
     """`/person/<slug>` — a person's page.
 
@@ -155,8 +171,8 @@ def go_page(repo_path: str, fields: Mapping[str, object] | None = None) -> str:
     >>> go_page("homer/notes/2026/09/errands.md")
     ''
     """
-    if card := card_id_of(fields or {}):
-        return _record_path(*card)
+    if link := go_card(fields or {}):
+        return link
     parts = [p for p in repo_path.strip("/").split("/") if p]
     if len(parts) < 2:
         return ""

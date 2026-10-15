@@ -263,6 +263,17 @@ class TestWhichLinkASearchHitGets:
         assert url == public(go_capture(CAPTURE_ID), self.BASE)
         assert "camping" not in url, "the path must not be baked into the link"
 
+    def test_a_diary_card_is_linked_by_its_entry_id(self):
+        """The archivist's search answers cite a diary card that a
+        correction may later move to another day."""
+        url = memory_hit_url(
+            {"rel": "family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
+             "entry_id": ENTRY_ID},
+            link_base_url=self.BASE, code_public_url="http://code.example",
+        )
+
+        assert url == public(go_diary(ENTRY_ID), self.BASE)
+
     def test_a_page_without_an_id_keeps_the_old_link(self):
         """No regression for hand-written wiki pages.
 

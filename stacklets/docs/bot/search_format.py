@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from stack.links import go_capture, go_docs, public
+from stack.links import go_card, go_docs, public
 
 
 def memory_doc_url(
@@ -71,9 +71,10 @@ def memory_hit_url(
 ) -> str:
     """The best durable link for one memory hit, or "" for none.
 
-    A capture is a record, so when the hit carries the id it was
-    captured with, the link is `/go/capture/<id>` and survives the file
-    being re-scoped, its topic renamed, or its title corrected.
+    A note, a bookmark or a diary card is a record, so when the hit
+    carries its card id the link is `/go/capture/<id>` or
+    `/go/diary/<id>` and survives the file being re-scoped, its topic
+    renamed, its title corrected or its day changed.
 
     Everything else falls back to the Forgejo blob URL. That link
     freezes today's address and today's path, which is exactly what the
@@ -82,9 +83,8 @@ def memory_hit_url(
     true. Anything that grows a stable id should move to a record kind
     rather than widening this fallback.
     """
-    if capture_id := (r.get("capture_id") or "").strip():
-        if url := public(go_capture(capture_id), link_base_url):
-            return url
+    if url := public(go_card(r), link_base_url):
+        return url
     return memory_doc_url(
         r.get("rel", ""), code_public_url=code_public_url, mirror_org=mirror_org,
     )
