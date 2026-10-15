@@ -26,7 +26,8 @@ import pytest
 SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
-                   "list_tool", "tool_trim", "voice_trigger", "open_question")
+                   "list_tool", "tool_trim", "voice_trigger", "open_question",
+                   "status_trace")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
@@ -356,6 +357,7 @@ def test_the_answer_to_a_voice_message_starts_with_what_was_heard(nanobot, monke
         chat_id: str
         content: str
         metadata: dict
+        event: object = None
 
     monkeypatch.setenv("AGENT_NAME", "Stacky")
     channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
@@ -370,6 +372,24 @@ def test_the_answer_to_a_voice_message_starts_with_what_was_heard(nanobot, monke
         "> Stacky please add bread to the shopping list.\n\n"
         "Brot steht jetzt auf der Einkaufsliste.",
         "Sonst noch was?"]
+
+
+def test_a_tool_hint_before_the_answer_does_not_take_the_quote(nanobot, monkeypatch):
+    import asyncio
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+    channel._should_process_message(None, _voice())
+    _hand_over(channel, "Stacky, wir brauchen Milch.")
+
+    asyncio.run(channel.send(_outbound("$ list_edit", event=_hint(mods, "list_edit"),
+                                       metadata={"event_id": "$voice"})))
+    asyncio.run(channel.send(_outbound("Milch steht jetzt auf der Einkaufsliste.",
+                                       metadata={"event_id": "$voice"})))
+
+    assert [m.content for m in channel.sent] == [
+        "> Stacky, wir brauchen Milch.\n\nMilch steht jetzt auf der Einkaufsliste."]
 
 
 def test_a_voice_message_for_someone_else_gets_no_answer(nanobot, monkeypatch):
@@ -411,6 +431,7 @@ def test_the_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
         chat_id: str
         content: str
         metadata: dict
+        event: object = None
 
     class _Text:
         sender = "@homer:simpson"
@@ -429,6 +450,130 @@ def test_the_answer_to_the_agents_question_needs_no_name(nanobot, monkeypatch):
 
     assert channel._should_process_message(kitchen, _Text())
     assert not channel._should_process_message(kitchen, _Text()), "only the first answer"
+
+
+def _said(text, sender="@homer:simpson"):
+    class _Text:
+        body = text
+        pill_mention = False
+        source = {"content": {"msgtype": "m.text", "body": text}}
+    event = _Text()
+    event.sender = sender
+    return event
+
+
+def _asks_homer(channel, *, event_id="$ask"):
+    """Homer asks the agent something, and the agent answers with a question."""
+    import asyncio
+    asyncio.run(channel._handle_message(
+        sender_id="@homer:simpson", chat_id="!kitchen",
+        content="Stacky, lösch die Partyliste", metadata={"event_id": event_id}))
+    asyncio.run(channel.send(_outbound(
+        "Die Partyliste hat noch 2 offene Punkte. Sollen die auch weg?",
+        metadata={"event_id": event_id})))
+
+
+def test_a_notice_from_nanobot_does_not_take_the_quote(nanobot, monkeypatch):
+    import asyncio
+
+    monkeypatch.setenv("AGENT_NAME", "Stacky")
+    mods = nanobot()
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+    channel._should_process_message(None, _voice())
+    _hand_over(channel, "Stacky, wir brauchen Milch.")
+
+    compaction = mods["nanobot.events"].ContextCompactionEvent
+    asyncio.run(channel.send(_outbound("Compressing context…", event=compaction(),
+                                       metadata={"event_id": "$voice"})))
+    asyncio.run(channel.send(_outbound("Milch steht jetzt auf der Einkaufsliste.",
+                                       metadata={"event_id": "$voice"})))
+
+    assert channel.sent[-1].content == \
+        "> Stacky, wir brauchen Milch.\n\nMilch steht jetzt auf der Einkaufsliste."
+
+
+# ── a slow turn shows what the agent is doing ────────────────────────────
+
+def _outbound(content, *, event=None, metadata=None):
+    import dataclasses
+
+    @dataclasses.dataclass
+    class _Outbound:
+        chat_id: str
+        content: str
+        metadata: dict
+        event: object = None
+
+    return _Outbound("!kitchen", content, metadata or {}, event)
+
+
+def _hint(mods, *names):
+    progress = mods["nanobot.bus.outbound_events"].ProgressEvent
+    return progress(content="$ stack ...", tool_hint=True,
+                    tool_events=[{"name": n} for n in names])
+
+
+def _slow_turn(nanobot, monkeypatch, steps):
+    """Run a turn whose status may change at once, step by step; return the channel."""
+    import asyncio
+    import sys as _sys
+
+    mods = nanobot()
+    monkeypatch.setattr(_sys.modules["status_trace"], "FIRST_AFTER", 0.0)
+    monkeypatch.setattr(_sys.modules["status_trace"], "GAP", 0.0)
+    monkeypatch.setattr(_sys.modules["sitecustomize"], "_TRACE_TICK", 0.01)
+    monkeypatch.setenv("AGENT_LANGUAGE", "de")
+    channel = mods["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    async def _run():
+        await channel._handle_message(sender_id="@homer:simpson", chat_id="!kitchen",
+                                      content="Stacky, was fehlt noch?", metadata={})
+        for step in steps(mods):
+            await asyncio.sleep(0.05)
+            await channel.send(step)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+    return channel
+
+
+def test_a_slow_turn_shows_one_status_that_grows(nanobot, monkeypatch):
+    channel = _slow_turn(nanobot, monkeypatch, lambda mods: [
+        _outbound("$ memory_search", event=_hint(mods, "memory_search")),
+        _outbound("$ list_edit", event=_hint(mods, "list_edit")),
+        _outbound("Milch steht jetzt auf der Einkaufsliste."),
+    ])
+
+    first, *edits = [content for _, content in channel.room_contents]
+    assert first["msgtype"] == "m.notice", "a notice: Matrix does not notify about it"
+    assert all(e["m.relates_to"] == {"rel_type": "m.replace", "event_id": "$notice1"}
+               for e in edits), "every change edits the one status"
+    assert len(edits[-1]["m.new_content"]["body"].splitlines()) >= 2
+    assert [m.content for m in channel.sent] == ["Milch steht jetzt auf der Einkaufsliste."], \
+        "tool hints never reach the chat; the answer is a message of its own"
+
+
+def test_compacting_shows_as_a_status_line_not_as_nanobots_notice(nanobot, monkeypatch):
+    def steps(mods):
+        compaction = mods["nanobot.events"].ContextCompactionEvent
+        return [_outbound("Compressing context…", event=compaction(phase="started")),
+                _outbound("Context compacted.", event=compaction(phase="succeeded")),
+                _outbound("Erledigt.")]
+    channel = _slow_turn(nanobot, monkeypatch, steps)
+
+    shown = channel.room_contents[-1][1]
+    body = (shown.get("m.new_content") or shown)["body"]
+    assert "Notizen" in body
+    assert [m.content for m in channel.sent] == ["Erledigt."]
+
+
+def test_the_status_stops_with_the_answer(nanobot, monkeypatch):
+    import asyncio
+
+    channel = _slow_turn(nanobot, monkeypatch, lambda mods: [_outbound("Erledigt.")])
+    shown = len(channel.room_contents)
+    asyncio.run(asyncio.sleep(0.05))
+    assert len(channel.room_contents) == shown
 
 
 # ── failure is contained, and visible ────────────────────────────────────

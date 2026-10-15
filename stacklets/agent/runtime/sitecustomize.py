@@ -56,6 +56,10 @@ Third, one shim that widens when the agent is allowed to answer at all:
    is a question, the asked person's next message there reaches it without
    its name.
 
+11. status_trace (status_trace.py) — a slow turn gets one status notice that
+   grows a line as the agent moves on (looking, looking closer, writing it
+   down); the answer comes as its own message, the notice stays as a trace.
+
 WHY SHIMS AND NOT A FORK
     nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
     keeps a session per Matrix thread, which retired the two shims that needed
@@ -99,6 +103,14 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  `MatrixChannel.send(self, msg: OutboundMessage)` (async, a dataclass whose
                  `metadata["event_id"]` is the message being answered)
     open_question: the voice_trigger symbols, plus `room.room_id` and `event.sender` in the gate
+    answers:     an answer is an `OutboundMessage` with `event` None or
+                 `nanobot.bus.outbound_events.StreamedResponseEvent`; every notice
+                 (progress, compaction, retry wait) carries its own event (`_is_answer`)
+    status_trace: `nanobot.bus.outbound_events.ProgressEvent` (`tool_hint`, `tool_events[].name`),
+                 `nanobot.events.ContextCompactionEvent` (`phase`) reaching `MatrixChannel.send`,
+                 reaching `MatrixChannel.send` when `sendToolHints` is on,
+                 `MatrixChannel._send_room_content(room_id, content)` returning a response
+                 with `event_id`, `MatrixChannel._build_thread_relates_to(metadata)` (static)
     join_greeting: `nanobot.channels.matrix.runtime.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
@@ -150,6 +162,34 @@ except Exception:
     # If the internal symbol moved (nanobot upgrade), fail loudly in the log but
     # do not stop the agent from starting.
     _log.exception("brief shim could not attach (nanobot internals changed?)")
+
+
+def _is_progress(msg) -> bool:
+    """True for nanobot's progress messages (tool hints, progress text), not an answer."""
+    try:
+        from nanobot.bus.outbound_events import ProgressEvent
+    except Exception:
+        return False
+    return isinstance(getattr(msg, "event", None), ProgressEvent)
+
+
+def _is_answer(msg) -> bool:
+    """True for the agent speaking to the family, not one of nanobot's notices.
+
+    A notice carries text too ("Compressing context…", a tool hint, a retry
+    wait), so text alone does not make an answer. An answer carries no
+    event, or the one that marks it as streamed.
+    """
+    if not msg.content:
+        return False
+    event = getattr(msg, "event", None)
+    if event is None:
+        return True
+    try:
+        from nanobot.bus.outbound_events import StreamedResponseEvent
+    except Exception:
+        return False
+    return isinstance(event, StreamedResponseEvent)
 
 
 # ── state_log: the message list per turn, for debugging (opt-in) ─────────────
@@ -299,6 +339,96 @@ except Exception:
     _log.exception("thread-trigger shim could not attach (nanobot internals changed?)")
 
 
+# ── status_trace: a slow turn shows what the agent is doing ──────────────────
+# One status notice per slow turn, a line appended as the agent moves on; the
+# answer comes as its own message and the notice stays as a trace. nanobot's
+# tool hints (config.json `sendToolHints`) are the signal and never reach the
+# chat themselves. Installed before the voice and question gates, so a message
+# they drop never starts a status. See status_trace.py.
+try:
+    import asyncio as _asyncio_trace
+    import os as _os_trace
+    import time as _time_trace
+
+    import nanobot.channels.matrix.runtime as _matrix_trace
+    import status_trace as _status_trace
+    from nanobot.events import ContextCompactionEvent as _Compaction
+
+    # How often a running trace looks whether its status should change.
+    _TRACE_TICK = 1.0
+    _traces: dict[tuple[str, str], "_Running"] = {}
+
+    class _Running:
+        """One turn's trace: its status notice in Matrix, and the loop keeping it current."""
+
+        def __init__(self, channel, room_id: str, metadata: dict) -> None:
+            self.trace = _status_trace.Trace(started=_time_trace.monotonic(),
+                                             lang=_os_trace.environ.get("AGENT_LANGUAGE", ""))
+            self.channel, self.room_id, self.metadata = channel, room_id, metadata
+            self.notice_id = ""
+            self.task = _asyncio_trace.create_task(self._keep_current())
+
+        async def _keep_current(self) -> None:
+            while True:
+                await _asyncio_trace.sleep(_TRACE_TICK)
+                lines = self.trace.due(at=_time_trace.monotonic())
+                if lines:
+                    await self._show("\n".join(lines))
+
+        async def _show(self, text: str) -> None:
+            notice = {"msgtype": "m.notice", "body": text}
+            if self.notice_id:
+                content = {**notice, "body": f"* {text}", "m.new_content": notice,
+                           "m.relates_to": {"rel_type": "m.replace", "event_id": self.notice_id}}
+            else:
+                thread = self.channel._build_thread_relates_to(self.metadata)
+                content = {**notice, "m.relates_to": thread} if thread else notice
+            try:
+                response = await self.channel._send_room_content(self.room_id, content)
+            except Exception:
+                _log.debug("status notice not sent", exc_info=True)
+                return
+            self.notice_id = self.notice_id or getattr(response, "event_id", "") or ""
+
+    def _trace_key(chat_id: str, metadata) -> tuple[str, str]:
+        return chat_id, (metadata or {}).get("thread_root_event_id", "") or ""
+
+    _orig_handle_trace = _matrix_trace.MatrixChannel._handle_message
+    _orig_send_trace = _matrix_trace.MatrixChannel.send
+
+    async def _handle_and_trace(self, sender_id, chat_id, content, *args, **kwargs):
+        metadata = kwargs.get("metadata") or {}
+        key = _trace_key(chat_id, metadata)
+        if key in _traces:
+            _traces.pop(key).task.cancel()
+        _traces[key] = _Running(self, chat_id, metadata)
+        return await _orig_handle_trace(self, sender_id, chat_id, content, *args, **kwargs)
+
+    async def _send_traced(self, msg):
+        key = _trace_key(msg.chat_id, msg.metadata)
+        running = _traces.get(key)
+        if _is_progress(msg) and msg.event.tool_hint:
+            # The signal, not a message: what the agent started doing.
+            if running:
+                running.trace.tools([e.get("name", "") for e in msg.event.tool_events or []])
+            return None
+        if isinstance(msg.event, _Compaction):
+            # A line in the family's words while someone waits; between turns
+            # nobody does, and a notice out of nowhere only puzzles.
+            if running and msg.event.phase == "started":
+                running.trace.tidying()
+            return None
+        if running and _is_answer(msg):
+            _traces.pop(key).task.cancel()
+        return await _orig_send_trace(self, msg)
+
+    _matrix_trace.MatrixChannel._handle_message = _handle_and_trace
+    _matrix_trace.MatrixChannel.send = _send_traced
+    _log.info("status-trace shim active")
+except Exception:
+    _log.exception("status-trace shim could not attach (nanobot internals changed?)")
+
+
 # ── voice_trigger: a voice message is addressed by what was said ─────────────
 # nanobot's gate runs before transcription, and a voice message's text is
 # "Voice message", so in a shared room it never reached the agent. Let it
@@ -343,9 +473,9 @@ try:
 
     async def _send(self, msg):
         # The answer carries the voice message's event id for threading; the
-        # first one with text gets what was heard in front of it.
+        # first answer gets what was heard in front of it, not a notice.
         heard = _pending_voice.answering((msg.metadata or {}).get("event_id", "")) \
-            if msg.content else ""
+            if _is_answer(msg) else ""
         if heard:
             msg = _dataclasses_voice.replace(msg, content=_quoted(heard, msg.content))
         return await _orig_send_voice(self, msg)
@@ -387,7 +517,7 @@ try:
         return await _orig_handle_q(self, sender_id, chat_id, content, *args, **kwargs)
 
     async def _send_and_remember(self, msg):
-        if msg.content:
+        if _is_answer(msg):
             if _asks(msg.content):
                 _open_questions.asked(msg.chat_id, _talking_to.get(msg.chat_id, ""),
                                       at=_time_question.monotonic())
