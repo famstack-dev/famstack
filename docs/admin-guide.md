@@ -793,7 +793,7 @@ newer commands (doctor, errors, memory, setup) and says so.
 
 ## Backups
 
-This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet that covers the irreplaceable data: photo originals, scanned documents, and everything in your family chat including the voice messages. Immich's and Paperless's databases are not covered yet, so layer it with Time Machine or a periodic tar if you want full coverage today.
+This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet that covers the irreplaceable data: photo originals, scanned documents, and everything in your family chat including the voice messages. Immich's and Paperless's databases are not covered yet, and neither is Forgejo, which holds the family memory with its diary and lists. Layer it with Time Machine or a periodic tar if you want full coverage today.
 
 ### The backup stacklet
 
