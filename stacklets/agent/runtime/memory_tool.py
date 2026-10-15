@@ -70,7 +70,7 @@ class MemorySearchTool(Tool):
             "Search the family memory vault by keywords. Most relevant first: a page "
             "with a rare keyword ranks above pages with only common ones. Each result "
             "has date, persons, vault path, title, the matching line, which keywords "
-            "matched, and a source link for captured notes. Use before answering "
+            "matched, and a source link for notes, bookmarks and diary cards. Use before answering "
             "factual questions about family people, plans, documents, notes, "
             "bookmarks, or topics."
         )
