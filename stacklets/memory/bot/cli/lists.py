@@ -1,10 +1,11 @@
-"""Archive the ticked items of every list, on the nightly sweep.
+"""Archive what is over on every list, on the nightly sweep.
 
 An item ticked today stays on its list for the rest of the day, so
 "did we get eggs?" still has an answer in the store. The night after,
 it moves to the list's archive, `<bucket>/lists/archive/<slug>/<YYYY-MM>.md`,
 and the list holds only what is still open. Ticks made by hand without
-a date get today's date first, and leave the night after.
+a date get today's date first, and leave the night after. On a
+calendar, an entry also leaves the night after its date.
 
 Everything moves in one commit by the memory bot, written to Forgejo
 against the hash each file was read at, so a tick made while this runs
@@ -33,8 +34,10 @@ from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import (  # noqa: E402
     LISTS_DIR,
     ListError,
+    archive_month,
+    archive_over,
     archive_path,
-    archive_ticked,
+    over,
     read_list,
     stamp_ticks,
 )
@@ -56,18 +59,18 @@ async def run(llm, argv: list[str]) -> int:
         changes, moved = archive_lists(client, bucket=bucket, today=_today())
         if changes and "--dry-run" not in argv:
             client.change_files(REPO_OWNER, REPO_NAME, changes,
-                                message=f"lists: archive {moved} ticked item(s)",
+                                message=f"lists: archive {moved} item(s) that are over",
                                 author_name=BOT_USERNAME, author_email=BOT_EMAIL)
     except (ForgejoError, OSError) as e:
         _err(f"lists not archived: {e}")
         return 1
-    print(f"archived {moved} ticked item(s)" if moved else "nothing to archive")
+    print(f"archived {moved} item(s)" if moved else "nothing to archive")
     return 0
 
 
 def archive_lists(client: ForgejoClient, *, bucket: str,
                   today: str) -> tuple[list[FileChange], int]:
-    """The file changes that archive every list's ticked items, and how many moved.
+    """The file changes that archive what is over on every list, and how many moved.
 
     A file that is not a list is reported and left alone.
     """
@@ -81,8 +84,7 @@ def archive_lists(client: ForgejoClient, *, bucket: str,
         text = current.get("content") or ""
         try:
             stamped = stamp_ticks(text, path=path, today=today)
-            months = {i.done_on[:7] for i in read_list(stamped, path=path).items
-                      if i.done and i.done_on and i.done_on < today}
+            months = {archive_month(i) for i in over(read_list(stamped, path=path), today)}
         except ListError as e:
             _err(f"  {e}; left alone")
             continue
@@ -92,7 +94,7 @@ def archive_lists(client: ForgejoClient, *, bucket: str,
             target = archive_path(slug, month, bucket=bucket)
             if found := client.get_file(REPO_OWNER, REPO_NAME, target):
                 archives[target], shas[target] = found.get("content") or "", found.get("sha", "")
-        after, written, items = archive_ticked(stamped, archives, path=path,
+        after, written, items = archive_over(stamped, archives, path=path,
                                                today=today, bucket=bucket)
         if after != text:
             changes.append(FileChange("update", path, after, sha=current.get("sha", "")))

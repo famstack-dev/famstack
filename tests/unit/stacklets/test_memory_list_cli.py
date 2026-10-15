@@ -108,7 +108,7 @@ class TestStartingAList:
         result = run("show")
         assert result["lists"] == [{"slug": "einkaufsliste", "title": "Einkaufsliste",
                                     "description": "Was wir im Supermarkt brauchen",
-                                    "topics": [], "open": 1}]
+                                    "kind": "todo", "topics": [], "open": 1}]
 
     def test_a_list_that_exists_is_not_started_again(self, run, groceries):
         result = run("create", "einkaufsliste", "--title", "Noch eine", "--as", "homer")
@@ -117,6 +117,26 @@ class TestStartingAList:
     def test_a_list_named_by_its_title_alone_gets_a_slug_from_it(self, run, store):
         result = run("create", "--title", "Garage aufräumen", "--as", "homer")
         assert result["path"] == "family/lists/garage-aufraumen.md"
+
+    def test_a_packing_list_is_started_as_a_checklist(self, run, store):
+        """Its ticks stay for the next trip; a todo list would archive them overnight."""
+        result = run("create", "packliste", "--title", "Packliste", "--kind", "checklist",
+                     "--as", "marge")
+        assert "kind: checklist\n" in store.text(result["path"])
+
+    def test_a_list_turns_into_a_checklist(self, run, store, groceries):
+        run("set", "einkaufsliste", "--kind", "checklist", "--as", "marge")
+        assert "kind: checklist\n" in store.text("family/lists/einkaufsliste.md")
+
+    def test_an_appointment_needs_its_date(self, run, store):
+        """A calendar is ordered by date and cleared by it; an entry without one would stay forever."""
+        run("create", "termine", "--title", "Termine", "--kind", "calendar", "--as", "marge")
+        refused = run("add", "termine", "Elternabend", "--as", "marge")
+        assert "needs its date" in refused["error"]
+        run("add", "termine", "Elternabend", "--due", "2026-11-17", "--as", "marge")
+        run("add", "termine", "Theater", "--due", "2026-11-03", "--as", "marge")
+        assert store.text("family/lists/termine.md").index("Theater") < \
+            store.text("family/lists/termine.md").index("Elternabend")
 
     def test_a_slug_is_lowercase_words_and_dashes(self, run):
         assert "not a slug" in run("create", "Einkauf Liste", "--title", "x", "--as", "marge")["error"]

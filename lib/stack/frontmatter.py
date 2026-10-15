@@ -91,7 +91,7 @@ SCHEMAS: dict[str, TypeSchema] = {
     "list": TypeSchema(
         required={"type", "title"},
         list_fields={"topics", "sections"},
-        scalar_fields={"title", "description", "recurring"},
+        scalar_fields={"title", "description", "kind"},
     ),
 }
 
