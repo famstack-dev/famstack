@@ -8,18 +8,24 @@ is e2e-verified by test_capture_memory_e2e.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import aiohttp
 import pytest
+from werkzeug import Response
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
-from vault_context import VaultContext  # noqa: E402
+from card_index import find_card  # noqa: E402
+from card_resolver import CardResolver  # noqa: E402
 from vault_entry import capture_frontmatter, render_capture  # noqa: E402
 from stack.web import FetchOutcome  # noqa: E402
 from stack.web.quality import Verdict  # noqa: E402
@@ -152,7 +158,8 @@ _UNSET = object()
 
 
 def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
-              llm=None, text_extractor=None, url_extractor=None, vault=None):
+              llm=None, text_extractor=None, url_extractor=None, vault=None,
+              cards=None):
     return CapturePipeline(
         url_extractor=url_extractor or FakeExtractor(_source(source_uri="http://src")),
         text_extractor=text_extractor
@@ -167,6 +174,7 @@ def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
         capture_tag_prompt_size=50,
         llm=llm,
         vault=vault,
+        cards=cards,
     )
 
 
@@ -1372,16 +1380,22 @@ class TestOnlyTheWritersOwnWordsBecomeTodos:
 
 
 class TestACorrectionFindsTheCaptureWhereItIsNow:
-    """A correction names the capture it is about by the id it was filed
-    with, the message's own event id, which never changes. Its path does:
-    a refile used to rename it, and photos filed as bookmarks have moved
-    to notes. So the capture is looked up by its id first, and the path
-    the filing message recorded is only the fallback while the local
-    copy of the family memory has not caught up."""
+    """A correction names the capture it is about by its card id, the
+    event id of the message it was filed from, which never changes. Its
+    path does: a refile used to rename it, and photos filed as bookmarks
+    have moved to notes. So the archivist asks core's resolver where the
+    id lives now, and the path the filing message recorded is only the
+    fallback for when the resolver cannot answer.
+
+    The resolver here is the real lookup (`card_index.find_card` over a
+    copy of the family memory) behind the tools server's `/cards`
+    contract, reached over HTTP by the archivist's real client."""
 
     OLD = "family/painting/bookmarks/2026/10/raku-454811.md"
     NEW = "family/painting/notes/2026/10/raku-454811.md"
     ID = "$img:home.test"
+    # Nothing listens on the discard port: a resolver that is down.
+    UNREACHABLE = "http://127.0.0.1:9"
 
     def _entry(self, path: str) -> str:
         return render_capture(
@@ -1395,32 +1409,60 @@ class TestACorrectionFindsTheCaptureWhereItIsNow:
             shared_bucket="family", summary="Eine Schale.", facts=[],
         )
 
-    async def _correct(self, tmp_path, monkeypatch, *, local: str | None):
-        if local:
-            (tmp_path / local).parent.mkdir(parents=True)
-            (tmp_path / local).write_text(self._entry(local), encoding="utf-8")
-        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path))
+    def _resolver(self, httpserver, brain: Path) -> str:
+        """The tools server's `/cards/<kind>/<id>` over `brain`."""
+        def answer(request):
+            kind, _, card_id = request.path.removeprefix("/cards/").partition("/")
+            path = find_card(kind, card_id, brain_dir=brain)
+            if path is None:
+                return Response('{"error": "no such card"}', status=404,
+                                content_type="application/json")
+            return Response(json.dumps({"kind": kind, "card_id": card_id, "path": path}),
+                            content_type="application/json")
+        httpserver.expect_request(re.compile("^/cards/")).respond_with_handler(answer)
+        return httpserver.url_for("")
+
+    async def _correct(self, *, resolver_url: str, stored: str):
         mirror = FakeMirror()
-        mirror._stored = {self.NEW: self._entry(self.NEW)}
-        out = await _pipeline(
-            mirror=mirror, vault=VaultContext(language="de", shared_bucket="family"),
-        ).reprocess(
-            vault_path=self.OLD, capture_id=self.ID,
-            user_hint="das ist Keramik", sender_mxid="@marge:s",
-        )
+        mirror._stored = {stored: self._entry(stored)}
+        async with aiohttp.ClientSession() as http:
+            out = await _pipeline(
+                mirror=mirror, cards=CardResolver(http, resolver_url),
+            ).reprocess(
+                vault_path=self.OLD, capture_id=self.ID,
+                user_hint="das ist Keramik", sender_mxid="@marge:s",
+            )
         return out, mirror
 
     @pytest.mark.asyncio
-    async def test_a_moved_capture_is_found_by_its_id(self, tmp_path, monkeypatch):
-        out, mirror = await self._correct(tmp_path, monkeypatch, local=self.NEW)
+    async def test_a_moved_capture_is_found_through_the_resolver(
+        self, tmp_path, httpserver,
+    ):
+        (tmp_path / self.NEW).parent.mkdir(parents=True)
+        (tmp_path / self.NEW).write_text(self._entry(self.NEW), encoding="utf-8")
+
+        out, mirror = await self._correct(
+            resolver_url=self._resolver(httpserver, tmp_path), stored=self.NEW)
+
         assert out.status == "reclassified"
         assert mirror.captures[-1]["existing_path"] == self.NEW
 
     @pytest.mark.asyncio
-    async def test_without_the_id_on_disk_the_recorded_path_is_tried(
-        self, tmp_path, monkeypatch,
+    async def test_a_resolver_that_is_down_falls_back_to_the_recorded_path(self):
+        """Core restarting must not turn every correction into "missing"."""
+        out, mirror = await self._correct(resolver_url=self.UNREACHABLE, stored=self.OLD)
+
+        assert out.status == "reclassified"
+        assert mirror.captures[-1]["existing_path"] == self.OLD
+
+    @pytest.mark.asyncio
+    async def test_an_id_no_card_carries_and_a_gone_path_is_missing(
+        self, tmp_path, httpserver,
     ):
-        """Nothing local carries the id, and the recorded path is gone:
-        the correction says the capture is missing rather than guessing."""
-        out, _ = await self._correct(tmp_path, monkeypatch, local=None)
+        """The resolver does not know the id and the recorded path is
+        gone: the correction says the capture is missing rather than
+        guessing."""
+        out, _ = await self._correct(
+            resolver_url=self._resolver(httpserver, tmp_path), stored=self.NEW)
+
         assert out.status == "capture_missing"

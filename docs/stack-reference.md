@@ -408,6 +408,51 @@ Subscribing to custom events on the bot side isn't wired yet — that
 comes with the first consumer bot. The emit contract is stable and
 tested end-to-end (see `tests/e2e/test_archivist_e2e.py`).
 
+### Persistent links and card ids
+
+A link a bot posts into a room stays in the timeline for good, so it
+never points at a service or a file path. It points at
+`<home>/go/<kind>/<name or id>`, and core's tools server resolves it when
+someone opens it. `stack.links` builds these paths
+(`go_docs`, `go_topic`, `go_person`, `go_list`, `go_capture`, `go_diary`,
+and `go_page` for a page an edit touched); `stacklets/core/tools-server/resolver.py`
+is the only place that knows what they resolve to.
+
+A **card** is one file in the family memory that stands for one thing. Its
+path is not a stable name: the folder follows the bucket and topic, the
+file name often follows the title, and a refile or a correction can move
+it. Each card type carries a **card id** that never changes, and anything
+that refers to a card from outside it (a `/go/` link, a correction, the
+agent) finds the card by that id. A stored path is only a hint.
+
+| Type | Card id | Link |
+|---|---|---|
+| document | `paperless_id` | `/go/docs/<paperless_id>`, opens Paperless |
+| note, bookmark | `capture_id`: the event id of the message it was filed from | `/go/capture/<capture_id>` |
+| email thread | `resource`: the `mid:` URI of the thread's first message | none yet |
+| diary card | `entry_id` | `/go/diary/<entry_id>` |
+| person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
+| topic | its folder, `<bucket>/<slug>/` | `/go/topic/<slug>` |
+| list | none yet: its file name is its name | `/go/list/<slug>` |
+
+The kinds found by id in the vault are listed in `stack.cards`
+(`CARD_ID_FIELDS`). For those, the tools server scans the frontmatter of
+the wiki's copy of the vault (`card_index.find_card`), with no index to go
+stale, and answers 404 for an id no card carries rather than guessing.
+The same lookup is served as data on the internal listener only, for the
+stack's own containers:
+
+```
+GET http://stack-core-tools:8000/cards/<kind>/<card id>
+200 {"kind": "capture", "card_id": "$…", "path": "family/painting/notes/2026/10/raku-454811.md"}
+404 {"error": "no such card"}
+```
+
+`CARD_RESOLVER_URL` in core's env points at it. The archivist asks it
+where a capture is before applying a correction, and falls back to the
+path the filing message recorded when it gets no answer: the wiki's copy
+follows a write by a few minutes.
+
 ### Backup
 
 A stacklet declares the data it wants backed up. The `backup` stacklet

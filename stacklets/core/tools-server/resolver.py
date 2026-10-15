@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from stack.cards import CARD_ID_FIELDS
+
 # A trailing `todo`/`todos` segment points at the entity's task list instead of
 # its overview page. Both spellings accepted — people type either.
 _TODO_LEAVES = {"todo", "todos"}
@@ -79,30 +81,34 @@ def resolve_person_target(segments: list[str]) -> str | None:
 def build_redirect(
     kind: str, rest: list[str], *,
     docs_base: str, wiki_base: str, shared_bucket: str,
-    find_capture: "Callable[[str], str | None] | None" = None,
+    find_card: "Callable[[str, str], str | None] | None" = None,
 ) -> str | None:
     """Full redirect URL for a `/<prefix>/<kind>/<rest>` request, or None.
 
-    `kind` is `docs`, `topic`, `person`, `list`, or `capture`; `rest` is the remaining
-    path segments. `docs_base`/`wiki_base` are the public base URLs of Paperless
+    `kind` is `docs`, `topic`, `person`, `list`, or a card kind from
+    `stack.cards` (`capture`, `diary`); `rest` is the remaining path
+    segments. `docs_base`/`wiki_base` are the public base URLs of Paperless
     and the wiki — already mode-correct, computed once by the HTTP layer from
     env, so this stays a pure string join. None (→ 404) for an unknown kind, a
     non-numeric doc id, or an entity shape the resolver rejects.
 
-    `capture` is the one kind whose target cannot be computed from the path:
-    the id says *which* capture, never where it is now. `find_capture` is
-    injected by the HTTP layer for exactly that lookup, which keeps the I/O out
-    of here and this module unit-testable without a vault on disk. Left unset,
-    `/capture/...` 404s rather than guessing.
+    A card kind is the one whose target cannot be computed from the path:
+    the card id says *which* card, never where it is now. `find_card(kind,
+    card_id)` is injected by the HTTP layer for exactly that lookup and
+    answers with the card's vault path, which keeps the I/O out of here and
+    this module unit-testable without a vault on disk. Left unset, a card
+    link 404s rather than guessing.
     """
     if kind == "docs":
         if len(rest) != 1 or not rest[0].isdigit():
             return None
         return f"{docs_base.rstrip('/')}/documents/{rest[0]}/details"
-    if kind == "capture":
-        if len(rest) != 1 or find_capture is None:
+    if kind in CARD_ID_FIELDS:
+        if len(rest) != 1 or find_card is None:
             return None
-        target = find_capture(rest[0])
+        path = find_card(kind, rest[0])
+        # The wiki serves a page at its vault path without the suffix.
+        target = path.removesuffix(".md") if path else None
     elif kind == "topic":
         target = resolve_topic_target(rest, shared_bucket=shared_bucket)
     elif kind == "person":

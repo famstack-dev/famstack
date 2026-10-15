@@ -8,7 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY access.py .
 COPY resolver.py .
-COPY capture_index.py .
+COPY card_index.py .
+# The `stack` library (lib/stack) is not copied: compose mounts it at
+# /app/stack, as it does for the bot-runner.
 
 # --gecos "" suppresses the interactive Full Name/Room/Phone prompts
 RUN adduser --disabled-password --gecos "" --uid 1000 tools

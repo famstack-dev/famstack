@@ -29,7 +29,10 @@ containers build links from one implementation.
 
 from __future__ import annotations
 
+from typing import Mapping
 from urllib.parse import quote
+
+from .cards import card_id_of
 
 
 # ── Logical paths ─────────────────────────────────────────────────────
@@ -43,10 +46,11 @@ from urllib.parse import quote
 #       beyond any one file. A trailing leaf (`todo`) selects a
 #       sub-page instead of the overview.
 #
-#   records, addressed by ID     — `docs`, `capture`
-#       One artefact, keyed by something assigned once and never
-#       re-derived. Never by path: a path encodes where a thing sat on
-#       the day the link was written, and these things move.
+#   records, addressed by ID     — `docs`, `capture`, `diary`
+#       One artefact, keyed by its card id (`stack.cards`): something
+#       assigned once and never re-derived. Never by path: a path
+#       encodes where a thing sat on the day the link was written, and
+#       these things move.
 #
 # A link posted into chat is permanent, so the cost of putting a kind in
 # the wrong family is paid forever. When in doubt, ask what changes when
@@ -94,7 +98,19 @@ def go_capture(capture_id: str) -> str:
     >>> go_capture("$abc123")
     '/capture/%24abc123'
     """
-    return f"/capture/{quote(str(capture_id), safe='')}"
+    return _record_path("capture", capture_id)
+
+
+def go_diary(entry_id: str) -> str:
+    """`/diary/<entry_id>`: one diary card, wherever it is filed now.
+
+    A correction can move a card to another day, and the day is its
+    folder; the entry id never changes.
+
+    >>> go_diary("3f9a0c1b2d")
+    '/diary/3f9a0c1b2d'
+    """
+    return _record_path("diary", entry_id)
 
 
 def go_person(slug: str, leaf: str | None = None) -> str:
@@ -117,13 +133,18 @@ def go_list(slug: str) -> str:
     return _entity_path("list", slug, None)
 
 
-def go_page(repo_path: str) -> str:
-    """Logical link for a vault page path, or "" when no stable route exists.
+def go_page(repo_path: str, fields: Mapping[str, object] | None = None) -> str:
+    """Logical link for a vault page, or "" when no stable route exists.
 
     Edit verbs answer with the page they touched. The reply carries this
-    link so the family can open the page in the wiki. Only pages with a
-    resolver route get a link; anything else returns "" rather than a
-    path-keyed link that breaks on the next rename.
+    link so the family can open the page in the wiki. `fields` is the
+    page's frontmatter: a note, a bookmark or a diary card is linked by
+    the card id it carries, never by its path. Topic, person and list
+    pages are linked by the name their path holds. Anything else returns
+    "" rather than a path-keyed link that breaks on the next rename.
+
+    >>> go_page("homer/notes/2026/09/errands.md", {"capture_id": "$e1"})
+    '/capture/%24e1'
 
     >>> go_page("family/lists/einkaufsliste.md")
     '/list/einkaufsliste'
@@ -134,6 +155,8 @@ def go_page(repo_path: str) -> str:
     >>> go_page("homer/notes/2026/09/errands.md")
     ''
     """
+    if card := card_id_of(fields or {}):
+        return _record_path(*card)
     parts = [p for p in repo_path.strip("/").split("/") if p]
     if len(parts) < 2:
         return ""
@@ -147,6 +170,15 @@ def go_page(repo_path: str) -> str:
     if len(parts) == 2 and parts[0] != "family":
         return go_person(parts[0], leaf)
     return go_topic(scope, leaf)
+
+
+def _record_path(kind: str, card_id: str) -> str:
+    """`/<kind>/<id>`, the id percent-encoded into one path segment.
+
+    A capture id is a Matrix event id: it starts with `$` and can carry
+    `/` in older room versions.
+    """
+    return f"/{kind}/{quote(str(card_id), safe='')}"
 
 
 def _entity_path(kind: str, scope: str, leaf: str | None) -> str:

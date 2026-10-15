@@ -214,9 +214,12 @@ def run(args, stacklet, config):
     # again, and the second write is a duplicate nobody asked for.
     mirrored = bool(result.get("mirrored"))
     lag = "" if mirrored else "\n  The wiki and the vault mount catch up shortly."
-    # The touched page's wiki link, so the reply can cite it.
+    # The touched page's wiki link, so the reply can cite it. A card is
+    # linked by the card id in its frontmatter, which `_replace` has
+    # already checked parses.
     home_url = (config or {}).get("home_url", "")
-    url = public(go_page(repo_path), f"{home_url}/go" if home_url else "")
+    url = public(go_page(repo_path, parse_frontmatter(after)),
+                 f"{home_url}/go" if home_url else "")
     link = f"\n  {url}" if url else ""
     print(f"Wrote {repo_path} (by {actor})\n  {told}{link}{lag}")
     return {

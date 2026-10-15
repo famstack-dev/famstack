@@ -321,6 +321,37 @@ def test_a_write_the_readers_have_not_caught_up_with_is_still_done(store, tmp_pa
     assert "Wrote" in out and "catch up" in out
 
 
+# The reply to an edit cites the page it touched. A note moves when it is
+# re-scoped or refiled, so its link is keyed by the card id in its
+# frontmatter, the same `/go/capture/<id>` the filing reply posted.
+
+NOTE = """---
+type: note
+title: Campsite booked
+timestamp: "2026-08-14T18:02:11Z"
+capture_id: "$camp:home.test"
+---
+
+Lake Springfield, pitch 12.
+"""
+
+
+def test_an_edited_note_answers_with_its_card_id_link(store, tmp_path, capsys):
+    store.page = NOTE
+    buffer_file = tmp_path / "buffer"
+    buffer_file.write_text(NOTE.replace("pitch 12", "pitch 14"), encoding="utf-8")
+
+    write_cli.run(
+        ["homer/notes/2026/08/campsite-3a338e.md", "--by", "homer",
+         "--from", str(buffer_file)],
+        None, {"data_dir": str(tmp_path), "home_url": "https://home.example.org"},
+    )
+
+    out = capsys.readouterr().out
+    assert "https://home.example.org/go/capture/%24camp%3Ahome.test" in out
+    assert "/go/" in out and "campsite" not in out.split("/go/", 1)[1]
+
+
 # ── person files ─────────────────────────────────────────────────────────
 
 def test_a_person_file_the_readers_would_skip_is_refused(store, tmp_path):
