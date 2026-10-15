@@ -53,6 +53,7 @@ from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
 
+from diary_room import household_now
 from vault_entry import (
     slug,
     capture_hash,
@@ -529,6 +530,7 @@ class GitMirror:
         author_name: str,
         author_email: str,
         previous_path: str = "",
+        today: str = "",
     ) -> bool:
         """Put a record's action items on its topic's list, `lists/<topic>.md`.
 
@@ -541,10 +543,15 @@ class GitMirror:
         have ticked, reworded or removed them since. When a refile renamed
         the record (`previous_path`), those items are linked to its new
         path instead. An item whose text is already on the list is left
-        alone too.
+        alone too. An item due before `today` (the household's date when
+        not given) stays off the list: an old letter filed late, or a
+        refile of last year's bill, has nothing left to do. The record's
+        summary still names it.
         """
         source = Link(record_title, record_path) if record_path else None
-        items = [i for ai in action_items or [] if (i := action_item(ai, source=source))]
+        today = today or household_now().date().isoformat()
+        items = [i for ai in action_items or [] if (i := action_item(ai, source=source))
+                 and (not i.due or i.due >= today)]
         if not (topic and items):
             return False
         path = list_path(topic, bucket=self.shared_bucket)
@@ -589,6 +596,7 @@ class GitMirror:
         record_path: str,
         record_title: str,
         previous_path: str = "",
+        today: str = "",
     ) -> None:
         topics = classification.get("topics") or classification.get("topic") or []
         if isinstance(topics, str):
@@ -607,6 +615,7 @@ class GitMirror:
                 message=f"chore(lists): archivist added action items to {self._slug(topic)}",
                 author_name=BOT_USERNAME,
                 author_email=BOT_EMAIL,
+                today=today,
             )
 
     async def _fold_capture_todos(
@@ -618,6 +627,7 @@ class GitMirror:
         author_name: str,
         author_email: str,
         previous_path: str = "",
+        today: str = "",
     ) -> None:
         topic = self._topic_of_capture(target_path)
         await self._fold_action_items_into_list(
@@ -631,6 +641,7 @@ class GitMirror:
             message=f"chore(lists): {author_name} added action items to {topic}",
             author_name=author_name,
             author_email=author_email,
+            today=today,
         )
 
     # ── Publish ──────────────────────────────────────────────────────────
