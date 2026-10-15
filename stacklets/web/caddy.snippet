@@ -7,6 +7,6 @@
 # No auth, matching the other family-facing stacklets. The LAN is the
 # perimeter.
 
-search.{$FAMSTACK_DOMAIN} {
+web.{$STACK_DOMAIN} {
     reverse_proxy stack-web-search:8080
 }

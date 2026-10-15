@@ -33,7 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-SEARCH_URL = "http://localhost:42080/search"
+SEARCH_URL = "http://localhost:42090/search"
 DEFAULT_COUNT = 8
 
 

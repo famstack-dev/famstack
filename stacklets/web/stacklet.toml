@@ -20,7 +20,8 @@ name        = "Web"
 description = "Search the internet privately (SearXNG)"
 version     = "0.1.0"
 category    = "infrastructure"
-port        = 42080
+stage       = "incubating"
+port        = 42090
 
 hints = [
     "Search at {url}",
@@ -45,6 +46,6 @@ generate = ["WEB_SECRET"]
 TZ = "{timezone}"
 
 [health]
-url     = "http://localhost:42080/healthz"
+url     = "http://localhost:42090/healthz"
 expect  = "200"
 timeout = 60

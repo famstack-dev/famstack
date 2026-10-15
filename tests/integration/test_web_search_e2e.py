@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO_ROOT / "stacklets" / "web" / "cli"))
 
 pytestmark = pytest.mark.smoke
 
-SEARCH_BASE = "http://localhost:42080"
+SEARCH_BASE = "http://localhost:42090"
 
 
 @pytest.fixture(scope="module", autouse=True)

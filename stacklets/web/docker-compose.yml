@@ -51,7 +51,7 @@ services:
       # 8080 is the image's internal listener. PORT_BIND_IP is set by
       # the runtime: 0.0.0.0 in port mode, 127.0.0.1 in domain mode so
       # Caddy is the only way in.
-      - "${PORT_BIND_IP:-127.0.0.1}:42080:8080"
+      - "${PORT_BIND_IP:-127.0.0.1}:42090:8080"
     restart: unless-stopped
 
 networks:
