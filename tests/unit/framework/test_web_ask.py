@@ -32,7 +32,7 @@ from stack.web.ask import (
     sources_from,
 )
 
-FIXTURE = Path(__file__).parent.parent / "fixtures" / "web" / "searxng-response.json"
+FIXTURE = Path(__file__).parents[2] / "fixtures" / "web" / "searxng-response.json"
 
 
 @pytest.fixture(scope="module")
