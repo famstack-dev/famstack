@@ -118,10 +118,6 @@ LINK_PREFIX       = "go"
 # points at `{LINK_BASE_URL}/topic/<scope>/todo`). `{home_url}` is core's bare
 # home base, mode-correct; the `/go` mirrors LINK_PREFIX above — move one, move both.
 LINK_BASE_URL     = "{home_url}/go"
-# The resolver's lookup by card id (`/cards/<kind>/<id>`), on the tools
-# server's internal listener: the archivist asks it where a capture is
-# before applying a correction. Container-to-container, never published.
-CARD_RESOLVER_URL = "http://stack-core-tools:8000"
 
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"

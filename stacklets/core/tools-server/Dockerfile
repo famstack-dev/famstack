@@ -8,7 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY access.py .
 COPY resolver.py .
-COPY card_index.py .
 # The `stack` library (lib/stack) is not copied: compose mounts it at
 # /app/stack, as it does for the bot-runner.
 

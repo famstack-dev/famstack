@@ -436,22 +436,14 @@ agent) finds the card by that id. A stored path is only a hint.
 | list | none yet: its file name is its name | `/go/list/<slug>` |
 
 The kinds found by id in the vault are listed in `stack.cards`
-(`CARD_ID_FIELDS`). For those, the tools server scans the frontmatter of
-the wiki's copy of the vault (`card_index.find_card`), with no index to go
-stale, and answers 404 for an id no card carries rather than guessing.
-The same lookup is served as data on the internal listener only, for the
-stack's own containers:
-
-```
-GET http://stack-core-tools:8000/cards/<kind>/<card id>
-200 {"kind": "capture", "card_id": "$…", "path": "family/painting/notes/2026/10/raku-454811.md"}
-404 {"error": "no such card"}
-```
-
-`CARD_RESOLVER_URL` in core's env points at it. The archivist asks it
-where a capture is before applying a correction, and falls back to the
-path the filing message recorded when it gets no answer: the wiki's copy
-follows a write by a few minutes.
+(`CARD_ID_FIELDS`), next to the one lookup by card id,
+`stack.cards.find_card`. It scans the frontmatter of a copy of the
+vault, with no index to go stale, and answers None for an id no card
+carries rather than guessing. Each reader runs it over the copy it reads
+from: core's tools server over the wiki's copy, so a `/go/` link lands on
+a page the wiki serves (404 otherwise); the archivist over its own mount,
+before it applies a correction to a capture, falling back to the path
+the filing message recorded while that copy has not caught up.
 
 ### Backup
 

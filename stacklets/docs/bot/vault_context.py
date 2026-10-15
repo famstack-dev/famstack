@@ -25,6 +25,7 @@ from memory.lib import (
     people_prompt_section,
     persons_prompt_section,
 )
+from stack.cards import find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people
 
@@ -116,3 +117,13 @@ class VaultContext:
             return people_prompt_section(people)
         persons = load_persons_from_vault(path, self.shared_bucket)
         return persons_prompt_section(persons)
+
+    def card_path(self, kind: str, card_id: str) -> str | None:
+        """Vault path of the card of `kind` with `card_id` now, or None.
+
+        A card id never changes; the path does, when a card moves. The
+        lookup is `stack.cards.find_card`, the one core's tools server
+        runs over the wiki's copy for the `/go/` links.
+        """
+        root = self._vault_path()
+        return find_card(kind, card_id, root=root) if root is not None else None

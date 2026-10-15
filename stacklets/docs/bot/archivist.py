@@ -50,7 +50,6 @@ from nio import (
 )
 
 from capture_tags import CaptureTagCache
-from card_resolver import CardResolver
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import BOT_EMAIL, BOT_USERNAME, GitMirror
 from git_mirror import REPO_NAME as MEMORY_REPO
@@ -596,7 +595,6 @@ class ArchivistBot(MicroBot):
             vision_max_pdf_pages=self.vision_max_pdf_pages,
             llm=classifier.llm if classifier is not None else None,
             vault=vault,
-            cards=CardResolver(http, os.environ.get("CARD_RESOLVER_URL", "")),
         )
         return ArchivistServices(
             paperless=paperless,

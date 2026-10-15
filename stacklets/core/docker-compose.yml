@@ -94,12 +94,11 @@ services:
       - ./tools-server/server.py:/app/server.py:ro
       - ./tools-server/access.py:/app/access.py:ro
       - ./tools-server/resolver.py:/app/resolver.py:ro
-      - ./tools-server/card_index.py:/app/card_index.py:ro
-      # Shared library: the card-id table and the frontmatter parser the
-      # vault's writers use. Mounted only, like the bot-runner's copy.
+      # Shared library: the card-id table and the lookup by card id
+      # (`stack.cards`). Mounted only, like the bot-runner's copy.
       - ../../lib/stack:/app/stack:ro
-      # The brain projection, read-only: `/go/capture/<id>`, `/go/diary/<id>`
-      # and `/cards/...` find where a card is filed now by reading the same
+      # The brain projection, read-only: `/go/capture/<id>` and
+      # `/go/diary/<id>` find where a card is filed now by reading the same
       # tree the wiki serves.
       # `${DATA_DIR}` is the host path (BRAIN_REPO_DIR is the *container*
       # path the bot-runner sees, so it cannot be a bind source here).

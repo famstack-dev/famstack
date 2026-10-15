@@ -16,6 +16,7 @@ fold into the ontology.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import io
 import re
@@ -168,16 +169,11 @@ class CapturePipeline:
         vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
         llm=None,
         vault=None,
-        cards=None,
     ):
         self._url_extractor = url_extractor
         # The memory vault, for the person files. None in callers
         # that run without one; the Person tags stand in for them then.
         self._vault = vault
-        # Core's resolver (`CardResolver`), which says where a capture is
-        # now by its card id. None in callers that run without core; a
-        # correction then reads the path the filing message recorded.
-        self._cards = cards
         self._text_extractor = text_extractor
         self._classifier = classifier
         self._mirror = mirror
@@ -825,13 +821,13 @@ class CapturePipeline:
     ) -> tuple[str, str] | None:
         """The path and text of a filed capture, by its id where it can be.
 
-        Core's resolver says where the id lives now. It reads the wiki's
-        copy of the family memory, which can lag a write by minutes, so
-        the path the filing message recorded is tried after it, and is
-        all there is when the resolver cannot answer.
+        The local copy of the family memory says where the id lives now.
+        It can lag a write by minutes, so the path the filing message
+        recorded is tried after it. The scan reads every card's header,
+        so it runs off the event loop.
         """
-        by_id = (await self._cards.path_of("capture", capture_id)
-                 if self._cards is not None and capture_id else None)
+        by_id = (await asyncio.to_thread(self._vault.card_path, "capture", capture_id)
+                 if self._vault is not None and capture_id else None)
         for path in dict.fromkeys(p for p in (by_id, recorded_path) if p):
             raw = await self._mirror.read_capture(path)
             if raw is not None:

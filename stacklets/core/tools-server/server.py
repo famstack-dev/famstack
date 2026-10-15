@@ -22,8 +22,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from access import INTERNAL_PORT, PUBLIC_PORT, serves
-from card_index import find_card
 from resolver import build_redirect
+from stack.cards import find_card
 
 
 # ── Config from environment ──────────────────────────────────────────────
@@ -55,8 +55,8 @@ LINK_SHARED_BUCKET = os.environ.get("SHARED_BUCKET", "family")
 # The one knob: the path namespace persistent links live under (home.tld/go/…).
 LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
 # The brain projection, read-only: the same tree the wiki serves. Only the
-# card lookups need it (`/go/capture/<id>`, `/go/diary/<id>`, `/cards/...`),
-# to find where a card sits now. This is the mount point, not
+# card links need it (`/go/capture/<id>`, `/go/diary/<id>`), to find where a
+# card sits now. This is the mount point, not
 # `BRAIN_REPO_DIR`: that variable is the path the *bot-runner* sees, and
 # pointing this at it would name a directory that does not exist in this
 # container. Unmounted (memory not installed) simply means card links 404.
@@ -164,7 +164,7 @@ def _go(kind: str, rest: list[str]):
     url = build_redirect(
         kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
         shared_bucket=LINK_SHARED_BUCKET,
-        find_card=lambda kind, cid: find_card(kind, cid, brain_dir=BRAIN_DIR),
+        find_card=lambda kind, cid: find_card(kind, cid, root=BRAIN_DIR),
     )
     if not url:
         return _error("no such resource", status=404)
@@ -216,25 +216,6 @@ async def go_diary(entry_id: str):
     to another folder; the entry id stays. 404 when no card carries it.
     """
     return _go("diary", [entry_id])
-
-
-# ── Card lookup ────────────────────────────────────────────────────────────
-#
-# The same lookup the card links use, answered as data for the stack's own
-# containers: the archivist asks it where a capture is before it applies a
-# correction, so there is one scanner for the whole stack. Internal listener
-# only (`access.serves`): a vault path is not for the network. Left out of the
-# OpenAPI spec, because Open WebUI offers every endpoint in it to the model as
-# a tool, and this one answers containers, not conversations.
-
-@app.get("/cards/{kind}/{card_id:path}", summary="Find a card by its card id",
-         include_in_schema=False)
-async def card(kind: str, card_id: str):
-    """Where the card of `kind` with `card_id` lives now, as a vault path."""
-    path = find_card(kind, card_id, brain_dir=BRAIN_DIR)
-    if not path:
-        return _error("no such card", status=404)
-    return {"kind": kind, "card_id": card_id, "path": path}
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────

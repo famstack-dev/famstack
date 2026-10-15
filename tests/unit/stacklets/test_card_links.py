@@ -25,10 +25,9 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from access import INTERNAL_PORT, PUBLIC_PORT, serves  # noqa: E402
-from card_index import find_card  # noqa: E402
 from resolver import build_redirect  # noqa: E402
 from search_format import memory_hit_url  # noqa: E402
+from stack.cards import find_card  # noqa: E402
 from stack.links import go_capture, go_diary, go_page, public  # noqa: E402
 
 CAPTURE_ID = "$Efjml6ySCYyWM6xsNwRCSSEund-u2CIywGpgC8u6tvY"
@@ -74,7 +73,7 @@ class TestFindingACardWhereverItSits:
     def test_a_capture_is_found_by_its_card_id(self, tmp_path):
         _write(tmp_path, "family/camping/notes/2026/08/campsite-3a338e.md")
 
-        assert find_card("capture", CAPTURE_ID, brain_dir=tmp_path) == (
+        assert find_card("capture", CAPTURE_ID, root=tmp_path) == (
             "family/camping/notes/2026/08/campsite-3a338e.md"
         )
 
@@ -86,12 +85,12 @@ class TestFindingACardWhereverItSits:
         be dead; the id-keyed one still lands.
         """
         before = _write(tmp_path, "homer/trip/notes/2026/08/old-title-3a338e.md")
-        assert find_card("capture", CAPTURE_ID, brain_dir=tmp_path).startswith("homer/")
+        assert find_card("capture", CAPTURE_ID, root=tmp_path).startswith("homer/")
 
         before.unlink()
         _write(tmp_path, "family/camping/notes/2026/08/new-title-9f0011.md")
 
-        assert find_card("capture", CAPTURE_ID, brain_dir=tmp_path) == (
+        assert find_card("capture", CAPTURE_ID, root=tmp_path) == (
             "family/camping/notes/2026/08/new-title-9f0011.md"
         )
 
@@ -104,7 +103,7 @@ class TestFindingACardWhereverItSits:
         _write(tmp_path, "family/diary/entries/2026/07/2026-07-30-3f9a0c1b2d.md",
                DIARY_CARD)
 
-        assert find_card("diary", ENTRY_ID, brain_dir=tmp_path) == (
+        assert find_card("diary", ENTRY_ID, root=tmp_path) == (
             "family/diary/entries/2026/07/2026-07-30-3f9a0c1b2d.md"
         )
 
@@ -114,19 +113,19 @@ class TestFindingACardWhereverItSits:
         _write(tmp_path, "family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
                DIARY_CARD)
 
-        assert find_card("diary", CAPTURE_ID, brain_dir=tmp_path) is None
-        assert find_card("capture", ENTRY_ID, brain_dir=tmp_path) is None
+        assert find_card("diary", CAPTURE_ID, root=tmp_path) is None
+        assert find_card("capture", ENTRY_ID, root=tmp_path) is None
 
     def test_an_unknown_id_is_not_found(self, tmp_path):
         """404 beats a redirect to whatever happened to be nearby."""
         _write(tmp_path, "family/camping/notes/2026/08/campsite-3a338e.md")
 
-        assert find_card("capture", "$nope", brain_dir=tmp_path) is None
+        assert find_card("capture", "$nope", root=tmp_path) is None
 
     def test_an_unknown_kind_is_not_found(self, tmp_path):
         _write(tmp_path, "family/camping/notes/2026/08/campsite-3a338e.md")
 
-        assert find_card("list", CAPTURE_ID, brain_dir=tmp_path) is None
+        assert find_card("list", CAPTURE_ID, root=tmp_path) is None
 
     def test_an_id_quoted_in_the_body_does_not_count(self, tmp_path):
         """Only frontmatter declares what a page *is*.
@@ -139,7 +138,7 @@ class TestFindingACardWhereverItSits:
             f"---\ntype: note\n---\n\nSee capture_id: {CAPTURE_ID} for details.\n",
         )
 
-        assert find_card("capture", CAPTURE_ID, brain_dir=tmp_path) is None
+        assert find_card("capture", CAPTURE_ID, root=tmp_path) is None
 
     def test_a_page_whose_frontmatter_does_not_parse_answers_to_nothing(self, tmp_path):
         """A hand edit gone wrong is skipped, not guessed at."""
@@ -148,11 +147,11 @@ class TestFindingACardWhereverItSits:
             f"---\ncapture_id: \"{CAPTURE_ID}\"\n  nested: nope\n---\n",
         )
 
-        assert find_card("capture", CAPTURE_ID, brain_dir=tmp_path) is None
+        assert find_card("capture", CAPTURE_ID, root=tmp_path) is None
 
     def test_a_missing_brain_is_not_an_error(self, tmp_path):
         """The projection may not exist yet on a fresh install."""
-        assert find_card("capture", CAPTURE_ID, brain_dir=tmp_path / "nothing") is None
+        assert find_card("capture", CAPTURE_ID, root=tmp_path / "nothing") is None
 
 
 class TestResolvingACardLink:
@@ -160,7 +159,7 @@ class TestResolvingACardLink:
     def _redirect(self, kind, card_id, brain):
         return build_redirect(
             kind, [card_id], **LINKS,
-            find_card=lambda k, cid: find_card(k, cid, brain_dir=brain),
+            find_card=lambda k, cid: find_card(k, cid, root=brain),
         )
 
     def test_a_capture_link_redirects_to_the_wiki_page(self, tmp_path):
@@ -204,12 +203,6 @@ class TestResolvingACardLink:
             "http://wiki.example/family/lists/einkaufsliste"
         )
 
-    def test_the_lookup_by_id_stays_off_the_network(self):
-        """The stack's containers ask where a card is; a browser on the
-        Wi-Fi gets the redirect, never the vault path behind it."""
-        assert serves(INTERNAL_PORT, f"/cards/capture/{CAPTURE_ID}")
-        assert not serves(PUBLIC_PORT, f"/cards/capture/{CAPTURE_ID}")
-
 
 class TestTheLinkAnEditAnswersWith:
     """An edit to a page answers with the page's link. A card is linked
@@ -240,7 +233,7 @@ class TestTheLinkAnEditAnswersWith:
         kind, card_id = link.removeprefix("https://home.example.org/go/").split("/")
         assert build_redirect(
             kind, [unquote(card_id)], **LINKS,
-            find_card=lambda k, cid: find_card(k, cid, brain_dir=tmp_path),
+            find_card=lambda k, cid: find_card(k, cid, root=tmp_path),
         ) == "http://wiki.example/homer/notes/2026/09/errands-77aa01"
 
     def test_a_card_without_its_id_gets_no_link(self):
