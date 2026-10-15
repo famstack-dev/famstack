@@ -19,6 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
+from vault_context import VaultContext  # noqa: E402
 from vault_entry import capture_frontmatter, render_capture  # noqa: E402
 from stack.web import FetchOutcome  # noqa: E402
 from stack.web.quality import Verdict  # noqa: E402
@@ -151,7 +152,7 @@ _UNSET = object()
 
 
 def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
-              llm=None, text_extractor=None, url_extractor=None):
+              llm=None, text_extractor=None, url_extractor=None, vault=None):
     return CapturePipeline(
         url_extractor=url_extractor or FakeExtractor(_source(source_uri="http://src")),
         text_extractor=text_extractor
@@ -165,6 +166,7 @@ def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
         capture_keep_body=capture_keep_body,
         capture_tag_prompt_size=50,
         llm=llm,
+        vault=vault,
     )
 
 
@@ -1359,3 +1361,58 @@ class TestOnlyTheWritersOwnWordsBecomeTodos:
             text="Kühlbox mitnehmen", sender_mxid="@marge:s", bucket="family/camping")
         assert classifier.saw_current_list == "- [ ] Kühlbox\n"
 
+
+
+class TestACorrectionFindsTheCaptureWhereItIsNow:
+    """A correction names the capture it is about by the id it was filed
+    with, the message's own event id, which never changes. Its path does:
+    a refile used to rename it, and photos filed as bookmarks have moved
+    to notes. So the capture is looked up by its id first, and the path
+    the filing message recorded is only the fallback while the local
+    copy of the family memory has not caught up."""
+
+    OLD = "family/painting/bookmarks/2026/10/raku-454811.md"
+    NEW = "family/painting/notes/2026/10/raku-454811.md"
+    ID = "$img:home.test"
+
+    def _entry(self, path: str) -> str:
+        return render_capture(
+            frontmatter=capture_frontmatter(
+                title="Raku", captured_at="2026-10-13", kind="note",
+                source_uri="mxc://home.test/x", persons=[], tags=[],
+                model=None, capture_id=self.ID,
+            ),
+            body="", kind="note", captured_at="2026-10-13",
+            source_uri="mxc://home.test/x", persons=[], from_path=path,
+            shared_bucket="family", summary="Eine Schale.", facts=[],
+        )
+
+    async def _correct(self, tmp_path, monkeypatch, *, local: str | None):
+        if local:
+            (tmp_path / local).parent.mkdir(parents=True)
+            (tmp_path / local).write_text(self._entry(local), encoding="utf-8")
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path))
+        mirror = FakeMirror()
+        mirror._stored = {self.NEW: self._entry(self.NEW)}
+        out = await _pipeline(
+            mirror=mirror, vault=VaultContext(language="de", shared_bucket="family"),
+        ).reprocess(
+            vault_path=self.OLD, capture_id=self.ID,
+            user_hint="das ist Keramik", sender_mxid="@marge:s",
+        )
+        return out, mirror
+
+    @pytest.mark.asyncio
+    async def test_a_moved_capture_is_found_by_its_id(self, tmp_path, monkeypatch):
+        out, mirror = await self._correct(tmp_path, monkeypatch, local=self.NEW)
+        assert out.status == "reclassified"
+        assert mirror.captures[-1]["existing_path"] == self.NEW
+
+    @pytest.mark.asyncio
+    async def test_without_the_id_on_disk_the_recorded_path_is_tried(
+        self, tmp_path, monkeypatch,
+    ):
+        """Nothing local carries the id, and the recorded path is gone:
+        the correction says the capture is missing rather than guessing."""
+        out, _ = await self._correct(tmp_path, monkeypatch, local=None)
+        assert out.status == "capture_missing"
