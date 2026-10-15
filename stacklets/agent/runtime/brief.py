@@ -26,6 +26,8 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from turn import person_of
+
 # Strip footnote/citation markers the curator leaves in generated pages, e.g.
 # "Safety Inspector [8]" -> "Safety Inspector". They are noise in a briefing.
 _CITE = re.compile(r"\s*\[\d+(?:,\s*\d+)*\]")
@@ -165,12 +167,6 @@ def when_sent(now: datetime) -> str:
     return f"Sent {now:%A, %Y-%m-%d %H:%M} ({now.tzname()})."
 
 
-# Who the agent is currently talking to, refreshed each turn by
-# `brief_lines`. A tool call has no access to the Matrix message, so this
-# is how a vault write learns whose name goes on the commit.
-speaking_with = ""
-
-
 def brief_lines(msg, workspace) -> list[str]:
     """Return the briefing as a list of short runtime-context lines (may be empty)."""
     vault = Path(workspace) / "vault"
@@ -181,14 +177,8 @@ def brief_lines(msg, workspace) -> list[str]:
     # WHO — the speaker. sender_id is an mxid like "@homer:simpson"; the localpart
     # is the vault person slug. This is the reliable, high-value part: it fixes
     # multi-user rooms where "me/my" must resolve to whoever actually spoke.
-    localpart = str(getattr(msg, "sender_id", "")).split(":")[0].lstrip("@")
+    localpart = person_of(getattr(msg, "sender_id", ""))
     if localpart:
-        # Remember who is speaking so a vault write made later in this turn is
-        # committed as them. The briefing is rebuilt every turn and always
-        # before any tool runs, so this is current by construction; a tool has
-        # no other route to the sender. See vault_write.py.
-        global speaking_with
-        speaking_with = localpart
         essence = _lead(vault / localpart / "about.md")
         head = f"You are speaking with {localpart} (@{localpart})."
         lines.append(f"{head} {essence}" if essence else head)

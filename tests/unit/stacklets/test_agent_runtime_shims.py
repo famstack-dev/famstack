@@ -27,7 +27,7 @@ SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
                    "list_tool", "tool_trim", "voice_trigger", "open_question",
-                   "status_trace")
+                   "status_trace", "turn")
 
 
 # The stub nanobot itself lives in conftest as `nanobot_stub`, shared with

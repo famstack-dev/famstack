@@ -28,7 +28,7 @@
     }
   },
   "tools": {
-    "exec": {"enable": true},
+    "exec": {"enable": true, "deny_patterns": ["\\blist\\s+delete\\b.*\\s--y"]},
     "web": {"enable": false},
     "file": {"enable": true},
     "cli_apps": {"enable": false},
