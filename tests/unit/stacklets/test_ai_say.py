@@ -146,3 +146,15 @@ class TestNothingIsPlayed:
 
         assert "stack up ai" in result["error"]
         assert not played.exists()
+
+
+def test_say_speaks_at_the_welcome_messages_pace(instance, speech_server, played):
+    """The welcome message's voice and pace were chosen by ear, and 1.0
+    sounds rushed. Every command that speaks uses them, so `say` sounds
+    like `hello`."""
+    _say(instance, "Dinner is ready")
+    instance.run_cli_command("ai", "hello", [])
+
+    say, hello = _requests(speech_server)
+    assert say["speed"] == hello["speed"] == 0.8
+    assert say["voice"] == hello["voice"] == "alloy"

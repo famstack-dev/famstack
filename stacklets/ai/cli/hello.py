@@ -4,17 +4,16 @@ HELP = "Play the welcome voice message"
 
 
 def run(args, stacklet, config):
-    import json
-    import subprocess
     import sys
-    import tempfile
-    import urllib.request
     from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from speech import default_voice, play, synthesize
 
     # Read language from stack.toml [ai] section, derive voice
     ai_cfg = config.get("stack", {}).get("ai", {})
     language = ai_cfg.get("language", "en")
-    voice = "onyx" if language.startswith("de") else "alloy"
+    voice = default_voice(language)
 
     # Admin name for personalisation — users come from the hook contract,
     # framework already loaded users.toml.
@@ -48,21 +47,10 @@ def run(args, stacklet, config):
     print("\n  Speaking...\n", file=sys.stderr)
 
     try:
-        req = urllib.request.Request(
-            "http://localhost:42063/v1/audio/speech",
-            data=json.dumps({"model": "tts-1", "input": text, "voice": voice, "speed": 0.8}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            audio = resp.read()
+        audio = synthesize(text, voice)
         if not audio:
             return {"error": "TTS service returned empty response. Is the ai stacklet running?"}
-
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        subprocess.run(["afplay", tmp], timeout=60)
-        Path(tmp).unlink(missing_ok=True)
+        play(audio)
     except Exception as e:
         return {"error": f"Could not play greeting: {e}"}
 

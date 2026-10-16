@@ -6,7 +6,7 @@ HELP = "AI introduces itself (LLM + TTS)"
 def run(args, stacklet, config):
     import sys
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from speech import ask_llm, speak
+    from speech import ask_llm, default_voice, speak
 
     import datetime
     import os
@@ -78,7 +78,7 @@ def run(args, stacklet, config):
     out(f"  {response}")
     nl()
 
-    voice = "onyx" if language.startswith("de") else "alloy"
+    voice = default_voice(language)
     speak(response, voice=voice)
 
     return {"ok": True}
