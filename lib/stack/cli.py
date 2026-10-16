@@ -39,6 +39,7 @@ from . import global_command
 from . import logscan
 from .plugins import plugin_help, stacklet_commands
 from .commands import COMMANDS
+from .migrations import MigrationError
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack
 
@@ -233,6 +234,18 @@ class CLI:
         if stacklet_id == "all":
             return self._up_all()
 
+        result = self._start(stacklet_id)
+        if "error" in result or "cancelled" in result:
+            return result
+        return self._migrate(stacklet_id, result)
+
+    def _start(self, stacklet_id: str) -> dict:
+        """Everything `up` does short of the migrations: framework, Docker,
+        health, `on_install_success` on a first run, `on_start_ready`.
+
+        `healthy` in the result says whether every health check passed,
+        which decides whether the migrations may run.
+        """
         result = self.stack.up(stacklet_id)
         if "error" in result or "cancelled" in result:
             return result
@@ -275,6 +288,7 @@ class CLI:
 
         self._reload_proxy()
 
+        healthy = True
         if compose_file:
             # Health checks run first — hooks can assume the service is healthy
             template_vars = self.stack._build_template_vars()
@@ -290,6 +304,9 @@ class CLI:
                 h_timeout = check.get("timeout", 120)
                 with self.stack.output.spinner(f"Health check: {label}") as sp:
                     status = docker.wait_for_health(h_url, headers=h_headers, timeout=h_timeout)
+                    # "auth" is up but gating credentials, which is what
+                    # `Stack.is_healthy` counts as healthy too.
+                    healthy = healthy and status in ("ready", "auth")
                     if status == "auth":
                         sp.fail("Reachable but requires API key")
                     elif status != "ready":
@@ -325,6 +342,34 @@ class CLI:
         result["port"] = stacklet.get("port")
         result["description"] = stacklet.get("description", "")
         result["manifest"] = manifest
+        result["healthy"] = healthy
+        return result
+
+    def _migrate(self, stacklet_id: str, result: dict) -> dict:
+        """Run the stacklet's pending migrations once it is up and healthy.
+
+        A failure turns `result` into an error, with the containers left
+        running: new code on unmigrated data is not a success, and the
+        exit code is what scripts and agents read. With nothing pending
+        nothing is printed and `result` comes back as it was.
+        """
+        if not result.get("healthy", True):
+            migrations = self.stack.migrations(stacklet_id)
+            if migrations and migrations.status().pending:
+                self.stack.output.warn(
+                    f"Migrations of {stacklet_id} wait until its health checks pass")
+            return result
+
+        outcome = self.stack.migrate(stacklet_id)
+        if not outcome:
+            return result
+        result["migrations"] = outcome
+        if "error" in outcome:
+            result.update(ok=False, error=outcome["error"])
+        elif outcome.get("failed"):
+            key = next(iter(outcome["failed"]))
+            result.update(ok=False, error=f"Migration {key} failed",
+                          problems=[f"Fix the cause, then: stack up {stacklet_id}"])
         return result
 
     def down(self, stacklet_id: str) -> dict:
@@ -429,16 +474,27 @@ class CLI:
         return self._up_ordered(set(stacklet_ids))
 
     def _up_ordered(self, include: set[str]) -> dict:
+        """Start every stacklet first, then run their migrations, both in
+        dependency order. A migration may need another stacklet's service
+        (a bot-runner command needs core), and one that was started later
+        in the same command is then already up."""
         order = _dependency_order(self.stack.discover(), include)
 
         started: list[str] = []
         errors: list[dict] = []
+        results: dict[str, dict] = {}
         for sid in order:
-            result = self.up(sid)
+            result = self._start(sid)
             if "error" in result or "cancelled" in result:
                 errors.append({"stacklet": sid, "result": result})
             else:
                 started.append(sid)
+                results[sid] = result
+
+        for sid in started:
+            result = self._migrate(sid, results[sid])
+            if "error" in result:
+                errors.append({"stacklet": sid, "result": result})
 
         return {"ok": not errors, "started": started, "errors": errors}
 
@@ -939,7 +995,9 @@ def handle_up(stck, args):
         _refresh_core(stck, args.stacklet)
     else:
         print_error(result)
-        if args.stacklet != "messages":
+        # A failed migration leaves the stacklet running, so it did not
+        # fail to start.
+        if args.stacklet != "messages" and "migrations" not in result:
             _notify(stck, f"{name} failed to start.")
         sys.exit(1)
 
@@ -1114,6 +1172,14 @@ def handle_doctor(stck, args):
         if compose_file:
             expected.update(docker.compose_service_env(compose_file))
 
+    def migrations(stacklet_id):
+        """Pending, failed and newer-than-checkout migrations, as data."""
+        try:
+            status = stck.migrations(stacklet_id).status()
+        except MigrationError as e:
+            return [], {f"{stacklet_id}/migrations": str(e)}, []
+        return ([(m.key, m.summary) for m in status.pending], status.failed, status.newer)
+
     findings = doctor.diagnose(
         stacklets,
         lambda container: expected.get(container, {}),
@@ -1121,6 +1187,7 @@ def handle_doctor(stck, args):
         docker.container_env,
         missing_secrets=missing_secrets,
         stale=stck.list().get("stale", []),
+        migrations=migrations,
     )
 
     findings += doctor.check_oidc(
@@ -1582,14 +1649,15 @@ def _restart_stale(stck, cli, yes=False):
             print(f"  {DIM}Aborted{RESET}\n")
             return
 
-    failed = []
+    # Stopped together and started together, as `restart a b` does, so
+    # the migrations run after every stale stacklet is back, in
+    # dependency order.
+    cli.down_many(stale)
+    result = cli.up_many(stale)
+    failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
     for sid in stale:
-        print(f"  Restarting {TEAL}{sid}{RESET}...", file=sys.stderr)
-        cli.down(sid)
-        result = cli.up(sid)
-        if "error" in result:
-            failed.append(sid)
-            print(f"  {RED}\u2717{RESET} {sid}: {result['error']}")
+        if sid in failed:
+            print(f"  {RED}\u2717{RESET} {sid}: {failed[sid]}")
         else:
             print(f"  {GREEN}\u2713{RESET} {sid}: restarted")
 
@@ -1813,8 +1881,8 @@ def handle_update(stck, args):
     """
     from .prompt import TEAL, confirm
     from .updater import (
-        Checkout, latest_tag, restart_targets, touches_framework,
-        touched_stacklets, version_key,
+        Checkout, latest_tag, migrations_in, migrations_left_behind,
+        restart_targets, touches_framework, touched_stacklets, version_key,
     )
 
     checkout = Checkout(stck.root)
@@ -1886,10 +1954,19 @@ def handle_update(stck, args):
     targets = restart_targets(changed, running)
     dirty = checkout.dirty_paths()
     collisions = sorted(set(dirty) & set(changed))
+    arriving = migrations_in(checkout.added_paths(base, target))
+    left_behind = migrations_left_behind(
+        checkout.removed_paths(base, target), lambda sid: _applied_migrations(stck, sid))
 
     print(f"\n  {BOLD}Update{RESET}  {DIM}{checkout.describe()}{RESET} \u2192 {TEAL}{target}{RESET}\n")
     if current and version_key(target) < version_key(current):
         print(f"  {ORANGE}\u26a0{RESET}  {target} is older than {current}. Data does not downgrade.")
+    if left_behind:
+        print(f"  {ORANGE}\u26a0{RESET}  {target} predates data migrations this instance has had:")
+        for sid, number, name in left_behind:
+            print(f"     {sid}/{number} {DIM}{name}{RESET}")
+        print(f"  {DIM}Its code reads the migrated data as it finds it. The way back is "
+              f"restoring {stck.data} from a backup made before they ran.{RESET}")
     if subjects:
         commits = f"{len(subjects)} commit" + ("s" if len(subjects) != 1 else "")
         files = f"{len(changed)} file" + ("s" if len(changed) != 1 else "")
@@ -1913,6 +1990,10 @@ def handle_update(stck, args):
         scope = ("every running stacklet" if touches_framework(changed)
                  else ", ".join(targets))
         print(f"\n  Needs a restart afterwards: {scope}")
+    if arriving:
+        # Never run from here: a migration needs the new code running.
+        print(f"  Data migrations that run when their stacklet next starts: "
+              f"{', '.join(f'{sid}/{number} {name}' for sid, number, name in arriving)}")
     print(f"  {DIM}Release notes: "
           f"https://github.com/famstack-dev/famstack/releases/tag/{target}{RESET}")
 
@@ -1954,6 +2035,12 @@ def handle_update(stck, args):
     if menubar_app.installed():
         print(f"  {DIM}The menu bar app is built from the checkout:{RESET} "
               f"{TEAL}./stack app install{RESET} {DIM}updates it.{RESET}\n")
+
+
+def _applied_migrations(stck, stacklet_id) -> set[str]:
+    """The migration numbers recorded as applied in a stacklet's data."""
+    migrations = stck.migrations(stacklet_id)
+    return set(migrations.record().applied) if migrations else set()
 
 
 def print_restart_call_to_action(targets, framework=False) -> None:

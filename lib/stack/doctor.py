@@ -169,6 +169,43 @@ def check_stale_code(stacklet: str) -> Finding:
     )
 
 
+def check_migrations(stacklet: str, pending: list[tuple[str, str]],
+                     failed: dict[str, str], newer: list[str]) -> list[Finding]:
+    """Migrations the stacklet's data has not had, or had from a newer release.
+
+    `pending` pairs each waiting migration's key with its summary, which
+    is the preview of what the next `stack up` changes. `failed` maps the
+    key of one that raised to its recorded error; it is pending as well
+    and reported once, as the error. `newer` names migrations applied
+    here that this checkout does not ship: older code is reading data a
+    newer release changed.
+    """
+    findings = [Finding(
+        level=ERROR,
+        title=f"migration {key} failed",
+        detail=failed[key] or "No error was recorded.",
+        fix=f"stack up {stacklet}",
+    ) for key in failed]
+    waiting = [(key, summary) for key, summary in pending if key not in failed]
+    if waiting:
+        findings.append(Finding(
+            level=WARN,
+            title=f"{stacklet} has data migrations waiting",
+            detail="; ".join(f"{key}: {summary}" for key, summary in waiting)
+                   + ". They run on the next start.",
+            fix=f"stack up {stacklet}",
+        ))
+    if newer:
+        findings.append(Finding(
+            level=WARN,
+            title=f"{stacklet} data was migrated by a newer release",
+            detail=(f"{', '.join(newer)} ran here, and this checkout does not ship "
+                    "them. This code reads the migrated data as it finds it."),
+            fix="stack update",
+        ))
+    return findings
+
+
 def check_release(position: str, latest: str, up_to_date: bool) -> Finding | None:
     """Whether a newer release exists than the one this checkout is on.
 
@@ -281,7 +318,7 @@ def check_oidc(providers: list[str], clients: dict[str, bool],
 
 
 def diagnose(stacklets, expected_env, containers_for, container_env,
-             *, missing_secrets=None, stale=()) -> list[Finding]:
+             *, missing_secrets=None, stale=(), migrations=None) -> list[Finding]:
     """Run every check across the given stacklets.
 
     The collaborators are injected rather than imported so the whole walk
@@ -293,7 +330,8 @@ def diagnose(stacklets, expected_env, containers_for, container_env,
     `missing_secrets` is optional so a caller that has no secret store to
     consult still gets the container checks. `stale` names the stacklets
     whose containers predate the code on disk, which only a caller with a
-    git checkout can work out.
+    git checkout can work out. `migrations`, when given, takes a stacklet
+    id and returns the `check_migrations` arguments after the id.
 
 """
     findings: list[Finding] = []
@@ -311,6 +349,9 @@ def diagnose(stacklets, expected_env, containers_for, container_env,
             found = check_missing_secrets(stacklet, missing_secrets(stacklet))
             if found:
                 findings.append(found)
+
+        if migrations:
+            findings += check_migrations(stacklet, *migrations(stacklet))
 
         for container in containers:
             name = container["name"]

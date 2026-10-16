@@ -82,6 +82,7 @@ Optional, all convention-named:
     on_start_ready.py   # every up, AFTER health - seed data, sync accounts
     on_stop.py          # every down - stop native services
     on_destroy.py       # destroy - unload plists, uninstall native
+  migrations/NNNN_<name>.py # data change, run once per instance on `stack up`, in order
   cli/<cmd>.py          # `./stack <id> <cmd>` - leading `_` = private helper
   bot/bot.toml          # bot manifest if shipping a chat bot
   bot/<name>.py         # MicroBot subclass
