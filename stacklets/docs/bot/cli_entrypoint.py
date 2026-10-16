@@ -35,6 +35,11 @@ Commands:
                                     Reached as `stack memory capture`;
                                     it lives here only while the capture
                                     pipeline does. See cli/capture.py.
+    migrate-photos-to-notes [--trailer "<line>"]
+                                    move the photos filed as bookmarks
+                                    to notes; run by migration
+                                    docs/0001 on `stack up docs`, not
+                                    by hand. Answers in JSON.
     tags [--types] [--used|--unused] [--owner=N]
                                     list tags or document_types
     tags merge <from> <to> [--type] [--dry]    retag docs, drop source
@@ -66,7 +71,9 @@ import aiohttp
 
 from pipeline import Classifier, PaperlessAPI
 
-from cli import capture, classify, mirror, reformat, reprocess, show, tags
+from cli import (
+    capture, classify, migrate_photos_to_notes, mirror, reformat, reprocess, show, tags,
+)
 from cli._shared import err
 
 
@@ -87,6 +94,11 @@ async def main(argv: list[str]) -> int:
         return 2
 
     cmd, *rest = argv
+    # Runs on the first `stack up docs`, before core's env carries the
+    # Paperless token, and needs only the family memory.
+    if cmd == "migrate-photos-to-notes":
+        return await migrate_photos_to_notes.run(rest)
+
     fn = _HANDLERS.get(cmd)
     if not fn:
         err(f"Unknown command: {cmd}")

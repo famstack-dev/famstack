@@ -122,6 +122,23 @@ def restart_targets(changed_paths, running) -> list[str]:
     return sorted(touched_stacklets(changed_paths) & set(running))
 
 
+def migrations_in(paths) -> list[tuple[str, str, str]]:
+    """The migration files among these paths, as `(stacklet, number, name)`."""
+    from .migrations import migration_file
+    return [m for m in map(migration_file, paths) if m]
+
+
+def migrations_left_behind(removed_paths, applied) -> list[tuple[str, str, str]]:
+    """Migrations this instance's data has had that a target release lacks.
+
+    `removed_paths` are the files the jump deletes, `applied` takes a
+    stacklet id and returns the numbers recorded as applied in its data.
+    Moving to a release older than one of these leaves its code reading
+    data it never wrote.
+    """
+    return [m for m in migrations_in(removed_paths) if m[1] in applied(m[0])]
+
+
 def stale_stacklets(revisions, running, changes_since) -> list[str]:
     """Running stacklets whose code the checkout has moved past.
 
@@ -230,6 +247,19 @@ class Checkout:
 
     def changed_paths(self, old: str, new: str) -> list[str]:
         code, out, _ = self._run("diff", "--name-only", old, new)
+        return out.splitlines() if code == 0 else []
+
+    def added_paths(self, old: str, new: str) -> list[str]:
+        """Files `new` has and `old` does not. A rename counts as a removal
+        and an addition, because a migration file is never renamed."""
+        code, out, _ = self._run("diff", "--name-only", "--no-renames",
+                                 "--diff-filter=A", old, new)
+        return out.splitlines() if code == 0 else []
+
+    def removed_paths(self, old: str, new: str) -> list[str]:
+        """Files `old` has and `new` does not."""
+        code, out, _ = self._run("diff", "--name-only", "--no-renames",
+                                 "--diff-filter=D", old, new)
         return out.splitlines() if code == 0 else []
 
     def log_subjects(self, old: str, new: str) -> list[str]:

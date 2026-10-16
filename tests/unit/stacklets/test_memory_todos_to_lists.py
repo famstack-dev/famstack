@@ -1,4 +1,4 @@
-"""Each topic's old `todos.md` moves to `lists/<topic>.md` on `stack up memory`.
+"""Each topic's old `todos.md` moves to `lists/<topic>.md`, by migration memory/0001.
 
 Families have been ticking items in these files for months, so the
 move is held to what a family would check afterwards: every item is
@@ -92,7 +92,7 @@ class TestTheMoveOnStart:
                                   method="GET").respond_with_data("", status=404)
         httpserver.expect_request(CONTENTS, method="POST").respond_with_json({}, status=201)
 
-        assert move_todos_to_lists(_client(httpserver)) == ["itchy-scratchy-land"]
+        assert move_todos_to_lists(_client(httpserver))[0] == ["itchy-scratchy-land"]
 
         commit = _commit(httpserver)
         files = _files(commit)
@@ -129,5 +129,57 @@ class TestTheMoveOnStart:
         httpserver.expect_request(f"{CONTENTS}/family/camping/todos.md",
                                   method="GET").respond_with_data("", status=404)
 
-        assert move_todos_to_lists(_client(httpserver)) == []
+        assert move_todos_to_lists(_client(httpserver)) == ([], None)
         assert not [r for r, _ in httpserver.log if r.method == "POST"]
+
+
+class TestTheMigration:
+    """`stacklets/memory/migrations/0001_move_todos_to_lists.py`, run by the
+    framework's runner the way `stack up memory` runs it."""
+
+    def _run(self, tmp_path, httpserver):
+        from stack import Stack
+        from stack.migrations import MigrationContext, Migrations
+        from stack.output import CollectorOutput
+
+        stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
+        stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+        migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory",
+                                tmp_path / "data" / "memory")
+        outcome = migrations.run(
+            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
+                                       env={"CODE_URL": httpserver.url_for("")}),
+            lambda msg: None)
+        return outcome, migrations.record()
+
+    def _old_list(self, httpserver):
+        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json(
+            [{"type": "dir", "path": "family/itchy-scratchy-land"}])
+        httpserver.expect_request(f"{CONTENTS}/family/itchy-scratchy-land/todos.md",
+                                  method="GET").respond_with_json(_file(CAMPING_TODOS, "old-sha"))
+        httpserver.expect_request(f"{CONTENTS}/family/lists/itchy-scratchy-land.md",
+                                  method="GET").respond_with_data("", status=404)
+
+    def test_its_commit_carries_the_trailer_and_is_its_record(self, tmp_path, httpserver):
+        self._old_list(httpserver)
+        httpserver.expect_request(CONTENTS, method="POST").respond_with_json(
+            {"commit": {"sha": "c0ffee"}}, status=201)
+
+        outcome, record = self._run(tmp_path, httpserver)
+
+        assert outcome == {"applied": ["memory/0001"]}
+        assert _commit(httpserver)["message"].endswith("\n\nMigration: memory/0001")
+        assert record.applied["0001"]["commit"] == "c0ffee"
+
+    def test_a_file_changed_underneath_fails_it_and_writes_nothing(self, tmp_path, httpserver):
+        """Forgejo refuses a commit whose sha no longer matches; the move
+        is not recorded and runs again on the next start."""
+        self._old_list(httpserver)
+        httpserver.expect_request(CONTENTS, method="POST").respond_with_json(
+            {"message": "sha does not match"}, status=409)
+
+        outcome, record = self._run(tmp_path, httpserver)
+
+        assert "409" in outcome["failed"]["memory/0001"]
+        assert record.applied == {}
+        assert [r.method for r, _ in httpserver.log].count("POST") == 1

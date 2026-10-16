@@ -23,6 +23,7 @@ from pathlib import Path
 from . import caddy
 from .docker import running_project_ids
 from .hooks import HookResolver, build_hook_ctx
+from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations
 from .output import SilentOutput
 from .secrets import TomlSecretStore
 
@@ -1383,6 +1384,59 @@ class Stack:
         marker = self._setup_done_marker(stacklet_id)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.touch()
+
+    # ── Migrations ────────────────────────────────────────────────────
+
+    def migrations(self, stacklet_id: str) -> Migrations | None:
+        """The migrations of a stacklet, recorded in its data dir."""
+        s = self._find_stacklet(stacklet_id)
+        if not s:
+            return None
+        return Migrations(stacklet_id, Path(s["path"]), self.data / stacklet_id,
+                          self._repo_history())
+
+    def _repo_history(self) -> ForgejoHistory | None:
+        """The code host, asked whether a migration's commit is still there.
+
+        Reached over loopback on the published port, which answers in
+        port mode and domain mode alike, as the stack admin, who can
+        read every repository. None on an instance without one.
+        """
+        code = self._find_stacklet("code")
+        if not code or not code.get("port"):
+            return None
+        from .forgejo import ForgejoClient
+        from .users import TECH_ADMIN_USERNAME, get_admin_password
+        return ForgejoHistory(ForgejoClient(
+            url=f"http://127.0.0.1:{code['port']}",
+            admin_user=TECH_ADMIN_USERNAME,
+            admin_password=get_admin_password(self.secrets) or "",
+        ))
+
+    def migrate(self, stacklet_id: str) -> dict:
+        """Run the stacklet's pending migrations; see `Migrations.run`.
+
+        Each gets the hook context with the env rendered now, as
+        `on_start_ready` does. A failure is printed here and returned;
+        `{"error": ...}` means the shipped files themselves are wrong
+        and nothing ran.
+        """
+        migrations = self.migrations(stacklet_id)
+        if migrations is None:
+            return {}
+
+        def context_for(migration):
+            return MigrationContext(migration, stack=self, stacklet_id=stacklet_id,
+                                    env=self.env(stacklet_id), step_fn=self.output.step)
+
+        try:
+            outcome = migrations.run(context_for, self.output.step)
+        except MigrationError as e:
+            self.output.error(str(e))
+            return {"error": str(e)}
+        for key, error in outcome.get("failed", {}).items():
+            self.output.error(f"Migration {key} failed: {error}")
+        return outcome
 
     def run_cli_command(self, stacklet_id: str, command: str, args: list | None = None) -> dict | None:
         """Run a stacklet's CLI plugin command.
