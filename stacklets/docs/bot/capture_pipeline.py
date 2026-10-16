@@ -16,6 +16,7 @@ fold into the ontology.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import io
 import re
@@ -822,9 +823,10 @@ class CapturePipeline:
 
         The local copy of the family memory says where the id lives now.
         It can lag a write by minutes, so the path the filing message
-        recorded is tried after it.
+        recorded is tried after it. The scan reads every card's header,
+        so it runs off the event loop.
         """
-        by_id = (self._vault.capture_path(capture_id)
+        by_id = (await asyncio.to_thread(self._vault.card_path, "capture", capture_id)
                  if self._vault is not None and capture_id else None)
         for path in dict.fromkeys(p for p in (by_id, recorded_path) if p):
             raw = await self._mirror.read_capture(path)

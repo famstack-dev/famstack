@@ -118,7 +118,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import dispatch_capture  # noqa: E402
 
 # The `/go` namespace owns its own URL shapes; we join, never build.
-from stack.links import go_capture, public  # noqa: E402
+from stack.links import go_card, public  # noqa: E402
 
 
 HELP = "Full-text search over the curated memory vault"
@@ -266,9 +266,8 @@ def _format_block(r: dict, link_base: str = "", show_matches: bool = False) -> s
         lines.append(f"  …{r['excerpt']}…")
     if show_matches and r.get("matched_terms"):
         lines.append(f"  matches: {', '.join(r['matched_terms'])}")
-    if capture_id := (r.get("capture_id") or "").strip():
-        if url := public(go_capture(capture_id), link_base):
-            lines.append(f"  {url}")
+    if url := public(go_card(r), link_base):
+        lines.append(f"  {url}")
     return "\n".join(lines)
 
 

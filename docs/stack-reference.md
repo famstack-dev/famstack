@@ -408,6 +408,43 @@ Subscribing to custom events on the bot side isn't wired yet — that
 comes with the first consumer bot. The emit contract is stable and
 tested end-to-end (see `tests/e2e/test_archivist_e2e.py`).
 
+### Persistent links and card ids
+
+A link a bot posts into a room stays in the timeline for good, so it
+never points at a service or a file path. It points at
+`<home>/go/<kind>/<name or id>`, and core's tools server resolves it when
+someone opens it. `stack.links` builds these paths
+(`go_docs`, `go_topic`, `go_person`, `go_list`, `go_capture`, `go_diary`,
+and `go_page` for a page an edit touched); `stacklets/core/tools-server/resolver.py`
+is the only place that knows what they resolve to.
+
+A **card** is one file in the family memory that stands for one thing. Its
+path is not a stable name: the folder follows the bucket and topic, the
+file name often follows the title, and a refile or a correction can move
+it. Each card type carries a **card id** that never changes, and anything
+that refers to a card from outside it (a `/go/` link, a correction, the
+agent) finds the card by that id. A stored path is only a hint.
+
+| Type | Card id | Link |
+|---|---|---|
+| document | `paperless_id` | `/go/docs/<paperless_id>`, opens Paperless |
+| note, bookmark | `capture_id`: the event id of the message it was filed from | `/go/capture/<capture_id>` |
+| email thread | `resource`: the `mid:` URI of the thread's first message | none yet |
+| diary card | `entry_id` | `/go/diary/<entry_id>`, opens its month page at the card |
+| person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
+| topic | its folder, `<bucket>/<slug>/` | `/go/topic/<slug>` |
+| list | none yet: its file name is its name | `/go/list/<slug>` |
+
+The kinds found by id in the vault are listed in `stack.cards`
+(`CARD_ID_FIELDS`), next to the one lookup by card id,
+`stack.cards.find_card`. It scans the frontmatter of a copy of the
+vault, with no index to go stale, and answers None for an id no card
+carries rather than guessing. Each reader runs it over the copy it reads
+from: core's tools server over the wiki's copy, so a `/go/` link lands on
+a page the wiki serves (404 otherwise); the archivist over its own mount,
+before it applies a correction to a capture, falling back to the path
+the filing message recorded while that copy has not caught up.
+
 ### Backup
 
 A stacklet declares the data it wants backed up. The `backup` stacklet

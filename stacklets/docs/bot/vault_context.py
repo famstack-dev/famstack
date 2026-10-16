@@ -25,8 +25,7 @@ from memory.lib import (
     people_prompt_section,
     persons_prompt_section,
 )
-from stack.frontmatter import FrontmatterError
-from stack.frontmatter import parse as parse_frontmatter
+from stack.cards import find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people
 
@@ -119,26 +118,12 @@ class VaultContext:
         persons = load_persons_from_vault(path, self.shared_bucket)
         return persons_prompt_section(persons)
 
-    def capture_path(self, capture_id: str) -> str | None:
-        """Where the capture filed with `capture_id` lives now, or None.
+    def card_path(self, kind: str, card_id: str) -> str | None:
+        """Vault path of the card of `kind` with `card_id` now, or None.
 
-        The id is the event id of the message it was filed from and never
-        changes; the path does, when a capture moves. A file whose
-        frontmatter the parser rejects (a hand edit gone wrong) is skipped
-        rather than guessed at. `core/tools-server/capture_index.py`
-        resolves `/go/capture/<id>` over the wiki's copy.
+        A card id never changes; the path does, when a card moves. The
+        lookup is `stack.cards.find_card`, the one core's tools server
+        runs over the wiki's copy for the `/go/` links.
         """
         root = self._vault_path()
-        wanted = (capture_id or "").strip()
-        if root is None or not wanted or not root.is_dir():
-            return None
-        for path in sorted(root.rglob("*.md")):
-            if ".git" in path.parts:
-                continue
-            try:
-                fm = parse_frontmatter(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, FrontmatterError):
-                continue
-            if str(fm.get("capture_id") or "") == wanted:
-                return path.relative_to(root).as_posix()
-        return None
+        return find_card(kind, card_id, root=root) if root is not None else None
