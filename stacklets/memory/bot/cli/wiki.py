@@ -64,7 +64,6 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-import yaml
 
 # Sibling stacklets — memory.lib gives us summary callout extraction
 # and frontmatter parsing without re-implementing them here.
@@ -73,6 +72,7 @@ from memory.lib import (  # noqa: E402
     _parse_frontmatter,
     extract_summary_callout,
 )
+from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
 from stack.people import Person, find_people, resolve  # noqa: E402
 
@@ -167,22 +167,21 @@ def _yaml_str(value: str) -> str:
 # Write-boundary gate. Quartz parses frontmatter with a strict YAML
 # parser and hard-fails the whole site build on one bad page; the
 # failure surfaces three hops downstream, in the running wiki container,
-# not here where the page is composed. So we parse the page's own
-# frontmatter with the same strictness before pushing it to Forgejo. A
-# page that won't load is refused at the source -- the previous good
-# version stays live. `_parse_frontmatter` in memory.lib is deliberately
-# lenient (skips malformed lines), so it can't stand in for this check.
+# not here where the page is composed. So the page's own frontmatter
+# goes through the shared parser before it is pushed to Forgejo. That
+# parser refuses every unquoted value YAML would read differently, so a
+# page it accepts loads in Quartz too. A page that won't load is refused
+# at the source -- the previous good version stays live.
 def _frontmatter_error(page: str) -> str | None:
-    """Return a YAML error string if `page`'s frontmatter won't parse, else None."""
+    """Why `page`'s frontmatter won't parse, or None when it does."""
     if not page.startswith("---\n"):
         return None  # no frontmatter block to validate
-    end = page.find("\n---", 4)
-    if end < 0:
+    if page.find("\n---\n", 4) < 0:
         return "unterminated frontmatter block"
     try:
-        yaml.safe_load(page[4:end])
-    except yaml.YAMLError as e:
-        return str(e).replace("\n", " ")
+        parse_frontmatter(page)
+    except FrontmatterError as e:
+        return str(e)
     return None
 
 
@@ -770,7 +769,7 @@ def _index_vault(vault: Path) -> list[dict]:
         summary = extract_summary_callout(text)
         if not summary:
             continue
-        fm = _parse_frontmatter(text)
+        fm = _parse_frontmatter(text, md)
         try:
             rel = str(md.relative_to(vault))
         except ValueError:
@@ -927,7 +926,7 @@ def _retire_undeclared(roster: list[str], shared_bucket: str, *,
             text = about.read_text(encoding="utf-8")
         except OSError:
             continue
-        if _parse_frontmatter(text).get("type") != "person" or not _is_generated_page(text):
+        if _parse_frontmatter(text, about).get("type") != "person" or not _is_generated_page(text):
             continue
         rel = f"{slug}/about.md"
         if write:

@@ -34,6 +34,7 @@ import math
 import re
 import shutil
 import subprocess
+import sys
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -47,7 +48,7 @@ from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
 
 # Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
 # so both host CLI and containers can parse identically.
-from stack.frontmatter import parse as _parse_frontmatter_new
+from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
@@ -1110,7 +1111,7 @@ def load_correspondents_from_vault(
             text = md_path.read_text(encoding="utf-8")
         except OSError:
             continue
-        meta = _parse_frontmatter(text)
+        meta = _parse_frontmatter(text, md_path)
         if not meta:
             # No frontmatter at all — likely a README or stray note, skip.
             continue
@@ -1252,7 +1253,7 @@ def load_persons_from_vault(
             text = about.read_text(encoding="utf-8")
         except OSError:
             continue
-        meta = _parse_frontmatter(text)
+        meta = _parse_frontmatter(text, about)
         if meta.get("kind") and meta.get("kind") != "person":
             continue
         canonical = meta.get("canonical") or meta.get("title") or slug
@@ -1728,19 +1729,21 @@ def install_memory_to_forgejo(
 # before dispatch; the archivist does the same before each query.
 
 
-def _parse_frontmatter(text: str) -> dict:
+def _parse_frontmatter(text: str, path: Path | str | None = None) -> dict:
     """Parse vault entry frontmatter using the shared stdlib-only module.
 
     Delegates to stack.frontmatter.parse, which handles the strict
-    §2 subset per the vault format spec. On parse errors, this still
-    silently returns the dict-so-far (graceful degradation for older
-    files or edge cases).
+    §2 subset per the vault format spec. A page whose frontmatter does
+    not parse is read without it, so search still finds it by its text,
+    and none of its fields are guessed. Pass the page's `path` to have
+    that reported on stderr.
     """
     try:
         return _parse_frontmatter_new(text)
-    except Exception:
-        # Graceful degradation: if parse fails, return empty dict
-        # so the file still surfaces in search, just without metadata
+    except FrontmatterError as e:
+        if path is not None:
+            print(f"[memory] {path}: frontmatter does not parse ({e}), "
+                  "read without it", file=sys.stderr)
         return {}
 
 
@@ -2046,7 +2049,7 @@ def search_memory(
         # `tags:`, `persons:`, ...) would otherwise trivially match
         # generic keywords and drown real hits.
         body = body_only(text)
-        fm = _parse_frontmatter(text)
+        fm = _parse_frontmatter(text, rel)
         doc_persons = _fm_list(fm, "persons")
         doc_tags = _fm_list(fm, "tags")
 

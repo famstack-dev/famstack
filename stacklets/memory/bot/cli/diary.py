@@ -60,7 +60,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # container that can talk to a model, so the compiler runs unchanged in
 # the bot-runner and in the curator that schedules it nightly.
 import httpx
-import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bot/
 sys.path.insert(0, "/app")  # stack.ai.client, and voice in the bot-runner
@@ -79,6 +78,7 @@ import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 from stack.ai.language import LANGUAGES, language_code  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
+from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
 from stack import media  # noqa: E402
 from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
@@ -375,20 +375,14 @@ def _household_vocabulary() -> str:
 
 
 def _frontmatter(path: Path) -> dict:
+    """A page's frontmatter, or {} when it has none that parses (and says so)."""
     try:
-        text = path.read_text(encoding="utf-8")
+        return parse_frontmatter(path.read_text(encoding="utf-8"))
     except OSError:
         return {}
-    if not text.startswith("---\n"):
+    except FrontmatterError as e:
+        _err(f"{path}: frontmatter does not parse ({e}), skipped")
         return {}
-    end = text.find("\n---", 4)
-    if end < 0:
-        return {}
-    try:
-        loaded = yaml.safe_load(text[4:end])
-    except yaml.YAMLError:
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
 
 
 def _pass_chain(llm, people: list | None):

@@ -173,6 +173,32 @@ def _fm(mapping):
     return lambda path: mapping.get(path, {})
 
 
+class TestTheMirrorReadsADocumentPage:
+    """The curator reads a changed page's header from disk to decide
+    which wiki pages to rebuild, with the parser every reader uses."""
+
+    PATH = "family/documents/2026/06/2026-06-10-car-insurance-p7.md"
+
+    def _select(self, tmp_path, header: str) -> list[str]:
+        page = tmp_path / self.PATH
+        page.parent.mkdir(parents=True)
+        page.write_text(f"---\n{header}---\n\n# Kfz-Versicherung\n")
+        brain = curator.Brain(tmp_path, tmp_path)
+        return member_selection([self.PATH], brain.frontmatter_at, shared_bucket="family")
+
+    def test_a_one_line_list_of_persons_selects_each_of_them(self, tmp_path):
+        assert self._select(tmp_path, "type: document\npersons: [Homer Simpson, Marge Simpson]\n") == [
+            "--home", "--member", "Homer Simpson", "--member", "Marge Simpson",
+        ]
+
+    def test_a_header_that_does_not_parse_selects_nobody_and_names_the_file(
+            self, tmp_path, capsys):
+        assert self._select(tmp_path, "type: document\ntitle: Kfz: Duff\npersons:\n  - Homer Simpson\n") == [
+            "--home",
+        ]
+        assert f"{self.PATH}: frontmatter does not parse" in capsys.readouterr().err
+
+
 class TestMemberSelection:
     def test_document_with_persons_selects_their_pages(self):
         paths = ["family/documents/2026/06/2026-06-10-car-insurance-p7.md"]

@@ -669,7 +669,7 @@ class Vault:
     def frontmatter_at(self, rev: str, path: str) -> dict:
         """Frontmatter of `path` at `rev` ({} for deleted/binary files)."""
         out = self.text_at(rev, path)
-        return _parse_frontmatter(out) if out else {}
+        return _parse_frontmatter(out, f"{rev}:{path}") if out else {}
 
     def text_at(self, rev: str, path: str) -> str:
         """The text of `path` at `rev`, "" where it does not exist."""
@@ -706,7 +706,7 @@ class Brain:
             text = (self.path / path).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             return {}
-        return _parse_frontmatter(text)
+        return _parse_frontmatter(text, path)
 
     def _apply(self, ops: list[tuple[str, str, str]]) -> None:
         """Replay file ops onto brain's working tree (no git, no commit).

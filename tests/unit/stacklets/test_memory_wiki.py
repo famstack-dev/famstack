@@ -517,6 +517,16 @@ class TestFrontmatterError:
     def test_unterminated_block_is_rejected(self):
         assert _frontmatter_error("---\ntitle: x\nno closing fence\n") is not None
 
+    def test_a_one_line_list_passes(self):
+        page = '---\ntitle: "Camping"\ntags: [camping, "Person: Bart"]\n---\n\n# body\n'
+        assert _frontmatter_error(page) is None
+
+    def test_a_value_quartz_would_cut_at_a_comment_is_rejected(self):
+        # YAML reads this title as "Bart": the page would load with the
+        # wrong title instead of failing, so the gate stops it here.
+        page = "---\ntitle: Bart #1\n---\n\n# body\n"
+        assert "#" in _frontmatter_error(page)
+
 
 # ── _is_generated_page (clean's delete filter) ─────────────────────────
 
