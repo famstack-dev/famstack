@@ -9,7 +9,10 @@ server loads.
     stack ai say "Dinner is ready" --voice nova
 """
 
-HELP = "Speak a text aloud on this Mac"
+# Also the line the agent reads for this command, so it says how to write
+# the text: Piper reads markdown marks aloud ("asterisk asterisk").
+HELP = ("Speak a text aloud on this Mac. Pass plain sentences written to be "
+        "heard: no markdown, lists, links or emoji")
 
 import argparse
 import sys
