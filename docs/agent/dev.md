@@ -528,3 +528,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-009](../adr/adr-009-managed-ai-provider.md) | Managed AI provider |
 | [adr-013](../adr/adr-013-stacklet-locations-and-stages.md) | Stacklet locations and stages |
 | [adr-014](../adr/adr-014-archivist-steps-back-for-the-agent.md) | The archivist steps back when the agent is in the room |
+| [adr-015](../adr/adr-015-a-change-to-a-record-is-a-persons-commit.md) | A change to a record is a person's commit |
