@@ -232,6 +232,27 @@ def stacklet_imports(stacklet_dir: Path):
                 del sys.modules[name]
 
 
+def run_python_file(stacklet_dir: Path, path: Path, ctx, module_name: str):
+    """Load a stacklet's Python file and call its `run(ctx)`.
+
+    Returns what `run` returns, and lets whatever it raises through: a
+    hook turns that into a printed line, a migration records it. A file
+    without `run` is loaded and returns None. The stacklet's directory
+    is on `sys.path` meanwhile, so `from lib import ...` finds its own
+    helpers.
+    """
+    with stacklet_imports(stacklet_dir):
+        sys.path.insert(0, str(stacklet_dir))
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load {path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        if hasattr(mod, "run"):
+            return mod.run(ctx)
+    return None
+
+
 class HookResolver:
     """Finds and runs lifecycle hooks for a stacklet.
 
@@ -282,13 +303,7 @@ class HookResolver:
     def _run_python(self, path: Path, ctx) -> bool:
         """Load and run a Python hook."""
         try:
-            with stacklet_imports(self._stacklet_dir):
-                spec = importlib.util.spec_from_file_location(
-                    f"hook.{path.stem}", path)
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                if hasattr(mod, "run"):
-                    mod.run(ctx)
+            run_python_file(self._stacklet_dir, path, ctx, f"hook.{path.stem}")
             return True
         except Cancelled:
             raise

@@ -457,6 +457,15 @@ class ForgejoClient:
             return []
         return data.get("tree", []) or []
 
+    def get_commit(self, owner: str, repo: str, sha: str) -> dict | None:
+        """One commit, with its message under `commit.message`; None when
+        the repo has no such commit."""
+        return self._req(
+            "GET", f"/api/v1/repos/{owner}/{repo}/git/commits/{sha}",
+            headers=self._content_header(), params={"stat": "false", "files": "false"},
+            allow_404=True,
+        )
+
     def list_commits(self, owner: str, repo: str, *,
                      path: str | None = None, limit: int = 20) -> list[dict]:
         params: dict[str, str] = {"limit": str(limit), "stat": "false"}

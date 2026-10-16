@@ -87,7 +87,7 @@ async def _move(tmp_path: Path, client: _Forgejo):
 @pytest.mark.asyncio
 async def test_photos_move_to_notes_and_nothing_else_does(tmp_path):
     client = _Forgejo(ENTRIES)
-    moved = await _move(tmp_path, client)
+    moved, _ = await _move(tmp_path, client)
 
     assert sorted(new for _, new in moved) == [
         "family/painting/notes/2026/10/glaze-dddddd.md",
@@ -114,7 +114,7 @@ async def test_a_moved_photo_says_it_is_a_note(tmp_path):
 @pytest.mark.asyncio
 async def test_with_nothing_left_to_move_nothing_is_written(tmp_path):
     client = _Forgejo({k: v for k, v in ENTRIES.items() if "raku" not in k and "glaze" not in k})
-    assert await _move(tmp_path, client) == []
+    assert await _move(tmp_path, client) == ([], None)
     assert client.commits == []
 
 

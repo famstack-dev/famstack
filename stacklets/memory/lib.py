@@ -2449,11 +2449,14 @@ def todos_as_list(text: str, topic: str, *, shared_bucket: str = DEFAULT_SHARED_
 
 def move_todos_to_lists(client: ForgejoClient, *,
                         shared_bucket: str = DEFAULT_SHARED_BUCKET,
-                        language: str = "") -> list[str]:
-    """Move every topic's `todos.md` to `lists/<topic>.md`; return the topics moved.
+                        language: str = "",
+                        trailer: str = "") -> tuple[list[str], str | None]:
+    """Move every topic's `todos.md` to `lists/<topic>.md`.
 
-    One commit for all of them, by the memory bot, so the history reads
-    as one step. A topic that already has a list keeps it, and the old
+    Returns the topics moved and the sha of the commit that moved them,
+    None when there was nothing to move. One commit for all of them, by
+    the memory bot, so the history reads as one step; `trailer` ends its
+    message. A topic that already has a list keeps it, and the old
     file's items that are not on it yet are added.
     """
     from stack.forgejo import FileChange
@@ -2484,11 +2487,13 @@ def move_todos_to_lists(client: ForgejoClient, *,
             changes.append(FileChange("create", new_path, converted))
         changes.append(FileChange("delete", old_path, sha=old.get("sha") or ""))
         moved.append(topic)
-    if changes:
-        client.change_files(
-            REPO_OWNER, REPO_NAME, changes,
-            message="lists: move each topic's todo list to lists/",
-            author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-        )
-    return moved
+    if not changes:
+        return moved, None
+    message = "lists: move each topic's todo list to lists/"
+    response = client.change_files(
+        REPO_OWNER, REPO_NAME, changes,
+        message=f"{message}\n\n{trailer}" if trailer else message,
+        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+    )
+    return moved, ((response or {}).get("commit") or {}).get("sha")
 

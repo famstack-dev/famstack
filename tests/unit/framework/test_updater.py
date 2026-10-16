@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from stack.updater import (
-    Checkout, latest_tag, restart_targets, running_version, stale_stacklets,
-    version_key,
+    Checkout, latest_tag, migrations_in, migrations_left_behind, restart_targets,
+    running_version, stale_stacklets, version_key,
 )
 
 
@@ -31,8 +31,9 @@ def _git(repo: Path, *args: str) -> str:
 def repo(tmp_path):
     """A checkout with two releases, shaped like the real one.
 
-    v1 ships a `docs` stacklet; v2 changes it, adds `photos`, and touches
-    the framework, so one repository covers every restart case.
+    v1 ships a `docs` stacklet; v2 changes it, adds `photos` and a docs
+    migration, and touches the framework, so one repository covers every
+    restart case.
     """
     root = tmp_path / "checkout"
     (root / "stacklets" / "docs").mkdir(parents=True)
@@ -50,6 +51,9 @@ def repo(tmp_path):
     (root / "stacklets" / "docs" / "docker-compose.yml").write_text("image: paperless:2\n")
     (root / "stacklets" / "photos").mkdir()
     (root / "stacklets" / "photos" / "stacklet.toml").write_text('id = "photos"\n')
+    (root / "stacklets" / "docs" / "migrations").mkdir()
+    (root / "stacklets" / "docs" / "migrations" / "0001_photos_to_notes.py").write_text(
+        '"""Move the photos filed as bookmarks to notes."""\n')
     (root / "lib" / "stack" / "cli.py").write_text("VERSION = 'v2'\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "second release")
@@ -249,6 +253,18 @@ class TestCheckout:
         assert "stacklets/docs/docker-compose.yml" in changed
         assert "stacklets/photos/stacklet.toml" in changed
         assert restart_targets(changed, running={"docs"}) == ["docs"]
+
+    def test_names_the_migrations_a_release_brings(self, repo):
+        added = Checkout(repo).added_paths("v0.1.0", "v0.2.0")
+        assert migrations_in(added) == [("docs", "0001", "photos_to_notes")]
+
+    def test_names_the_applied_migrations_an_older_release_lacks(self, repo):
+        """Going back from v2 to v1 leaves docs' 0001 behind, once it ran here."""
+        removed = Checkout(repo).removed_paths("v0.2.0", "v0.1.0")
+
+        assert migrations_left_behind(removed, lambda sid: {"0001"} if sid == "docs" else set()) \
+            == [("docs", "0001", "photos_to_notes")]
+        assert migrations_left_behind(removed, lambda sid: set()) == []
 
     def test_reports_the_commits_in_between(self, repo):
         assert Checkout(repo).log_subjects("v0.1.0", "v0.2.0") == ["second release"]

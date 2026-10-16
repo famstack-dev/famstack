@@ -27,7 +27,6 @@ from lib import (  # noqa: E402
     ensure_brain_projection_admin,
     ensure_people,
     ensure_vault_cloned,
-    move_todos_to_lists,
     host_code_url,
     point_remote_at,
     pull_vault,
@@ -61,26 +60,6 @@ def _ensure_people(ctx, code_url: str, token: str) -> None:
         return
     if added:
         ctx.step(f"Memory: added {', '.join(added)} to {bucket}/people/")
-
-
-def _move_todos_to_lists(ctx, code_url: str, token: str) -> None:
-    """Move each topic's old `todos.md` to `lists/<topic>.md`, once.
-
-    Like the person files, a failure is reported and never blocks
-    startup; the old files stay where they were until the next start.
-    """
-    if not (code_url and token):
-        return
-    bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
-    try:
-        moved = move_todos_to_lists(
-            ForgejoClient(url=code_url, token=token), shared_bucket=bucket,
-            language=ctx.env.get("LANGUAGE", ""))
-    except (ForgejoError, OSError, ValueError) as e:
-        ctx.warn(f"Memory: could not move the todo lists to {bucket}/lists/: {e}")
-        return
-    if moved:
-        ctx.step(f"Memory: moved the todo lists of {', '.join(moved)} to {bucket}/lists/")
 
 
 def run(ctx):
@@ -136,7 +115,6 @@ def run(ctx):
             ctx.step(f"{reason} and it could not be replaced")
 
     _ensure_people(ctx, code_url, token)
-    _move_todos_to_lists(ctx, code_url, token)
 
     # If the vault never got cloned (install hook ran before code
     # stacklet was reachable, for example), try once more here. This

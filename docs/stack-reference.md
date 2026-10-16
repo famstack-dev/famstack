@@ -170,7 +170,7 @@ ADMIN_PASSWORD   = "{admin_password}"
 ```
 
 **`generate`** — list of env var names. Values are auto-generated as
-cryptographically random strings and stored in `.famstack/secrets.toml`,
+cryptographically random strings and stored in `.stack/secrets.toml`,
 namespaced by stacklet ID (`photos__DB_PASSWORD`). Idempotent — existing
 secrets are never overwritten. Destroying a stacklet does not remove its
 secrets, so re-enabling reuses the same credentials.
@@ -635,7 +635,7 @@ effect.
 14. Show welcome screen with URL, login, hints
 ```
 
-**First run detection:** `.famstack/{id}.setup-done` marker. Absent
+**First run detection:** `.stack/{id}.setup-done` marker. Absent
 means first run. Created after `on_install` completes. Deleted by
 destroy.
 
@@ -685,7 +685,7 @@ password doesn't change when they remove a single service.
 ### `stack uninstall`
 
 Destroys all stacklets, removes Docker network, deletes runtime state
-(`.famstack/`), and removes config files (`stack.toml`, `users.toml`).
+(`.stack/`), and removes config files (`stack.toml`, `users.toml`).
 The nuclear option — back to a fresh clone.
 
 ### Hooks
@@ -697,8 +697,8 @@ the step is skipped. No registration needed.
 ```
 First stack up:
 
-  on_configure ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready
-  (config gate)    (system)       (services)   (wait)     (first-run API work)   (every-up API work)
+  on_configure ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready ──► migrations
+  (config gate)    (system)       (services)   (wait)     (first-run API work)   (every-up API work)   (pending ones)
 
 on_configure is the gate: it collects all required settings (provider
 choice, API keys, server names) and persists them to stack.toml or
@@ -708,8 +708,8 @@ that on_configure wrote and acts on it. Both hooks should be idempotent.
 
 Subsequent stack up:
 
-  on_start ──► health ──► on_start_ready
-  (services)   (wait)     (API work)
+  on_start ──► health ──► on_start_ready ──► migrations
+  (services)   (wait)     (API work)          (pending ones)
 
 stack down:
 
@@ -742,7 +742,7 @@ hooks/on_install.sh   ← fallback
 ```
 
 **Once-only hooks** (`on_configure`, `on_install`, `on_install_success`)
-are gated by the `.famstack/{id}.setup-done` marker. Created after
+are gated by the `.stack/{id}.setup-done` marker. Created after
 `on_install` completes. Deleted by `on_destroy`. A future `stack up`
 runs them again from scratch.
 
@@ -839,6 +839,106 @@ def run(ctx):
     secret("API_TOKEN", data["token"])
     step("API token saved")
 ```
+
+---
+
+## Migrations
+
+A stacklet that changes the shape of data it already wrote (moves files,
+renames a field, rewrites records) ships the change as a migration. The
+framework runs each one once per instance, in order, records it with the
+data, and stops at the first failure.
+
+```
+stacklets/<id>/migrations/0001_move_todos_to_lists.py
+stacklets/<id>/migrations/0002_kind_for_variants.py
+```
+
+- **Name:** four digits, an underscore, snake_case. Numbers are per
+  stacklet, never reused or renumbered; gaps are fine. Two files with one
+  number stop `stack up` before anything runs, and a unit test keeps that
+  out of the tree.
+- **Docstring:** its first line is what `stack up` and `stack doctor`
+  show (`Migrating memory 0001: Move each topic's old todos.md to the
+  family's lists.`). The rest says what changes, how to undo it, and
+  which conflict check it relies on.
+- **`run(ctx)`:** the hook context above, plus `ctx.migration`
+  (`memory/0001`) and `ctx.trailer` (`Migration: memory/0001`). The
+  stacklet's directory is on `sys.path`, so `from lib import ...` works.
+  Returning is done, raising is failed, finding nothing to do is a
+  return. Like a hook it runs on the host with the stdlib; work that needs
+  a container goes through `ctx.run_in_container`, or through a command in
+  the bot runner (`stack.bot_runner.call`, which returns the command's
+  stdout and raises on failure).
+- **Safe to run again.** Twice is the same as once. Write in one step,
+  or so that a rerun resumes: the record is written only after `run`
+  returns, so an interrupted migration is still pending.
+- **Never change an applied migration's meaning.** Fix forward with a new
+  number. There are no down migrations and no dry run: `stack doctor`
+  listing what is pending is the preview. Migrations are kept until 1.0.
+
+**When.** `stack up <id>` runs the pending ones after `on_start_ready`,
+and only when every health check passed; otherwise they wait, and one
+line says so. A command that starts several stacklets (`stack up a b`,
+`stack up all`, `stack restart` with or without ids) starts all of them
+first, then runs migrations per stacklet in dependency order, so a
+migration may use a service of a stacklet its own one requires.
+`stack update` never runs them: it names the ones the release brings,
+which run on the restart it asks for. A fresh install runs them all, and
+they find nothing to do.
+
+**Failure.** The first migration that raises stops that stacklet's run.
+The error is printed and recorded, `stack up` exits 1, and the
+containers keep running. The ones after it wait; the next `stack up`
+retries it first.
+
+**Record.** It lives with the data it describes, so restoring an older
+backup brings the older record back and the migration runs again:
+
+- `<data_dir>/<id>/.migrations.json` records every migration that ran,
+  by number, with the time, and the last error of one that failed.
+- A migration that changes a git repository on the code host, such as the
+  family memory, declares it with `REPO = "family/memory"`, writes one
+  commit whose message ends in `ctx.trailer`, and returns the commit's
+  sha (None when it changed nothing). The record then points at that
+  commit, and the migration counts as applied while the repository has
+  it: restore the repository from a backup older than the commit and it
+  runs again. A code host that does not answer leaves the record as it
+  is.
+
+A migration of the family memory writes its commit through
+`ForgejoClient.change_files`, passing the sha it read each file at.
+Forgejo refuses the commit when a file changed in between, so a
+concurrent writer (a bot filing a note) makes the migration fail and
+rerun rather than overwrite; the bots keep running. Git history is the
+undo.
+
+```python
+"""Move each topic's old todos.md to the family's lists.
+
+One memory-bot commit. Undo: revert the commit in family/memory.
+"""
+from lib import host_code_url, move_todos_to_lists
+from stack.forgejo import ForgejoClient
+
+REPO = "family/memory"
+
+def run(ctx):
+    client = ForgejoClient(url=host_code_url(ctx.env["CODE_URL"]),
+                           token=ctx.secret("MEMORY_BOT_TOKEN"))
+    moved, commit = move_todos_to_lists(client, trailer=ctx.trailer)
+    return commit
+```
+
+**Visibility.** With nothing pending, `stack up` prints nothing about
+migrations and changes nothing; it reads the record and asks the code
+host about each recorded commit. `stack doctor` lists pending
+migrations with their summaries (warning), failed ones with their error
+(error), and migrations recorded here that the checkout does not ship
+(warning: data migrated by a newer release). `stack update` to a release
+that lacks a migration applied here names it before asking to proceed.
+A commit that adds a migration carries an `Upgrade:` footer saying which
+restart runs it and whether older releases read the result.
 
 ---
 
@@ -1237,7 +1337,7 @@ same for a reverse proxy in front of the stack that is not this one.
 
 ### Generated Secrets
 
-Declared in `[env].generate`. Stored in `.famstack/secrets.toml`,
+Declared in `[env].generate`. Stored in `.stack/secrets.toml`,
 namespaced by stacklet ID:
 
 ```toml
@@ -1366,7 +1466,7 @@ template variables and passes everything through the rendered `.env`.
 
 ---
 
-## Runtime State: `.famstack/`
+## Runtime State: `.stack/`
 
 Gitignored. Created by `stack init`. Contains:
 
@@ -1377,6 +1477,10 @@ Gitignored. Created by `stack init`. Contains:
 
 No `enabled` file — stacklet state is derived from Docker containers
 and the filesystem. See [States](#states).
+
+Which migrations ran is not here: it lives with the data, in
+`<data_dir>/<id>/.migrations.json`, so it travels with a backup. See
+[Migrations](#migrations).
 
 Deleted entirely by `stack uninstall`.
 
