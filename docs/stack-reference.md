@@ -860,8 +860,8 @@ and leaves the admin's comments and other sections as they are.
 ### What the agent may run
 
 The agent (the `agent` stacklet) runs `stack` commands through the core
-API, never the CLI itself. The API runs a fixed set of `memory` commands
-and `docs show`, plus the stacklet commands the admin lists in
+API, never the CLI itself. The API runs a fixed set of `memory` commands,
+`docs show` and `ai say`, plus the stacklet commands the admin lists in
 `stack.toml`:
 
 ```toml

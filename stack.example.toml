@@ -125,7 +125,7 @@ language = "en"
 # name = "Stacky"
 #
 # Stacklet commands the agent may run, besides its own memory and
-# document lookups. "<stacklet>" allows all of its commands,
+# document lookups and speaking aloud. "<stacklet>" allows all of its commands,
 # "<stacklet> <command>" just that one. Framework commands (up, down,
 # destroy, config, ...) can never be allowed. Anything listed runs,
 # including commands that change something. The agent sees the list

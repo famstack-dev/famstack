@@ -66,6 +66,9 @@ DOMAIN_ALLOW = [
     # always known this; nothing read it back until now.
     ["memory", "history"],
     ["docs", "show"],
+    # Speaking aloud on the server Mac. It plays sound and stores nothing;
+    # `ai switch` and `ai download` change the instance and stay out.
+    ["ai", "say"],
 ]
 
 
