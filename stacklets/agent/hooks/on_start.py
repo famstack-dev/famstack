@@ -1,4 +1,9 @@
-"""Check the agent has an AI server before it starts.
+"""Tell the agent what it may run, and check it has an AI server.
+
+First the command list: the stacklet commands `[agent] allow` grants,
+written into the agent's workspace as an always-loaded skill. It goes
+first because the AI checks below may return early, and the list must
+not depend on whether the AI server answers.
 
 The agent talks to whatever `[ai] openai_url` points at: the local AI
 stacklet, another machine on the network, or a hosted provider. So the
@@ -10,6 +15,9 @@ be booting, or be a machine that sleeps; neither should keep the agent
 down once it comes back.
 """
 
+from pathlib import Path
+
+from stack.agent_access import write_command_skill
 from stack.ai.probe import probe
 from stack.prompt import warn
 
@@ -27,7 +35,17 @@ def _has_model(model: str, available: list[str]) -> bool:
     return any(short in m or m in short for m in available)
 
 
+def _write_command_list(ctx):
+    workspace = Path(ctx.env["AGENT_DATA_DIR"]) / "workspace"
+    for entry in write_command_skill(ctx.stack, workspace):
+        warn(f"[agent] allow: '{entry}' names no stacklet command, so the "
+             "agent cannot run it. Entries are '<stacklet>' or "
+             "'<stacklet> <command>', as listed by './stack <stacklet>'.")
+
+
 def run(ctx):
+    _write_command_list(ctx)
+
     url = ctx.env.get("AGENT_OPENAI_URL", "")
     if not url:
         raise RuntimeError(

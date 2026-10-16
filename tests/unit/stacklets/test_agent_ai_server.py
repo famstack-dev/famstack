@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from stack.stack import Stack
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _AGENT = _REPO_ROOT / "stacklets" / "agent"
 
@@ -30,11 +32,16 @@ _spec.loader.exec_module(on_start)
 
 
 class FakeCtx:
-    """The agent's rendered env, as the framework hands it to the hook."""
+    """The agent's rendered env, as the framework hands it to the hook,
+    on a throwaway instance that allows the agent no stacklet commands."""
 
-    def __init__(self, url, model="llama3.1:8b"):
+    def __init__(self, tmp_path, url, model="llama3.1:8b"):
+        (tmp_path / "stack.toml").write_text(
+            f'[core]\nextension_dirs = ["{tmp_path / "ext"}"]\n')
+        self.stack = Stack(_REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
         self.env = {"AGENT_OPENAI_URL": url, "AGENT_OPENAI_KEY": "k",
-                    "AGENT_MODEL": model}
+                    "AGENT_MODEL": model,
+                    "AGENT_DATA_DIR": str(tmp_path / "data" / "agent")}
 
 
 def test_the_local_ai_stacklet_is_not_a_requirement():
@@ -43,35 +50,35 @@ def test_the_local_ai_stacklet_is_not_a_requirement():
     assert "messages" in manifest["requires"]
 
 
-def test_no_ai_server_stops_the_start_and_names_both_ways_to_get_one():
+def test_no_ai_server_stops_the_start_and_names_both_ways_to_get_one(tmp_path):
     with pytest.raises(RuntimeError) as e:
-        on_start.run(FakeCtx(url=""))
+        on_start.run(FakeCtx(tmp_path, url=""))
     assert "stack up ai" in str(e.value)
     assert "stack ai switch" in str(e.value)
 
 
-def test_a_server_that_answers_starts_quietly(httpserver, capsys):
+def test_a_server_that_answers_starts_quietly(httpserver, capsys, tmp_path):
     httpserver.expect_request("/v1/models").respond_with_json(
         {"data": [{"id": "llama3.1:8b"}]})
 
-    on_start.run(FakeCtx(url=httpserver.url_for("/v1")))
+    on_start.run(FakeCtx(tmp_path, url=httpserver.url_for("/v1")))
 
     assert "⚠" not in capsys.readouterr().out
 
 
-def test_a_server_that_does_not_answer_warns_and_starts_anyway(capsys):
-    on_start.run(FakeCtx(url="http://127.0.0.1:9/v1"))
+def test_a_server_that_does_not_answer_warns_and_starts_anyway(capsys, tmp_path):
+    on_start.run(FakeCtx(tmp_path, url="http://127.0.0.1:9/v1"))
 
     assert "127.0.0.1:9" in capsys.readouterr().out
 
 
-def test_a_model_the_server_does_not_have_is_named(httpserver, capsys):
+def test_a_model_the_server_does_not_have_is_named(httpserver, capsys, tmp_path):
     """The installer picks an MLX model id. A server running something
     else answers every request with an error the family never sees."""
     httpserver.expect_request("/v1/models").respond_with_json(
         {"data": [{"id": "llama3.1:8b"}]})
 
-    on_start.run(FakeCtx(url=httpserver.url_for("/v1"),
+    on_start.run(FakeCtx(tmp_path, url=httpserver.url_for("/v1"),
                          model="mlx-community/Qwen3.5-9B-MLX-8bit"))
 
     assert "Qwen3.5-9B-MLX-8bit" in capsys.readouterr().out

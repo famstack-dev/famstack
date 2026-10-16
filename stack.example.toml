@@ -120,6 +120,19 @@ whisper_url = "http://localhost:42062/v1"
 # "en" = English (alloy voice), "de" = German (onyx voice)
 language = "en"
 
+# [agent]
+# The family agent's name in chat (default "Stacky").
+# name = "Stacky"
+#
+# Stacklet commands the agent may run, besides its own memory and
+# document lookups. "<stacklet>" allows all of its commands,
+# "<stacklet> <command>" just that one. Framework commands (up, down,
+# destroy, config, ...) can never be allowed. Anything listed runs,
+# including commands that change something. The agent sees the list
+# after `./stack up agent`.
+# allow = ["kettle"]
+# allow = ["kettle status", "kettle boil"]
+
 [backup]
 # Nightly append-only backup of stacklet data. Enable the backup stacklet
 # (`stack up backup`) to install the cron entry that runs the sync and to

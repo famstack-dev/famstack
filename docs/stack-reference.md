@@ -857,6 +857,41 @@ hook's `ctx.cfg(key, value)`. It changes that one line in that section
 and leaves the admin's comments and other sections as they are.
 `stack ai switch` uses it to write `[ai]`.
 
+### What the agent may run
+
+The agent (the `agent` stacklet) runs `stack` commands through the core
+API, never the CLI itself. The API runs a fixed set of `memory` commands
+and `docs show`, plus the stacklet commands the admin lists in
+`stack.toml`:
+
+```toml
+[agent]
+allow = ["kettle"]                    # every command of the kettle stacklet
+# allow = ["kettle status", "kettle boil"]   # or single commands
+```
+
+- An entry is a stacklet id, or a stacklet id and one of its commands.
+  It matches by leading words, so `"kettle"` allows `stack kettle status`
+  and `stack kettle boil 3`. A bare string is read as a one-entry list.
+- Only stacklet commands qualify. An entry whose first word is not a
+  discovered stacklet with CLI commands, or whose second word is not
+  one of its commands, is ignored. So no entry can hand the agent a
+  framework command such as `up`, `destroy` or `config`.
+  `stack up agent` warns about every ignored entry.
+- The API reads the list on every request, so a change applies without
+  a restart. The agent learns about it on the next `stack up agent`.
+- Anything allowed runs, including commands that change something. That
+  is the admin's decision. Limits ("never above 80 degrees") belong in
+  the command as checks, not in the agent's prompt.
+
+`stack up agent` writes the allowed commands into the agent's workspace
+as an always-loaded skill, one line per command with its `HELP`, so the
+agent can call one without asking for `--help` first. **`HELP` is
+prompt text then**, so it names the arguments:
+`HELP = "Boil the water: boil <minutes>"`. With nothing allowed there
+is no such skill, and the agent's prompt is the same as without the
+feature.
+
 ---
 
 ## Docker Compose Conventions
@@ -1267,6 +1302,12 @@ openai_key = "local"
 default    = "mlx-community/Qwen2.5-14B-Instruct-4bit"
 whisper_url = "http://localhost:6111/v1"
 language   = "en"
+
+[agent]
+name  = "Stacky"                # the agent's name in chat
+allow = []                      # stacklet commands the agent may run,
+                                # "<id>" or "<id> <command>". See
+                                # "What the agent may run".
 
 [backup]
 # One block per destination. Engine name selects the implementation.

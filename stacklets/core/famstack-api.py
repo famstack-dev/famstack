@@ -8,8 +8,9 @@ so every consumer gets back what it speaks:
     A lifecycle surface (status/list/up/down/logs) for trusted core tools —
     the stacker bot and the tools-server.
   * plaintext line in → runs `./stack <args>` in text mode → plaintext out.
-    A curated read/domain surface (memory, docs) for the agent, which wants a
-    token-lean answer, not JSON, and must never reach lifecycle ops.
+    A curated read/domain surface (memory, docs, and the stacklet commands
+    in stack.toml `[agent] allow`) for the agent, which wants a token-lean
+    answer, not JSON, and must never reach lifecycle ops.
 
 Format is auto-detected: a request that begins with `{` is JSON, anything else
 is a plaintext command line. One service, two allowlists scoped by trust.
@@ -27,6 +28,9 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+
+from stack.agent_access import allowed_commands
+from stack.stack import Stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STACK_BIN = REPO_ROOT / "stack"
@@ -63,6 +67,25 @@ DOMAIN_ALLOW = [
     ["memory", "history"],
     ["docs", "show"],
 ]
+
+
+def _instance_stack():
+    """The instance as the CLI sees it, read fresh for every request.
+
+    STACK_DIR names the instance dir, as it does for the CLI, and the
+    subprocess below inherits it. Only the config and stacklet discovery
+    are read here, so the data dir does not matter.
+    """
+    instance = Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser()
+    return Stack(REPO_ROOT, instance, instance_dir=instance)
+
+
+def _domain_allow():
+    """DOMAIN_ALLOW plus the stacklet commands the admin listed in
+    `[agent] allow`. Only stacklet commands qualify, so no entry can add a
+    lifecycle command (see stack/agent_access.py)."""
+    return DOMAIN_ALLOW + allowed_commands(_instance_stack())
+
 
 def handle_request(data):
     """Process a single JSON command by calling the stack CLI."""
@@ -151,7 +174,8 @@ def handle_plaintext(line):
 
     The token-lean counterpart to `handle_request`: the agent sends a plaintext
     command line and gets the CLI's normal text output back (no `--json`), so its
-    context stays small. Confined to `DOMAIN_ALLOW` -- never lifecycle ops.
+    context stays small. Confined to `DOMAIN_ALLOW` and the stacklet commands
+    the admin allowed in stack.toml -- never lifecycle ops.
 
     Every path that is not a command that ran and succeeded reports a non-zero
     status, refusals included. A refusal the caller cannot distinguish from an
@@ -163,8 +187,9 @@ def handle_plaintext(line):
         return _with_exit(f"error: could not parse command ({e})\n", 2)
     if not args:
         return _with_exit("error: empty command\n", 2)
-    if not any(args[:len(p)] == p for p in DOMAIN_ALLOW):
-        allowed = ", ".join(" ".join(p) for p in DOMAIN_ALLOW)
+    domain_allow = _domain_allow()
+    if not any(args[:len(p)] == p for p in domain_allow):
+        allowed = ", ".join(" ".join(p) for p in domain_allow)
         return _with_exit(
             f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n", 126,
         )

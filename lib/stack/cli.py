@@ -37,6 +37,7 @@ from . import docker
 from . import doctor
 from . import global_command
 from . import logscan
+from .plugins import plugin_help, stacklet_commands
 from .commands import COMMANDS
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack
@@ -2038,48 +2039,6 @@ def handle_version(stck, args):
     print(f"{stck.product_name()} {running_version_of(stck)}")
 
 
-# ── Plugin loader ─────────────────────────────────────────────────────────
-
-def _load_stacklet_commands(stck: Stack) -> dict:
-    """Discover CLI plugins from stacklets/{id}/cli/*.py."""
-    commands = {}
-    for s in stck.discover():
-        cli_dir = Path(s["path"]) / "cli"
-        if not cli_dir.exists():
-            continue
-        for py in sorted(cli_dir.glob("*.py")):
-            if py.name.startswith("_"):
-                continue
-            commands.setdefault(s["id"], {})[py.stem] = str(py)
-    return commands
-
-
-def _plugin_help(module_path: str):
-    """`(short, full)` help for a CLI plugin, read statically — no import.
-
-    `short` is the plugin's `HELP = "..."` (the one-liner in `stack <id>`'s
-    command list); `full` is its module docstring (the usage + examples that
-    `stack <id> <cmd> --help` should print). Pulled with `ast` so building the
-    parser stays cheap and never runs the plugins' import-time side effects.
-    """
-    try:
-        import ast
-        tree = ast.parse(Path(module_path).read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
-        return None, None
-    full = ast.get_docstring(tree)
-    short = None
-    for node in tree.body:
-        if (isinstance(node, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == "HELP"
-                        for t in node.targets)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)):
-            short = node.value.value
-            break
-    return short, full
-
-
 # ── Main ──────────────────────────────────────────────────────────────────
 
 DISPATCH = {
@@ -2261,7 +2220,7 @@ def main():
     stck = None
     if repo_root:
         stck = create_stack(repo_root, instance_dir)
-        stacklet_cmds = _load_stacklet_commands(stck)
+        stacklet_cmds = stacklet_commands(stck)
         for sid, cmds in stacklet_cmds.items():
             sp = sub.add_parser(sid)
             sp_sub = sp.add_subparsers(dest="action")
@@ -2269,7 +2228,7 @@ def main():
                 # Surface each plugin's own HELP + docstring so
                 # `stack <id>` lists commands with a one-liner and
                 # `stack <id> <cmd> --help` prints its usage + examples.
-                short, full = _plugin_help(mod_path)
+                short, full = plugin_help(mod_path)
                 sp_sub.add_parser(
                     cmd_name, help=short,
                     description=full,
