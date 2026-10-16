@@ -161,7 +161,7 @@ body: |
   multiline text
 ---
 """
-        with pytest.raises(FrontmatterError, match="indented line"):
+        with pytest.raises(FrontmatterError, match="`\\|`"):
             parse(text)
 
     def test_rejects_block_scalar_gt(self):
@@ -176,68 +176,56 @@ body: >
   folded text
 ---
 """
-        with pytest.raises(FrontmatterError, match="indented line"):
+        with pytest.raises(FrontmatterError, match="`>`"):
             parse(text)
 
     def test_rejects_flow_map_syntax(self):
-        """Reject flow map syntax {key: value}."""
-        text = """\
----
-type: document
-title: Test
-timestamp: 2026-07-07T00:00:00Z
-source: paperless
-paperless_id: 1
-metadata: {key: value}
----
-"""
-        # This should parse but the value will be the string "{key: value}"
-        # which is allowed. Let's verify the value is treated as a scalar.
-        fm = parse(text)
-        assert fm["metadata"] == "{key: value}"
-
-    def test_rejects_flow_list_syntax(self):
-        """Reject flow list syntax [a, b, c]."""
-        text = """\
----
-type: note
-title: Test
-timestamp: 2026-07-07T00:00:00Z
-persons: [Homer, Marge, Bart]
----
-"""
-        # This should parse but the value will be the string "[Homer, Marge, Bart]"
-        fm = parse(text)
-        assert fm["persons"] == "[Homer, Marge, Bart]"
+        """A flow map is a nested map on one line, and nesting is forbidden."""
+        with pytest.raises(FrontmatterError, match="`{`"):
+            parse("---\ntype: note\nmetadata: {key: value}\n---\n")
 
     def test_rejects_anchors(self):
-        """Reject anchors (&anchor)."""
-        text = """\
----
-type: note
-title: Test &title_anchor
-timestamp: 2026-07-07T00:00:00Z
----
-"""
-        # Anchors are visible in the raw string but the parser doesn't enforce
-        # their rejection. In practice, they'd be part of the scalar value.
-        fm = parse(text)
-        # The anchor is included in the parsed value (stdlib parser doesn't understand anchors)
-        assert "&title_anchor" in fm["title"]
+        """An anchor makes YAML read `&title_anchor` as markup, not as title text."""
+        with pytest.raises(FrontmatterError, match="`&`"):
+            parse("---\ntype: note\ntitle: &title_anchor Test\n---\n")
 
     def test_rejects_aliases(self):
-        """Reject aliases (*alias)."""
-        text = """\
----
-type: note
-title: *missing_anchor
-timestamp: 2026-07-07T00:00:00Z
----
-"""
-        # Aliases would normally reference a prior anchor; without it, it's undefined.
-        # Our parser treats it as a scalar.
-        fm = parse(text)
-        assert "*missing_anchor" in fm["title"]
+        """An alias points at another value; the subset has none to point at."""
+        with pytest.raises(FrontmatterError, match="`\\*`"):
+            parse("---\ntype: note\ntitle: *missing_anchor\n---\n")
+
+    def test_rejects_an_empty_block_scalar(self):
+        """`body: |` with nothing indented below is still a block scalar."""
+        with pytest.raises(FrontmatterError, match="`\\|`"):
+            parse("---\ntype: note\nbody: |\n---\n")
+
+    def test_rejects_an_unquoted_colon_in_a_value(self):
+        """`title: Notes: Admin` took the wiki down: Quartz's YAML parser
+        refuses it, so this parser refuses it too rather than reading a title."""
+        with pytest.raises(FrontmatterError, match="`: `"):
+            parse("---\ntitle: Notes: Admin\n---\n")
+
+    def test_rejects_an_unquoted_comment_in_a_value(self):
+        """YAML reads `Bart #1` as `Bart` plus a comment; refuse the ambiguity."""
+        with pytest.raises(FrontmatterError, match="` #`"):
+            parse("---\ntitle: Bart #1\n---\n")
+
+    def test_a_hash_inside_a_word_is_text(self):
+        """Only ` #` starts a comment, so a URL fragment stays part of the URL."""
+        fm = parse("---\nresource: https://example.org/a#b\n---\n")
+        assert fm["resource"] == "https://example.org/a#b"
+
+    def test_rejects_an_unclosed_quote(self):
+        with pytest.raises(FrontmatterError, match="never closed"):
+            parse('---\ntitle: "Bart\n---\n')
+
+    def test_rejects_text_after_a_closing_quote(self):
+        with pytest.raises(FrontmatterError, match="after the closing quote"):
+            parse('---\ntitle: "Bart" Simpson\n---\n')
+
+    def test_rejects_a_list_of_maps(self):
+        with pytest.raises(FrontmatterError, match="`: `"):
+            parse("---\npersons:\n  - name: Homer\n---\n")
 
     def test_rejects_multiple_documents(self):
         """Reject multiple-document separator (---)."""
@@ -284,6 +272,50 @@ timestamp: 2026-07-07T00:00:00Z
 
 
 # ── Validator tests (acceptance: catches all error classes) ──────────────
+
+class TestFlowLists:
+    """A one-line flow list of scalars reads as a list, as YAML reads it.
+
+    The family edits pages by hand, and `tags: [a, b]` is how most people
+    write a short list. Reading it as the string "[a, b]" turned a tag
+    filter into a substring match on brackets. `dump` still writes block
+    lists, so the files the stack writes do not change.
+    """
+
+    def test_an_empty_flow_list_is_an_empty_list(self):
+        assert parse("---\ntags: []\n---\n") == {"tags": []}
+
+    def test_a_flow_list_of_plain_values(self):
+        fm = parse("---\npersons: [Homer, Marge, Bart]\n---\n")
+        assert fm["persons"] == ["Homer", "Marge", "Bart"]
+
+    def test_items_keep_their_quotes_and_commas_inside_them(self):
+        fm = parse('---\ntags: ["Person: Homer", \'Krusty, the Clown\']\n---\n')
+        assert fm["tags"] == ["Person: Homer", "Krusty, the Clown"]
+
+    def test_items_are_strings_like_block_list_items(self):
+        assert parse("---\nevent_ids: [1, true]\n---\n") == {"event_ids": ["1", "true"]}
+
+    def test_a_flow_list_reads_the_same_as_the_block_list_dump_writes(self):
+        written = "---\n" + dump({"tags": ["school", "Person: Bart"]}) + "\n---\n"
+        assert parse(written) == parse('---\ntags: [school, "Person: Bart"]\n---\n')
+
+    def test_rejects_a_nested_list(self):
+        with pytest.raises(FrontmatterError, match="nested"):
+            parse("---\ntags: [a, [b]]\n---\n")
+
+    def test_rejects_a_map_inside_a_list(self):
+        with pytest.raises(FrontmatterError, match="nested"):
+            parse("---\ntags: [{a: 1}]\n---\n")
+
+    def test_rejects_a_list_that_does_not_close_on_its_line(self):
+        with pytest.raises(FrontmatterError, match="close"):
+            parse("---\ntags: [a,\n  b]\n---\n")
+
+    def test_rejects_an_empty_item(self):
+        with pytest.raises(FrontmatterError, match="empty item"):
+            parse("---\ntags: [a,,b]\n---\n")
+
 
 class TestValidator:
     """Verify schema validation catches all required error conditions."""
@@ -650,6 +682,24 @@ class TestSpecialValues:
 
 
 # ── Date string preservation ────────────────────────────────────────────
+
+class TestQuotedEscapes:
+    """What `dump` escapes, `parse` reads back as the original text."""
+
+    def test_double_quote_and_backslash_round_trip(self):
+        # The colon makes `dump` quote the value, so the escapes are written.
+        title = 'Bart "El Barto": Simpson \\ Springfield'
+        written = dump({"title": title})
+        assert written.startswith('title: "')
+        assert parse("---\n" + written + "\n---\n")["title"] == title
+
+    def test_two_single_quotes_are_one(self):
+        assert parse("---\ntitle: 'Moe''s Tavern'\n---\n")["title"] == "Moe's Tavern"
+
+    def test_rejects_an_unknown_escape(self):
+        with pytest.raises(FrontmatterError, match="escape"):
+            parse('---\npath: "C:\\Users"\n---\n')
+
 
 class TestDatePreservation:
     """Verify ISO date strings are preserved as strings."""
