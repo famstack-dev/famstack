@@ -45,7 +45,6 @@ def run(args, stacklet, config):
         return {"error": f"The speech server has no voice '{voice}'. "
                          f"Voices: {', '.join(voices)}"}
 
-    print(f"\n  Speaking as {voice}...\n")
     try:
         audio = synthesize(text, voice)
     except urllib.error.HTTPError as e:
@@ -58,5 +57,6 @@ def run(args, stacklet, config):
         return {"error": "The speech server returned no audio. "
                          "Check 'docker logs stack-ai-speech'."}
 
+    print(f"\n  Speaking as {voice}...\n")
     play(audio)
     return {"ok": True, "voice": voice}
