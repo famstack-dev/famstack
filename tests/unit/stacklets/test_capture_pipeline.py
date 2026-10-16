@@ -1155,6 +1155,53 @@ class TestCorrectingAnEntryKeepsItsFile:
         assert published["kept_media"] is None
 
 
+class TestACorrectionReadsTheHeaderOrLeavesTheEntryAlone:
+    """A correction rewrites an entry from its header: type, date, id.
+
+    A header hand-edited into something the parser refuses would have
+    to be guessed at, and the rewrite would file the capture under the
+    guess. The entry is left as it is instead (and the log names it).
+    """
+
+    PATH = "marge/bookmarks/test-capture.md"
+
+    def _entry(self) -> str:
+        fm = capture_frontmatter(
+            title="Schulkalender", captured_at="2026-03-14", kind="bookmark",
+            source_uri="https://school.example/kalender", persons=["Marge"],
+            tags=["schule"], model=None, capture_id="$cal:home.local",
+        )
+        return render_capture(
+            frontmatter=fm, body="", kind="bookmark",
+            captured_at="2026-03-14", source_uri="https://school.example/kalender",
+            persons=["Marge"], from_path=self.PATH, shared_bucket="family",
+            summary="The school calendar for March.", facts=[],
+        )
+
+    async def _reprocess(self, raw: str):
+        mirror = FakeMirror()
+        mirror._stored = {self.PATH: raw}
+        outcome = await _pipeline(mirror=mirror).reprocess(
+            vault_path=self.PATH, user_hint="das gehört zur Schule",
+            sender_mxid="@marge:s",
+        )
+        return outcome, mirror.captures
+
+    @pytest.mark.asyncio
+    async def test_a_header_with_a_one_line_list_is_corrected(self):
+        raw = self._entry().replace("---\n", "---\nreminders: [Elternabend, Ferien]\n", 1)
+        outcome, published = await self._reprocess(raw)
+        assert outcome.status == "reclassified"
+        assert published[-1]["capture_id"] == "$cal:home.local"
+
+    @pytest.mark.asyncio
+    async def test_a_header_that_does_not_parse_leaves_the_entry_alone(self):
+        raw = self._entry().replace("---\n", "---\nnote: Marge: bitte pruefen\n", 1)
+        outcome, published = await self._reprocess(raw)
+        assert outcome.status == "capture_missing"
+        assert published == []
+
+
 class TestAPhotosCaption:
     """A photo posted with a caption ("Bart, first time without training
     wheels") carries the only words about it the family wrote. The model

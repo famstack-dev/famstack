@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
+from stack.frontmatter import FrontmatterError
 
 from diary_room import household_now
 
@@ -1288,19 +1289,28 @@ class GitMirror:
             capture_id=capture_id,
         )
 
-        content = fold_email_message(
-            existing_content,
-            section=section,
-            message_id=message_id,
-            new_frontmatter=new_fm,
-            title=title,
-            captured_at=captured_at,
-            source_uri=thread_uri,
-            persons=persons,
-            tags=tags or [],
-            from_path=target_path,
-            shared_bucket=self.shared_bucket,
-        )
+        try:
+            content = fold_email_message(
+                existing_content,
+                section=section,
+                message_id=message_id,
+                new_frontmatter=new_fm,
+                title=title,
+                captured_at=captured_at,
+                source_uri=thread_uri,
+                persons=persons,
+                tags=tags or [],
+                from_path=target_path,
+                shared_bucket=self.shared_bucket,
+            )
+        except FrontmatterError as e:
+            # Merging into a header that does not parse would rewrite the
+            # thread without its type and title; the file stays as it is.
+            logger.warning(
+                "[git-mirror] {}: frontmatter does not parse ({}), email not folded",
+                target_path, e,
+            )
+            return None
         if content is None:
             # Already folded into this thread — nothing to write.
             logger.info("[git-mirror] email already folded → {}", target_path)
