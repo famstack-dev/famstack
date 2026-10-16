@@ -22,8 +22,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from access import INTERNAL_PORT, PUBLIC_PORT, serves
-from capture_index import find_capture
 from resolver import build_redirect
+from stack.cards import find_card
 
 
 # ── Config from environment ──────────────────────────────────────────────
@@ -54,12 +54,12 @@ WIKI_PUBLIC_URL = os.environ.get("MEMORY_PUBLIC_URL", "").replace(
 LINK_SHARED_BUCKET = os.environ.get("SHARED_BUCKET", "family")
 # The one knob: the path namespace persistent links live under (home.tld/go/…).
 LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
-# The brain projection, read-only — the same tree the wiki serves. Only
-# `/go/capture/<id>` needs it, to find where a capture sits now. This is the
-# mount point, not `BRAIN_REPO_DIR`: that variable is the path the *bot-runner*
-# sees, and pointing this at it would name a directory that does not exist in
-# this container. Unmounted (memory not installed) simply means capture
-# links 404.
+# The brain projection, read-only: the same tree the wiki serves. Only the
+# card links need it (`/go/capture/<id>`, `/go/diary/<id>`), to find where a
+# card sits now. This is the mount point, not
+# `BRAIN_REPO_DIR`: that variable is the path the *bot-runner* sees, and
+# pointing this at it would name a directory that does not exist in this
+# container. Unmounted (memory not installed) simply means card links 404.
 BRAIN_DIR = Path("/brain")
 
 
@@ -164,7 +164,7 @@ def _go(kind: str, rest: list[str]):
     url = build_redirect(
         kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
         shared_bucket=LINK_SHARED_BUCKET,
-        find_capture=lambda cid: find_capture(cid, brain_dir=BRAIN_DIR),
+        find_card=lambda kind, cid: find_card(kind, cid, root=BRAIN_DIR),
     )
     if not url:
         return _error("no such resource", status=404)
@@ -206,6 +206,16 @@ async def go_capture(capture_id: str):
     someone a different note.
     """
     return _go("capture", [capture_id])
+
+
+@app.get(f"/{LINK_PREFIX}/diary/{{entry_id}}", summary="Resolve a diary card link")
+async def go_diary(entry_id: str):
+    """Redirect a diary card to wherever it is filed now, by its entry id.
+
+    A family member's correction can move a card to another day, and so
+    to another folder; the entry id stays. 404 when no card carries it.
+    """
+    return _go("diary", [entry_id])
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────

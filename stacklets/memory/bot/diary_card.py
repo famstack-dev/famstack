@@ -305,6 +305,7 @@ def to_entry(card: Card) -> "diary.Entry":
         gist=card.summary,
         moments=diary.verify_moments(card.body, card.quotes),
         title=card.title,
+        entry_id=card.entry_id,
     )
 
 

@@ -2117,6 +2117,9 @@ def search_memory(
             # rename, a corrected title). Empty for anything not
             # captured from chat.
             "capture_id": fm.get("capture_id") or "",
+            # A diary card's id, the same kind of key for the same
+            # reason: a correction can move the card to another day.
+            "entry_id": fm.get("entry_id") or "",
         })
 
     idf = [_idf(doc_count, df) for df in doc_freq]
