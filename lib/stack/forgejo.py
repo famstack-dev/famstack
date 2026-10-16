@@ -239,9 +239,11 @@ class ForgejoClient:
             return self._req("GET", f"/api/v1/users/{owner}/repos",
                              headers=self._admin_header(),
                              params={"limit": "50"}) or []
-        return self._req("GET", "/api/v1/repos/search",
-                         headers=self._admin_header(),
-                         params={"limit": "50"}) or []
+        # The search endpoint wraps its results: {"ok": ..., "data": [...]}.
+        found = self._req("GET", "/api/v1/repos/search",
+                          headers=self._admin_header(),
+                          params={"limit": "50"}) or {}
+        return found.get("data") or []
 
     def get_repo(self, owner: str, repo: str) -> dict | None:
         return self._req("GET", f"/api/v1/repos/{owner}/{repo}",
