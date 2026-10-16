@@ -15,6 +15,10 @@ _SSL.verify_mode = __import__("ssl").CERT_NONE
 # helpers at another server, which is how the tests reach a stand-in.
 _SPEECH_URL = "http://localhost:42063"
 
+# The welcome message's pace, chosen by ear: 1.0 sounds rushed. Every
+# command that speaks uses it, so they all sound like `stack ai hello`.
+SPEED = 0.8
+
 # The map the speech container mounts: the voice names it accepts.
 VOICE_MAP = Path(__file__).parent / "config" / "voice_to_speaker.yaml"
 
@@ -41,7 +45,7 @@ def known_voices() -> list[str]:
     return voices
 
 
-def synthesize(text: str, voice: str = "alloy", speed: float = 0.8) -> bytes:
+def synthesize(text: str, voice: str = "alloy", speed: float = SPEED) -> bytes:
     """The text spoken as MP3. Raises OSError when the server fails or
     does not answer (`urllib.error.HTTPError` for an answer that is not 2xx)."""
     url = os.environ.get("STACK_SPEECH_URL", _SPEECH_URL).rstrip("/")
@@ -68,7 +72,7 @@ def play(audio: bytes) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
-def speak(text: str, voice: str = "alloy", speed: float = 0.8) -> bool:
+def speak(text: str, voice: str = "alloy", speed: float = SPEED) -> bool:
     """Send text to TTS and play it. Returns True on success."""
     try:
         audio = synthesize(text, voice, speed)
