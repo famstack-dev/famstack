@@ -605,6 +605,24 @@ Useful commands:
 ./stack memory prompt             # the vocabulary the models are given, per prompt
 ```
 
+### Web (`web`) incubating
+
+Private web search through [SearXNG](https://docs.searxng.org/), and a question answered from the results with its sources. Experimental: it can change or disappear between releases.
+
+```bash
+./stack up web
+./stack web search "immich vs photoprism"
+./stack web ask "does immich support raw files"
+./stack web fetch <url>            # read one page; works without the stacklet
+```
+
+SearXNG passes each search on to public search engines, from your Mac and without an account. The search terms leave the house; nothing else does. `ask` writes its answer with the stack's AI, so it needs `core` up as well. Few engines answer on a default install, so when results get thinner, check which engines still respond before changing the question.
+
+| | |
+|---|---|
+| Port | `42090` |
+| Data | none: SearXNG keeps no index and no history |
+
 ---
 
 ## Configuration

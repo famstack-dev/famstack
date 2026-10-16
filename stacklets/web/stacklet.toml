@@ -1,0 +1,51 @@
+# stacklet.toml — web stacklet (reading the internet)
+#
+# The stacklet is what *stops* web reading being heavy. Reading a pasted
+# link is not in here: canonicalization, structured data, plain HTTP,
+# extraction and the quality gate live in `lib/stack/web/`, which the
+# bot-runner already carries. A family that never installs this stacklet
+# still gets link capture, and the archivist never waits on a container
+# for the case that never needed one.
+#
+# What is in here is the part that genuinely needs a service. Search is
+# a search engine. The stealth fetch tier, when it lands, is a browser
+# — roughly 250 MB of Chromium that would otherwise tax every bot image
+# for a capability most of them never invoke.
+#
+# So installing this is opt-in by construction: a family that never
+# searches and never pastes a shop link never downloads any of it.
+
+id          = "web"
+name        = "Web"
+description = "Search the internet privately (SearXNG)"
+version     = "0.1.0"
+category    = "infrastructure"
+stage       = "incubating"
+port        = 42090
+
+hints = [
+    "Search at {url}",
+    "From the terminal: `stack web search \"immich vs photoprism\"`",
+    "Read a page: `stack web fetch <url>` (does not need this stacklet)",
+]
+
+[upstream]
+image   = "searxng/searxng"
+channel = "patch"
+
+# `generate` keys are minted per install and kept in the stack's secret
+# store, never in the repo. SearXNG signs its session cookie with this;
+# the shipped default is the literal string "ultrasecretkey".
+[env]
+generate = ["WEB_SECRET"]
+
+[env.defaults]
+# No data dir. SearXNG keeps no index and no state: it forwards a query
+# to upstream engines and merges the replies. Declaring one would create
+# an empty directory for teardown to clean up again.
+TZ = "{timezone}"
+
+[health]
+url     = "http://localhost:42090/healthz"
+expect  = "200"
+timeout = 60

@@ -14,7 +14,7 @@ See `docs/design/web/plan.md` for the measurements behind each tier.
 """
 
 from stack.web.content import SourceContent
-from stack.web.fetch import FetchOutcome, fetch_url
+from stack.web.fetch import FetchOutcome, fetch_url, urllib_transport
 from stack.web.profiles import canonicalize, profile_for
 from stack.web.quality import Page, Verdict, assess
 
@@ -27,4 +27,5 @@ __all__ = [
     "canonicalize",
     "fetch_url",
     "profile_for",
+    "urllib_transport",
 ]

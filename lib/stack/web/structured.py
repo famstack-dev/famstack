@@ -29,6 +29,13 @@ import re
 from typing import Any, Iterator
 
 from stack.web.content import SourceContent
+from stack.web.quality import page_title
+
+# Below this, a list is more likely a breadcrumb trail than the page's
+# subject. Four is deliberate: sites nest three-level breadcrumbs as
+# `ItemList` often enough that three would misfire, and a round-up with
+# fewer than four entries is not worth a vault entry either.
+_MIN_LIST_ENTRIES = 4
 
 _LD_BLOCK_RE = re.compile(
     r'<script[^>]*type\s*=\s*["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -204,11 +211,60 @@ def _article_markdown(obj: dict) -> str | None:
 
 # ── Entry point ───────────────────────────────────────────────────────
 
+# ── Listing ──────────────────────────────────────────────────────────
+
+def _itemlist_markdown(obj: dict) -> str | None:
+    """An `ItemList` rendered as the list of things it points at.
+
+    A search-results or round-up page is not an article, and extraction
+    correctly finds almost no prose on one: a chefkoch recipe search
+    returned 106 characters, which the gate called `empty`. That verdict
+    was true and useless, because the page carried forty recipes with
+    names and links, published as structured data for exactly this
+    purpose.
+
+    Filing the *list* is the honest answer. What must not happen is
+    filing one of its entries as though it were the page, which is why
+    `_recipe_markdown` still refuses a `Recipe` that carries no
+    ingredients: a round-up embeds thirty of those.
+
+    Returns None for a list too short to be the subject of the page.
+    Breadcrumb trails are `BreadcrumbList` rather than `ItemList`, but
+    sites mislabel them, and a three-crumb trail is indistinguishable
+    from a three-item list except by size.
+    """
+    entries = []
+    for item in obj.get("itemListElement") or []:
+        if not isinstance(item, dict):
+            continue
+        name = _text(item.get("name") or item.get("item"))
+        link = item.get("url")
+        if not isinstance(link, str):
+            nested = item.get("item")
+            link = nested.get("url") if isinstance(nested, dict) else None
+        if name and isinstance(link, str) and link.strip():
+            entries.append((name, link.strip()))
+
+    if len(entries) < _MIN_LIST_ENTRIES:
+        return None
+
+    lines = [f"{len(entries)} entries on this page:", ""]
+    lines += [f"- [{name}]({link})" for name, link in entries]
+    return "\n".join(lines)
+
+
+# Tried in this order, and the order is the whole correctness argument.
+# A recipe page routinely carries a breadcrumb trail as well as its
+# recipe; walking objects in document order and taking the first that
+# renders would file the breadcrumb. So every reader is given a chance
+# at the entire document before the next one is tried, and the specific
+# kinds come before the generic list.
 _READERS = (
     ("Recipe", _recipe_markdown),
     ("Article", _article_markdown),
     ("NewsArticle", _article_markdown),
     ("BlogPosting", _article_markdown),
+    ("ItemList", _itemlist_markdown),
 )
 
 
@@ -219,18 +275,27 @@ def read_structured(html: str, *, url: str | None = None) -> SourceContent | Non
     but not about this page — the caller falls through to general
     extraction, which is the common case.
     """
-    for payload in _blocks(html):
-        for obj in _objects(payload):
-            for wanted, render in _READERS:
-                if not _has_type(obj, wanted):
-                    continue
-                body = render(obj)
-                if not body:
-                    continue
-                return SourceContent(
-                    text=body,
-                    mime="text/markdown",
-                    title_hint=_text(obj.get("headline") or obj.get("name")) or None,
-                    source_uri=url,
-                )
+    objects = [obj for payload in _blocks(html) for obj in _objects(payload)]
+
+    for wanted, render in _READERS:
+        for obj in objects:
+            if not _has_type(obj, wanted):
+                continue
+            body = render(obj)
+            if not body:
+                continue
+            # An `ItemList` usually carries no name of its own, and a
+            # capture with no title makes the classifier invent one.
+            # The document's `<title>` is the page's own answer to what
+            # it is, so it is a better fallback than a guess.
+            return SourceContent(
+                text=body,
+                mime="text/markdown",
+                title_hint=(
+                    _text(obj.get("headline") or obj.get("name"))
+                    or page_title(html)
+                    or None
+                ),
+                source_uri=url,
+            )
     return None
