@@ -56,3 +56,18 @@ def test_the_shell_cannot_confirm_deleting_a_list():
 def test_the_shell_still_shows_and_deletes_lists_the_store_allows():
     assert not _blocked_by_exec("stack memory list show partyliste")
     assert not _blocked_by_exec("stack memory list delete partyliste --as homer")
+
+
+def test_the_shell_finds_python_for_the_stack_client():
+    """`stack` in the agent's shell reaches the host through a Python client.
+
+    nanobot 0.3.5 runs each exec command with only HOME, LANG, TERM and the
+    keys named in `allowed_env_keys` (`ExecTool._build_env`). The shell still
+    finds `stack` on its built-in search path, but the client's
+    `#!/usr/bin/env python3` then searches only /bin and /usr/bin, and the
+    image's Python is in /usr/local/bin: every `stack` call fails with 127.
+    """
+    client = CONFIG.parent / "client" / "stack"
+    assert client.read_text().startswith("#!/usr/bin/env python3")
+
+    assert "PATH" in _config()["tools"]["exec"].get("allowed_env_keys", [])
