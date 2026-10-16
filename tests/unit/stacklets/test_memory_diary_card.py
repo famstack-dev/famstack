@@ -88,10 +88,12 @@ class TestACardHoldsTheWholeEntry:
         direct = diary.pages_for(
             [replace(e, gist="", moments=[]) for e in entries],
             bucket="family", room_id=ROOM, media=media)
-        # What the card adds on purpose (its title and summary) is set
-        # aside: this pins that nothing of the entry itself is lost.
+        # What the card adds on purpose (its title, its summary and the
+        # anchor its link lands on) is set aside: this pins that nothing
+        # of the entry itself is lost.
         from_cards = diary.pages_for(
-            [replace(diary_card.to_entry(c), gist="", moments=[], title="") for c in cards],
+            [replace(diary_card.to_entry(c), gist="", moments=[], title="", entry_id="")
+             for c in cards],
             bucket="family", room_id=ROOM, media=diary_card.media_of(cards))
         assert from_cards == direct
 
@@ -506,6 +508,16 @@ class TestTheDiaryPageShowsTheCard:
 
         assert "### A day at the lake" in page
         assert "*Marge · Voice note, 0:07*" in page
+
+    def test_the_card_is_anchored_by_its_entry_id(self):
+        """`/go/diary/<entry_id>` lands on the month page at this anchor.
+        The heading's own anchor follows the title, which a correction
+        rewrites; the entry id never changes."""
+        card = diary_card.to_card(self._note(), _extraction(title="A day at the lake"),
+                                  room_id=ROOM, media={})
+        page = _page_for(card)
+
+        assert f'<a id="{card.entry_id}"></a>\n### A day at the lake' in page
 
     def test_the_summary_opens_the_entry_and_every_word_follows(self):
         card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake."),
