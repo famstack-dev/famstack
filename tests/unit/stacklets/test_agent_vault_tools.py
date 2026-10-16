@@ -182,6 +182,21 @@ def test_the_agent_cannot_add_a_person(api):
     assert not any(args[:len(p)] == p for p in api.DOMAIN_ALLOW)
 
 
+
+def test_the_agent_can_speak_aloud_without_being_allowed_it(api):
+    """Saying something aloud is one of the agent's own abilities, like a
+    lookup: it works on an instance whose stack.toml allows nothing."""
+    args = ["ai", "say", "Dinner is ready"]
+    assert any(args[:len(p)] == p for p in api.DOMAIN_ALLOW)
+
+
+@pytest.mark.parametrize("command", ["switch", "download", "models"])
+def test_speaking_does_not_open_the_rest_of_the_ai_stacklet(api, command):
+    """`ai switch` rewrites the AI setup and `ai download` fills the disk;
+    speaking must not hand the model either."""
+    args = ["ai", command]
+    assert not any(args[:len(p)] == p for p in api.DOMAIN_ALLOW)
+
 # ── gate 2: the memory CLI's real parser ─────────────────────────────
 
 @pytest.mark.parametrize("tool_name,command,kwargs", [

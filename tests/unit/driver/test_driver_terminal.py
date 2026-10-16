@@ -12,10 +12,20 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "driver"))
+DRIVER = Path(__file__).resolve().parents[2] / "driver"
+sys.path.insert(0, str(DRIVER))
 
 from chat import listing  # noqa: E402
+from narration import Narrator  # noqa: E402
 from terminal import Answers, plain, prompt_in  # noqa: E402
+
+# The driver's modules have bare names that stacklets use too (`speech`).
+# Left cached, a later test running `stack ai say` imports the driver's
+# `speech` instead of the ai stacklet's.
+sys.path.remove(str(DRIVER))
+for _name, _module in list(sys.modules.items()):
+    if Path(getattr(_module, "__file__", None) or "/").is_relative_to(DRIVER):
+        del sys.modules[_name]
 
 COLOUR = "\x1b[38;5;208m"
 RESET = "\x1b[0m"
@@ -71,7 +81,6 @@ class TestTheProtocol:
     so the driver calls of one scenario leave one protocol behind."""
 
     def test_steps_are_appended_to_the_protocol_file(self, tmp_path, monkeypatch):
-        from narration import Narrator
         protocol = tmp_path / "run.log"
         monkeypatch.setenv("DRIVER_LOG", str(protocol))
 

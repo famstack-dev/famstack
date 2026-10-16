@@ -486,6 +486,7 @@ Useful commands:
 ./stack ai models
 ./stack ai download <model-id>
 ./stack ai switch <url>
+./stack ai say "<text>" [--voice <name>]
 ./stack setup ai
 ```
 
@@ -746,6 +747,7 @@ Key things to know:
 ```bash
 ./stack ai models             # available AI models in the backend
 ./stack ai switch <url>       # use another AI server; `managed` for the engine the stack runs
+./stack ai say "<text>"       # speak a text aloud on this Mac; `--voice <name>` picks the voice
 ./stack config                # show resolved configuration
 ./stack config --secrets      # include generated passwords
 ./stack version               # print version

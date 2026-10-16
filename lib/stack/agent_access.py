@@ -1,8 +1,9 @@
 """`[agent] allow`: the stacklet commands the admin lets the agent run.
 
 The agent reaches the CLI only through the core API's plaintext surface,
-which runs a fixed set of memory and docs commands. An admin who wants it
-to operate something more lists that stacklet's commands in stack.toml:
+which runs a fixed set of memory, docs and speech commands. An admin
+who wants it to operate something more lists that stacklet's commands
+in stack.toml:
 
     [agent]
     allow = ["kettle"]                  # every command of the kettle stacklet
