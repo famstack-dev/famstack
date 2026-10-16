@@ -131,3 +131,38 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
         assert people["margaret"] == "Maggie"
         assert people["maggie simpson"] == "Maggie"
         assert "  - Maggie (Maggie Simpson, Margaret)" in section
+
+
+class TestTheWikiPagesTheDiaryReads:
+    """Before person files exist, the wiki's person pages add the names.
+
+    The diary reads their headers with the parser every other reader
+    uses. A page whose header does not parse adds nothing, rather than
+    a name guessed from half of it, and the file is named on stderr.
+    """
+
+    @staticmethod
+    def _instance(tmp_path, monkeypatch, pages: dict[str, str]):
+        vault, brain = tmp_path / "vault", tmp_path / "brain"
+        (vault / "family").mkdir(parents=True)
+        for slug, text in pages.items():
+            (brain / slug).mkdir(parents=True)
+            (brain / slug / "about.md").write_text(text)
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(vault))
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
+        monkeypatch.setenv("SHARED_BUCKET", "family")
+        monkeypatch.setenv("FAMILY_NAMES", "Homer Simpson")
+        return _diary_command()
+
+    def test_a_one_line_list_of_synonyms_adds_each_name(self, tmp_path, monkeypatch):
+        cli = self._instance(tmp_path, monkeypatch, {"moe": (
+            "---\ntype: person\ngenerated: true\ntitle: Moe Szyslak\n"
+            "canonical: Moe Szyslak\nsynonyms: [Moe, Mo]\n---\n")})
+        assert cli._household_people() == ["Homer Simpson", "Moe Szyslak", "Moe", "Mo"]
+
+    def test_a_page_whose_header_does_not_parse_is_skipped_and_named(
+            self, tmp_path, monkeypatch, capsys):
+        cli = self._instance(tmp_path, monkeypatch, {"barney": (
+            "---\ntype: person\ngenerated: true\ncanonical: Barney #2\n---\n")})
+        assert cli._household_people() == ["Homer Simpson"]
+        assert "barney/about.md: frontmatter does not parse" in capsys.readouterr().err

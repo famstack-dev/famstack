@@ -48,11 +48,19 @@ Allowed:
     - homer
     - marge
   ```
+  A writer emits this block form. A reader also accepts a one-line flow
+  list of scalars (`tags: [homer, "Person: Marge"]`, `tags: []`), the
+  form people type by hand, and reads its items as strings.
 
 Forbidden (a writer MUST NOT emit; a reader MUST fail loudly, not
 silently drop):
-- Nested maps, lists of maps, flow syntax (`{}`, `[]`), anchors/aliases,
-  multiline block scalars (`|`, `>`), multiple documents.
+- Nested maps, lists of maps, flow maps (`{}`), nested flow lists,
+  anchors/aliases, multiline block scalars (`|`, `>`), multiple documents.
+- Unquoted values YAML reads as something else: one that starts with a
+  YAML indicator (`[ ] { } , & * ! | > # % @` and backtick, or `- `,
+  `? `, `: `), or that contains `: ` or ` #`. Quote them. Quartz reads
+  the wiki's pages with a full YAML parser, so a value both parsers
+  accept means the same to both.
 
 Rationale: full YAML's ambiguity buys nothing a family vault needs and
 costs a C-extension dependency the host CLI cannot load. We own the

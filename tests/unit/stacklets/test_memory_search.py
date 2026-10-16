@@ -1005,3 +1005,46 @@ class TestSearchReadsTheBrain:
                           {"data_dir": str(tmp_path)})
 
         assert capsys.readouterr().out.split() == ["family/notes/garten.md"]
+
+
+# ─── Hand-edited frontmatter ─────────────────────────────────────────────
+
+class TestHandEditedFrontmatter:
+    """Search reads a page's frontmatter the way every other reader does.
+
+    The family edits pages by hand. A short list written on one line is
+    a list, so the person and tag filters find the page. A header that
+    does not parse is not guessed at: the page is still found by its
+    words, and the file is named on stderr so someone can fix it.
+    """
+
+    def test_a_one_line_list_of_persons_is_filtered_on(self, vault):
+        _write(vault / "marge/notes/2026/03/2026-03-20-kuchen.md", """
+            ---
+            title: Kuchen fuer Maggie
+            date: 2026-03-20
+            persons: [Marge, Maggie]
+            tags: [Topic:Cooking, "Person: Maggie"]
+            ---
+
+            Krapfen mit Puderzucker.
+        """)
+        results = search_memory("Krapfen", vault, persons=["Maggie"])
+        assert [r["rel"] for r in results] == ["marge/notes/2026/03/2026-03-20-kuchen.md"]
+        assert search_memory("Krapfen", vault, tags=["Person: Maggie"]) == results
+
+    def test_a_page_whose_header_does_not_parse_is_found_and_named(self, vault, capsys):
+        _write(vault / "homer/notes/2026/03/2026-03-21-moe.md", """
+            ---
+            title: Moe's: the tavern
+            persons:
+              - Homer
+            ---
+
+            Duff vom Fass bei Moe.
+        """)
+        results = search_memory("Duff vom Fass", vault)
+        assert [r["rel"] for r in results] == ["homer/notes/2026/03/2026-03-21-moe.md"]
+        # Its persons were not guessed from the half that would parse.
+        assert search_memory("Duff vom Fass", vault, persons=["Homer"]) == []
+        assert "homer/notes/2026/03/2026-03-21-moe.md: frontmatter does not parse" in capsys.readouterr().err

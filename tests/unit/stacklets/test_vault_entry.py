@@ -7,6 +7,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
@@ -27,6 +29,7 @@ from vault_entry import (
     merge_email_frontmatter,
     fold_email_message,
 )
+from stack.frontmatter import FrontmatterError
 
 
 # ── Slug generation ────────────────────────────────────────────────────
@@ -952,6 +955,29 @@ class TestFoldEmailMessage:
         fm, _ = split_frontmatter(second)
         assert fm["persons"] == ["Homer", "Marge"]
         assert fm["tags"] == ["school", "form"]
+
+    def _fold_into(self, existing: str) -> str | None:
+        return fold_email_message(
+            existing,
+            section=self._section("reply@h", body="the reply"), message_id="reply@h",
+            new_frontmatter=self._fm(["Marge"], ["form"]),
+            title="Elternabend", captured_at="2026-06-22",
+            source_uri="mid:root@h", persons=["Marge"], tags=["form"],
+            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+        )
+
+    def test_a_hand_edited_one_line_list_is_unioned_as_a_list(self):
+        thread = ("---\ntype: email\ntitle: Elternabend\npersons: [Homer]\n"
+                  "tags: [school, \"Person: Homer\"]\n---\n\n# Elternabend\n")
+        fm, _ = split_frontmatter(self._fold_into(thread))
+        assert fm["persons"] == ["Homer", "Marge"]
+        assert fm["tags"] == ["school", "Person: Homer", "form"]
+
+    def test_a_thread_whose_header_does_not_parse_is_not_rewritten(self):
+        """Merging into an empty header would drop the thread's type and title."""
+        thread = "---\ntype: email\ntitle: Elternabend: Klasse 4b\n---\n\n# Elternabend\n"
+        with pytest.raises(FrontmatterError):
+            self._fold_into(thread)
 
     def test_already_folded_message_is_noop(self):
         first = fold_email_message(

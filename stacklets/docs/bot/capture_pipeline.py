@@ -45,6 +45,8 @@ from pipeline import (
     LLMUnavailableError,
 )
 from stack import resolve_model
+from stack.frontmatter import FrontmatterError
+from stack.frontmatter import parse as parse_frontmatter
 from stack.lists import list_path
 
 try:
@@ -607,7 +609,16 @@ class CapturePipeline:
         if found is None:
             return CaptureOutcome(status="capture_missing")
         vault_path, raw = found
-        meta, summary_text = _parse_capture_markdown(raw)
+        try:
+            meta, summary_text = _parse_capture_markdown(raw)
+        except FrontmatterError as e:
+            # Re-rendering from a header that does not parse would refile
+            # the capture under a guessed type, date and id.
+            logger.warning(
+                "[capture] {}: frontmatter does not parse ({}), reprocess skipped",
+                vault_path, e,
+            )
+            return CaptureOutcome(status="capture_missing")
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
         # The summary callout doesn't carry the frontmatter tag list,
@@ -992,9 +1003,9 @@ def _parse_capture_markdown(raw: str) -> tuple[dict, str]:
     the prose + facts text (with the `> ` blockquote prefix stripped
     per line), suitable for use as a SourceContent.text.
 
-    Tolerant of partial or missing structure -- returns `({}, "")`
-    rather than raising so a malformed mirror entry surfaces as
-    "couldn't reprocess" instead of crashing the bot.
+    Tolerant of missing structure -- returns `({}, "")` when there is
+    no frontmatter block. Frontmatter that is there but does not parse
+    raises `FrontmatterError`.
     """
     if not raw or not raw.startswith("---\n"):
         return ({}, "")
@@ -1002,7 +1013,7 @@ def _parse_capture_markdown(raw: str) -> tuple[dict, str]:
     if fm_end < 0:
         return ({}, raw)
 
-    meta = _parse_yaml_frontmatter(raw[4:fm_end])
+    meta = parse_frontmatter(raw)
     body = raw[fm_end + len("\n---\n"):]
     summary = _extract_summary_callout(body)
     return (meta, summary)
@@ -1071,36 +1082,6 @@ def _with_reply(replies, sender_mxid: str, words: str) -> list[tuple[str, str]]:
     if not words or reply in replies:
         return list(replies)
     return [*replies, reply]
-
-
-def _parse_yaml_frontmatter(text: str) -> dict:
-    """Same stdlib subset memory/lib's `_parse_frontmatter` uses --
-    keeps the bot stdlib-only for this path so we don't pull
-    python-frontmatter into the reprocess hot loop."""
-    data: dict = {}
-    current_list: list[str] | None = None
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip()
-        if not line:
-            continue
-        if line.startswith("  - ") or line.startswith("- "):
-            if current_list is not None:
-                token = line.split("- ", 1)[1].strip().strip("'\"")
-                current_list.append(token)
-            continue
-        if line.startswith(" ") or line.startswith("\t"):
-            continue
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key, value = key.strip(), value.strip()
-        if value == "":
-            current_list = []
-            data[key] = current_list
-        else:
-            data[key] = value.strip("'\"")
-            current_list = None
-    return data
 
 
 def _extract_summary_callout(body: str) -> str:

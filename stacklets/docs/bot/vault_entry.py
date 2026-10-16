@@ -38,12 +38,12 @@ from __future__ import annotations
 import hashlib
 import re
 
-import yaml
 
 # Frontmatter writer uses the shared stdlib module so reader/writer agree.
 # render_* stay pure formatters; schema validation lives at the write
 # boundary (GitMirror), so unit tests can render partial frontmatter.
 from stack.frontmatter import dump as frontmatter_dump
+from stack.frontmatter import parse as frontmatter_parse
 
 # Slug and entity-path conventions live in the framework (`stack.vault`)
 # so the memory wiki and this docs archivist share one source.
@@ -674,20 +674,16 @@ def split_frontmatter(content: str) -> tuple[dict, str]:
     """Split a markdown file into (frontmatter dict, body after frontmatter).
 
     Returns ``({}, content)`` when there is no leading ``---`` block, so a
-    malformed or frontmatter-less file degrades to "all body" rather than
-    raising.
+    frontmatter-less file degrades to "all body". A block that is there
+    but does not parse raises ``FrontmatterError``: merging into an empty
+    dict would rewrite the file without its type and title.
     """
     if not content.startswith("---\n"):
         return ({}, content)
     end = content.find("\n---\n", 4)
     if end < 0:
         return ({}, content)
-    try:
-        fm = yaml.safe_load(content[4:end])
-    except yaml.YAMLError:
-        fm = None
-    body = content[end + len("\n---\n"):]
-    return (fm if isinstance(fm, dict) else {}, body)
+    return (frontmatter_parse(content), content[end + len("\n---\n"):])
 
 
 def merge_email_frontmatter(
@@ -736,6 +732,9 @@ def fold_email_message(
         return ``None`` so the caller skips the write (idempotent).
       - A new message in an existing thread → append the section and union
         its persons/tags into the existing frontmatter.
+
+    Raises ``FrontmatterError`` when the existing file's frontmatter does
+    not parse.
     """
     if not existing_content:
         return render_email_thread(
