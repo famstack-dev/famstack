@@ -1,0 +1,108 @@
+{
+  "query": "immich vs photoprism",
+  "number_of_results": null,
+  "results": [
+    {
+      "url": "https://www.reddit.com/r/selfhosted/comments/1doatsa/immich_vs_photoprism/",
+      "title": "Immich vs photoprism : r/selfhosted - Reddit",
+      "content": "25.06.2024 ... Im using both, they have different use case, indeed photoprism si best as managing picture collection, but needs a thirdy program to backup ...",
+      "engine": "google cse",
+      "engines": [
+        "brave",
+        "google cse"
+      ],
+      "score": 4.0
+    },
+    {
+      "url": "https://jellywatch.app/blog/jellyfin-vs-immich-vs-photoprism-vs-nextcloud-photos-2026",
+      "title": "Jellyfin vs Immich vs Photoprism vs Nextcloud Photos 2026: Complete Self-Hosted Photo Comparison — JellyWatch Blog",
+      "content": "Is Nextcloud Photos good enough on its own? For casual use, yes. For serious photo management (face detection, search, RAW), Immich or Photoprism is significantly better.",
+      "engine": "brave",
+      "engines": [
+        "brave"
+      ],
+      "score": 0.8333333333333333
+    },
+    {
+      "url": "https://discuss.privacyguides.net/t/immich-photo-manager-self-hosted/17033",
+      "title": "Immich Photo Manager (Self-Hosted) - Tool Suggestions - Privacy Guides Community",
+      "content": "Immich is a feature rich and privacy respecting solution for self-hosting photos and videos. It is very capable and meets all the required criteria for recommendation. Please check it out at the link below.",
+      "engine": "brave",
+      "engines": [
+        "brave"
+      ],
+      "score": 0.8095238095238095
+    },
+    {
+      "url": "https://www.reddit.com/r/selfhosted/comments/1jmwt0z/immich_vs_photoprism/?tl=de",
+      "title": "Immich vs Photoprism : r/selfhosted - Reddit",
+      "content": "29.03.2025 ... Ich habe Photoprism vor über einem Jahr widerwillig aufgegeben und würde fast nie in Betracht ziehen, zurückzuwechseln. Photoprism ist großartig ...",
+      "engine": "google cse",
+      "engines": [
+        "google cse"
+      ],
+      "score": 0.3333333333333333
+    },
+    {
+      "url": "https://www.reddit.com/r/selfhosted/comments/1azx5yj/immich_or_photoprism/?tl=de",
+      "title": "Immich oder Photoprism : r/selfhosted - Reddit",
+      "content": "25.02.2024 ... Die Gesichtserkennung von Immich ist der von Photoprism weit voraus. Ich würde sagen, dass sie im Vergleich zu Immich in Photoprism fast ...",
+      "engine": "google cse",
+      "engines": [
+        "google cse"
+      ],
+      "score": 0.125
+    },
+    {
+      "url": "https://www.reddit.com/r/selfhosted/comments/1doatsa/immich_vs_photoprism/?tl=de",
+      "title": "Immich gegen Photoprism : r/selfhosted - Reddit",
+      "content": "25.06.2024 ... Beide sind solide, Immich hat einen offeneren (und kurzlebigeren) Entwicklungspfad. Es gibt nur eine Sache, die mich bei Immich ärgert, was ...",
+      "engine": "google cse",
+      "engines": [
+        "google cse"
+      ],
+      "score": 0.07692307692307693
+    },
+    {
+      "url": "https://tmnascommunity.eu/forums/topic/immich-and-or-photoprism/",
+      "title": "immich and/or photoprism – TerraMaster Community Place",
+      "content": "Hi!, please, can be possible to add here immich or photoprism? there are google photos alternative.",
+      "engine": "brave",
+      "engines": [
+        "brave"
+      ],
+      "score": 0.06666666666666667
+    },
+    {
+      "url": "https://gethomepage.dev/configs/settings/",
+      "title": "Settings - Homepage",
+      "content": "The settings.yaml file allows you to define application level options. For changes made to this file to take effect, you will need to regenerate the static HTML, this can be done by clicking the refresh icon in the bottom right of the page · You can customize the title of the page if you'd like",
+      "engine": "brave",
+      "engines": [
+        "brave"
+      ],
+      "score": 0.0625
+    },
+    {
+      "url": "https://dicloak.com/blog-detail/immich-vs-photoprism-2025--which-is-the-best-photo-management-tool",
+      "title": "Immich Vs PhotoPrism (2025) | Which Is The Best Photo Management Tool?",
+      "content": "This article compares two open-source ... community support. Image is favored for its speed, ease of use, and mobile optimization, while Photo Prism excels in advanced AI features and search functionalities....",
+      "engine": "brave",
+      "engines": [
+        "brave"
+      ],
+      "score": 0.058823529411764705
+    },
+    {
+      "url": "https://blog.elest.io/immich-vs-photoprism-which-self-hosted-photo-manager-for-your-family/",
+      "title": "Immich vs PhotoPrism: Which Self-Hosted Photo Manager for Your Family?",
+      "content": "Immich is the more resource-hungry option but also the fastest. Large libraries load quickly, the web UI is snappy, and upload processing is efficient. Expect to allocate 4+ GB of RAM for a comfortable experience.",
+      "engine": "google cse",
+      "engines": [
+        "brave",
+        "google cse"
+      ],
+      "score": 2.0
+    }
+  ]
+}

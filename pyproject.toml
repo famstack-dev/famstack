@@ -27,7 +27,11 @@ test = [
     "pypdfium2>=4.0",
     # URL → Markdown for the archivist's capture pipeline. Tests run
     # trafilatura against fixture HTML in-process — no network calls.
-    "trafilatura>=1.12,<3.0",
+    # Kept in lockstep with stacklets/core/bot-runner/requirements.txt:
+    # the fixtures assert character counts against the gate's floor, so
+    # tests resolving a different minor version than the container would
+    # be validating something we do not ship.
+    "trafilatura>=2.2,<2.3",
     # The framework LLM client (stack.ai.client) wraps the OpenAI SDK.
     # Tests point it at a pytest-httpserver mock /v1 endpoint.
     "openai>=1.50,<3.0",
