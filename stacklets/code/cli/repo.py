@@ -41,17 +41,18 @@ def _connect(config):
 
 def _cmd_list(client, argv):
     owner = argv[0] if argv else None
-    repos = client.list_repos(owner=owner)
+    repos = [{"full_name": r["full_name"], "private": r["private"],
+              "description": r.get("description") or ""}
+             for r in client.list_repos(owner=owner)]
     if not repos:
         print("\n  No repositories.\n")
-        return
+        return {"repos": []}
     print()
     for r in repos:
-        full = r.get("full_name") or f"{r.get('owner', {}).get('login', '?')}/{r.get('name', '?')}"
-        visibility = "private" if r.get("private") else "public"
-        desc = r.get("description") or ""
-        print(f"  {full:40s} {visibility:8s} {desc}")
+        visibility = "private" if r["private"] else "public"
+        print(f"  {r['full_name']:40s} {visibility:8s} {r['description']}")
     print()
+    return {"repos": repos}
 
 
 def _cmd_create(client, argv):
