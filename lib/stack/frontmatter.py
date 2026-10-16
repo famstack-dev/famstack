@@ -116,7 +116,8 @@ def parse(text: str) -> dict:
     The §2 subset consists of:
       - Top-level keys only (no nesting)
       - Scalar values: string, integer, boolean, or date-as-string
-      - One-deep string lists (key: followed by indented `- item` lines)
+      - One-deep string lists (key: followed by indented `- item` lines),
+        also read from a one-line flow list (`key: [a, b]`)
 
     Out-of-subset input raises FrontmatterError with a descriptive message.
     Returns {} when there is no frontmatter block.
@@ -145,8 +146,9 @@ def _parse_block(block: str) -> dict:
     """Parse the content between --- delimiters.
 
     Raises FrontmatterError on violations:
-      - Nested maps, lists of maps, flow syntax ({}, [])
-      - Block scalars (|, >), anchors/aliases
+      - Nested maps, lists of maps, flow maps ({})
+      - Block scalars (|, >), anchors/aliases, tags
+      - Unquoted values YAML reads differently (`: `, ` #`)
       - Multiple-document markers (---)
       - Indented key names
     """
@@ -156,6 +158,7 @@ def _parse_block(block: str) -> dict:
 
     for i, raw_line in enumerate(lines):
         line = raw_line.rstrip()
+        line_no = i + 1
 
         # Empty lines are fine
         if not line:
@@ -166,38 +169,36 @@ def _parse_block(block: str) -> dict:
         if line.startswith("  - ") or line.startswith("- "):
             if current_list is None:
                 raise FrontmatterError(
-                    f"Line {i + 1}: list item without a key (indent with `key:` first)"
+                    f"Line {line_no}: list item without a key (indent with `key:` first)"
                 )
-            # Parse the item value, stripping quotes
             item_text = line.split("- ", 1)[1].strip()
-            item = _unquote(item_text)
-            current_list.append(item)
+            current_list.append(_parse_item(item_text, line_no))
             continue
 
         # Continuation lines (indented but not a list item) are forbidden
         if line.startswith(" ") or line.startswith("\t"):
             raise FrontmatterError(
-                f"Line {i + 1}: indented line without a list context "
-                "(block scalars, nested maps, and flow syntax are forbidden)"
+                f"Line {line_no}: indented line without a list context "
+                "(block scalars and nested maps are forbidden)"
             )
 
         # Multiple-document marker is forbidden
         if line.startswith("---"):
             raise FrontmatterError(
-                f"Line {i + 1}: multiple-document separator --- found "
+                f"Line {line_no}: multiple-document separator --- found "
                 "(only one document allowed)"
             )
 
         # Key: value line
         if ":" not in line:
-            raise FrontmatterError(f"Line {i + 1}: no ':' in key-value line")
+            raise FrontmatterError(f"Line {line_no}: no ':' in key-value line")
 
         key, _, value_part = line.partition(":")
         key = key.strip()
 
         # Keys must not be indented (checked above)
         if not key:
-            raise FrontmatterError(f"Line {i + 1}: empty key name")
+            raise FrontmatterError(f"Line {line_no}: empty key name")
 
         value = value_part.strip()
 
@@ -205,39 +206,160 @@ def _parse_block(block: str) -> dict:
             # Start a new list
             current_list = []
             data[key] = current_list
+        elif value.startswith("["):
+            data[key] = _parse_flow_list(value, line_no)
+            current_list = None
         else:
             # Scalar value — unquote and potentially coerce to bool/int
-            parsed_val = _parse_scalar(value)
-            data[key] = parsed_val
+            data[key] = _parse_scalar(value, line_no)
             current_list = None
 
     return data
 
 
-def _unquote(s: str) -> str:
-    """Remove surrounding quotes from a string if present.
+# ── Values ────────────────────────────────────────────────────────────
+#
+# The subset is read by this parser and, for the wiki, by Quartz's YAML
+# parser. An unquoted value that YAML reads as structure, or reads with
+# a different meaning, is refused here, so a value both parsers accept
+# is a value both read the same way.
 
-    Handles both single and double quotes. A string that doesn't start
-    and end with matching quotes is returned as-is.
+# Characters that open YAML syntax when they start an unquoted value:
+# flow maps and lists, anchors, aliases, tags, block scalars, comments,
+# directives and reserved characters.
+_LEADING_SYNTAX = "[]{},&*!|>#%@`"
+
+# `-`, `?` and `:` are syntax only when a space or the line end follows.
+_LEADING_SYNTAX_BEFORE_SPACE = "-?:"
+
+# The escapes a double-quoted value may carry. `dump` writes the first
+# two; the rest are YAML's own that a hand edit may use.
+_ESCAPES = {'"': '"', "\\": "\\", "n": "\n", "t": "\t", "/": "/"}
+
+
+def _parse_flow_list(value: str, line_no: int) -> list[str]:
+    """A one-line flow list of scalars (`[a, "b, c"]`) as a list of strings.
+
+    Read so that a hand edit like `tags: [a, b]` or `tags: []` means what
+    it says. `dump` still writes block lists; nesting stays forbidden.
     """
-    s = s.strip()
-    if len(s) >= 2:
-        if (s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'"):
-            return s[1:-1]
-    return s
+    if not value.endswith("]"):
+        raise FrontmatterError(
+            f"Line {line_no}: a flow list must close with `]` on the same line"
+        )
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    return [_parse_item(part.strip(), line_no) for part in _split_flow(inner, line_no)]
 
 
-def _parse_scalar(s: str) -> str | bool | int:
+def _split_flow(inner: str, line_no: int) -> list[str]:
+    """Split the inside of a flow list on the commas outside quotes."""
+    parts: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for c in inner:
+        if escaped:
+            escaped = False
+        elif quote == '"' and c == "\\":
+            escaped = True
+        elif quote and c == quote:
+            quote = ""
+        elif not quote and c in "\"'":
+            quote = c
+        elif not quote and c == ",":
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(c)
+    parts.append("".join(current))
+    if any(not part.strip() for part in parts):
+        raise FrontmatterError(f"Line {line_no}: empty item in a flow list")
+    return parts
+
+
+def _parse_item(text: str, line_no: int) -> str:
+    """A list item: always a string, quoted or plain, never a nested list or map."""
+    if text[:1] in "\"'":
+        return _parse_quoted(text, line_no)
+    if any(c in text for c in "[]{}"):
+        raise FrontmatterError(
+            f"Line {line_no}: list items must be plain values, not nested lists or maps"
+        )
+    _check_plain(text, line_no)
+    return text
+
+
+def _parse_quoted(s: str, line_no: int) -> str:
+    """The text inside a single- or double-quoted value, escapes resolved.
+
+    YAML's rules: `''` is a single quote inside single quotes, and a
+    backslash escapes inside double quotes. Text after the closing quote
+    is refused, as YAML refuses it.
+    """
+    quote = s[0]
+    out: list[str] = []
+    i = 1
+    while i < len(s):
+        c = s[i]
+        if quote == '"' and c == "\\":
+            escape = s[i + 1:i + 2]
+            if escape not in _ESCAPES:
+                raise FrontmatterError(
+                    f"Line {line_no}: unknown escape `\\{escape}` in a quoted value"
+                )
+            out.append(_ESCAPES[escape])
+            i += 2
+            continue
+        if c == quote:
+            if quote == "'" and s[i + 1:i + 2] == "'":
+                out.append("'")
+                i += 2
+                continue
+            if i != len(s) - 1:
+                raise FrontmatterError(
+                    f"Line {line_no}: text after the closing quote of a value"
+                )
+            return "".join(out)
+        out.append(c)
+        i += 1
+    raise FrontmatterError(f"Line {line_no}: quoted value is never closed")
+
+
+def _check_plain(s: str, line_no: int) -> None:
+    """Refuse an unquoted value that YAML would read as something else."""
+    first, second = s[0], s[1:2]
+    if first in _LEADING_SYNTAX or (
+        first in _LEADING_SYNTAX_BEFORE_SPACE and second in ("", " ", "\t")
+    ):
+        raise FrontmatterError(
+            f"Line {line_no}: a value starting with `{first}` must be quoted"
+        )
+    if ": " in s or s.endswith(":"):
+        raise FrontmatterError(
+            f"Line {line_no}: a value containing `: ` must be quoted"
+        )
+    if " #" in s or "\t#" in s:
+        raise FrontmatterError(
+            f"Line {line_no}: a value containing ` #` must be quoted "
+            "(YAML reads the rest as a comment)"
+        )
+
+
+def _parse_scalar(s: str, line_no: int) -> str | bool | int:
     """Parse a scalar value, inferring type for booleans and integers.
 
     Per §2 of the spec, scalars can be strings, integers, booleans, or
     dates (as strings). Quoted values are always returned as strings.
-    Unquoted 'true', 'false', 'yes', 'no' are interpreted as booleans.
+    Unquoted 'true' and 'false' are interpreted as booleans.
     Unquoted integers are parsed as int. Everything else is a string.
     """
     # Quoted strings: always string (even if they look like numbers/booleans)
-    if s and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
-        return _unquote(s)
+    if s[0] in "\"'":
+        return _parse_quoted(s, line_no)
+
+    _check_plain(s, line_no)
 
     # Unquoted boolean literals
     if s.lower() == "true":
@@ -246,7 +368,7 @@ def _parse_scalar(s: str) -> str | bool | int:
         return False
 
     # Unquoted integer (only if purely digits, optionally with leading -)
-    if s and (s.isdigit() or (s[0] == "-" and s[1:].isdigit())):
+    if s.isdigit() or (s[0] == "-" and s[1:].isdigit()):
         try:
             return int(s)
         except ValueError:
