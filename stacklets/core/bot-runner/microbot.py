@@ -432,6 +432,8 @@ class MicroBot:
     # nothing is dropped under load.
 
     DRAIN_PAGE_SIZE = 50
+    # How far back the first look at a room reaches (see `_drain_room`).
+    FIRST_LOOK_REACH_MS = 120_000
     MAX_DRAIN_PAGES = 40  # safety cap: up to ~2000 backlogged events per room
 
     async def _drain(self) -> None:
@@ -445,11 +447,13 @@ class MicroBot:
                 logger.warning("[{}] drain error in {}: {}", self.name, room_id, e)
 
     async def _drain_room(self, room_id: str) -> None:
-        # First sight of a room: anchor the cursor at "now" so we don't
-        # replay its whole history (the old "skip old messages" behavior).
+        # First sight of a room: anchor the cursor a little before "now". Not
+        # at the start, so the room's history is not replayed; not at "now",
+        # because a bot added without an invite (`stack messages join`) first
+        # sees the room on this drain, and the first message typed into a new
+        # room usually falls in between. Invites anchor at the join instead.
         if room_id not in self._cursors:
-            self._advance_cursor(room_id, int(time.time() * 1000))
-            return
+            self._advance_cursor(room_id, int(time.time() * 1000) - self.FIRST_LOOK_REACH_MS)
 
         cursor = self._cursors[room_id]
 
