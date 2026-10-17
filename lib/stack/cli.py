@@ -114,7 +114,7 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
 
 **Get started:**
 
-- You should see a new room in your chat: Documents Room.
+- You should see a new 'Documents' room here. 
 - Head over and check it out.
 - Drop a document into the room.
 
@@ -209,7 +209,7 @@ def _notify_up(stck, result):
             lines.append(f"- {hint}")
         _notify(stck, "\n".join(lines))
 
-VERSION = "0.4.0"
+VERSION = "0.5.0-beta.1"
 
 
 # ── Stack + Docker orchestration ──────────────────────────────────────────
