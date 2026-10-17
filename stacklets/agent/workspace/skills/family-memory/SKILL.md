@@ -42,7 +42,7 @@ LISTS:
   "bought all|clear the list"    -> tick what they got; ticked items leave the list overnight
   "start the week|fresh list"    -> list_edit op=reset          # reopens all
   belongs on another list        -> op=move, to=<list>, never remove
-     "hole X lieber auf dem Markt" | "kaufe X woanders" | "X gibt es bei Y" -> move
+     "get X at the market instead" | "buy X somewhere else" | "Y sells X" -> move
   no list fits (a new store)     -> op=create list=<slug> title about topic sections, then add
   "belongs here|rename|new order|new sections" -> op=set list=<slug> with only what changes
   "delete|drop list X|don't need X any more" -> op=delete list=X; never empty it item by item

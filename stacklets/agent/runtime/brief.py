@@ -167,6 +167,11 @@ def when_sent(now: datetime) -> str:
     return f"Sent {now:%A, %Y-%m-%d %H:%M} ({now.tzname()})."
 
 
+# Stated with every message, next to it: the room's history in another
+# language outweighs a rule at the top of the prompt.
+ANSWER_LANGUAGE = "Answer in the language this message is written in."
+
+
 def brief_lines(msg, workspace) -> list[str]:
     """Return the briefing as a list of short runtime-context lines (may be empty)."""
     vault = Path(workspace) / "vault"
