@@ -54,6 +54,7 @@ HELP = "Replace a page in the family memory vault"
 
 import difflib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -71,6 +72,13 @@ from stack.page_patch import apply_edits  # noqa: E402
 # read-write into the container at ~/.nanobot, so the container writes here and
 # the host reads the same bytes with no transport in between.
 _AGENT_BUFFER = "agent/.write-buffer"
+
+# The diary builds its index, year and month pages from the cards under
+# `diary/entries/` into the wiki's copy of the vault (`diary.pages_for`). A
+# write to one of those paths lands in the family's own files instead, and
+# the build skips a page it did not make, so the written text replaces the
+# diary's page for good.
+_DIARY_PAGE = re.compile(r"^[^/]+/diary/(?!entries/).+\.md$")
 
 _USAGE = ("usage: stack memory write <vault-path> --by <person> "
           "[--from <file>] [--patch] [--dry-run]\n"
@@ -135,6 +143,12 @@ def run(args, stacklet, config):
     repo_path = paths[0].strip().removeprefix("vault/").lstrip("/")
     if not repo_path.endswith(".md"):
         return {"error": f"{repo_path!r} is not a page (expected a .md path)"}
+    if _DIARY_PAGE.match(repo_path):
+        return {"error": (
+            f"{repo_path} is a page the diary builds from its entries, and a write "
+            "here would cover it. An appointment goes on the calendar with "
+            "list_edit (add with due); a diary entry is changed in its own card "
+            "under diary/entries/.")}
 
     buffer = Path(source).expanduser() if source else data_dir / _AGENT_BUFFER
     try:
