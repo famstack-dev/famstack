@@ -287,6 +287,32 @@ def test_a_path_that_is_not_a_page_is_refused(store, tmp_path):
     assert "not a page" in result["error"]
 
 
+@pytest.mark.parametrize("page", ["family/diary/2026/10.md", "family/diary/2026/about.md",
+                                  "family/diary/about.md"])
+def test_a_page_the_diary_builds_is_refused(store, tmp_path, page):
+    """The diary builds these from its entries, in the wiki's copy of the vault.
+
+    A write puts a page at the same path in the family's own files, and the
+    build skips a page it did not make, so the diary's month is gone for
+    good. Asked for a calendar entry it had no place for, the agent did
+    exactly that.
+    """
+    result = _run(store, "---\ntitle: Oktober 2026\n---\n\n# Termine\n", path=page, tmp=tmp_path)
+
+    assert "the diary builds" in result["error"]
+    assert "list_edit" in result["error"]
+    assert store.commits == []
+
+
+def test_a_diary_entry_is_still_written(store, tmp_path):
+    """An entry is the family's own card; a correction to it is a write like any other."""
+    store.page = "---\ntype: diary\ntitle: Am See\n---\n\nWir waren schwimmen.\n"
+    result = _run(store, store.page.replace("schwimmen", "baden"),
+                  path="family/diary/entries/2026/10/2026-10-12-am-see.md", tmp=tmp_path)
+
+    assert result["committed"] is True
+
+
 def test_writing_the_page_it_already_holds_commits_nothing(store, tmp_path):
     """Re-posting an unchanged list must not produce an empty commit."""
     result = _run(store, PAGE, tmp=tmp_path)
