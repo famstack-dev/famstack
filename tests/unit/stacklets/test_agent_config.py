@@ -71,3 +71,10 @@ def test_the_shell_finds_python_for_the_stack_client():
     assert client.read_text().startswith("#!/usr/bin/env python3")
 
     assert "PATH" in _config()["tools"]["exec"].get("allowed_env_keys", [])
+
+
+def test_dream_stays_off():
+    """Dream condenses every room's history into files that every room's
+    prompt includes, so what one person said in a direct chat could come
+    up in the family room. The vault is the agent's only memory."""
+    assert _config()["agents"]["defaults"]["dream"]["enabled"] is False

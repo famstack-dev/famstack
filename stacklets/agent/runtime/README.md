@@ -60,6 +60,9 @@ plus pointers; it reads full pages with its file tools only if it needs depth.
   runtime-context provider on every `AgentLoop`. nanobot appends the block to
   the user's message and keeps it with that message in the history, so the
   next turn replays exactly what the model saw: the prompt prefix stays cached.
+- `dream_aside.py` — run once by the entrypoint, not a shim. nanobot's Dream
+  is off in `config.json`; this moves what it wrote before (profile files,
+  `MEMORY.md`, its own skills) into `~/.nanobot/dream-archive/`.
 
 ```
 Dockerfile:  COPY runtime/ /app/runtime  +  ENV PYTHONPATH=/app/runtime

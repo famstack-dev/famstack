@@ -4,7 +4,7 @@
 # 1. Refresh config.json from the image template so stack.toml changes (injected
 #    as env) always take effect. nanobot resolves the ${VARS} against env on load.
 # 2. Seed the personality on first run only, substituting the configurable name;
-#    the family (and Dream) may edit it afterwards.
+#    the family may edit it afterwards.
 # 3. Read @stacky-bot's Matrix password from the mounted secrets store, the same
 #    secret the bot-runner provisions the account with.
 set -e
@@ -28,14 +28,17 @@ json.dump(config, open(path, "w"), indent=2)
 PY
 
 NAME="${AGENT_NAME:-Stacky}"
-for f in SOUL.md AGENTS.md; do
-    [ -f "$NB/workspace/$f" ] || sed "s/__AGENT_NAME__/$NAME/g" "/app/workspace-seed/$f" > "$NB/workspace/$f"
-done
 
-# Seed a minimal USER.md so nanobot does not install its default profile
+# Dream is off (config.json). What it wrote before is set aside once, so the
+# seeding below puts the shipped profile back.
+python3 /app/runtime/dream_aside.py "$NB" /app/workspace-seed "$NAME"
+
+# USER.md is seeded so nanobot does not install its default profile
 # template. The template costs ~1K prompt characters per request and holds
 # no data: the runtime brief carries the per-turn speaker instead.
-[ -f "$NB/workspace/USER.md" ] || printf '# User Profile\n\nThe runtime brief names the current speaker each turn. No data here.\n' > "$NB/workspace/USER.md"
+for f in SOUL.md AGENTS.md USER.md; do
+    [ -f "$NB/workspace/$f" ] || sed "s/__AGENT_NAME__/$NAME/g" "/app/workspace-seed/$f" > "$NB/workspace/$f"
+done
 
 # Product-defined skills always refresh from the image seed (not user-editable).
 if [ -d /app/workspace-seed/skills ]; then
