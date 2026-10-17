@@ -197,6 +197,7 @@ def run(args, stacklet, config):
     try:
         if ns.verb == "show":
             _name_the_calendar(ns, _all_lists_at(vault), config)
+            _name_by_title(ns, _all_lists_at(vault))
             return show(vault, ns.slug, show_all=ns.all, days=ns.days,
                         language=_language(config))
         if not ns.actor.strip():
@@ -206,6 +207,7 @@ def run(args, stacklet, config):
         actor = _actor(ns.actor)
         if ns.verb != "create":
             _name_the_calendar(ns, _all_lists_at(vault), config)
+            _name_by_title(ns, _all_lists_at(vault))
         if ns.verb == "create":
             return create(vault, config, ns, actor)
         if ns.verb == "set":
@@ -462,6 +464,33 @@ def _name_the_calendar(ns, lists: list[tuple[str, FamilyList]], config) -> None:
         ns.to = found
     items = getattr(ns, "items", None)
     if items and items[0].strip().casefold() == CALENDAR_NAME:
+        ns.items = [found, *items[1:]]
+
+
+# What people put after a list's name when they say it.
+_LIST_WORDS = re.compile(r"[\s-]*(liste|list)$", re.IGNORECASE)
+
+
+def _name_by_title(ns, lists: list[tuple[str, FamilyList]]) -> None:
+    """Replace a list named by its title ("Wochenmarkt", "Wochenmarkt-Liste")
+    with its slug (`markt`), wherever a list is named. A slug always wins."""
+    slugs = {lst.slug for _, lst in lists}
+
+    def slug_for(name: str | None) -> str | None:
+        if not name or name in slugs:
+            return None
+        wanted = _LIST_WORDS.sub("", name.strip()).casefold()
+        found = [lst.slug for _, lst in lists
+                 if _LIST_WORDS.sub("", lst.title.strip()).casefold() == wanted]
+        return found[0] if len(found) == 1 else None
+
+    for attr in ("slug", "to"):
+        found = slug_for(getattr(ns, attr, None))
+        if found:
+            setattr(ns, attr, found)
+    items = getattr(ns, "items", None)
+    found = slug_for(items[0]) if items else None
+    if found and len(items) > 1:
         ns.items = [found, *items[1:]]
 
 
