@@ -238,6 +238,7 @@ for _module_name, _what in (
     ("history_tool", "memory_history tool"),
     ("vault_write", "write_file on a vault page -> stack memory write"),
     ("list_tool", "list_edit item tool -> stack memory list"),
+    ("calendar_tool", "calendar tool -> stack memory list ... calendar"),
     ("tool_trim", "unused-tool trim (AGENT_TOOL_TRIM=0 to disable)"),
 ):
     try:

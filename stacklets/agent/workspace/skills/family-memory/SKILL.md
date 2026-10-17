@@ -34,6 +34,14 @@ VOICE AND PHOTOS:
      unclear or empty         -> ask; change nothing      # my answer shows the transcript itself
   photo attached              -> look at it; a handwritten list -> add each item (list not said -> leave list out)
 
+CALENDAR (the family's dates; never list_edit, never read_file):
+  appointment | "put it in the calendar" -> calendar op=add what="<what>, <where>" day=YYYY-MM-DD time=HH:MM
+     "tomorrow|on Saturday"   -> day from when the message was sent; say the date in my answer
+     no day said              -> ask for the day; add nothing
+     a second time (when to leave) -> add it as its own entry; never drop either time
+  "what's on|this week|today|tomorrow" -> calendar op=show days=7|1|2; read out its weekdays as they are
+  cancelled|called off        -> calendar op=remove what=<what>
+
 LISTS:
   "what is on X|which lists"     -> exec `stack memory list show [<list>]`; never read_file to show a list
   item op add|tick|untick|remove -> list_edit(list, op, items=[one or more])

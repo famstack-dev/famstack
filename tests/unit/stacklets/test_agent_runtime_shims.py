@@ -77,7 +77,7 @@ def test_vault_tools_are_registered(nanobot):
     """
     mods = nanobot()
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
-                                 "MemoryHistoryTool", "ListEditTool"}
+                                 "MemoryHistoryTool", "ListEditTool", "CalendarTool"}
 
 
 def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
@@ -660,7 +660,7 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     mods = nanobot(drop="nanobot.agent.loop.AgentLoop")
 
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
-                                 "MemoryHistoryTool", "ListEditTool"}
+                                 "MemoryHistoryTool", "ListEditTool", "CalendarTool"}
 
 
 def test_the_stub_can_actually_express_a_detached_shim(nanobot):
