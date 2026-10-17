@@ -237,6 +237,83 @@ class TestKnownItems:
         assert "no list names the topic 'garten'" in result["error"]
 
 
+class TestTheFamilyCalendar:
+    """`calendar` names the family calendar, whatever its file is called.
+
+    "Trag es in den Kalender ein" names no list the family has. The calendar's
+    file is called after the household language, or whatever the family named
+    it, and on an instance where no letter with a date was ever filed there was
+    none at all. The agent, with nowhere to put the appointment, wrote it into
+    the diary. One name that always works, and a calendar that is there when
+    the first date comes, leave nothing to look up or guess.
+    """
+
+    @pytest.fixture
+    def run_in(self, store, tmp_path):
+        def _go(language, *argv):
+            config = {"data_dir": str(tmp_path), "stack": {"core": {"language": language}}}
+            return list_cli.run(list(argv), None, config)
+        return _go
+
+    @pytest.fixture
+    def kalender(self, run):
+        run("create", "kalender", "--title", "Kalender", "--kind", "calendar", "--as", "marge")
+        return "family/lists/kalender.md"
+
+    def test_an_entry_lands_on_the_calendar_the_family_has(self, run, store, kalender):
+        result = run("add", "calendar", "10:30 Treff am Bahnhof", "--due", "2026-10-18",
+                     "--as", "marge")
+        assert result["summary"] == "added 10:30 Treff am Bahnhof to Kalender"
+        assert "- [ ] 10:30 Treff am Bahnhof 📅 2026-10-18" in store.text(kalender)
+
+    def test_the_first_entry_starts_the_calendar_in_the_household_language(self, run_in, store):
+        result = run_in("de", "add", "calendar", "Elternabend", "--due", "2026-11-17",
+                        "--as", "marge")
+        page = store.text("family/lists/termine.md")
+        assert page.startswith("---\ntype: list\ntitle: Termine\n")
+        assert "kind: calendar\n" in page and "- [ ] Elternabend" in page
+        assert result["summary"] == "added Elternabend to Termine"
+        assert len(store.commits) == 1
+
+    def test_an_english_household_gets_dates(self, run_in, store):
+        run_in("en", "add", "calendar", "Parent evening", "--due", "2026-11-17", "--as", "marge")
+        assert "title: Dates\n" in store.text("family/lists/dates.md")
+
+    def test_an_entry_known_from_another_list_still_goes_on_the_calendar(
+            self, run, store, groceries, kalender):
+        """The name decides, not where the words were last seen."""
+        run("add", "einkaufsliste", "Zahnarzt", "--as", "marge")
+        run("add", "calendar", "Zahnarzt", "--for", "homer", "--due", "2026-11-05", "--as", "marge")
+        assert "Zahnarzt" in store.text(kalender)
+
+    def test_an_entry_still_needs_its_date(self, run, store):
+        refused = run("add", "calendar", "Elternabend", "--as", "marge")
+        assert "needs its date" in refused["error"]
+        assert store.commits == []
+
+    def test_the_name_works_for_showing_and_ticking(self, run, store, kalender):
+        run("add", "calendar", "Elternabend", "--due", "2026-11-17", "--as", "marge")
+        assert run("show", "calendar")["title"] == "Kalender"
+        run("tick", "calendar", "Elternabend", "--as", "marge")
+        assert "- [x] Elternabend" in store.text(kalender)
+
+    def test_ticking_on_a_calendar_that_does_not_exist_starts_nothing(self, run, store):
+        refused = run("tick", "calendar", "Elternabend", "--as", "marge")
+        assert "no list 'calendar'" in refused["error"]
+        assert store.commits == []
+
+    def test_a_list_the_family_called_calendar_is_itself(self, run, store, kalender):
+        run("create", "calendar", "--title", "Calendar", "--as", "bart")
+        run("add", "calendar", "Comics", "--as", "bart")
+        assert "Comics" in store.text("family/lists/calendar.md")
+
+    def test_a_date_without_a_list_is_not_put_on_the_calendar(self, run, store, groceries):
+        """Without the name nothing is guessed: the caller is asked which list."""
+        result = run("add", "Kerzen", "--due", "2026-10-20", "--as", "marge")
+        assert "name the list" in result["error"]
+        assert not (store.vault / "family/lists/dates.md").exists()
+
+
 class TestTickingOff:
     @pytest.fixture
     def stocked(self, run, groceries):

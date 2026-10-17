@@ -45,6 +45,9 @@ from stack.lists import (  # noqa: E402
     KINDS,
     TODO,
     LISTS_DIR,
+    calendar_description,
+    calendar_slug,
+    calendar_title,
     FamilyList,
     Item,
     ListError,
@@ -73,6 +76,9 @@ USAGE = """\
                                                     each where it was last bought
     stack memory list add schule "Sign the field trip form" --for homer --for marge \\
         --due 2026-10-20 --as marge
+    stack memory list add calendar "10:30 Elternabend" --due 2026-10-20 --as marge
+                                                    `calendar` is the family calendar, whatever
+                                                    its name; add starts it when there is none
     stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
     stack memory list tick "Erlaubniszettel" --as marge   on whichever list it is
     stack memory list move einkaufsliste Eier --to markt --as marge
@@ -93,6 +99,11 @@ VERBS = ("show", "create", "add", "tick", "untick", "remove", "move", "reset", "
 
 # A commit subject's length, as git and Forgejo show it without wrapping.
 _SUBJECT_MAX = 72
+
+# The name every caller can use for the family calendar, whatever its file
+# is called in this household ("termine", "dates", or one the family started),
+# so the agent never has to look it up or guess it.
+CALENDAR_NAME = "calendar"
 
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -182,12 +193,15 @@ def run(args, stacklet, config):
         return {"error": "no vault found; is the memory stacklet installed?"}
     try:
         if ns.verb == "show":
+            _name_the_calendar(ns, _all_lists_at(vault), config)
             return show(vault, ns.slug, show_all=ns.all)
         if not ns.actor.strip():
             # Every change is a commit with a person's name on it; one
             # without a name cannot be told apart from anybody else's.
             raise Refusal(f"say who {ns.verb}s: add --as <person>, the family member it is for")
         actor = _actor(ns.actor)
+        if ns.verb != "create":
+            _name_the_calendar(ns, _all_lists_at(vault), config)
         if ns.verb == "create":
             return create(vault, config, ns, actor)
         if ns.verb == "set":
@@ -342,10 +356,15 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     """Add items, each to its list: the one named, or where it was last bought.
 
     An item the household had before keeps its spelling and its section.
-    One commit per list.
+    `calendar` names the family calendar, which is started with the first
+    entry when there is none. One commit per list.
     """
     lists = _all_lists_at(vault)
     slug, names = _list_and_items(lists, ns.items)
+    start = ""
+    if slug == CALENDAR_NAME and not any(lst.slug == slug for _, lst in lists):
+        path, calendar, start = _calendar(lists, config)
+        lists, slug = [*lists, (path, calendar)], calendar.slug
     if slug:
         candidates = [(p, lst) for p, lst in lists if lst.slug == slug]
     else:
@@ -372,18 +391,61 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     if undated:
         raise Refusal(f"an entry on {undated[0]} needs its date: --due YYYY-MM-DD")
     people = _people(vault, config, ns.people)
-    return _combined([_add_to(config, *by_slug[target], entries, people, due, actor)
+    return _combined([_add_to(config, *by_slug[target], entries, people, due, actor,
+                              start=start if target == slug else "")
                       for target, entries in plan.items()])
 
 
+def _name_the_calendar(ns, lists: list[tuple[str, FamilyList]], config) -> None:
+    """Replace `calendar` wherever a list is named with the family calendar's slug.
+
+    A list the family really called `calendar` is itself. Without any
+    calendar the name is left as it is: `add` starts one, every other verb
+    says there is no such list.
+    """
+    if any(lst.slug == CALENDAR_NAME for _, lst in lists):
+        return
+    found = next((lst.slug for path, lst in lists
+                  if lst.kind == CALENDAR and path.startswith(f"{_shared_bucket(config)}/")), "")
+    if not found:
+        return
+    if getattr(ns, "slug", None) == CALENDAR_NAME:
+        ns.slug = found
+    if getattr(ns, "to", None) == CALENDAR_NAME:
+        ns.to = found
+    items = getattr(ns, "items", None)
+    if items and items[0].strip().casefold() == CALENDAR_NAME:
+        ns.items = [found, *items[1:]]
+
+
+def _calendar(lists: list[tuple[str, FamilyList]], config) -> tuple[str, FamilyList, str]:
+    """The family calendar as (path, list, start): the text to start it with, or "".
+
+    The first list of `kind: calendar` in the shared bucket, by name, the
+    one the archivist puts a letter's dates on. Without one, the calendar
+    the archivist would start, in the household language, with the text
+    that starts it.
+    """
+    bucket = _shared_bucket(config)
+    for path, lst in lists:
+        if lst.kind == CALENDAR and path.startswith(f"{bucket}/"):
+            return path, lst, ""
+    language = _language(config)
+    path = list_path(calendar_slug(language), bucket=bucket)
+    start = new_list(calendar_title(language), description=calendar_description(language),
+                     kind=CALENDAR)
+    return path, read_list(start, path=path), start
+
+
 def _add_to(config, path: str, lst: FamilyList, entries: list[tuple[str, str]],
-            people: list, due: str, actor: str) -> dict:
+            people: list, due: str, actor: str, *, start: str = "") -> dict:
     bucket = path.split("/", 1)[0]
     links = tuple(person_link(p.id, p.first_name, bucket=bucket) for p in people)
     outcome: dict = {}
 
     def _apply(prior: str) -> str:
-        new, outcome["said"] = _add(prior, read_list(prior, path=path), entries, links, due, path)
+        text = prior or start
+        new, outcome["said"] = _add(text, read_list(text, path=path), entries, links, due, path)
         return new
     return _commit(config, path, _apply, actor, lambda: outcome.get("said", "added"))
 
@@ -460,7 +522,13 @@ def _locate(lists: list[tuple[str, FamilyList]], name: str, verb: str) -> tuple[
 def _list_and_items(lists: list[tuple[str, FamilyList]], words: list[str]) -> tuple[str, list[str]]:
     """The list a command names first, if any, and the items after it."""
     names = [" ".join(w.split()) for w in words if w.strip()]
-    slug = names.pop(0) if names and any(lst.slug == names[0] for _, lst in lists) else ""
+    first = names[0] if names else ""
+    if first.casefold() == CALENDAR_NAME:
+        slug = names.pop(0).casefold()
+    elif any(lst.slug == first for _, lst in lists):
+        slug = names.pop(0)
+    else:
+        slug = ""
     if not names:
         raise Refusal("name at least one item")
     return slug, names
@@ -702,6 +770,11 @@ def _vault(config) -> Path | None:
 def _shared_bucket(config) -> str:
     stack_cfg = (config or {}).get("stack") or {}
     return (stack_cfg.get("core") or {}).get("shared_bucket") or DEFAULT_SHARED_BUCKET
+
+
+def _language(config) -> str:
+    stack_cfg = (config or {}).get("stack") or {}
+    return (stack_cfg.get("core") or {}).get("language") or ""
 
 
 def _actor(value: str) -> str:
