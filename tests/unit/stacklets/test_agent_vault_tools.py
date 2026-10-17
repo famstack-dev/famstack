@@ -37,7 +37,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 MEMORY_DIR = REPO_ROOT / "stacklets" / "memory"
 
-TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "list_tool", "sitecustomize")
+TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "list_tool", "calendar_tool",
+                "sitecustomize")
 
 
 # ── loading the real components under test ───────────────────────────
@@ -90,6 +91,7 @@ def vault_tools(monkeypatch, nanobot_stub):
         "memory_person": importlib.import_module("person_tool").MemoryPersonTool,
         "memory_history": importlib.import_module("history_tool").MemoryHistoryTool,
         "list_edit": importlib.import_module("list_tool").ListEditTool,
+        "calendar": importlib.import_module("calendar_tool").CalendarTool,
     }
     yield tools
     for name in TOOL_MODULES:
@@ -126,7 +128,7 @@ def argv_of(tool_cls, **kwargs) -> list[str]:
 # ── gate 0: every tool carries its parameters ────────────────────────
 
 @pytest.mark.parametrize("tool_name", ["memory_search", "memory_person", "memory_history",
-                                       "list_edit"])
+                                       "list_edit", "calendar"])
 def test_every_tool_carries_its_own_parameters(vault_tools, tool_name):
     """A tool nanobot cannot instantiate is missing from the model's list.
 
@@ -143,6 +145,8 @@ def test_every_tool_carries_its_own_parameters(vault_tools, tool_name):
     ("memory_search", {"query": "Homer"}),
     ("memory_person", {"name": "homer"}),
     ("list_edit", {"list": "einkaufsliste", "op": "tick", "items": ["Milch"]}),
+    ("calendar", {"op": "add", "what": "Elternabend", "day": "2026-11-12"}),
+    ("calendar", {"op": "show"}),
 ])
 def test_the_command_a_tool_runs_is_allowed_by_the_api(api, vault_tools,
                                                        tool_name, kwargs):
@@ -227,6 +231,10 @@ def test_speaking_does_not_open_the_rest_of_the_ai_stacklet(api, command):
       "sections": ["Schrauben", "Farbe"], "items": ["ignored"]}),
     ("list_edit", "list", {"op": "create", "title": "Packliste", "kind": "checklist"}),
     ("list_edit", "list", {"list": "packliste", "op": "set", "kind": "todo"}),
+    ("calendar", "list", {"op": "add", "what": "Treff am Bahnhof", "day": "2026-10-18",
+                          "time": "10:30"}),
+    ("calendar", "list", {"op": "show", "days": 2}),
+    ("calendar", "list", {"op": "remove", "what": "Treff am Bahnhof"}),
 ])
 def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
         memory_cli, vault_tools, tool_name, command, kwargs):
@@ -248,6 +256,27 @@ def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
             f"{tool_name} builds `{' '.join(argv)}`, which "
             f"`stack memory {command}` rejects (argparse exit {exit_.code})"
         )
+
+
+class TestTheCalendarTool:
+    """The model hands over an appointment's parts; the store gets one fixed entry."""
+
+    def test_the_time_goes_in_front_of_the_entry(self, vault_tools):
+        argv = argv_of(vault_tools["calendar"], op="add", what="Treff am Bahnhof",
+                       day="2026-10-18", time="9.30")
+        assert argv[3:8] == ["add", "calendar", "09:30 Treff am Bahnhof", "--due", "2026-10-18"]
+
+    def test_an_appointment_without_a_day_runs_nothing(self, vault_tools):
+        argv = argv_of(vault_tools["calendar"], op="add", what="Elternabend")
+        assert argv == []
+
+    def test_a_time_that_is_not_a_time_runs_nothing(self, vault_tools):
+        argv = argv_of(vault_tools["calendar"], op="add", what="Elternabend",
+                       day="2026-11-12", time="abends")
+        assert argv == []
+
+    def test_show_without_a_span_is_the_week(self, vault_tools):
+        assert argv_of(vault_tools["calendar"], op="show")[-2:] == ["--days", "7"]
 
 
 def test_an_unknown_flag_would_be_caught(memory_cli):

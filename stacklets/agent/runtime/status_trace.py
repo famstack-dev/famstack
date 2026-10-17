@@ -53,7 +53,7 @@ GIVE_UP_AFTER = 600.0
 LOOK, CHECK, WRITE, THINK, STILL, TIDY = "look", "check", "write", "think", "still", "tidy"
 
 # Tools that change a list or a page; everything else reads.
-_WRITERS = {"list_edit", "write_file", "edit_file", "apply_patch"}
+_WRITERS = {"list_edit", "calendar", "write_file", "edit_file", "apply_patch"}
 
 PHRASES: dict[str, dict[str, tuple[str, ...]]] = {
     "de": {
