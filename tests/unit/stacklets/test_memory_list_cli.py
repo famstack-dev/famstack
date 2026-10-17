@@ -237,6 +237,29 @@ class TestKnownItems:
         assert "no list names the topic 'garten'" in result["error"]
 
 
+class TestAListIsFoundByWhatTheFamilyCallsIt:
+    """A list has a short name (`markt`) and a title (`Wochenmarkt`). People
+    say the title, often with "list" after it: "was steht auf der
+    Wochenmarkt-Liste?" found nothing, and the agent had to ask back."""
+
+    @pytest.fixture
+    def markt(self, run):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Eier", "--as", "marge")
+
+    def test_its_title_finds_it(self, run, markt, capsys):
+        run("show", "Wochenmarkt")
+        assert "Eier" in capsys.readouterr().out
+
+    def test_its_title_with_list_after_it_finds_it(self, run, markt, capsys):
+        run("show", "Wochenmarkt-Liste")
+        assert "Eier" in capsys.readouterr().out
+
+    def test_a_change_by_title_lands_on_that_list(self, run, store, markt):
+        run("add", "Wochenmarkt", "Honig", "--as", "marge")
+        assert "Honig" in store.text("family/lists/markt.md")
+
+
 class TestTheFamilyCalendar:
     """`calendar` names the family calendar, whatever its file is called.
 
