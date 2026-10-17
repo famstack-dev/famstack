@@ -314,6 +314,61 @@ class TestTheFamilyCalendar:
         assert not (store.vault / "family/lists/dates.md").exists()
 
 
+class TestReadingTheCalendar:
+    """The calendar answers "what is planned this week" with the weekday already said.
+
+    A model counts weekdays instead of computing them: asked for next week, the
+    agent called a Friday "Dienstag". So the store names every entry's weekday
+    and how far away it is, and the agent only reads it out.
+    """
+
+    @pytest.fixture
+    def run_in(self, store, tmp_path):
+        def _go(language, *argv):
+            config = {"data_dir": str(tmp_path), "stack": {"core": {"language": language}}}
+            return list_cli.run(list(argv), None, config)
+        return _go
+
+    @staticmethod
+    def _in(days: int) -> str:
+        from datetime import timedelta
+        return (date.today() + timedelta(days=days)).isoformat()
+
+    def test_each_entry_says_its_weekday_in_the_household_language(self, run_in, capsys):
+        run_in("de", "add", "calendar", "Weihnachtsessen", "--due", "2026-12-25", "--as", "marge")
+        capsys.readouterr()
+        result = run_in("de", "show", "calendar")
+        assert "Fr 25.12." in capsys.readouterr().out
+        assert result["items"][0]["weekday"] == "Fr"
+        run_in("en", "show", "calendar")
+        assert "Fri 25 Dec" in capsys.readouterr().out
+
+    def test_today_and_tomorrow_are_named_and_later_days_counted(self, run_in, capsys):
+        for days, what in ((0, "Grillfest"), (1, "Treff am Bahnhof"), (3, "Elternabend")):
+            run_in("de", "add", "calendar", what, "--due", self._in(days), "--as", "marge")
+        capsys.readouterr()
+        result = run_in("de", "show", "calendar")
+        out = capsys.readouterr().out
+        assert "(heute) Grillfest" in out
+        assert "(morgen) Treff am Bahnhof" in out
+        assert "(in 3 Tagen) Elternabend" in out
+        assert [i["in_days"] for i in result["items"]] == [0, 1, 3]
+
+    def test_days_limits_the_calendar_to_what_is_coming_up(self, run_in):
+        for days, what in ((0, "Grillfest"), (1, "Treff am Bahnhof"), (8, "Zahnarzt")):
+            run_in("en", "add", "calendar", what, "--due", self._in(days), "--as", "marge")
+        today_and_tomorrow = run_in("en", "show", "calendar", "--days", "2")
+        assert [i["text"] for i in today_and_tomorrow["items"]] == ["Grillfest", "Treff am Bahnhof"]
+        week = run_in("en", "show", "calendar", "--days", "7")
+        assert "Zahnarzt" not in [i["text"] for i in week["items"]]
+
+    def test_other_lists_read_as_before(self, run, groceries, capsys):
+        run("add", "einkaufsliste", "Milch", "--due", "2026-12-25", "--as", "marge")
+        capsys.readouterr()
+        run("show", "einkaufsliste")
+        assert "- [ ] Milch  (due 2026-12-25)" in capsys.readouterr().out
+
+
 class TestTickingOff:
     @pytest.fixture
     def stocked(self, run, groceries):

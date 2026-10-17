@@ -68,6 +68,8 @@ from stack.vault import slug as vault_slug  # noqa: E402
 USAGE = """\
     stack memory list show                          every list, with its open items counted
     stack memory list show einkaufsliste [--all]    the open items (--all: the ticked ones too)
+    stack memory list show calendar --days 7        the family calendar's next 7 days, each
+                                                    entry with its weekday (2: today, tomorrow)
     stack memory list create einkaufsliste --title Einkaufsliste \\
         --description "Was wir im Supermarkt brauchen" --topic einkaeufe-besorgungen \\
         --section "Gemüse & Obst" --section "Milchprodukte & Eier" --as marge
@@ -122,6 +124,7 @@ def _parser() -> argparse.ArgumentParser:
     show = verbs.add_parser("show", add_help=False)
     show.add_argument("slug", nargs="?")
     show.add_argument("--all", action="store_true")
+    show.add_argument("--days", type=int, default=None)
 
     create = verbs.add_parser("create", add_help=False)
     # The slug is optional: a family names a list, and `Baumarkt` makes
@@ -194,7 +197,8 @@ def run(args, stacklet, config):
     try:
         if ns.verb == "show":
             _name_the_calendar(ns, _all_lists_at(vault), config)
-            return show(vault, ns.slug, show_all=ns.all)
+            return show(vault, ns.slug, show_all=ns.all, days=ns.days,
+                        language=_language(config))
         if not ns.actor.strip():
             # Every change is a commit with a person's name on it; one
             # without a name cannot be told apart from anybody else's.
@@ -219,8 +223,15 @@ def run(args, stacklet, config):
 
 # ── Reading ──────────────────────────────────────────────────────────────
 
-def show(vault: Path, slug: str | None, *, show_all: bool) -> dict:
-    """Print every list, or one list's items under their sections."""
+def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = None,
+         language: str = "") -> dict:
+    """Print every list, or one list's items under their sections.
+
+    A calendar's entries carry their weekday and how far away they are,
+    worked out here: a model asked for the week counts weekdays instead,
+    and gets some wrong. `days` keeps the entries from today on that fall
+    within that many days.
+    """
     refresh_vault_if_stale(vault)
     if not slug:
         lists = _all_lists(vault)
@@ -236,6 +247,12 @@ def show(vault: Path, slug: str | None, *, show_all: bool) -> dict:
 
     path, lst = _find_list(vault, slug)
     items = lst.items if show_all else lst.open_items
+    when = {}
+    if lst.kind == CALENDAR:
+        today = date.today()
+        when = {id(i): _when(i.due, today, language) for i in items if i.due}
+        if days is not None:
+            items = [i for i in items if id(i) in when and 0 <= when[id(i)]["in_days"] < days]
     done = len(lst.items) - len(lst.open_items)
     print(f"{lst.title} ({path}): {len(lst.open_items)} open, {done} done")
     section = ""
@@ -243,14 +260,44 @@ def show(vault: Path, slug: str | None, *, show_all: bool) -> dict:
         if item.section != section:
             section = item.section
             print(f"## {section}")
-        print(_describe(item))
+        print(_describe(item, when.get(id(item))))
     return {"slug": lst.slug, "path": path, "title": lst.title,
-            "items": [_as_dict(i) for i in items]}
+            "items": [{**_as_dict(i), **when.get(id(i), {})} for i in items]}
 
 
-def _describe(item: Item) -> str:
-    """An item as a person reads it: the box, the text, who and when."""
+# A calendar entry's day as the household says it: "Fr 25.12. (in 3 Tagen)".
+_DAY_WORDS = {
+    "de": {"weekdays": ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"), "date": "{d.day:02}.{d.month:02}.",
+           "today": "heute", "tomorrow": "morgen", "yesterday": "gestern",
+           "ahead": "in {n} Tagen", "ago": "vor {n} Tagen"},
+    "en": {"weekdays": ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), "date": "{d.day} {month}",
+           "today": "today", "tomorrow": "tomorrow", "yesterday": "yesterday",
+           "ahead": "in {n} days", "ago": "{n} days ago"},
+}
+_MONTHS_EN = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _when(due: str, today: date, language: str) -> dict:
+    """The weekday, the day as written, and the distance from `today` of `due`."""
+    words = _DAY_WORDS.get((language or "").strip().lower()[:2], _DAY_WORDS["en"])
+    day = date.fromisoformat(due)
+    n = (day - today).days
+    relative = {0: words["today"], 1: words["tomorrow"], -1: words["yesterday"]}.get(n) or \
+        (words["ahead"] if n > 0 else words["ago"]).format(n=abs(n))
+    written = words["date"].format(d=day, month=_MONTHS_EN[day.month - 1])
+    weekday = words["weekdays"][day.weekday()]
+    return {"weekday": weekday, "day": f"{weekday} {written} ({relative})", "in_days": n}
+
+
+def _describe(item: Item, when: dict | None = None) -> str:
+    """An item as a person reads it: the box, the text, who and when.
+
+    A calendar entry leads with its day (`when`), the way a calendar reads.
+    """
     extra = [link.label for link in item.links if link.person]
+    if when:
+        tail = f"  ({', '.join(extra)})" if extra else ""
+        return f"- [{'x' if item.done else ' '}] {when['day']} {item.text}{tail}"
     if item.due:
         extra.append(f"due {item.due}")
     if item.done_on:
