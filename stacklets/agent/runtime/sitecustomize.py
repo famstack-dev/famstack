@@ -137,12 +137,13 @@ try:
 
     import nanobot.agent.loop as _loop
     from brief import brief_lines as _brief_lines
+    from brief import ANSWER_LANGUAGE as _ANSWER_LANGUAGE
     from brief import when_sent as _when_sent
     from nanobot.runtime_context import RuntimeContextBlock as _Block
     from nanobot.runtime_context import wrap_runtime_context_lines as _wrap
 
     async def _family_brief(request):
-        lines = [_when_sent(_datetime.datetime.now().astimezone())]
+        lines = [_when_sent(_datetime.datetime.now().astimezone()), _ANSWER_LANGUAGE]
         try:
             lines += _brief_lines(request, request.workspace)
         except Exception:
