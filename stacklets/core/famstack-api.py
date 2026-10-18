@@ -32,6 +32,10 @@ from pathlib import Path
 from stack.agent_access import allowed_commands
 from stack.stack import Stack
 
+# stacklets/core/scheduler.py, beside this file, whoever loads it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scheduler  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STACK_BIN = REPO_ROOT / "stack"
 API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
@@ -261,6 +265,9 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
 
     print(f"famstack API listening on {API_HOST}:{API_PORT}", file=sys.stderr)
+    # The scheduler runs in this process: the one host service that runs the
+    # stack CLI, on request and on time.
+    stop_scheduler = scheduler.start(Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser())
 
     while running:
         try:
@@ -270,6 +277,7 @@ def main():
         except OSError:
             break
 
+    stop_scheduler.set()
     print("famstack API stopped", file=sys.stderr)
 
 

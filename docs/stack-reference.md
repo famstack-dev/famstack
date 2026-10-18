@@ -14,7 +14,7 @@ Think Spring Boot for self-hosted services on a Mac.
 
 The distinction is **infrastructure vs feature**. Core hosts cross-cutting
 infrastructure that every running stack needs: Watchtower (auto-updates),
-the bot runtime, the API socket, the LLM tools server. Vertical stacklets
+the bot runtime, the API socket, the scheduler, the LLM tools server. Vertical stacklets
 host features a user might rationally decline: photos, documents, backup,
 the AI stack. The test: could a user legitimately want this off? If yes,
 it belongs in its own stacklet, even when multiple other stacklets opt
@@ -1031,6 +1031,45 @@ is no such skill, and the agent's prompt is the same as without the
 feature.
 
 ---
+
+### Scheduled commands
+
+`stack core schedule` runs a stacklet command at a time. Core owns the
+scheduler (`stacklets/core/scheduler.py`): it runs inside core's API
+service on the host, so it runs while core runs, and notes every check in a
+heartbeat that `stack doctor` reports on.
+
+```bash
+./stack core schedule add dates "daily 07:00" -- memory list show dates
+./stack core schedule add tea "in 10m" -- ai say "The tea is ready"
+./stack core schedule add dentist "at 2026-11-04 18:00" --title "Lisa's dentist tomorrow" \
+    --by homer --for lisa -- memory list show dates
+./stack core schedule list [--by <person>] [--for <person>] | run <name> | remove <name> | log [<name>]
+```
+
+- **Who and what**: `--title` says what an entry does in words (the
+  command when left out), `--by` who created it (`admin` by default),
+  `--for` who it is for. `list` takes `--by` and `--for` too, alone or
+  together.
+
+- **When**: `daily HH:MM`, `weekly <day> HH:MM`, `at YYYY-MM-DD HH:MM`,
+  `in <duration>` (stored as the `at` it means). Household wall clock,
+  `[core] timezone`.
+- **What**: a stacklet command as typed after `stack`, the same rule as
+  `[agent] allow`: framework commands (`up`, `down`, `destroy`) are
+  refused, when the entry is added and again when it runs. A schedule does
+  not change schedules.
+- **Restarts and sleep**: entries, the last due time per entry and the run
+  log live in `<data_dir>/core/schedule/`. Nothing runs twice. A due time
+  that passed while the scheduler was down runs once within the entry's
+  grace (`--grace`, default 15 minutes), later it is logged as `missed`;
+  of several passed due times only the latest can run. A one-off is
+  removed once it ran.
+- **A run**: the CLI in text mode, with `STACK_SCHEDULE_NAME` and
+  `STACK_SCHEDULE_FOR` (`--for <person>`) set, a time limit (`--timeout`,
+  default 5 minutes), never overlapping its own previous run. The log keeps
+  the status (`ok`, `failed`, `timeout`, `refused`, `missed`, `skipped`)
+  and the first lines of output.
 
 ## Docker Compose Conventions
 

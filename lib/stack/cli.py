@@ -700,6 +700,27 @@ def find_instance_dir() -> Path | None:
     return find_repo_root()
 
 
+def _scheduler_findings(stck) -> list:
+    """The scheduler's heartbeat and the runs it missed in the last day, as doctor findings."""
+    from datetime import datetime, timedelta, timezone
+
+    from .schedule import Schedule
+
+    schedule = Schedule(stck.data / "core" / "schedule")
+    now = datetime.now(timezone.utc)
+    missed = [r["name"] for r in schedule.runs(limit=500) if r.get("status") == "missed"
+              and datetime.fromisoformat(r["due"]) > now - timedelta(days=1)]
+    return doctor.check_scheduler(schedule.heartbeat(), now,
+                                  core_running=bool(docker.containers_for("core")), missed=missed)
+
+
+def _pmset() -> str:
+    """`pmset -g`, the Mac's power settings; empty where there is none."""
+    try:
+        return subprocess.run(["pmset", "-g"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
 def create_stack(repo_root: Path, instance_dir: Path | None = None) -> Stack:
     """Create a Stack instance.
 
@@ -1201,6 +1222,11 @@ def handle_doctor(stck, args):
                                      stck._cfg("ai", "language", ""))
     if language:
         findings.append(language)
+
+    findings += _scheduler_findings(stck)
+    sleep = doctor.check_sleep(_pmset())
+    if sleep:
+        findings.append(sleep)
 
     # What this instance is running, and whether a release has passed it.
     # No fetch: doctor is run often, and often when something is

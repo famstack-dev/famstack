@@ -101,6 +101,16 @@ What actually fills the disk:
 
 `data_dir` defaults to `~/famstack-data` but accepts any path. If your internal SSD is tight, point it at an external drive in `stack.toml` before running `./stack up photos` for the first time.
 
+### Keep the Mac awake
+
+A sleeping Mac runs nothing: no bot answers, no photo uploads, no scheduled command. Set it never to sleep on its own, and keep it on power:
+
+```bash
+sudo pmset -a sleep 0
+```
+
+The screen may still turn off. `./stack doctor` warns while the Mac is set to sleep, also when something like `caffeinate` holds it awake for now. The stack runs as your user, so the Mac also has to be logged in after a restart: switch on automatic login in System Settings > Users & Groups (macOS offers it only while FileVault is off).
+
 ---
 
 ## Install
@@ -759,6 +769,22 @@ Key things to know:
 ./stack host                  # disk, memory, uptime
 ./stack updates               # check for newer Docker images
 ```
+
+### Scheduled commands
+
+`./stack core schedule` runs a stacklet command at a time, in your timezone. It survives restarts: a time that passed while the Mac was off or asleep runs once within its grace (15 minutes by default), later it is logged as missed.
+
+```bash
+./stack core schedule add dates "daily 07:00" -- memory list show dates
+./stack core schedule add tea "in 10m" -- ai say "The tea is ready"
+./stack core schedule add dentist "at 2026-11-04 18:00" --title "Lisa's dentist tomorrow" --by homer --for lisa -- memory list show dates
+./stack core schedule list              # what is due next, and the last result
+./stack core schedule list --for lisa   # what is for Lisa; --by for what someone created
+./stack core schedule log               # what ran, missed or failed
+./stack core schedule remove tea
+```
+
+It runs inside core's API service, so it runs while core runs. `./stack doctor` says when it has stopped checking, or when runs were missed in the last day.
 
 ### AI & Config
 
