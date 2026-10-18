@@ -281,9 +281,15 @@ a { color: var(--teal); text-underline-offset: 2px; }
 .body h3, .body h4 { font: 500 1.08rem/1.3 var(--serif); margin: 1.1em 0 .4em; }
 .body ul, .body ol { padding-left: 1.2em; margin: 0 0 .8em; }
 .body blockquote {
-  margin: 0 0 .8em; padding: 2px 14px; border-left: 2px solid var(--line-strong);
-  font-family: var(--serif); font-style: italic; color: var(--charcoal);
+  margin: 0 0 .8em; padding: 2px 14px; border-left: 2px solid var(--line-strong); color: var(--charcoal);
 }
+.body blockquote p, .body .callout p { margin: 0 0 .35em; }
+.body .callout {
+  margin: 0 0 1em; padding: 10px 14px; border-radius: 9px;
+  background: color-mix(in srgb, var(--c) 7%, var(--paper));
+  border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
+}
+.body .callout .label { display: block; margin-bottom: 6px; color: var(--c); }
 .body code { font: .82em var(--mono); background: color-mix(in srgb, var(--teal) 9%, transparent); padding: 1px 5px; border-radius: 4px; }
 .body .figure {
   display: inline-flex; gap: 6px; align-items: center; font: .74rem var(--mono); color: var(--charcoal);

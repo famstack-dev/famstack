@@ -181,8 +181,21 @@ function markdown(text, card) {
     if (list) html.push(`</${list}>`);
     list = null;
   };
+  let quoted = [];
+  const flushQuote = () => {
+    if (!quoted.length) return;
+    // An Obsidian callout ("> [!summary]") is a labelled box; any other quote a quote.
+    const callout = quoted[0].match(/^\[!(\w+)\][-+]?\s*(.*)$/);
+    const rest = callout ? [callout[2], ...quoted.slice(1)] : quoted;
+    const inner = rest.filter((l) => l.trim()).map((l) => `<p>${inline(l, card)}</p>`).join("");
+    html.push(callout
+      ? `<div class="callout"><span class="label">${escapeHtml(callout[1])}</span>${inner}</div>`
+      : `<blockquote>${inner}</blockquote>`);
+    quoted = [];
+  };
   for (const raw of lines) {
     const line = raw.trimEnd();
+    if (!/^>/.test(line)) flushQuote();
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     const bullet = line.match(/^\s*[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
     const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
@@ -199,13 +212,14 @@ function markdown(text, card) {
       html.push(`<li>${inline((bullet || numbered)[1], card)}</li>`);
     } else if (quote) {
       flush(); closeList();
-      html.push(`<blockquote>${inline(quote[1], card)}</blockquote>`);
+      quoted.push(quote[1]);
+      continue;
     } else {
       closeList();
       para.push(line.trim());
     }
   }
-  flush(); closeList();
+  flush(); closeList(); flushQuote();
   return html.join("");
 }
 
@@ -514,7 +528,8 @@ function renderResults() {
 
 // ── The graph of the focused card ─────────────────────────────────────────
 
-const W = 320, H = 320, CX = W / 2, CY = H / 2, R1 = 92, R2 = 140;
+// The graph's canvas: room around the rings for the labels.
+const W = 400, H = 360, CX = W / 2, CY = H / 2, R1 = 92, R2 = 142;
 
 async function renderGraph() {
   const pane = document.getElementById("graphpane");
@@ -538,16 +553,14 @@ async function renderGraph() {
     const angle = (i / Math.max(first.length, 1)) * Math.PI * 2 - Math.PI / 2;
     pos.set(a.card.id, [CX + R1 * Math.cos(angle), CY + R1 * Math.sin(angle), angle]);
   });
-  const byVia = new Map();
-  second.forEach((a) => byVia.set(a.via, [...(byVia.get(a.via) || []), a]));
-  for (const [via, kids] of byVia) {
-    const base = pos.get(via)?.[2] ?? 0;
-    const spread = Math.min(0.5, (Math.PI * 2) / Math.max(first.length, 1) / 2);
-    kids.forEach((a, i) => {
-      const angle = base + (kids.length > 1 ? (i / (kids.length - 1) - 0.5) * spread * 2 : 0);
-      pos.set(a.card.id, [CX + R2 * Math.cos(angle), CY + R2 * Math.sin(angle), angle]);
-    });
-  }
+  // The outer ring is shared out evenly, in the order of the cards it hangs off,
+  // so each sits near its nearer card without piling up behind a busy one.
+  const outer = [...second].sort((a, b) => (pos.get(a.via)?.[2] ?? 0) - (pos.get(b.via)?.[2] ?? 0));
+  const start = outer.length ? pos.get(outer[0].via)?.[2] ?? -Math.PI / 2 : 0;
+  outer.forEach((a, i) => {
+    const angle = start + (i / outer.length) * Math.PI * 2;
+    pos.set(a.card.id, [CX + R2 * Math.cos(angle), CY + R2 * Math.sin(angle), angle]);
+  });
 
   const size = (links) => 4 + Math.min(Math.log2((links || 0) + 1) * 2.2, 9);
   const edges = s("g");
