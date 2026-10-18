@@ -1,0 +1,397 @@
+"""`stack memory find`, `card` and `links`: the family memory as linked cards.
+
+The agent reads the family memory by card: it finds cards by words, opens
+one by its id, and follows its links. Each card says who changed it last
+and in which commit, so a card that changed since the agent read it can be
+told apart from one that did not.
+
+The family memory here is a real git repository with commits made as
+the people who made them, the way every change reaches the vault
+(ADR-015). The brain, the copy the agent reads, is the vault plus the
+pages the wiki generates; here it is the vault itself.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+from datetime import date, timedelta
+from pathlib import Path
+
+import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+
+
+def _load(name: str):
+    path = _REPO_ROOT / "stacklets" / "memory" / "cli" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"memory_cli_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+find_cli, card_cli, links_cli = _load("find"), _load("card"), _load("links")
+
+RECENT = (date.today() - timedelta(days=2)).isoformat()
+LONG_AGO = (date.today() - timedelta(days=900)).isoformat()
+
+
+class Memory:
+    """A family memory on disk: files committed as the people who wrote them."""
+
+    def __init__(self, root: Path):
+        self.data_dir = root
+        self.vault = root / "memory" / "vault"
+        self.vault.mkdir(parents=True)
+        self._git("init", "-q")
+
+    def write(self, path: str, text: str, *, by: str, message: str) -> str:
+        file = self.vault / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
+        self._git("add", path)
+        self._git("-c", f"user.name={by}", "-c", f"user.email={by}@famstack",
+                  "commit", "-q", "-m", message)
+        return self._git("rev-parse", "--short=7", "HEAD").strip()
+
+    def file_many(self, count: int, *, by: str) -> None:
+        """`count` filings, one commit each, as years of a family's use leave them."""
+        branch = self._git("symbolic-ref", "HEAD").strip()
+        lines = []
+        for i in range(count):
+            path, body = f"{by}/notes/many-{i}.md", _note(f"Many{i:09d}", f"Notiz {i}", RECENT).encode()
+            lines += [f"commit {branch}".encode(),
+                      f"committer {by} <{by}@famstack> {1700000000 + i} +0000".encode(),
+                      b"data 6", b"filing"]
+            if i == 0:
+                lines.append(f"from {self._git('rev-parse', 'HEAD').strip()}".encode())
+            lines += [f"M 100644 inline {path}".encode(), f"data {len(body)}".encode(), body, b""]
+        subprocess.run(["git", "-C", str(self.vault), "fast-import", "--quiet", "--force"],
+                       input=b"\n".join(lines), check=True)
+        self._git("reset", "-q", "--hard")
+
+    def _git(self, *args) -> str:
+        return subprocess.run(["git", "-C", str(self.vault), *args], check=True,
+                              capture_output=True, text=True).stdout
+
+
+@pytest.fixture
+def memory(tmp_path):
+    m = Memory(tmp_path)
+    m.write("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\nslug: lisa\n"
+            "synonyms:\n  - Lisa\n---\nLisa plays the saxophone.\n",
+            by="marge", message="chore(people): marge described Lisa")
+    m.write("family/camping/about.md", "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
+            "The family's camping trips.\n", by="homer", message="feat(topics): homer added camping")
+    return m
+
+
+def _run(cli, memory, *args):
+    return cli.run(list(args), None, {"data_dir": str(memory.data_dir)})
+
+
+def _note(capture_id: str, title: str, day: str, body: str = "", persons=()) -> str:
+    people = "".join(f"\n  - {p}" for p in persons)
+    return (f"---\ntype: note\ntitle: {title}\ndate: \"{day}\"\ncapture_id: \"${capture_id}\"\n"
+            + (f"persons:{people}\n" if persons else "") + f"---\n{body}\n")
+
+
+class TestFindingCards:
+
+    def test_a_card_is_named_by_its_id_with_its_date_and_version(self, memory, capsys):
+        sha = memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                           by="homer", message="feat(notes): homer filed Zelt ist kaputt")
+
+        _run(find_cli, memory, "zelt")
+
+        line = capsys.readouterr().out.splitlines()[0]
+        assert line.startswith("capture/Abc123Def4  note  " + RECENT + "  Zelt ist kaputt")
+        assert f"@{sha}" in line
+
+    def test_a_recent_card_ranks_above_an_old_one_that_matches_a_little_better(self, memory,
+                                                                                capsys):
+        memory.write("homer/notes/old.md", _note("Old0000000001", "Camping 2023", LONG_AGO,
+                                                 body="Zelt, Zelt, Zelt aufgebaut."),
+                     by="homer", message="feat(notes): old")
+        memory.write("homer/notes/new.md", _note("New0000000001", "Camping jetzt", RECENT,
+                                                 body="Das Zelt ist gerissen."),
+                     by="homer", message="feat(notes): new")
+
+        _run(find_cli, memory, "zelt")
+
+        out = capsys.readouterr().out
+        assert out.index("Camping jetzt") < out.index("Camping 2023")
+
+    def test_a_card_many_others_point_to_ranks_above_an_isolated_one(self, memory, capsys):
+        """Of two cards that match alike, the one the family keeps linking
+        to is the one that matters (a trip's overview, not a stray note)."""
+        memory.write("homer/notes/a.md", _note("Lonely0000001", "Zelt allein", RECENT),
+                     by="homer", message="feat(notes): a")
+        memory.write("homer/notes/b.md", _note("Linked0000001", "Zelt geteilt", RECENT),
+                     by="homer", message="feat(notes): b")
+        for i in range(5):
+            memory.write(f"homer/notes/ref{i}.md",
+                         _note(f"Ref{i:010d}", f"Ausflug {i}", RECENT, body="Siehe [b](b.md)."),
+                         by="homer", message=f"feat(notes): ref {i}")
+
+        _run(find_cli, memory, "zelt")
+
+        out = capsys.readouterr().out
+        assert out.index("Zelt geteilt") < out.index("Zelt allein")
+
+    def test_a_compiled_page_is_found_with_the_cards_it_was_made_from(self, memory, capsys):
+        """The wiki's pages answer most questions in one read; the cards
+        behind them say who wrote what and when. One search finds both."""
+        memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                     by="homer", message="feat(notes): zelt")
+        memory.write("family/camping/about.md",
+                     "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
+                     "<!-- begin: generated -->\nDas Zelt ist kaputt "
+                     "([Zelt ist kaputt](/homer/notes/zelt.md)).\n<!-- end: generated -->\n",
+                     by="curator", message="chore(wiki): compile camping")
+
+        _run(find_cli, memory, "zelt")
+        found = capsys.readouterr().out
+        _run(card_cli, memory, "topic/camping")
+        page = capsys.readouterr().out
+
+        assert "topic/camping" in found and "capture/Abc123Def4" in found
+        assert "links to: capture/Abc123Def4 (Zelt ist kaputt)" in page
+
+    def test_a_word_inside_a_longer_one_is_found(self, memory, capsys):
+        """German writes its words together: "zelt" has to find "Zeltplatz"."""
+        memory.write("homer/notes/platz.md", _note("Platz00000001", "Zeltplatz am See", RECENT),
+                     by="homer", message="feat(notes): platz")
+
+        _run(find_cli, memory, "zelt")
+
+        assert "Zeltplatz am See" in capsys.readouterr().out
+
+    def test_since_keeps_only_what_changed_from_that_day_on(self, memory, capsys):
+        memory.write("homer/notes/old.md", _note("Old0000000001", "Zelt geflickt", LONG_AGO),
+                     by="homer", message="feat(notes): old")
+        memory.write("homer/notes/new.md", _note("New0000000001", "Zelt gerissen", RECENT),
+                     by="homer", message="feat(notes): new")
+
+        _run(find_cli, memory, "zelt", "--since", (date.today() - timedelta(days=30)).isoformat())
+
+        out = capsys.readouterr().out
+        assert "Zelt gerissen" in out and "Zelt geflickt" not in out
+
+    def test_nothing_found_says_so_and_exits_1(self, memory, capsys):
+        with pytest.raises(SystemExit) as exit_:
+            _run(find_cli, memory, "einhorn")
+
+        assert exit_.value.code == 1
+        assert "No card matches" in capsys.readouterr().out
+
+
+class TestOpeningACard:
+
+    def test_a_card_says_who_changed_it_when_and_how(self, memory, capsys):
+        sha = memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                           by="marge", message="fix(notes): marge corrected the tent note")
+
+        _run(card_cli, memory, "capture/Abc123Def4")
+
+        out = capsys.readouterr().out
+        assert f"by marge @{sha}: fix(notes): marge corrected the tent note" in out
+
+    def test_a_card_shows_the_cards_that_point_to_it(self, memory, capsys):
+        memory.write("family/camping/zelt.md",
+                     _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT, persons=["Lisa"]),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(card_cli, memory, "person/lisa")
+
+        out = capsys.readouterr().out
+        assert "linked from: capture/Abc123Def4 (Zelt ist kaputt)" in out
+
+    def test_a_link_relative_to_the_page_reaches_the_card(self, memory, capsys):
+        """Pages link each other the way markdown does, relative to where
+        they live; such a link is an edge like a site path."""
+        memory.write("family/camping/zelt.md",
+                     _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT,
+                           body="Lisa hat es gemerkt ([Lisa](../../lisa/about.md))."),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(card_cli, memory, "person/lisa")
+
+        assert "linked from: capture/Abc123Def4 (Zelt ist kaputt)" in capsys.readouterr().out
+
+    def test_a_card_in_a_topic_folder_links_to_its_topic(self, memory, capsys):
+        memory.write("family/camping/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(card_cli, memory, "capture/Abc123Def4")
+
+        assert "links to: topic/camping (Camping)" in capsys.readouterr().out
+
+    def test_the_version_moves_when_the_card_changes(self, memory, capsys):
+        first = memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                             by="homer", message="feat(notes): zelt")
+        second = memory.write("homer/notes/zelt.md",
+                              _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT, body="Geflickt."),
+                              by="marge", message="fix(notes): marge mended the tent")
+
+        _run(card_cli, memory, "capture/Abc123Def4")
+
+        line = capsys.readouterr().out.splitlines()[0]
+        assert f"@{second}" in line and f"@{first}" not in line
+
+    def test_several_cards_open_in_one_call(self, memory, capsys):
+        """Each model call costs seconds; opening the cards a search found
+        one by one cost a call each (8 calls for one question on the rig)."""
+        memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(card_cli, memory, "capture/Abc123Def4", "person/lisa", "topic/camping")
+
+        out = capsys.readouterr().out
+        assert "Zelt ist kaputt" in out and "Lisa plays the saxophone" in out
+        assert "The family's camping trips" in out
+
+    def test_cards_opened_together_share_one_budget_and_say_how_to_see_the_rest(self, memory,
+                                                                               capsys):
+        """A tool result is read again on every later call of a turn, so
+        several cards together get the text of one; a card cut short says
+        how to see more with the commands the agent has."""
+        memory.write("homer/notes/long.md",
+                     _note("Long000000001", "Langer Bericht", RECENT, body="Zelt. " * 2000),
+                     by="homer", message="feat(notes): long")
+
+        _run(card_cli, memory, "capture/Long00000", "person/lisa")
+        together = capsys.readouterr().out
+        _run(card_cli, memory, "capture/Long00000")
+        alone = capsys.readouterr().out
+
+        assert len(together) < 4000 and len(alone) < 7000
+        assert "`stack memory card capture/Long000000` alone shows more" in together
+        assert alone.count("Zelt.") > 1.5 * together.count("Zelt.")
+
+    def test_a_card_keeps_its_history_however_much_was_filed_after_it(self, memory, capsys):
+        """Years of filings later, Lisa's profile still says who wrote it."""
+        memory.file_many(2100, by="homer")
+
+        _run(card_cli, memory, "person/lisa")
+
+        assert "by marge" in capsys.readouterr().out
+
+    def test_a_persons_card_is_their_profile_not_their_registry_entry(self, memory, capsys):
+        """Both name the person; the profile is what a question about them needs."""
+        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n",
+                     by="marge", message="chore(people): marge registered Lisa")
+
+        _run(card_cli, memory, "person/lisa")
+
+        assert "Lisa plays the saxophone" in capsys.readouterr().out
+
+    def test_a_path_outside_the_family_memory_is_no_card(self, memory, tmp_path, capsys):
+        """The agent opens pages with `card`; only the memory's cards exist for it."""
+        (tmp_path / "secret.txt").write_text("not the family's memory")
+
+        with pytest.raises(SystemExit) as exit_:
+            _run(card_cli, memory, "../../secret.txt")
+
+        assert exit_.value.code == 1
+        assert "not the family's memory" not in capsys.readouterr().out
+
+    def test_an_unknown_card_says_how_to_find_one(self, memory, capsys):
+        with pytest.raises(SystemExit) as exit_:
+            _run(card_cli, memory, "capture/nothere")
+
+        assert exit_.value.code == 1
+        assert "stack memory find" in capsys.readouterr().out
+
+
+class TestFollowingLinks:
+
+    def test_the_cards_around_a_card_come_nearest_first(self, memory, capsys):
+        memory.write("family/camping/zelt.md",
+                     _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT, persons=["Lisa"]),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(links_cli, memory, "person/lisa", "--depth", "2")
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0].startswith("1  linked from  capture/Abc123Def4")
+        assert any(line.startswith("2  links to  topic/camping") for line in lines)
+
+    def test_links_reach_only_as_far_as_asked(self, memory, capsys):
+        memory.write("family/camping/zelt.md",
+                     _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT, persons=["Lisa"]),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(links_cli, memory, "person/lisa")
+
+        out = capsys.readouterr().out
+        assert "capture/Abc123Def4" in out and "topic/camping" not in out
+
+
+class TestWhoIsListening:
+    """What one person keeps in their own bucket stays theirs: a room with
+    others in it reads the family's memory, not one person's (the same rule
+    that files a note into a bucket by who is in the room). `--audience`
+    names who will see the answer; without it, the admin sees everything."""
+
+    @pytest.fixture
+    def private(self, memory):
+        memory.write("marge/notes/aquarell.md",
+                     _note("Marge000000001", "Barts Aquarell", RECENT,
+                           body="Bart malt nass in nass. Siehe [Lisa](../../lisa/about.md)."),
+                     by="marge", message="feat(notes): marge filed Barts Aquarell")
+        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n"
+                     "Lisa, 8, the family's saxophonist.\n",
+                     by="marge", message="chore(people): marge registered Lisa")
+        return memory
+
+    def test_in_a_room_with_others_a_persons_own_note_is_not_found(self, private, capsys):
+        with pytest.raises(SystemExit):
+            _run(find_cli, private, "aquarell", "--audience", "bart,homer")
+
+        assert "Barts Aquarell" not in capsys.readouterr().out
+
+    def test_nor_opened_by_its_id(self, private, capsys):
+        with pytest.raises(SystemExit) as exit_:
+            _run(card_cli, private, "capture/Marge00000", "--audience", "bart,homer")
+
+        assert exit_.value.code == 1 and "nass in nass" not in capsys.readouterr().out
+
+    def test_nor_seen_as_a_link_of_a_card_that_is_read(self, private, capsys):
+        with pytest.raises(SystemExit):  # Lisa's card has no links left: exit 1
+            _run(links_cli, private, "person/lisa", "--audience", "bart")
+
+        assert "Marge00000" not in capsys.readouterr().out
+
+    def test_in_their_own_chat_it_is_theirs_to_read(self, private, capsys):
+        _run(find_cli, private, "aquarell", "--audience", "marge")
+
+        assert "Barts Aquarell" in capsys.readouterr().out
+
+    def test_a_person_with_others_still_reads_it_as_one_of_them_only_alone(self, private, capsys):
+        with pytest.raises(SystemExit):
+            _run(find_cli, private, "aquarell", "--audience", "marge,homer")
+
+        assert "Barts Aquarell" not in capsys.readouterr().out
+
+    def test_the_familys_memory_is_read_by_everyone(self, private, capsys):
+        _run(find_cli, private, "camping", "--audience", "bart,homer")
+
+        assert "topic/camping" in capsys.readouterr().out
+
+    def test_a_profile_kept_in_the_persons_bucket_falls_back_to_the_familys_entry(self, private,
+                                                                                capsys):
+        """Lisa's compiled page lives in her bucket; others read the family's file on her."""
+        _run(card_cli, private, "person/lisa", "--audience", "bart,homer")
+
+        out = capsys.readouterr().out
+        assert "the family's saxophonist" in out and "Lisa plays the saxophone" not in out
+
+    def test_the_admin_without_an_audience_sees_everything(self, private, capsys):
+        _run(find_cli, private, "aquarell")
+
+        assert "Barts Aquarell" in capsys.readouterr().out
