@@ -19,7 +19,9 @@ is unit-testable without a running instance.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import datetime
 
 ERROR = "error"
 WARN = "warn"
@@ -254,6 +256,55 @@ def check_language(core_language: str, ai_language: str) -> Finding | None:
              f"language your family reads), then restart what is running: "
              f"stack restart <id>..."),
     )
+
+
+# Seconds without a check before the scheduler counts as stopped: four ticks.
+SCHEDULER_SILENT = 120
+_SLEEP = re.compile(r"^\s*sleep\s+(\d+)(.*)$", re.MULTILINE)
+
+
+def check_scheduler(heartbeat: datetime | None, now: datetime, *, core_running: bool,
+                    missed: list[str]) -> list[Finding]:
+    """Whether scheduled commands run: the scheduler checks, and none were missed.
+
+    The scheduler runs inside core's API service and notes every check;
+    `missed` names the entries whose runs in the last day passed while it
+    was down or the Mac asleep. A scheduler that stopped is otherwise
+    noticed only when a reminder does not come.
+    """
+    findings = []
+    if core_running and (heartbeat is None or (now - heartbeat).total_seconds() > SCHEDULER_SILENT):
+        last = f"It last checked at {heartbeat:%Y-%m-%d %H:%M}." if heartbeat else "It never checked."
+        findings.append(Finding(
+            level=ERROR, title="the scheduler is not running",
+            detail=f"Scheduled commands do not run. {last} It runs inside core's API service.",
+            fix="stack restart core"))
+    if missed:
+        findings.append(Finding(
+            level=WARN, title=f"{len(missed)} scheduled run(s) missed in the last day",
+            detail=("They fell due while the scheduler was down or the Mac asleep, and "
+                    f"later than their grace: {', '.join(sorted(set(missed)))}."),
+            fix="stack core schedule log"))
+    return findings
+
+
+def check_sleep(pmset: str) -> Finding | None:
+    """Whether the Mac goes to sleep on its own (`pmset -g`).
+
+    Nothing runs while it sleeps: no scheduled command, no bot, no chat.
+    `caffeinate` holding it awake shows as "sleep prevented by"; that ends
+    with the process, so the setting still counts.
+    """
+    m = _SLEEP.search(pmset or "")
+    if not m or int(m[1]) == 0:
+        return None
+    held = " Something keeps it awake right now, but only while that runs." \
+        if "prevented by" in m[2] else ""
+    return Finding(
+        level=WARN, title=f"this Mac sleeps after {m[1]} minute(s) without use",
+        detail=("While it sleeps nothing runs: scheduled commands, the bots, the family chat."
+                + held),
+        fix="sudo pmset -a sleep 0")
 
 
 def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
