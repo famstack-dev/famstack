@@ -5,7 +5,7 @@ The memory stacklet owns the cards, so it serves them: core's card browser
 read operations of the card graph (`graph.py`), the same ones `stack memory
 find`, `card` and `links` print, so a page and the CLI never disagree:
 
-    GET /find?q=<words>&type=&since=&person=&limit=&audience=
+    GET /find?q=<words>&type=&person=&since=&until=&sort=newest&limit=&audience=
     GET /card/<id>?audience=
     GET /links/<id>?depth=2&audience=
     GET /history?limit=&audience=
@@ -179,13 +179,10 @@ def _around(graph: Graph, card: Card, depth: int) -> list[dict]:
 
 def _found(graph: Graph, query: dict[str, str]) -> dict:
     limit = max(1, min(_int(query.get("limit"), FIND_LIMIT), 200))
-    person = (query.get("person") or "").lower()
     cards = graph.find(query.get("q", ""), kind=query.get("type", ""),
-                       since=query.get("since", ""), limit=10_000)
-    if person:
-        pid = f"person/{person}"
-        cards = [c for c in cards if pid in c.links_out or c.id == pid
-                 or person in (p.lower() for p in c.persons)]
+                       since=query.get("since", ""), until=query.get("until", ""),
+                       person=query.get("person", ""), newest=query.get("sort") == "newest",
+                       limit=10_000)
     types: dict[str, int] = {}
     for card in graph.cards.values():
         types[card.type] = types.get(card.type, 0) + 1

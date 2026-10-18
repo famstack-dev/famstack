@@ -3,6 +3,8 @@
     stack memory find zelt kaputt                 cards about the broken tent
     stack memory find schule --type diary         only diary entries
     stack memory find --since 2026-10-01          everything changed since then
+    stack memory find --person lisa --since 2026-10-06 --until 2026-10-12 --sort newest
+                                                  what was about Lisa that week, newest first
 
 One line per card: its id, type, date, title, version and link count. A
 card is opened with `stack memory card <id>`, its neighbours with
@@ -30,6 +32,9 @@ def run(args, stacklet, config):
     parser.add_argument("words", nargs="*")
     parser.add_argument("--type", default="")
     parser.add_argument("--since", default="")
+    parser.add_argument("--until", default="")
+    parser.add_argument("--person", default="")
+    parser.add_argument("--sort", choices=("relevant", "newest"), default="relevant")
     parser.add_argument("--limit", type=int, default=8)
     args, audience = take_audience(args)
     try:
@@ -40,7 +45,8 @@ def run(args, stacklet, config):
     graph = graph_for(config, audience)
     if graph is None:
         return {"error": "no family memory found; is the memory stacklet installed?"}
-    cards = graph.find(" ".join(ns.words), kind=ns.type, since=ns.since, limit=ns.limit)
+    cards = graph.find(" ".join(ns.words), kind=ns.type, since=ns.since, until=ns.until,
+                       person=ns.person, newest=ns.sort == "newest", limit=ns.limit)
     if not cards:
         print("No card matches. Try other or fewer words.")
         sys.exit(1)

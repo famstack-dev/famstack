@@ -395,3 +395,43 @@ class TestWhoIsListening:
         _run(find_cli, private, "aquarell")
 
         assert "Barts Aquarell" in capsys.readouterr().out
+
+
+class TestNarrowingWhatIsFound:
+    """What an agent asks most: about one person, in a stretch of days,
+    newest first ("what did Lisa do last week?")."""
+
+    @pytest.fixture
+    def days(self, memory):
+        memory.write("family/camping/zelt.md",
+                     _note("Zelt00000001", "Zelt gekauft", "2026-09-01", persons=["Lisa"]),
+                     by="homer", message="feat(notes): zelt")
+        memory.write("family/camping/see.md",
+                     _note("See000000001", "Am See", "2026-09-10", persons=["Lisa"]),
+                     by="marge", message="feat(notes): see")
+        memory.write("family/camping/grill.md", _note("Grill0000001", "Grillabend", "2026-09-12"),
+                     by="homer", message="feat(notes): grill")
+        return memory
+
+    def test_a_person_narrows_it_to_the_cards_about_them(self, days, capsys):
+        _run(find_cli, days, "--person", "lisa")
+
+        out = capsys.readouterr().out
+        assert "Zelt gekauft" in out and "Am See" in out and "Grillabend" not in out
+
+    def test_a_person_is_found_by_any_of_their_names(self, days, capsys):
+        _run(find_cli, days, "--person", "Lisa Simpson")
+
+        assert "Am See" in capsys.readouterr().out
+
+    def test_a_stretch_of_days_keeps_what_falls_in_it(self, days, capsys):
+        _run(find_cli, days, "--since", "2026-09-05", "--until", "2026-09-11")
+
+        out = capsys.readouterr().out
+        assert "Am See" in out and "Zelt gekauft" not in out and "Grillabend" not in out
+
+    def test_newest_first_orders_by_day(self, days, capsys):
+        _run(find_cli, days, "--type", "note", "--sort", "newest")
+
+        lines = capsys.readouterr().out.splitlines()
+        assert [ln.split("  ")[3] for ln in lines] == ["Grillabend", "Am See", "Zelt gekauft"]

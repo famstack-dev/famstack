@@ -121,15 +121,28 @@ class Graph:
         matches = [c for i, c in self.cards.items() if i.startswith(ref) and "/" in ref]
         return matches[0] if len(matches) == 1 else None
 
-    def find(self, query: str, *, kind: str = "", since: str = "", limit: int = 8,
+    def find(self, query: str, *, kind: str = "", since: str = "", until: str = "",
+             person: str = "", newest: bool = False, limit: int = 8,
              today: date | None = None) -> list[Card]:
+        """Cards that match `query`, best first, or newest first with `newest`.
+
+        `kind`, a stretch of days (`since`, `until`, both inclusive) and a
+        `person` (slug or any of their names: the cards about them) narrow it.
+        """
         today = today or date.today()
         terms = [w for w in _WORD.findall(query.lower()) if len(w) > 2]
+        about = self.person_id(person) if person else ""
+        if person and not about:
+            return []
         scored = []
         for card in self.cards.values():
             if kind and card.type != kind:
                 continue
             if since and (card.day or "") < since:
+                continue
+            if until and (not card.day or card.day > until):
+                continue
+            if about and not self._about(card, about):
                 continue
             match = _match(card, terms)
             if terms and match == 0:
@@ -137,8 +150,20 @@ class Graph:
             score = (match or 1.0) * (0.5 + 0.5 * _freshness(card, today)) \
                 + 0.1 * math.log1p(len(card.links_in))
             scored.append((score, card.day or "", card))
-        scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
+        order = (lambda s: (s[1], s[0])) if newest else (lambda s: (s[0], s[1]))
+        scored.sort(key=order, reverse=True)
         return [c for _, _, c in scored[:limit]]
+
+    def person_id(self, said: str) -> str:
+        """The card id of the person `said` names (slug or any name), or ""."""
+        said = said.strip().lower()
+        if f"person/{said}" in self.cards:
+            return f"person/{said}"
+        return self._names.get(said, "")
+
+    def _about(self, card: Card, person: str) -> bool:
+        return card.id == person or person in card.links_out or \
+            any(self._names.get(p.lower()) == person for p in card.persons)
 
     def neighbours(self, ref: str, depth: int = 1) -> list[tuple[int, str, Card]]:
         """(distance, how, card) for every card within `depth` links of `ref`."""
@@ -160,6 +185,7 @@ class Graph:
 
     def _link(self, cards: list[Card]) -> None:
         names = {n: c.id for c in cards if c.type == "person" for n in c.names}
+        self._names = names
         topics = {c.id.split("/", 1)[1] for c in cards if c.type == "topic"}
         for card in cards:
             for target in _LINK.findall(card.text):
