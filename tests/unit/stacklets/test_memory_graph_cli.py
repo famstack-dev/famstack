@@ -495,3 +495,32 @@ class TestEveryThingIsOneCard:
         _run(card_cli, memory, "list/zeltliste")
 
         assert "links to: topic/camping (Camping)" in capsys.readouterr().out
+class TestWhatFindLeavesOut:
+
+    @pytest.fixture
+    def pages(self, memory):
+        memory.write("family/diary/2026/10.md", "---\ntitle: October 2026\ngenerated: true\n---\n"
+                     "The family's month: camping, the tent.\n", by="curator", message="chore(wiki): month")
+        memory.write("family/camping/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
+                     by="homer", message="feat(notes): zelt")
+        return memory
+
+    def test_navigation_pages_are_left_out_of_a_search(self, pages, capsys):
+        _run(find_cli, pages, "camping")
+
+        assert "October 2026" not in capsys.readouterr().out
+
+    def test_they_are_found_when_asked_for(self, pages, capsys):
+        _run(find_cli, pages, "camping", "--type", "index")
+
+        assert "index/family/diary/2026/10  index" in capsys.readouterr().out
+
+    def test_without_words_the_newest_come_first(self, pages, capsys):
+        memory = pages
+        memory.write("family/camping/alt.md", _note("Alt000000001", "Alter Eintrag", LONG_AGO),
+                     by="homer", message="feat(notes): alt")
+
+        _run(find_cli, memory)
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[-1].split("  ")[3] == "Alter Eintrag"

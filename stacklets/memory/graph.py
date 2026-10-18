@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from stack.cards import ARCHIVE, card_kind, card_ref
+from stack.cards import ARCHIVE, INDEX, card_kind, card_ref
 from stack.frontmatter import FrontmatterError, parse
 
 # How fast a card ages, in days until its weight halves. None: never.
@@ -54,6 +54,8 @@ HALF_LIFE_DAYS: dict[str, float | None] = {
 }
 
 _SHORT_ID = 10
+# Found only when asked for by kind: pages to navigate by, and lists' archives.
+_LEFT_OUT = {INDEX, ARCHIVE}
 _LINK = re.compile(r"\]\(([^)\s#:]+\.md|/[^)\s#:]+)\)")
 _WORD = re.compile(r"[^\W_]+")
 _GENERATED = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->")
@@ -132,15 +134,20 @@ class Graph:
 
         `kind`, a stretch of days (`since`, `until`, both inclusive) and a
         `person` (slug or any of their names: the cards about them) narrow it.
+        Navigation pages and list archives come only when `kind` names them;
+        without words the newest come first.
         """
         today = today or date.today()
         terms = [w for w in _WORD.findall(query.lower()) if len(w) > 2]
         about = self.person_id(person) if person else ""
         if person and not about:
             return []
+        newest = newest or not terms  # nothing asked: what is new
         scored = []
         for card in self.cards.values():
             if kind and card.type != kind:
+                continue
+            if not kind and card.type in _LEFT_OUT:
                 continue
             if since and (card.day or "") < since:
                 continue
