@@ -147,6 +147,9 @@ function inline(text, card) {
     const ref = resolvePath(href, card?.path || "");
     return ref ? `<a class="card-link" data-ref="${ref}">${label}</a>` : label;
   });
+  // <https://...>, already escaped to &lt;...&gt;: a link showing its address.
+  out = out.replace(/&lt;(https?:\/\/[^\s&]+(?:&amp;[^\s&]+)*)&gt;/g, (_, href) =>
+    `<a href="${href}" target="_blank" rel="noopener noreferrer">${href.replace(/^https?:\/\//, "")}</a>`);
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
   out = out.replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
