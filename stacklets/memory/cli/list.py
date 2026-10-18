@@ -722,6 +722,11 @@ def _reset(text: str, lst: FamilyList, today: str, path: str) -> tuple[str, str]
     return text, f"reopened {'; '.join(i.text for i in ticked)} on {lst.title}"
 
 
+# The day `show` prints in front of a calendar entry: a weekday, the date,
+# and how far away it is in brackets.
+_PRINTED_DAY = re.compile(r"^\S+ \S+(?: \S+)? \([^)]*\)\s+")
+
+
 def _one(lst: FamilyList, name: str, *, verb: str = "") -> Item:
     """The single item `name` means, or a refusal that names the candidates.
 
@@ -731,6 +736,11 @@ def _one(lst: FamilyList, name: str, *, verb: str = "") -> Item:
     else the open one.
     """
     matches = find(lst, name)
+    if not matches and lst.kind == CALENDAR:
+        # Named the way `show` prints it, the day in front:
+        # "Mon 19 Oct (in 2 days) 17:00 Turnen", "Mo 19.10. (in 2 Tagen) 17:00 Turnen".
+        bare = _PRINTED_DAY.sub("", name, count=1)
+        matches = find(lst, bare) if bare != name else matches
     if len(matches) > 1 and len({i.text.casefold() for i in matches}) == 1:
         wanted_done = verb == "untick"
         matches = [i for i in matches if i.done == wanted_done][:1] or matches[:1]
