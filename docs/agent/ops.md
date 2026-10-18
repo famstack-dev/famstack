@@ -45,6 +45,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
+| `./stack core schedule add <name> "<when>" -- <cmd>` | yes | no | runs a stacklet command at a time; `list`, `run`, `remove`, `log` |
 | `./stack infra dns-token` | yes | no | stores or replaces the DNS provider API token (HTTPS in domain mode); `./stack up infra` applies it |
 
 **Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success.
