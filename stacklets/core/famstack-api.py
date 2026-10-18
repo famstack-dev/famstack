@@ -45,6 +45,11 @@ NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 # commands above -- those stay on the JSON path used only by trusted core tools.
 DOMAIN_ALLOW = [
     ["memory", "search"],
+    # The family memory as linked cards: find by words, open one by its id,
+    # follow its links. Read-only, straight off the brain and the vault's log.
+    ["memory", "find"],
+    ["memory", "card"],
+    ["memory", "links"],
     # Reading a person only: `person add` writes the family's own
     # declarations, which stay with the family.
     ["memory", "person", "show"],
