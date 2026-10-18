@@ -1,6 +1,9 @@
 """Docker runtime detection: prefer OrbStack, warn on Docker Desktop."""
 
 import json as _json
+import sys
+
+import pytest
 from unittest.mock import patch, MagicMock
 
 
@@ -267,6 +270,8 @@ class TestACommandAsksDockerOnlyWhenItUsesIt:
 
         assert not log.exists() or "context" not in log.read_text()
 
+    @pytest.mark.skipif(sys.platform != "darwin",
+                        reason="contexts are pinned on macOS only (OrbStack or Docker Desktop)")
     def test_the_first_docker_command_is_pinned_to_the_runtime(self, tmp_path):
         from stack import docker
         bin_dir, log = self._docker_on_path(tmp_path)
