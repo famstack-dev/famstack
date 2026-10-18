@@ -884,7 +884,7 @@ class Stack:
 
     def _docker_runtime(self) -> str:
         from . import docker
-        return docker._context or "default"
+        return docker.active_context() or "default"
 
     def _docker_version(self) -> str:
         from . import docker
