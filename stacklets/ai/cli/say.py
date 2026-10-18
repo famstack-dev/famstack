@@ -8,6 +8,10 @@ server loads.
     stack ai say "Dinner is ready"
     stack ai say "Dinner is ready" --voice nova
     stack ai say "Dinner is ready" --volume 40
+    stack ai say "Dinner is ready" --language en
+
+Which voice: `--voice`, else the voice of `--language`, else of the text's
+own language when it can be told, else of `[ai] language`.
 
 How loud: `--volume`, else `[ai] speech_volume`, else 100, as a share of
 the Mac's own output volume. A speech server the stack does not run is
@@ -25,17 +29,18 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from speech import default_voice, known_voices, play, speakable, synthesize  # noqa: E402
+from speech import VOICED, default_voice, known_voices, play, speakable, synthesize  # noqa: E402
 
-from stack.ai.language import written_in  # noqa: E402
+from stack.ai.language import language_code, written_in  # noqa: E402
 
-USAGE = 'stack ai say "<text>" [--voice <name>] [--volume <0-100>]'
+USAGE = 'stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>]'
 
 
 def _parse(args: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="stack ai say", description=HELP, usage=USAGE)
     p.add_argument("text", nargs="*", help="what to say; quotes are optional")
     p.add_argument("--voice", default="", help="one of the speech server's voices")
+    p.add_argument("--language", default="", help="the text's language, e.g. en, when not the house's")
     p.add_argument("--volume", type=int, default=None,
                    help="percent of the Mac's own output volume, at most 100")
     return p.parse_args(args)
@@ -48,9 +53,16 @@ def run(args, stacklet, config):
         return {"error": f"Nothing to say. Usage: {USAGE}"}
 
     ai = config.get("stack", {}).get("ai", {})
-    # The text's own language picks the voice when it can be told; German read
-    # by the English voice sounds foreign.
-    language = written_in(text) or ai.get("language", "en")
+    house, note = language_code(ai.get("language", "en")), ""
+    if opts.language:
+        language = language_code(opts.language)
+        if language not in VOICED:
+            note = f"No voice for '{language}'; spoken in the house's voice."
+            language = house
+    else:
+        # The text's own language when it can be told: German read by the
+        # English voice sounds foreign.
+        language = written_in(text) or house
     voice = opts.voice or default_voice(language)
     voices = known_voices()
     if voice not in voices:
@@ -72,4 +84,4 @@ def run(args, stacklet, config):
     print(f"\n  Speaking as {voice}...\n")
     volume = opts.volume if opts.volume is not None else int(ai.get("speech_volume", 100))
     play(audio, volume=volume)
-    return {"ok": True, "voice": voice}
+    return {"ok": True, "voice": voice, **({"note": note} if note else {})}
