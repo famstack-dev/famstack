@@ -2308,6 +2308,10 @@ def main():
     if repo_root:
         stck = create_stack(repo_root, instance_dir)
         stacklet_cmds = stacklet_commands(stck)
+        # Help is read from the plugin files, about 40 ms for all of them, and
+        # only shown for `stack <id>` and `--help`: a command that runs reads none.
+        argv = sys.argv[1:]
+        help_for = argv[0] if argv and ("-h" in argv or "--help" in argv or len(argv) == 1) else None
         for sid, cmds in stacklet_cmds.items():
             sp = sub.add_parser(sid)
             sp_sub = sp.add_subparsers(dest="action")
@@ -2315,7 +2319,7 @@ def main():
                 # Surface each plugin's own HELP + docstring so
                 # `stack <id>` lists commands with a one-liner and
                 # `stack <id> <cmd> --help` prints its usage + examples.
-                short, full = plugin_help(mod_path)
+                short, full = plugin_help(mod_path) if sid == help_for else (None, None)
                 sp_sub.add_parser(
                     cmd_name, help=short,
                     description=full,
@@ -2357,9 +2361,9 @@ def main():
 
     stck = create_stack(repo_root, instance_dir)
 
-    # Pin all docker commands to the configured runtime context
-    preferred = stck._cfg("core", "runtime", "orbstack")
-    docker.init_runtime(preferred)
+    # Pin all docker commands to the configured runtime context, picked
+    # on the first one: most commands never run docker.
+    docker.prefer_runtime(stck._cfg("core", "runtime", "orbstack"))
 
     # JSON mode — read-only queries only
     _JSON_COMMANDS = {"status", "list", "env"}

@@ -226,3 +226,61 @@ class TestComposePullFetchesOnlyWhatIsMissing:
             docker.compose_pull("/tmp/compose.yml")
         cmd = run.call_args[0][0]
         assert cmd[cmd.index("pull"):] == ["pull", "--policy", "missing", "--ignore-buildable"]
+
+
+class TestACommandAsksDockerOnlyWhenItUsesIt:
+    """Picking the runtime asks Docker for its contexts, ~55 ms. Every
+    `stack` command paid it at start, also the many that never run a
+    container command (an agent's list reads, the memory commands). It is
+    asked on the first Docker command now, and that command is pinned to
+    the runtime as before."""
+
+    def _docker_on_path(self, tmp_path):
+        """A `docker` that records its arguments and knows two contexts."""
+        log = tmp_path / "docker.log"
+        stub = tmp_path / "bin" / "docker"
+        stub.parent.mkdir()
+        stub.write_text(
+            "#!/bin/sh\n"
+            f'echo "$*" >> "{log}"\n'
+            'if [ "$1" = "context" ]; then\n'
+            '  echo \'{"Name":"default"}\'; echo \'{"Name":"orbstack"}\'\n'
+            "fi\n")
+        stub.chmod(0o755)
+        return stub.parent, log
+
+    def _stack(self, tmp_path, bin_dir, *args):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+        repo = Path(__file__).resolve().parents[3]
+        return subprocess.run([sys.executable, "-m", "stack", *args], capture_output=True,
+                              text=True, cwd=str(repo), timeout=60,
+                              env={**os.environ, "PYTHONPATH": str(repo / "lib"),
+                                   "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+    def test_a_command_without_containers_never_asks_docker(self, tmp_path):
+        bin_dir, log = self._docker_on_path(tmp_path)
+
+        self._stack(tmp_path, bin_dir, "memory", "find", "zelt")
+
+        assert not log.exists() or "context" not in log.read_text()
+
+    def test_the_first_docker_command_is_pinned_to_the_runtime(self, tmp_path):
+        from stack import docker
+        bin_dir, log = self._docker_on_path(tmp_path)
+        docker._context = None
+        import os
+        old = os.environ["PATH"]
+        os.environ["PATH"] = f"{bin_dir}:{old}"
+        try:
+            docker.prefer_runtime("orbstack")
+            docker.compose("compose.yml", "ps")
+        finally:
+            os.environ["PATH"] = old
+            docker._context = None
+
+        calls = log.read_text().splitlines()
+        assert calls[0].startswith("context ls")
+        assert calls[1].startswith("--context orbstack compose")
