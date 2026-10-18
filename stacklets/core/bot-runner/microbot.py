@@ -12,7 +12,8 @@ The contract is simple:
 
 The base class then handles:
   - Login with password, or restore a saved session (survives restarts)
-  - E2E encryption setup (Element X forces encryption on DMs)
+  - E2E encryption: a bot reads the encrypted rooms it was invited to
+    (Element X encrypts DMs); its key store survives restarts
   - Auto-trust all device keys (family LAN — no verification needed)
   - Initial sync that skips old messages (bots don't replay history)
   - Auto-accept room invitations
@@ -91,6 +92,19 @@ EYES = "\U0001F440"
 CHECK = "\U00002705"
 CROSS = "\U0000274C"
 
+
+class FamilyClient(AsyncClient):
+    """nio's client, sending into an encrypted room without verifying each device first.
+
+    nio refuses to encrypt for a device nobody verified. `_trust_all_devices`
+    marks every device it knows as trusted after each sync, but one that
+    appeared since would fail the send. On the family's own server every
+    device is a family member's, so a send never waits on verification.
+    """
+
+    async def room_send(self, *args, ignore_unverified_devices: bool = True, **kwargs):
+        return await super().room_send(*args, ignore_unverified_devices=ignore_unverified_devices,
+                                       **kwargs)
 
 class MicroBot:
     """Base class for lightweight Matrix bots.
@@ -178,7 +192,7 @@ class MicroBot:
         Path(store_path).mkdir(parents=True, exist_ok=True)
 
         config = AsyncClientConfig(store_sync_tokens=True, encryption_enabled=True)
-        self._client = AsyncClient(
+        self._client = FamilyClient(
             self.homeserver, self.user_id,
             store_path=store_path, config=config,
         )
@@ -208,9 +222,7 @@ class MicroBot:
             return
 
         # ── E2E encryption ───────────────────────────────────────────
-        if self._client.olm:
-            resp = await self._client.keys_upload()
-            logger.info("[{}] Keys uploaded: {}", self.name, type(resp).__name__)
+        await self._keep_keys()
 
         # ── Auto-accept invitations ──────────────────────────────────
         # Two-stage hand-off so subclass `on_room_joined` sees a fully
@@ -236,6 +248,7 @@ class MicroBot:
         logger.info("[{}] Initial sync...", self.name)
         await self._client.sync(timeout=10000, full_state=True)
 
+        await self._keep_keys()
         self._trust_all_devices()
 
         rooms = self._client.rooms
@@ -244,21 +257,19 @@ class MicroBot:
         await self._sync_display_name()
 
         # ── Undecryptable message handler ────────────────────────────
-        # By design: the bots do not read encrypted rooms. Tell the user
-        # once per room (per process) what is going on and how to fix
-        # it, instead of a cryptic decrypt error on every message.
+        # A bot reads the encrypted rooms it was invited to: the invite is
+        # the family's opt-in. A message nio could not decrypt came without
+        # its room key, which the sender's app usually shares a moment
+        # later. Say so once per room (per process) instead of answering
+        # nothing.
         decrypt_notified: set[str] = set()
-        DOCS_URL = (
-            "https://github.com/famstack-dev/famstack/blob/main/"
-            "docs/user-guide.md#save-anything-capture-rooms"
-        )
 
         async def on_encrypted(room, event):
             if isinstance(event, MegolmEvent) and event.sender != self.user_id:
                 logger.warning(
-                    "[{}] Could not decrypt event in {} from {} (algorithm={})",
+                    "[{}] Could not decrypt event in {} from {} (session {})",
                     self.name, room.room_id, event.sender,
-                    getattr(event, "algorithm", "?"),
+                    getattr(event, "session_id", "?"),
                 )
                 if room.room_id in decrypt_notified:
                     return
@@ -269,24 +280,11 @@ class MicroBot:
                     content={
                         "msgtype": "m.notice",
                         "body": (
-                            "This room is encrypted, and I can't read "
-                            "encrypted messages. That's by design: anything "
-                            "sent encrypted stays private and is never "
-                            "processed by famstack.\n\n"
-                            "To work with me, create a new room with "
-                            "encryption disabled (encryption can't be "
-                            "switched off later). Background: " + DOCS_URL
-                        ),
-                        "format": "org.matrix.custom.html",
-                        "formatted_body": (
-                            "This room is encrypted, and I can't read "
-                            "encrypted messages. That's <b>by design</b>: "
-                            "anything sent encrypted stays private and is "
-                            "never processed by famstack.<br/><br/>"
-                            "To work with me, create a new room with "
-                            "<b>encryption disabled</b> (encryption can't be "
-                            "switched off later). "
-                            f'<a href="{DOCS_URL}">Background</a>.'
+                            "I couldn't read that message: it reached me "
+                            "encrypted, without the key to open it. Your app "
+                            "usually sends me the key a moment later, so try "
+                            "sending it again. If it keeps happening, remove "
+                            "me from the room and invite me again."
                         ),
                     },
                 )
@@ -313,6 +311,7 @@ class MicroBot:
         while self._running:
             try:
                 resp = await self._client.sync(timeout=30000)
+                await self._keep_keys()
                 self._trust_all_devices()
                 # Bare `sync()` does NOT dispatch nio response callbacks
                 # (only `sync_forever()` does), so the pending-joins
@@ -1627,6 +1626,29 @@ class MicroBot:
         """Signal the sync loop to exit."""
         self._running = False
 
+    async def _keep_keys(self) -> None:
+        """The key upkeep nio's `sync_forever` does and a bare `sync()` does not.
+
+        One-time keys are topped up (the family's clients use one each to
+        open a session and send the bot a room's key), other people's
+        devices are queried and their sessions claimed, and queued
+        to-device messages go out. Failures are logged; the next sync tries
+        again.
+        """
+        client = self._client
+        if client is None or not client.olm:
+            return
+        try:
+            if client.should_upload_keys:
+                await client.keys_upload()
+            if client.should_query_keys:
+                await client.keys_query()
+            if client.should_claim_keys:
+                await client.keys_claim(client.get_users_for_key_claiming())
+            await client.send_to_device_messages()
+        except Exception as e:
+            logger.warning("[{}] Key upkeep failed: {}", self.name, e)
+
     def _trust_all_devices(self) -> None:
         """Mark all known devices as trusted without interactive verification."""
         if not self.client.olm:
@@ -1650,10 +1672,17 @@ class MicroBot:
             self.client.user_id = data["user_id"]
             self.client.device_id = data["device_id"]
             logger.info("[{}] Restored session (device {})", self.name, data["device_id"])
-            return True
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("[{}] Bad session file: {}", self.name, e)
             return False
+        # A password login opens the device's key store itself; a restored
+        # session has to. Without it nio has no olm, and the bot neither
+        # decrypts nor encrypts from its first restart on.
+        try:
+            self.client.load_store()
+        except Exception as e:
+            logger.warning("[{}] Key store not loaded, encrypted rooms stay unread: {}", self.name, e)
+        return True
 
     def _clear_session(self):
         """Wipe saved session and in-memory credentials."""
