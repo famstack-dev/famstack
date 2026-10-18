@@ -93,6 +93,13 @@ class TestSpeaking:
         assert result["voice"] == "onyx"
         assert _requests(speech_server)[0]["voice"] == "onyx"
 
+    def test_a_german_text_in_an_english_house_gets_the_german_voice(
+            self, instance, speech_server, played):
+        """Read by the English voice, German sounds foreign (#242)."""
+        result = _say(instance, "Das Essen ist fertig, kommt bitte runter.")
+
+        assert result["voice"] == "onyx"
+
     def test_a_chosen_voice_speaks_it(self, instance, speech_server, played):
         result = _say(instance, "Dinner is ready", "--voice", "nova")
 
