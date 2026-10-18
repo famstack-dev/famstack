@@ -231,3 +231,25 @@ class TestWrittenForTheEar:
         _say(instance, written)
 
         assert _requests(speech_server)[0]["input"] == spoken
+
+
+class TestALanguageOtherThanTheHouses:
+    """The agent translates, then says which language it wrote (#242)."""
+
+    def test_the_named_language_picks_its_voice(self, tmp_path, speech_server, played):
+        result = _say(_instance(tmp_path, "de"), "Dinner is ready", "--language", "en")
+
+        assert result["voice"] == "alloy"
+
+    def test_a_named_voice_still_wins(self, tmp_path, speech_server, played):
+        result = _say(_instance(tmp_path, "de"), "Dinner is ready", "--language", "en",
+                      "--voice", "nova")
+
+        assert result["voice"] == "nova"
+
+    def test_a_language_without_a_voice_falls_back_to_the_houses_and_says_so(
+            self, tmp_path, speech_server, played):
+        result = _say(_instance(tmp_path, "de"), "Le dîner est prêt", "--language", "fr")
+
+        assert result["voice"] == "onyx"
+        assert "fr" in result["note"]
