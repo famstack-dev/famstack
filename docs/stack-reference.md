@@ -198,6 +198,7 @@ Available template variables:
 | `{ai_openai_url_docker}` | Same, rewritten for container access via `host.docker.internal` |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
 | `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
+| `{ai_speech_url}`, `{ai_speech_url_docker}` | The speech server: `stack.toml` → `[ai].speech_url`, or the ai stacklet's own on port 42063 |
 | `{ai_whisper_key}` | `stack.toml` → `[ai].whisper_key` with a dedicated speech server, otherwise the AI key |
 | `{ai_whisper_model}` | `stack.toml` → `[ai].whisper_model`, default `whisper-1` |
 | `{ai_default_model}` | `stack.toml` → `[ai].default` |

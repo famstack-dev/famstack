@@ -74,3 +74,16 @@ class TestWhatTheStackletsGet:
         instance._set_cfg("ai", "whisper_key", "")
 
         assert instance.env("core")["WHISPER_KEY"] == "local"
+
+
+class TestWhereSpeakingGoes:
+    """What the bots speak with: the ai stacklet's own speech server on this
+    Mac, or the one `[ai] speech_url` names, as the containers reach it."""
+
+    def test_by_default_the_bots_reach_the_speech_server_on_this_mac(self, instance):
+        assert instance.env("core")["SPEECH_URL"] == "http://host.docker.internal:42063"
+
+    def test_a_speech_server_elsewhere_is_used_as_named(self, instance):
+        instance._set_cfg("ai", "speech_url", "https://tts.example.test")
+
+        assert instance.env("core")["SPEECH_URL"] == "https://tts.example.test"
