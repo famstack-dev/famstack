@@ -25,7 +25,7 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from speech import default_voice, known_voices, play, synthesize  # noqa: E402
+from speech import default_voice, known_voices, play, speakable, synthesize  # noqa: E402
 
 USAGE = 'stack ai say "<text>" [--voice <name>] [--volume <0-100>]'
 
@@ -41,7 +41,7 @@ def _parse(args: list[str]) -> argparse.Namespace:
 
 def run(args, stacklet, config):
     opts = _parse(args)
-    text = " ".join(opts.text).strip()
+    text = speakable(" ".join(opts.text))
     if not text:
         return {"error": f"Nothing to say. Usage: {USAGE}"}
 
