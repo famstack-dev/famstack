@@ -79,6 +79,80 @@ def card_id_of(fields: Mapping[str, object]) -> tuple[str, str] | None:
     return None
 
 
+# ── Every card's kind and id ─────────────────────────────────────────
+#
+# The table above is what the `/go` resolver finds by reading the vault.
+# The rule below names every card, whatever its kind, for the readers that
+# see the whole memory (the card graph, the pages that show it): one id
+# per thing, so a person, a list or a correspondent is one card however a
+# link reaches it.
+
+# The kinds a card can be, besides what its `type` says: a list's monthly
+# archive, and a page the wiki generates to navigate (a diary month, an index).
+ARCHIVE = "list-archive"
+INDEX = "index"
+# Records that carry the id of the message they were filed from, when they do.
+_CAPTURED = ("note", "bookmark", "email")
+
+
+def card_kind(rel: str, fields: Mapping[str, object]) -> str:
+    """The kind of the card at `rel` (vault-relative path) with `fields`."""
+    parts = rel.removesuffix(".md").split("/")
+    if len(parts) >= 4 and parts[1] == "lists" and parts[2] == "archive":
+        return ARCHIVE
+    kind = str(fields.get("type") or "").strip()
+    if kind:
+        return kind
+    if len(parts) == 3 and parts[1] == "lists":
+        return "list"
+    if str(fields.get("generated") or "").lower() == "true":
+        return INDEX
+    return "page"
+
+
+def card_ref(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
+    """(kind of id, id) of the card at `rel`: `("person", "homer")`.
+
+    The id is the field that never changes where the kind has one, the
+    thing's own name otherwise (a slug, the list's file), and the path
+    only for a page that is nothing else.
+
+    >>> card_ref("family/people/homer.md", {"type": "person"})
+    ('person', 'homer')
+    >>> card_ref("homer/about.md", {"type": "person", "generated": "true"})
+    ('person', 'homer')
+    >>> card_ref("family/lists/archive/markt/2026-10.md", {"type": "list"})
+    ('list', 'markt/2026-10')
+    """
+    stable = card_id_of(fields)
+    paperless = str(fields.get("paperless_id") or "").strip()
+    if stable:
+        return stable
+    if paperless:
+        return "docs", paperless
+    parts = rel.removesuffix(".md").split("/")
+    kind = card_kind(rel, fields)
+    slug = str(fields.get("slug") or "").strip()
+    if kind == ARCHIVE:
+        return "list", f"{parts[-2]}/{parts[-1]}"
+    if kind == "list":
+        return "list", parts[-1]
+    if kind == "person":
+        return "person", slug or str(fields.get("account") or "").strip() or \
+            (parts[0] if parts[-1] == "about" else parts[-1])
+    if kind == "topic":
+        return "topic", slug or (parts[-2] if parts[-1] == "about" else parts[-1])
+    if kind == "correspondent":
+        return "correspondent", slug or parts[-1]
+    if kind == "email" and str(fields.get("resource") or "").strip():
+        return "email", str(fields["resource"]).strip()  # the thread's first message, mid:…
+    if kind in _CAPTURED:
+        return kind, parts[-1]  # written by hand: no message to name it by
+    if kind == INDEX:
+        return INDEX, "/".join(parts)
+    return "page", "/".join(parts)
+
+
 # ── The lookup ────────────────────────────────────────────────────────
 
 _DELIMITER = "---"

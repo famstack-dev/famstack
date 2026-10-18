@@ -435,6 +435,17 @@ agent) finds the card by that id. A stored path is only a hint.
 | person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
 | topic | its folder, `<bucket>/<slug>/` | `/go/topic/<slug>` |
 | list | none yet: its file name is its name | `/go/list/<slug>` |
+| list archive | `<list>/<YYYY-MM>`, from `<bucket>/lists/archive/<list>/<YYYY-MM>.md`; part of its list | none |
+| correspondent | `slug`, else its file name | none yet |
+| note, bookmark written by hand | its file name (no message to name it by) | none |
+| a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
+
+A person is one card whatever file a link reaches: the family's file on
+them (`<bucket>/people/<id>.md`) and the profile the wiki compiles
+(`<id>/about.md`). `stack.cards.card_ref` holds the rule for every kind,
+for the readers that see the whole memory (the card graph behind
+`stack memory find`, `card` and `links`, and the cards API); `card_kind`
+tells a list archive and a navigation page from the rest.
 
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,

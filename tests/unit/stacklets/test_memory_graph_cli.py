@@ -435,3 +435,63 @@ class TestNarrowingWhatIsFound:
 
         lines = capsys.readouterr().out.splitlines()
         assert [ln.split("  ")[3] for ln in lines] == ["Grillabend", "Am See", "Zelt gekauft"]
+
+
+class TestEveryThingIsOneCard:
+    """One card per thing, with an id of its kind: the graph is only right
+    when a person, a list or a correspondent is one node, whatever file
+    a link points at."""
+
+    def test_a_person_is_one_card_of_their_file_and_their_profile(self, memory, capsys):
+        """Records link the family's file on a person; the wiki compiles their
+        profile. Both are the person: one card, linked from either."""
+        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n"
+                     "aliases:\n  - Lis\n---\n", by="marge", message="chore(people): marge registered Lisa")
+        memory.write("family/camping/zelt.md",
+                     _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT,
+                           body="Siehe [Lisa](../people/lisa.md)."),
+                     by="homer", message="feat(notes): zelt")
+
+        _run(card_cli, memory, "person/lisa")
+
+        out = capsys.readouterr().out
+        assert "Lisa plays the saxophone" in out
+        assert "linked from: capture/Abc123Def4" in out
+        _run(find_cli, memory, "lisa", "--type", "person")
+        assert capsys.readouterr().out.count("Lisa Simpson") == 1
+
+    def test_a_lists_monthly_archive_belongs_to_its_list(self, memory, capsys):
+        memory.write("family/lists/markt.md", "---\ntype: list\ntitle: Wochenmarkt\n---\n- [ ] Kohlrabi\n",
+                     by="marge", message="feat(lists): markt")
+        memory.write("family/lists/archive/markt/2026-10.md",
+                     "---\ntype: list\ntitle: Wochenmarkt, 2026-10\n---\n- [x] Eier\n",
+                     by="marge", message="chore(lists): archive markt")
+
+        _run(card_cli, memory, "list/markt/2026-10")
+
+        out = capsys.readouterr().out
+        assert out.startswith("list/markt/2026-10  list-archive")
+        assert "links to: list/markt (Wochenmarkt)" in out
+
+    def test_a_correspondent_and_a_hand_written_note_have_ids_of_their_kind(self, memory, capsys):
+        memory.write("family/correspondents/springfield-elementary.md",
+                     "---\ntype: correspondent\ntitle: Springfield Elementary\n"
+                     "slug: springfield-elementary\ngenerated: true\n---\n",
+                     by="curator", message="chore(wiki): correspondent")
+        memory.write("homer/notes/reifen-wechseln.md", "---\ntype: note\ntitle: Reifen wechseln\n---\n",
+                     by="homer", message="feat(notes): homer wrote it down")
+
+        _run(find_cli, memory, "springfield reifen")
+
+        out = capsys.readouterr().out
+        assert "correspondent/springfield-elementary  correspondent" in out
+        assert "note/reifen-wechseln  note" in out
+
+    def test_a_list_belongs_to_the_topics_it_names(self, memory, capsys):
+        memory.write("family/lists/zeltliste.md",
+                     "---\ntype: list\ntitle: Zeltliste\ntopics:\n  - camping\n---\n- [ ] Heringe\n",
+                     by="marge", message="feat(lists): zeltliste")
+
+        _run(card_cli, memory, "list/zeltliste")
+
+        assert "links to: topic/camping (Camping)" in capsys.readouterr().out

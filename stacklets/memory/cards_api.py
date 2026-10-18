@@ -137,7 +137,7 @@ def _full(card: Card, graph: Graph) -> dict:
     body = card.text.split(_FRONTMATTER_END, 1)[1] if card.text.startswith("---") \
         and _FRONTMATTER_END in card.text else card.text
     full = {**_summary(card), "meta": _plain(card.meta), "text": body.strip(),
-            "compiled": card.compiled,
+            "compiled": card.compiled, "files": list(card.files or (card.path,)),
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
             "links_out": _linked(card.links_out, graph), "links_in": _linked(card.links_in, graph)}

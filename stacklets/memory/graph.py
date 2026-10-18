@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+from stack.cards import ARCHIVE, card_kind, card_ref
 from stack.frontmatter import FrontmatterError, parse
 
 # How fast a card ages, in days until its weight halves. None: never.
@@ -85,6 +86,9 @@ class Card:
     changes: list[Change] = field(default_factory=list)
     # The card's frontmatter as written: what a reader shows per type.
     meta: dict = field(default_factory=dict)
+    # Every file the card is made of (a person: the family's file and the
+    # profile), its own `path` first. A link to any of them is a link to it.
+    files: tuple[str, ...] = ()
 
     @property
     def version(self) -> str:
@@ -108,7 +112,7 @@ class Graph:
     def __init__(self, cards: list[Card]):
         cards = _unique(cards)
         self.cards = {c.id: c for c in cards}
-        self._by_path = {c.path: c.id for c in cards}
+        self._by_path = {f: c.id for c in cards for f in (c.files or (c.path,))}
         self._link(cards)
 
     def card(self, ref: str) -> Card | None:
@@ -199,6 +203,11 @@ class Graph:
             parts = card.path.split("/")
             if len(parts) > 2 and parts[1] in topics and card.type != "topic":
                 card.links_out.add(f"topic/{parts[1]}")
+            if card.type == ARCHIVE:
+                card.links_out.add(card.id.rsplit("/", 1)[0])  # list/markt/2026-10 -> list/markt
+            for topic in card.meta.get("topics") or []:  # a list names the topics it serves
+                if str(topic) in topics and card.type != "topic":
+                    card.links_out.add(f"topic/{topic}")
         for card in cards:
             for other in card.links_out:
                 if other in self.cards:
@@ -206,15 +215,34 @@ class Graph:
 
 
 def _unique(cards: list[Card]) -> list[Card]:
-    """One card per id. Two can claim one: a person's compiled profile
-    (`bart/about.md`) and their entry in the people registry
-    (`family/people/bart.md`). The profile keeps the id; the other is a page."""
+    """One card per id. A person is two files, the family's (`family/people/
+    bart.md`, what records link) and the profile the wiki compiles
+    (`bart/about.md`): they are one card. Any other two files that claim one
+    id keep it in path order; the later is a page."""
     owner: dict[str, Card] = {}
     for card in sorted(cards, key=lambda c: (not c.path.endswith("about.md"), not c.compiled, c.path)):
-        if card.id in owner:
+        first = owner.get(card.id)
+        if first is None:
+            owner[card.id] = card
+        elif first.type == card.type == "person":
+            owner[card.id] = _merged(first, card)
+        else:
             card.id = f"page/{card.path.removesuffix('.md')}"
-        owner[card.id] = card
+            owner[card.id] = card
     return list(owner.values())
+
+
+def _merged(profile: Card, declared: Card) -> Card:
+    """A person's profile and the family's file on them, as one card: the
+    profile's text, the declared fields (aliases, the account) over its own."""
+    changes = sorted({c.sha: c for c in profile.changes + declared.changes}.values(),
+                     key=lambda c: c.at or c.day, reverse=True)
+    return Card(id=profile.id, type="person", title=profile.title or declared.title,
+                path=profile.path, day=max(profile.day, declared.day), text=profile.text,
+                names=tuple(dict.fromkeys(profile.names + declared.names)),
+                persons=profile.persons, compiled=profile.compiled,
+                changes=changes, meta={**profile.meta, **declared.meta},
+                files=(profile.path, declared.path))
 
 
 # ── Reading the files ─────────────────────────────────────────────────────
@@ -292,8 +320,10 @@ def _card(rel: str, text: str) -> Card | None:
         meta = parse(text) if text.startswith("---") else {}
     except FrontmatterError:
         meta = {}
-    kind = str(meta.get("type") or "").strip() or _kind_from_path(rel)
-    card_id = _id(rel, meta, kind)
+    kind = card_kind(rel, meta)
+    ref_kind, ref = card_ref(rel, meta)
+    # Capture ids are Matrix event ids: shown by a unique prefix, as git shows a commit.
+    card_id = f"{ref_kind}/{ref.lstrip('$')[:_SHORT_ID] if ref_kind in ('capture', 'diary') else ref}"
     title = str(meta.get("title") or Path(rel).stem).strip()
     day = str(meta.get("date") or "")[:10] or str(meta.get("timestamp") or "")[:10]
     names = tuple(n.lower() for n in [
@@ -306,29 +336,6 @@ def _card(rel: str, text: str) -> Card | None:
     return Card(id=card_id, type=kind, title=title, path=rel, day=day,
                 text=_GENERATED.sub("", text), names=names, persons=persons,
                 compiled=compiled, meta=dict(meta))
-
-
-def _id(rel: str, meta: dict, kind: str) -> str:
-    for field_name, prefix in (("entry_id", "diary"), ("capture_id", "capture"),
-                               ("paperless_id", "docs")):
-        value = str(meta.get(field_name) or "").strip()
-        if value:
-            return f"{prefix}/{value.lstrip('$')[:_SHORT_ID]}"
-    parts = rel.removesuffix(".md").split("/")
-    if kind == "person":
-        return f"person/{meta.get('slug') or (parts[0] if parts[-1] == 'about' else parts[-1])}"
-    if kind == "topic":
-        return f"topic/{meta.get('slug') or parts[-2]}"
-    if kind == "list" or (len(parts) == 3 and parts[1] == "lists"):
-        return f"list/{parts[-1]}"
-    return f"page/{rel.removesuffix('.md')}"
-
-
-def _kind_from_path(rel: str) -> str:
-    parts = rel.split("/")
-    if len(parts) == 3 and parts[1] == "lists":
-        return "list"
-    return "page"
 
 
 def _page(link: str, here: str) -> str:
