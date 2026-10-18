@@ -29,10 +29,11 @@ And three readers outside the CLI: core's tools server (`/go` links, through
 
 Four things follow from that:
 
-- **Ids are defined twice.** `stack.cards` holds the id fields for captures
-  and diary entries; the graph (`stacklets/memory/graph.py`) derives the same
-  ids again and adds documents, people, topics and lists, whose rules live in
-  `docs/stack-reference.md` and nowhere in code.
+- **Ids are defined twice, and some kinds have none.** `stack.cards` holds the
+  id fields for captures and diary entries; the graph derived them again and
+  added documents, people, topics and lists. Notes written by hand and
+  correspondents have no lasting id: they are named by their file, which
+  changes when the file is renamed.
 - **The ontology is not used for reading.** `ontology.toml` names every topic
   and document type in German and English, with synonyms and keywords
   ("Versicherung", "insurance", "policy", "coverage"). `find` and `search`
@@ -67,11 +68,40 @@ is part of `find`'s match); `topic` and `person show` become `card` on a
 `lookup` stays, as the ontology's own tool. Removed commands keep working for
 one release and say which command replaced them.
 
-### 2. One table of card ids
-`stack.cards` holds the id rule of every card type (captures, diary entries,
-documents, people, topics, lists, facts, and `page/<path>` for the rest).
-The graph, the `/go` resolver and the writers use it; the reference doc
-quotes it.
+### 2. Every card carries its id
+Every card has an `id` in its frontmatter, `<kind>-<value>`, set once and
+kept:
+
+| Kind | Example | The value |
+|---|---|---|
+| document | `doc-53` | Paperless's document id |
+| diary entry | `diary-3c09e20cfa` | its `entry_id` |
+| correspondent | `corr-12` | Paperless's correspondent id |
+| person, topic, list | `person-homer`, `topic-camping`, `list-markt` | the slug they are named by |
+| list archive | `list-markt-2026-10` | its list and month |
+| note, bookmark, email | `note-7f3a9c21e4` | ten random hex digits, made when it is first filed |
+
+The value is the source's own id wherever the source has a lasting one, so a
+card rebuilt from its source (ADR-010) gets the same id again; only records
+with none get a random one. The fields a card came from (`capture_id`,
+`entry_id`, `paperless_id`) stay, as where it came from. Every writer sets the
+id (the archivist, capture, the curator for compiled pages, the list and
+person commands); a migration gives every existing card its id in one commit;
+the curator adds one to a card written by hand, as the stack's commit.
+`stack.cards` holds the rule; the graph, the `/go` resolver, the cards API and
+the writers use it, and a card without an id yet is named by it as before.
+
+**A card whose id changes keeps the old one.** A note refiled as a document is
+a new card with a new id; it lists the ids it had before (`was:
+[note-7f3a9c21e4]`), in the same commit as the change, so who changed it and
+when stay in the history. Every reader resolves an old id to the current card:
+`/go/note-7f3a9c21e4` redirects, `card` and the cards API answer with the
+current card and say which id they were asked for. A card that was removed
+answers as gone, with the commit that removed it, rather than not found: a link
+in a chat's history keeps saying what became of it.
+
+`/go/<id>` is the link to any card; the links in use today (`/go/capture/…`,
+`/go/diary/…`, `/go/docs/…`, `/go/topic/…`) keep working.
 
 ### 3. The ontology widens a search
 `find` matches a word and every name, synonym and keyword the ontology gives
@@ -101,7 +131,8 @@ and `docs show` reads the document from Paperless. Reading never needs to
 know which source a card came from.
 
 ## Order
-1. One id table in `stack.cards`; the graph uses it.
+1. Every card's id: the rule in `stack.cards` (the graph uses it, done on
+   #257), the writers, the migration, `was:` and its redirects, `/go/<id>`.
 2. The audience rule in one function; `history` and `list show` take it.
 3. The curator compiles from readable cards only.
 4. Ontology terms in `find`.
