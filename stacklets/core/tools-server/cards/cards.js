@@ -78,7 +78,7 @@ function h(tag, attrs = {}, ...children) {
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? "" : v);
   }
-  for (const c of children.flat()) {
+  for (const c of children.flat(Infinity)) {
     if (c == null || c === false) continue;
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
@@ -92,7 +92,7 @@ function s(tag, attrs = {}, ...children) {
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (v != null) el.setAttribute(k, v);
   }
-  for (const c of children.flat()) if (c != null) el.append(c);
+  for (const c of children.flat(Infinity)) if (c != null) el.append(c);
   return el;
 }
 
@@ -170,7 +170,8 @@ function resolvePath(href, here) {
 }
 
 function markdown(text, card) {
-  const lines = String(text || "").replace(/<!--[\s\S]*?-->/g, "").split("\n");
+  const lines = String(text || "").replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<a id="[^"]*"><\/a>/g, "").split("\n");
   const html = [];
   let list = null;
   let para = [];
@@ -181,6 +182,18 @@ function markdown(text, card) {
   const closeList = () => {
     if (list) html.push(`</${list}>`);
     list = null;
+  };
+  let table = [];
+  const flushTable = () => {
+    // A markdown table: its header row, the rule under it, then the rows.
+    const rows = table.filter((cells) => !cells.every((c) => /^:?-{2,}:?$/.test(c)));
+    if (rows.length) {
+      const [head, ...body] = rows;
+      html.push(`<table><thead><tr>${head.map((c) => `<th>${inline(c, card)}</th>`).join("")}</tr></thead>`
+        + `<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c, card)}</td>`).join("")}</tr>`)
+          .join("")}</tbody></table>`);
+    }
+    table = [];
   };
   let quoted = [];
   const flushQuote = () => {
@@ -201,7 +214,14 @@ function markdown(text, card) {
     const bullet = line.match(/^\s*[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
     const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
     const quote = line.match(/^>\s?(.*)$/);
+    const row = /^\s*\|.*\|\s*$/.test(line);
+    if (!row) flushTable();
     if (!line.trim()) { flush(); closeList(); continue; }
+    if (row) {
+      flush(); closeList();
+      table.push(line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+      continue;
+    }
     if (heading) {
       flush(); closeList();
       const level = heading[1].length <= 2 ? "h3" : "h4";
@@ -220,7 +240,7 @@ function markdown(text, card) {
       para.push(line.trim());
     }
   }
-  flush(); closeList(); flushQuote();
+  flush(); closeList(); flushQuote(); flushTable();
   return html.join("");
 }
 

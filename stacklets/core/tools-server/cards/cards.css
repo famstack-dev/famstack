@@ -290,6 +290,9 @@ a { color: var(--teal); text-underline-offset: 2px; }
   border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
 }
 .body .callout .label { display: block; margin-bottom: 6px; color: var(--c); }
+.body table { width: 100%; border-collapse: collapse; margin: 0 0 1em; font-size: .86rem; }
+.body th { text-align: left; font: 500 .66rem var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--teal); }
+.body th, .body td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .body code { font: .82em var(--mono); background: color-mix(in srgb, var(--teal) 9%, transparent); padding: 1px 5px; border-radius: 4px; }
 .body .figure {
   display: inline-flex; gap: 6px; align-items: center; font: .74rem var(--mono); color: var(--charcoal);
