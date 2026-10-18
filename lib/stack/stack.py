@@ -374,6 +374,10 @@ class Stack:
         ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
                           if dedicated_whisper else ai_openai_key)
 
+        # What the stack speaks with: a speech server [ai] speech_url names,
+        # or the ai stacklet's own on this Mac.
+        ai_speech_url = self._cfg("ai", "speech_url") or "http://localhost:42063"
+
         template_vars = {
             # Core config
             "data_dir":              str(self.data),
@@ -398,6 +402,8 @@ class Stack:
             "ai_whisper_url":        ai_whisper_url,
             "ai_whisper_url_docker": ai_whisper_url.replace("://localhost", "://host.docker.internal"),
             "ai_whisper_key":        ai_whisper_key,
+            "ai_speech_url":         ai_speech_url,
+            "ai_speech_url_docker":  ai_speech_url.replace("://localhost", "://host.docker.internal"),
             # The AI address when it is served elsewhere, empty when the
             # local engine serves it. Drives the ai stacklet's `remote`.
             "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == "external"
