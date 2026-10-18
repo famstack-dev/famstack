@@ -24,8 +24,12 @@ SPEED = 0.8
 VOICE_MAP = Path(__file__).parent / "config" / "voice_to_speaker.yaml"
 
 
+# The languages the speech server has a voice of their own for.
+VOICED = {"en": "alloy", "de": "onyx"}
+
+
 def default_voice(language: str) -> str:
-    """The voice for `[ai] language`: German has its own, the rest English."""
+    """The voice for a language: German has its own, the rest English."""
     return "onyx" if language.startswith("de") else "alloy"
 
 
