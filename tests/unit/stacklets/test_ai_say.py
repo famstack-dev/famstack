@@ -46,7 +46,9 @@ def played(tmp_path, monkeypatch):
     bin_dir.mkdir()
     out = tmp_path / "played.mp3"
     player = bin_dir / "afplay"
-    player.write_text(f'#!/bin/sh\ncp "$1" "{out}"\n')
+    # The file is the last argument; the arguments before it go to played.args.
+    player.write_text(f'#!/bin/sh\nfor a; do last=$a; done\necho "$@" > "{out}.args"\n'
+                      f'cp "$last" "{out}"\n')
     player.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return out
@@ -158,3 +160,43 @@ def test_say_speaks_at_the_welcome_messages_pace(instance, speech_server, played
     say, hello = _requests(speech_server)
     assert say["speed"] == hello["speed"] == 0.8
     assert say["voice"] == hello["voice"] == "alloy"
+
+
+class TestHowLoud:
+    """Played at a share of the Mac's own output volume, never above it, and
+    the system volume is never changed: a muted Mac stays silent (#241)."""
+
+    def test_the_admins_volume_is_a_share_of_the_macs(self, tmp_path, speech_server, played):
+        instance = _instance(tmp_path, "en")
+        with open(tmp_path / "stack.toml", "a") as f:
+            f.write("speech_volume = 50\n")
+
+        _say(instance, "Dinner is ready")
+
+        assert Path(f"{played}.args").read_text().split()[:2] == ["-v", "0.5"]
+
+    def test_a_volume_for_one_sentence_wins(self, instance, speech_server, played):
+        _say(instance, "Dinner is ready", "--volume", "30")
+
+        assert Path(f"{played}.args").read_text().split()[:2] == ["-v", "0.3"]
+
+    def test_never_louder_than_the_mac(self, instance, speech_server, played):
+        _say(instance, "Dinner is ready", "--volume", "250")
+
+        assert Path(f"{played}.args").read_text().split()[:2] == ["-v", "1.0"]
+
+
+def test_a_speech_server_elsewhere_speaks_it(tmp_path, httpserver, played, monkeypatch):
+    """`[ai] speech_url` names a speech server the stack does not run, as
+    `whisper_url` does for hearing."""
+    monkeypatch.delenv("STACK_SPEECH_URL", raising=False)
+    httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_data(
+        AUDIO, content_type="audio/mpeg")
+    instance = _instance(tmp_path, "en")
+    with open(tmp_path / "stack.toml", "a") as f:
+        f.write(f'speech_url = "{httpserver.url_for("/")}"\n')
+
+    result = _say(instance, "Dinner is ready")
+
+    assert "error" not in result, result
+    assert played.read_bytes() == AUDIO
