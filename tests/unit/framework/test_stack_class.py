@@ -7,6 +7,7 @@ These tests define the target interface. They drive the decomposition
 of the 3000-line stack script into a clean class.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -96,6 +97,17 @@ data_dir = "/tmp/test-data"
         env = s.env("myapp")
         assert env["TZ"] == "Europe/Berlin"
         assert env["DATA"] == "/tmp/test-data/myapp"
+
+    def test_a_model_per_bot_reaches_the_bots(self, tmp_path):
+        # `[ai.models]` was read by the bots' resolver but never rendered,
+        # so a model named there for a bot or a task had no effect.
+        (tmp_path / "stack.toml").write_text(
+            '[ai]\ndefault = "big"\n\n[ai.models]\n"agent-bot.voice" = "small"\n')
+        _create_stacklet(tmp_path, "myapp", env_defaults={"MODELS": "{ai_models_json}"})
+
+        from stack import Stack
+        env = Stack(root=tmp_path, data=tmp_path / "data").env("myapp")
+        assert json.loads(env["MODELS"]) == {"agent-bot.voice": "small"}
 
     def test_family_names_come_from_users_toml(self, tmp_path):
         # Everyone in users.toml, account or not yet seen in any filing:
