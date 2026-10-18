@@ -115,6 +115,13 @@ whisper_url = "http://localhost:42062/v1"
 # whisper_key = ""               # only for a speech server that needs one
 # whisper_model = "whisper-1"    # the speech model to ask the server for
 
+# Speaking aloud (`stack ai say`, the agent): a speech server the stack does
+# not run, OpenAI-compatible (POST /v1/audio/speech). Unset: the ai
+# stacklet's own on this Mac.
+# speech_url = "https://tts.example.home"
+# How loud, in percent of the Mac's own output volume (never above it).
+# speech_volume = 100
+
 # The language the stack speaks to you: the voice that reads answers
 # aloud. Can differ from [core] language, which decides transcription.
 # "en" = English (alloy voice), "de" = German (onyx voice)

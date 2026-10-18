@@ -75,10 +75,15 @@ def voice_models(voice_map: str, languages) -> list[str]:
     return models
 
 
-def synthesize(text: str, voice: str = "alloy", speed: float = SPEED) -> bytes:
+def synthesize(text: str, voice: str = "alloy", speed: float = SPEED, *,
+               url: str = "") -> bytes:
     """The text spoken as MP3. Raises OSError when the server fails or
-    does not answer (`urllib.error.HTTPError` for an answer that is not 2xx)."""
-    url = os.environ.get("STACK_SPEECH_URL", _SPEECH_URL).rstrip("/")
+    does not answer (`urllib.error.HTTPError` for an answer that is not 2xx).
+
+    `url` is a speech server the stack does not run (`[ai] speech_url`);
+    otherwise `STACK_SPEECH_URL`, otherwise the ai stacklet's own.
+    """
+    url = (url or os.environ.get("STACK_SPEECH_URL", _SPEECH_URL)).rstrip("/")
     req = urllib.request.Request(
         f"{url}/v1/audio/speech",
         data=json.dumps({
@@ -91,13 +96,18 @@ def synthesize(text: str, voice: str = "alloy", speed: float = SPEED) -> bytes:
         return resp.read()
 
 
-def play(audio: bytes) -> None:
-    """Play MP3 audio on the Mac's speakers and wait until it is done."""
+def play(audio: bytes, volume: int = 100) -> None:
+    """Play MP3 audio on the Mac's speakers and wait until it is done.
+
+    `volume` is a percentage of the Mac's own output volume, capped at 100:
+    the system volume is never changed, so a muted Mac stays silent.
+    """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         f.write(audio)
         tmp = f.name
+    share = max(0, min(int(volume), 100)) / 100
     try:
-        subprocess.run(["afplay", tmp], timeout=60)
+        subprocess.run(["afplay", "-v", str(share), tmp], timeout=60)
     finally:
         Path(tmp).unlink(missing_ok=True)
 
