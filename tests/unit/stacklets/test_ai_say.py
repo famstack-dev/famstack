@@ -225,6 +225,9 @@ class TestWrittenForTheEar:
         ("Run `stack up` first.", "Run stack up first."),
         ("Fertig 🎉!", "Fertig!"),
         ("| list | open |\n|---|---|\n| Markt | 3 |", "list: Markt, open: 3"),
+        ("Pokerabend um 21:00 Uhr.", "Pokerabend um 21 Uhr."),
+        ("Um 09:05 Uhr geht es los.", "Um 9 Uhr 5 geht es los."),
+        ("Dinner at 6:00 pm, cake at 6:30 pm.", "Dinner at 6 pm, cake at 6 30 pm."),
     ])
     def test_what_is_spoken_is_what_a_person_would_say(self, instance, speech_server, played,
                                                        written, spoken):
