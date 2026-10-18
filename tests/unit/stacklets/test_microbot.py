@@ -296,6 +296,29 @@ class TestDrain:
         assert bot._cursors[room.room_id] > 0   # cursor anchored at ~now
 
     @pytest.mark.asyncio
+    async def test_a_message_moments_before_the_first_look_is_delivered(self, tmp_path):
+        """A bot added to a room without an invite (`stack messages join`)
+        first sees the room on its next drain. A message sent in between,
+        the first thing a member types into a new room, was skipped: the
+        cursor was anchored at "now". A first look reaches back two minutes,
+        which still leaves the room's history alone."""
+        import time
+        seen = []
+
+        async def handler(room, event):
+            seen.append(event.server_timestamp)
+
+        bot, client = _build_bot(tmp_path, handler=handler)
+        room = _room()
+        client.rooms = {room.room_id: room}
+        now = int(time.time() * 1000)
+        client.timeline = [_event(ts=now - 5_000), _event(ts=now - 3_600_000)]
+
+        await bot._drain()
+
+        assert seen == [now - 5_000]
+
+    @pytest.mark.asyncio
     async def test_a_room_joined_by_invite_delivers_the_first_message(self, tmp_path):
         """Anchoring at the join, not at the first drain, is what makes the
         very first thing a member types get answered.
