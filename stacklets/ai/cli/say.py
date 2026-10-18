@@ -27,6 +27,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from speech import default_voice, known_voices, play, speakable, synthesize  # noqa: E402
 
+from stack.ai.language import written_in  # noqa: E402
+
 USAGE = 'stack ai say "<text>" [--voice <name>] [--volume <0-100>]'
 
 
@@ -46,7 +48,9 @@ def run(args, stacklet, config):
         return {"error": f"Nothing to say. Usage: {USAGE}"}
 
     ai = config.get("stack", {}).get("ai", {})
-    language = ai.get("language", "en")
+    # The text's own language picks the voice when it can be told; German read
+    # by the English voice sounds foreign.
+    language = written_in(text) or ai.get("language", "en")
     voice = opts.voice or default_voice(language)
     voices = known_voices()
     if voice not in voices:
