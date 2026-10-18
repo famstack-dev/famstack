@@ -18,26 +18,54 @@ from __future__ import annotations
 
 import json
 import platform
-import ssl
 import subprocess
 import time
-import urllib.error
-import urllib.request
+from functools import cache
 from pathlib import Path
 
-_SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode = ssl.CERT_NONE
 
-# Set by init_runtime() at startup, used by _docker() for every command.
+@cache
+def _ssl():
+    """The health probes' TLS context, made on first use: building it and
+    importing the HTTP modules cost ~30 ms of every `stack` command, and
+    most commands never probe."""
+    import ssl
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+# Set by init_runtime(), used by _docker() for every command.
 _context: str | None = None
+# The runtime prefer_runtime() asked for, picked on the first docker command.
+_preferred: str | None = None
+
+
+def prefer_runtime(preferred: str = "orbstack") -> None:
+    """Pin docker commands to `preferred`, asking Docker only when one runs.
+
+    `init_runtime` asks Docker for its contexts, ~55 ms; most `stack`
+    commands never run a docker command, so they should not pay for it.
+    """
+    global _preferred
+    _preferred = preferred
+
+
+def active_context() -> str | None:
+    """The context docker commands are pinned to, picking it if still open."""
+    global _preferred
+    if _preferred is not None and _context is None:
+        preferred, _preferred = _preferred, None
+        init_runtime(preferred)
+    return _context
 
 
 def _docker(*args, **kwargs) -> subprocess.CompletedProcess:
     """Run a docker command, pinned to the configured context."""
     cmd = ["docker"]
-    if _context:
-        cmd += ["--context", _context]
+    context = active_context()
+    if context:
+        cmd += ["--context", context]
     cmd += list(args)
     return subprocess.run(cmd, **kwargs)
 
@@ -237,9 +265,10 @@ def check_docker() -> tuple[str | None, str | None]:
 
 def check_health(url: str, headers: dict | None = None) -> bool:
     """Quick probe — returns True if URL responds with 2xx."""
+    import urllib.request
     try:
         req = urllib.request.Request(url, headers=headers or {})
-        with urllib.request.urlopen(req, timeout=3, context=_SSL):
+        with urllib.request.urlopen(req, timeout=3, context=_ssl()):
             return True
     except Exception:
         return False
@@ -252,9 +281,11 @@ def probe_health(url: str, headers: dict | None = None, timeout: float = 3) -> s
     wait_for_health (bootstrap-time polling) and Stack.is_healthy
     (runtime reachability checks).
     """
+    import urllib.error
+    import urllib.request
     try:
         req = urllib.request.Request(url, headers=headers or {})
-        with urllib.request.urlopen(req, timeout=timeout, context=_SSL):
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl()):
             return "ready"
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
