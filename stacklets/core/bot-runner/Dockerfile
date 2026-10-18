@@ -13,7 +13,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py microbot.py room_context.py accounts.py voice.py ./
+COPY main.py microbot.py room_context.py accounts.py voice.py cross_signing.py ./
 
 RUN adduser --disabled-password --uid 1000 botrunner
 RUN mkdir -p /botdata && chown botrunner:botrunner /botdata

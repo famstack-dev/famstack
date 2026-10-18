@@ -78,6 +78,7 @@ from nio.api import RelationshipType
 from nio.crypto.attachments import decrypt_attachment
 
 import voice
+from cross_signing import CrossSigning
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 from stack.users import TECH_ADMIN_USERNAME
@@ -231,6 +232,7 @@ class MicroBot:
 
         # ── E2E encryption ───────────────────────────────────────────
         await self._keep_keys()
+        await self._vouch_for_device()
 
         # ── Auto-accept invitations ──────────────────────────────────
         # Two-stage hand-off so subclass `on_room_joined` sees a fully
@@ -1684,6 +1686,20 @@ class MicroBot:
             await client.send_to_device_messages()
         except Exception as e:
             logger.warning("[{}] Key upkeep failed: {}", self.name, e)
+
+    async def _vouch_for_device(self) -> None:
+        """Sign this login with the bot's own cross-signing keys (`cross_signing`),
+        so the family's apps share room keys with it as with a verified device."""
+        if self._client is None or not self._client.olm:
+            return
+        try:
+            outcome = await CrossSigning(
+                self._ensure_http(), self.homeserver, self.client.access_token, self.user_id,
+                self.client.device_id, self.password,
+                self._session_dir / f"{self.name}.cross-signing.json").vouch()
+            logger.info("[{}] Cross-signing: {}", self.name, outcome)
+        except Exception as e:  # an unsigned device still works with most apps today
+            logger.warning("[{}] Cross-signing failed, the device stays unsigned: {}", self.name, e)
 
     def _trust_all_devices(self) -> None:
         """Mark all known devices as trusted without interactive verification."""
