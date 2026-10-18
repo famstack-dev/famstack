@@ -15,6 +15,7 @@ was given stands in for the Mac's player, so no test makes a sound.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -256,3 +257,53 @@ class TestALanguageOtherThanTheHouses:
 
         assert result["voice"] == "onyx"
         assert "fr" in result["note"]
+
+
+class TestALongerText:
+    """One sentence of 58 characters took 1.8 s to synthesize and 5.8 s to
+    play (rig, 2026-10-18), and the agent's turn waited for both. A text is
+    spoken sentence by sentence, the next synthesized while one plays; an
+    agent that should not wait for the speaker says `--no-wait`."""
+
+    @pytest.fixture
+    def slow_player(self, tmp_path, monkeypatch):
+        """A player that takes a second per file and logs when it plays."""
+        bin_dir = tmp_path / "slowbin"
+        bin_dir.mkdir()
+        log = tmp_path / "player.log"
+        player = bin_dir / "afplay"
+        player.write_text(f'#!/bin/sh\necho start >> "{log}"\nsleep 1\necho end >> "{log}"\n')
+        player.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        return log
+
+    def test_each_sentence_is_its_own_request_in_order(self, instance, speech_server, played):
+        _say(instance, "Heute Abend ist Pokerabend mit Moe und Barney. "
+                       "Morgen kommt Oma zum Kaffee vorbei. Danach gehen alle schwimmen.")
+
+        assert [r["input"] for r in _requests(speech_server)] == [
+            "Heute Abend ist Pokerabend mit Moe und Barney.",
+            "Morgen kommt Oma zum Kaffee vorbei.", "Danach gehen alle schwimmen."]
+
+    def test_a_short_sentence_goes_with_the_next(self, instance, speech_server, played):
+        _say(instance, "Ok. Dinner is ready in the kitchen now.")
+
+        assert [r["input"] for r in _requests(speech_server)] == [
+            "Ok. Dinner is ready in the kitchen now."]
+
+    def test_no_wait_returns_while_the_last_sentence_still_plays(self, instance, speech_server,
+                                                                 slow_player):
+        started = time.monotonic()
+        result = _say(instance, "Dinner is ready in the kitchen now.", "--no-wait")
+
+        assert "error" not in result, result
+        assert time.monotonic() - started < 0.9
+        time.sleep(1.5)
+        assert "end" in slow_player.read_text()
+
+    def test_a_second_text_waits_until_the_first_was_heard(self, instance, speech_server,
+                                                           slow_player):
+        _say(instance, "Dinner is ready in the kitchen now.", "--no-wait")
+        _say(instance, "Bart, please come down for dinner.")
+
+        assert slow_player.read_text().split() == ["start", "end", "start", "end"]
