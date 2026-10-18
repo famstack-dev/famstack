@@ -20,6 +20,7 @@ wait with progress, return a dict.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -2261,6 +2262,32 @@ def print_help(name="stack", plugin_cmds=None):
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
+class _Watched:
+    """Stdout that remembers whether a command wrote anything to it."""
+
+    def __init__(self, stream):
+        self._stream, self.wrote = stream, False
+
+    def write(self, text):
+        self.wrote = self.wrote or bool(text)
+        return self._stream.write(text)
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def _print_fields(result: dict | None) -> None:
+    """A command that printed nothing: its result as `key: value` lines.
+
+    The plugin contract lets a command only return a dict. Without this,
+    the terminal and the agent's text surface showed nothing at all.
+    """
+    for key, value in (result or {}).items():
+        if key == "ok" and value is True:
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        print(f"{key}: {text}")
+
 def main():
     repo_root = find_repo_root()
     instance_dir = find_instance_dir()
@@ -2448,7 +2475,6 @@ def main():
             # renders it. With --json that dict is the only thing on stdout;
             # what the command prints for people goes to stderr, and the flag
             # is taken out of the arguments before the command reads them.
-            import contextlib
             _remaining = [a for a in _remaining if a != "--json"]
             sys.argv = [a for a in sys.argv if a != "--json"]
             with contextlib.redirect_stdout(sys.stderr):
@@ -2458,9 +2484,13 @@ def main():
             if result and "error" in result:
                 sys.exit(1)
             return
-        result = stck.run_cli_command(args.command, action, _remaining)
+        watched = _Watched(sys.stdout)
+        with contextlib.redirect_stdout(watched):
+            result = stck.run_cli_command(args.command, action, _remaining)
         if result and "error" in result:
             print_error(result); sys.exit(1)
+        if not watched.wrote:
+            _print_fields(result)
         return
 
     print_help(stck.product_name(), stacklet_cmds or None)

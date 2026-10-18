@@ -1533,7 +1533,8 @@ Check a new command, or a changed one, against them.
    says how far it got. The request itself survives the timeout.
 6. **A command returns a dict**, `{"error": ...}` on failure, which exits
    non-zero. With `--json` that dict is all of stdout; what the command
-   prints for people goes to stderr.
+   prints for people goes to stderr. Without it, a command that printed
+   nothing has its dict printed as `key: value` lines (`ok: true` left out).
 
 A command that records a choice in `stack.toml` calls
 `config["set_cfg"](section, key, value)`, the plugin-side twin of a

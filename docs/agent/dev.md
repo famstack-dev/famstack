@@ -154,7 +154,7 @@ def run(args, stacklet, config):
 ```
 
 Rules:
-- Return a dict. With `--json` the framework prints it as JSON on stdout and sends whatever the command printed to stderr; without it, the command's own output is what people see. `--json` never reaches the command's arguments.
+- Return a dict. With `--json` the framework prints it as JSON on stdout and sends whatever the command printed to stderr; without it, the command's own output is what people see, or the dict as `key: value` lines when it printed nothing. `--json` never reaches the command's arguments.
 - On error, return `{"error": "..."}` - framework translates to non-zero exit.
 - **Never bypass the CLI from another stacklet.** Use `ctx.stack.run_cli_command(<id>, <cmd>, ...)`.
 
