@@ -213,7 +213,10 @@ a { color: var(--teal); text-underline-offset: 2px; }
 .chip[aria-pressed="true"] { border-color: var(--slate); background: var(--slate); color: var(--parchment); }
 .chip .n { font: 500 0.68rem var(--mono); opacity: .7; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c, var(--t-page)); }
-.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 8px; margin-bottom: 14px; }
+.field { display: grid; gap: 4px; }
+.field.wide { grid-column: 1 / -1; }
+.result .w { grid-column: 1 / -1; font: 400 .66rem var(--mono); color: var(--charcoal); opacity: .65; }
 .filters select, .filters input {
   width: 100%; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--paper);
   font-size: .82rem;

@@ -16,7 +16,7 @@ const WORDS = {
   en: {
     memory: "Memory · Cards", search: "Search the family memory", viewas: "View as",
     everyone: "Everyone (admin)", types: "Kinds", all: "all", relevant: "relevant", newest: "newest",
-    anyone: "Anyone", cards: (n) => `${n} cards`, details: "Details", history: "History",
+    anyone: "Anyone", person: "Person", from: "From", to: "To", cards: (n) => `${n} cards`, details: "Details", history: "History",
     linksTo: "Links to", linkedFrom: "Linked from", nothing: "Nothing written here yet.",
     open: "open", done: "done", openPaperless: "Open in Paperless", around: "Around this card",
     links: "links", people: "people", versions: "versions", openLinked: "Open the linked cards",
@@ -30,7 +30,7 @@ const WORDS = {
   de: {
     memory: "Gedächtnis · Karten", search: "Im Familiengedächtnis suchen", viewas: "Ansicht als",
     everyone: "Alle (Admin)", types: "Arten", all: "alle", relevant: "passend", newest: "neueste",
-    anyone: "Alle Personen", cards: (n) => `${n} Karten`, details: "Details", history: "Verlauf",
+    anyone: "Alle Personen", person: "Person", from: "Von", to: "Bis", cards: (n) => `${n} Karten`, details: "Details", history: "Verlauf",
     linksTo: "Verweist auf", linkedFrom: "Verwiesen von", nothing: "Hier steht noch nichts.",
     open: "offen", done: "erledigt", openPaperless: "In Paperless öffnen", around: "Rund um diese Karte",
     links: "Verweise", people: "Personen", versions: "Versionen", openLinked: "Verknüpfte Karten öffnen",
@@ -61,7 +61,7 @@ const typeName = (type) => TYPE_NAMES[type] || type;
 // ── State ─────────────────────────────────────────────────────────────────
 
 const state = {
-  q: "", type: "", person: "", since: "", sort: "rank", audience: "",
+  q: "", type: "", person: "", since: "", until: "", sort: "rank", audience: "",
   open: [],        // card ids, left to right
   focus: "",       // the card the graph is about
   cards: new Map(), // id -> full card, as last read
@@ -471,6 +471,8 @@ async function find() {
   if (state.type) params.type = state.type;
   if (state.person) params.person = state.person;
   if (state.since) params.since = state.since;
+  if (state.until) params.until = state.until;
+  if (state.sort === "day") params.sort = "newest";
   try {
     lastFound = (await api("find", params)) || lastFound;
   } catch {
@@ -493,8 +495,11 @@ function renderTypes() {
 
 function renderResults() {
   const list = document.getElementById("results");
-  const cards = [...lastFound.cards];
-  if (state.sort === "day") cards.sort((a, b) => (b.day || "").localeCompare(a.day || ""));
+  const cards = lastFound.cards;
+  // Two cards with one title (a person's profile and the family's file on them):
+  // the row says where each lives.
+  const seen = new Map();
+  cards.forEach((c) => seen.set(c.title, (seen.get(c.title) || 0) + 1));
   document.getElementById("total").textContent = T.cards(lastFound.total);
   list.replaceChildren(...cards.map((c) => h("li", {
     class: `result${state.open.includes(c.id) ? " open" : ""}`, style: `--c:${typeColor(c.type)}`,
@@ -502,7 +507,9 @@ function renderResults() {
   },
     h("span", { class: "k" }, typeName(c.type)), h("span", { class: "d" }, niceDay(c.day)),
     h("span", { class: "l", title: T.links }, c.links ? `↔ ${c.links}` : ""),
-    h("span", { class: "t" }, c.title))));
+    h("span", { class: "t" }, c.title),
+    seen.get(c.title) > 1 ? h("span", { class: "w" }, c.path.split("/").slice(0, -1).join("/") || c.path)
+      : null)));
 }
 
 // ── The graph of the focused card ─────────────────────────────────────────
@@ -634,19 +641,23 @@ function remember() {
   const params = new URLSearchParams();
   if (state.open.length) params.set("open", state.open.join(","));
   if (state.focus) params.set("focus", state.focus);
-  for (const key of ["q", "type", "person", "since", "audience"]) if (state[key]) params.set(key, state[key]);
+  for (const key of ["q", "type", "person", "since", "until", "audience"]) {
+    if (state[key]) params.set(key, state[key]);
+  }
   history.replaceState(null, "", `#${params.toString()}`);
 }
 
 async function restore() {
   const params = new URLSearchParams(location.hash.slice(1));
-  for (const key of ["q", "type", "person", "since", "audience"]) state[key] = params.get(key) || "";
+  for (const key of ["q", "type", "person", "since", "until", "audience"]) state[key] = params.get(key) || "";
   document.getElementById("q").value = state.q;
   document.getElementById("since").value = state.since;
+  document.getElementById("until").value = state.until;
   const open = (params.get("open") || "").split(",").filter(Boolean);
   const focus = params.get("focus") || "";
   for (const id of open) await openCard(id, { focus: false });
-  if (focus && state.cards.has(focus)) setFocus(focus, { scroll: false });
+  if (focus && state.cards.has(focus)) setFocus(focus);
+  else document.getElementById("board").scrollTo({ left: 0 });
 }
 
 function wire() {
@@ -657,9 +668,11 @@ function wire() {
   document.documentElement.lang = LANG;
   const q = document.getElementById("q");
   q.addEventListener("input", () => { state.q = q.value; scheduleFind(); remember(); });
-  document.getElementById("since").addEventListener("change", (e) => {
-    state.since = e.target.value; scheduleFind(); remember();
-  });
+  for (const key of ["since", "until"]) {
+    document.getElementById(key).addEventListener("change", (e) => {
+      state[key] = e.target.value; scheduleFind(); remember();
+    });
+  }
   document.getElementById("person").addEventListener("change", (e) => {
     state.person = e.target.value; scheduleFind(); remember();
   });
@@ -675,7 +688,7 @@ function wire() {
   document.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => {
     state.sort = b.dataset.sort;
     document.querySelectorAll("[data-sort]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    renderResults();
+    scheduleFind();
   }));
   document.addEventListener("keydown", (e) => {
     if (e.key === "/" && document.activeElement !== q) { e.preventDefault(); q.focus(); }

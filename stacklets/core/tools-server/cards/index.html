@@ -31,8 +31,12 @@
       <span class="label" data-i18n="types">Kinds</span>
       <div class="chips" id="types"></div>
       <div class="filters">
-        <select id="person" aria-label="Person"></select>
-        <input id="since" type="date" aria-label="Since">
+        <label class="field wide"><span class="label" data-i18n="person">Person</span>
+          <select id="person"></select></label>
+        <label class="field"><span class="label" data-i18n="from">From</span>
+          <input id="since" type="date"></label>
+        <label class="field"><span class="label" data-i18n="to">To</span>
+          <input id="until" type="date"></label>
       </div>
       <div class="count">
         <span class="label" id="total"></span>
