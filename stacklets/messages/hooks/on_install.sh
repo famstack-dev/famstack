@@ -137,8 +137,9 @@ config = {
     ],
     "turn_allow_guests": False,
 
-    # Rate limits are not set here: hooks/on_start.py adds them on every
-    # start, so a limit added later reaches servers installed before it.
+    # Rate limits and the user search are not set here: hooks/on_start.py
+    # adds them on every start, so a setting added later reaches servers
+    # installed before it.
 }
 
 with open(conf_path, 'w') as f:

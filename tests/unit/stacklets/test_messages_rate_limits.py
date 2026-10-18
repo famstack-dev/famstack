@@ -49,6 +49,14 @@ def test_an_existing_server_gains_the_invite_limit(tmp_path):
     assert "rc_message" in config and "rc_login" in config
 
 
+def test_everyone_on_the_server_can_find_everyone(tmp_path):
+    # Without it, a child searching for the agent (or a parent it shares no
+    # room with yet) finds nobody, and families talk to the agent in a DM.
+    conf = _server(tmp_path, {"server_name": "simpson"})
+    _start(tmp_path)
+    assert json.loads(conf.read_text())["user_directory"] == {"search_all_users": True}
+
+
 def test_an_admins_own_value_is_kept(tmp_path):
     own = {"per_user": {"per_second": 0.01, "burst_count": 3}}
     conf = _server(tmp_path, {"server_name": "simpson", "rc_invites": own})
