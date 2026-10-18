@@ -64,6 +64,7 @@ class Change:
     day: str
     who: str
     subject: str
+    at: str = ""  # the author time, to the second, for ordering within a day
 
 
 @dataclass
@@ -82,6 +83,8 @@ class Card:
     links_out: set[str] = field(default_factory=set)
     links_in: set[str] = field(default_factory=set)
     changes: list[Change] = field(default_factory=list)
+    # The card's frontmatter as written: what a reader shows per type.
+    meta: dict = field(default_factory=dict)
 
     @property
     def version(self) -> str:
@@ -244,7 +247,7 @@ def git_changes(repo: Path) -> dict[str, list[Change]]:
     try:
         out = subprocess.run(
             ["git", "-C", str(repo), "log", "--name-only",
-             "--format=\x1e%h\x1f%ad\x1f%an\x1f%s", "--date=short"],
+             "--format=\x1e%h\x1f%ad\x1f%an\x1f%s\x1f%aI", "--date=short"],
             capture_output=True, text=True, timeout=60, check=True,
         ).stdout
     except (OSError, subprocess.SubprocessError):
@@ -252,9 +255,9 @@ def git_changes(repo: Path) -> dict[str, list[Change]]:
     changes: dict[str, list[Change]] = {}
     for block in out.split("\x1e")[1:]:
         head, _, files = block.partition("\n")
-        sha, day, who, subject = (head.split("\x1f") + ["", "", "", ""])[:4]
+        sha, day, who, subject, at = (head.split("\x1f") + ["", "", "", "", ""])[:5]
         for name in files.split():
-            changes.setdefault(name, []).append(Change(sha, day, who, subject))
+            changes.setdefault(name, []).append(Change(sha, day, who, subject, at))
     return changes
 
 
@@ -276,7 +279,7 @@ def _card(rel: str, text: str) -> Card | None:
     compiled = str(meta.get("generated") or "").lower() == "true" or "<!-- begin: generated" in text
     return Card(id=card_id, type=kind, title=title, path=rel, day=day,
                 text=_GENERATED.sub("", text), names=names, persons=persons,
-                compiled=compiled)
+                compiled=compiled, meta=dict(meta))
 
 
 def _id(rel: str, meta: dict, kind: str) -> str:
