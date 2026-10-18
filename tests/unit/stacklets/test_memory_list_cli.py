@@ -357,6 +357,20 @@ class TestReadingTheCalendar:
         from datetime import timedelta
         return (date.today() + timedelta(days=days)).isoformat()
 
+    @pytest.mark.parametrize("language, printed", [
+        ("en", "Mon 19 Oct (in 2 days) 17:00 Turnen Bart"),
+        ("de", "Mo 19.10. (in 2 Tagen) 17:00 Turnen Bart"),
+    ])
+    def test_an_entry_named_the_way_the_calendar_prints_it_is_found(self, run_in, store, language,
+                                                                     printed):
+        """The agent repeats an entry as `show` printed it, day in front."""
+        run_in(language, "add", "calendar", "17:00 Turnen Bart", "--due", "2026-10-19", "--as", "marge")
+
+        result = run_in(language, "remove", "calendar", printed, "--as", "marge")
+
+        assert "error" not in result
+        assert result["summary"].startswith("removed 17:00 Turnen Bart")
+
     def test_each_entry_says_its_weekday_in_the_household_language(self, run_in, capsys):
         run_in("de", "add", "calendar", "Weihnachtsessen", "--due", "2026-12-25", "--as", "marge")
         capsys.readouterr()
