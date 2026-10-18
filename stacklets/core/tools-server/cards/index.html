@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Family memory · famstack</title>
+  <link rel="stylesheet" href="/cards/static/cards.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">fam<i>stack</i></span>
+      <span class="label" data-i18n="memory">Memory · Cards</span>
+    </div>
+    <label class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" autocomplete="off" spellcheck="false"
+             data-i18n-placeholder="search" placeholder="Search the family memory">
+      <kbd>/</kbd>
+    </label>
+    <div class="viewas">
+      <span class="live" title="read live from the family memory"></span>
+      <span class="label" data-i18n="viewas">View as</span>
+      <select id="audience" aria-label="View as"></select>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="rail">
+      <span class="label" data-i18n="types">Kinds</span>
+      <div class="chips" id="types"></div>
+      <div class="filters">
+        <select id="person" aria-label="Person"></select>
+        <input id="since" type="date" aria-label="Since">
+      </div>
+      <div class="count">
+        <span class="label" id="total"></span>
+        <div class="sort" role="group">
+          <button data-sort="rank" aria-pressed="true" data-i18n="relevant">relevant</button>
+          <button data-sort="day" aria-pressed="false" data-i18n="newest">newest</button>
+        </div>
+      </div>
+      <ul class="results" id="results"></ul>
+    </aside>
+
+    <section class="board" id="board" aria-live="polite"></section>
+
+    <aside class="graphpane" id="graphpane"></aside>
+  </div>
+
+  <script src="/cards/static/cards.js"></script>
+</body>
+</html>

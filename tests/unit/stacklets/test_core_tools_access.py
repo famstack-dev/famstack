@@ -21,7 +21,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 
-from access import INTERNAL_PORT, PUBLIC_PORT, serves  # noqa: E402
+from access import CARDS_PORT, INTERNAL_PORT, PUBLIC_PORT, serves  # noqa: E402
 
 PRIVATE = ("/tools/documents/search", "/tools/photos/search", "/tools/stack/status",
            "/logs", "/openapi.json", "/docs", "/")
@@ -56,3 +56,19 @@ def test_an_unknown_listener_is_treated_as_the_network():
     # Fail closed: only the internal listener is trusted by name.
     assert not serves(9999, "/tools/stack/status")
     assert not serves(None, "/logs")
+
+
+def test_the_card_page_listener_serves_the_card_page():
+    """Published on this Mac only (127.0.0.1): the family memory's card browser."""
+    assert serves(CARDS_PORT, "/cards")
+    assert serves(CARDS_PORT, "/cards/api/find")
+
+
+def test_the_card_page_listener_serves_nothing_else():
+    assert not serves(CARDS_PORT, "/logs")
+    assert not serves(CARDS_PORT, "/cardsx")
+    assert not serves(CARDS_PORT, "/go/topic/camping")
+
+
+def test_the_network_does_not_get_the_card_page():
+    assert not serves(PUBLIC_PORT, "/cards")

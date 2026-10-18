@@ -79,9 +79,7 @@ class CardsAPI:
             if card is None:
                 return _missing(rest)
             depth = max(1, min(_int(query.get("depth"), 1), 3))
-            return _json({"card": _summary(card), "around": [
-                {"distance": d, "how": how, "card": _summary(c)}
-                for d, how, c in graph.neighbours(card.id, depth)]})
+            return _json({"card": _summary(card), "around": _around(graph, card, depth)})
         if route == "history":
             return _json(self._history(graph, _int(query.get("limit"), HISTORY_LIMIT)))
         if route == "people":
@@ -162,6 +160,21 @@ def _items(card: Card) -> list[dict]:
         return []
     return [{"text": i.text, "done": i.done, "section": i.section, "due": i.due,
              "done_on": i.done_on} for i in family_list.items]
+
+
+def _around(graph: Graph, card: Card, depth: int) -> list[dict]:
+    """The cards within `depth` links, each with the nearer card it was reached
+    through (`via`), so a page can draw the path: the card itself for the first ring."""
+    found = graph.neighbours(card.id, depth)
+    rings: dict[int, set[str]] = {0: {card.id}}
+    for distance, _, other in found:
+        rings.setdefault(distance, set()).add(other.id)
+    around = []
+    for distance, how, other in found:
+        nearer = rings.get(distance - 1, set())
+        via = next((i for i in sorted(other.links_in | other.links_out) if i in nearer), card.id)
+        around.append({"distance": distance, "how": how, "via": via, "card": _summary(other)})
+    return around
 
 
 def _found(graph: Graph, query: dict[str, str]) -> dict:

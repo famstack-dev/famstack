@@ -110,8 +110,8 @@ class TestOpeningACard:
         _, around = _get(api, "/links/person/lisa?depth=2")
 
         assert around["around"][0]["distance"] == 1
-        assert any(a["card"]["id"] == "topic/camping" and a["distance"] == 2
-                   for a in around["around"])
+        [camping] = [a for a in around["around"] if a["card"]["id"] == "topic/camping"]
+        assert camping["distance"] == 2 and camping["via"] == "capture/Abc123Def4"
 
     def test_an_unknown_card_is_not_found(self, api):
         assert _get(api, "/card/capture/nothere")[0] == 404
