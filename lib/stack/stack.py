@@ -415,7 +415,9 @@ class Stack:
             "ai_tts_voice":          "onyx" if self._cfg("ai", "language", "en").startswith("de") else "alloy",
             "ai_default_model":      self._cfg("ai", "default"),
             "ai_default_model_short": self._cfg("ai", "default").rsplit("/", 1)[-1],
-            "ai_models_json":        "",  # populated when [ai.models] exists
+            # `[ai.models]`: a model per bot or task, as `stack.ai.models` reads it.
+            "ai_models_json":        (json.dumps(self.config["ai"]["models"])
+                                      if self.config.get("ai", {}).get("models") else ""),
             "messages_server_name":  self._cfg("messages", "server_name"),
         }
 
