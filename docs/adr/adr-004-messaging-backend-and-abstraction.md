@@ -199,6 +199,15 @@ E2EE (e.g., for federation over the internet) can flip it on in config.
 setting and still offer to enable encryption on new DMs. Worth testing and
 documenting as a known limitation.
 
+**Amended 2026-10-18: the bots read the encrypted rooms they are invited to.**
+Element X does encrypt direct chats, whatever the server says, and families
+talk to the agent in a direct chat. A room with only people in it stays
+private; inviting a bot is the family's opt-in to have famstack process it,
+encrypted or not. Encryption stays off by default for new rooms. The bot
+runner keeps each bot's key store across restarts and opens encrypted
+attachments. Anything that reads a room's history straight from Synapse
+(the diary compile, `stack messages read`) still sees only ciphertext there.
+
 ---
 
 ## The Abstraction Layer
