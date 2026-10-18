@@ -68,40 +68,48 @@ is part of `find`'s match); `topic` and `person show` become `card` on a
 `lookup` stays, as the ontology's own tool. Removed commands keep working for
 one release and say which command replaced them.
 
-### 2. Every card carries its id
-Every card has an `id` in its frontmatter, `<kind>-<value>`, set once and
-kept:
+### 2. Every card carries its own id: `card_id`
+Every card has a `card_id` in its frontmatter: our own id for the card,
+`<kind>-<value>`, made once when the card is first written and never
+derived again.
 
-| Kind | Example | The value |
+| Kind | Example | Value at creation |
 |---|---|---|
-| document | `doc-53` | Paperless's document id |
-| diary entry | `diary-3c09e20cfa` | its `entry_id` |
-| correspondent | `corr-12` | Paperless's correspondent id |
-| person, topic, list | `person-homer`, `topic-camping`, `list-markt` | the slug they are named by |
+| note, bookmark, email, document, diary entry | `note-7f3a9c21e4` | ten random hex digits |
+| person, topic, list | `person-homer`, `list-markt` | its slug |
+| correspondent | `corr-springfield-elementary` | its slug |
 | list archive | `list-markt-2026-10` | its list and month |
-| note, bookmark, email | `note-7f3a9c21e4` | ten random hex digits, made when it is first filed |
 
-The value is the source's own id wherever the source has a lasting one, so a
-card rebuilt from its source (ADR-010) gets the same id again; only records
-with none get a random one. The fields a card came from (`capture_id`,
-`entry_id`, `paperless_id`) stay, as where it came from. Every writer sets the
-id (the archivist, capture, the curator for compiled pages, the list and
-person commands); a migration gives every existing card its id in one commit;
-the curator adds one to a card written by hand, as the stack's commit.
-`stack.cards` holds the rule; the graph, the `/go` resolver, the cards API and
-the writers use it, and a card without an id yet is named by it as before.
+It stands next to the ids of where a card came from, which stay as they are:
+`capture_id`, `entry_id`, `paperless_id`. Those name the source; `card_id`
+names the card. A card's identity does not depend on a system famstack does
+not control: Paperless numbers documents anew on a re-import, a Matrix event
+id belongs to Matrix, a slug changes with a rename. Stored, the card id
+outlives all three. Every reader reads one field instead of a rule per kind.
+
+Every writer sets it (the archivist, capture, the diary, the curator for the
+pages it compiles, the list and person commands). A writer that rebuilds a
+card from its source (ADR-010) finds the existing card by its source id
+(`stack.cards.find_card`) and keeps its `card_id`. A migration gives every
+existing card its id, in one commit; the curator gives one to a card written
+by hand, as the stack's commit. The name is `card_id`, not `id`: it is the
+concept the stack reference already calls the card id, it sits with the other
+`*_id` fields, and a plain `id` is read by other tools that open the same
+files (Obsidian plugins, Quartz).
 
 **A card whose id changes keeps the old one.** A note refiled as a document is
-a new card with a new id; it lists the ids it had before (`was:
-[note-7f3a9c21e4]`), in the same commit as the change, so who changed it and
-when stay in the history. Every reader resolves an old id to the current card:
+a new card with a new `card_id`; it lists the ids it had before in
+`former_card_ids`, in the same commit as the change, so who changed it and when
+stay in the history. Every reader resolves a former id to the current card:
 `/go/note-7f3a9c21e4` redirects, `card` and the cards API answer with the
 current card and say which id they were asked for. A card that was removed
-answers as gone, with the commit that removed it, rather than not found: a link
-in a chat's history keeps saying what became of it.
+answers as gone, with the commit that removed it, rather than not found: a
+link in a chat's history keeps saying what became of it.
 
-`/go/<id>` is the link to any card; the links in use today (`/go/capture/…`,
-`/go/diary/…`, `/go/docs/…`, `/go/topic/…`) keep working.
+`/go/<card_id>` is the link to any card; the links in use today
+(`/go/capture/…`, `/go/diary/…`, `/go/docs/…`, `/go/topic/…`) keep working.
+Until every card has its id, readers name a card by the rule in `stack.cards`
+(`card_ref`), as the card graph does now.
 
 ### 3. The ontology widens a search
 `find` matches a word and every name, synonym and keyword the ontology gives
@@ -131,8 +139,9 @@ and `docs show` reads the document from Paperless. Reading never needs to
 know which source a card came from.
 
 ## Order
-1. Every card's id: the rule in `stack.cards` (the graph uses it, done on
-   #257), the writers, the migration, `was:` and its redirects, `/go/<id>`.
+1. `card_id` on every card: the writers, the migration, `former_card_ids` and
+   its redirects, `/go/<card_id>`. Until then the graph names cards by the rule
+   in `stack.cards` (done on #257).
 2. The audience rule in one function; `history` and `list show` take it.
 3. The curator compiles from readable cards only.
 4. Ontology terms in `find`.
