@@ -200,3 +200,27 @@ def test_a_speech_server_elsewhere_speaks_it(tmp_path, httpserver, played, monke
 
     assert "error" not in result, result
     assert played.read_bytes() == AUDIO
+
+
+class TestWrittenForTheEar:
+    """Markdown is read aloud literally: "**Three emails**" took 3.9 s for
+    "asterisk asterisk three emails asterisk asterisk" (rig, 2026-10-16).
+    What reaches the speech server is the text as a person would say it (#243)."""
+
+    @pytest.mark.parametrize("written, spoken", [
+        ("**Three emails** came in.", "Three emails came in."),
+        ("_Bitte_ jetzt.", "Bitte jetzt."),
+        ("## Today\nSchool at 8.", "Today. School at 8."),
+        ("Lists:\n- Milk\n- Eggs", "Lists: Milk. Eggs"),
+        ("1. Milk\n2. Eggs", "Milk. Eggs"),
+        ("See [the list](http://home/go/list/markt).", "See the list."),
+        ("It is on https://famstack.dev/docs/guide now.", "It is on famstack.dev now."),
+        ("Run `stack up` first.", "Run stack up first."),
+        ("Fertig 🎉!", "Fertig!"),
+        ("| list | open |\n|---|---|\n| Markt | 3 |", "list: Markt, open: 3"),
+    ])
+    def test_what_is_spoken_is_what_a_person_would_say(self, instance, speech_server, played,
+                                                       written, spoken):
+        _say(instance, written)
+
+        assert _requests(speech_server)[0]["input"] == spoken
