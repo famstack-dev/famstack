@@ -468,3 +468,72 @@ class TestLanguage:
     def test_a_voice_in_another_language_is_a_valid_setup(self):
         """German documents, an English voice: nothing to report."""
         assert check_language("de", "en") is None
+
+
+# ── Whether scheduled commands run ───────────────────────────────────────
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from stack.doctor import check_scheduler, check_sleep  # noqa: E402
+
+_NOW = datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc)
+
+# `pmset -g` on the test rig, 2026-10-18: sleep after a minute, held off by caffeinate.
+_PMSET_RIG = """System-wide power settings:
+Currently in use:
+ standby              1
+ Sleep On Power Button 1
+ hibernatefile        /var/vm/sleepimage
+ disksleep            10
+ sleep                1 (sleep prevented by caffeinate, powerd)
+ hibernatemode        3
+ displaysleep         60
+"""
+
+
+class TestTheScheduler:
+    """The scheduler runs inside core's API service and notes every check.
+    One that stopped is otherwise noticed only when a reminder does not come."""
+
+    def test_a_scheduler_that_just_checked_is_fine(self):
+        assert check_scheduler(_NOW - timedelta(seconds=40), _NOW, core_running=True,
+                               missed=[]) == []
+
+    def test_one_silent_for_minutes_while_core_runs_is_an_error(self):
+        [finding] = check_scheduler(_NOW - timedelta(minutes=10), _NOW, core_running=True,
+                                    missed=[])
+
+        assert finding.is_error and finding.fix == "stack restart core"
+        assert "06:50" in finding.detail
+
+    def test_one_that_never_checked_is_an_error_too(self):
+        [finding] = check_scheduler(None, _NOW, core_running=True, missed=[])
+
+        assert finding.is_error and "never" in finding.detail
+
+    def test_with_core_down_a_silent_scheduler_is_expected(self):
+        assert check_scheduler(None, _NOW, core_running=False, missed=[]) == []
+
+    def test_missed_runs_of_the_last_day_are_named(self):
+        [finding] = check_scheduler(_NOW, _NOW, core_running=True,
+                                    missed=["morning-homer", "dates", "morning-homer"])
+
+        assert not finding.is_error
+        assert "3 scheduled run(s)" in finding.title
+        assert "dates, morning-homer" in finding.detail
+
+
+class TestTheMacStaysAwake:
+
+    def test_a_mac_that_never_sleeps_is_fine(self):
+        assert check_sleep(_PMSET_RIG.replace("sleep                1 (sleep prevented by "
+                                              "caffeinate, powerd)", "sleep                0")) is None
+
+    def test_sleep_held_off_by_caffeinate_still_counts(self):
+        finding = check_sleep(_PMSET_RIG)
+
+        assert finding and finding.fix == "sudo pmset -a sleep 0"
+        assert "1 minute" in finding.title and "only while that runs" in finding.detail
+
+    def test_without_pmset_there_is_nothing_to_say(self):
+        assert check_sleep("") is None

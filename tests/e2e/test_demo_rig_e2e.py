@@ -552,3 +552,35 @@ async def test_demo_rig_memory_todos_stay_mutable_and_capture_items_project(
             demo_code, MEMORY_REPO, path, f"chore: demo rig cleanup {topic}",
         )
         _cleanup_memory_files_containing(demo_code, token)
+
+
+@pytest.mark.demo_rig
+def test_demo_rig_the_scheduler_fires_an_entry_on_its_own(bdd):
+    """A scheduled command runs at its time without anyone asking.
+
+    The unit tests drive the scheduler's check by hand with a set clock;
+    only the running instance shows that core's API service really runs it,
+    every 30 seconds, under launchd.
+    """
+    import time
+    import uuid
+
+    name = f"demo-rig-{uuid.uuid4().hex[:8]}"
+    bdd.given("core running, with its scheduler inside the API service")
+    listed = json.loads(_run_stack("core", "schedule", "list", "--json").stdout)
+    assert listed["heartbeat"], "the scheduler has never checked: is core up on this code?"
+
+    bdd.when("an entry is due a minute from now")
+    added = _run_stack("core", "schedule", "add", name, "in 1m", "--", "memory", "list", "show")
+    assert added.returncode == 0, added.stdout + added.stderr
+
+    bdd.then("it runs by itself within a minute and a half, and is gone afterwards")
+    deadline = time.monotonic() + 150
+    runs = []
+    while time.monotonic() < deadline and not runs:
+        time.sleep(5)
+        runs = json.loads(_run_stack("core", "schedule", "log", name, "--json").stdout)["runs"]
+    assert runs, f"{name} did not run within 150 s"
+    assert runs[-1]["status"] == "ok", runs[-1]
+    entries = json.loads(_run_stack("core", "schedule", "list", "--json").stdout)["entries"]
+    assert name not in [e["name"] for e in entries]
