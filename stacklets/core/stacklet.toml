@@ -55,6 +55,7 @@ OPENAI_KEY     = "{ai_openai_key}"
 WHISPER_URL    = "{ai_whisper_url_docker}/audio/transcriptions"
 WHISPER_KEY    = "{ai_whisper_key}"
 WHISPER_MODEL  = "{ai_whisper_model}"
+SPEECH_URL     = "{ai_speech_url_docker}"
 # Transcripts are a cache over the audio, not a record: the mxc on the
 # timeline stays the anchor. Kept on disk because whisper costs minutes
 # of GPU per memo and a backfill over the memories room must never pay
