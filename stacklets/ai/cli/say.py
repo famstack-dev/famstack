@@ -9,6 +9,7 @@ server loads.
     stack ai say "Dinner is ready" --voice nova
     stack ai say "Dinner is ready" --volume 40
     stack ai say "Dinner is ready" --language en
+    stack ai say "Dinner is ready" --no-wait
 
 Which voice: `--voice`, else the voice of `--language`, else of the text's
 own language when it can be told, else of `[ai] language`.
@@ -16,6 +17,10 @@ own language when it can be told, else of `[ai] language`.
 How loud: `--volume`, else `[ai] speech_volume`, else 100, as a share of
 the Mac's own output volume. A speech server the stack does not run is
 named by `[ai] speech_url`.
+
+A longer text is spoken sentence by sentence, each synthesized while the
+one before plays. `--no-wait` returns once the last sentence has started
+playing. Two at once take turns: the second waits for the first.
 """
 
 # Also the line the agent reads for this command, so it says how to write
@@ -29,11 +34,12 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from speech import VOICED, default_voice, known_voices, play, speakable, synthesize  # noqa: E402
+from speech import VOICED, NoAudio, default_voice, known_voices, parts, say_aloud, speakable  # noqa: E402
 
 from stack.ai.language import language_code, written_in  # noqa: E402
 
-USAGE = 'stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>]'
+USAGE = ('stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>] '
+         '[--no-wait]')
 
 
 def _parse(args: list[str]) -> argparse.Namespace:
@@ -43,6 +49,8 @@ def _parse(args: list[str]) -> argparse.Namespace:
     p.add_argument("--language", default="", help="the text's language, e.g. en, when not the house's")
     p.add_argument("--volume", type=int, default=None,
                    help="percent of the Mac's own output volume, at most 100")
+    p.add_argument("--no-wait", action="store_true",
+                   help="return once the last sentence has started playing")
     return p.parse_args(args)
 
 
@@ -69,19 +77,18 @@ def run(args, stacklet, config):
         return {"error": f"The speech server has no voice '{voice}'. "
                          f"Voices: {', '.join(voices)}"}
 
+    volume = opts.volume if opts.volume is not None else int(ai.get("speech_volume", 100))
     try:
-        audio = synthesize(text, voice, url=ai.get("speech_url", ""))
+        say_aloud(parts(text), voice, volume=volume, url=ai.get("speech_url", ""),
+                  wait=not opts.no_wait)
     except urllib.error.HTTPError as e:
         return {"error": f"The speech server failed ({e.code}). "
                          "Check 'docker logs stack-ai-speech'."}
     except OSError:
         return {"error": "The speech server is not reachable. "
                          "Start the ai stacklet: stack up ai"}
-    if not audio:
+    except NoAudio:
         return {"error": "The speech server returned no audio. "
                          "Check 'docker logs stack-ai-speech'."}
-
     print(f"\n  Speaking as {voice}...\n")
-    volume = opts.volume if opts.volume is not None else int(ai.get("speech_volume", 100))
-    play(audio, volume=volume)
     return {"ok": True, "voice": voice, **({"note": note} if note else {})}

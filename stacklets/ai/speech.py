@@ -1,5 +1,6 @@
 """Shared TTS and LLM utilities for the AI stacklet."""
 
+import fcntl
 import json
 import os
 import re
@@ -118,6 +119,89 @@ def play(audio: bytes, volume: int = 100) -> None:
         subprocess.run(["afplay", "-v", str(share), tmp], timeout=60)
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+# ── Speaking a longer text ───────────────────────────────────────────────
+# A text is spoken in parts, each synthesized while the one before plays,
+# so the first sentence is heard after its own synthesis, not the whole
+# text's (1.8 s for one sentence of 58 characters on the rig).
+
+# A sentence ends at . ! ? or … before a space and no lowercase letter, so
+# "21.00" and "z.B. mit" stay whole.
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?![a-zäöüß])")
+# Each part is one request to the speech server; a short sentence goes
+# with the next.
+PART_MIN_CHARS = 25
+# One speaker at a time on this Mac: a second `say` waits for the first to
+# finish rather than talking over it.
+SPEAKER_LOCK = Path(tempfile.gettempdir()) / "stack-speaker.lock"
+
+
+class NoAudio(Exception):
+    """The speech server answered, with nothing to play."""
+
+
+def parts(text: str) -> list[str]:
+    """`text` as the parts it is spoken in, in order."""
+    out: list[str] = []
+    for sentence in (s.strip() for s in _SENTENCE_END.split(text)):
+        if not sentence:
+            continue
+        if out and len(out[-1]) < PART_MIN_CHARS:
+            out[-1] += " " + sentence
+        else:
+            out.append(sentence)
+    return out
+
+
+def say_aloud(text_parts: list[str], voice: str, *, volume: int = 100, url: str = "",
+              wait: bool = True) -> None:
+    """Speak the parts on the Mac's speakers, one after the other.
+
+    The first part is synthesized before anything plays, so a speech server
+    that fails or does not answer raises here (OSError), as `synthesize`
+    does, and one that sends no audio raises NoAudio. A later part that fails ends the speaking after the part before.
+    With `wait=False` it returns once the last part has started playing;
+    the player keeps the speaker until it is done.
+    """
+    share = str(max(0, min(int(volume), 100)) / 100)
+    audio = synthesize(text_parts[0], voice, url=url)
+    if not audio:
+        raise NoAudio(text_parts[0])
+    with SPEAKER_LOCK.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for i, _ in enumerate(text_parts):
+            file = _audio_file(audio)
+            if i == len(text_parts) - 1:
+                _play_last(file, share, lock, wait=wait)
+                return
+            player = subprocess.Popen(["afplay", "-v", share, file])
+            try:
+                audio = synthesize(text_parts[i + 1], voice, url=url)
+            except OSError:
+                audio = b""
+            player.wait(timeout=120)
+            Path(file).unlink(missing_ok=True)
+            if not audio:
+                return
+
+
+def _audio_file(audio: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        f.write(audio)
+        return f.name
+
+
+def _play_last(file: str, share: str, lock, *, wait: bool) -> None:
+    if wait:
+        subprocess.run(["afplay", "-v", share, file], timeout=120)
+        Path(file).unlink(missing_ok=True)
+        return
+    # The player inherits the locked file, so the speaker stays taken until
+    # it has finished, after this process is gone.
+    subprocess.Popen(["/bin/sh", "-c", 'afplay -v "$1" "$2"; rm -f "$2"', "sh", share, file],
+                     pass_fds=(lock.fileno(),), start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def speak(text: str, voice: str = "alloy", speed: float = SPEED) -> bool:
