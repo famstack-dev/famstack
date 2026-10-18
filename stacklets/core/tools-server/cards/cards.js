@@ -118,7 +118,8 @@ async function api(path, params = {}) {
 }
 
 const DAY = new Intl.DateTimeFormat(LANG, { day: "numeric", month: "short", year: "numeric" });
-const WEEKDAY = new Intl.DateTimeFormat(LANG, { weekday: "long", month: "long", year: "numeric" });
+const WEEKDAY = new Intl.DateTimeFormat(LANG, { weekday: "long" });
+const MONTH_YEAR = new Intl.DateTimeFormat(LANG, { month: "long", year: "numeric" });
 function niceDay(day) {
   if (!day) return "";
   const d = new Date(`${day}T12:00:00`);
@@ -187,7 +188,7 @@ function markdown(text, card) {
     // An Obsidian callout ("> [!summary]") is a labelled box; any other quote a quote.
     const callout = quoted[0].match(/^\[!(\w+)\][-+]?\s*(.*)$/);
     const rest = callout ? [callout[2], ...quoted.slice(1)] : quoted;
-    const inner = rest.filter((l) => l.trim()).map((l) => `<p>${inline(l, card)}</p>`).join("");
+    const inner = markdown(rest.join("\n"), card);
     html.push(callout
       ? `<div class="callout"><span class="label">${escapeHtml(callout[1])}</span>${inner}</div>`
       : `<blockquote>${inner}</blockquote>`);
@@ -223,7 +224,18 @@ function markdown(text, card) {
   return html.join("");
 }
 
-function bodyOf(card, text = card.text) {
+function withoutTitle(text, title) {
+  // The card's title is its heading already; a body that starts with it says it twice.
+  const lines = String(text || "").split("\n");
+  const first = lines.findIndex((l) => l.trim());
+  if (first >= 0 && /^#{1,3}\s+/.test(lines[first])
+      && lines[first].replace(/^#+\s+/, "").trim().toLowerCase() === String(title).trim().toLowerCase()) {
+    lines.splice(first, 1);
+  }
+  return lines.join("\n");
+}
+
+function bodyOf(card, text = withoutTitle(card.text, card.title)) {
   const div = h("div", { class: "body" });
   if (!String(text || "").trim()) {
     div.append(h("p", { class: "empty-text" }, T.nothing));
@@ -258,7 +270,8 @@ const RENDER = {
     const d = card.day ? new Date(`${card.day}T12:00:00`) : null;
     return [
       d && !Number.isNaN(d.getTime()) ? h("div", { class: "hero-day" },
-        h("span", { class: "big" }, d.getDate()), h("span", { class: "rest" }, WEEKDAY.format(d))) : null,
+        h("span", { class: "big" }, d.getDate()),
+        h("span", { class: "rest" }, `${WEEKDAY.format(d)}, ${MONTH_YEAR.format(d)}`)) : null,
       peopleRow(card), bodyOf(card),
     ];
   },
@@ -657,7 +670,9 @@ function remember() {
   for (const key of ["q", "type", "person", "since", "until", "audience"]) {
     if (state[key]) params.set(key, state[key]);
   }
+  writing = true;
   history.replaceState(null, "", `#${params.toString()}`);
+  writing = false;
 }
 
 async function restore() {
@@ -708,6 +723,16 @@ function wire() {
     if (e.key === "Escape" && document.activeElement === q) q.blur();
   });
 }
+
+// A link pasted into this tab, or back and forward: open what the address names.
+let writing = false;
+window.addEventListener("hashchange", async () => {
+  if (writing) return;
+  state.open = []; state.cards.clear(); state.focus = "";
+  await restore();
+  if (!state.open.length) renderBoard();
+  renderGraph(); find();
+});
 
 (async function start() {
   wire();
