@@ -141,17 +141,34 @@ def card_kind(rel: str, fields: Mapping[str, object]) -> str:
 
 
 def card_ref(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
-    """(kind of id, id) of the card at `rel`: `("person", "homer")`.
+    """(kind of id, id) of the card at `rel`: its own `card_id` when it has one.
+
+    A card that carries a `card_id` is named by it (ADR-016). One that has
+    none yet is named by `card_name`, the rule from before card ids.
+
+    >>> card_ref("family/people/homer.md", {"type": "person", "card_id": "person-homer"})
+    ('card_id', 'person-homer')
+    >>> card_ref("family/people/homer.md", {"type": "person"})
+    ('person', 'homer')
+    """
+    if card_id := card_id_from(fields):
+        return CARD_ID, card_id
+    return card_name(rel, fields)
+
+
+def card_name(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
+    """(kind of id, id) of the card at `rel` by the rule before card ids: `("person", "homer")`.
 
     The id is the field that never changes where the kind has one, the
     thing's own name otherwise (a slug, the list's file), and the path
-    only for a page that is nothing else.
+    only for a page that is nothing else. The card graph links people,
+    topics and lists by these names, whatever id a card carries.
 
-    >>> card_ref("family/people/homer.md", {"type": "person"})
+    >>> card_name("family/people/homer.md", {"type": "person"})
     ('person', 'homer')
-    >>> card_ref("homer/about.md", {"type": "person", "generated": "true"})
+    >>> card_name("homer/about.md", {"type": "person", "generated": "true"})
     ('person', 'homer')
-    >>> card_ref("family/lists/archive/markt/2026-10.md", {"type": "list"})
+    >>> card_name("family/lists/archive/markt/2026-10.md", {"type": "list"})
     ('list', 'markt/2026-10')
     """
     stable = card_id_of(fields)

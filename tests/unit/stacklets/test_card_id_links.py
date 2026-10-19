@@ -308,3 +308,33 @@ class TestStackMemoryCard:
             _card(memory, "note-1234567890", "--audience", "bart")
         out = capsys.readouterr().out
         assert "gone" not in out and "No card 'note-1234567890'" in out
+
+
+# ── The card graph ───────────────────────────────────────────────────────
+
+class TestTheCardGraph:
+    """The card browser and `stack memory find` name a card by its `card_id`."""
+
+    def _graph(self, memory: Memory):
+        from graph import load_graph
+        return load_graph(memory.vault)
+
+    def test_a_card_is_named_by_its_card_id_and_still_opens_by_its_old_name(self, memory):
+        graph = self._graph(memory)
+        note = graph.card("note-7f3a9c21e4")
+        assert note is not None and note.id == "note-7f3a9c21e4" and note.path == NOTE_PATH
+        assert graph.card("capture/Efjml6ySCY") is note
+
+    def test_a_card_naming_a_person_links_the_persons_card(self, memory):
+        memory.write({"family/notes/plant.md": "---\ntype: note\ncard_id: note-2b2b2b2b2b\n"
+                      "title: Plant shift\npersons:\n  - Homer\n---\n"},
+                     by="marge", message="a note about homer")
+        graph = self._graph(memory)
+        assert "person-homer" in graph.card("note-2b2b2b2b2b").links_out
+        assert graph.person_id("homer") == "person-homer"
+
+    def test_a_list_archive_links_its_list(self, memory):
+        memory.write({"family/lists/archive/markt/2026-10.md":
+                      "---\ntype: list\ncard_id: list-markt-2026-10\ntitle: Markt, 2026-10\n---\n"},
+                     by="marge", message="archive")
+        assert "list-markt" in self._graph(memory).card("list-markt-2026-10").links_out

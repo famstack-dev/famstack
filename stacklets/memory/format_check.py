@@ -18,12 +18,8 @@ what needs fixing. It writes nothing.
 from __future__ import annotations
 
 from graph import Card, Graph, links_of
+from stack.cards import CARD_TYPES, card_id_from
 from stack.frontmatter import FrontmatterError, parse
-
-# The closed vocabulary of `type`, ADR-017 §6.
-CARD_TYPES = frozenset({
-    "document", "note", "bookmark", "email", "diary", "list", "person", "correspondent", "topic",
-})
 
 
 def format_report(graph: Graph) -> dict:
@@ -32,7 +28,7 @@ def format_report(graph: Graph) -> dict:
     report = {
         "cards": len(cards),
         "without_card_id": _without_card_id(cards),
-        "shared_ids": [{"id": cid, "paths": paths} for cid, paths in sorted(graph.shared_ids.items())],
+        "shared_ids": _shared_card_ids(cards),
         "links_to_nothing": _links_to_nothing(graph, cards),
         "no_card_type": [f for f in map(_type_problem, cards) if f],
     }
@@ -45,9 +41,22 @@ def _without_card_id(cards: list[Card]) -> dict[str, int]:
     """How many cards of each type carry no `card_id` (ADR-016 §2)."""
     counts: dict[str, int] = {}
     for card in cards:
-        if not str(card.meta.get("card_id") or "").strip():
+        if not card_id_from(card.meta):
             counts[card.type] = counts.get(card.type, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _shared_card_ids(cards: list[Card]) -> list[dict]:
+    """Each `card_id` two or more files carry, with those files (ADR-016 §2).
+
+    Read from the stored ids: two cards without one are not one card for
+    sharing a name, they are two cards still waiting for their ids.
+    """
+    holders: dict[str, list[str]] = {}
+    for card in cards:
+        if card_id := card_id_from(card.meta):
+            holders.setdefault(card_id, []).append(card.path)
+    return [{"id": cid, "paths": paths} for cid, paths in sorted(holders.items()) if len(paths) > 1]
 
 
 def _links_to_nothing(graph: Graph, cards: list[Card]) -> list[dict]:

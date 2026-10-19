@@ -9,11 +9,15 @@ a wiki, instead of reading pages it found by text alone.
 into the brain (a person's or a topic's page, a diary month, an index) is a
 view: never a card, and read only with the card it is about.
 
-**Node ids** are the `/go` link names (`stack.links`): `diary/<entry_id>`,
-`capture/<capture_id>`, `docs/<paperless_id>`, `person/<slug>`,
-`topic/<slug>`, `list/<name>`. A page with none of these is `page/<path>`.
-Capture ids are Matrix event ids, long and random, so they are shown by a
-unique prefix, as git shows a commit.
+**Node ids** are the `/go` link names (`stack.links`): a card's own
+`card_id` (`note-7f3a9c21e4`, `person-homer`, ADR-016) when it has one. A
+card without one yet is named by the rule from before card ids
+(`stack.cards.card_name`): `diary/<entry_id>`, `capture/<capture_id>`,
+`docs/<paperless_id>`, `person/<slug>`, `topic/<slug>`, `list/<name>`, and
+`page/<path>` for a page with none of these. That name is also how the
+graph links a card to the people, topics and lists it names, and it opens
+the card as well as its id does. Capture ids are Matrix event ids, long and
+random, so they are shown by a unique prefix, as git shows a commit.
 
 **History is git.** Every change to the family memory is a person's commit
 (ADR-015), so the vault's log says who changed a card, when, and how; the
@@ -47,7 +51,15 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from stack.cards import ARCHIVE, INDEX, card_kind, card_ref, is_navigation_page
+from stack.cards import (
+    ARCHIVE,
+    CARD_ID,
+    INDEX,
+    card_kind,
+    card_name,
+    card_ref,
+    is_navigation_page,
+)
 from stack.frontmatter import FrontmatterError, parse
 from stack.vault import entity_page_path
 
@@ -104,6 +116,8 @@ class Card:
     path: str
     day: str
     text: str
+    # `kind/value` by the rule before card ids, which the graph links by.
+    name: str = ""
     names: tuple[str, ...] = ()
     persons: tuple[str, ...] = ()
     links_out: set[str] = field(default_factory=set)
@@ -129,7 +143,7 @@ class Graph:
 
         graph = load_graph(vault, views=brain)
         graph.find("zelt kaputt")      # ranked cards
-        graph.card("person/homer")     # one card, or None
+        graph.card("person-homer")     # one card by its id or its name, or None
         graph.shared_ids               # ids two files claim: {id: [path, ...]}
     """
 
@@ -137,6 +151,11 @@ class Graph:
         cards, self.shared_ids = _unique(cards)
         self.cards = {c.id: c for c in cards}
         self._by_path = {c.path: c.id for c in cards}
+        # The name each card had before card ids, to its id: what the graph
+        # links by, and what an older reference opens.
+        self._named: dict[str, str] = {}
+        for c in cards:
+            self._named.setdefault(c.name or c.id, c.id)
         # The media archive's files the cards refer to (`2026/10/x.png`): what
         # this graph's audience may open.
         self.media = {m for c in cards for m in media_of(c)}
@@ -146,11 +165,13 @@ class Graph:
         ref = ref.strip().lstrip("@")
         if ref in self.cards:
             return self.cards[ref]
+        if ref in self._named:
+            return self.cards[self._named[ref]]
         path = ref.removeprefix("vault/").lstrip("/")
         if found := self.at(path):
             return found
-        matches = [c for i, c in self.cards.items() if i.startswith(ref) and "/" in ref]
-        return matches[0] if len(matches) == 1 else None
+        matches = {i for n, i in self._named.items() if n.startswith(ref) and "/" in ref}
+        return self.cards[matches.pop()] if len(matches) == 1 else None
 
     def at(self, path: str) -> Card | None:
         """The card of the file at `path` (vault-relative), or None."""
@@ -198,8 +219,8 @@ class Graph:
     def person_id(self, said: str) -> str:
         """The card id of the person `said` names (slug or any name), or ""."""
         said = said.strip().lower()
-        if f"person/{said}" in self.cards:
-            return f"person/{said}"
+        if found := self._named.get(f"person/{said}"):
+            return found
         return self._names.get(said, "")
 
     def _about(self, card: Card, person: str) -> bool:
@@ -227,7 +248,7 @@ class Graph:
     def _link(self, cards: list[Card]) -> None:
         names = {n: c.id for c in cards if c.type == "person" for n in c.names}
         self._names = names
-        topics = {c.id.split("/", 1)[1] for c in cards if c.type == "topic"}
+        topics = {c.name.split("/", 1)[1]: c.id for c in cards if c.type == "topic"}
         for card in cards:
             for _, target in links_of(card):
                 other = self._by_path.get(target)
@@ -239,12 +260,13 @@ class Graph:
                     card.links_out.add(pid)
             parts = card.path.split("/")
             if len(parts) > 2 and parts[1] in topics and card.type != "topic":
-                card.links_out.add(f"topic/{parts[1]}")
-            if card.type == ARCHIVE:
-                card.links_out.add(card.id.rsplit("/", 1)[0])  # list/markt/2026-10 -> list/markt
+                card.links_out.add(topics[parts[1]])
+            # list/markt/2026-10 -> list/markt
+            if card.type == ARCHIVE and (lst := self._named.get(card.name.rsplit("/", 1)[0])):
+                card.links_out.add(lst)
             for topic in card.meta.get("topics") or []:  # a list names the topics it serves
                 if str(topic) in topics and card.type != "topic":
-                    card.links_out.add(f"topic/{topic}")
+                    card.links_out.add(topics[str(topic)])
         for card in cards:
             for other in card.links_out:
                 if other in self.cards:
@@ -312,7 +334,7 @@ def _views(card: Card, brain: Path) -> list[View]:
     correspondent's shares the card's path.
     """
     if card.type == "person":
-        wanted = [("person", entity_page_path(card.id.split("/", 1)[1], "person"))]
+        wanted = [("person", entity_page_path(card.name.split("/", 1)[1], "person"))]
     elif card.type == "correspondent":
         wanted = [("correspondent", card.path)]
     else:
@@ -374,9 +396,11 @@ def _card(rel: str, text: str) -> Card:
     except FrontmatterError:
         meta = {}
     kind = card_kind(rel, meta)
-    ref_kind, ref = card_ref(rel, meta)
+    name_kind, value = card_name(rel, meta)
     # Capture ids are Matrix event ids: shown by a unique prefix, as git shows a commit.
-    card_id = f"{ref_kind}/{ref.lstrip('$')[:_SHORT_ID] if ref_kind in ('capture', 'diary') else ref}"
+    name = f"{name_kind}/{value.lstrip('$')[:_SHORT_ID] if name_kind in ('capture', 'diary') else value}"
+    ref_kind, ref = card_ref(rel, meta)
+    card_id = ref if ref_kind == CARD_ID else name
     title = str(meta.get("title") or Path(rel).stem).strip()
     day = str(meta.get("date") or "")[:10] or str(meta.get("timestamp") or "")[:10]
     names = tuple(n.lower() for n in [
@@ -385,7 +409,7 @@ def _card(rel: str, text: str) -> Card:
         str(meta.get("title") or "").split(" ")[0],
     ] if n) if kind == "person" else ()
     persons = tuple(str(p) for p in (meta.get("persons") or []) if p)
-    return Card(id=card_id, type=kind, title=title, path=rel, day=day,
+    return Card(id=card_id, type=kind, title=title, path=rel, day=day, name=name,
                 text=_GENERATED.sub("", text), names=names, persons=persons, meta=dict(meta))
 
 

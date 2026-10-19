@@ -449,13 +449,16 @@ compiles into the brain (a person's `<id>/about.md`, a topic's page, a
 diary month, an index) is a view: never found, never opened as a card.
 A card comes with the views compiled about it, found where the wiki
 compiles them until views name their card: a person's at `<id>/about.md`,
-a correspondent's at the card's own path. `stack.cards.card_ref` holds
-the naming rule for every kind; `card_kind` tells a list archive and a
-navigation page from the rest.
+a correspondent's at the card's own path. A card is named by its
+`card_id` when it has one (`stack.cards.card_ref`); one without is named
+by the rule in the table above (`card_name`), and that name still opens
+a card that has an id since. The graph links people, topics and lists by
+those names. `card_kind` tells a list archive and a navigation page from
+the rest.
 
 `stack memory check-format` (and the cards API's `/report`, which the
 card browser shows) lists where the vault does not meet ADR-016 and
-ADR-017 yet: cards without a `card_id`, per type; ids two files claim;
+ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
 links to a file the vault does not have; files with no frontmatter or a
 `type` that is no card type. It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
