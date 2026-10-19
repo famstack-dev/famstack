@@ -781,7 +781,7 @@ class CapturePipeline:
             )
         vault_path = filed.path if filed else None
 
-        # Feed topic tags (not the derived Person: X) back into the
+        # Feed the topic tags back into the
         # vocabulary cache so the next capture's prompt sees them.
         topic_tags = [
             t for t in (classification.get("tags") or [])
@@ -975,21 +975,12 @@ class CapturePipeline:
 
     @staticmethod
     def _tag_list(classification: dict) -> list[str]:
-        """Mirror `tags:` — free-form capture tags + `Person: X` per person,
-        so Dataview queries on `Person: …` span documents and captures."""
+        """Mirror `tags:`, the classifier's free-form tags. No `Person: X`
+        tags: `persons` says who a capture is about (ADR-017 §4)."""
         raw_tags = classification.get("tags") or []
         if isinstance(raw_tags, str):
             raw_tags = [raw_tags]
-        persons = classification.get("persons") or []
-        if isinstance(persons, str):
-            persons = [persons]
-        out: list[str] = [
-            t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
-        ]
-        out.extend(
-            f"Person: {p}" for p in persons if isinstance(p, str) and p.strip()
-        )
-        return out
+        return [t.strip() for t in raw_tags if isinstance(t, str) and t.strip()]
 
 
 # ── Parsing for reprocess ──────────────────────────────────────────────

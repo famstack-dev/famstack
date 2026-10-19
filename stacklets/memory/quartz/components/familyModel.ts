@@ -679,7 +679,11 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
   // ── page header and breadcrumbs ──
   const bySlug = new Map(allFiles.map((f) => [String(f.slug), f]))
   const peopleBy = new Map(people.map((p) => [fold(p.label), p.slug!]))
+  // A record's `persons` holds ids (ADR-017 §4), the folder of the person's page.
+  const peopleById = new Map(people.map((p) => [p.slug!.split("/")[0], p]))
   const personChip = (name: string) => {
+    const byId = peopleById.get(name)
+    if (byId) return { label: byId.label.split(" ")[0], slug: byId.slug }
     const slug = peopleBy.get(fold(name)) ?? peopleBy.get(fold(name.split(" ")[0]))
     return { label: name.charAt(0).toUpperCase() + name.slice(1), slug }
   }

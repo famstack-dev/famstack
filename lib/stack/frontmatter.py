@@ -105,6 +105,16 @@ DECLARED_SCHEMAS: dict[str, TypeSchema] = {
         list_fields={"aliases"},
         scalar_fields={"title", "account"},
     ),
+    "correspondent": TypeSchema(
+        required={"type", "title"},
+        list_fields={"aliases"},
+        scalar_fields={"title"},
+    ),
+    "topic": TypeSchema(
+        required={"type", "title"},
+        list_fields=set(),
+        scalar_fields={"title"},
+    ),
 }
 
 
@@ -424,6 +434,40 @@ def dump(fm: dict) -> str:
             lines.append(f"{key}: {quoted_val}")
 
     return "\n".join(lines)
+
+
+def with_field(text: str, key: str, value) -> str:
+    """`text` with the frontmatter field `key` set to `value`, every other byte as it was.
+
+    The field's lines (its `key:` line and the list items under it) are
+    replaced where they are; a field the file lacks is added last in the
+    frontmatter; an empty value removes the field, since an optional
+    field with no value is left out. A file without frontmatter comes
+    back as it is.
+
+        >>> with_field("---\\ntype: note\\npersons:\\n  - Homer\\n---\\n\\nBody\\n", "persons", ["homer"])
+        '---\\ntype: note\\npersons:\\n  - homer\\n---\\n\\nBody\\n'
+    """
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 3)
+    if end < 0:
+        return text
+    lines = text[4:end].split("\n")
+    rendered = dump({key: value})
+    new = rendered.split("\n") if rendered else []
+    start = next((i for i, line in enumerate(lines)
+                  if not line[:1].isspace() and line.partition(":")[0].strip() == key), None)
+    if start is None:
+        if not new:
+            return text
+        lines += new
+    else:
+        stop = start + 1
+        while stop < len(lines) and lines[stop].lstrip().startswith("- "):
+            stop += 1
+        lines[start:stop] = new
+    return "---\n" + "\n".join(lines) + text[end:]
 
 
 def _quote_value(s: str) -> str:

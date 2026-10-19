@@ -1098,9 +1098,9 @@ def load_correspondents_from_vault(
     `shared_bucket` defaults to "family" — the conventional name. Pass
     the configured slug when the deployment overrides it via stack.toml.
 
-    Pages without a `kind: correspondent` frontmatter or without a
-    canonical name (frontmatter `canonical:`, falling back to the file
-    stem) are skipped — keeps the loader robust against partial edits.
+    A page that says it is something else (`type` or `kind` other than
+    `correspondent`) is skipped. The name is the card's `title` (ADR-017),
+    else `canonical:` from before cards, else the file stem.
     """
     folder = Path(vault_path) / correspondents_dir(shared_bucket)
     if not folder.exists():
@@ -1116,9 +1116,9 @@ def load_correspondents_from_vault(
         if not meta:
             # No frontmatter at all — likely a README or stray note, skip.
             continue
-        if meta.get("kind") and meta.get("kind") != "correspondent":
+        if any(meta.get(k) and meta.get(k) != "correspondent" for k in ("type", "kind")):
             continue
-        canonical = meta.get("canonical") or md_path.stem
+        canonical = meta.get("title") or meta.get("canonical") or md_path.stem
         if not canonical:
             continue
         result.append(Correspondent(

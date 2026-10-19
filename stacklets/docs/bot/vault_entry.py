@@ -47,9 +47,12 @@ from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
 from stack.cards import card_identity
 
-# Slug and entity-path conventions live in the framework (`stack.vault`)
-# so the memory wiki and this docs archivist share one source.
-from stack.vault import slug, entity_relpath  # noqa: F401  (slug re-exported for callers/tests)
+# Slug and card-path conventions live in the framework (`stack.vault`,
+# `stack.card_links`) so the memory wiki, its migrations and this docs
+# archivist share one source.
+from stack.card_links import About
+from stack.people import Person
+from stack.vault import correspondent_path, relative_link, slug  # noqa: F401  (slug re-exported for callers/tests)
 from stack.email_message import defang_links
 from stack.briefing import render_briefing
 
@@ -249,7 +252,7 @@ def document_frontmatter(
         correspondent: Correspondent name or None.
         document_type: Document type or None.
         category: Top-level category tag or None.
-        persons: List of person names.
+        persons: Ids of the declared people the document is about (ADR-017 §4).
         tags: List of topic tags.
         paperless_id: Paperless document ID.
         paperless_url: Public Paperless URL (base, not page-specific).
@@ -330,7 +333,7 @@ def capture_frontmatter(
         captured_at: Capture date (YYYY-MM-DD).
         kind: "bookmark" or "note".
         source_uri: Original source URL, or None.
-        persons: List of person names.
+        persons: Ids of the declared people the capture is about.
         tags: List of topic tags.
         model: Model name used for classification, or None.
         capture_id: Stable capture identifier carried on the
@@ -389,6 +392,7 @@ def render_document(
     facts: list | None = None,
     action_items: list | None = None,
     source_link: tuple[str, str] | None = None,
+    people: list[Person] | None = None,
 ) -> str:
     """Assemble the mirror file for a Paperless document.
 
@@ -397,8 +401,10 @@ def render_document(
       - YAML frontmatter (machine view: structured metadata)
       - H1 title
       - entity-link header (``**From:** [Duff Insurance](…) · **About:** [Homer](…)``)
-        as relative markdown links, so they resolve in Obsidian, on
-        GitHub/Forgejo, and as OKF graph edges.
+        as relative markdown links to the correspondent's and each
+        person's card, so they resolve in Obsidian, on GitHub/Forgejo,
+        and as OKF graph edges. A name no declared person goes by is
+        shown as written, without a link.
       - **briefing callout** — ``> [!summary]`` with prose, optional
         source link, facts, and action items. Wrapped in a callout
         so the briefing reads as a distinct block from the OCR body
@@ -410,13 +416,14 @@ def render_document(
         frontmatter: YAML frontmatter dict.
         body: Document body text (OCR-cleaned or reformatted).
         correspondent: Correspondent name for the entity header.
-        persons: List of person names for the entity header.
+        persons: The names the classifier gave, for the entity header.
         from_path: This entry's own vault path, for relative link math.
-        shared_bucket: The institutional bucket slug (for correspondents).
+        shared_bucket: The institutional bucket slug (people, correspondents).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
         action_items: List of action item dicts or strings.
         source_link: ``(label, url)`` tuple for the "Show Document" link.
+        people: The declared people the names resolve through.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -427,16 +434,14 @@ def render_document(
     parts.append(f"# {frontmatter.get('title', 'Untitled')}")
     parts.append("")
 
-    if (correspondent or persons):
+    about = About.of(persons, people)
+    if (correspondent or about):
         bits = []
         if correspondent:
-            href = entity_relpath(correspondent, "correspondent", from_path, shared_bucket)
+            href = relative_link(correspondent_path(correspondent, shared_bucket), from_path)
             bits.append(f"**From:** [{correspondent}]({href})")
-        if persons:
-            bits.append("**About:** " + ", ".join(
-                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
-                for p in persons
-            ))
+        if about:
+            bits.append("**About:** " + about.links(from_path, bucket=shared_bucket))
         parts.append("> " + " · ".join(bits))
         parts.append("")
 
@@ -471,6 +476,7 @@ def render_capture(
     kept_media: dict | None = None,
     caption: str = "",
     replies: "list[tuple[str, str]] | tuple" = (),
+    people: list[Person] | None = None,
 ) -> str:
     """Assemble the mirror file for a capture entry (kind=note|bookmark).
 
@@ -493,9 +499,9 @@ def render_capture(
         kind: "bookmark" or "note".
         captured_at: Capture date.
         source_uri: Original source URL, or None.
-        persons: List of person names.
+        persons: The names the classifier gave, for the About line.
         from_path: This entry's own vault path, for relative link math.
-        shared_bucket: The institutional bucket slug (for correspondents).
+        shared_bucket: The institutional bucket slug (for people's cards).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
         action_items: Tasks the note records (notes only); [] / None for
@@ -509,6 +515,7 @@ def render_capture(
             The summary is the model's reading of it; this is the record.
         replies: ``(author, words)`` for each reply in the capture's thread,
             in the order they came, kept as written for the same reason.
+        people: The declared people the names resolve through.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -520,13 +527,8 @@ def render_capture(
     parts.append("")
 
     meta_lines: list[str] = []
-    if persons:
-        meta_lines.append(
-            "**About** " + ", ".join(
-                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
-                for p in persons
-            )
-        )
+    if about := About.of(persons, people):
+        meta_lines.append("**About** " + about.links(from_path, bucket=shared_bucket))
     line2_bits = []
     if captured_at:
         line2_bits.append(f"**Captured** {captured_at}")
@@ -667,19 +669,15 @@ def render_email_thread(
     from_path: str,
     shared_bucket: str,
     sections: list[str],
+    people: list[Person] | None = None,
 ) -> str:
     """Assemble a fresh thread file: frontmatter + H1 + meta + sections."""
     fm_yaml = frontmatter_dump(frontmatter)
     parts = ["---", fm_yaml, "---", "", f"# {title}", ""]
 
     meta_lines: list[str] = []
-    if persons:
-        meta_lines.append(
-            "**About** " + ", ".join(
-                f"[{p}]({entity_relpath(p, 'person', from_path, shared_bucket)})"
-                for p in persons
-            )
-        )
+    if about := About.of(persons, people):
+        meta_lines.append("**About** " + about.links(from_path, bucket=shared_bucket))
     line2 = []
     if captured_at:
         line2.append(f"**Started** {captured_at}")
@@ -747,6 +745,7 @@ def fold_email_message(
     tags: list[str],
     from_path: str,
     shared_bucket: str,
+    people: list[Person] | None = None,
 ) -> str | None:
     """Fold one message into its thread file; return the new file content.
 
@@ -758,6 +757,9 @@ def fold_email_message(
       - A new message in an existing thread → append the section and union
         its persons/tags into the existing frontmatter.
 
+    ``persons`` are the names the classifier gave; the frontmatter gets
+    the ids of the declared ``people`` they resolve to.
+
     Raises ``FrontmatterError`` when the existing file's frontmatter does
     not parse.
     """
@@ -766,12 +768,13 @@ def fold_email_message(
             frontmatter=new_frontmatter, title=title,
             captured_at=captured_at, source_uri=source_uri,
             persons=persons, from_path=from_path,
-            shared_bucket=shared_bucket, sections=[section],
+            shared_bucket=shared_bucket, sections=[section], people=people,
         )
     if message_id and email_mid_marker(message_id) in existing_content:
         return None
     fm_old, body_old = split_frontmatter(existing_content)
-    fm_merged = merge_email_frontmatter(fm_old, persons=persons, tags=tags)
+    fm_merged = merge_email_frontmatter(
+        fm_old, persons=About.of(persons, people).ids, tags=tags)
     fm_yaml = frontmatter_dump(fm_merged)
     return (
         f"---\n{fm_yaml}\n---\n"
