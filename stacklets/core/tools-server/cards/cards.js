@@ -26,6 +26,10 @@ const WORDS = {
     unreachable: "The family memory does not answer. Is the memory stacklet running? (stack up memory)",
     file: "File", id: "Card", changedBy: (who, day) => `${who} · ${day}`, focus: "Show its links",
     close: "Close", view: "View", views: "Compiled about this card", openWiki: "Open in the wiki",
+    report: "Format", toFix: (n) => `${n} to fix`, nothingToFix: "Nothing to fix: the memory meets its format.",
+    reportSub: (n) => `Where the memory does not meet its format yet, over all ${n} cards (as the admin).`,
+    noCardId: "Without a card_id", sharedIds: "One id, several files",
+    deadLinks: "Links to nothing in the memory repo", noType: "Not a card type", notThere: "is not there",
   },
   de: {
     memory: "Gedächtnis · Karten", search: "Im Familiengedächtnis suchen", viewas: "Ansicht als",
@@ -40,6 +44,10 @@ const WORDS = {
     unreachable: "Das Familiengedächtnis antwortet nicht. Läuft das memory-Stacklet? (stack up memory)",
     file: "Datei", id: "Karte", changedBy: (who, day) => `${who} · ${day}`, focus: "Verweise zeigen",
     close: "Schließen", view: "Ansicht", views: "Über diese Karte zusammengestellt", openWiki: "Im Wiki öffnen",
+    report: "Format", toFix: (n) => `${n} zu beheben`, nothingToFix: "Nichts zu beheben: das Gedächtnis hat sein Format.",
+    reportSub: (n) => `Wo das Gedächtnis sein Format noch nicht hat, über alle ${n} Karten (als Admin).`,
+    noCardId: "Ohne card_id", sharedIds: "Eine ID, mehrere Dateien",
+    deadLinks: "Verweise ins Leere", noType: "Keine Kartenart", notThere: "gibt es nicht",
   },
 };
 const LANG = (navigator.language || "en").slice(0, 2) === "de" ? "de" : "en";
@@ -62,6 +70,7 @@ const typeName = (type) => TYPE_NAMES[type] || type;
 
 const state = {
   q: "", type: "", person: "", since: "", until: "", sort: "rank", audience: "",
+  report: false,   // the format report at the front of the board
   open: [],        // card ids, left to right
   focus: "",       // the card the graph is about
   cards: new Map(), // id -> full card, as last read
@@ -497,7 +506,11 @@ function setFocus(id, { scroll = true } = {}) {
 function renderBoard() {
   const board = document.getElementById("board");
   board.replaceChildren();
-  if (!state.open.length) return renderWelcome(board);
+  if (state.report && lastReport) board.append(reportElement(lastReport));
+  if (!state.open.length) {
+    if (!state.report) renderWelcome(board);
+    return;
+  }
   for (const id of state.open) {
     const card = state.cards.get(id);
     if (card) board.append(cardElement(card));
@@ -519,6 +532,49 @@ async function renderWelcome(board) {
       linkChips(change.cards.slice(0, 6), null),
       h("div", { class: "subj" }, change.subject)));
   }
+}
+
+// ── The format report ─────────────────────────────────────────────────────
+// Where the memory does not meet ADR-016 and ADR-017 yet. It is the admin's:
+// the API answers it for the whole memory, whoever the page is viewed as.
+
+let lastReport = null;
+
+async function loadReport() {
+  try { lastReport = await api("report"); } catch { lastReport = null; }
+  const n = lastReport?.findings;
+  document.getElementById("report").textContent =
+    n == null ? T.report : n ? `${T.report} · ${n}` : `${T.report} ✓`;
+}
+
+async function showReport(on) {
+  state.report = on;
+  document.getElementById("report").setAttribute("aria-pressed", String(on));
+  if (on) await loadReport();
+  renderBoard();
+  remember();
+}
+
+function reportElement(report) {
+  const section = (title, rows) => rows.length ? h("div", { class: "linkset" },
+    h("h4", { class: "label" }, title), h("ul", { class: "findings" }, rows)) : null;
+  const opens = (ref, label) => h("button", { class: "linkchip", onclick: () => openCard(ref) },
+    h("span", {}, label));
+  return h("article", { class: "card report", "data-id": "report" },
+    h("header", {}, h("span", { class: "kind label" }, T.report), h("span", { class: "spacer" }),
+      h("button", { class: "iconbtn", title: T.close, "aria-label": T.close, onclick: () => showReport(false) },
+        "✕")),
+    h("h2", {}, report.findings ? T.toFix(report.findings) : T.nothingToFix),
+    h("p", { class: "body hint" }, T.reportSub(report.cards)),
+    section(T.noCardId, Object.entries(report.without_card_id).map(([type, n]) =>
+      h("li", {}, kindLabel(type), h("span", { class: "n" }, n)))),
+    section(T.sharedIds, report.shared_ids.map((shared) =>
+      h("li", {}, h("code", {}, shared.id), shared.paths.map((path) => opens(path, path))))),
+    section(T.deadLinks, report.links_to_nothing.map((dead) =>
+      h("li", {}, opens(dead.card, dead.title), h("code", {}, dead.link),
+        h("span", { class: "hint" }, `${dead.target} ${T.notThere}`)))),
+    section(T.noType, report.no_card_type.map((file) =>
+      h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))));
 }
 
 // ── Finding cards ─────────────────────────────────────────────────────────
@@ -704,6 +760,7 @@ function remember() {
   const params = new URLSearchParams();
   if (state.open.length) params.set("open", state.open.join(","));
   if (state.focus) params.set("focus", state.focus);
+  if (state.report) params.set("report", "1");
   for (const key of ["q", "type", "person", "since", "until", "audience"]) {
     if (state[key]) params.set(key, state[key]);
   }
@@ -715,6 +772,8 @@ function remember() {
 async function restore() {
   const params = new URLSearchParams(location.hash.slice(1));
   for (const key of ["q", "type", "person", "since", "until", "audience"]) state[key] = params.get(key) || "";
+  state.report = params.get("report") === "1";
+  document.getElementById("report").setAttribute("aria-pressed", String(state.report));
   document.getElementById("q").value = state.q;
   document.getElementById("since").value = state.since;
   document.getElementById("until").value = state.until;
@@ -750,6 +809,7 @@ function wire() {
     state.focus = state.open.includes(state.focus) ? state.focus : state.open[0] || "";
     renderGraph(); scheduleFind(); remember();
   });
+  document.getElementById("report").addEventListener("click", () => showReport(!state.report));
   document.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => {
     state.sort = b.dataset.sort;
     document.querySelectorAll("[data-sort]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
@@ -774,6 +834,7 @@ window.addEventListener("hashchange", async () => {
 (async function start() {
   wire();
   await loadPeople();
+  await loadReport();
   await restore();
   if (!state.open.length) renderBoard();
   renderGraph();

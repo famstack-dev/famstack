@@ -377,6 +377,18 @@ details.view summary .kind { color: var(--teal); }
 details.view .body { padding: 0 0 6px; }
 details.view .action { margin: 0 0 12px; }
 
+/* The format report: at the front of the board, a card of its own kind */
+.reportbtn {
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; background: transparent; white-space: nowrap;
+  border: 1.5px solid var(--lava); color: var(--slate); font: 600 .78rem var(--grotesk);
+}
+.reportbtn[aria-pressed="true"] { background: var(--lava); color: var(--parchment); }
+.card.report { --c: var(--lava); }
+.findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: .84rem; }
+.findings li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.findings code { font: .72rem var(--mono); overflow-wrap: anywhere; }
+.findings .n { margin-left: auto; font: 500 .74rem var(--mono); }
+
 /* Empty board: what changed lately */
 .welcome {
   flex: 1 1 auto; max-width: 720px; margin: 0 auto; padding: 30px 10px; overflow: auto;
