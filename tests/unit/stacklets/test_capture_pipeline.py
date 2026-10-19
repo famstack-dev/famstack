@@ -289,27 +289,27 @@ class TestCaptureText:
 
 
 class TestTagList:
-    """`_tag_list` mixes the classifier's free-form tags with a `Person: X`
-    tag per attributed person, normalising types and whitespace."""
+    """`_tag_list` is the classifier's free-form tags, normalising types and
+    whitespace. It names no person: the capture's `persons` does."""
 
-    def test_tags_and_persons(self):
+    def test_tags_without_person_tags(self):
         c = {"tags": ["AI", "Productivity"], "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity", "Person: Homer"]
+        assert CapturePipeline._tag_list(c) == ["AI", "Productivity"]
 
     def test_single_string_tag_becomes_list(self):
         c = {"tags": "AI", "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Person: Homer"]
+        assert CapturePipeline._tag_list(c) == ["AI"]
 
     def test_empty_classification_yields_empty(self):
         assert CapturePipeline._tag_list({}) == []
 
     def test_skips_non_string_values(self):
         c = {"tags": ["AI", None, 42, ""], "persons": ["Homer", ""]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Person: Homer"]
+        assert CapturePipeline._tag_list(c) == ["AI"]
 
     def test_strips_whitespace(self):
         c = {"tags": ["  AI  ", "Productivity"], "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity", "Person: Homer"]
+        assert CapturePipeline._tag_list(c) == ["AI", "Productivity"]
 
 
 class TestClassifyDegradation:
@@ -797,7 +797,7 @@ class TestTopicSeedEndToEnd:
             seed_topics=["camping"],
         )
         assert out.status == "captured"
-        # Mirror gets the merged list (seed + Person: Homer).
+        # Mirror gets the merged list.
         assert "camping" in mirror.captures[0]["tags"]
         # Classification dict also carries the merge.
         assert "camping" in out.classification["tags"]
@@ -828,8 +828,7 @@ class TestTopicSeedEndToEnd:
         assert "gear" in tags
         assert "vans" in tags
         # Seed first, then classifier additions in order.
-        non_person = [t for t in tags if not t.startswith("Person: ")]
-        assert non_person == ["van-life", "gear", "vans"]
+        assert tags == ["van-life", "gear", "vans"]
 
     @pytest.mark.asyncio
     async def test_seed_recorded_in_capture_tag_cache(self):

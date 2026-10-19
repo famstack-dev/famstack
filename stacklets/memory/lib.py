@@ -1098,9 +1098,9 @@ def load_correspondents_from_vault(
     `shared_bucket` defaults to "family" — the conventional name. Pass
     the configured slug when the deployment overrides it via stack.toml.
 
-    Pages without a `kind: correspondent` frontmatter or without a
-    canonical name (frontmatter `canonical:`, falling back to the file
-    stem) are skipped — keeps the loader robust against partial edits.
+    A page that says it is something else (`type` or `kind` other than
+    `correspondent`) is skipped. The name is the card's `title` (ADR-017),
+    else `canonical:` from before cards, else the file stem.
     """
     folder = Path(vault_path) / correspondents_dir(shared_bucket)
     if not folder.exists():
@@ -1116,9 +1116,9 @@ def load_correspondents_from_vault(
         if not meta:
             # No frontmatter at all — likely a README or stray note, skip.
             continue
-        if meta.get("kind") and meta.get("kind") != "correspondent":
+        if any(meta.get(k) and meta.get(k) != "correspondent" for k in ("type", "kind")):
             continue
-        canonical = meta.get("canonical") or md_path.stem
+        canonical = meta.get("title") or meta.get("canonical") or md_path.stem
         if not canonical:
             continue
         result.append(Correspondent(
@@ -2573,26 +2573,40 @@ def give_card_ids(client: ForgejoClient, vault: Path, *, since: str | None = Non
                   trailer: str = "") -> tuple[CardIds, str | None]:
     """Give the cards in the working copy `vault` an id; see `card_ids_for`.
 
-    One commit by the memory bot, written against the blob each file was
-    read at, so an edit pushed meanwhile makes Forgejo refuse it and
-    nothing is written. Returns what the pass found and the commit's sha,
-    None when there was nothing to change. `trailer` ends the message.
+    One commit by the memory bot (`_commit`). Returns what the pass found
+    and the commit's sha, None when there was nothing to change.
+    `trailer` ends the message.
+    """
+    found = card_ids_for(vault, since=since)
+    message = f"cards: give {len(found.changes)} card(s) an id of their own"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+
+
+def _commit(client: ForgejoClient, vault: Path, changes: dict[str, str], *,
+            message: str, trailer: str = "", created: frozenset[str] = frozenset()) -> str | None:
+    """Write `changes` (path to new text) to the memory repo in one commit by
+    the memory bot; its sha, or None for no changes.
+
+    A changed file is written against the blob it was read at from the
+    working copy `vault`, and a file in `created` as new, so an edit pushed
+    meanwhile, or a file that appeared, makes Forgejo refuse the commit
+    and nothing is written.
     """
     from stack.forgejo import FileChange
 
-    found = card_ids_for(vault, since=since)
-    if not found.changes:
-        return found, None
-    paths = sorted(found.changes)
-    shas = _blob_shas(vault, paths)
-    message = f"cards: give {len(paths)} card(s) an id of their own"
+    if not changes:
+        return None
+    paths = sorted(changes)
+    updated = [p for p in paths if p not in created]
+    shas = _blob_shas(vault, updated) if updated else {}
     response = client.change_files(
         REPO_OWNER, REPO_NAME,
-        [FileChange("update", p, found.changes[p], sha=shas[p]) for p in paths],
+        [FileChange("create", p, changes[p]) if p in created
+         else FileChange("update", p, changes[p], sha=shas[p]) for p in paths],
         message=f"{message}\n\n{trailer}" if trailer else message,
         author_name=BOT_USERNAME, author_email=BOT_EMAIL,
     )
-    return found, ((response or {}).get("commit") or {}).get("sha")
+    return ((response or {}).get("commit") or {}).get("sha")
 
 
 def _markdown_files(vault: Path) -> dict[str, str]:
@@ -2664,3 +2678,120 @@ def _blob_shas(vault: Path, paths: list[str]) -> dict[str, str]:
     if rc != 0 or len(shas) != len(paths):
         raise OSError(f"cannot hash the files in {vault}: {err}")
     return dict(zip(paths, shas))
+
+
+# ─── The cards a record links ────────────────────────────────────────────
+#
+# A record links the cards of the people, the correspondent and the topic it
+# names (ADR-017 §3, §4, §10). The archivist files new records that way;
+# these passes bring the files that were there before to the same shape,
+# over a working copy of the memory repo, with the archivist's functions
+# (`stack.card_links`): migration 0003 names people by id, migration 0004
+# declares the correspondents and topics records name.
+
+@dataclass
+class CardLinks:
+    """What a pass over the memory repo changes, and what it left for a person.
+
+    `changes` maps a path to the file's new text, `created` holds the paths
+    among them that are new files. `left` says what the rule could not
+    decide without guessing, one line per finding, for the admin.
+
+    >>> CardLinks().changes
+    {}
+    """
+
+    changes: dict[str, str] = field(default_factory=dict)
+    created: set[str] = field(default_factory=set)
+    left: list[str] = field(default_factory=list)
+
+
+def people_by_id_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> CardLinks:
+    """What names the people in the working copy `vault`'s records by id.
+
+    In each document, note, bookmark and email: a `persons` entry a
+    declared person goes by becomes their id, each link to a person's
+    compiled page (`<id>/about.md`) in the meta block points at their
+    card, and `Person: <name>` tags go (`stack.card_links.people_by_id`).
+    In every file, a link to a document that moved since points at where
+    it is now, when its Paperless id names exactly one document
+    (`stack.card_links.moved_links`). A name no one goes by, and a link
+    no one document answers, are left as they are and listed in `left`.
+    """
+    from stack.card_links import moved_links, people_by_id
+    from stack.people import load_people
+
+    people = load_people(vault, shared_bucket)
+    if not people:
+        raise RuntimeError(f"no person files under {shared_bucket}/people/ to name people by")
+    texts = _markdown_files(vault)
+    documents: dict[str, list[str]] = {}
+    for path, text in texts.items():
+        fields = _parse_frontmatter(text)
+        if fields.get("type") == "document" and str(fields.get("paperless_id") or "").strip():
+            documents.setdefault(str(fields["paperless_id"]).strip(), []).append(path)
+
+    found = CardLinks()
+    for path in sorted(texts):
+        text, unknown = people_by_id(texts[path], path, people, bucket=shared_bucket)
+        text, unplaced = moved_links(text, path, exists=texts.__contains__, documents=documents)
+        found.left += [f"{path}: no declared person goes by {name!r}" for name in unknown]
+        found.left += unplaced
+        if text != texts[path]:
+            found.changes[path] = text
+    return found
+
+
+def name_people_by_id(client: ForgejoClient, vault: Path, *,
+                      shared_bucket: str = DEFAULT_SHARED_BUCKET,
+                      trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Name the people in `vault`'s records by id (`people_by_id_for`), in one
+    commit by the memory bot; what the pass found and the commit's sha."""
+    found = people_by_id_for(vault, shared_bucket=shared_bucket)
+    message = f"cards: name people by id in {len(found.changes)} card(s)"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+
+
+def declared_cards_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> CardLinks:
+    """The cards the working copy `vault`'s records name and it does not have.
+
+    One correspondent's card for each correspondent a document names
+    (`stack.card_links.correspondent_card`), one topic's card for each
+    topic a record is filed into (`stack.card_links.topic_card`). A card
+    that is there is never rewritten. A correspondent's file of the old
+    shape (`kind: correspondent`, no `type`) gets `type: correspondent`
+    and its id, and nothing else.
+    """
+    from stack.card_links import correspondent_card, topic_card, with_correspondent_type
+    from stack.vault import topic_of
+
+    texts = _markdown_files(vault)
+    found = CardLinks()
+
+    def declare(path: str, text: str) -> None:
+        if path not in texts and path not in found.changes:
+            found.changes[path] = text
+            found.created.add(path)
+
+    for path in sorted(texts):
+        fields = _parse_frontmatter(texts[path])
+        name = str(fields.get("correspondent") or "").strip()
+        if fields.get("type") == "document" and name:
+            declare(*correspondent_card(name, bucket=shared_bucket))
+        if topic := topic_of(path):
+            declare(*topic_card(*topic))
+        if path.startswith(f"{correspondents_dir(shared_bucket)}/"):
+            if (typed := with_correspondent_type(texts[path], path)) != texts[path]:
+                found.changes[path] = typed
+    return found
+
+
+def declare_cards(client: ForgejoClient, vault: Path, *,
+                  shared_bucket: str = DEFAULT_SHARED_BUCKET,
+                  trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Write the cards `vault`'s records name (`declared_cards_for`), in one
+    commit by the memory bot; what the pass found and the commit's sha."""
+    found = declared_cards_for(vault, shared_bucket=shared_bucket)
+    message = f"cards: declare {len(found.changes)} correspondent and topic card(s)"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
+                          created=frozenset(found.created))

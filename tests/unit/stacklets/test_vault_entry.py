@@ -30,6 +30,11 @@ from vault_entry import (
     fold_email_message,
 )
 from stack.frontmatter import FrontmatterError
+from stack.people import Person
+
+# The people the Simpsons declared: what the classifier's names resolve to.
+PEOPLE = [Person("homer", "Homer Simpson", account="homer"),
+          Person("marge", "Marge Simpson", account="marge")]
 
 
 # ── Slug generation ────────────────────────────────────────────────────
@@ -401,7 +406,7 @@ class TestRenderDocument:
             frontmatter=fm,
             body="Vehicle registration insurance renewal.\nAmount: EUR 340.00.",
             correspondent="Duff Insurance",
-            persons=["Homer"],
+            persons=["Homer"], people=PEOPLE,
             summary="Kfz-Versicherung renewal for Homer Simpson's 2025 vehicle.",
             facts=["Policy: 12345678", "Amount: EUR 340.00"],
             action_items=[{"action": "Pay invoice", "due": "2025-04-01"}],
@@ -411,8 +416,7 @@ class TestRenderDocument:
         assert "# Duff Insurance - Kfz-Versicherung" in content
         assert "**From:** [Duff Insurance](" in content
         assert "correspondents/duff-insurance.md)" in content
-        assert "**About:** [Homer](" in content
-        assert "homer/about.md)" in content
+        assert "**About:** [Homer](../../../people/homer.md)" in content
         assert "> [!summary]" in content
         assert "Kfz-Versicherung renewal" in content
         assert "**Facts**" in content
@@ -549,14 +553,13 @@ class TestRenderCapture:
             kind="bookmark",
             captured_at="2025-03-27",
             source_uri="https://reddit.com/r/famstack/...",
-            persons=["Marge"],
+            persons=["Marge"], people=PEOPLE,
             summary="Discussion about document filing.",
             facts=["Subreddit: r/famstack"],
         )
         assert "---" in content
         assert "# Reddit Thread" in content
-        assert "**About** [Marge](" in content
-        assert "marge/about.md)" in content
+        assert "**About** [Marge](../../../../family/people/marge.md)" in content
         assert "**Captured** 2025-03-27" in content
         assert "**Kind** bookmark" in content
         assert "**Source** <https://reddit.com/r/famstack/...>" in content
@@ -581,14 +584,13 @@ class TestRenderCapture:
             kind="note",
             captured_at="2025-03-27",
             source_uri=None,
-            persons=["Marge"],
+            persons=["Marge"], people=PEOPLE,
             summary="Q2 budget discussion notes.",
             facts=[],
         )
         assert "---" in content
         assert "# Meeting notes" in content
-        assert "**About** [Marge](" in content
-        assert "marge/about.md)" in content
+        assert "**About** [Marge](../../../../family/people/marge.md)" in content
         assert "**Kind** note" in content
         assert "**Captured** 2025-03-27" in content
         assert "Q2 budget discussion notes" in content
@@ -920,10 +922,10 @@ class TestFoldEmailMessage:
         out = fold_email_message(
             None,
             section=self._section("root@h"), message_id="root@h",
-            new_frontmatter=self._fm(["Homer"], ["school"]),
+            new_frontmatter=self._fm(["homer"], ["school"]),
             title="Elternabend", captured_at="2026-06-21",
             source_uri="mid:root@h", persons=["Homer"], tags=["school"],
-            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+            from_path="family/emails/2026/06/x.md", shared_bucket="family", people=PEOPLE,
         )
         assert out is not None
         assert "# Elternabend" in out
@@ -933,44 +935,44 @@ class TestFoldEmailMessage:
         first = fold_email_message(
             None,
             section=self._section("root@h"), message_id="root@h",
-            new_frontmatter=self._fm(["Homer"], ["school"]),
+            new_frontmatter=self._fm(["homer"], ["school"]),
             title="Elternabend", captured_at="2026-06-21",
             source_uri="mid:root@h", persons=["Homer"], tags=["school"],
-            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+            from_path="family/emails/2026/06/x.md", shared_bucket="family", people=PEOPLE,
         )
         second = fold_email_message(
             first,
             section=self._section("reply@h", body="the reply"),
             message_id="reply@h",
-            new_frontmatter=self._fm(["Marge"], ["form"]),
+            new_frontmatter=self._fm(["marge"], ["form"]),
             title="Elternabend", captured_at="2026-06-22",
             source_uri="mid:root@h", persons=["Marge"], tags=["form"],
-            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+            from_path="family/emails/2026/06/x.md", shared_bucket="family", people=PEOPLE,
         )
         # Both message markers present → one growing file.
         assert "<!-- mid:root@h -->" in second
         assert "<!-- mid:reply@h -->" in second
         assert "the reply" in second
-        # Frontmatter unioned the reply's person and tag.
+        # Frontmatter unioned the reply's person, by id, and tag.
         fm, _ = split_frontmatter(second)
-        assert fm["persons"] == ["Homer", "Marge"]
+        assert fm["persons"] == ["homer", "marge"]
         assert fm["tags"] == ["school", "form"]
 
     def _fold_into(self, existing: str) -> str | None:
         return fold_email_message(
             existing,
             section=self._section("reply@h", body="the reply"), message_id="reply@h",
-            new_frontmatter=self._fm(["Marge"], ["form"]),
+            new_frontmatter=self._fm(["marge"], ["form"]),
             title="Elternabend", captured_at="2026-06-22",
             source_uri="mid:root@h", persons=["Marge"], tags=["form"],
-            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+            from_path="family/emails/2026/06/x.md", shared_bucket="family", people=PEOPLE,
         )
 
     def test_a_hand_edited_one_line_list_is_unioned_as_a_list(self):
         thread = ("---\ntype: email\ntitle: Elternabend\npersons: [Homer]\n"
                   "tags: [school, \"Person: Homer\"]\n---\n\n# Elternabend\n")
         fm, _ = split_frontmatter(self._fold_into(thread))
-        assert fm["persons"] == ["Homer", "Marge"]
+        assert fm["persons"] == ["Homer", "marge"]
         assert fm["tags"] == ["school", "Person: Homer", "form"]
 
     def test_a_thread_whose_header_does_not_parse_is_not_rewritten(self):
@@ -983,18 +985,18 @@ class TestFoldEmailMessage:
         first = fold_email_message(
             None,
             section=self._section("root@h"), message_id="root@h",
-            new_frontmatter=self._fm(["Homer"], ["school"]),
+            new_frontmatter=self._fm(["homer"], ["school"]),
             title="Elternabend", captured_at="2026-06-21",
             source_uri="mid:root@h", persons=["Homer"], tags=["school"],
-            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+            from_path="family/emails/2026/06/x.md", shared_bucket="family", people=PEOPLE,
         )
         again = fold_email_message(
             first,
             section=self._section("root@h"), message_id="root@h",
-            new_frontmatter=self._fm(["Homer"], ["school"]),
+            new_frontmatter=self._fm(["homer"], ["school"]),
             title="Elternabend", captured_at="2026-06-21",
             source_uri="mid:root@h", persons=["Homer"], tags=["school"],
-            from_path="family/emails/2026/06/x.md", shared_bucket="family",
+            from_path="family/emails/2026/06/x.md", shared_bucket="family", people=PEOPLE,
         )
         assert again is None  # idempotent: marker already present
 

@@ -11,13 +11,15 @@ convention. This is the projection layer that sits between the ontology
 (`stack.ontology` — what entities *are*) and the vault on disk (where
 their pages *live*).
 
-Entity layouts:
+Where things live:
 
-  - Container entities own a folder of routed content plus an `about.md`:
-        person   -> <bucket-slug>/about.md      (bucket = Matrix localpart)
+  - A view the wiki compiles (`entity_page_path`), in the brain:
+        person   -> <id>/about.md          (id = the Matrix localpart)
         topic    -> <bucket>/<slug>/about.md
-  - Leaf entities are a single reference page, no folder:
+  - A card in the memory repo, which records link (ADR-017 §3, §10):
+        person        -> <shared_bucket>/people/<id>.md   (`stack.people.person_path`)
         correspondent -> <shared_bucket>/correspondents/<slug>.md
+        topic         -> <bucket>/<slug>/topic.md
 """
 
 from __future__ import annotations
@@ -97,30 +99,59 @@ def entity_page_path(name: str, kind: str, shared_bucket: str = DEFAULT_SHARED_B
     if kind == "person":
         return f"{slugify_person(name)}/about.md"
     if kind == "correspondent":
-        return f"{correspondents_dir(shared_bucket)}/{slug(name)}.md"
+        return correspondent_path(name, shared_bucket)
     raise ValueError(f"unknown entity kind: {kind!r}")
 
 
-def entity_relpath(
-    name: str,
-    kind: str,
-    from_path: str,
-    shared_bucket: str = DEFAULT_SHARED_BUCKET,
-) -> str:
-    """Relative link from ``from_path`` to an entity's page.
+def correspondent_path(name: str, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
+    """The correspondent's card, which every document from them links.
 
-    The result is relative to the *directory* of ``from_path``, so the
-    link resolves in Obsidian, on GitHub/Forgejo, and as an OKF graph
-    edge. The target page need not exist yet (OKF treats unwritten links
-    as valid "not-yet-written knowledge").
-
-    >>> entity_relpath("Homer", "person", "family/documents/2026/03/x.md")
-    '../../../../homer/about.md'
-    >>> entity_relpath("Duff Insurance", "correspondent", "family/documents/2026/03/x.md")
-    '../../../correspondents/duff-insurance.md'
-    >>> entity_relpath("Homer", "person", "x.md")
-    'homer/about.md'
+    >>> correspondent_path("Moe's Tavern")
+    'family/correspondents/moe-s-tavern.md'
     """
-    target = entity_page_path(name, kind, shared_bucket)
+    return f"{correspondents_dir(shared_bucket)}/{slug(name)}.md"
+
+
+# The folders a bucket files records into. A folder of a bucket that holds
+# one of them is a topic (`family/itchy-scratchy-land/notes/...`).
+CAPTURE_FOLDERS = ("notes", "bookmarks", "emails", "documents")
+
+TOPIC_CARD = "topic.md"
+
+
+def topic_of(path: str) -> tuple[str, str] | None:
+    """(bucket, topic slug) of a record filed into a topic, None for any other path.
+
+    >>> topic_of("family/itchy-scratchy-land/notes/2026/10/tent-3a338e.md")
+    ('family', 'itchy-scratchy-land')
+    >>> topic_of("homer/notes/2026/10/tent-3a338e.md") is None
+    True
+    """
+    parts = path.split("/")
+    if len(parts) >= 4 and parts[2] in CAPTURE_FOLDERS and parts[1] not in CAPTURE_FOLDERS:
+        return parts[0], parts[1]
+    return None
+
+
+def topic_card_path(bucket: str, topic: str) -> str:
+    """The topic's card, in the topic's own folder.
+
+    >>> topic_card_path("family", "itchy-scratchy-land")
+    'family/itchy-scratchy-land/topic.md'
+    """
+    return f"{bucket}/{topic}/{TOPIC_CARD}"
+
+
+def relative_link(target: str, from_path: str) -> str:
+    """The link from vault file `from_path` to vault file `target`.
+
+    Relative to the directory of `from_path`, so the link resolves in
+    Obsidian, in Forgejo and as an OKF graph edge (ADR-017 §3).
+
+    >>> relative_link("family/people/homer.md", "family/documents/2026/03/x.md")
+    '../../../people/homer.md'
+    >>> relative_link("family/people/homer.md", "x.md")
+    'family/people/homer.md'
+    """
     base = posixpath.dirname(from_path)
     return posixpath.relpath(target, base) if base else target

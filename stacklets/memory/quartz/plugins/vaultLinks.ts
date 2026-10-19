@@ -14,8 +14,27 @@ import path from "path"
 // link against its file's directory first and hands CrawlLinks the
 // root path it expects. A link that would climb out of the vault is left
 // as it is.
+//
+// A record links a card's own file (ADR-017 §3). Two kinds of card are
+// not pages on the site but are read through the view compiled from
+// them, and this is the one place that maps the card to its view:
+//
+//   family/people/homer.md                 -> homer/about.md
+//   family/itchy-scratchy-land/topic.md    -> family/itchy-scratchy-land/about.md
+//
+// A correspondent's view shares its card's path, so it needs no mapping.
 
 const RELATIVE = /^\.\.?\//
+const PERSON_CARD = /^[^/]+\/people\/([^/]+)\.md$/
+const TOPIC_CARD = /^([^/]+\/[^/]+)\/topic\.md$/
+
+export function viewOf(card: string): string {
+  const person = PERSON_CARD.exec(card)
+  if (person) return `${person[1]}/about.md`
+  const topic = TOPIC_CARD.exec(card)
+  if (topic) return `${topic[1]}/about.md`
+  return card
+}
 
 export const VaultLinks: QuartzTransformerPlugin = () => ({
   name: "VaultLinks",
@@ -26,7 +45,7 @@ export const VaultLinks: QuartzTransformerPlugin = () => ({
         visit(tree, "link", (node: Link) => {
           if (!RELATIVE.test(node.url)) return
           const resolved = path.posix.normalize(path.posix.join(dir, node.url))
-          if (!resolved.startsWith("..")) node.url = "/" + resolved
+          if (!resolved.startsWith("..")) node.url = "/" + viewOf(resolved)
         })
       },
     ]

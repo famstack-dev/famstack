@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
+from stack.card_links import About, correspondent_card, topic_card, without_person_tags
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
@@ -94,7 +95,8 @@ from stack.lists import (  # noqa: E402
     relink,
     topic_list_description,
 )
-from stack.people import resolve  # noqa: E402
+from stack.people import Person, resolve  # noqa: E402
+from stack.vault import topic_of  # noqa: E402
 
 
 # The shared family knowledge vault. The memory stacklet creates and
@@ -167,6 +169,27 @@ def _card_id_in(content: str | None) -> str:
         return card_id_from(frontmatter_parse(content or ""))
     except FrontmatterError:
         return ""
+
+
+def _classified_persons(classification: dict) -> list[str]:
+    """The names of the people a classification says the record is about."""
+    raw = classification.get("persons") or classification.get("person") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [p for p in raw if isinstance(p, str) and p]
+
+
+def _strings(value) -> list[str]:
+    """`value` as a list of strings: a classifier may answer one, a list, or null."""
+    values = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return [v for v in values if isinstance(v, str) and v.strip()]
+
+
+def _report_unknown(path: str, about: About) -> None:
+    """Log the names no declared person goes by: they stay plain names in `path`."""
+    if about.unknown:
+        logger.info("[git-mirror] {}: no declared person goes by {}; kept as written",
+                    path, ", ".join(about.unknown))
 
 
 def _filer_localpart(submitter: str | None) -> str | None:
@@ -513,6 +536,7 @@ class GitMirror:
         facts: list | None = None,
         action_items: list | None = None,
         source_link: tuple[str, str] | None = None,
+        people: list[Person] | None = None,
     ) -> str:
         """Document mirror markdown. Delegates to ``vault_entry.render_document``."""
         return render_document(
@@ -520,7 +544,7 @@ class GitMirror:
             correspondent=correspondent, persons=persons,
             from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts, action_items=action_items,
-            source_link=source_link,
+            source_link=source_link, people=people,
         )
 
     def _render_capture(
@@ -538,6 +562,7 @@ class GitMirror:
         kept_media: dict | None = None,
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
+        people: list[Person] | None = None,
     ) -> str:
         """Capture mirror markdown. Delegates to ``vault_entry.render_capture``."""
         return render_capture(
@@ -546,6 +571,7 @@ class GitMirror:
             from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts, action_items=action_items,
             kept_media=kept_media, caption=caption, replies=replies,
+            people=people,
         )
 
     def _commit_message(
@@ -785,6 +811,42 @@ class GitMirror:
 
     # ── Publish ──────────────────────────────────────────────────────────
 
+    # ── The cards a record links ─────────────────────────────────────────
+    #
+    # A record links the cards of the people, the correspondent and the
+    # topic it names (ADR-017 §3, §10). People are declared by the family;
+    # a correspondent's card and a topic's are written here the first time
+    # a record names them, and never rewritten: from then on they are the
+    # family's (`stack.card_links`).
+
+    def _people(self) -> list[Person]:
+        """The declared people names resolve through; none without a local copy."""
+        return (self.vault.people() if self.vault else None) or []
+
+    async def _declare(self, client: ForgejoClient, path: str, text: str) -> None:
+        """Write the card at `path` when the memory repo has none there yet.
+
+        Created, never updated: a card that appeared meanwhile makes
+        Forgejo refuse the write, and the card that is there stays.
+        """
+        try:
+            if await asyncio.to_thread(client.get_file, self.repo_owner, REPO_NAME, path):
+                return
+            await asyncio.to_thread(
+                client.put_file, self.repo_owner, REPO_NAME, path,
+                content=text, message=f"declare: {path}",
+                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+            )
+        except ForgejoError as e:
+            logger.warning("[git-mirror] could not declare {}: {}", path, e)
+            return
+        logger.info("[git-mirror] declared {}", path)
+
+    async def _declare_topic(self, client: ForgejoClient, record_path: str) -> None:
+        """Give the topic a record was filed into its card, the first time."""
+        if found := topic_of(record_path):
+            await self._declare(client, *topic_card(*found))
+
     async def publish(
         self,
         *,
@@ -829,10 +891,9 @@ class GitMirror:
             topics = [topics]
         category = topics[0] if topics else None
 
-        persons_raw = classification.get("persons") or classification.get("person") or []
-        if isinstance(persons_raw, str):
-            persons_raw = [persons_raw]
-        persons = [p for p in persons_raw if isinstance(p, str) and p]
+        persons = _classified_persons(classification)
+        people = self._people()
+        about = About.of(persons, people)
 
         target_path = self._filepath(date, paperless_id, title, bool(resolved_title))
 
@@ -846,7 +907,7 @@ class GitMirror:
         fm = self._frontmatter(
             title=title, date=date,
             correspondent=correspondent, document_type=document_type,
-            category=category, persons=persons, tags=tags or [],
+            category=category, persons=about.ids, tags=without_person_tags(tags or []),
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             identity=identity_for((existing or {}).get("content"), "document", target_path),
@@ -875,7 +936,7 @@ class GitMirror:
 
         content = self._render(
             frontmatter=fm, body=body_text,
-            correspondent=correspondent, persons=persons,
+            correspondent=correspondent, persons=persons, people=people,
             from_path=target_path,
             summary=briefing_summary,
             facts=briefing_facts,
@@ -923,6 +984,11 @@ class GitMirror:
 
         self._cache[paperless_id] = target_path
         self._save_cache()
+        _report_unknown(target_path, about)
+        if correspondent:
+            await self._declare(client, *correspondent_card(
+                correspondent, _strings(classification.get("correspondent_aliases")),
+                bucket=self.shared_bucket))
         await self._fold_document_todos(client, classification=classification,
                                         record_path=target_path, record_title=title,
                                         previous_path=existing_path or "")
@@ -1091,10 +1157,9 @@ class GitMirror:
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Capture"
 
-        persons_raw = classification.get("persons") or classification.get("person") or []
-        if isinstance(persons_raw, str):
-            persons_raw = [persons_raw]
-        persons = [p for p in persons_raw if isinstance(p, str) and p]
+        persons = _classified_persons(classification)
+        people = self._people()
+        about = About.of(persons, people)
 
         hash_key = source_uri or body_text
         target_path = self._capture_filepath(
@@ -1132,8 +1197,8 @@ class GitMirror:
             captured_at=captured_at,
             kind=kind,
             source_uri=source_uri,
-            persons=persons,
-            tags=tags or [],
+            persons=about.ids,
+            tags=without_person_tags(tags or []),
             model=model,
             capture_id=capture_id,
             filed_by=_filer_localpart(submitter),
@@ -1153,6 +1218,7 @@ class GitMirror:
             captured_at=captured_at,
             source_uri=source_uri,
             persons=persons,
+            people=people,
             from_path=target_path,
             summary=briefing_summary,
             facts=briefing_facts,
@@ -1191,6 +1257,8 @@ class GitMirror:
             return None
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
+        _report_unknown(target_path, about)
+        await self._declare_topic(client, target_path)
         await self._fold_capture_todos(
             client,
             target_path=target_path,
@@ -1271,10 +1339,9 @@ class GitMirror:
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Email thread"
 
-        persons_raw = classification.get("persons") or classification.get("person") or []
-        if isinstance(persons_raw, str):
-            persons_raw = [persons_raw]
-        persons = [p for p in persons_raw if isinstance(p, str) and p]
+        persons = _classified_persons(classification)
+        people = self._people()
+        about = About.of(persons, people)
 
         # Thread files are keyed by the thread-root hash, but the slug comes
         # from the per-message title, which drifts ("Dental appointment…"
@@ -1313,8 +1380,8 @@ class GitMirror:
             captured_at=captured_at,
             kind="email",
             source_uri=thread_uri,
-            persons=persons,
-            tags=tags or [],
+            persons=about.ids,
+            tags=without_person_tags(tags or []),
             model=model,
             capture_id=capture_id,
             identity=identity_for(existing_content, "email", target_path),
@@ -1330,9 +1397,10 @@ class GitMirror:
                 captured_at=captured_at,
                 source_uri=thread_uri,
                 persons=persons,
-                tags=tags or [],
+                tags=without_person_tags(tags or []),
                 from_path=target_path,
                 shared_bucket=self.shared_bucket,
+                people=people,
             )
         except FrontmatterError as e:
             # Merging into a header that does not parse would rewrite the
@@ -1376,6 +1444,8 @@ class GitMirror:
             return None
 
         logger.info("[git-mirror] {} email → {}", verb, target_path)
+        _report_unknown(target_path, about)
+        await self._declare_topic(client, target_path)
         await self._fold_capture_todos(
             client,
             target_path=target_path,

@@ -63,10 +63,12 @@ const config: QuartzConfig = {
     // are the raw source the diary pages are compiled from, and stay in
     // the brain for search and the agent; the family reads the pages.
     // `*/people/*.md` keeps the declared person files off the site for
-    // the same reason: each person's page is compiled from theirs.
+    // the same reason: each person's page is compiled from theirs, and a
+    // topic's (`*/*/topic.md`) from its card. VaultLinks sends a link to
+    // either card to its page.
     ignorePatterns: [".git", ".obsidian", "private", "templates", "README.md", "**/README.md",
                      "media/**/*.json", "media/**/.tmp-*",
-                     "**/diary/entries/**", "*/people/*.md"],
+                     "**/diary/entries/**", "*/people/*.md", "*/*/topic.md"],
     defaultDateType: "modified",
     theme: {
       // Self-hosted. The comment above about analytics applies with more
