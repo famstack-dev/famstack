@@ -354,14 +354,16 @@ class TestValidator:
         assert any("must not carry `generated`" in e for e in errors)
 
     def test_projection_missing_generated_error(self):
-        """Validator rejects projection type (correspondent) missing generated marker."""
-        fm = {
-            "type": "correspondent",
-            "title": "Duff Insurance",
-            "canonical": "Duff Insurance",
-        }
-        errors = validate(fm)
+        """Validator rejects a projection type no one declares (index) missing the marker."""
+        errors = validate({"type": "index", "title": "Documents"})
         assert any("must have `generated: true`" in e for e in errors)
+
+    def test_a_correspondent_or_topic_without_the_marker_is_a_declared_card(self):
+        """ADR-017 §10: the card a correspondent or a topic gets is type and title."""
+        assert validate({"type": "correspondent", "card_id": "correspondent-moe-s-tavern",
+                         "title": "Moe's Tavern", "aliases": ["Moe's"]}) == []
+        assert validate({"type": "topic", "card_id": "topic-itchy-scratchy-land",
+                         "title": "Itchy Scratchy Land"}) == []
 
     def test_a_person_without_the_marker_is_the_familys_own_file(self):
         """vault-format §5, `person` (declared): type and title, nothing generated."""

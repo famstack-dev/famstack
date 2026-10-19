@@ -176,3 +176,46 @@ class TestAMemoryThatMeetsTheFormat:
 
         assert "error" not in command
         assert "Nothing to fix" in capsys.readouterr().out
+
+
+class TestARecordLinksTheCardsItNames:
+    """ADR-017 §3, §10: a record links the cards of its people and its
+    correspondent, and a record filed into a topic belongs to the topic's
+    card. In the card browser that is an edge to each of those cards, and
+    the report finds no link to nothing."""
+
+    DOC = "family/documents/2026/10/2026-10-13-tab-p31.md"
+    NOTE = "family/itchy-scratchy-land/notes/2026/10/book-the-hotel-3a338e.md"
+
+    @pytest.fixture
+    def memory(self, tmp_path):
+        m = Memory(tmp_path)
+        cards = {
+            "family/people/homer.md": HOMER.replace("type: person\n", "type: person\ncard_id: person-homer\n"),
+            "family/correspondents/moe-s-tavern.md":
+                "---\ntype: correspondent\ncard_id: correspondent-moe-s-tavern\ntitle: Moe's Tavern\n---\n",
+            "family/itchy-scratchy-land/topic.md":
+                "---\ntype: topic\ncard_id: topic-itchy-scratchy-land\ntitle: Itchy Scratchy Land\n---\n",
+            self.DOC: ("---\ntype: document\ncard_id: document-0b6e2d91aa\ntitle: Tab\n"
+                       "correspondent: Moe's Tavern\npersons:\n  - homer\npaperless_id: 31\n---\n\n# Tab\n\n"
+                       "> **From:** [Moe's Tavern](../../../correspondents/moe-s-tavern.md)"
+                       " · **About:** [Homer](../../../people/homer.md)\n"),
+            self.NOTE: ("---\ntype: note\ncard_id: note-7f3a9c21e4\ntitle: Book the hotel\n"
+                        "persons:\n  - homer\n---\n\n# Book the hotel\n"),
+        }
+        for path, text in cards.items():
+            m.write(path, text, by="homer", message=f"feat: {path}")
+        return m
+
+    def test_each_card_a_record_names_is_an_edge(self, memory):
+        from graph import load_graph
+
+        graph = load_graph(memory.vault)
+        assert graph.card("document-0b6e2d91aa").links_out == {
+            "person-homer", "correspondent-moe-s-tavern"}
+        # `persons: [homer]` alone names the person: the note links no file.
+        assert graph.card("note-7f3a9c21e4").links_out == {
+            "person-homer", "topic-itchy-scratchy-land"}
+
+    def test_the_report_finds_no_link_to_nothing(self, memory):
+        assert _from_the_command(memory)["links_to_nothing"] == []

@@ -434,10 +434,10 @@ agent) finds the card by that id. A stored path is only a hint.
 | email thread | `resource`: the `mid:` URI of the thread's first message | none yet |
 | diary card | `entry_id` | `/go/diary/<entry_id>`, opens its month page at the card |
 | person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
-| topic | its folder, `<bucket>/<slug>/` | `/go/topic/<slug>` |
+| topic | its folder, `<bucket>/<slug>/`, whose card is `topic.md` | `/go/topic/<slug>` |
 | list | none yet: its file name is its name | `/go/list/<slug>` |
 | list archive | `<list>/<YYYY-MM>`, from `<bucket>/lists/archive/<list>/<YYYY-MM>.md`; part of its list | none |
-| correspondent | `slug`, else its file name | none yet |
+| correspondent | `slug`, else its file name, `<shared>/correspondents/<slug>.md` | none yet |
 | note, bookmark written by hand | its file name (no message to name it by) | none |
 | a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
 
@@ -449,12 +449,34 @@ compiles into the brain (a person's `<id>/about.md`, a topic's page, a
 diary month, an index) is a view: never found, never opened as a card.
 A card comes with the views compiled about it, found where the wiki
 compiles them until views name their card: a person's at `<id>/about.md`,
-a correspondent's at the card's own path. A card is named by its
+a correspondent's at the card's own path, a topic's at `about.md` next to
+its card. A card is named by its
 `card_id` when it has one (`stack.cards.card_ref`); one without is named
 by the rule in the table above (`card_name`), and that name still opens
 a card that has an id since. The graph links people, topics and lists by
 those names. `card_kind` tells a list archive and a navigation page from
 the rest.
+
+**A record links the cards it names** (ADR-017 §3, §4, §10). Its
+frontmatter holds ids and its body the links derived from them: `persons`
+holds person ids, and the meta block under the title links each person's
+card, `<shared>/people/<id>.md`, and the correspondent's,
+`<shared>/correspondents/<slug>.md`, relative to the record. A name the
+classifier gave that no declared person goes by stays a plain name and is
+left out of `persons`. Records carry no `Person: <name>` tags; Paperless
+keeps its own. The archivist writes a correspondent's card the first time
+a document names it (`type`, `card_id`, `title`, the classifier's
+`correspondent_aliases`), and a topic's, `<bucket>/<topic>/topic.md`, the
+first time a record is filed into the topic; it never rewrites either.
+`stack.card_links` holds these rules, for the archivist and for the
+migrations that brought the files written before to the same shape:
+`memory/0003` (people by id, `Person:` tags dropped, and links to a
+document that moved since, found by its Paperless id) and `memory/0004`
+(the cards of correspondents and topics). The graph links a record to the
+people its `persons` names, by id or by any name they go by, and the wiki
+sends a link to a person's or a topic's card to that card's view
+(`quartz/plugins/vaultLinks.ts`). Diary cards still name people by first
+name and tag them: their text is signed with a digest.
 
 `stack memory check-format` (and the cards API's `/report`, which the
 card browser shows) lists where the vault does not meet ADR-016 and

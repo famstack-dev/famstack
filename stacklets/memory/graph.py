@@ -331,12 +331,15 @@ def _views(card: Card, brain: Path) -> list[View]:
 
     Until a view names its card (`about`, ADR-016 step 3), the path is the
     only thing that ties the two: a person's view is `<slug>/about.md`, a
-    correspondent's shares the card's path.
+    correspondent's shares the card's path, a topic's is `about.md` in the
+    folder that holds its card.
     """
     if card.type == "person":
         wanted = [("person", entity_page_path(card.name.split("/", 1)[1], "person"))]
     elif card.type == "correspondent":
         wanted = [("correspondent", card.path)]
+    elif card.type == "topic":
+        wanted = [("topic", posixpath.join(posixpath.dirname(card.path), "about.md"))]
     else:
         return []
     found = []
@@ -403,8 +406,9 @@ def _card(rel: str, text: str) -> Card:
     card_id = ref if ref_kind == CARD_ID else name
     title = str(meta.get("title") or Path(rel).stem).strip()
     day = str(meta.get("date") or "")[:10] or str(meta.get("timestamp") or "")[:10]
+    # A person goes by their id too: a record's `persons` holds ids (ADR-017 §4).
     names = tuple(n.lower() for n in [
-        meta.get("slug"), meta.get("canonical"), meta.get("title"),
+        value, meta.get("slug"), meta.get("canonical"), meta.get("title"),
         *(meta.get("synonyms") or []), *(meta.get("aliases") or []),
         str(meta.get("title") or "").split(" ")[0],
     ] if n) if kind == "person" else ()

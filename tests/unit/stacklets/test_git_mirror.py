@@ -20,6 +20,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
+from stack.people import Person  # noqa: E402
 from git_mirror import (  # noqa: E402
     BOT_EMAIL,
     BOT_USERNAME,
@@ -274,7 +275,7 @@ class TestRender:
             frontmatter=fm,
             body="Policy number: KFZ-2024-XXX\n\nAmount: EUR 340.",
             correspondent="Duff Insurance",
-            persons=["Homer"],
+            persons=["Homer"], people=[Person("homer", "Homer Simpson")],
         )
         # Frontmatter fenced with ---
         assert out.startswith("---\n")
@@ -286,8 +287,7 @@ class TestRender:
         assert "# Duff Insurance Rechnung" in out
         assert "**From:** [Duff Insurance](" in out
         assert "correspondents/duff-insurance.md)" in out
-        assert "**About:** [Homer](" in out
-        assert "homer/about.md)" in out
+        assert "**About:** [Homer](../../../people/homer.md)" in out
         assert "Policy number: KFZ-2024-XXX" in out
 
     def test_no_wiki_header_when_no_entities(self, mirror):
@@ -887,12 +887,12 @@ class TestCaptureRender:
             captured_at="2026-05-17",
             kind="bookmark",
             source_uri="https://example.com/llms",
-            persons=["Homer"], tags=["LLMs"], model="qwen2.5:14b",
+            persons=["homer"], tags=["LLMs"], model="qwen2.5:14b",
         )
         out = mirror._render(
             from_path="family/documents/2026/03/entry.md",
             frontmatter=fm, body="",
-            correspondent=None, persons=["Homer"],
+            correspondent=None, persons=["Homer"], people=[Person("homer", "Homer Simpson")],
             summary="A 200-word digest of the article's main points.",
             facts=["Mac Mini idles under 10W"],
             action_items=[],
@@ -901,8 +901,7 @@ class TestCaptureRender:
         # Resource URL is quoted because it contains ':'
         assert 'resource: "https://example.com/llms"' in out
         assert "# Why local LLMs matter" in out
-        assert "**About:** [Homer](" in out
-        assert "homer/about.md)" in out
+        assert "**About:** [Homer](../../../people/homer.md)" in out
         assert "> [!summary]" in out
         assert "A 200-word digest" in out
         # No trailing empty body section — file ends after briefing.
@@ -1023,7 +1022,7 @@ class TestACaptureKeepsItsPath:
         path, client = await self._refile(
             mirror, monkeypatch, entity="marge", title="Bart's drawing")
         assert path == self.PATH
-        assert list(client.files) == [self.PATH]
+        assert [p for p in client.files if "/bookmarks/" in p] == [self.PATH]
 
     async def test_a_new_capture_is_named_after_its_title(self, mirror, monkeypatch):
         client = _FakeVaultClient()
@@ -1121,3 +1120,85 @@ class TestACardKeepsItsId:
             classification={"title": "Field trip lunch"}, **message)
         assert again == (path, card_id) and self._card_id(client, path) == card_id
         assert "Bring a lunch." in client.files[path]["content"]
+
+
+class TestARecordLinksTheCardsItNames:
+    """A record names its people by id and links each one's card; it links
+    its correspondent's card and, filed into a topic, sits next to the
+    topic's card. The archivist writes a correspondent's or a topic's card
+    the first time something names it, and never again (ADR-017 §3, §4, §10)."""
+
+    MOE = "family/correspondents/moe-s-tavern.md"
+    TOPIC = "family/itchy-scratchy-land/topic.md"
+
+    @pytest.fixture
+    def client(self, tmp_path, monkeypatch, mirror) -> _FakeVaultClient:
+        """The Simpsons' memory: declared people on disk, Forgejo in memory."""
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))  # memory.lib, for VaultContext
+        from vault_context import VaultContext
+
+        people = tmp_path / "vault" / "family" / "people"
+        people.mkdir(parents=True)
+        for pid, name in (("homer", "Homer Simpson"), ("bart", "Bart Simpson")):
+            (people / f"{pid}.md").write_text(f"---\ntype: person\ntitle: {name}\n---\n")
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "vault"))
+        mirror.vault = VaultContext(language="en", shared_bucket="family")
+        client = _FakeVaultClient()
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        return client
+
+    async def _document(self, mirror, client, paperless_id, **classification):
+        await mirror.publish(
+            paperless_id=paperless_id, body_text="Two Duffs.", processing="ai_formatted",
+            model=None, paperless_url="", tags=["Leisure", "Person: Homer"],
+            classification={"title": f"Tab {paperless_id}", "date": "2026-10-13",
+                            "correspondent": "Moe's Tavern", **classification},
+        )
+        return next(f["content"] for p, f in client.files.items() if p.endswith(f"-p{paperless_id}.md"))
+
+    async def test_a_document_names_its_people_by_id_and_links_their_cards(self, mirror, client):
+        from stack.frontmatter import parse
+
+        text = await self._document(mirror, client, 31, persons=["Homer", "Bart"])
+        fields = parse(text)
+        assert fields["persons"] == ["homer", "bart"]
+        assert fields["tags"] == ["Leisure"]
+        assert ("**About:** [Homer](../../../people/homer.md), "
+                "[Bart](../../../people/bart.md)") in text
+
+    async def test_a_name_nobody_goes_by_stays_a_plain_name(self, mirror, client):
+        from stack.frontmatter import parse
+
+        text = await self._document(mirror, client, 32, persons=["Homer", "Mr. Burns"])
+        assert parse(text)["persons"] == ["homer"]
+        assert "**About:** [Homer](../../../people/homer.md), Mr. Burns" in text
+        assert not [p for p in client.files if "/people/" in p]
+
+    async def test_a_new_correspondent_gets_its_card_and_a_known_one_keeps_it(self, mirror, client):
+        from stack.frontmatter import parse
+
+        text = await self._document(mirror, client, 33, correspondent_aliases=["Moe's"])
+        assert "**From:** [Moe's Tavern](../../../correspondents/moe-s-tavern.md)" in text
+        card = client.files[self.MOE]["content"]
+        assert parse(card) == {"type": "correspondent", "card_id": "correspondent-moe-s-tavern",
+                               "title": "Moe's Tavern", "aliases": ["Moe's"]}
+
+        await self._document(mirror, client, 34, correspondent_aliases=["Moe Szyslak"])
+        assert client.files[self.MOE]["content"] == card
+        assert [p["path"] for p in client.puts].count(self.MOE) == 1
+
+    async def test_a_note_filed_into_a_topic_gives_the_topic_its_card_once(self, mirror, client):
+        from stack.frontmatter import parse
+
+        for text in ("Book the hotel", "Pack sunscreen"):
+            await mirror.publish_capture(
+                entity="family/itchy-scratchy-land", kind="note", source_uri=None,
+                title_hint=None, body_text=text, classification={"title": text, "summary": "s"},
+                captured_at="2026-10-13", model=None,
+            )
+        assert parse(client.files[self.TOPIC]["content"]) == {
+            "type": "topic", "card_id": "topic-itchy-scratchy-land", "title": "Itchy Scratchy Land"}
+        assert [p["path"] for p in client.puts].count(self.TOPIC) == 1
+

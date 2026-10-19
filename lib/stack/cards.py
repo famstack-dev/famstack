@@ -36,7 +36,7 @@ from pathlib import PurePosixPath
 from typing import Container, Mapping
 
 from .frontmatter import RECORD_TYPES, FrontmatterError, dump, parse
-from .vault import slug
+from .vault import TOPIC_CARD, slug
 
 
 # ── The table ─────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ def card_name(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
         return "person", slug or str(fields.get("account") or "").strip() or \
             (parts[0] if parts[-1] == "about" else parts[-1])
     if kind == "topic":
-        return "topic", slug or (parts[-2] if parts[-1] == "about" else parts[-1])
+        return "topic", slug or (parts[-2] if parts[-1] in ("about", "topic") else parts[-1])
     if kind == "correspondent":
         return "correspondent", slug or parts[-1]
     if kind == "email" and str(fields.get("resource") or "").strip():
@@ -280,14 +280,16 @@ def new_card_id(card_type: str, path: str, *, taken: Container[str] = ()) -> str
     """The id a card of `card_type` gets when it is first written at `path`.
 
     A record (document, note, bookmark, email, diary) gets ten random hex
-    digits. Any other card gets its file's slug, and a list's archive its
-    list's slug and month. `taken` holds the ids other cards carry: a
+    digits. Any other card gets its file's slug, a topic's card its
+    folder's, and a list's archive its list's slug and month. `taken` holds the ids other cards carry: a
     slug two buckets share gets a number after it the second time.
 
     >>> new_card_id("person", "family/people/homer.md")
     'person-homer'
     >>> new_card_id("list", "family/lists/archive/markt/2026-10.md")
     'list-markt-2026-10'
+    >>> new_card_id("topic", "family/itchy-scratchy-land/topic.md")
+    'topic-itchy-scratchy-land'
     >>> new_card_id("list", "homer/lists/markt.md", taken={"list-markt"})
     'list-markt-2'
     """
@@ -298,6 +300,8 @@ def new_card_id(card_type: str, path: str, *, taken: Container[str] = ()) -> str
     archive = _ARCHIVE.search(path) if card_type == "list" else None
     if archive:
         value = f"{_slug(archive['list'])}-{archive['month']}"
+    elif card_type == "topic" and PurePosixPath(path).name == TOPIC_CARD:
+        value = _slug(PurePosixPath(path).parent.name)  # the topic's folder names it
     else:
         value = _slug(PurePosixPath(path).stem)
     card_id, n = f"{card_type}-{value}", 1

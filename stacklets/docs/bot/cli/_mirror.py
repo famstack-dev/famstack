@@ -54,7 +54,11 @@ def build_mirror_like_bot():
             admin_usernames.append(name)
 
     from git_mirror import GitMirror
+    from vault_context import VaultContext
     settings = read_bot_toml_settings()
+    # The people a document names are linked by their cards, read from
+    # the local copy of the memory, as the bot reads them.
+    shared_bucket = os.environ.get("SHARED_BUCKET") or "family"
     return GitMirror(
         code_url=code_url,
         admin_user=admin_user,
@@ -62,6 +66,8 @@ def build_mirror_like_bot():
         admin_usernames=admin_usernames,
         data_dir=_DATA_DIR,
         org_name=settings.get("mirror_org", "family"),
+        shared_bucket=shared_bucket,
+        vault=VaultContext(language=os.environ.get("LANGUAGE", ""), shared_bucket=shared_bucket),
     )
 
 
