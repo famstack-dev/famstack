@@ -51,7 +51,7 @@ def _admin_login(base, admin_user, admin_password):
 
 
 def _resolve_space(base, token, server_name):
-    """Resolve the Family Space room ID, or None."""
+    """Resolve the space's room ID, or None."""
     space_alias = f"#family:{server_name}"
     encoded_alias = urllib.parse.quote(space_alias)
     status, resp = _api("GET", f"{base}/_matrix/client/v3/directory/room/{encoded_alias}", token=token)
@@ -135,7 +135,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         if not room_id:
             continue
 
-        # Join the bot and all admin-role family members, and make those
+        # Join the bot and every person with the admin role, and make those
         # admins of the room: the tech admin created it and is otherwise
         # the only account with power there.
         _join_user(base, token, room_id, f"@{bot_id}:{server_name}")
@@ -146,7 +146,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
 
 def _ensure_admin_power(base, token, room_id, full_user):
     """Give a user power level 100 in a room, writing only when it differs.
-    The same rule `stack messages setup --room-admins` applies to every family room."""
+    The same rule `stack messages setup --room-admins` applies to every room the stack creates."""
     path = f"{base}/_matrix/client/v3/rooms/{room_id}/state/m.room.power_levels/"
     status, body = _api("GET", path, token=token)
     levels: dict = dict(body) if status == 200 else {}
