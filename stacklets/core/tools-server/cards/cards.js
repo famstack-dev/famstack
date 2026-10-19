@@ -314,7 +314,21 @@ function withoutTitle(text, title) {
   return lines.join("\n");
 }
 
-function bodyOf(card, text = withoutTitle(card.text, card.title)) {
+function withoutMeta(text) {
+  // A record opens with a quote of its fields (`> **About** … **Captured** …`,
+  // written for Obsidian, ADR-017 §5). The header shows them already.
+  const lines = String(text || "").split("\n");
+  const first = lines.findIndex((l) => l.trim());
+  if (first < 0 || !/^>/.test(lines[first])) return lines.join("\n");
+  let end = first;
+  while (end < lines.length && /^>/.test(lines[end])) end++;
+  const fields = lines.slice(first, end).filter((l) => l.replace(/^>\s*/, "").trim());
+  const isMeta = fields.length && fields.every((l) => /^>\s*\*\*[^*\n]+\*\*/.test(l));
+  if (isMeta) lines.splice(first, end - first);
+  return lines.join("\n");
+}
+
+function bodyOf(card, text = withoutMeta(withoutTitle(card.text, card.title))) {
   const div = h("div", { class: "body" });
   if (!String(text || "").trim()) {
     div.append(h("p", { class: "empty-text" }, T.nothing));
