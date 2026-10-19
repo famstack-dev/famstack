@@ -7,7 +7,8 @@ Several ids open several cards in one call; together they get the text of
 one card, shared. A card cut short that way shows more when opened alone.
 
 Shows the card's line, where it lives, its last changes (who, when, what),
-the cards it links to and the cards that link to it, then its text. Ids
+the cards it links to and the cards that link to it, the views the wiki
+compiled about it (a person's page), then its text. Ids
 come from `stack memory find`, `stack memory links` or another card. A
 version (`@a1b2c3d`) that moved since you last read a card means it changed.
 
@@ -64,6 +65,7 @@ def _shown(card, graph, budget: int, *, alone: bool) -> str:
         lines.append(f"changed {change.day} by {change.who} @{change.sha}: {change.subject}")
     lines += _links("links to", card.links_out, graph)
     lines += _links("linked from", card.links_in, graph)
+    lines += [f"view: {v.path} ({v.view}, compiled by the wiki)" for v in card.views]
     text = _FRONTMATTER.sub("", card.text).strip()
     if len(text) > budget:
         rest = (f"`stack memory card {card.id}` alone shows more" if not alone
