@@ -2686,7 +2686,8 @@ def _blob_shas(vault: Path, paths: list[str]) -> dict[str, str]:
 # names (ADR-017 §3, §4, §10). The archivist files new records that way;
 # these passes bring the files that were there before to the same shape,
 # over a working copy of the memory repo, with the archivist's functions
-# (`stack.card_links`): migration 0003 names people by id.
+# (`stack.card_links`): migration 0003 names people by id, migration 0004
+# declares the correspondents and topics records name.
 
 @dataclass
 class CardLinks:
@@ -2750,3 +2751,47 @@ def name_people_by_id(client: ForgejoClient, vault: Path, *,
     message = f"cards: name people by id in {len(found.changes)} card(s)"
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
+
+def declared_cards_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> CardLinks:
+    """The cards the working copy `vault`'s records name and it does not have.
+
+    One correspondent's card for each correspondent a document names
+    (`stack.card_links.correspondent_card`), one topic's card for each
+    topic a record is filed into (`stack.card_links.topic_card`). A card
+    that is there is never rewritten. A correspondent's file of the old
+    shape (`kind: correspondent`, no `type`) gets `type: correspondent`
+    and its id, and nothing else.
+    """
+    from stack.card_links import correspondent_card, topic_card, with_correspondent_type
+    from stack.vault import topic_of
+
+    texts = _markdown_files(vault)
+    found = CardLinks()
+
+    def declare(path: str, text: str) -> None:
+        if path not in texts and path not in found.changes:
+            found.changes[path] = text
+            found.created.add(path)
+
+    for path in sorted(texts):
+        fields = _parse_frontmatter(texts[path])
+        name = str(fields.get("correspondent") or "").strip()
+        if fields.get("type") == "document" and name:
+            declare(*correspondent_card(name, bucket=shared_bucket))
+        if topic := topic_of(path):
+            declare(*topic_card(*topic))
+        if path.startswith(f"{correspondents_dir(shared_bucket)}/"):
+            if (typed := with_correspondent_type(texts[path], path)) != texts[path]:
+                found.changes[path] = typed
+    return found
+
+
+def declare_cards(client: ForgejoClient, vault: Path, *,
+                  shared_bucket: str = DEFAULT_SHARED_BUCKET,
+                  trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Write the cards `vault`'s records name (`declared_cards_for`), in one
+    commit by the memory bot; what the pass found and the commit's sha."""
+    found = declared_cards_for(vault, shared_bucket=shared_bucket)
+    message = f"cards: declare {len(found.changes)} correspondent and topic card(s)"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
+                          created=frozenset(found.created))

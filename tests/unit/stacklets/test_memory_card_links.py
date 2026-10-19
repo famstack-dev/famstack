@@ -1,4 +1,4 @@
-"""Every record links the cards it names: migration memory/0003.
+"""Every record links the cards it names: migrations memory/0003 and memory/0004.
 
 ADR-017 §3, §4 and §10: a record names its people by id and links each
 person's card, links its correspondent's card, and a topic it is filed
@@ -30,7 +30,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
-from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, name_people_by_id  # noqa: E402
+from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, declare_cards, name_people_by_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
@@ -226,9 +226,49 @@ class TestPeopleByIdOnce:
         assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
+# ── Migration 0004: correspondents and topics ────────────────────────────
+
+class TestDeclareCardsOnce:
+    TRAILER = "Migration: memory/0004"
+
+    @pytest.fixture
+    def found(self, memory, forgejo, tmp_path):
+        found, sha = declare_cards(forgejo, _clone(memory, tmp_path, "run1"), trailer=self.TRAILER)
+        assert sha == _git(memory, "rev-parse", "HEAD")
+        return found
+
+    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
+        assert _commits(httpserver) == 1
+        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
+            f"{BOT_USERNAME}|cards: declare 3 correspondent and topic card(s)\n\n{self.TRAILER}"
+
+    def test_a_correspondent_a_document_names_gets_its_card(self, found, memory):
+        assert parse(_read(memory, SCHOOL)) == {
+            "type": "correspondent", "card_id": "correspondent-springfield-elementary-school",
+            "title": "Springfield Elementary School"}
+
+    def test_a_topic_folder_gets_its_card(self, found, memory):
+        assert parse(_read(memory, TOPIC)) == {
+            "type": "topic", "card_id": "topic-itchy-scratchy-land", "title": "Itchy Scratchy Land"}
+
+    def test_a_declared_correspondent_is_never_rewritten(self, found, memory):
+        assert _read(memory, MOE) == VAULT[MOE]
+
+    def test_an_old_correspondent_file_gets_its_type_and_id_and_nothing_else(self, found, memory):
+        assert _read(memory, KRUSTY) == ("---\ntype: correspondent\ncard_id: correspondent-krusty-burger\n"
+                                         + VAULT[KRUSTY][len("---\n"):])
+
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,
+                                                          httpserver, tmp_path):
+        head = _git(memory, "rev-parse", "HEAD")
+        again, sha = declare_cards(forgejo, _clone(memory, tmp_path, "run2"), trailer=self.TRAILER)
+        assert (again.changes, sha) == ({}, None)
+        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+
+
 class TestStackUpMemory:
-    """The migration, run by the framework's runner the way `stack up memory`
-    runs it: it reads a fresh clone over HTTP and makes one commit."""
+    """Both migrations, run by the framework's runner the way `stack up memory`
+    runs it: each reads a fresh clone over HTTP and makes one commit."""
 
     def test_each_runs_once_and_records_its_commit(self, memory, forgejo, tmp_path, httpserver):
         from stack import Stack
@@ -246,10 +286,24 @@ class TestStackUpMemory:
                                        env={"CODE_URL": httpserver.url_for("")}),
             lambda msg: None)
 
-        assert outcome["applied"] == ["memory/0001", "memory/0002", "memory/0003"]
+        assert outcome["applied"] == ["memory/0001", "memory/0002", "memory/0003", "memory/0004"]
         log = _git(memory, "log", "--format=%H %(trailers:key=Migration,valueonly)").splitlines()
         commits = dict(reversed(line.split()) for line in log if len(line.split()) == 2)
         record = migrations.record().applied
         assert record["0003"]["commit"] == commits["memory/0003"]
+        assert record["0004"]["commit"] == commits["memory/0004"]
         assert parse(_read(memory, NOTE))["persons"] == ["abraham"]
+        assert (memory / TOPIC).is_file()
 
+
+def test_a_card_that_appeared_meanwhile_makes_forgejo_refuse_the_commit(memory, forgejo, tmp_path):
+    """Nothing is written over it; the next `stack up memory` reads again."""
+    from stack.forgejo import ForgejoError
+
+    stale = _clone(memory, tmp_path, "stale")
+    (memory / TOPIC).write_text("---\ntype: topic\ntitle: Itchy & Scratchy Land\n---\n", encoding="utf-8")
+    _git(memory, "add", "-A")
+    _git(memory, "commit", "-q", "-m", "Marge declared the topic")
+    with pytest.raises(ForgejoError):
+        declare_cards(forgejo, stale)
+    assert re.search(r"Itchy & Scratchy", _read(memory, TOPIC))
