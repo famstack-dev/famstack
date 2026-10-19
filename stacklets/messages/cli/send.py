@@ -1,11 +1,16 @@
 """
 stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]
+stack messages send --to <person> "message" [--as <user>] ...
 
-Sends a text message to a room. By default it posts as stacker-bot (the
-system account). `--as agent` posts as the agent, `--as <id>-bot` as that
-bot, and `--as <user>` as a family member, the text counterpart to
-`stack messages upload --as`. The room can be a bare alias (e.g. 'chat')
-or a full Matrix room ID.
+Sends a text message to a room, or with `--to <person>` to that person's
+private chat with the sender: the room whose only members are the two of
+them. When there is none, nothing is sent and the command fails, so a
+scheduled run shows up as failed. The stack does not create rooms here.
+
+By default it posts as stacker-bot (the system account). `--as agent`
+posts as the agent, `--as <id>-bot` as that bot, and `--as <user>` as a
+family member, the text counterpart to `stack messages upload --as`. The
+room can be a bare alias (e.g. 'chat') or a full Matrix room ID.
 
 An unencrypted room gets the message over plain HTTP, from the host. An
 encrypted room gets it encrypted, from a device of the sending account's
@@ -43,7 +48,7 @@ The plain HTTP session is persisted in .stack/messages/session-<user>.toml so
 repeated sends don't create new devices or require re-authentication.
 """
 
-HELP = "Send a message to a chat room"
+HELP = "Send a message to a chat room or a person's private chat"
 
 import json
 import subprocess
@@ -57,12 +62,13 @@ _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from _matrix import Account, MatrixClient, resolve_login
 
-_USAGE = ('Usage: stack messages send <room> "message" '
+_USAGE = ('Usage: stack messages send <room> "message" | --to <person> "message" '
           '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]')
 
 # The flags that take a value, and what the value is, for the error when it is missing.
 _VALUE_FLAGS = {
     "--as": "a username",
+    "--to": "a username",
     "--mention": "a username",
     "--thread": "an event id",
     "--reply-to": "an event id",
@@ -128,7 +134,8 @@ def _simple_markdown_to_html(text):
 class Request:
     """One send, as the command line asked for it."""
     message: str
-    room: str
+    room: str | None = None
+    to: str | None = None
     sender: str | None = None
     mentions: list[str] = field(default_factory=list)
     thread_root: str | None = None
@@ -136,7 +143,10 @@ class Request:
 
 
 def parse_request(argv):
-    """`(request, error)` from the words after `stack messages send`, one of them None."""
+    """`(request, error)` from the words after `stack messages send`, one of them None.
+
+    With `--to` every other word is the message; without it the first is the room.
+    """
     values = {flag: [] for flag in _VALUE_FLAGS}
     rest = []
     i = 0
@@ -154,9 +164,11 @@ def parse_request(argv):
     def last(flag):
         return values[flag][-1] if values[flag] else None
 
-    if len(rest) < 2:
+    to = last("--to")
+    room = None if to else (rest.pop(0) if rest else None)
+    if not rest:
         return None, _USAGE
-    return Request(message=" ".join(rest[1:]), room=rest[0], sender=last("--as"),
+    return Request(message=" ".join(rest), room=room, to=to, sender=last("--as"),
                    mentions=values["--mention"], thread_root=last("--thread"),
                    reply_to=last("--reply-to")), None
 
@@ -164,9 +176,14 @@ def parse_request(argv):
 # ── The room ─────────────────────────────────────────────────────────────
 
 
-def _target_room(client, request):
-    """`(room id, error)` for the request's room, one of them None."""
-    room = request.room
+def _target_room(client, request, account):
+    """`(room id, error)` for the request's room or person, one of them None."""
+    if request.to:
+        room_id = client.private_chat(request.to)
+        if not room_id:
+            return None, f"{request.to.capitalize()} has no private chat with {account.label} yet."
+        return room_id, None
+    room = request.room or ""
     # Best-effort join so a family member not yet in the room can still post.
     client.join(room)
     room_id = room if room.startswith("!") else client.resolve_room(room)
@@ -243,7 +260,7 @@ def run(args, stacklet, config):
     if not client.login(account.login, account.password):
         return {"error": f"{account.login} can't log in: check the password in secrets."}
 
-    room_id, err = _target_room(client, request)
+    room_id, err = _target_room(client, request, account)
     if room_id is None:
         return {"error": err}
 
@@ -258,8 +275,9 @@ def run(args, stacklet, config):
         return {"error": f"Failed to send: {detail}"}
 
     # The id is what `--thread`, `--reply-to` and `read --after` take.
-    print(f"  Sent to {request.room}: {detail}")
-    return {"ok": True, "room": request.room, "room_id": room_id, "event_id": detail}
+    target = request.room or request.to
+    print(f"  Sent to {target}: {detail}")
+    return {"ok": True, "room": target, "room_id": room_id, "event_id": detail}
 
 
 def _client(config):
