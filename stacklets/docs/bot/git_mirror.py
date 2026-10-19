@@ -66,6 +66,7 @@ from vault_entry import (
     document_filepath,
     document_resource_url,
     capture_filepath,
+    card_id_for,
     document_frontmatter,
     capture_frontmatter,
     render_document,
@@ -463,6 +464,7 @@ class GitMirror:
         paperless_url: str,
         processing: str,
         model: str | None,
+        card_id: str = "",
     ) -> dict:
         """Document frontmatter. Delegates to ``vault_entry.document_frontmatter``,
         injecting this mirror's known Paperless server version."""
@@ -473,6 +475,7 @@ class GitMirror:
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             paperless_version=self.paperless_version,
+            card_id=card_id,
         )
         _validate_on_write(fm)
         return fm
@@ -825,6 +828,7 @@ class GitMirror:
             category=category, persons=persons, tags=tags or [],
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
+            card_id=card_id_for((existing or {}).get("content"), "document", target_path),
         )
 
         # The briefing's "Show Document" link wants the per-document
@@ -972,12 +976,14 @@ class GitMirror:
         model: str | None,
         capture_id: str | None = None,
         filed_by: str | None = None,
+        card_id: str = "",
     ) -> dict:
         """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``."""
         fm = capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
             model=model, capture_id=capture_id, filed_by=filed_by,
+            card_id=card_id,
         )
         _validate_on_write(fm)
         return fm
@@ -1110,6 +1116,7 @@ class GitMirror:
             model=model,
             capture_id=capture_id,
             filed_by=_filer_localpart(submitter),
+            card_id=card_id_for((existing or {}).get("content"), kind, target_path),
         )
 
         briefing_summary = classification.get("summary")
@@ -1289,6 +1296,7 @@ class GitMirror:
             tags=tags or [],
             model=model,
             capture_id=capture_id,
+            card_id=card_id_for(existing_content, "email", target_path),
         )
 
         try:

@@ -42,8 +42,10 @@ import re
 # Frontmatter writer uses the shared stdlib module so reader/writer agree.
 # render_* stay pure formatters; schema validation lives at the write
 # boundary (GitMirror), so unit tests can render partial frontmatter.
+from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
+from stack.cards import card_id_from, new_card_id
 
 # Slug and entity-path conventions live in the framework (`stack.vault`)
 # so the memory wiki and this docs archivist share one source.
@@ -202,6 +204,24 @@ def document_resource_url(paperless_url: str, paperless_id: int) -> str:
     return f"{paperless_url.rstrip('/')}/documents/{paperless_id}/details"
 
 
+def card_id_for(existing: str | None, card_type: str, path: str) -> str:
+    """The card id a filing written to `path` carries.
+
+    A rebuild of a card from its source (a reprocess, a correction, an
+    email thread that gains a message) replaces a file that is there
+    already, and keeps that file's id: the id is made once, when the card
+    is first written (ADR-016). A first filing gets a new one.
+
+    >>> card_id_for("---\\ntype: note\\ncard_id: note-7f3a9c21e4\\n---\\n", "note", "homer/notes/a.md")
+    'note-7f3a9c21e4'
+    """
+    try:
+        kept = card_id_from(frontmatter_parse(existing or ""))
+    except FrontmatterError:
+        kept = ""
+    return kept or new_card_id(card_type, path)
+
+
 def document_frontmatter(
     *,
     title: str,
@@ -216,6 +236,7 @@ def document_frontmatter(
     processing: str,
     model: str | None,
     paperless_version: str = "",
+    card_id: str = "",
 ) -> dict:
     """Assemble the frontmatter dict for a document mirror entry.
 
@@ -234,6 +255,7 @@ def document_frontmatter(
         processing: Processing provenance ("ai_formatted", "ocr", "original").
         model: Model name used for classification/reformat, or None.
         paperless_version: Paperless server version, if known.
+        card_id: The card's own id (`card_id_for`).
 
     Returns:
         Frontmatter dict ready for YAML serialization.
@@ -243,7 +265,10 @@ def document_frontmatter(
     # `type` is the OKF-required concept kind ("document"). It is a
     # different axis from `document_type` (the Paperless subtype:
     # invoice, contract); both coexist. First key per OKF convention.
-    fm: dict = {"type": "document", "title": title}
+    fm: dict = {"type": "document"}
+    if card_id:
+        fm["card_id"] = card_id
+    fm["title"] = title
     if date:
         fm["date"] = date
     if correspondent:
@@ -283,6 +308,7 @@ def capture_frontmatter(
     model: str | None,
     capture_id: str | None = None,
     filed_by: str | None = None,
+    card_id: str = "",
 ) -> dict:
     """Frontmatter for a capture entry.
 
@@ -311,6 +337,7 @@ def capture_frontmatter(
         model: Model name used for classification, or None.
         capture_id: Stable capture identifier carried on the
             ``dev.famstack.event`` envelope, or None.
+        card_id: The card's own id (`card_id_for`).
 
     Returns:
         Frontmatter dict ready for YAML serialization.
@@ -324,7 +351,10 @@ def capture_frontmatter(
     )
     # `type` is the OKF-required concept kind (note/bookmark). It is the
     # single home for that distinction; there is no separate `kind` key.
-    fm: dict = {"type": kind, "title": title}
+    fm: dict = {"type": kind}
+    if card_id:
+        fm["card_id"] = card_id
+    fm["title"] = title
     if captured_at:
         fm["date"] = captured_at
     if persons:
