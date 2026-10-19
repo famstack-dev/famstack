@@ -292,6 +292,11 @@ a { color: var(--teal); text-underline-offset: 2px; }
   border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
 }
 .body .callout .label { display: block; margin-bottom: 6px; color: var(--c); }
+.body details.callout > summary { cursor: pointer; list-style: none; display: flex; align-items: center; }
+.body details.callout > summary::-webkit-details-marker { display: none; }
+.body details.callout > summary::after { content: "+"; margin-left: auto; font: 500 .9rem var(--mono); color: var(--c); }
+.body details.callout[open] > summary::after { content: "−"; }
+.body details.callout:not([open]) .label { margin-bottom: 0; }
 .body .table { overflow-x: auto; margin: 0 0 1em; }
 .body .table table { margin: 0; overflow-wrap: normal; }
 .body table { width: 100%; border-collapse: collapse; margin: 0 0 1em; font-size: .86rem; }

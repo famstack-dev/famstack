@@ -257,13 +257,21 @@ function markdown(text, card) {
   let quoted = [];
   const flushQuote = () => {
     if (!quoted.length) return;
-    // An Obsidian callout ("> [!summary]") is a labelled box; any other quote a quote.
-    const callout = quoted[0].match(/^\[!(\w+)\][-+]?\s*(.*)$/);
-    const rest = callout ? [callout[2], ...quoted.slice(1)] : quoted;
-    const inner = markdown(rest.join("\n"), card);
-    html.push(callout
-      ? `<div class="callout"><span class="label">${escapeHtml(callout[1])}</span>${inner}</div>`
-      : `<blockquote>${inner}</blockquote>`);
+    // An Obsidian callout (`> [!quote]- Original paste`) is a labelled box: its
+    // title is the label, its type only when it has none. `-` starts it folded
+    // and `+` open, as in Obsidian. Any other quote is a quote.
+    const callout = quoted[0].match(/^\[!(\w+)\]([-+]?)\s*(.*)$/);
+    if (!callout) {
+      html.push(`<blockquote>${markdown(quoted.join("\n"), card)}</blockquote>`);
+      quoted = [];
+      return;
+    }
+    const [, type, fold, title] = callout;
+    const label = `<span class="label">${title.trim() ? inline(title.trim(), card) : escapeHtml(type)}</span>`;
+    const inner = markdown(quoted.slice(1).join("\n"), card);
+    html.push(fold
+      ? `<details class="callout"${fold === "+" ? " open" : ""}><summary>${label}</summary>${inner}</details>`
+      : `<div class="callout">${label}${inner}</div>`);
     quoted = [];
   };
   for (const raw of lines) {
