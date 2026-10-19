@@ -16,7 +16,7 @@ This guide is for everyone in the family: what to type, what comes back, and wha
 Setting the server up, or keeping it running? That is the [Admin Guide](admin-guide.md).
 
 > [!TIP]
-> **Try the Memories Room.** Record a voice message for your kids tonight, and tomorrow morning it is in your family diary. After four months of recording memos and our kids' voices, it has already become one of our most valuable artifacts. [How it works](#the-memories-room)
+> **Try the Memories room.** Record a voice message for your kids tonight, and tomorrow morning it is in your family diary. After four months of recording memos and our kids' voices, it has already become one of our most valuable artifacts. [How it works](#the-memories-room)
 
 > [!TIP]
 > **On your phone, turn on threads.** In Element X: **Settings > Labs > Threads**, then close and reopen the app. The archivist answers in threads, you correct it there, and each diary card sits in the thread under its memory. Without threads those replies land in one flat list.
@@ -25,7 +25,7 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 
 | You want to | Go to |
 |---|---|
-| Record the kids, keep the stories | [The Memories Room](#the-memories-room) |
+| Record the kids, keep the stories | [The Memories room](#the-memories-room) |
 | Read the family diary | [The family diary](#the-family-diary) |
 | Fix a name or a date in a memory | [Put a memory right](#put-a-memory-right) |
 | File a letter, receipt or contract | [File documents](#file-documents) |
@@ -42,12 +42,12 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 
 ## The rooms
 
-After install, your chat has these rooms:
+Your chat has a space called Family with these rooms:
 
-- **#Family Chat**: where the family talks. Photos, voice memos, plans, life.
-- **#Server Room**: where the server talks back. Status, alerts, install confirmations. Mostly for the admin.
-- **#Documents**: the household paper inbox. Everything you drop here lands in the document archive.
-- **#Memories**: a place to record your family's life. More on this [below](#the-memories-room).
+- **Family Room**: where the family talks. Photos, voice memos, plans, life.
+- **Memories**: a place to record your family's life. More on this [below](#the-memories-room).
+- **Documents Room**: the household paper inbox. Everything you drop here lands in the document archive. It appears once the admin sets up documents.
+- **Server Room**: where the server talks back. Status, alerts, install confirmations. Only admins are in it.
 
 You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). Create bot rooms **with encryption disabled** — the bots cannot read encrypted messages (see [the note below](#save-anything-capture-rooms)). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
 
@@ -57,18 +57,27 @@ You can create as many rooms as you like. Any room you invite the archivist into
 
 > Needs the `docs` stacklet. Auto-tagging needs `ai`.
 
-Photograph a letter, a receipt, a contract, an insurance policy. Send the photo (or PDF) to **#Documents**. That's it.
+Photograph a letter, a receipt, a contract, an insurance policy. Send the photo (or PDF) to the **Documents Room**. That's it.
 
-The archivist OCRs it, reads it, and files it: a title, a topic tag, the family member it concerns, who sent it. You see a read receipt while it works and get a reply when it's done:
+The archivist OCRs it, reads it, and files it: a title, a topic tag, the family member it concerns, who sent it. It puts 👀 on your upload while it works, ✅ when the document is filed, and answers in the thread under your upload:
 
-> 📄 Filed: **Car insurance renewal 2026**
-> Insurance · Homer · Springfield Insurance
+> ✅ Filed: Car insurance renewal 2026 (#42)
+>
+> Insurance | Homer | Invoice | Springfield Insurance | 2026-03-01
+>
+> Annual renewal of the family car's insurance with Springfield Insurance.
+>
+> - EUR 340.00/year
+>
+> http://192.168.1.42:42020/documents/42/details
+
+The first line has the title and the document number. Below it: the tags, a short summary, the facts worth finding again, anything the letter asks you to do, and a link to the document in the archive.
 
 Write a caption with the upload ("this is for the tax file") and the archivist takes it into account when filing.
 
 For multi-page documents, type `(` to open a scan session, send the pages one by one, then `)` to close it. The pages become one document.
 
-Useful in #Documents:
+Useful in the Documents Room:
 
 - **Type any word to search.** `insurance` finds every insurance document. Short queries are fine.
 - **`show 42`** posts document 42 into the chat.
@@ -80,7 +89,7 @@ Useful in #Documents:
 
 > Needs the `docs` and `code` stacklets.
 
-A capture room is any room the archivist is in, except #Documents. Create a room ("My notes"), invite the archivist, done. DMs with the bot work the same way.
+A capture room is any room the archivist is in, except the Documents Room. Create a room ("My notes"), invite the archivist, done. DMs with the bot work the same way.
 Archivist captures your notes, thoughts and links for you. The bot 
 creates summaries, tags them so you can find them again and starts to build your 
 personal knowledge base.
@@ -94,7 +103,8 @@ personal knowledge base.
 What you can drop there:
 
 - **A link.** Becomes a bookmark with a summary. Write something around it ("gift idea for Lisa: https://...") and your words shape the summary.
-- **Pasted text.** A paragraph or more becomes a note: summarized, tagged, kept. Short chat messages are ignored, so you can still talk in the room.
+- **Pasted text.** In a room with only you and the archivist, a paragraph or more becomes a note on its own: summarized, tagged, kept. With other people in the room, people write long messages to each other, so the archivist keeps nothing on its own: react 📌 to a message to keep it. Short messages are never kept on their own, so you can still talk in the room.
+- **Any message, with 📌.** React 📌 to a message, yours or someone else's, and the archivist keeps it as a note or a bookmark, filed under the name of whoever wrote it.
 - **A PDF.** Becomes a note with the full text preserved, so you can search for any phrase in it later. The UNO rules sheet, the toy manual, the school newsletter.
 - **A photo or image.** Becomes a visual bookmark: the AI describes what it sees and files the description.
 - **A `.md` or `.txt` file.** Becomes a note with the content kept word for word.
@@ -153,7 +163,7 @@ More you can say:
 - "Stacky, Bart has the dentist on 5 November" puts it on the family's calendar list. If you have none yet, Stacky starts one called Dates. Say the time in the same sentence ("at 10:30") and it goes at the start of the entry. It keeps its entries in date order, the next one on top, and each one leaves the day after its date, ticked or not. Its page in the wiki still shows the last seven days, greyed out, below what is ahead. An entry needs its date, so Stacky asks for one if you leave it out.
 - "Stacky, we don't need the hardware store list any more" deletes it. If it still has open items, Stacky names them and asks first. What was bought stays in the archive, so a list started again under the same name still knows where things go.
 
-**Letters and notes put their to-dos on lists too.** When a letter in **#Documents** asks you to do something ("sign the permission slip by 23 October"), the archivist puts it on the list of the letter's topic, with the day and a link back to the letter. A short note in your own words, pinned with 📌 in a [topic room](#topic-rooms) ("we should take out the trash by Friday"), does the same. Long pasted text and links never turn into to-dos: someone else's tips are not your chores. Tick these off with Stacky like anything else. A letter's dates (the parents' evening, the dentist, the school play) go on the family's calendar list the same way, with the child it names and a link back to the letter. If you have no calendar list yet, the archivist starts one called Dates.
+**Letters and notes put their to-dos on lists too.** When a letter in the **Documents Room** asks you to do something ("sign the permission slip by 23 October"), the archivist puts it on the list of the letter's topic, with the day and a link back to the letter. A short note in your own words, pinned with 📌 in a [topic room](#topic-rooms) ("we should take out the trash by Friday"), does the same. Long pasted text and links never turn into to-dos: someone else's tips are not your chores. Tick these off with Stacky like anything else. A letter's dates (the parents' evening, the dentist, the school play) go on the family's calendar list the same way, with the child it names and a link back to the letter. If you have no calendar list yet, the archivist starts one called Dates.
 
 **A list belongs to a topic.** In a topic room, Stacky uses that topic's lists. To tie an existing list to a room: "Stacky, the supermarket list belongs to this room."
 
@@ -203,8 +213,8 @@ The archivist gets things wrong sometimes. Wrong family member, too generic a ta
 
 Reply to the bot's filing confirmation with what's off:
 
-> **archivist**: 📄 Filed: **Letter from school** · School · Homer
-> **you** (replying): this is Bart's, and it's about the field trip payment
+> **archivist**: ✅ Filed: Letter from school (#57) ...
+> **you** (in the thread): this is Bart's, and it's about the field trip payment
 
 The archivist re-reads the document with your correction, re-files it, and confirms again. Corrections chain: if the second attempt is still off, reply to the new confirmation. Each reply carries the whole conversation back to the original document, so you never start over.
 
@@ -222,7 +232,7 @@ Memories work the same way, in the thread under each memory: see [Put a memory r
 
 Two ways to ask:
 
-- In **#Documents**, just type. Search is the default there.
+- In the **Documents Room**, just type. Search is the default there.
 - In **any other room**, start with its name: `Archivist, when does the car insurance renew?` Picking it from the `@` list works too. Inside a thread the name alone is not enough, because a message there corrects the filing: pick the archivist from the `@` list to ask something instead.
 
 Plain words work as search ("Duff Insurance", "vaccination Bart"). Questions get real answers: the archivist searches the document archive and the family knowledge vault, reads what it finds, and answers with numbered sources you can check:
@@ -256,13 +266,13 @@ Every page has an edit link: edits happen in Forgejo (the family's private git s
 
 ---
 
-## The Memories Room
+## The Memories room
 
 > Needs the `memory` stacklet. Voice messages need the `ai` stacklet; the cards in the room need the archivist (`docs`).
 
 One of the most valuable things you can do with famstack has nothing to do with documents. If you try one thing, make it this room.
 
-The Memories Room keeps what photos can't: your kids' voices, the funny things they said, bedtime stories in their own words. We record a voice diary once or twice a week at the dinner table: what was funny, what was special, what the kids want to tell their future selves. Holiday diaries, first days at school, a birthday message. We wish we had started with our first son.
+The Memories room keeps what photos can't: your kids' voices, the funny things they said, bedtime stories in their own words. We record a voice diary once or twice a week at the dinner table: what was funny, what was special, what the kids want to tell their future selves. Holiday diaries, first days at school, a birthday message. We wish we had started with our first son.
 
 famstack does more than keep them. Every night it transcribes what you recorded, works out the date and who it was for, and writes it into a family diary you can read back month by month, with every recording one tap away. You don't type, tag or file anything. This is the feature that keeps gaining value.
 

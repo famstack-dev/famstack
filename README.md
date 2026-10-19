@@ -91,8 +91,12 @@ The installer checks dependencies, sets up your data directory, and gets the ner
 ./stack up docs        # Paperless-ngx: document archive with OCR
 ./stack up ai          # Local AI: TTS, Whisper, oMLX
 ./stack up photos      # Immich: family photo library + mobile backup
+./stack up code        # Forgejo: private git server, needed by memory
+./stack up memory      # family wiki and diary (needs code)
 ./stack status         # check everything is running
 ```
+
+Mac too small for local models? Skip `./stack up ai` and point the stack at an AI server on another machine or a hosted provider instead: `./stack ai switch <url>` (see the [Admin Guide](docs/admin-guide.md#ai-on-another-machine-or-a-hosted-provider)).
 
 Twenty minutes from clone to a working family server. The [Admin Guide](docs/admin-guide.md) covers install, stacklets, operations, and troubleshooting in detail. The [User Guide](docs/user-guide.md) is the page you send your family: what to type in chat and what comes back.
 
