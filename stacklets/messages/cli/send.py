@@ -1,11 +1,19 @@
 """
-stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] — send a message to a room
+stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]
 
-Sends a plain text message to the specified room. By default it posts as
-stacker-bot (the system account). `--as agent` posts as the agent,
-`--as <id>-bot` as that bot, and `--as <user>` as a family member, the
-text counterpart to `stack messages upload --as`. The room can be a bare
-alias (e.g. 'chat') or a full Matrix room ID.
+Sends a text message to a room. By default it posts as stacker-bot (the
+system account). `--as agent` posts as the agent, `--as <id>-bot` as that
+bot, and `--as <user>` as a family member, the text counterpart to
+`stack messages upload --as`. The room can be a bare alias (e.g. 'chat')
+or a full Matrix room ID.
+
+An unencrypted room gets the message over plain HTTP, from the host. An
+encrypted room gets it encrypted, from a device of the sending account's
+own, `<account> (command line)`, which runs in the bot runner (core must
+be up) and keeps its keys there next to the bot's. It signs itself with
+the account's cross-signing keys when the stack holds them (the bots), so
+apps show it as verified; a person's command-line device stays unverified.
+Two sends as one account take turns on its key store.
 
 Pass `--mention <user>` (repeatable) to notify a user via the Matrix
 `m.mentions` payload. A bot in a group room answers when it is mentioned this
@@ -31,18 +39,37 @@ This is the building block other stacklets use for notifications:
   - docs could notify when a new document is archived
   - core could notify on update events
 
-The session is persisted in .famstack/messages-session.toml so repeated
-sends don't create new devices or require re-authentication.
+The plain HTTP session is persisted in .stack/messages/session-<user>.toml so
+repeated sends don't create new devices or require re-authentication.
 """
 
 HELP = "Send a message to a chat room"
 
+import json
+import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from stack import bot_runner
 
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
-from _matrix import MatrixClient, resolve_login
+from _matrix import Account, MatrixClient, resolve_login
+
+_USAGE = ('Usage: stack messages send <room> "message" '
+          '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]')
+
+# The flags that take a value, and what the value is, for the error when it is missing.
+_VALUE_FLAGS = {
+    "--as": "a username",
+    "--mention": "a username",
+    "--thread": "an event id",
+    "--reply-to": "an event id",
+}
+
+# Where the bot runner mounts the stack's data dir (stacklets/core/docker-compose.yml).
+_BOT_RUNNER_DATA = "/data"
 
 
 def _simple_markdown_to_html(text):
@@ -94,6 +121,104 @@ def _simple_markdown_to_html(text):
     return "\n".join(html_lines)
 
 
+# ── The request ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class Request:
+    """One send, as the command line asked for it."""
+    message: str
+    room: str
+    sender: str | None = None
+    mentions: list[str] = field(default_factory=list)
+    thread_root: str | None = None
+    reply_to: str | None = None
+
+
+def parse_request(argv):
+    """`(request, error)` from the words after `stack messages send`, one of them None."""
+    values = {flag: [] for flag in _VALUE_FLAGS}
+    rest = []
+    i = 0
+    while i < len(argv):
+        flag = argv[i]
+        if flag not in _VALUE_FLAGS:
+            rest.append(flag)
+            i += 1
+            continue
+        if i + 1 >= len(argv):
+            return None, f"{flag} needs {_VALUE_FLAGS[flag]}"
+        values[flag].append(argv[i + 1])
+        i += 2
+
+    def last(flag):
+        return values[flag][-1] if values[flag] else None
+
+    if len(rest) < 2:
+        return None, _USAGE
+    return Request(message=" ".join(rest[1:]), room=rest[0], sender=last("--as"),
+                   mentions=values["--mention"], thread_root=last("--thread"),
+                   reply_to=last("--reply-to")), None
+
+
+# ── The room ─────────────────────────────────────────────────────────────
+
+
+def _target_room(client, request):
+    """`(room id, error)` for the request's room, one of them None."""
+    room = request.room
+    # Best-effort join so a family member not yet in the room can still post.
+    client.join(room)
+    room_id = room if room.startswith("!") else client.resolve_room(room)
+    if not room_id:
+        return None, f"Room '{room}' not found"
+    return room_id, None
+
+
+# ── The encrypted path ───────────────────────────────────────────────────
+
+
+def _state_dir(account):
+    """Where the account's command-line device keeps its state in the bot runner.
+
+    A bot's next to the bot's own device, so it finds the account's
+    cross-signing keys; a person's in the messages data dir.
+    """
+    kind = "cli" if account.is_person else "bot"
+    return f"{_BOT_RUNNER_DATA}/{account.stacklet}/{kind}"
+
+
+def _send_encrypted(account: Account, user_id, room_id, content):
+    """Send through `stack.matrix.send` in the bot runner. Returns (ok, event id or error).
+
+    The request, password included, goes over stdin, so it is in no
+    process's arguments.
+    """
+    if not bot_runner.bot_runner_running():
+        return False, "The room is encrypted, and sending into it needs core: start it with 'stack up core'."
+    request = json.dumps({"user_id": user_id, "password": account.password,
+                          "state_dir": _state_dir(account), "room_id": room_id,
+                          "content": content})
+    try:
+        result = bot_runner.run_module("stack.matrix.send", request)
+    except subprocess.TimeoutExpired:
+        return False, "the encrypted send timed out"
+    except FileNotFoundError:
+        return False, "docker CLI not found on this host"
+    lines = result.stdout.strip().splitlines()
+    try:
+        answer = json.loads(lines[-1]) if lines else {}
+    except json.JSONDecodeError:
+        answer = {}
+    if answer.get("event_id"):
+        return True, answer["event_id"]
+    reason = answer.get("error") or (result.stderr.strip().splitlines() or ["no answer"])[-1]
+    return False, reason
+
+
+# ── The command ──────────────────────────────────────────────────────────
+
+
 def run(args, stacklet, config):
     """Called by the main stack CLI: 'stack messages send <room> "message"'.
 
@@ -104,80 +229,42 @@ def run(args, stacklet, config):
     if not config["is_healthy"]():
         return {"error": "Messages is not running — start it with 'stack up messages'"}
 
-    # Parse room, message, and optional `--as <user>` from the remaining argv.
-    # sys.argv: ['stack', 'messages', 'send', '<room>', '<message>', ...]
-    sender = None
-    mentions = []
-    thread_root = None
-    reply_to = None
-    rest = []
-    argv = sys.argv[3:]  # skip 'stack', 'messages', 'send'
-    i = 0
-    while i < len(argv):
-        if argv[i] == "--as":
-            if i + 1 >= len(argv):
-                return {"error": "--as needs a username"}
-            sender = argv[i + 1]
-            i += 2
-            continue
-        if argv[i] == "--mention":
-            if i + 1 >= len(argv):
-                return {"error": "--mention needs a username"}
-            mentions.append(argv[i + 1])
-            i += 2
-            continue
-        if argv[i] == "--reply-to":
-            if i + 1 >= len(argv):
-                return {"error": "--reply-to needs an event id"}
-            reply_to = argv[i + 1]
-            i += 2
-            continue
-        if argv[i] == "--thread":
-            if i + 1 >= len(argv):
-                return {"error": "--thread needs an event id"}
-            thread_root = argv[i + 1]
-            i += 2
-            continue
-        rest.append(argv[i])
-        i += 1
-    if len(rest) < 2:
-        return {"error": 'Usage: stack messages send <room> "message" [--as <user>] '
-                         '[--mention <user>] [--thread <event-id>] [--reply-to <event-id>]'}
+    # sys.argv: ['stack', 'messages', 'send', ...]
+    request, err = parse_request(sys.argv[3:])
+    if request is None:
+        return {"error": err}
 
-    room = rest[0]
-    message = " ".join(rest[1:])
-
-    instance_dir = config.get("instance_dir", config.get("repo_root", "."))
     stack_cfg = config.get("stack", {})
-    secrets = config.get("secrets", {})
-    server_name = stack_cfg.get("messages", {}).get("server_name", "home")
-
-    # Default sender is stacker-bot; `--as <user>` posts as a family member so
-    # the archivist captures and attributes it the way a real person would.
-    account, err = resolve_login(sender, secrets, stack_cfg)
+    account, err = resolve_login(request.sender, config.get("secrets", {}), stack_cfg)
     if account is None:
         return {"error": err}
 
-    manifest = config.get("manifest", {})
-    synapse_port = manifest.get("ports", {}).get("synapse", 42031)
-    base_url = f"http://localhost:{synapse_port}"
-    client = MatrixClient(base_url, server_name, instance_dir)
-
+    client = _client(config)
     if not client.login(account.login, account.password):
         return {"error": f"{account.login} can't log in: check the password in secrets."}
 
-    # Best-effort join so a family member not yet in the room can still post.
-    client.join(room)
+    room_id, err = _target_room(client, request)
+    if room_id is None:
+        return {"error": err}
 
-    html = _simple_markdown_to_html(message)
-
-    ok, detail = client.send(
-        room, message, html=html, mentions=mentions or None,
-        thread_root=thread_root, reply_to=reply_to,
-    )
-    if ok:
-        # The id is what `--thread`, `--reply-to` and `read --after` take.
-        print(f"  Sent to {room}: {detail}")
-        return {"ok": True, "room": room, "event_id": detail}
+    content = client.text_content(
+        request.message, html=_simple_markdown_to_html(request.message),
+        mentions=request.mentions, thread_root=request.thread_root, reply_to=request.reply_to)
+    if client.is_encrypted(room_id):
+        ok, detail = _send_encrypted(account, client.user_id, room_id, content)
     else:
+        ok, detail = client.send_content(room_id, content)
+    if not ok:
         return {"error": f"Failed to send: {detail}"}
+
+    # The id is what `--thread`, `--reply-to` and `read --after` take.
+    print(f"  Sent to {request.room}: {detail}")
+    return {"ok": True, "room": request.room, "room_id": room_id, "event_id": detail}
+
+
+def _client(config):
+    """A client for the stack's Synapse, as the host reaches it."""
+    server_name = config.get("stack", {}).get("messages", {}).get("server_name", "home")
+    synapse_port = config.get("manifest", {}).get("ports", {}).get("synapse", 42031)
+    instance_dir = config.get("instance_dir", config.get("repo_root", "."))
+    return MatrixClient(f"http://localhost:{synapse_port}", server_name, instance_dir)

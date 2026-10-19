@@ -87,10 +87,10 @@ class Synapse:
         return next(iter(self.cross[kind]["keys"].values()))
 
 
-async def _vouch(synapse, keys_file, device="DEVICE1"):
+async def _vouch(synapse, keys_file, device="DEVICE1", owner=True):
     async with aiohttp.ClientSession() as http:
         return await CrossSigning(http, synapse.url, "token", BOT, device, PASSWORD,
-                                  keys_file).vouch()
+                                  keys_file, owner=owner).vouch()
 
 
 @pytest.fixture
@@ -137,3 +137,44 @@ class TestABotVouchesForItsDevice:
         await _vouch(synapse, tmp_path / "keys.json")
 
         assert (tmp_path / "keys.json").stat().st_mode & 0o077 == 0
+
+
+class TestAnotherDeviceOfTheAccount:
+    """A second device of the account, such as one a command line logs in
+    with, is signed by the same keys and never makes or publishes any:
+    one identity per account, whichever device starts first."""
+
+    async def test_it_is_signed_with_the_owners_keys(self, synapse, tmp_path):
+        keys = tmp_path / "keys.json"
+        await _vouch(synapse, keys)
+        before = keys.read_text()
+        synapse.uploads.clear()
+
+        outcome = await _vouch(synapse, keys, device="DEVICE2", owner=False)
+
+        assert outcome == "signed the device"
+        assert synapse.uploads == ["signatures"]
+        self_signing = synapse.public("self_signing_key")
+        device = synapse.devices["DEVICE2"]
+        assert _verifies(self_signing, device["signatures"][BOT][f"ed25519:{self_signing}"], device)
+        assert keys.read_text() == before
+
+    async def test_without_the_accounts_keys_it_stays_unsigned(self, synapse, tmp_path):
+        outcome = await _vouch(synapse, tmp_path / "keys.json", device="DEVICE2", owner=False)
+
+        assert "stays unsigned" in outcome
+        assert not (tmp_path / "keys.json").exists()
+        assert synapse.uploads == []
+
+    async def test_it_never_replaces_the_published_identity(self, synapse, tmp_path):
+        await _vouch(synapse, tmp_path / "published.json")
+        published = synapse.public("master_key")
+        await _vouch(synapse, tmp_path / "stale.json", device="DEVICE2")
+        await _vouch(synapse, tmp_path / "published.json")  # the owner takes it back
+        synapse.uploads.clear()
+
+        outcome = await _vouch(synapse, tmp_path / "stale.json", device="DEVICE2", owner=False)
+
+        assert "stays unsigned" in outcome
+        assert synapse.uploads == []
+        assert synapse.public("master_key") == published

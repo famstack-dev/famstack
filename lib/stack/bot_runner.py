@@ -92,3 +92,17 @@ def call(entrypoint: str, command: str, *argv: str) -> str:
         raise RuntimeError(f"{command} in {BOT_RUNNER_CONTAINER} failed "
                            f"(exit {result.returncode}){reason}")
     return result.stdout
+
+
+def run_module(module: str, input_text: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    """Run `python -m <module>` of the stack library inside the bot-runner.
+
+    `input_text` goes to its stdin, which is how a credential reaches it
+    without appearing in any process's arguments. Output is captured and
+    returned as it is; the caller reads the module's own answer. Check
+    `bot_runner_running` first for a message that names the fix.
+    """
+    return subprocess.run(
+        ["docker", "exec", "-i", BOT_RUNNER_CONTAINER, "python", "-m", module],
+        input=input_text, capture_output=True, text=True, timeout=timeout,
+    )
