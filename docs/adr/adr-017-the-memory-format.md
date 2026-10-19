@@ -1,8 +1,8 @@
 # ADR-017: The Memory Format
 
 ## Status
-Accepted, 2026-10-19. Replaces the file format in `docs/design/brain/vault-format.md`
-(v1) once accepted; that note stays the record of v1.
+Accepted, 2026-10-19. Replaces the file format in
+`docs/design/brain/vault-format.md` (v1); that note stays the record of v1.
 
 ## Context
 The family memory is two git repos (ADR-011). The **memory repo**
