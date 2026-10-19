@@ -25,7 +25,7 @@ const WORDS = {
     recently: "Changed lately", noGraph: "Open a card to see what it links to.",
     unreachable: "The family memory does not answer. Is the memory stacklet running? (stack up memory)",
     file: "File", id: "Card", changedBy: (who, day) => `${who} · ${day}`, focus: "Show its links",
-    close: "Close",
+    close: "Close", view: "View", views: "Compiled about this card", openWiki: "Open in the wiki",
   },
   de: {
     memory: "Gedächtnis · Karten", search: "Im Familiengedächtnis suchen", viewas: "Ansicht als",
@@ -39,7 +39,7 @@ const WORDS = {
     recently: "Zuletzt geändert", noGraph: "Eine Karte öffnen, um ihre Verweise zu sehen.",
     unreachable: "Das Familiengedächtnis antwortet nicht. Läuft das memory-Stacklet? (stack up memory)",
     file: "Datei", id: "Karte", changedBy: (who, day) => `${who} · ${day}`, focus: "Verweise zeigen",
-    close: "Schließen",
+    close: "Schließen", view: "Ansicht", views: "Über diese Karte zusammengestellt", openWiki: "Im Wiki öffnen",
   },
 };
 const LANG = (navigator.language || "en").slice(0, 2) === "de" ? "de" : "en";
@@ -116,6 +116,9 @@ async function api(path, params = {}) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+
+// A `/go` link opens on core's link resolver, which sends it on to Paperless or the wiki.
+const goUrl = (path) => `${location.protocol}//${location.hostname}:42000${path}`;
 
 const DAY = new Intl.DateTimeFormat(LANG, { day: "numeric", month: "short", year: "numeric" });
 const WEEKDAY = new Intl.DateTimeFormat(LANG, { weekday: "long" });
@@ -318,13 +321,12 @@ const RENDER = {
   document(card) {
     const m = card.meta;
     const id = m.paperless_id;
-    const goHost = `${location.protocol}//${location.hostname}:42000`;
     return [
       factsGrid([
         ["From", m.correspondent], ["Kind", m.document_type || m.doctype], ["Date", niceDay(card.day)],
         ["Tags", m.tags], ["Amount", m.amount],
       ]),
-      id ? h("a", { class: "action", href: `${goHost}/go/docs/${id}`, target: "_blank",
+      id ? h("a", { class: "action", href: goUrl(`/go/docs/${id}`), target: "_blank",
                     rel: "noopener noreferrer" }, T.openPaperless, " ↗") : null,
       bodyOf(card),
     ];
@@ -378,6 +380,18 @@ function renderBody(card) {
   return (RENDER[card.type] || ((c) => [peopleRow(c), bodyOf(c)]))(card);
 }
 
+// The pages the wiki compiled about a card (a person's page): read with the
+// card, marked as views, never opened as cards of their own.
+function viewsOf(card) {
+  if (!card.views?.length) return null;
+  return h("div", { class: "linkset" }, h("h4", { class: "label" }, T.views),
+    card.views.map((view) => h("details", { class: "more view" },
+      h("summary", {}, h("span", { class: "kind label" }, T.view), h("span", {}, view.title)),
+      bodyOf({ id: card.id, path: view.path }, withoutTitle(view.text, view.title)),
+      view.go ? h("a", { class: "action", href: goUrl(view.go), target: "_blank",
+                         rel: "noopener noreferrer" }, T.openWiki, " ↗") : null)));
+}
+
 // ── A card ────────────────────────────────────────────────────────────────
 
 function linkChips(cards, from) {
@@ -421,6 +435,7 @@ function cardElement(card) {
       last ? h("span", {}, last.who) : null,
       h("span", {}, `${card.links} ${T.links}`)),
     renderBody(card),
+    viewsOf(card),
     card.links_out.length ? h("div", { class: "linkset" },
       h("h4", { class: "label" }, T.linksTo), linkChips(card.links_out, card.id)) : null,
     card.links_in.length ? h("div", { class: "linkset" },
@@ -546,8 +561,7 @@ function renderTypes() {
 function renderResults() {
   const list = document.getElementById("results");
   const cards = lastFound.cards;
-  // Two cards with one title (a person's profile and the family's file on them):
-  // the row says where each lives.
+  // Two cards with one title: the row says where each lives.
   const seen = new Map();
   cards.forEach((c) => seen.set(c.title, (seen.get(c.title) || 0) + 1));
   document.getElementById("total").textContent = T.cards(lastFound.total);

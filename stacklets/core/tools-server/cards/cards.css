@@ -371,6 +371,12 @@ details.more[open] summary::after { content: "−"; }
 .linkchip span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linkchip:hover { border-color: var(--c); transform: translateY(-1px); }
 
+/* A view the wiki compiled about the card: marked, and folded until opened */
+details.more.view { margin: 0 0 8px; padding: 0 12px; border: 1px dashed var(--line-strong); border-radius: 8px; }
+details.view summary .kind { color: var(--teal); }
+details.view .body { padding: 0 0 6px; }
+details.view .action { margin: 0 0 12px; }
+
 /* Empty board: what changed lately */
 .welcome {
   flex: 1 1 auto; max-width: 720px; margin: 0 auto; padding: 30px 10px; overflow: auto;
