@@ -517,8 +517,12 @@ its diary month), in two speeds. At once, with the mirror, without the
 model (`stack memory wiki update ... --fast`, `diary pages --fast`):
 which cards belong, list items, dates and links, with the model's last
 wording renumbered to the cards as they are. After the quiet window
-(`wiki_rebuild_quiet_secs`), once per burst, with the model. The curator
-finds a push with its poll, and the nightly sweep stays as the catch-all.
+(`wiki_rebuild_quiet_secs`), once per burst, with the model. Forgejo
+tells the curator of each push to `family/memory` through a webhook to
+`http://stack-memory-curator:8090/push` (the cards API), which `stack up
+memory` adds once; the code stacklet allows webhooks to `stack-*` hosts
+(`FORGEJO__webhook__ALLOWED_HOST_LIST`). The poll stays as the fallback,
+and the nightly sweep as the catch-all.
 
 **A record links the cards it names** (ADR-017 §3, §4, §10). Its
 frontmatter holds ids and its body the links derived from them: `persons`

@@ -1492,6 +1492,25 @@ def purge_local_generated_memory_pages(vault_path: Path) -> dict:
     return {"deleted": deleted}
 
 
+# Where Forgejo tells the curator of a push to the memory repo: the curator's
+# cards API (`memory/cards_api.py`, `PORT`), on the stack network.
+CURATOR_PUSH_URL = "http://stack-memory-curator:8090/push"
+
+
+def ensure_push_webhook(client: ForgejoClient) -> bool:
+    """Have the memory repo notify the curator of every push; True when added now.
+
+    Every writer pushes to Forgejo (the archivist, the CLI, a person's
+    clone), so a webhook there is the one place that sees them all. The
+    curator still polls: a notice that does not arrive is picked up there.
+    """
+    for hook in client.list_hooks(REPO_OWNER, REPO_NAME):
+        if (hook.get("config") or {}).get("url") == CURATOR_PUSH_URL:
+            return False
+    client.create_hook(REPO_OWNER, REPO_NAME, CURATOR_PUSH_URL)
+    return True
+
+
 def ensure_brain_projection_admin(
     *,
     code_url: str,

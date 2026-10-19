@@ -20,11 +20,13 @@ import asyncio
 import json
 import subprocess
 import sys
+import urllib.request
 from datetime import date
 from pathlib import Path
 
 import pytest
 import yaml
+from werkzeug import Response
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
@@ -34,7 +36,10 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 import curator  # noqa: E402
 import diary_card  # noqa: E402
 import wiki  # noqa: E402
+from cards_api import CardsAPI, serve  # noqa: E402
 from graph import load_graph  # noqa: E402
+from lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
+from stack.forgejo import ForgejoClient  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402
 
 ROOM = "!memories:simpsons"
@@ -332,3 +337,57 @@ class TestTheCardSaysWhenAViewIsBehind:
         assert all(self._views_of_tent(family).values())
         asyncio.run(family.compile(selection, fast=True))
         assert not any(self._views_of_tent(family).values())
+
+
+# ── Learning of a push ────────────────────────────────────────────────────
+
+class TestLearningOfAPush:
+
+    def test_forgejos_notice_wakes_the_curator_at_once_without_the_models_turn(self, tmp_path):
+        server = serve(CardsAPI(vault=tmp_path), host="127.0.0.1", port=0,
+                       on_push=lambda: curator.request_push(tmp_path))
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/push",
+                data=b'{"ref": "refs/heads/main"}', method="POST")
+            with urllib.request.urlopen(request) as r:
+                assert r.status == 204
+        finally:
+            server.shutdown()
+
+        forced, waited = asyncio.run(_timed(curator.sleep_until_tick(30, tmp_path)))
+
+        assert forced is False and waited < 1.0
+
+    def test_a_push_whose_notice_never_came_is_found_by_the_poll(self, tmp_path):
+        """No notice: the tick ends with the poll interval, and the cycle
+        reads what moved from git as it always did."""
+        forced, waited = asyncio.run(_timed(curator.sleep_until_tick(0.2, tmp_path)))
+
+        assert forced is False and waited >= 0.2
+
+    def test_the_memory_repo_is_set_up_to_notify_the_curator_once(self, httpserver):
+        hooks: list[dict] = []
+        route = "/api/v1/repos/family/memory/hooks"
+        httpserver.expect_request(route, method="GET").respond_with_handler(
+            lambda request: Response(json.dumps(hooks), content_type="application/json"))
+
+        def create(request):
+            hooks.append(json.loads(request.data))
+            return Response(json.dumps(hooks[-1]), status=201, content_type="application/json")
+        httpserver.expect_request(route, method="POST").respond_with_handler(create)
+        forgejo = ForgejoClient(url=httpserver.url_for(""), admin_user="admin",
+                                admin_password="duff")
+
+        assert ensure_push_webhook(forgejo) is True
+        assert ensure_push_webhook(forgejo) is False
+        [hook] = hooks
+        assert hook["config"]["url"] == CURATOR_PUSH_URL and hook["events"] == ["push"]
+
+
+async def _timed(waiting) -> tuple[bool, float]:
+    """(what the tick returned, how many seconds it took)."""
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    forced = await waiting
+    return forced, loop.time() - start

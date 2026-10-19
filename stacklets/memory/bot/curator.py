@@ -7,7 +7,8 @@ container is a pure view that just watches the files). Jobs:
 
 1. **Views follow their cards, in two speeds** (ADR-016 §5). New
    commits land — an archivist filing, a learn commit, a hand edit
-   pushed from Obsidian — and the poll finds the push.
+   pushed from Obsidian — and Forgejo tells the curator of the push
+   (`POST /push` on the cards API; the poll stays as the fallback).
    The views to compile again are exactly those whose `derived_from`
    names a changed card, before or after the change, plus the ones a
    new card would now be in (its persons, its topic, its correspondent,
@@ -135,6 +136,11 @@ _GENERATED_NAMES = {"about.md", "index.md"}
 # there, and this loop is what answers. The curator stays brain's only
 # writer; callers only ask and wait (one-writer invariant, ADR-011).
 TRIGGER_NAME = MIRROR_TRIGGER_NAME
+
+# Left by Forgejo's notice of a push to the memory repo (`POST /push` on
+# the cards API): the next cycle starts at once, but unlike the trigger
+# above it asks for no compile with the model before the quiet window.
+PUSH_TRIGGER_NAME = "pushed"
 
 # The curator's own git remote. `origin` belongs to the host plane
 # (hooks and the host CLI reach Forgejo on a localhost/LAN port); this
@@ -691,18 +697,29 @@ def consume_trigger(state_dir: Path, name: str = TRIGGER_NAME) -> bool:
 
 async def sleep_until_tick(secs: float, state_dir: Path,
                            slice_secs: float = 1.0) -> bool:
-    """Sleep up to `secs`, waking early when a mirror-now trigger lands.
+    """Sleep up to `secs`, waking early when a trigger lands.
 
-    Returns True when the wake-up was triggered rather than timed. The
-    sleep is sliced so `stack memory sync` sees a tick within about a
-    second instead of a full poll interval.
+    Returns True when a mirror-now trigger woke it, which asks for the
+    model's compile at once too. A push trigger (Forgejo's notice) wakes
+    it without that and returns False, as the poll does when `secs` run
+    out: the poll is what still finds a push whose notice never came. The
+    sleep is sliced so either trigger is seen within about a second
+    instead of a full poll interval.
     """
     deadline = time.monotonic() + secs
     while time.monotonic() < deadline:
         if consume_trigger(state_dir):
             return True
+        if consume_trigger(state_dir, PUSH_TRIGGER_NAME):
+            return False
         await asyncio.sleep(min(slice_secs, max(deadline - time.monotonic(), 0.0)))
     return consume_trigger(state_dir)
+
+
+def request_push(state_dir: Path) -> None:
+    """Leave the push trigger: Forgejo says the memory repo moved."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / PUSH_TRIGGER_NAME).write_text(str(time.time()), encoding="utf-8")
 
 
 def nightly_due(nightly: str, last_run_date: str, now_local: time.struct_time) -> bool:
@@ -1196,19 +1213,22 @@ def _vault_writer() -> ForgejoClient | None:
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
-def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str) -> None:
+def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str,
+                 state_dir: Path) -> None:
     """The cards as JSON for core's card page, on the stack network (`memory/cards_api.py`).
 
     The curator holds the vault and the brain, so it serves the vault's cards
     with the views it compiled about them, and the media archive's files
-    those cards embed.
+    those cards embed. The same server takes Forgejo's notice of a push to
+    the memory repo, which wakes the loop below.
     A failure to start is logged, never fatal: the wiki is the curator's job.
     """
     from memory.cards_api import PORT, CardsAPI, serve
     fonts = Path(__file__).resolve().parents[1] / "quartz" / "static" / "fonts"
     try:
         serve(CardsAPI(brain=brain_dir, vault=vault_dir, fonts=fonts, media=media_dir,
-                       shared_bucket=shared_bucket))
+                       shared_bucket=shared_bucket),
+              on_push=lambda: request_push(state_dir))
         logger.info("[curator] cards API on :{}", PORT)
     except OSError as e:
         logger.warning("[curator] cards API not started: {}", e)
@@ -1236,7 +1256,7 @@ async def main() -> None:
     vault = Vault(vault_dir)
     brain = Brain(brain_dir, vault_dir)
     _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
-                 shared_bucket)
+                 shared_bucket, state_dir)
     debounce = Debounce(QUIET_SECS)
 
     async def select(since: str, until: str) -> Selection:

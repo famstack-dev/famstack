@@ -2,7 +2,9 @@
 
 The install hook clones the vault once; this hook keeps it fresh on
 every restart. Best-effort — a failed pull never blocks startup.
-Readers fall back to whatever is already on disk, or to the seed.
+Readers fall back to whatever is already on disk, or to the seed. It
+also makes sure Forgejo tells the curator of every push to the vault
+(a webhook, added once).
 
 It also repairs the vault's `origin` URL on every run. Both halves of
 that URL rot on their own schedule, and they need different cures. The
@@ -26,6 +28,7 @@ from lib import (  # noqa: E402
     brain_path_for,
     ensure_brain_projection_admin,
     ensure_people,
+    ensure_push_webhook,
     ensure_vault_cloned,
     host_code_url,
     point_remote_at,
@@ -169,3 +172,18 @@ def run(ctx):
         ctx.step(f"Memory: cloned brain projection to {brain}")
     elif not (brain / ".git").exists():
         ctx.warn(f"Memory brain projection clone failed at {brain}: the wiki and the diary will not update")
+    _ensure_push_webhook(ctx, code_url, admin_user, admin_password)
+
+
+def _ensure_push_webhook(ctx, code_url: str, admin_user: str, admin_password: str) -> None:
+    """Have Forgejo tell the curator of every push to the memory repo.
+
+    A failure is reported and never blocks startup: the curator's poll
+    still finds every push, only later.
+    """
+    client = ForgejoClient(url=code_url, admin_user=admin_user, admin_password=admin_password)
+    try:
+        if ensure_push_webhook(client):
+            ctx.step("Memory: Forgejo now tells the curator of every push to family/memory")
+    except (ForgejoError, OSError) as e:
+        ctx.warn(f"Memory: could not add the push webhook, the curator polls instead: {e}")

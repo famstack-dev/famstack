@@ -13,11 +13,17 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /report                where the memory does not meet its format yet
     GET /media/<path>?audience= a photo or recording a card embeds
     GET /fonts/<file>          the famstack faces the wiki serves
+    POST /push                 Forgejo's notice of a push to the memory repo
 
 The cards are the files of the vault; a card comes with the views the wiki
 compiled from it into the brain (those whose `about` or `derived_from` names
 it), which are never cards of their own. A view compiled from an older
 version of the card is marked `behind`: the card's own text counts.
+
+`POST /push` is the one route that is no read: the memory repo's webhook
+calls it on every push, and the curator pulls at once instead of at its
+next poll. It carries no secret because all it can do is make the curator
+look sooner.
 
 `audience` is who will see the answer (person slugs, comma-separated): a
 card in a person's own bucket only when they are the whole audience. No
@@ -43,6 +49,7 @@ import mimetypes
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -312,10 +319,25 @@ def _missing(ref: str) -> tuple[int, str, bytes]:
 
 # ── Serving ───────────────────────────────────────────────────────────────
 
-def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT) -> ThreadingHTTPServer:
-    """Start answering on `host:port` in a background thread; returns the server."""
+def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
+          on_push: Callable[[], None] | None = None) -> ThreadingHTTPServer:
+    """Start answering on `host:port` in a background thread; returns the server.
+
+    `on_push` is called for each `POST /push`; without it the route is not there.
+    """
 
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 (the stdlib's name)
+            # Forgejo sends the push as JSON; its content is not needed,
+            # the curator reads what changed from git.
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            found = urlparse(self.path).path == "/push" and on_push is not None
+            if found and on_push is not None:
+                on_push()
+            self.send_response(204 if found else 404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_GET(self):  # noqa: N802 (the stdlib's name)
             url = urlparse(self.path)
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
