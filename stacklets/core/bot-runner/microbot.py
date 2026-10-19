@@ -51,7 +51,6 @@ that reads it back didn't fire reliably, so the local cursor stays.)
 """
 
 import asyncio
-import copy
 import json
 import time
 from pathlib import Path
@@ -66,18 +65,17 @@ from nio import (
     JoinResponse,
     MegolmEvent,
     MessageDirection,
-    RoomEncryptedMedia,
     RoomMessage,
     RoomMessagesResponse,
     SyncResponse,
 )
 from nio.api import RelationshipType
-from nio.crypto.attachments import decrypt_attachment
 
 import voice
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 from stack.matrix.device import Device
+from stack.matrix.media import Media
 from stack.users import TECH_ADMIN_USERNAME
 from stack.name_trigger import addressed_by_name, strip_address
 
@@ -92,10 +90,6 @@ EYES = "\U0001F440"
 # timeline, since the detailed filing reply now lives in a thread.
 CHECK = "\U00002705"
 CROSS = "\U0000274C"
-
-
-# Encrypted attachments whose key is kept for a later download; the oldest go first.
-MEDIA_KEYS_KEPT = 500
 
 class MicroBot:
     """Base class for lightweight Matrix bots.
@@ -131,8 +125,8 @@ class MicroBot:
         # to these; we do not register them with nio, because the live sync
         # is only a doorbell — delivery happens in `_drain`.
         self._handlers: list[tuple] = []
-        # The keys of encrypted attachments seen, by their mxc:// address.
-        self._media_keys: dict[str, tuple[str, str, str]] = {}
+        # Up- and download, and the keys of the encrypted attachments seen.
+        self._media = Media(homeserver, self.name)
         # Rooms we have auto-accepted but whose state hasn't yet arrived
         # via sync. The SyncResponse callback drains this set and fires
         # `on_room_joined` once nio has populated the room.
@@ -462,7 +456,7 @@ class MicroBot:
         if room is None:
             return
 
-        event = self._plain_media(event)
+        event = self._media.plain(event)
         if voice.is_voice(event) and not self._wants_voice(room, event):
             return
         decoding = voice.is_voice(event)
@@ -484,30 +478,6 @@ class MicroBot:
                 await handler(room, event)
         if decoding and not handled:
             await self._set_typing(room_id, on=False)
-
-    def _plain_media(self, event):
-        """An encrypted photo, file or voice message as the plain event handlers expect.
-
-        nio parses a decrypted attachment as `RoomEncrypted*`, which no
-        handler listens for, and keeps its address in `content.file`
-        together with the key to open it. The plain event carries the
-        address in `content.url`, as an unencrypted one does; the key is
-        kept for `_download_media`.
-        """
-        if not isinstance(event, RoomEncryptedMedia):
-            return event
-        source = copy.deepcopy(event.source)
-        content = source.get("content", {})
-        file = content.pop("file", None) or {}
-        try:
-            url, key = file["url"], (file["key"]["k"], file["hashes"]["sha256"], file["iv"])
-        except (KeyError, TypeError):
-            return event
-        content["url"] = url
-        self._media_keys[url] = key
-        while len(self._media_keys) > MEDIA_KEYS_KEPT:
-            self._media_keys.pop(next(iter(self._media_keys)))
-        return RoomMessage.parse_event(source)
 
     def _wants_voice(self, room, event) -> bool:
         """Whether this bot decodes a voice message in `room`.
@@ -1051,64 +1021,18 @@ class MicroBot:
             logger.warning("[{}] Could not set display name: {}", self.name, e)
 
     async def _download_media(self, mxc_url: str) -> bytes | None:
-        """Download a file from Matrix via the authenticated media API.
-
-        Uses `/_matrix/client/v1/media/download/...` with the bot's
-        access token — the authenticated endpoint, not nio's default
-        (which targets the now-deprecated unauthenticated media API).
-        Returns the bytes, or None on any non-200 (logged). An attachment
-        from an encrypted room is decrypted with the key its event carried.
-        """
-        rest = mxc_url.replace("mxc://", "")
-        server_name, _, media_id = rest.partition("/")
-        download_url = (
-            f"{self.homeserver}/_matrix/client/v1/media/download/"
-            f"{server_name}/{media_id}"
-        )
-        session = self._ensure_http()
-        async with session.get(
-            download_url,
-            headers={"Authorization": f"Bearer {self.client.access_token}"},
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.read()
-                key = self._media_keys.get(mxc_url)
-                return decrypt_attachment(data, *key) if key else data
-            body = await resp.text()
-            logger.error(
-                "[{}] Media download failed (HTTP {}): {}",
-                self.name, resp.status, body,
-            )
-            return None
+        """A file from the media repository, decrypted if it came from an
+        encrypted room; None on failure (`stack.matrix.media`)."""
+        return await self._media.download(self._ensure_http(), self.client.access_token,
+                                          mxc_url)
 
     async def _upload_media(
         self, data: bytes, filename: str, content_type: str,
     ) -> str | None:
-        """Upload bytes to the media repo, returning the ``mxc://`` URI.
-
-        Goes straight to ``/_matrix/media/v3/upload`` with the bot's token
-        (same authenticated-HTTP approach as `_download_media`, sidestepping
-        nio's data-provider upload API). Returns None on any non-200 (logged).
-        """
-        session = self._ensure_http()
-        url = f"{self.homeserver}/_matrix/media/v3/upload"
-        async with session.post(
-            url,
-            params={"filename": filename},
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.client.access_token}",
-                "Content-Type": content_type or "application/octet-stream",
-            },
-        ) as resp:
-            if resp.status == 200:
-                return (await resp.json()).get("content_uri")
-            body = await resp.text()
-            logger.error(
-                "[{}] Media upload failed (HTTP {}): {}",
-                self.name, resp.status, body,
-            )
-            return None
+        """Upload bytes to the media repo, returning the ``mxc://`` URI; None
+        on failure (`stack.matrix.media`)."""
+        return await self._media.upload(self._ensure_http(), self.client.access_token,
+                                        data, filename, content_type)
 
     async def send_file(
         self,
