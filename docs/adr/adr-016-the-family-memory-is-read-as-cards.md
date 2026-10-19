@@ -106,32 +106,71 @@ current card and say which id they were asked for. A card that was removed
 answers as gone, with the commit that removed it, rather than not found: a
 link in a chat's history keeps saying what became of it.
 
+**Two files with one `card_id` are one error, not two cards.** A note copied
+by hand keeps the id it was copied with. The format check reports it, and the
+curator gives the newer file (by its first commit) a new id, as the stack's
+commit.
+
 `/go/<card_id>` is the link to any card; the links in use today
 (`/go/capture/…`, `/go/diary/…`, `/go/docs/…`, `/go/topic/…`) keep working.
 Until every card has its id, readers name a card by the rule in `stack.cards`
 (`card_ref`), as the card graph does now.
 
-### 3. The ontology widens a search
+### 3. One thing, one card
+Each thing the memory knows about is one card, whatever pages are compiled
+from it:
+
+- **A person** is the declared file, `<shared>/people/<id>.md`, card
+  `person-homer`. The compiled page in the brain (`homer/about.md`) is that
+  card's page, not a second card: it carries the same `card_id`, and every
+  reader shows it as the card's compiled view. Records link to the declared
+  file, and their `persons` field holds person ids (`homer`), not display
+  names (ADR-017). The same holds for a correspondent and its compiled page.
+- **A list archive** is a card of its own, `list-markt-2026-10`, with
+  `kind: archive` and a `list` field naming the card of the list it belongs
+  to.
+- **Navigation pages** (the home page, folder listings, the diary's front,
+  year and month pages) are not cards. They carry a `type` (`index`,
+  `diary-page`) and no `card_id`, `find` leaves them out, and they stay
+  reachable as links.
+
+The file format of every card type, its fields and its links, is ADR-017.
+
+### 4. The ontology widens a search
 `find` matches a word and every name, synonym and keyword the ontology gives
 for the same topic or document type, in every language. "Versicherung" finds
 the English insurance letter.
 
-### 4. Facts are cards
-Each row of `facts.toml` is a card, `fact/<kind>-<n>`, found by `find` and
+### 5. Facts are cards
+Each row of `facts.toml` is a card, `fact-<kind>-<n>`, found by `find` and
 opened by `card`. Facts are still written with `stack facts`.
 
-### 5. One rule for who may read a card
+### 6. One rule for who may read a card
 A card in a person's own bucket is read only when that person is the whole
 audience; the family's bucket is read by everyone. The rule lives in one
 function, every read operation takes the audience, and the curator applies it
 when it compiles a page: a page is made only from the cards its readers may
 read. The CLI without an audience is the admin's and reads everything.
 
-### 6. Writes stay as they are
+**The agent never chooses its audience.** The agent's runtime sets it from
+the room the turn belongs to: the room's members, bots excluded. The model
+cannot leave it out or change it, and a read the agent makes never goes out
+without one. A prompt that asks the model to keep something private is not
+the rule; the code is.
+
+**Two buckets, stated as a limit.** Where a card is filed follows the same
+membership: one person in the room files into that person's bucket, two or
+more into the family's. A room with two of five people (the parents' room)
+therefore files for everyone, and the children's agent can read it. The user
+guide says so. Narrower audiences (a card readable only by the people of its
+room) can come later without losing anything: the room each card was filed
+from is in the Matrix timeline, so a reprocess can rebuild them.
+
+### 7. Writes stay as they are
 Capture, the list verbs, `write`, `person add` and the diary compile keep
 their commands. Every change is the person's commit (ADR-015).
 
-### 7. Sources plug in as cards
+### 8. Sources plug in as cards
 A source (a chat room, the diary room, email, Paperless) delivers cards to
 the vault through the front door. A document is the one source whose content
 lives elsewhere: its card holds the summary, the correspondent and the link,
@@ -139,18 +178,30 @@ and `docs show` reads the document from Paperless. Reading never needs to
 know which source a card came from.
 
 ## Order
-1. `card_id` on every card: the writers, the migration, `former_card_ids` and
-   its redirects, `/go/<card_id>`. Until then the graph names cards by the rule
-   in `stack.cards` (done on #257).
-2. The audience rule in one function; `history` and `list show` take it.
+1. `card_id` on every card, one card per thing (§3): the writers, the
+   migration, `former_card_ids` and its redirects, `/go/<card_id>`. The
+   migration is the one ADR-017 needs for links and person ids; both run as
+   one. Until then the graph names cards by the rule in `stack.cards`.
+2. The audience rule in one function; `history` and `list show` take it, and
+   the agent's runtime sets it.
 3. The curator compiles from readable cards only.
 4. Ontology terms in `find`.
 5. Facts as cards.
 6. `search`, `topic` and `person show` onto the interface; the old commands
    point at the new ones for one release.
 
-Steps 1 to 3 change no command's output for the admin. Step 3 changes compiled
-pages: a person's page loses what it quoted from someone else's bucket.
+Steps 1 to 3 are the base of 0.5, step 4 follows when there is time, steps 5
+and 6 come after 0.5. Steps 1 to 3 change no command's output for the admin.
+Step 3 changes compiled pages: a person's page loses what it quoted from
+someone else's bucket.
+
+**The card browser comes first and checks each step.** Core's tools server
+shows the card graph on the server Mac (#257), and the same graph answers as
+JSON through the cards API and `memory card`. It reports what the steps are
+meant to remove: cards without a `card_id`, two files with one id, a thing
+that is two cards, links to nothing. The admin reads it in the browser, an
+agent reads it as JSON, and a step is done when its report is empty on the
+test instance.
 
 ## Consequences
 - One place to make reading faster. The graph is built from the files and the
@@ -159,6 +210,7 @@ pages: a person's page loses what it quoted from someone else's bucket.
 - Agents learn four read commands instead of eight, and the same commands the
   admin uses.
 - Privacy holds for every reader, not only the one that passes `--audience`.
+  It holds for the agent only where the runtime can name the room of a turn.
 - Removing `search`, `topic` and `person show` is a breaking change for
   scripts that call them; they keep working for one release.
 
