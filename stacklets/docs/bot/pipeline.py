@@ -1450,6 +1450,13 @@ def _format_evidence_block(evidence: list[dict]) -> str:
     return "\n".join(lines).rstrip()
 
 
+# The line the synthesis prompt asks for when the summaries are not
+# enough. It stays in English whatever language the answer is in, so
+# the bot can detect a deferral in every household language; the bot
+# strips it before the family sees the answer.
+DEFERRAL_MARKER = "NEED_TO_READ"
+
+
 def _build_synthesize_prompt(
     question: str, evidence: list[dict], lang: str,
     *,
@@ -1461,8 +1468,10 @@ def _build_synthesize_prompt(
 
       - Use only the evidence; don't invent facts.
       - Cite hits as `[N]` so the reader can verify.
-      - If the summaries aren't enough, defer with a "need to read
-        [N] in detail" line rather than guessing.
+      - If the summaries aren't enough, defer rather than guess: one
+        sentence in the family's language, then a `NEED_TO_READ [N]`
+        line that names the hits to read in full. A summary that does
+        not mention something is a reason to defer, not to answer "no".
       - Reply in the family's language so a German household gets a
         German answer even when the question routed through an
         English-speaking model intermediary.
@@ -1484,7 +1493,8 @@ Evidence (each hit is numbered; cite the ones you used as [N]):
 Rules:
 - Answer concisely. One sentence when the answer is obvious; only longer when the question genuinely needs it.
 - Cite every fact with the source bracket(s): "[1]", "[2, 3]".
-- If the summaries alone are not enough to answer, reply: "I'd need to read [N] in detail to answer that." (List the most relevant hit numbers.)
+- If the summaries alone are not enough to answer, write one sentence saying which hits you would need to read in detail, then end with a line that is exactly {DEFERRAL_MARKER} followed by the most relevant hit numbers, for example: {DEFERRAL_MARKER} [1] [3]. Write {DEFERRAL_MARKER} as it is here, whatever language the sentence is in.
+- A summary is short and leaves most of a document out. When the question asks for a detail no summary mentions (a phone number, a clause, an exclusion), that does not mean the document lacks it: defer as above instead of answering "no" or that it cannot be determined.
 - Respond in the family's language: {lang}.
 - Do not include any preamble like "Based on the evidence..." -- answer directly.
 

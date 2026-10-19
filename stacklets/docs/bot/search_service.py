@@ -26,6 +26,7 @@ from memory.lib import (
     search_memory as _search_memory,
 )
 from nl_query import (
+    answer_for_display,
     build_evidence,
     expand_to_full_content,
     extract_citations,
@@ -205,7 +206,7 @@ class SearchService:
         blocks, notifier,
     ) -> str:
         """Render the synthesised answer + cited evidence, with one bounded
-        deep-dive when the first pass deferred ("I'd need to read [N]")."""
+        deep-dive when the first pass deferred (`NEED_TO_READ [N]`)."""
         citations = extract_citations(synthesized)
         selected = select_evidence_for_display(evidence, citations)
         logger.info(
@@ -232,7 +233,7 @@ class SearchService:
                     blocks.append(format_evidence_item(ev, idx))
                 return "\n\n".join(blocks)
 
-        blocks.append(self._t("search_answer", answer=synthesized))
+        blocks.append(self._t("search_answer", answer=answer_for_display(synthesized)))
         blocks.append(self._t("search_evidence_header"))
         for idx, ev in selected:
             blocks.append(format_evidence_item(ev, idx))
