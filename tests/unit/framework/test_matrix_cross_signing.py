@@ -1,4 +1,4 @@
-"""A bot vouches for its own device, so the family's apps treat it as signed.
+"""A bot vouches for its own device, so other users' apps treat it as signed.
 
 Newer Matrix apps share room keys only with devices their owner signed
 (MSC4153). A bot has no person to verify its login, so at start it
@@ -21,9 +21,9 @@ from Crypto.Signature import eddsa
 from werkzeug.wrappers import Response
 
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO / "stacklets" / "core" / "bot-runner"))
+sys.path.insert(0, str(_REPO / "lib"))
 
-from cross_signing import CrossSigning  # noqa: E402
+from stack.matrix.cross_signing import CrossSigning  # noqa: E402
 
 BOT = "@archivist-bot:simpson"
 PASSWORD = "bot-password"

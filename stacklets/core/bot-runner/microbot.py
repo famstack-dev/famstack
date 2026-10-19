@@ -20,11 +20,10 @@ The base class then handles:
   - The sync loop with error recovery
   - Reliable, burst-safe delivery by draining the room timeline
 
-Session persistence: each bot stores its access token and device ID in
-a JSON file at {session_dir}/{name}.session.json. On restart, the bot
-restores the session instead of creating a new login — this prevents
-the "unknown device" problem where other clients can't encrypt for a
-bot that logs in with a new device every time.
+The Matrix plumbing under the first three (the login kept across
+restarts, the device's key store and key upkeep, cross-signing) is not
+bot-specific and lives in `stack.matrix`; this module is what makes a
+bot a bot on top of it.
 
 Delivery model — Synapse is the queue: the room timeline is a durable,
 ordered log; we treat it as the work queue rather than maintaining a
@@ -52,7 +51,6 @@ that reads it back didn't fire reliably, so the local cursor stays.)
 """
 
 import asyncio
-import copy
 import json
 import time
 from pathlib import Path
@@ -63,24 +61,21 @@ import markdown
 from loguru import logger
 from nio import (
     AsyncClient,
-    AsyncClientConfig,
     InviteMemberEvent,
     JoinResponse,
-    LoginResponse,
     MegolmEvent,
     MessageDirection,
-    RoomEncryptedMedia,
     RoomMessage,
     RoomMessagesResponse,
     SyncResponse,
 )
 from nio.api import RelationshipType
-from nio.crypto.attachments import decrypt_attachment
 
 import voice
-from cross_signing import CrossSigning
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
+from stack.matrix.device import Device
+from stack.matrix.media import Media
 from stack.users import TECH_ADMIN_USERNAME
 from stack.name_trigger import addressed_by_name, strip_address
 
@@ -95,23 +90,6 @@ EYES = "\U0001F440"
 # timeline, since the detailed filing reply now lives in a thread.
 CHECK = "\U00002705"
 CROSS = "\U0000274C"
-
-
-# Encrypted attachments whose key is kept for a later download; the oldest go first.
-MEDIA_KEYS_KEPT = 500
-
-class FamilyClient(AsyncClient):
-    """nio's client, sending into an encrypted room without verifying each device first.
-
-    nio refuses to encrypt for a device nobody verified. `_trust_all_devices`
-    marks every device it knows as trusted after each sync, but one that
-    appeared since would fail the send. On the family's own server every
-    device is a family member's, so a send never waits on verification.
-    """
-
-    async def room_send(self, *args, ignore_unverified_devices: bool = True, **kwargs):
-        return await super().room_send(*args, ignore_unverified_devices=ignore_unverified_devices,
-                                       **kwargs)
 
 class MicroBot:
     """Base class for lightweight Matrix bots.
@@ -141,15 +119,14 @@ class MicroBot:
         # rename reaches an already-provisioned account.
         self.display_name: str | None = config.get("display_name")
         self._session_dir = Path(session_dir)
-        self.session_file = self._session_dir / f"{self.name}.session.json"
         self._cursor_file = self._session_dir / f"{self.name}-cursor"
         self._cursors = self._load_cursors()
         # (event_type_or_tuple, wrapped_handler) pairs. The drain dispatches
         # to these; we do not register them with nio, because the live sync
         # is only a doorbell — delivery happens in `_drain`.
         self._handlers: list[tuple] = []
-        # The keys of encrypted attachments seen, by their mxc:// address.
-        self._media_keys: dict[str, tuple[str, str, str]] = {}
+        # Up- and download, and the keys of the encrypted attachments seen.
+        self._media = Media(homeserver, self.name)
         # Rooms we have auto-accepted but whose state hasn't yet arrived
         # via sync. The SyncResponse callback drains this set and fires
         # `on_room_joined` once nio has populated the room.
@@ -197,42 +174,17 @@ class MicroBot:
 
     async def start(self) -> None:
         """Start the bot: login -> initial sync -> register callbacks -> sync loop."""
-        store_path = str(self._session_dir / f"{self.name}_crypto")
-        Path(store_path).mkdir(parents=True, exist_ok=True)
-
-        config = AsyncClientConfig(store_sync_tokens=True, encryption_enabled=True)
-        self._client = FamilyClient(
-            self.homeserver, self.user_id,
-            store_path=store_path, config=config,
-        )
+        # ── Login or restore session, E2E keys ───────────────────────
+        # The device keeps its login and key store across restarts and
+        # does the key upkeep around each sync (`stack.matrix.device`).
+        device = Device(self.homeserver, self.user_id, self.password,
+                        self._session_dir, self.name)
+        self._client = device.client
         self._running = True
 
-        # ── Login or restore session ─────────────────────────────────
-        logged_in = False
-        if self._restore_session():
-            try:
-                resp = await self._client.whoami()
-                if hasattr(resp, "user_id") and resp.user_id == self.user_id:
-                    logger.info("[{}] Session valid for {}", self.name, resp.user_id)
-                    logged_in = True
-                else:
-                    logger.warning("[{}] Session invalid (whoami returned {}), clearing", self.name, type(resp).__name__)
-                    self._clear_session()
-            except Exception as e:
-                logger.warning("[{}] Session check failed: {}, clearing", self.name, e)
-                self._clear_session()
-
-        if not logged_in:
-            logged_in = await self._password_login()
-
-        if not logged_in:
-            logger.error("[{}] Cannot authenticate — giving up", self.name)
+        if not await device.connect(self._ensure_http()):
             await self._aclose()
             return
-
-        # ── E2E encryption ───────────────────────────────────────────
-        await self._keep_keys()
-        await self._vouch_for_device()
 
         # ── Auto-accept invitations ──────────────────────────────────
         # Two-stage hand-off so subclass `on_room_joined` sees a fully
@@ -256,10 +208,7 @@ class MicroBot:
 
         # ── Initial sync ─────────────────────────────────────────────
         logger.info("[{}] Initial sync...", self.name)
-        await self._client.sync(timeout=10000, full_state=True)
-
-        await self._keep_keys()
-        self._trust_all_devices()
+        await device.sync(timeout=10000, full_state=True)
 
         rooms = self._client.rooms
         logger.info("[{}] In {} room(s): {}", self.name, len(rooms), list(rooms.keys()))
@@ -268,7 +217,7 @@ class MicroBot:
 
         # ── Undecryptable message handler ────────────────────────────
         # A bot reads the encrypted rooms it was invited to: the invite is
-        # the family's opt-in. A message nio could not decrypt came without
+        # the opt-in. A message nio could not decrypt came without
         # its room key, which the sender's app usually shares a moment
         # later. Say so once per room (per process) instead of answering
         # nothing.
@@ -320,9 +269,7 @@ class MicroBot:
         logger.info("[{}] Running", self.name)
         while self._running:
             try:
-                resp = await self._client.sync(timeout=30000)
-                await self._keep_keys()
-                self._trust_all_devices()
+                resp = await device.sync(timeout=30000)
                 # Bare `sync()` does NOT dispatch nio response callbacks
                 # (only `sync_forever()` does), so the pending-joins
                 # hand-off must be driven from here explicitly.
@@ -346,33 +293,6 @@ class MicroBot:
             await self._client.close()
         if self._http is not None:
             await self._http.close()
-
-    async def _password_login(self, retries=30, interval=10) -> bool:
-        """Log in with password, retrying until the account exists.
-
-        On a fresh install, the bot runner starts before messages creates
-        the bot accounts. Instead of crashing, we wait.
-        """
-        if not self.password:
-            logger.error("[{}] No password available", self.name)
-            return False
-
-        for attempt in range(1, retries + 1):
-            resp = await self.client.login(self.password)
-            if isinstance(resp, LoginResponse):
-                logger.info("[{}] Logged in (device {})", self.name, resp.device_id)
-                self._save_session()
-                return True
-
-            if attempt == 1:
-                logger.info("[{}] Login not ready, waiting for account creation...", self.name)
-            elif attempt % 6 == 0:
-                logger.info("[{}] Still waiting... (attempt {})", self.name, attempt)
-
-            await asyncio.sleep(interval)
-
-        logger.error("[{}] Login failed after {} attempts", self.name, retries)
-        return False
 
     def register_callbacks(self, client: AsyncClient) -> None:
         """Override in subclass to register event callbacks.
@@ -536,7 +456,7 @@ class MicroBot:
         if room is None:
             return
 
-        event = self._plain_media(event)
+        event = self._media.plain(event)
         if voice.is_voice(event) and not self._wants_voice(room, event):
             return
         decoding = voice.is_voice(event)
@@ -558,30 +478,6 @@ class MicroBot:
                 await handler(room, event)
         if decoding and not handled:
             await self._set_typing(room_id, on=False)
-
-    def _plain_media(self, event):
-        """An encrypted photo, file or voice message as the plain event handlers expect.
-
-        nio parses a decrypted attachment as `RoomEncrypted*`, which no
-        handler listens for, and keeps its address in `content.file`
-        together with the key to open it. The plain event carries the
-        address in `content.url`, as an unencrypted one does; the key is
-        kept for `_download_media`.
-        """
-        if not isinstance(event, RoomEncryptedMedia):
-            return event
-        source = copy.deepcopy(event.source)
-        content = source.get("content", {})
-        file = content.pop("file", None) or {}
-        try:
-            url, key = file["url"], (file["key"]["k"], file["hashes"]["sha256"], file["iv"])
-        except (KeyError, TypeError):
-            return event
-        content["url"] = url
-        self._media_keys[url] = key
-        while len(self._media_keys) > MEDIA_KEYS_KEPT:
-            self._media_keys.pop(next(iter(self._media_keys)))
-        return RoomMessage.parse_event(source)
 
     def _wants_voice(self, room, event) -> bool:
         """Whether this bot decodes a voice message in `room`.
@@ -1125,64 +1021,18 @@ class MicroBot:
             logger.warning("[{}] Could not set display name: {}", self.name, e)
 
     async def _download_media(self, mxc_url: str) -> bytes | None:
-        """Download a file from Matrix via the authenticated media API.
-
-        Uses `/_matrix/client/v1/media/download/...` with the bot's
-        access token — the authenticated endpoint, not nio's default
-        (which targets the now-deprecated unauthenticated media API).
-        Returns the bytes, or None on any non-200 (logged). An attachment
-        from an encrypted room is decrypted with the key its event carried.
-        """
-        rest = mxc_url.replace("mxc://", "")
-        server_name, _, media_id = rest.partition("/")
-        download_url = (
-            f"{self.homeserver}/_matrix/client/v1/media/download/"
-            f"{server_name}/{media_id}"
-        )
-        session = self._ensure_http()
-        async with session.get(
-            download_url,
-            headers={"Authorization": f"Bearer {self.client.access_token}"},
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.read()
-                key = self._media_keys.get(mxc_url)
-                return decrypt_attachment(data, *key) if key else data
-            body = await resp.text()
-            logger.error(
-                "[{}] Media download failed (HTTP {}): {}",
-                self.name, resp.status, body,
-            )
-            return None
+        """A file from the media repository, decrypted if it came from an
+        encrypted room; None on failure (`stack.matrix.media`)."""
+        return await self._media.download(self._ensure_http(), self.client.access_token,
+                                          mxc_url)
 
     async def _upload_media(
         self, data: bytes, filename: str, content_type: str,
     ) -> str | None:
-        """Upload bytes to the media repo, returning the ``mxc://`` URI.
-
-        Goes straight to ``/_matrix/media/v3/upload`` with the bot's token
-        (same authenticated-HTTP approach as `_download_media`, sidestepping
-        nio's data-provider upload API). Returns None on any non-200 (logged).
-        """
-        session = self._ensure_http()
-        url = f"{self.homeserver}/_matrix/media/v3/upload"
-        async with session.post(
-            url,
-            params={"filename": filename},
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.client.access_token}",
-                "Content-Type": content_type or "application/octet-stream",
-            },
-        ) as resp:
-            if resp.status == 200:
-                return (await resp.json()).get("content_uri")
-            body = await resp.text()
-            logger.error(
-                "[{}] Media upload failed (HTTP {}): {}",
-                self.name, resp.status, body,
-            )
-            return None
+        """Upload bytes to the media repo, returning the ``mxc://`` URI; None
+        on failure (`stack.matrix.media`)."""
+        return await self._media.upload(self._ensure_http(), self.client.access_token,
+                                        data, filename, content_type)
 
     async def send_file(
         self,
@@ -1663,95 +1513,6 @@ class MicroBot:
     async def stop(self) -> None:
         """Signal the sync loop to exit."""
         self._running = False
-
-    async def _keep_keys(self) -> None:
-        """The key upkeep nio's `sync_forever` does and a bare `sync()` does not.
-
-        One-time keys are topped up (the family's clients use one each to
-        open a session and send the bot a room's key), other people's
-        devices are queried and their sessions claimed, and queued
-        to-device messages go out. Failures are logged; the next sync tries
-        again.
-        """
-        client = self._client
-        if client is None or not client.olm:
-            return
-        try:
-            if client.should_upload_keys:
-                await client.keys_upload()
-            if client.should_query_keys:
-                await client.keys_query()
-            if client.should_claim_keys:
-                await client.keys_claim(client.get_users_for_key_claiming())
-            await client.send_to_device_messages()
-        except Exception as e:
-            logger.warning("[{}] Key upkeep failed: {}", self.name, e)
-
-    async def _vouch_for_device(self) -> None:
-        """Sign this login with the bot's own cross-signing keys (`cross_signing`),
-        so the family's apps share room keys with it as with a verified device."""
-        if self._client is None or not self._client.olm:
-            return
-        try:
-            outcome = await CrossSigning(
-                self._ensure_http(), self.homeserver, self.client.access_token, self.user_id,
-                self.client.device_id, self.password,
-                self._session_dir / f"{self.name}.cross-signing.json").vouch()
-            logger.info("[{}] Cross-signing: {}", self.name, outcome)
-        except Exception as e:  # an unsigned device still works with most apps today
-            logger.warning("[{}] Cross-signing failed, the device stays unsigned: {}", self.name, e)
-
-    def _trust_all_devices(self) -> None:
-        """Mark all known devices as trusted without interactive verification."""
-        if not self.client.olm:
-            return
-        try:
-            for user_id in self.client.device_store.users:
-                for device in self.client.device_store.active_user_devices(user_id):
-                    if not self.client.olm.is_device_verified(device):
-                        self.client.verify_device(device)
-                        logger.info("[{}] Trusted device {} of {}", self.name, device.device_id, user_id)
-        except Exception as e:
-            logger.debug("[{}] Trust devices: {}", self.name, e)
-
-    def _restore_session(self) -> bool:
-        """Restore a saved Matrix session."""
-        if not self.session_file.exists():
-            return False
-        try:
-            data = json.loads(self.session_file.read_text())
-            self.client.access_token = data["access_token"]
-            self.client.user_id = data["user_id"]
-            self.client.device_id = data["device_id"]
-            logger.info("[{}] Restored session (device {})", self.name, data["device_id"])
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning("[{}] Bad session file: {}", self.name, e)
-            return False
-        # A password login opens the device's key store itself; a restored
-        # session has to. Without it nio has no olm, and the bot neither
-        # decrypts nor encrypts from its first restart on.
-        try:
-            self.client.load_store()
-        except Exception as e:
-            logger.warning("[{}] Key store not loaded, encrypted rooms stay unread: {}", self.name, e)
-        return True
-
-    def _clear_session(self):
-        """Wipe saved session and in-memory credentials."""
-        self.client.access_token = ""
-        self.client.device_id = ""
-        if self.session_file.exists():
-            self.session_file.unlink()
-            logger.info("[{}] Deleted stale session file", self.name)
-
-    def _save_session(self) -> None:
-        """Persist the current session so it survives container restarts."""
-        self.session_file.parent.mkdir(parents=True, exist_ok=True)
-        self.session_file.write_text(json.dumps({
-            "access_token": self.client.access_token,
-            "user_id": self.client.user_id,
-            "device_id": self.client.device_id,
-        }))
 
     # ── Message cursor ───────────────────────────────────────────────
     # Per-room timestamp of the last processed message. Callbacks
