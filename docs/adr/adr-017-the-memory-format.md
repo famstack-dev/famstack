@@ -1,7 +1,7 @@
 # ADR-017: The Memory Format
 
 ## Status
-Proposed. Replaces the file format in `docs/design/brain/vault-format.md`
+Accepted, 2026-10-19. Replaces the file format in `docs/design/brain/vault-format.md`
 (v1) once accepted; that note stays the record of v1.
 
 ## Context
