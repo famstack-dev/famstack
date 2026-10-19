@@ -37,15 +37,16 @@ def run(args, stacklet, config):
         return {"error": "Usage: stack messages react <room> <event-id> <emoji> [--as <user>]"}
     room, event_id, emoji = argv
 
-    username, password, err = resolve_login(sender, config.get("secrets", {}))
-    if err:
+    stack_cfg = config.get("stack", {})
+    account, err = resolve_login(sender, config.get("secrets", {}), stack_cfg)
+    if account is None:
         return {"error": err}
-    server_name = config.get("stack", {}).get("messages", {}).get("server_name", "home")
+    server_name = stack_cfg.get("messages", {}).get("server_name", "home")
     synapse_port = config.get("manifest", {}).get("ports", {}).get("synapse", 42031)
     client = MatrixClient(f"http://localhost:{synapse_port}", server_name,
                           config.get("instance_dir", config.get("repo_root", ".")))
-    if not client.login(username, password):
-        return {"error": f"{username} can't log in — check the password in secrets."}
+    if not client.login(account.login, account.password):
+        return {"error": f"{account.login} can't log in: check the password in secrets."}
 
     ok, detail = client.react(room, event_id, emoji)
     if not ok:

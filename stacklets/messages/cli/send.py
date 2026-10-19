@@ -2,9 +2,10 @@
 stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] — send a message to a room
 
 Sends a plain text message to the specified room. By default it posts as
-stacker-bot (the system account); pass `--as <user>` to post as a family
-member, the text counterpart to `stack messages upload --as`. The room can
-be a bare alias (e.g. 'chat') or a full Matrix room ID.
+stacker-bot (the system account). `--as agent` posts as the agent,
+`--as <id>-bot` as that bot, and `--as <user>` as a family member, the
+text counterpart to `stack messages upload --as`. The room can be a bare
+alias (e.g. 'chat') or a full Matrix room ID.
 
 Pass `--mention <user>` (repeatable) to notify a user via the Matrix
 `m.mentions` payload. A bot in a group room answers when it is mentioned this
@@ -153,8 +154,8 @@ def run(args, stacklet, config):
 
     # Default sender is stacker-bot; `--as <user>` posts as a family member so
     # the archivist captures and attributes it the way a real person would.
-    username, password, err = resolve_login(sender, secrets)
-    if err:
+    account, err = resolve_login(sender, secrets, stack_cfg)
+    if account is None:
         return {"error": err}
 
     manifest = config.get("manifest", {})
@@ -162,8 +163,8 @@ def run(args, stacklet, config):
     base_url = f"http://localhost:{synapse_port}"
     client = MatrixClient(base_url, server_name, instance_dir)
 
-    if not client.login(username, password):
-        return {"error": f"{username} can't log in — check the password in secrets."}
+    if not client.login(account.login, account.password):
+        return {"error": f"{account.login} can't log in: check the password in secrets."}
 
     # Best-effort join so a family member not yet in the room can still post.
     client.join(room)

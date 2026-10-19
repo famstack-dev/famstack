@@ -318,6 +318,9 @@ Useful commands:
 ./stack messages setup
 ```
 
+`messages send` posts as the system account by default; `--as agent`
+posts as the agent, `--as <member>` as that family member.
+
 ### Photos (`photos`)
 
 Immich-based photo library, with native mobile apps and automatic background upload.
