@@ -168,6 +168,8 @@ carries the `capture_id` of its message and is rebuilt from it (ADR-010,
 ADR-015). One written in the memory repo, by hand or with `stack memory
 write`, has no source id, is the household's and is never rebuilt. A file
 without frontmatter is read as such a note and reported by the format check.
+`README.md` and `index.md` are the exception: they are navigation pages for
+Forgejo and the wiki, never cards, and carry no `card_id`.
 
 `kind` is a fixed variant that changes behaviour or rendering, checked like
 an enum. `document_type` stays: it is an open classification the household
