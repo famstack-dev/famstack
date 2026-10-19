@@ -1119,6 +1119,10 @@ allow = ["kettle"]                    # every command of the kettle stacklet
 - Anything allowed runs, including commands that change something. That
   is the admin's decision. Limits ("never above 80 degrees") belong in
   the command as checks, not in the agent's prompt.
+- One exception: a `messages` command that names its sender with `--as`
+  runs only as `--as agent`. Allowing `messages` lets the agent send as
+  itself or as the system account, never as a person; writing in a
+  person's name stays a tool for the terminal.
 
 `stack up agent` writes the allowed commands into the agent's workspace
 as an always-loaded skill, one line per command with its `HELP`, so the

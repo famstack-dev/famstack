@@ -81,6 +81,28 @@ DOMAIN_ALLOW = [
 ]
 
 
+# The account the agent may send as on a `messages` command. Without `--as`
+# a message comes from the system account; with it, only from the agent
+# itself. Writing as a person stays a tool for the terminal.
+AGENT_SENDER = "agent"
+
+
+def sender_refusal(args):
+    """Why the agent may not run this command line, or None.
+
+    Refuses a `messages` command whose `--as` names anyone but the agent,
+    so an admin who lets the agent send messages has not let it write as
+    a person. `--as` on other commands is who did something, not who
+    speaks, and is left alone.
+    """
+    if args[:1] != ["messages"]:
+        return None
+    for i, word in enumerate(args):
+        if word == "--as" and args[i + 1:i + 2] != [AGENT_SENDER]:
+            return f"the agent sends only as itself (--as {AGENT_SENDER}), never as a person"
+    return None
+
+
 def _instance_stack():
     """The instance as the CLI sees it, read fresh for every request.
 
@@ -205,6 +227,9 @@ def handle_plaintext(line):
         return _with_exit(
             f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n", 126,
         )
+    refusal = sender_refusal(args)
+    if refusal:
+        return _with_exit(f"error: {refusal}\n", 126)
     try:
         r = subprocess.run(
             [str(STACK_BIN), *args], capture_output=True, text=True,

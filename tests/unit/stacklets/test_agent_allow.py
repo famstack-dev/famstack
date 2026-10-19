@@ -151,6 +151,37 @@ def test_a_framework_command_is_refused_even_when_listed(instance, api, entry, l
     assert ask(api, line)[1] == 126
 
 
+# ── the agent writes only as itself ───────────────────────────────────────
+
+def test_allowing_the_agent_to_send_does_not_let_it_write_as_a_person(instance, api):
+    """Refused before anything runs: a person's name on a message stays
+    something only someone at the terminal can put there."""
+    instance("messages")
+
+    text, code = ask(api, 'messages send chat "Pick up the kids" --as homer')
+
+    assert code == 126
+    assert "never as a person" in text
+
+
+@pytest.mark.parametrize("line", [
+    ["messages", "upload", "chat", "letter.pdf", "--as", "marge"],
+    ["messages", "send", "chat", "hi", "--as", "agent", "--as", "homer"],
+    ["messages", "send", "chat", "hi", "--as"],
+])
+def test_every_way_of_naming_another_sender_is_refused(api, line):
+    assert api.sender_refusal(line)
+
+
+def test_the_agent_sends_as_itself_or_as_the_system_account(api):
+    assert api.sender_refusal(["messages", "send", "--to", "homer", "hi", "--as", "agent"]) is None
+    assert api.sender_refusal(["messages", "send", "chat", "Backup done"]) is None
+
+
+def test_as_on_other_commands_names_who_acted_and_is_left_alone(api):
+    assert api.sender_refusal(["memory", "list", "tick", "shopping", "milk", "--as", "homer"]) is None
+
+
 # ── the agent is told what it may run ──────────────────────────────────────
 
 def test_the_agent_sees_each_allowed_command_with_its_help(instance, tmp_path):
