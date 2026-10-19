@@ -78,11 +78,11 @@ Cards, in the memory repo:
 | `type` | `kind` (absent means the first) | Class (§7) |
 |---|---|---|
 | `document` | | record |
-| `note`, `bookmark`, `email` | | record |
+| `note` | | record with a `capture_id`; state without one |
+| `bookmark`, `email` | | record |
 | `diary` | `text`, `voice`, `image`, `video`, `file` | record |
 | `list` | `todo`, `checklist`, `calendar`, `archive` | state |
 | `person`, `correspondent`, `topic` | | state, declared once, never rewritten |
-| `page` | | state: anything a person writes by hand |
 
 Pages, in the brain, all with `generated: true`, `cites` (the card ids they
 were compiled from) and, when about one thing, `about` (its card id):
@@ -95,6 +95,12 @@ were compiled from) and, when about one thing, `about` (its card id):
 
 A page never carries a card type, so no reader takes it for a card. Reserved
 for later: `pet`, `vehicle`, `place`.
+
+**A note is a note wherever it was written.** One captured from the chat
+carries the `capture_id` of its message and is rebuilt from it (ADR-010,
+ADR-015). One written in the memory repo, by hand or with `stack memory
+write`, has no source id, is the household's and is never rebuilt. A file
+without frontmatter is read as such a note and reported by the format check.
 
 `kind` is a fixed variant that changes behaviour or rendering, checked like
 an enum. `document_type` stays: it is an open classification the household
@@ -117,7 +123,7 @@ check.
 | Class | Types | Rule |
 |---|---|---|
 | Record | `document`, `note`, `bookmark`, `email`, `diary` | Derived from a source and regenerated from it. A person's change is a commit and is applied again on every regenerate (ADR-015). |
-| State | `list`, `person`, `correspondent`, `page` | The household's. Machines change only the lines they are about, or create a missing file and never rewrite it. |
+| State | `list`, `person`, `correspondent`, `topic`, a `note` without a source id | The household's. Machines change only the lines they are about, or create a missing file and never rewrite it. |
 | Page | everything with `generated: true` | Brain only, rebuilt at will, never a card. A page that shares its path with a card (a correspondent, the root `index.md`) keeps the card's text and fills only the region between `<!-- begin: generated -->` and `<!-- end: generated -->`. |
 
 ### 8. Correspondents and topics are declared like people
