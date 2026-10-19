@@ -68,7 +68,7 @@ from pipeline import (
 )
 from stack import media, resolve_model
 from stack.email_message import defang_links
-from stack.links import go_capture, go_docs, go_topic, public
+from stack.links import go_card, go_docs, go_topic, public
 from stack.ai.client import (
     ModelCapabilities,
 )
@@ -2567,7 +2567,7 @@ class ArchivistBot(MicroBot):
         await self._answer(room_id, reply, reply_to, metadata=metadata)
 
     def _capture_link(self, o: CaptureOutcome) -> str:
-        """A `/go/capture/<id>` link to the page this capture became.
+        """A `/go/<card_id>` link to the page this capture became.
 
         The footer used to carry the source: the URL that was pasted, or
         a placeholder for typed text. That is the message directly above
@@ -2576,19 +2576,18 @@ class ArchivistBot(MicroBot):
         there at all. The page itself carries the source, so nothing is
         lost by pointing at the page instead.
 
-        Keyed by capture id rather than vault path because the path moves
-        on its own: a capture re-scopes when a second person joins the
-        room, a topic gets renamed, a correction rewrites the title. The
-        resolver looks the id up in the tree it serves.
+        Keyed by the card's id rather than its vault path because the path
+        moves on its own: a capture re-scopes when a second person joins
+        the room, a topic gets renamed, a correction rewrites the title.
+        The resolver looks the id up in the tree it serves. A filing whose
+        card has no id of its own yet is linked by its capture id
+        (`/go/capture/<id>`), which keeps resolving.
 
         "" when there is nothing to link -- no home base yet, or a
         capture that never reached the mirror and so has no page. The
         caller falls back to the source footer.
         """
-        capture_id = ((o.envelope or {}).get("data") or {}).get("capture_id")
-        if not capture_id:
-            return ""
-        return public(go_capture(str(capture_id)), self.link_base_url)
+        return public(go_card((o.envelope or {}).get("data") or {}), self.link_base_url)
 
     def _todo_link(self, o: CaptureOutcome) -> str:
         """A `/go/topic/<scope>/todo` link when a topic capture produced todos.

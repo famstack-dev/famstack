@@ -61,6 +61,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_memory  # noqa: E402
 
+from stack.cards import CardIdError, card_id_from, with_card_id  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
 from stack.people import PEOPLE_DIR, PersonError, read_person  # noqa: E402
@@ -102,6 +103,24 @@ def _check_frontmatter(before: str, after: str, page: str) -> None:
         raise ValueError(
             f"{page}: frontmatter does not parse ({e}). Keep the "
             "frontmatter block exactly as you read it.") from e
+
+
+def _keep_card_id(before: str, after: str, page: str) -> str:
+    """The page with its card id: a new page gets one, a page that had one keeps it.
+
+    A card id is made once (ADR-016), so a rewrite that drops it, or
+    changes it, gets the old one back. A page that was there without one
+    is written as it comes: the curator gives it its id, so a write changes
+    only what it says. So is a page the rule cannot place (a `type` that is
+    no card type), which the curator reports.
+    """
+    try:
+        kept = card_id_from(parse_frontmatter(before))
+        if before.strip() and not kept:
+            return after
+        return with_card_id(after, page, kept)
+    except (CardIdError, FrontmatterError):
+        return after
 
 
 def _check_person(after: str, page: str) -> None:
@@ -183,6 +202,7 @@ def run(args, stacklet, config):
         # seam sees every mutation, so the check lives here. ValueError
         # becomes the error message the caller relays to the model.
         _check_frontmatter(seen["before"], seen["after"], repo_path)
+        seen["after"] = _keep_card_id(seen["before"], seen["after"], repo_path)
         _check_person(seen["after"], repo_path)
         if _is_list(repo_path):
             _check_list_write(diff(seen["before"], seen["after"]), as_patch=as_patch)

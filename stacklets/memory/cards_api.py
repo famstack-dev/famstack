@@ -173,7 +173,8 @@ class CardsAPI:
 # ── What a card looks like as JSON ───────────────────────────────────────
 
 def _summary(card: Card) -> dict:
-    return {"id": card.id, "type": card.type, "title": card.title, "day": card.day,
+    return {"id": card.id, "name": card.name, "type": card.type, "title": card.title,
+            "day": card.day,
             "version": card.version, "path": card.path, "persons": list(card.persons),
             "links": len(card.links_out | card.links_in)}
 

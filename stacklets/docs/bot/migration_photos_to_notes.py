@@ -27,6 +27,7 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
+from stack.cards import card_identity
 from stack.forgejo import FileChange, ForgejoClient
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as dump_frontmatter
@@ -69,12 +70,19 @@ def verdict(text: str) -> str | None:
     return UNKNOWN
 
 
-def as_note(text: str) -> str:
-    """The entry with `type: note` and its Kind line saying so."""
+def as_note(text: str, path: str) -> str:
+    """The entry at `path` as a note, and its Kind line saying so.
+
+    A card that changes its type is a new card (ADR-016): it gets a note's
+    card id and lists the bookmark's in `former_card_ids`, in the same
+    commit, so a link to the bookmark still finds it.
+    """
     fm = parse_frontmatter(text)
-    fm["type"] = "note"
+    identity = card_identity(fm, "note", path)
+    rest = {k: v for k, v in fm.items() if k not in ("type", *identity)}
     body = text[text.index("\n---\n", 4) + len("\n---\n"):]
-    return "---\n" + dump_frontmatter(fm) + "\n---\n" + _KIND.sub(r"\1note", body, count=1)
+    return ("---\n" + dump_frontmatter({"type": "note", **identity, **rest}) + "\n---\n"
+            + _KIND.sub(r"\1note", body, count=1))
 
 
 def note_path(path: str) -> str:
@@ -115,7 +123,7 @@ async def migrate_photos_to_notes(
         current, new = await read(rel), note_path(rel)
         if not current or await read(new):
             continue
-        changes.append(FileChange("create", new, as_note(current.get("content") or "")))
+        changes.append(FileChange("create", new, as_note(current.get("content") or "", new)))
         changes.append(FileChange("delete", rel, sha=current.get("sha") or ""))
         moved.append((rel, new))
 

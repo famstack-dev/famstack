@@ -391,7 +391,7 @@ def create(vault: Path, config, ns, actor: str) -> dict:
     if list(vault.glob(f"*/{LISTS_DIR}/{slug}.md")):
         raise Refusal(f"the list {slug!r} already exists")
     path = list_path(slug, bucket=_shared_bucket(config))
-    text = new_list(ns.title.strip(), description=ns.description.strip(),
+    text = new_list(ns.title.strip(), path=path, description=ns.description.strip(),
                     topics=ns.topic, sections=ns.section, kind=ns.kind)
 
     def _create(prior: str) -> str:
@@ -508,8 +508,8 @@ def _calendar(lists: list[tuple[str, FamilyList]], config) -> tuple[str, FamilyL
             return path, lst, ""
     language = _language(config)
     path = list_path(calendar_slug(language), bucket=bucket)
-    start = new_list(calendar_title(language), description=calendar_description(language),
-                     kind=CALENDAR)
+    start = new_list(calendar_title(language), path=path,
+                     description=calendar_description(language), kind=CALENDAR)
     return path, read_list(start, path=path), start
 
 

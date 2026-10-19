@@ -19,6 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
+from git_mirror import Filed  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
 from vault_entry import capture_frontmatter, render_capture  # noqa: E402
 from stack.web import FetchOutcome  # noqa: E402
@@ -96,19 +97,19 @@ class FakeMirror:
 
     async def publish_capture(self, **kwargs):
         self.captures.append(kwargs)
-        # Mirrors the new publish_capture contract: return the vault
-        # path (or None on failure). Stubs out a deterministic path
-        # so the envelope-emission branch in _publish executes.
+        # Mirrors the publish_capture contract: where the capture landed
+        # and its card id (or None on failure). Deterministic, so the
+        # envelope-emission branch in _publish executes.
         kind = kwargs.get("kind") or "bookmark"
         entity = "homer"
-        return f"{entity}/{kind}s/test-capture.md"
+        return Filed(f"{entity}/{kind}s/test-capture.md", f"{kind}-7f3a9c21e4")
 
     async def publish_email_message(self, **kwargs):
         # Email folds into a thread file via its own mirror entrypoint;
         # the path is keyed by the thread, not the individual message.
         self.emails.append(kwargs)
         entity = kwargs.get("entity") or "homer"
-        return f"{entity}/emails/test-thread.md"
+        return Filed(f"{entity}/emails/test-thread.md", "email-0b6e2d91aa")
 
     async def read_capture(self, path):
         # The simplest re-readable shape for reprocess tests.

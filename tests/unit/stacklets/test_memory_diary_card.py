@@ -25,6 +25,7 @@ the compiler really produces for a messy room.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import replace
 from datetime import date
@@ -181,7 +182,68 @@ class TestACardLivesAtOnePath:
 
 
 def _vault(cards) -> dict[str, str]:
-    return {diary_card.card_path(c, bucket=BUCKET): diary_card.render(c) for c in cards}
+    """The diary files as a compile of `cards` writes them into an empty vault."""
+    return diary_card.plan({}, cards, bucket=BUCKET, complete=True).writes
+
+
+class TestADiaryCardKeepsItsId:
+    """A diary card gets `card_id` when the compile first writes it (ADR-016),
+    and every later compile and correction keeps it."""
+
+    def test_a_new_card_gets_one(self):
+        cards = _cards(_compile())
+        for text in _vault(cards).values():
+            assert re.fullmatch(r"diary-[0-9a-f]{10}", parse_frontmatter(text)["card_id"])
+
+    def test_a_card_whose_date_moves_keeps_it(self):
+        cards = _cards(_compile())
+        vault = _vault(cards)
+        before = parse_frontmatter(vault[diary_card.card_path(cards[0], bucket=BUCKET)])["card_id"]
+        moved = replace(cards[0], on=date(2026, 3, 1), confidence="corrected")
+        plan = diary_card.plan(vault, [moved, *cards[1:]], bucket=BUCKET, complete=True)
+        after = plan.writes[diary_card.card_path(moved, bucket=BUCKET)]
+        assert parse_frontmatter(after)["card_id"] == before
+
+    def test_an_id_the_migration_added_leaves_the_card_the_compilers(self):
+        """Migration 0002 adds the line to a card the compiler signed before
+        ids existed. The card must still read as the compiler's, or every
+        later compile would leave it alone as a person's."""
+        card = _cards(_compile())[0]
+        signed = diary_card.render(card)
+        with_id = signed.replace("type: diary\n", "type: diary\ncard_id: diary-0b6e2d91aa\n", 1)
+        assert not diary_card.edited_by_hand(with_id)
+        plan = diary_card.plan({diary_card.card_path(card, bucket=BUCKET): with_id}, [card],
+                               bucket=BUCKET, complete=True)
+        assert plan.writes == {} and plan.kept == []
+
+    def test_the_report_names_each_card_by_the_id_it_was_written_with(self):
+        """The archivist posts the cards a run filed, and their links use the id."""
+        cards = _cards(_compile())
+        plan = diary_card.plan({}, cards, bucket=BUCKET, complete=True)
+        report = _diary_cli()._report(cards, plan, {}, set(), bucket=BUCKET, room_id=ROOM,
+                                      posted=set())
+        written = {parse_frontmatter(text)["card_id"] for text in plan.writes.values()}
+        assert {c["card_id"] for c in report["cards"]} == written
+
+
+def _diary_cli():
+    """The diary command, with the paths the curator and the bot-runner give it.
+
+    It is part of the memory bot's `cli` package; loaded under a name of
+    its own, as the docs stacklet ships a `cli` package too.
+    """
+    import importlib
+    import importlib.util
+    sys.path.append(str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
+    sys.path.append(str(_REPO_ROOT / "stacklets"))
+    package = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"
+    if "memory_bot_cli" not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            "memory_bot_cli", package / "__init__.py", submodule_search_locations=[str(package)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["memory_bot_cli"] = module
+        spec.loader.exec_module(module)
+    return importlib.import_module("memory_bot_cli.diary")
 
 
 class TestAPersonsEditWins:
@@ -212,10 +274,12 @@ class TestAPersonsEditWins:
         """A reply arrives, a message is edited in the room: the card is
         rewritten, because nobody has put anything of their own in it."""
         cards = _cards(_compile())
+        vault = _vault(cards)
         changed = replace(cards[0], replies=[("homer", "Mmm, report card.")])
-        plan = diary_card.plan(_vault(cards), [changed, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = diary_card.plan(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
         path = diary_card.card_path(changed, bucket=BUCKET)
-        assert plan.writes == {path: diary_card.render(changed)}
+        card_id = parse_frontmatter(vault[path])["card_id"]
+        assert plan.writes == {path: diary_card.render(replace(changed, card_id=card_id))}
 
     def test_an_edited_card_is_never_overwritten(self):
         """The family fixed a misheard name. The room changes afterwards

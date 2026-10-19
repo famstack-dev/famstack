@@ -429,6 +429,7 @@ def build_capture_event(
     # future programmatic surfaces) can supply their own opaque key
     # under the same name.
     capture_id: str | None = None,
+    card_id: str = "",
     resolved_tags: list[str] | None = None,
     resolved_persons: list[str] | None = None,
     actor: str | None = None,
@@ -462,6 +463,9 @@ def build_capture_event(
         # via chat) and lets the deriver tie the capture back to its
         # triggering event without walking the mirror.
         data["capture_id"] = capture_id
+    if card_id:
+        # The card's own id in the memory (ADR-016), the one its link uses.
+        data["card_id"] = card_id
 
     summary = (
         f"{title} captured" if title else f"Capture ({kind})"
