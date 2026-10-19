@@ -911,6 +911,24 @@ def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
+def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str) -> None:
+    """The cards as JSON for core's card page, on the stack network (`memory/cards_api.py`).
+
+    The curator holds the vault and the brain, so it serves the vault's cards
+    with the views it compiled about them, and the media archive's files
+    those cards embed.
+    A failure to start is logged, never fatal: the wiki is the curator's job.
+    """
+    from memory.cards_api import PORT, CardsAPI, serve
+    fonts = Path(__file__).resolve().parents[1] / "quartz" / "static" / "fonts"
+    try:
+        serve(CardsAPI(brain=brain_dir, vault=vault_dir, fonts=fonts, media=media_dir,
+                       shared_bucket=shared_bucket))
+        logger.info("[curator] cards API on :{}", PORT)
+    except OSError as e:
+        logger.warning("[curator] cards API not started: {}", e)
+
+
 async def main() -> None:
     rebuild_enabled = os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true"
 
@@ -931,6 +949,8 @@ async def main() -> None:
 
     vault = Vault(vault_dir)
     brain = Brain(brain_dir, vault_dir)
+    _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
+                 shared_bucket)
     debounce = Debounce(QUIET_SECS)
 
     # The working copies' `origin` carries a host-plane URL (hooks and

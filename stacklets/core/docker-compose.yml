@@ -87,6 +87,9 @@ services:
       # links. The stack's containers use the internal one,
       # stack-core-tools:8000, which serves everything.
       - "${PORT_BIND_IP:-127.0.0.1}:42000:8001"
+      # The card browser: this Mac only, in every mode. Nothing on it knows
+      # who is looking yet, so no other device reaches it.
+      - "127.0.0.1:42002:8002"
     volumes:
       # Live like the bot-runner: the Dockerfile COPYs these so the image
       # runs standalone, but a bind mount means an edit + restart takes
@@ -94,6 +97,8 @@ services:
       - ./tools-server/server.py:/app/server.py:ro
       - ./tools-server/access.py:/app/access.py:ro
       - ./tools-server/resolver.py:/app/resolver.py:ro
+      - ./tools-server/cards_page.py:/app/cards_page.py:ro
+      - ./tools-server/cards:/app/cards:ro
       # Shared library: the card-id table and the lookup by card id
       # (`stack.cards`). Mounted only, like the bot-runner's copy.
       - ../../lib/stack:/app/stack:ro

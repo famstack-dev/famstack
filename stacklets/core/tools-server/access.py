@@ -9,7 +9,8 @@ nothing about who is calling. The listener does.
 
 On the public listener only the persistent links (`/<prefix>/...`) exist,
 because family members' browsers open them. Search, logs and status are for
-the stack's containers.
+the stack's containers. A third listener serves the card browser
+(`/cards`), published on this Mac only.
 
 Pure: no web framework, so the rule is tested on its own.
 """
@@ -18,6 +19,10 @@ from __future__ import annotations
 
 INTERNAL_PORT = 8000
 PUBLIC_PORT = 8001
+# The family memory's card browser. Published on 127.0.0.1 only, so only
+# a browser on this Mac reaches it: nothing on it knows who is looking yet.
+CARDS_PORT = 8002
+CARDS_PREFIX = "/cards"
 
 
 def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> bool:
@@ -28,4 +33,6 @@ def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> boo
     """
     if listener_port == INTERNAL_PORT:
         return True
+    if listener_port == CARDS_PORT:
+        return path == CARDS_PREFIX or path.startswith(CARDS_PREFIX + "/")
     return path.startswith(f"/{link_prefix}/")
