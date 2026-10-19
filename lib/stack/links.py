@@ -32,7 +32,7 @@ from __future__ import annotations
 from typing import Mapping
 from urllib.parse import quote
 
-from .cards import card_id_of
+from .cards import card_id_from, card_id_of
 
 
 # ── Logical paths ─────────────────────────────────────────────────────
@@ -51,6 +51,12 @@ from .cards import card_id_of
 #       assigned once and never re-derived. Never by path: a path
 #       encodes where a thing sat on the day the link was written, and
 #       these things move.
+#
+#   any card, by its `card_id`   — `/<card_id>`, no kind segment
+#       The id names its type (`note-7f3a9c21e4`, `list-markt`), so the
+#       path needs no noun. A card that changed its id still answers to
+#       the old one (`former_card_ids`). The two families above stay
+#       readable for the links already posted.
 #
 # A link posted into chat is permanent, so the cost of putting a kind in
 # the wrong family is paid forever. When in doubt, ask what changes when
@@ -117,14 +123,20 @@ def go_card(fields: Mapping[str, object]) -> str:
     """The link of a card, by the card id in its frontmatter, or "".
 
     `fields` is the card's frontmatter, or a search hit carrying the same
-    fields. "" for a page with no card id: a topic, a person, a list, a
-    hand-written page.
+    fields. A card with its own `card_id` is `/<card_id>`, the link to any
+    card (ADR-016). One that has none yet is linked by the id of its kind
+    (`/capture/<id>`, `/diary/<id>`), and those links keep resolving. ""
+    for a page with neither: a topic, a person, a hand-written page.
 
+    >>> go_card({"type": "note", "card_id": "note-7f3a9c21e4", "capture_id": "$e1"})
+    '/note-7f3a9c21e4'
     >>> go_card({"type": "diary", "entry_id": "3f9a0c1b2d"})
     '/diary/3f9a0c1b2d'
     >>> go_card({"type": "topic"})
     ''
     """
+    if card_id := card_id_from(fields):
+        return f"/{quote(card_id, safe='')}"
     card = card_id_of(fields)
     return _record_path(*card) if card else ""
 

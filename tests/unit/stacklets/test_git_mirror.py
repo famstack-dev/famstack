@@ -1000,14 +1000,14 @@ class TestACaptureKeepsItsPath:
         monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
         mirror._setup_done = True
         mirror._creds = SimpleNamespace(token="t")
-        path = await mirror.publish_capture(
+        filed = await mirror.publish_capture(
             entity=entity, kind="bookmark", source_uri="mxc://home.test/x",
             title_hint=None, body_text="",
             classification={"title": title, "summary": "s"},
             captured_at="2026-10-13", model=None,
             existing_path=self.PATH, capture_id="$x",
         )
-        return path, client
+        return filed.path, client
 
     async def test_a_new_title_keeps_the_file(self, mirror, monkeypatch):
         path, client = await self._refile(
@@ -1030,7 +1030,7 @@ class TestACaptureKeepsItsPath:
         monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
         mirror._setup_done = True
         mirror._creds = SimpleNamespace(token="t")
-        path = await mirror.publish_capture(
+        path, _ = await mirror.publish_capture(
             entity="family/painting", kind="bookmark", source_uri="mxc://home.test/y",
             title_hint=None, body_text="", classification={"title": "Tent", "summary": "s"},
             captured_at="2026-10-13", model=None,
@@ -1080,13 +1080,14 @@ class TestACardKeepsItsId:
         capture = dict(entity="marge", kind="note", source_uri=None, title_hint=None,
                        body_text="Brushes and paper for the next trip.",
                        captured_at="2026-10-13", model=None, capture_id="$r-Plk")
-        path = await mirror.publish_capture(classification={"title": "Art supplies"}, **capture)
-        card_id = self._card_id(client, path)
+        path, card_id = await mirror.publish_capture(classification={"title": "Art supplies"},
+                                                     **capture)
         assert re.fullmatch(r"note-[0-9a-f]{10}", card_id)
+        assert self._card_id(client, path) == card_id
 
         again = await mirror.publish_capture(classification={"title": "Art supplies for Lisa"},
                                              existing_path=path, **capture)
-        assert again == path and self._card_id(client, path) == card_id
+        assert again == (path, card_id) and self._card_id(client, path) == card_id
 
     async def test_a_note_refiled_from_a_bookmark_keeps_its_former_id(self, mirror, monkeypatch):
         """A correction rebuilds the card from its source; a link to the id it
@@ -1109,14 +1110,14 @@ class TestACardKeepsItsId:
         message = dict(entity="marge", thread_uri="mid:abc@springfield-elementary.test",
                        from_addr="skinner@springfield-elementary.test", title_hint=None,
                        captured_at="2026-10-13", model=None)
-        path = await mirror.publish_email_message(
+        path, card_id = await mirror.publish_email_message(
             message_id="abc@springfield-elementary.test", body_text="Field trip on Friday.",
             classification={"title": "Field trip"}, **message)
-        card_id = self._card_id(client, path)
         assert re.fullmatch(r"email-[0-9a-f]{10}", card_id)
+        assert self._card_id(client, path) == card_id
 
-        await mirror.publish_email_message(
+        again = await mirror.publish_email_message(
             message_id="def@springfield-elementary.test", body_text="Bring a lunch.",
             classification={"title": "Field trip lunch"}, **message)
-        assert self._card_id(client, path) == card_id
+        assert again == (path, card_id) and self._card_id(client, path) == card_id
         assert "Bring a lunch." in client.files[path]["content"]

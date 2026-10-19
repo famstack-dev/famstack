@@ -2124,6 +2124,9 @@ def search_memory(
             # A diary card's id, the same kind of key for the same
             # reason: a correction can move the card to another day.
             "entry_id": fm.get("entry_id") or "",
+            # The card's own id (ADR-016), which any card carries and its
+            # link (`/go/<card_id>`) uses before the two above.
+            "card_id": card_id_from(fm),
         })
 
     idf = [_idf(doc_count, df) for df in doc_freq]

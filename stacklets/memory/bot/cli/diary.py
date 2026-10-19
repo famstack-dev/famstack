@@ -51,6 +51,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -1411,7 +1412,7 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
 def _card_json(card, *, path: str, room_id: str) -> dict:
     """A card as the archivist posts it."""
     return {
-        "entry_id": card.entry_id, "path": path,
+        "entry_id": card.entry_id, "card_id": card.card_id, "path": path,
         "root": card.event_ids[0], "room_id": room_id,
         "date": card.on.isoformat(), "date_basis": card.confidence,
         "date_label": diary.day_label(card.on), "at": card.at,
@@ -1444,7 +1445,10 @@ def _report(cards, plan, tree, failed, *, bucket: str, room_id: str,
             continue
         before = on_file.get(card.entry_id)
         if path in plan.writes:
-            state, shown = ("changed" if before is not None else "new"), card
+            # The compile's card gets its id in the plan; what was written has it.
+            written = diary_card.parse(plan.writes[path])
+            state = "changed" if before is not None else "new"
+            shown = replace(card, card_id=written.card_id)
         else:
             state, shown = "unchanged", (before or card)
         out.append({**_card_json(shown, path=path, room_id=room_id),

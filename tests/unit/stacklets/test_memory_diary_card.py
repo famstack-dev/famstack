@@ -216,6 +216,35 @@ class TestADiaryCardKeepsItsId:
                                bucket=BUCKET, complete=True)
         assert plan.writes == {} and plan.kept == []
 
+    def test_the_report_names_each_card_by_the_id_it_was_written_with(self):
+        """The archivist posts the cards a run filed, and their links use the id."""
+        cards = _cards(_compile())
+        plan = diary_card.plan({}, cards, bucket=BUCKET, complete=True)
+        report = _diary_cli()._report(cards, plan, {}, set(), bucket=BUCKET, room_id=ROOM,
+                                      posted=set())
+        written = {parse_frontmatter(text)["card_id"] for text in plan.writes.values()}
+        assert {c["card_id"] for c in report["cards"]} == written
+
+
+def _diary_cli():
+    """The diary command, with the paths the curator and the bot-runner give it.
+
+    It is part of the memory bot's `cli` package; loaded under a name of
+    its own, as the docs stacklet ships a `cli` package too.
+    """
+    import importlib
+    import importlib.util
+    sys.path.append(str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
+    sys.path.append(str(_REPO_ROOT / "stacklets"))
+    package = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"
+    if "memory_bot_cli" not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            "memory_bot_cli", package / "__init__.py", submodule_search_locations=[str(package)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["memory_bot_cli"] = module
+        spec.loader.exec_module(module)
+    return importlib.import_module("memory_bot_cli.diary")
+
 
 class TestAPersonsEditWins:
 

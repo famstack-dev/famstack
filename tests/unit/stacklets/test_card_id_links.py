@@ -28,10 +28,13 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
+from matching import build_capture_event  # noqa: E402
 from migration_photos_to_notes import as_note  # noqa: E402
 from resolver import build_redirect, card_link_answer  # noqa: E402
+from search_format import memory_hit_url  # noqa: E402
 from stack.cards import find_by_card_id, find_card, removal_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
+from stack.links import go_card, public  # noqa: E402
 
 
 def _load_card_cli():
@@ -243,6 +246,26 @@ class TestAPhotoRefiledAsANote:
                      message="notes: file the photos filed as bookmarks as notes")
         assert _open(memory, "bookmark-a1b2c3d4e5") == (
             302, f"{WIKI}/{PHOTO_PATH.removesuffix('.md')}")
+
+
+# ── What the bots post ───────────────────────────────────────────────────
+
+class TestTheLinkABotPosts:
+    def test_a_capture_filing_links_its_card_id(self):
+        data = build_capture_event(NOTE_PATH, {"title": "Campsite"}, kind="note", source_uri=None,
+                                   capture_id=CAPTURE_ID, card_id="note-7f3a9c21e4")["data"]
+        assert public(go_card(data), "https://home.example/go") == \
+            "https://home.example/go/note-7f3a9c21e4"
+
+    def test_a_filing_from_before_card_ids_keeps_its_capture_link(self):
+        data = build_capture_event(NOTE_PATH, {"title": "Campsite"}, kind="note", source_uri=None,
+                                   capture_id="$abc")["data"]
+        assert go_card(data) == "/capture/%24abc"
+
+    def test_a_search_hit_links_its_card_id(self):
+        hit = {"rel": DIARY_PATH, "entry_id": "3f9a0c1b2d", "card_id": "diary-0b6e2d91aa"}
+        assert memory_hit_url(hit, link_base_url="https://home.example/go") == \
+            "https://home.example/go/diary-0b6e2d91aa"
 
 
 # ── stack memory card ────────────────────────────────────────────────────

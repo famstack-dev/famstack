@@ -71,10 +71,10 @@ def memory_hit_url(
 ) -> str:
     """The best durable link for one memory hit, or "" for none.
 
-    A note, a bookmark or a diary card is a record, so when the hit
-    carries its card id the link is `/go/capture/<id>` or
-    `/go/diary/<id>` and survives the file being re-scoped, its topic
-    renamed, its title corrected or its day changed.
+    When the hit carries its card id the link is `/go/<card_id>`, and for
+    a note, a bookmark or a diary card without one yet `/go/capture/<id>`
+    or `/go/diary/<id>`. Either survives the file being re-scoped, its
+    topic renamed, its title corrected or its day changed.
 
     Everything else falls back to the Forgejo blob URL. That link
     freezes today's address and today's path, which is exactly what the

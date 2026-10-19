@@ -485,15 +485,18 @@ take the id from `stack.cards.card_id_from`.
 
 **`/go/<card_id>` opens any card**, on the page the link of its kind in
 the table opens: a note on its wiki page, a diary card on its month at the
-card, a person on their page, a list on the list. The links in the table
-keep resolving as before.
+card, a person on their page, a list on the list. Bots post it wherever
+they link a card (a filing reply, a search hit, the reply to an edit;
+`go_card`), and fall back to the link of the kind for a card that has no
+id yet. The links in the table keep resolving as before. A document's
+filing reply still opens Paperless (`/go/docs/<paperless_id>`).
 
 **A card whose id changes keeps the old one.** A card that becomes another
 type is a new card with a new id: it lists the ids it had in
 `former_card_ids`, in the same commit (`stack.cards.card_identity`, which
-every writer uses, so a rebuild keeps both fields). `/go/<former id>`
-opens the card, and `stack memory card <former id>` shows it and says which
-id it was asked for. A photo filed as a bookmark and refiled as a note
+every writer uses, so a rebuild keeps both fields). `/go/<former id>` opens
+the card, and `stack memory card <former id>` shows it and says which id it
+was asked for. A photo filed as a bookmark and refiled as a note
 (migration `docs/0001`) is the case today.
 
 **A card that was removed answers as gone.** When no card carries an id,
@@ -502,10 +505,9 @@ commit that deleted a file with that `card_id`. `/go/<card_id>` then
 answers 410 with who removed it, the day and the commit (not its subject,
 which can carry the title), and `stack memory card` says the same to an
 audience that could have read the card. An id no card ever carried is a
-404. Core's
-tools server reads the memory repo read-only for this, and git in its
-image; cards themselves are still found in the wiki's copy. Opening a link
-writes nothing.
+404. Core's tools server reads the memory repo read-only for this, and git
+in its image; cards themselves are still found in the wiki's copy.
+Opening a link writes nothing.
 
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the lookups: `stack.cards.find_card` by the id
