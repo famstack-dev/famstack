@@ -235,8 +235,14 @@ def moved_links(text: str, path: str, *, exists: Callable[[str], bool],
     id (`...-p72.md`) is rewritten when `documents` (Paperless id to the
     paths of the documents carrying it) holds exactly one file for that
     id. None or two: the link stays as it is and is returned. Every
-    other byte stays as it was.
+    other byte stays as it was. A diary card comes back unchanged (see
+    `LINKED_RECORDS`).
     """
+    try:
+        if parse(text).get("type") == "diary":
+            return text, []
+    except FrontmatterError:
+        return text, []
     left: list[str] = []
 
     def moved(match: re.Match) -> str:
