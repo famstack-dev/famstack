@@ -9,6 +9,8 @@ and asks the LLM to compose the browsable pages a family lands on:
     --members              every person's page
     --topic camping        just one topic's page
     --topics               every topic page, no home/members
+    --correspondent duff   just one correspondent's page
+    --fast                 no model: the cards as they are, the model's last wording
     --dry-run              preview to stdout, no writes
     clean                  delete every generated page (asks first)
     clean --dry-run        list the pages clean would delete
@@ -43,11 +45,18 @@ frontmatter `topics:` or `tags:` mention the slug. The deriver later
 inherits the same cross-reference structure and refreshes it on
 every capture instead of every wiki rebuild.
 
+Every page is a view (ADR-016 §3, ADR-017 §7): its frontmatter says
+what kind (`view`), what it is about (`about`, a card id) and which
+cards it was compiled from (`derived_from`, `compiled_from`), and never
+carries a `type` or a `card_id`. The curator reads `derived_from` to
+compile a view again when one of its cards is pushed.
+
 Updates are splice-based: the generated body lives inside a bracketed
 regenerate region (`<!-- begin: generated --> ... <!-- end: generated -->`);
-anything a human writes outside the brackets -- a welcome line,
-frontmatter, a hand-edited note -- survives the next regen. Same
-contract as the correspondent pages.
+the text around the brackets -- the seeded welcome on the home page,
+a correspondent card's own text -- survives the next regen. A page the
+model wrote keeps the model's answer below the region, so `--fast` can
+render it again with the cards as they are now.
 
 Apply by default; `--dry-run` is the opt-in preview. Mirrors
 `stack memory ontology`. Lives in `memory/bot/cli/` because the LLM
@@ -56,11 +65,14 @@ client needs the bot-runner's Python environment.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import os
 import re
 import sys
 import tomllib
-from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -72,9 +84,18 @@ from memory.lib import (  # noqa: E402
     _parse_frontmatter,
     extract_summary_callout,
 )
-from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
-from stack.vault import correspondents_dir, slug, slugify_person  # noqa: E402
-from stack.people import Person, find_people, resolve  # noqa: E402
+from stack.cards import (  # noqa: E402
+    ABOUT,
+    COMPILED_FROM,
+    DERIVED_FROM,
+    VIEW,
+    card_id_from,
+    card_version,
+    is_view,
+)
+from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter  # noqa: E402
+from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person  # noqa: E402
+from stack.people import PEOPLE_DIR, Person, find_people, resolve  # noqa: E402
 
 from stack.ai.client import LLM, LLMError  # noqa: E402
 
@@ -152,18 +173,6 @@ def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-# YAML-safe scalar for a frontmatter value. Human strings (a display
-# name, a section title like "Notes: Admin") carry colons, leading `&`,
-# `#`, quotes -- all of which a bare YAML scalar mis-parses. Quartz's
-# parser hard-fails the whole page on one of these (observed live: a
-# `title: Notes: Admin` index page took the entire wiki build down).
-# Always-quote and escape; double quotes with backslash-escaped `"` and
-# `\` is the one form that round-trips every printable string.
-def _yaml_str(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
-
-
 # Write-boundary gate. Quartz parses frontmatter with a strict YAML
 # parser and hard-fails the whole site build on one bad page; the
 # failure surfaces three hops downstream, in the running wiki container,
@@ -185,32 +194,157 @@ def _frontmatter_error(page: str) -> str | None:
     return None
 
 
-def _has_generated_marker(content: str) -> bool:
-    value = _parse_frontmatter(content).get("generated")
-    if value is True:
-        return True
-    return isinstance(value, str) and value.strip().lower() == "true"
+# ── Views ────────────────────────────────────────────────────────────────
+#
+# Every page this module writes is a view (ADR-016 §3, ADR-017 §7): it
+# says what kind of view it is, what it is about, and which cards it was
+# compiled from, each at the version it was read at. The curator reads
+# `derived_from` to know which views to compile again when a card is
+# pushed; the card graph reads `compiled_from` to say when a view is
+# behind one of its cards. A view never carries a `type` or a `card_id`,
+# so no reader takes it for a card.
+
+@dataclass
+class ViewFields:
+    """The frontmatter of one view. `sources` are its cards as (card id, version)."""
+
+    view: str
+    title: str = ""
+    about: str = ""
+    sources: list[tuple[str, str]] = field(default_factory=list)
+    # A person's view also carries the names the person goes by, which the
+    # archivist and the diary read to recognise them (`memory.lib`).
+    names: dict[str, object] = field(default_factory=dict)
+
+    def frontmatter(self) -> dict:
+        sources = list(dict.fromkeys(s for s in self.sources if s[0]))
+        return {
+            VIEW: self.view, "title": self.title, ABOUT: self.about,
+            **self.names,
+            DERIVED_FROM: [card_id for card_id, _ in sources],
+            COMPILED_FROM: [f"{card_id}@{version}" for card_id, version in sources],
+        }
 
 
-def _with_generated_marker(content: str) -> str:
-    """Ensure the page frontmatter declares this file as generated."""
-    if not content.startswith("---\n"):
-        return f"---\ngenerated: true\n---\n\n{content.lstrip()}"
-    end = content.find("\n---\n", 4)
-    if end < 0:
-        return content
+def _sources(entries: list[dict]) -> list[tuple[str, str]]:
+    """The cards behind index entries, as a view names them."""
+    return [(e["card_id"], e.get("version") or "") for e in entries if e.get("card_id")]
 
-    frontmatter = content[4:end]
-    lines = frontmatter.splitlines()
-    for i, line in enumerate(lines):
-        key, sep, _value = line.partition(":")
-        if sep and key.strip() == "generated" and not line.startswith((" ", "\t")):
-            lines[i] = "generated: true"
-            break
-    else:
-        lines.append("generated: true")
 
-    return "---\n" + "\n".join(lines) + content[end:]
+def _card_source(rel: str) -> list[tuple[str, str]]:
+    """The card at vault path `rel` as a view names it, or [] when there is none.
+
+    Read from the memory repo's working copy first: a view can share its
+    path with the card it is about (a correspondent), and then the brain
+    holds the view there, not the card.
+    """
+    for root in (os.environ.get("MEMORY_VAULT_DIR"), os.environ.get("BRAIN_REPO_DIR")):
+        if not root:
+            continue
+        try:
+            data = (Path(root) / rel).read_bytes()
+        except OSError:
+            continue
+        fields = _parse_frontmatter(data.decode("utf-8", errors="ignore"))
+        if not is_view(fields) and (card_id := card_id_from(fields)):
+            return [(card_id, card_version(data))]
+    return []
+
+
+def _list_sources(lists: list[tuple[str, "FamilyList"]], keep) -> list[tuple[str, str]]:
+    """The cards of the lists `keep(list)` says a view shows items of."""
+    return [s for path, lst in lists if keep(lst) for s in _card_source(path)]
+
+
+# The model's last answer for a view, kept in the view itself after the
+# regenerated region, so a compile without the model can render the page
+# again with the cards as they are now. Base64, because JSON may hold the
+# `--` that would end an HTML comment.
+_ANSWER_LINE = re.compile(r"^<!-- answer: (?P<data>[A-Za-z0-9+/=]*) -->\n?", re.M)
+
+
+def _with_answer(body: str, answer: str) -> str:
+    """`body` carrying `answer` (what `_kept_answer` made) as its only answer line."""
+    body = _ANSWER_LINE.sub("", body).rstrip()
+    if not answer:
+        return body + "\n"
+    return f"{body}\n\n<!-- answer: {answer} -->\n"
+
+
+def _kept_answer(raw: str, refs: list[tuple[str, str]]) -> str:
+    """The model's `raw` answer and the sources its `[N]` numbers meant, for `_with_answer`."""
+    data = json.dumps({"answer": raw, "sources": refs}, ensure_ascii=False)
+    return base64.b64encode(data.encode("utf-8")).decode("ascii")
+
+
+def _answer_on(text: str) -> tuple[str, list[tuple[str, str]]] | None:
+    """The answer a view keeps and the sources it cited, or None."""
+    found = _ANSWER_LINE.search(text)
+    if not found:
+        return None
+    try:
+        data = json.loads(base64.b64decode(found["data"]).decode("utf-8"))
+        return str(data["answer"]), [tuple(ref) for ref in data["sources"]]
+    except (binascii.Error, ValueError, KeyError, TypeError):
+        return None
+
+
+class _NoAnswer(Exception):
+    """A compile without the model, for a view that has no answer to reuse."""
+
+
+async def _ask(llm: "LLM | None", target_path: str, prompt: str,
+               refs: list[tuple[str, str]]) -> str:
+    """The model's answer for one view, as raw JSON.
+
+    `refs` are the view's sources in the order `prompt` numbers them. With
+    no model (`--fast`), the answer is the one the view keeps, its `[N]`
+    citations moved to where their sources are now and dropped where a
+    source is gone: what the cards say is current at once, the model's
+    wording follows when it is next asked. A view that does not exist yet
+    starts from an empty answer, as does one the model never wrote for; a
+    page compiled before views kept answers raises `_NoAnswer` and stays
+    as it is until the model's turn.
+    """
+    if llm is not None:
+        return await llm.complete("overview", prompt, json_mode=True,
+                                  temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
+    try:
+        text = (_brain_dir() / target_path).read_text(encoding="utf-8")
+    except OSError:
+        return "{}"
+    kept = _answer_on(text)
+    if kept is None and _parse_frontmatter(text).get(VIEW):
+        return "{}"  # a view the model has not written for yet
+    if kept is None:
+        raise _NoAnswer(target_path)
+    raw, before = kept
+    now = {ref: n for n, ref in enumerate(refs, start=1)}
+    remap = {old: now[ref] for old, ref in enumerate(before, start=1) if ref in now}
+    try:
+        return json.dumps(_renumbered(json.loads(raw), remap), ensure_ascii=False)
+    except json.JSONDecodeError:
+        raise _NoAnswer(target_path) from None
+
+
+def _renumbered(value, remap: dict[int, int], key: str = ""):
+    """A model's answer with every citation number moved through `remap`.
+
+    Citations sit in three places: `[N]` inside text, a `cite` list, and
+    the keys of a person's `lately` lines. A number `remap` lacks is dropped.
+    """
+    if isinstance(value, str):
+        return _renumber_citations(value, remap, drop_unknown=True)
+    if isinstance(value, list):
+        if key == "cite":
+            return [remap[n] for n in value if isinstance(n, int) and n in remap]
+        return [_renumbered(v, remap, key) for v in value]
+    if isinstance(value, dict):
+        if key == "lately":
+            return {str(remap[int(k)]): _renumbered(v, remap)
+                    for k, v in value.items() if k.isdigit() and int(k) in remap}
+        return {k: _renumbered(v, remap, k) for k, v in value.items()}
+    return value
 
 
 # Citation extractor — single use here, inlined to keep the command
@@ -236,6 +370,10 @@ def _extract_citations(text: str) -> list[int]:
 
 async def run(llm: LLM, argv: list[str]) -> int:
     dry_run = "--dry-run" in argv or "--dry" in argv
+    # `--fast` compiles without the model: the cards as they are now, the
+    # model's wording kept from its last answer (`_ask`). The curator runs
+    # it at once after a push, and the full compile after the quiet window.
+    model: LLM | None = None if "--fast" in argv else llm
 
     # Generation reads source and writes generated pages into ONE tree:
     # the brain projection working copy. The curator's mirror has already
@@ -334,7 +472,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
         if home_sel:
             rc = await _generate_home(
-                llm, index, roster=roster, people=persons,
+                model, index, roster=roster, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
@@ -350,7 +488,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
                 _err(f"no member bucket for '{slug}' — skipping")
                 continue
             rc = await _generate_member(
-                llm, slug, index, vault, person=persons.get(slug), people=persons,
+                model, slug, index, vault, person=persons.get(slug), people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
@@ -388,7 +526,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
             topic_set = [t for t in topics if t[1] in wanted]
         for bucket_prefix, topic_slug in topic_set:
             rc = await _generate_topic(
-                llm, bucket_prefix, topic_slug, index, people=persons,
+                model, bucket_prefix, topic_slug, index, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
             )
             if rc == 0:
@@ -402,7 +540,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # ── Default loop ──────────────────────────────────────────────────
     # Bare invocation: home, every member, every correspondent, every topic.
     rc = await _generate_home(
-        llm, index, roster=roster, people=persons,
+        model, index, roster=roster, people=persons,
         shared_bucket=shared_bucket, lang=lang, write=not dry_run,
     )
     if rc != 0:
@@ -416,7 +554,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # here -- the overall run still succeeds.
     for member_slug in roster:
         await _generate_member(
-            llm, member_slug, index, vault, person=persons.get(member_slug), people=persons,
+            model, member_slug, index, vault, person=persons.get(member_slug), people=persons,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
 
@@ -429,7 +567,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
     for bucket_prefix, topic_slug in topics:
         await _generate_topic(
-            llm, bucket_prefix, topic_slug, index, people=persons,
+            model, bucket_prefix, topic_slug, index, people=persons,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
         )
     return 0
@@ -437,7 +575,7 @@ async def run(llm: LLM, argv: list[str]) -> int:
 # ── Generation ───────────────────────────────────────────────────────────
 
 async def _generate_home(
-    llm: LLM, index: list[dict], *,
+    llm: LLM | None, index: list[dict], *,
     roster: list[str], people: dict[str, Person],
     shared_bucket: str, lang: str, write: bool, today: date | None = None,
 ) -> int:
@@ -448,6 +586,9 @@ async def _generate_home(
     the declared full names. Quartz turns those
     links into backlinks and graph edges for free, so the home page and
     the member pages become navigable in both directions.
+
+    The view is derived from every card it read: the person cards of the
+    roster and every filed summary.
     """
     # The template carries the layout; the model reads the sources and
     # answers in JSON. Everyone on the roster gets a line, linked to their
@@ -455,14 +596,17 @@ async def _generate_home(
     names = {slug: p.name for slug, p in people.items()}
     today = today or date.today()
     recent = home_page.recent(index, today)
+    refs = [_reference(e) for e in index]
     prompt = home_page.prompt(
         evidence=_format_evidence(index), ids=roster, names=names, lang=lang,
         recent=recent, today=today,
         aliases={slug: list(p.aliases) for slug, p in people.items()})
     try:
-        raw = await llm.complete("overview", prompt, json_mode=True,
-                                 temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
+        raw = await _ask(llm, _HOME_PAGE, prompt, refs)
         answer = home_page.read_answer(raw, ids=roster, recent=recent, today=today)
+    except _NoAnswer:
+        _err(f"kept {_HOME_PAGE} as it is until the model writes it")
+        return 0
     except LLMError as e:
         _err(f"home: no answer from the model ({e}); the page stays as it was")
         return 1
@@ -494,17 +638,33 @@ async def _generate_home(
             shared_bucket=shared_bucket, write=write,
         )
         return 0
+    people_cards = [s for pid in roster
+                    for s in _card_source(f"{shared_bucket}/{PEOPLE_DIR}/{pid}.md")]
     rc = _publish(
-        page, target_path="index.md",
-        # Only used if the seed's root index.md is somehow missing;
-        # otherwise the seed already carries this frontmatter.
-        default_preamble="---\ntitle: Family Memory\n---",
+        page, target_path=_HOME_PAGE,
+        # The seeded `index.md` names the site; a brain without one gets this.
+        view=ViewFields("home", title=_prior_title(_HOME_PAGE) or "Family Memory",
+                        sources=people_cards + _sources(index)),
+        answer=_kept_answer(raw, refs),
     )
     _publish_capture_indexes(
         index, page_dir=shared_bucket, display=home_display,
         shared_bucket=shared_bucket, write=write,
     )
     return rc
+
+
+# The home page is the root `index.md`, the page the wiki opens on.
+_HOME_PAGE = "index.md"
+
+
+def _prior_title(target_path: str) -> str:
+    """The title the page at `target_path` has now, "" without one."""
+    try:
+        text = (_brain_dir() / target_path).read_text(encoding="utf-8")
+    except (OSError, RuntimeError):
+        return ""
+    return str(_parse_frontmatter(text).get("title") or "")
 
 
 # Stamped on every person page the compiler writes, with the layout it
@@ -516,7 +676,7 @@ _PERSON_PAGE_STAMP = "<!-- person page: 4 -->"
 
 
 async def _generate_member(
-    llm: LLM, slug: str, index: list[dict], vault: Path, *,
+    llm: LLM | None, slug: str, index: list[dict], vault: Path, *,
     person: Person | None = None, people: dict[str, Person] | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
@@ -527,26 +687,35 @@ async def _generate_member(
     model is told who filed each source and every name each of them
     goes by, so it credits the right person and never takes an alias
     for someone new.
+
+    The view is about the person's card and derived from it, every record
+    about them and every list with an open item linked to them.
     """
     entries = _member_entries(index, slug)
+    lists = _family_lists(shared_bucket)
+    card = _card_source(f"{shared_bucket}/{PEOPLE_DIR}/{slug}.md")
+    view = ViewFields("person", about=card[0][0] if card else "", sources=(
+        card + _sources(entries)
+        + _list_sources(lists, lambda lst: any(slug in i.people for i in lst.open_items))))
     if not entries and person is not None:
         # A declared person always has a page: the home page and the
         # People menu link to it. Nothing filed yet means nothing for the
         # model to write, so the page says so without asking it.
         return _publish_person(
-            _empty_person_body(person), slug, person, [], write=write)
+            _empty_person_body(person), view, slug, person.name, person, [], write=write)
     if not entries:
         _err(f"no content involving '{slug}' — skipping")
         return 1
 
     display = person.name if person else slug.capitalize()
     facts = _load_facts(vault, slug)
+    target_path = f"{slug}/about.md"
 
     # Anchored regen: renumber the existing page's citations to the
     # current evidence order, and name what's new since that page was
     # generated. Both jobs are mechanical here so the model carries
     # neither (it fails silently at both, see _previous_generated).
-    previous, prev_refs = _previous_generated(vault / slug / "about.md")
+    previous, prev_refs = _previous_generated(vault / target_path)
     if _PERSON_PAGE_STAMP not in previous:
         previous, prev_refs = "", {}
     previous = previous.replace(_PERSON_PAGE_STAMP, "").strip()
@@ -557,6 +726,7 @@ async def _generate_member(
     # index, so the model cannot misdate them or invent one.
     first_name = person.first_name if person else display.split()[0]
     lately = person_page.latest(entries)
+    refs = [_reference(e) for e in entries]
     prompt = person_page.prompt(
         display=display, first_name=first_name,
         evidence=_format_evidence(entries, with_persons=True, people=people or {}),
@@ -564,9 +734,11 @@ async def _generate_member(
         lately=lately, lang=lang, previous=previous, new_evidence=new_evidence,
     )
     try:
-        raw = await llm.complete("overview", prompt, json_mode=True,
-                                 temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
+        raw = await _ask(llm, target_path, prompt, refs)
         parts = person_page.read_answer(raw, lately=lately)
+    except _NoAnswer:
+        _err(f"kept {target_path} as it is until the model writes it")
+        return 0
     except LLMError as e:
         _err(f"{slug}: no answer from the model ({e}); the page stays as it was")
         return 1
@@ -578,29 +750,20 @@ async def _generate_member(
         parts, name=display, first_name=first_name, entries=entries,
         lately=lately, docs=docs,
         links={n: _reference(entries[n - 1])[1] for n in docs}, lang=lang,
-        open_items=open_items.person_items(_family_lists(shared_bucket), slug, lang),
+        open_items=open_items.person_items(lists, slug, lang),
     )
 
     page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug, lang=lang)
 
     if not write:
-        print(f"\n<!-- {slug}/about.md -->\n{page}")
+        print(f"\n<!-- {target_path} -->\n{page}")
         _publish_capture_indexes(
             index, page_dir=slug, display=display,
             shared_bucket=shared_bucket, write=write,
         )
         return 0
-    learned = _member_synonyms(index, slug)
-    if person is None:
-        # No person files: first-creation frontmatter seeds the names
-        # on the page itself (`canonical` the longest synonym seen in
-        # documents) and the splice keeps them from then on.
-        rc = _publish(
-            page, target_path=f"{slug}/about.md",
-            default_preamble=_member_preamble(slug, display, learned),
-        )
-    else:
-        rc = _publish_person(page, slug, person, learned, write=True)
+    rc = _publish_person(page, view, slug, display, person, _member_synonyms(index, slug),
+                         answer=_kept_answer(raw, refs), write=True)
     _publish_capture_indexes(
         index, page_dir=slug, display=display,
         shared_bucket=shared_bucket, write=write,
@@ -609,7 +772,7 @@ async def _generate_member(
 
 
 async def _generate_topic(
-    llm: LLM, bucket_prefix: str, topic_slug: str, index: list[dict], *,
+    llm: LLM | None, bucket_prefix: str, topic_slug: str, index: list[dict], *,
     people: dict[str, Person] | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
@@ -627,6 +790,9 @@ async def _generate_topic(
     is derived from this (matches `<shared_bucket>` → shared; else
     personal) — the prompt branches on scope so the page reads as
     one person's interest or the household's, depending.
+
+    The view is about the topic's card and derived from it, its captures,
+    the captures elsewhere that name it, and the lists that name it.
     """
 
     entries = _topic_entries(index, bucket_prefix, topic_slug)
@@ -642,8 +808,10 @@ async def _generate_topic(
     # state out of the sources, as JSON. The todo items and the lists of
     # what was filed come from disk and the index, as they are.
     page_dir = f"{bucket_prefix}/{topic_slug}"
+    target_path = f"{page_dir}/about.md"
     sources = _topic_sources(entries, cross_refs, topic_slug, people or {})
     lists = _family_lists(bucket_prefix)
+    refs = [_reference(e) for e in entries + cross_refs]
     prompt = topic_page.prompt(
         display=display, scope=scope, lang=lang,
         todos=open_items.topic_texts(lists, topic_slug),
@@ -651,9 +819,11 @@ async def _generate_topic(
             sources, {n: e.get("summary") or "" for n, e in enumerate(entries + cross_refs, 1)}),
     )
     try:
-        raw = await llm.complete("overview", prompt, json_mode=True,
-                                 temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
+        raw = await _ask(llm, target_path, prompt, refs)
         answer = topic_page.read_answer(raw)
+    except _NoAnswer:
+        _err(f"kept {target_path} as it is until the model writes it")
+        return 0
     except LLMError as e:
         _err(f"{page_dir}: no answer from the model ({e}); the page stays as it was")
         return 1
@@ -666,16 +836,18 @@ async def _generate_topic(
     page = _with_references(page, entries + cross_refs, page_dir=page_dir, lang=lang)
 
     if not write:
-        print(f"\n<!-- {page_dir}/about.md -->\n{page}")
+        print(f"\n<!-- {target_path} -->\n{page}")
         _publish_capture_indexes(
             index, page_dir=page_dir, display=display,
             shared_bucket=shared_bucket, write=write,
         )
         return 0
+    card = _card_source(f"{page_dir}/{TOPIC_CARD}")
     rc = _publish(
-        page,
-        target_path=f"{page_dir}/about.md",
-        default_preamble=_topic_preamble(topic_slug, display, scope),
+        page, target_path=target_path, answer=_kept_answer(raw, refs),
+        view=ViewFields("topic", title=display, about=card[0][0] if card else "", sources=(
+            card + _sources(entries + cross_refs)
+            + _list_sources(lists, lambda lst: topic_slug in lst.topics))),
     )
     _publish_capture_indexes(
         index, page_dir=page_dir, display=display,
@@ -723,30 +895,6 @@ def _family_lists(bucket: str) -> list[tuple[str, FamilyList]]:
     return lists
 
 
-def _member_preamble(slug: str, display: str, synonyms: list[str]) -> str:
-    """Frontmatter for a freshly-created member page.
-
-    Picks the longest synonym as the canonical name -- in a household
-    that uses both "Margaret" and "Maggie", the longer one is reliably
-    the formal first name. Empty synonyms (a member named consistently
-    in every document) collapses to a single-field registry entry.
-    """
-    canonical = max(synonyms, key=len) if synonyms else display
-    others = [s for s in synonyms if s != canonical]
-    lines = [
-        "---",
-        f"title: {_yaml_str(canonical)}",
-        f"slug: {slug}",
-        "type: person",
-        f"canonical: {_yaml_str(canonical)}",
-    ]
-    if others:
-        lines.append("synonyms:")
-        lines.extend(f"  - {_yaml_str(s)}" for s in others)
-    lines.append("---")
-    return "\n".join(lines)
-
-
 # ── Vault index (single walk) ──────────────────────────────────────────────
 
 def _index_vault(vault: Path) -> list[dict]:
@@ -757,19 +905,24 @@ def _index_vault(vault: Path) -> list[dict]:
     entry holds `title`, `date`, `summary`, `rel`, `persons` (frontmatter
     person list, slugified to match member buckets), and `person_names`
     (the original casing, kept aligned with `persons` so callers can
-    recover synonym variants for the entity registry). The one list the
+    recover synonym variants for the entity registry), and `card_id` and
+    `version`, which the views compiled from it name. The one list the
     home page and every member page draw from: one walk, many surfaces.
+    Views are never evidence, so the walk skips them.
     """
     out: list[dict] = []
     for md in sorted(vault.rglob("*.md")):
         try:
-            text = md.read_text(encoding="utf-8", errors="ignore")
+            data = md.read_bytes()
         except OSError:
             continue
+        text = data.decode("utf-8", errors="ignore")
         summary = extract_summary_callout(text)
         if not summary:
             continue
         fm = _parse_frontmatter(text, md)
+        if is_view(fm):
+            continue
         try:
             rel = str(md.relative_to(vault))
         except ValueError:
@@ -783,6 +936,9 @@ def _index_vault(vault: Path) -> list[dict]:
         _corr = fm.get("correspondent")
         _fb = fm.get("filed_by")
         out.append({
+            # The card, as the views compiled from it name it (`ViewFields`).
+            "card_id": card_id_from(fm),
+            "version": card_version(data),
             "title": fm.get("title") or md.stem,
             "type": fm.get("type") or "",
             "date": fm.get("date") or "",
@@ -822,27 +978,29 @@ def _norm_str_list(value) -> list[str]:
     return [v.strip() for v in value if isinstance(v, str) and v.strip()]
 
 
-def _publish_person(page: str, slug: str, person: Person, learned: list[str], *,
-                    write: bool) -> int:
-    """Publish a declared person's page under the names their file gives.
+def _publish_person(page: str, view: ViewFields, slug: str, display: str,
+                    person: Person | None, learned: list[str], *,
+                    answer: str = "", write: bool) -> int:
+    """Publish a person's view under the names they go by.
 
-    The file owns the names: the full name is canonical, the family's
-    aliases come first, the variants documents used follow. Refreshed on
-    every rebuild, so an alias added to the file reaches the page the
-    next time.
+    With a person file, the file owns the names: the full name is
+    canonical, the family's aliases come first, the variants documents
+    used follow. Without one, the longest name documents used is
+    canonical: in a household that uses both "Margaret" and "Maggie",
+    the longer one is reliably the formal first name. Refreshed on every
+    compile, so an alias added to the file reaches the page the next time.
     """
-    names = _distinct([*person.aliases, person.first_name, *learned], exclude=person.name)
+    if person is not None:
+        canonical = person.name
+        names = _distinct([*person.aliases, person.first_name, *learned], exclude=canonical)
+    else:
+        canonical = max(learned, key=len) if learned else display
+        names = _distinct(learned, exclude=canonical)
     if not write:
         print(f"\n<!-- {slug}/about.md -->\n{page}")
         return 0
-    return _publish(
-        page, target_path=f"{slug}/about.md",
-        transform=lambda prior: _with_member_names(
-            _splice_generated(prior, page, default_preamble=_member_preamble(
-                slug, person.name, [person.name, *names])),
-            canonical=person.name, synonyms=names,
-        ),
-    )
+    view.title, view.names = canonical, {"canonical": canonical, "synonyms": names}
+    return _publish(page, target_path=f"{slug}/about.md", view=view, answer=answer)
 
 
 def _empty_person_body(person: Person) -> str:
@@ -926,7 +1084,8 @@ def _retire_undeclared(roster: list[str], shared_bucket: str, *,
             text = about.read_text(encoding="utf-8")
         except OSError:
             continue
-        if _parse_frontmatter(text, about).get("type") != "person" or not _is_generated_page(text):
+        fields = _parse_frontmatter(text, about)
+        if "person" not in (fields.get(VIEW), fields.get("type")) or not _is_generated_page(text):
             continue
         rel = f"{slug}/about.md"
         if write:
@@ -947,36 +1106,6 @@ def _distinct(names: list[str], *, exclude: str = "") -> list[str]:
             seen.add(name.lower())
             out.append(name)
     return out
-
-
-def _with_member_names(content: str, *, canonical: str, synonyms: list[str]) -> str:
-    """Set a member page's `title`, `canonical` and `synonyms` frontmatter.
-
-    Every other frontmatter line is kept as it is. A page without
-    frontmatter is returned unchanged; the splice always gives a member
-    page one.
-    """
-    if not content.startswith("---\n"):
-        return content
-    end = content.find("\n---\n", 4)
-    if end < 0:
-        return content
-    kept: list[str] = []
-    skipping_list = False
-    for line in content[4:end].splitlines():
-        if skipping_list and line.startswith((" ", "\t")):
-            continue
-        skipping_list = False
-        key = line.partition(":")[0].strip()
-        if not line.startswith((" ", "\t")) and key in ("title", "canonical", "synonyms"):
-            skipping_list = key == "synonyms"
-            continue
-        kept.append(line)
-    names = [f"title: {_yaml_str(canonical)}", f"canonical: {_yaml_str(canonical)}"]
-    if synonyms:
-        names.append("synonyms:")
-        names.extend(f"  - {_yaml_str(s)}" for s in synonyms)
-    return "---\n" + "\n".join(names + kept) + content[end:]
 
 
 def _member_slugs(vault: Path, index: list[dict], shared_bucket: str) -> list[str]:
@@ -1069,24 +1198,6 @@ def _correspondent_entries(index: list[dict], canonical: str) -> list[dict]:
     return sorted(hits, key=lambda e: e.get("date") or "", reverse=True)
 
 
-def _correspondent_preamble(slug_: str, canonical: str) -> str:
-    """First-creation frontmatter for a correspondent leaf page.
-
-    Leaf entities are a single file, not a folder, so there is no
-    `about.md`/`index.md` split -- the page IS the concept file. Carries
-    `type: correspondent` (the OKF concept kind) and the canonical name
-    the `memory.lib.correspondents()` reader keys on.
-    """
-    return "\n".join([
-        "---",
-        f"title: {_yaml_str(canonical)}",
-        f"slug: {slug_}",
-        "type: correspondent",
-        f"canonical: {_yaml_str(canonical)}",
-        "---",
-    ])
-
-
 def _correspondent_body(entries: list[dict], *, page_dir: str) -> str:
     """A deterministic `## Documents` backlink list (no LLM).
 
@@ -1113,8 +1224,10 @@ async def _generate_correspondent(
 ) -> int:
     """Compose one correspondent's leaf page from its referencing documents.
 
-    Deterministic: no LLM. The page is identity (preamble) plus the
-    backlink list. Lives at `<shared_bucket>/correspondents/<slug>.md`.
+    Deterministic: no LLM. Lives at `<shared_bucket>/correspondents/<slug>.md`,
+    the path of the correspondent's own card: the view keeps the card's
+    text and adds the backlink list (ADR-017 §9). It is about that card
+    and derived from it and the documents that name it.
     """
     entries = _correspondent_entries(index, canonical)
     if not entries:
@@ -1128,9 +1241,11 @@ async def _generate_correspondent(
     if not write:
         print(f"\n<!-- {target_path} -->\n{body}")
         return 0
+    card = _card_source(target_path)
     return _publish(
         body, target_path=target_path,
-        default_preamble=_correspondent_preamble(slug_, canonical),
+        view=ViewFields("correspondent", title=canonical, about=card[0][0] if card else "",
+                        sources=card + _sources(entries)),
     )
 
 
@@ -1218,26 +1333,6 @@ def _topic_cross_refs(
         if topic_slug in topics or topic_slug in tags:
             out.append(entry)
     return out
-
-
-def _topic_preamble(slug: str, display: str, scope: str) -> str:
-    """First-creation frontmatter for a topic `about.md`.
-
-    Mirrors `_member_preamble`'s contract: laid down above the
-    bracketed regenerate region the first time the page is written.
-    Carries the topic's identity (type, slug, display name, scope)
-    so future deriver passes and hand-inspection know what they are
-    looking at without re-parsing the bucket path.
-    """
-
-    return "\n".join([
-        "---",
-        f"title: {_yaml_str(display)}",
-        f"slug: {slug}",
-        "type: topic",
-        f"scope: {_yaml_str(scope)}",
-        "---",
-    ])
 
 
 # ── Facts ────────────────────────────────────────────────────────────────
@@ -1493,10 +1588,10 @@ def _publish_capture_indexes(
         if not write:
             print(f"\n<!-- {target_path} -->\n{content}")
             continue
-        _publish(
-            content, target_path=target_path,
-            default_preamble=f"---\ntitle: {_yaml_str(f'{_KIND_LABEL[kind]}: {display}')}\n---",
-        )
+        folder = target_path.rsplit("/", 1)[0] + "/"
+        _publish(content, target_path=target_path, view=ViewFields(
+            "folder", title=f"{_KIND_LABEL[kind]}: {display}",
+            sources=_sources([e for e in index if (e.get("rel") or "").startswith(folder)])))
 
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
@@ -1535,35 +1630,35 @@ def _previous_generated(page_path: Path) -> tuple[str, dict[tuple[str, str], int
     return body, refs_map
 
 
-def _renumber_citations(text: str, remap: dict[int, int]) -> str:
+def _renumber_citations(text: str, remap: dict[int, int], *,
+                        drop_unknown: bool = False) -> str:
     """Rewrite every ``[N]``/``[N, M]`` citation through ``remap``.
 
     Numbers without a mapping pass through unchanged (evidence that
     vanished from the index; the prompt tells the model to drop those
-    lines). Single-pass over citation groups, so chained renumbering
+    lines), or with ``drop_unknown`` are removed, a citation left empty
+    with them. Single-pass over citation groups, so chained renumbering
     (1→2 while 2→3) cannot double-apply.
     """
     def _sub(m: re.Match) -> str:
-        nums = [int(x) for x in re.split(r",\s*", m.group(1))]
-        return "[" + ", ".join(str(remap.get(n, n)) for n in nums) + "]"
+        nums = [int(x) for x in re.split(r",\s*", m.group(2))]
+        kept = [remap[n] for n in nums if n in remap] if drop_unknown \
+            else [remap.get(n, n) for n in nums]
+        return m.group(1) + "[" + ", ".join(map(str, kept)) + "]" if kept else ""
 
-    return re.sub(r"\[(\d+(?:,\s*\d+)*)\]", _sub, text)
+    return re.sub(r"(\s?)\[(\d+(?:,\s*\d+)*)\]", _sub, text)
 
 
-def _splice_generated(existing: str, generated: str, *,
-                      default_preamble: str = "") -> str:
+def _splice_generated(existing: str, generated: str) -> str:
     """Place `generated` inside the regenerate region of `existing`.
 
     If the page already has the markers, only the content between them is
     replaced -- everything a human wrote outside survives. If it has no
     markers yet but has other content (a freshly seeded `index.md`), the
     region is appended below whatever is already there, so a seeded
-    welcome stays on top of the generated overview. If the file is
-    entirely empty (a member folder that never had a page), the caller's
-    `default_preamble` is laid down above the region -- Quartz only
-    treats a folder index as the folder's landing page when it carries a
-    `title` frontmatter field, so freshly-created pages need at least
-    that much up top.
+    welcome stays on top of the generated overview. An empty file
+    becomes the region alone. The frontmatter is not this function's:
+    `_publish` writes the view's own above whatever this returns.
     """
     # Blank lines around the markers so any markdown parser treats them
     # as discrete block elements rather than glueing the next heading
@@ -1579,8 +1674,6 @@ def _splice_generated(existing: str, generated: str, *,
     base = existing.rstrip()
     if base:
         return f"{base}\n\n{block}\n"
-    if default_preamble:
-        return f"{default_preamble.rstrip()}\n\n{block}\n"
     return f"{block}\n"
 
 
@@ -1597,14 +1690,14 @@ def _splice_generated(existing: str, generated: str, *,
 def _is_generated_page(content: str) -> bool:
     """True if `content` is a page the wiki produced.
 
-    The durable signal is `generated: true` frontmatter. The splice
-    marker remains a legacy backstop so `clean` can remove pages written
-    before the marker existed. Source captures (notes, bookmarks,
-    documents, email threads) carry only their own `<!-- mid:... -->` /
-    section markers, never this one, so the predicate is the safe delete
-    filter for `clean`: it cannot match a capture.
+    The durable signal is the view's frontmatter (`stack.cards.is_view`).
+    The splice marker remains a backstop for pages written before there
+    was one. Source captures (notes, bookmarks, documents, email threads)
+    carry only their own `<!-- mid:... -->` / section markers, never this
+    one, so the predicate is the safe delete filter for `clean`: it
+    cannot match a capture.
     """
-    return _has_generated_marker(content) or _BEGIN in content
+    return is_view(_parse_frontmatter(content)) or _BEGIN in content
 
 
 def _is_affirmative(response: str) -> bool:
@@ -1695,18 +1788,21 @@ def _brain_dir() -> Path:
     return Path(value)
 
 
-def _publish(page: str, *, target_path: str,
-             default_preamble: str = "",
-             transform: "Callable[[str], str] | None" = None) -> int:
-    """Splice the generated page into `target_path` in the brain working copy.
+def _publish(page: str, *, target_path: str, view: ViewFields, answer: str = "") -> int:
+    """Write view `page` to `target_path` in the brain working copy.
 
-    The previous file is read from disk (the mirror put memory's source
-    there; a previous regen put any prior generated body there) so the
-    merge preserves whatever lives outside the brackets. By default that
-    merge is the marker splice; a caller can pass `transform` to fold
-    prior to new some other way. The write is to disk only -- the
-    curator's commit+push carries it to Forgejo and on to Quartz, so
-    memory (source) is never touched.
+    The previous file is read from disk and its body kept around the
+    regenerated region: the seeded welcome above the home page, the text
+    of a correspondent's card above its view. The frontmatter is the
+    view's own (`view`), whatever was there before. `answer` is what
+    `_kept_answer` made of the model's answer; without one, the answer
+    the page keeps goes too. The write is to disk only: the curator's
+    commit and push carry it to Forgejo and on to Quartz, so memory
+    (source) is never touched.
+
+    A file there that is no view is left alone, unless it is the card the
+    view is about: a person's own page written by hand into the memory
+    repo stays theirs.
     """
     try:
         page_path = _brain_dir() / target_path
@@ -1717,14 +1813,13 @@ def _publish(page: str, *, target_path: str,
         prior = page_path.read_text(encoding="utf-8")
     except OSError:
         prior = ""
-    if prior and not _is_generated_page(prior):
-        _err(f"source page {target_path} has no generated marker, skipped")
+    prior_fields = _parse_frontmatter(prior) if prior else {}
+    is_its_card = bool(view.about) and card_id_from(prior_fields) == view.about
+    if prior and not (_is_generated_page(prior) or is_its_card):
+        _err(f"source page {target_path} is no view, skipped")
         return 0
-    if transform is not None:
-        merged = transform(prior)
-    else:
-        merged = _splice_generated(prior, page, default_preamble=default_preamble)
-    merged = _with_generated_marker(merged)
+    body = _with_answer(_splice_generated(_body_of(prior), page), answer)
+    merged = f"---\n{dump(view.frontmatter())}\n---\n\n{body.lstrip()}"
 
     if merged == prior:
         _err(f"unchanged {target_path}, skipped")
@@ -1747,6 +1842,14 @@ def _publish(page: str, *, target_path: str,
 
     _err(f"published {target_path}")
     return 0
+
+
+def _body_of(text: str) -> str:
+    """`text` without its frontmatter block."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 4)
+    return text if end < 0 else text[end + len("\n---\n"):]
 
 
 # ── Arg helpers ──────────────────────────────────────────────────────────

@@ -15,7 +15,9 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /fonts/<file>          the famstack faces the wiki serves
 
 The cards are the files of the vault; a card comes with the views the wiki
-compiled about it into the brain, which are never cards of their own.
+compiled from it into the brain (those whose `about` or `derived_from` names
+it), which are never cards of their own. A view compiled from an older
+version of the card is marked `behind`: the card's own text counts.
 
 `audience` is who will see the answer (person slugs, comma-separated): a
 card in a person's own bucket only when they are the whole audience. No
@@ -194,11 +196,12 @@ def _full(card: Card, graph: Graph) -> dict:
 
 
 def _view(view: View) -> dict:
-    """A view as a page shows it: what it is, its text, and its `/go` link
-    into the wiki where it has one (`/go/person/homer`)."""
+    """A view as a page shows it: what it is, its text, whether it is behind
+    the card, and its `/go` link into the wiki where it has one
+    (`/go/person/homer`)."""
     go = go_page(view.path)
     return {"view": view.view, "title": view.title, "path": view.path, "text": view.text,
-            "go": f"/go{go}" if go else ""}
+            "behind": view.behind, "go": f"/go{go}" if go else ""}
 
 
 def _walk(card: Card, graph: Graph) -> dict:

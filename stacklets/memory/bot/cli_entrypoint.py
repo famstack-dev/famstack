@@ -17,6 +17,11 @@ Commands:
         words. Exit 1 means no keywords, which the host treats as
         "search it literally" rather than as a failure.
 
+    diary pages [--fast] [--month <YYYY-MM>]...
+        Compile the diary pages again from the diary records on file,
+        without reading the room: what the curator runs when a diary
+        card was pushed. `--fast` asks no model.
+
     diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>]
         Compile the memories room into the family diary. Walks the
         room's full history, transcribes every recording, recovers the
@@ -35,13 +40,16 @@ Commands:
         archive, a file per month under `lists/archive/<slug>/`. The
         curator runs it on the nightly sweep. No model involved.
 
-    wiki [--home] [--member <slug>]... [--topic <slug>]... [--dry-run]
+    wiki [--home] [--member <slug>]... [--topic <slug>]... [--correspondent <name>]... [--fast] [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
         `--dry-run` previews to stdout. Bare invocation regenerates
         home + every member + every topic; selection flags repeat and
         combine to cover exactly the pages a filing burst touched (the
-        curator's incremental path). See `cli/wiki.py` for the full
-        prompt-and-splice contract.
+        curator's incremental path). `--fast` asks no model: the pages
+        show the cards as they are, in the model's last wording. See
+        `cli/wiki.py` for the full prompt-and-splice contract.
+
+A command run with `--fast` needs no model, so it runs without one.
 """
 
 from __future__ import annotations
@@ -83,6 +91,8 @@ async def main(argv: list[str]) -> int:
         _usage()
         return 2
 
+    if "--fast" in rest:
+        return await fn(None, rest)
     try:
         llm = LLM.from_env(namespace="memory-wiki")
     except LLMUnavailableError as e:

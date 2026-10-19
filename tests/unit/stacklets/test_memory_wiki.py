@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -28,7 +29,6 @@ from wiki import (  # noqa: E402
     _clean_generated,
     _correspondent_body,
     _correspondent_entries,
-    _correspondent_preamble,
     _correspondent_roster,
     _entry_kind,
     _frontmatter_error,
@@ -36,7 +36,6 @@ from wiki import (  # noqa: E402
     _index_vault,
     _is_affirmative,
     _is_generated_page,
-    _member_preamble,
     _member_slugs,
     _month_label,
     _publish,
@@ -44,22 +43,9 @@ from wiki import (  # noqa: E402
     _topic_cross_refs,
     _topic_entries,
     _topic_locations,
-    _topic_preamble,
     _with_diary_link,
-    _yaml_str,
+    ViewFields,
 )
-
-
-def _frontmatter(preamble: str) -> dict:
-    """Parse a `---`-fenced preamble the way Quartz's YAML parser does.
-
-    The wiki publishes these blocks verbatim; a value YAML mis-reads
-    (a bare colon, a leading `&`) hard-fails the whole site build. These
-    tests assert the block round-trips through a real YAML parser.
-    """
-    body = preamble.strip()
-    assert body.startswith("---") and body.endswith("---")
-    return yaml.safe_load(body.strip("-\n")) or {}
 
 
 def _page_frontmatter(content: str) -> dict:
@@ -332,28 +318,6 @@ class TestTopicCrossRefs:
         assert refs == []
 
 
-# ── _member_preamble ──────────────────────────────────────────────────
-
-
-class TestMemberPreamble:
-    """First-creation frontmatter for a member `about.md`."""
-
-    def test_carries_okf_type_and_canonical(self):
-        pre = _member_preamble("maggie", "Maggie", ["Maggie", "Margaret"])
-        fm = _frontmatter(pre)
-        assert fm["type"] == "person"  # OKF concept kind
-        assert fm["title"] == "Margaret"  # longest synonym is canonical
-        assert fm["canonical"] == "Margaret"
-        assert fm["slug"] == "maggie"
-
-    def test_no_synonyms_collapses_to_display(self):
-        pre = _member_preamble("homer", "Homer", [])
-        fm = _frontmatter(pre)
-        assert fm["type"] == "person"
-        assert fm["title"] == "Homer"
-        assert "synonyms" not in fm
-
-
 # ── Correspondents ────────────────────────────────────────────────────
 
 
@@ -401,25 +365,6 @@ class TestCorrespondentEntries:
         assert [e["title"] for e in entries] == ["New", "Old"]
 
 
-class TestCorrespondentPreamble:
-
-    def test_carries_okf_type_and_canonical(self):
-        pre = _correspondent_preamble("duff-insurance", "Duff Insurance")
-        fm = _frontmatter(pre)
-        assert fm["type"] == "correspondent"  # OKF concept kind
-        assert fm["title"] == "Duff Insurance"
-        assert fm["canonical"] == "Duff Insurance"
-        assert fm["slug"] == "duff-insurance"
-
-    def test_canonical_with_colon_stays_valid_yaml(self):
-        # A correspondent like "Müller: Steuerberatung" carries a colon;
-        # unquoted it would break the whole Quartz build (the prod bug).
-        pre = _correspondent_preamble("mueller", "Müller: Steuerberatung")
-        fm = _frontmatter(pre)
-        assert fm["title"] == "Müller: Steuerberatung"
-        assert fm["canonical"] == "Müller: Steuerberatung"
-
-
 class TestCorrespondentBody:
 
     def test_lists_documents_as_relative_links(self):
@@ -434,64 +379,6 @@ class TestCorrespondentBody:
         # same form resolves no matter how deep the page lives.
         assert "[Auto Policy](/family/documents/2026/03/auto-policy-p247.md)" in body
         assert "2026-03-15" in body
-
-
-# ── _topic_preamble ───────────────────────────────────────────────────
-
-
-class TestTopicPreamble:
-    """First-creation frontmatter for `about.md` when the page does not
-    exist yet. The wiki command's splice writer lays this on top of
-    the regenerate region before the LLM-generated body."""
-
-    def test_shared_topic_carries_scope_and_slug(self):
-        pre = _topic_preamble("camping", "Camping", "shared")
-        fm = _frontmatter(pre)
-        assert fm["title"] == "Camping"
-        assert fm["slug"] == "camping"
-        assert fm["scope"] == "shared"
-        assert fm["type"] == "topic"
-
-    def test_personal_topic_scope_recorded(self):
-        pre = _topic_preamble("gravel", "Gravel", "personal")
-        assert _frontmatter(pre)["scope"] == "personal"
-
-    def test_display_with_special_chars(self):
-        """A topic named `Van Life` keeps the casing + spaces in the
-        display title, even though the slug is hyphenated."""
-        pre = _topic_preamble("van-life", "Van Life", "shared")
-        fm = _frontmatter(pre)
-        assert fm["title"] == "Van Life"
-        assert fm["slug"] == "van-life"
-
-    def test_display_with_colon_stays_valid_yaml(self):
-        # A topic display carrying a colon ("Itchy: The Park") must quote,
-        # or the YAML parser reads a nested mapping and fails the build.
-        pre = _topic_preamble("itchy", "Itchy: The Park", "shared")
-        assert _frontmatter(pre)["title"] == "Itchy: The Park"
-
-
-# ── _yaml_str ──────────────────────────────────────────────────────────
-
-
-class TestYamlStr:
-    """Every human string in frontmatter routes through `_yaml_str`. A
-    bare colon here is what took the live wiki build down."""
-
-    def test_index_title_with_colon_round_trips(self):
-        # The exact prod failure: a folder-index title `Notes: Admin`
-        # emitted unquoted as `title: Notes: Admin` is invalid YAML.
-        title = _yaml_str("Notes: Admin")
-        assert yaml.safe_load(f"title: {title}") == {"title": "Notes: Admin"}
-
-    def test_quotes_and_backslashes_escaped(self):
-        value = 'He said "hi" \\ bye'
-        assert yaml.safe_load(f"x: {_yaml_str(value)}") == {"x": value}
-
-    def test_yaml_special_leads_round_trip(self):
-        # Leading `&`, `*`, `#`, `-` all change meaning in a bare scalar.
-        for value in ("&anchor", "*alias", "# not a comment", "- dash"):
-            assert yaml.safe_load(f"x: {_yaml_str(value)}") == {"x": value}
 
 
 # ── _frontmatter_error (write-boundary gate) ───────────────────────────
@@ -734,23 +621,28 @@ class TestMemberSlugs:
 # ── On-disk projection write (slice 4: materialize into the brain copy) ─────
 
 
-class TestPublishOnDisk:
-    """`_publish` writes generated pages into the brain working copy on
-    disk (the curator commits + pushes). It splices against the file
-    already there and refuses a page whose frontmatter won't parse. Brain
-    is resolved from BRAIN_REPO_DIR."""
+HOMER_VIEW = ViewFields("person", title="Homer", about="person-homer",
+                       sources=[("person-homer", "1a2b3c4d5e"), ("note-7f3a9c21e4", "6f7a8b9c0d")])
 
-    def test_creates_new_page_with_preamble(self, tmp_path, monkeypatch):
+
+class TestPublishOnDisk:
+    """`_publish` writes views into the brain working copy on disk (the
+    curator commits + pushes). It splices against the file already there
+    and writes the view's own frontmatter above it. Brain is resolved
+    from BRAIN_REPO_DIR."""
+
+    def test_a_new_page_carries_the_fields_of_a_view(self, tmp_path, monkeypatch):
+        """A view says what it is and which cards it was compiled from, and
+        carries nothing a reader would take for a card (ADR-017 §7)."""
         monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
-        rc = _publish(
-            "# Homer\n\nA profile.",
-            target_path="homer/about.md",
-            default_preamble="---\ntitle: Homer\ntype: person\n---",
-        )
+        rc = _publish("# Homer\n\nA profile.", target_path="homer/about.md", view=HOMER_VIEW)
         assert rc == 0
         written = (tmp_path / "homer" / "about.md").read_text()
-        assert written.startswith("---\ntitle: Homer")
-        assert _page_frontmatter(written)["generated"] is True
+        assert _page_frontmatter(written) == {
+            "view": "person", "title": "Homer", "about": "person-homer",
+            "derived_from": ["person-homer", "note-7f3a9c21e4"],
+            "compiled_from": ["person-homer@1a2b3c4d5e", "note-7f3a9c21e4@6f7a8b9c0d"],
+        }
         assert "<!-- begin: generated -->" in written
         assert "A profile." in written
 
@@ -760,11 +652,7 @@ class TestPublishOnDisk:
         monkeypatch.delenv("BRAIN_REPO_DIR", raising=False)
         monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory))
 
-        rc = _publish(
-            "body",
-            target_path="homer/about.md",
-            default_preamble="---\ntitle: Homer\n---",
-        )
+        rc = _publish("body", target_path="homer/about.md", view=HOMER_VIEW)
 
         assert rc == 1
         assert list(memory.rglob("*.md")) == []
@@ -778,12 +666,12 @@ class TestPublishOnDisk:
             "<!-- begin: generated -->\n\nold body\n\n<!-- end: generated -->\n",
             encoding="utf-8",
         )
-        _publish("new body", target_path="homer/about.md")
+        _publish("new body", target_path="homer/about.md", view=HOMER_VIEW)
         written = page.read_text()
         assert "Hand-written welcome." in written   # outside-markers survives
         assert "new body" in written
         assert "old body" not in written
-        assert _page_frontmatter(written)["generated"] is True
+        assert _page_frontmatter(written)["view"] == "person"
 
     def test_hand_written_about_page_wins_over_generation(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
@@ -795,7 +683,7 @@ class TestPublishOnDisk:
             encoding="utf-8",
         )
 
-        rc = _publish("generated body", target_path="homer/about.md")
+        rc = _publish("generated body", target_path="homer/about.md", view=HOMER_VIEW)
 
         assert rc == 0
         assert page.read_text(encoding="utf-8") == (
@@ -803,16 +691,20 @@ class TestPublishOnDisk:
             "# Homer\n\nHand-written source page.\n"
         )
 
-    def test_invalid_frontmatter_refused_and_not_written(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("title", [
+        "Notes: Admin", "Itchy: The Park", "&anchor", "*alias", "# not a comment", "- dash",
+        'He said "hi" \\ bye', "yes",
+    ])
+    def test_every_title_is_written_so_quartz_reads_it_back(self, tmp_path, monkeypatch, title):
+        # Unquoted, `title: Notes: Admin` is the exact page that took the
+        # whole Quartz build down; leading `&`, `*`, `#`, `-` change meaning too.
         monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
-        rc = _publish(
-            "body",
-            target_path="x/about.md",
-            # Unquoted colon — the exact Quartz-build-killer the gate blocks.
-            default_preamble="---\ntitle: Notes: Admin\n---",
-        )
-        assert rc == 1
-        assert not (tmp_path / "x" / "about.md").exists()
+        rc = _publish("body", target_path="family/notes/index.md",
+                      view=ViewFields("folder", title=title))
+        assert rc == 0
+        written = (tmp_path / "family" / "notes" / "index.md").read_text()
+        assert _page_frontmatter(written)["title"] == title
+        assert _frontmatter_error(written) is None
 
     def test_memory_is_never_written(self, tmp_path, monkeypatch):
         # Two trees: a brain (write target) and a memory (must stay clean).
@@ -822,8 +714,7 @@ class TestPublishOnDisk:
         memory.mkdir()
         monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
         monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory))
-        _publish("body", target_path="homer/about.md",
-                 default_preamble="---\ntitle: Homer\n---")
+        _publish("body", target_path="homer/about.md", view=HOMER_VIEW)
         assert (brain / "homer" / "about.md").exists()
         assert list(memory.rglob("*.md")) == []   # memory untouched
 

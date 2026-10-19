@@ -6,7 +6,7 @@ its file's slug, a list's archive the list's slug and month. A file with
 no frontmatter or no `type` was written by hand and becomes a note: it
 gets `type: note`, a `title` from its first heading or else its file
 name, and an id. `README.md`, `index.md` and pages the wiki compiled
-(`generated: true`) are no cards and are left alone. Of two files with
+(views, `stack.cards.is_view`) are no cards and are left alone. Of two files with
 one id, the one first committed later gets a new id. Only those lines
 are added or rewritten; every other byte stays as it was. A file the
 rule cannot place (frontmatter that does not parse, a `type` that is no

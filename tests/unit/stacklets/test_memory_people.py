@@ -258,18 +258,21 @@ class TestUndeclaredPersonPages:
 
 
 class TestPersonPageNames:
-    def test_the_declared_names_replace_what_the_page_had(self):
-        page = ("---\ntitle: Margaret\nslug: maggie\ntype: person\ncanonical: Margaret\n"
-                "synonyms:\n  - Maggie\nbirthday: \"2025-01-12\"\n---\n\nbody\n")
-        updated = wiki._with_member_names(
-            page, canonical="Maggie Simpson", synonyms=["Margaret", "Maggie"])
-        frontmatter = yaml.safe_load(updated.split("---\n")[1])
-        assert frontmatter == {
-            "title": "Maggie Simpson", "canonical": "Maggie Simpson",
-            "synonyms": ["Margaret", "Maggie"],
-            "slug": "maggie", "type": "person", "birthday": "2025-01-12",
-        }
-        assert updated.endswith("---\n\nbody\n")
+    def test_the_declared_names_replace_what_the_page_had(self, tmp_path, monkeypatch):
+        """The person file owns the names; the documents' variants follow its aliases."""
+        monkeypatch.setenv("BRAIN_REPO_DIR", str(tmp_path))
+        page = tmp_path / "maggie" / "about.md"
+        page.parent.mkdir()
+        page.write_text("---\ntitle: Margaret\nslug: maggie\ntype: person\ncanonical: Margaret\n"
+                        "synonyms:\n  - Maggie\ngenerated: true\n---\n\nbody\n")
+        maggie = read_person("maggie", MAGGIE)
+
+        wiki._publish_person("body", wiki.ViewFields("person"), "maggie", maggie.name, maggie,
+                             ["Maggie", "Margaret Bouvier"], write=True)
+
+        frontmatter = yaml.safe_load(page.read_text().split("---\n")[1])
+        assert frontmatter["title"] == frontmatter["canonical"] == "Maggie Simpson"
+        assert frontmatter["synonyms"] == ["Margaret", "Maggie", "Margaret Bouvier"]
 
     def test_the_home_page_lists_everyone_declared_account_holders_first(
         self, instance, monkeypatch,

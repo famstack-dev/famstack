@@ -57,7 +57,7 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
-from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, new_card_id, with_card_id
+from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
@@ -1410,7 +1410,7 @@ def seed_brain(
 
 
 def _declares_generated(content: str) -> bool:
-    """True when a page's frontmatter declares the whole file generated.
+    """True when a page's frontmatter declares the whole file a view.
 
     The splice marker only brackets a *region*, and a hand-written page may
     reserve one for the wiki to fill in later — the seeded root `index.md`
@@ -1418,14 +1418,11 @@ def _declares_generated(content: str) -> bool:
     deleted that welcome page on every start, which left a fresh install
     serving 404 at the wiki root until the first nightly sweep.
 
-    `generated: true` is the whole-page declaration, and the generator
-    stamps it on every page it publishes (`_with_generated_marker`), so
-    every real projection artifact still matches.
+    The view's frontmatter is the whole-page declaration
+    (`stack.cards.is_view`, which still knows the older `generated: true`),
+    and the compiler writes it on every page it publishes.
     """
-    value = _parse_frontmatter(content).get("generated")
-    if value is True:
-        return True
-    return isinstance(value, str) and value.strip().lower() == "true"
+    return is_view(_parse_frontmatter(content))
 
 
 def purge_generated_memory_pages(
@@ -1438,8 +1435,9 @@ def purge_generated_memory_pages(
     B1 moves generation to `family/brain`, but upgraded instances can
     already have generated wiki pages in the source repo from pre-B1
     runs. The migration keys off the page's own frontmatter rather than
-    stale path conventions: any markdown file declaring `generated: true`
-    is a projection artifact and is removed from memory. See
+    stale path conventions: any markdown file declaring itself a view
+    (or `generated: true`, as views did before) is a projection artifact
+    and is removed from memory. See
     `_declares_generated` for why the splice marker alone is not enough.
     """
     deleted: list[str] = []

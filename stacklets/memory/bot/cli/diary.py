@@ -23,6 +23,9 @@ expensive half is cached rather than repeated: transcripts live in
                                             vocabulary change)
     stack memory diary --limit 20           only the newest 20 messages
                                             (bounded preview)
+    diary pages [--fast] [--month 2026-10]  the pages again from the records
+                                            on file, no room read (the
+                                            curator, after a push)
 
 WHY THE BURST WINDOW IS A KNOB
     Messages that synced late carry arrival timestamps, not recording
@@ -81,6 +84,7 @@ from stack.ai.language import LANGUAGES, language_code  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
+from stack.cards import card_version  # noqa: E402
 from stack import media  # noqa: E402
 from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
 
@@ -315,13 +319,14 @@ def _household_people() -> list[str]:
     the declared names alone.
     """
     brain = Path(os.environ.get("BRAIN_REPO_DIR", ""))
-    pages = [_frontmatter(about) for about in sorted(brain.glob("*/about.md"))] if brain.is_dir() else []
+    abouts = sorted(brain.glob("*/about.md")) if brain.is_dir() else []
     declared = _declared()
     if declared is None:
-        return diary.household(os.environ.get("FAMILY_NAMES", ""), pages)
+        return diary.household(os.environ.get("FAMILY_NAMES", ""), [_frontmatter(a) for a in abouts])
+    # A person's page is the folder named by their id (`<id>/about.md`).
     ids = {p.id for p in declared}
     names = ",".join(n for p in declared for n in p.all_names())
-    return diary.household(names, [p for p in pages if p.get("slug") in ids])
+    return diary.household(names, [_frontmatter(a) for a in abouts if a.parent.name in ids])
 
 
 def _declared_persons(declared: list[DeclaredPerson], learned: list[Person]) -> list[Person]:
@@ -1154,6 +1159,8 @@ def _positional(argv: list[str], fallback: str) -> str:
 async def run(llm, argv: list[str]) -> int:
     if argv and argv[0] == "correct":
         return await correct(llm, argv[1:])
+    if argv and argv[0] == "pages":
+        return await pages(llm, argv[1:])
     room_arg = _positional(argv, "memories")
     dry_run = "--dry-run" in argv
     # A machine-readable report of the cards on stdout, for the archivist,
@@ -1374,15 +1381,24 @@ def _mirror() -> None:
 
 
 async def _project(records, llm, summaries_cache, *, room_id: str,
-                   bucket: str, rebuild: bool, dry_run: bool) -> int:
+                   bucket: str, rebuild: bool, dry_run: bool,
+                   only: "list[str] | None" = None) -> int:
     """Build and publish the diary pages from the records in the vault.
 
     `records` maps each record's path to its content, as the vault holds
     it after this run's writes. The pages are a view of these and of
     nothing else, so every correction and hand edit shows.
+
+    Without `llm`, a month whose entries changed keeps the paragraph last
+    written for it. `only` (months, `2026-10`) publishes those months'
+    pages, their years' and the front page, and asks the model about no
+    other month; None publishes every page.
     """
     on_file = [diary_card.parse(t) for t in records.values()]
-    entries = sorted((diary_card.to_entry(c) for c in on_file),
+    versions = {c.card_id: card_version(t.encode("utf-8"))
+                for c, t in zip(on_file, records.values())}
+    entries = sorted((replace(e, version=versions.get(e.card_id, ""))
+                      for e in map(diary_card.to_entry, on_file)),
                      key=lambda e: (e.on, e.at))
 
     months: dict[str, list] = {}
@@ -1392,10 +1408,13 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
 
     summaries = {}
     for key, in_month in sorted(months.items()):
+        if only is not None and key not in only:
+            summaries[key] = summaries_cache.latest(key)
+            continue
         digest = diary.month_digest(in_month)
         cached = "" if rebuild else summaries_cache.get(key, digest)
-        if cached:
-            summaries[key] = cached
+        if cached or llm is None:
+            summaries[key] = cached or summaries_cache.latest(key)
             continue
         _err(f"  summarising {in_month[0].on.strftime('%B %Y')}")
         summaries[key] = await _summarise(in_month, llm)
@@ -1406,7 +1425,36 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
 
     pages = diary.pages_for(entries, bucket=bucket, room_id=room_id, summaries=summaries,
                             media=diary_card.media_of(on_file))
+    if only is not None:
+        wanted = {f"{diary.DIARY_DIR}/about.md"}
+        for month in only:
+            year, _, number = month.partition("-")
+            wanted |= {f"{diary.DIARY_DIR}/{year}/about.md", f"{diary.DIARY_DIR}/{year}/{number}.md"}
+        pages = [page for page in pages if page.path in wanted]
     return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
+
+
+async def pages(llm, argv: list[str]) -> int:
+    """`diary pages [--fast] [--month <YYYY-MM>]...`: the diary pages, from the records on file.
+
+    Reads the diary records from the memory repo's working copy, not the
+    room: what the curator runs when a diary card was pushed, a hand edit
+    or a correction. `--fast` asks no model; a month whose entries changed
+    keeps its paragraph until the next compile with one.
+    """
+    bucket = os.environ.get("SHARED_BUCKET", "family")
+    diary.configure_language(os.environ.get("LANGUAGE", ""))
+    vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    root = vault / bucket / diary.DIARY_DIR / diary_card.ENTRIES_DIR
+    records = {path.relative_to(vault).as_posix(): path.read_text(encoding="utf-8")
+               for path in sorted(root.rglob("*.md"))}
+    room_id = next((r for r in (_room_of(diary_card.parse(t)) for t in records.values()) if r), "")
+    _, summaries_cache = diary_store.open_stores(
+        summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
+    months = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--month"]
+    return await _project(records, None if "--fast" in argv else llm, summaries_cache,
+                          room_id=room_id, bucket=bucket, rebuild=False,
+                          dry_run="--dry-run" in argv, only=months or None)
 
 
 def _card_json(card, *, path: str, room_id: str) -> dict:
@@ -1627,18 +1675,20 @@ def _publish_pages(pages, *, bucket: str, dry_run: bool) -> int:
 
     One publisher for both exits: a full compile and the empty diary
     reach the wiki the same way, so the page a family lands on has the
-    same frontmatter and the same splice contract either way.
+    same frontmatter and the same splice contract either way. Each page
+    is a view of the entries it shows.
     """
     if dry_run:
-        for path, body, _title in pages:
-            print(f"\n{'=' * 70}\n{bucket}/{path}\n{'=' * 70}\n{body}")
+        for page in pages:
+            print(f"\n{'=' * 70}\n{bucket}/{page.path}\n{'=' * 70}\n{page.body}")
         return 0
 
     rc = 0
-    for path, body, title in pages:
+    for page in pages:
         rc |= wiki._publish(
-            body, target_path=f"{bucket}/{path}",
-            default_preamble=f"---\ntitle: {wiki._yaml_str(title)}\n---",
+            page.body, target_path=f"{bucket}/{page.path}",
+            view=wiki.ViewFields(page.view, title=page.title,
+                                 sources=[(e.card_id, e.version) for e in page.entries]),
         )
     return rc
 

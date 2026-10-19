@@ -9,7 +9,9 @@ one card, shared. A card cut short that way shows more when opened alone.
 
 Shows the card's line, where it lives, its last changes (who, when, what),
 the cards it links to and the cards that link to it, the views the wiki
-compiled about it (a person's page), then its text. Ids come from `stack
+compiled from it (a person's page, a topic's, a diary month; one compiled
+from an older version of the card says it is behind, and the card's own
+text counts), then its text. Ids come from `stack
 memory find`, `stack memory links` or another card, or are a card's own
 `card_id` (ADR-016). An id a card had before (`former_card_ids`) opens the
 card that has it now and says so; an id of a card that was removed says
@@ -120,7 +122,9 @@ def _shown(card, graph, budget: int, *, alone: bool) -> str:
         lines.append(f"changed {change.day} by {change.who} @{change.sha}: {change.subject}")
     lines += _links("links to", card.links_out, graph)
     lines += _links("linked from", card.links_in, graph)
-    lines += [f"view: {v.path} ({v.view}, compiled by the wiki)" for v in card.views]
+    lines += [f"view: {v.path} ({v.view}, compiled by the wiki"
+              + ("; behind this card, whose own text counts)" if v.behind else ")")
+              for v in card.views]
     text = _FRONTMATTER.sub("", card.text).strip()
     if len(text) > budget:
         rest = (f"`stack memory card {card.id}` alone shows more" if not alone

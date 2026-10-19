@@ -31,6 +31,7 @@ import html
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone, tzinfo
+from typing import NamedTuple
 
 # A sync burst is a phone coming back online and flushing its queue, so
 # its members land seconds apart whatever their recording dates. 120s is
@@ -300,6 +301,10 @@ class Entry:
     # The card's entry id, when the entry comes from a card. Anchors the
     # entry on the page, so `/go/diary/<entry_id>` lands on it.
     entry_id: str = ""
+    # The card's own id and the version of it the entry was read from, so
+    # a page names the cards it shows (`Page.entries`).
+    card_id: str = ""
+    version: str = ""
 
 
 # ── What this household says ──────────────────────────────────────────
@@ -1247,11 +1252,25 @@ def _and_list(names: list[str]) -> str:
     return ", ".join(names[:-1]) + f" {_L['and']} {names[-1]}"
 
 
+class Page(NamedTuple):
+    """One diary page: where it goes, what it says, and the entries it shows.
+
+    `view` is the kind of view it is (ADR-017 §7): `diary-front`,
+    `diary-year` or `diary-month`.
+    """
+
+    path: str
+    body: str
+    title: str
+    view: str
+    entries: list
+
+
 def pages_for(entries, *, bucket: str, room_id: str = "",
               summaries: "dict[str, str] | None" = None,
               media: "dict[str, str] | None" = None,
-              ) -> list[tuple[str, str, str]]:
-    """Every page the diary publishes: (path, body, title).
+              ) -> list[Page]:
+    """Every page the diary publishes, as `Page`s.
 
     Three levels, because a diary outlives its first year: the root
     names the years, a year names its months, and a month holds the
@@ -1273,17 +1292,19 @@ def pages_for(entries, *, bucket: str, room_id: str = "",
     call; a download and a file write), handed in keyed by month and by
     event id so rendering stays a pure function of its inputs.
     """
-    out = [(f"{DIARY_DIR}/about.md", render_index(entries, bucket=bucket), _L["diary_title"])]
+    out = [Page(f"{DIARY_DIR}/about.md", render_index(entries, bucket=bucket),
+                _L["diary_title"], "diary-front", list(entries))]
     for year, in_year in sorted(_by_year(entries).items()):
-        out.append((
+        out.append(Page(
             f"{DIARY_DIR}/{year}/about.md", render_year(in_year, bucket=bucket), year,
+            "diary-year", in_year,
         ))
         for month, in_month in sorted(_by_month(in_year).items()):
-            out.append((
+            out.append(Page(
                 f"{DIARY_DIR}/{year}/{month}.md",
                 render_month(in_month, room_id=room_id,
                              summary=(summaries or {}).get(f"{year}-{month}", ""),
                              media=media),
-                _month_year(in_month[0].on),
+                _month_year(in_month[0].on), "diary-month", in_month,
             ))
     return out

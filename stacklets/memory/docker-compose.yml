@@ -70,8 +70,8 @@ services:
     restart: unless-stopped
 
   # Curator — the vault keeper. Owns the `git pull` from Forgejo,
-  # runs debounced incremental rebuilds (member pages + home) after
-  # filings settle, plus a nightly full sweep as the self-healing
+  # compiles the views a push touched (at once without the model, with it once
+  # filings settle), plus a nightly full sweep as the self-healing
   # catch-all. Own slim image (python + git + the LLM client deps) —
   # see curator.Dockerfile; code arrives by bind mount like the
   # bot-runner's, the env is memory's own. See `bot/curator.py`.

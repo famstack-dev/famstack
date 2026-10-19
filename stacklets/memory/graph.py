@@ -7,7 +7,10 @@ a wiki, instead of reading pages it found by text alone.
 
 **A card is a file in the vault** (ADR-016 §3). What the wiki compiles
 into the brain (a person's or a topic's page, a diary month, an index) is a
-view: never a card, and read only with the card it is about.
+view: never a card, and read only with the cards it names, the one it is
+about (`about`) and those it was compiled from (`derived_from`). A view
+compiled from an older version of a card than the vault holds is behind
+that card, and the card's own text counts.
 
 **Node ids** are the `/go` link names (`stack.links`): a card's own
 `card_id` (`note-7f3a9c21e4`, `person-homer`, ADR-016) when it has one. A
@@ -52,16 +55,21 @@ from datetime import date, datetime
 from pathlib import Path
 
 from stack.cards import (
+    ABOUT,
     ARCHIVE,
     CARD_ID,
     INDEX,
+    VIEW,
+    card_id_from,
     card_kind,
     card_name,
     card_ref,
+    card_version,
+    compiled_versions,
     is_navigation_page,
+    view_names,
 )
 from stack.frontmatter import FrontmatterError, parse
-from stack.vault import entity_page_path
 
 # How fast a card ages, in days until its weight halves. None: never.
 HALF_LIFE_DAYS: dict[str, float | None] = {
@@ -81,6 +89,8 @@ _FILE_LINK = re.compile(r"\]\(([^)\s#]+)\)")
 _MEDIA = "media/"
 _WORD = re.compile(r"[^\W_]+")
 _GENERATED = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->")
+# The model's last answer a view keeps for a compile without the model.
+_ANSWER = re.compile(r"^<!-- answer: [A-Za-z0-9+/=]* -->\n?", re.M)
 _FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 
 
@@ -90,13 +100,15 @@ class View:
 
     `view` says what kind of view it is (`person`, `correspondent`, as
     ADR-017 §7 names them), `path` where it lives in the brain, `text` its
-    body without the frontmatter.
+    body without the frontmatter. `behind` says the view was compiled from
+    an older version of the card it is read with than the vault holds.
     """
 
     view: str
     title: str
     path: str
     text: str
+    behind: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,6 +138,9 @@ class Card:
     # The card's frontmatter as written: what a reader shows per type.
     meta: dict = field(default_factory=dict)
     views: list[View] = field(default_factory=list)
+    # The git blob id of the file as it is: the version a view records of
+    # each card it was compiled from (`stack.cards.card_version`).
+    blob: str = ""
 
     @property
     def version(self) -> str:
@@ -308,6 +323,7 @@ def load_graph(vault: Path, *, views: Path | None = None,
     """
     vault = Path(vault)
     changes = git_changes(vault)
+    compiled = _views(Path(views)) if views is not None else {}
     cards = []
     for path in sorted(vault.rglob("*.md")):
         rel = path.relative_to(vault).as_posix()
@@ -315,46 +331,63 @@ def load_graph(vault: Path, *, views: Path | None = None,
             continue
         if audience is not None and not readable(rel, audience, shared_bucket=shared_bucket):
             continue
-        card = _card(rel, path.read_text(encoding="utf-8", errors="replace"))
+        data = path.read_bytes()
+        card = _card(rel, data.decode("utf-8", errors="replace"))
+        card.blob = card_version(data)
         card.changes = changes.get(rel) or []
         if not card.day and card.changes:
             card.day = card.changes[0].day
-        if views is not None:
-            card.views = [v for v in _views(card, Path(views))
-                          if audience is None or readable(v.path, audience, shared_bucket=shared_bucket)]
+        card.views = [v for v in _views_of(card, compiled)
+                      if audience is None or readable(v.path, audience, shared_bucket=shared_bucket)]
         cards.append(card)
     return Graph(cards)
 
 
-def _views(card: Card, brain: Path) -> list[View]:
-    """The views the wiki compiled about `card`, found where it compiles them.
+@dataclass(frozen=True)
+class _Compiled:
+    """A view in the brain, with what it says about the cards it names."""
 
-    Until a view names its card (`about`, ADR-016 step 3), the path is the
-    only thing that ties the two: a person's view is `<slug>/about.md`, a
-    correspondent's shares the card's path, a topic's is `about.md` in the
-    folder that holds its card.
-    """
-    if card.type == "person":
-        wanted = [("person", entity_page_path(card.name.split("/", 1)[1], "person"))]
-    elif card.type == "correspondent":
-        wanted = [("correspondent", card.path)]
-    elif card.type == "topic":
-        wanted = [("topic", posixpath.join(posixpath.dirname(card.path), "about.md"))]
-    else:
-        return []
-    found = []
-    for kind, rel in wanted:
-        file = brain / rel
-        if not file.is_file():
+    view: View
+    about: str
+    versions: dict
+
+
+def _views(brain: Path) -> dict[str, list[_Compiled]]:
+    """Every view in `brain`, by each card id it names (`about`, `derived_from`)."""
+    found: dict[str, list[_Compiled]] = {}
+    for file in sorted(brain.rglob("*.md")):
+        rel = file.relative_to(brain).as_posix()
+        if rel.startswith(".git/"):
             continue
         text = file.read_text(encoding="utf-8", errors="replace")
+        if not text.startswith("---"):
+            continue
         try:
-            meta = parse(text) if text.startswith("---") else {}
+            meta = parse(text)
         except FrontmatterError:
-            meta = {}
-        body = _GENERATED.sub("", _FRONTMATTER.sub("", text, count=1)).strip()
-        found.append(View(view=kind, title=str(meta.get("title") or card.title), path=rel, text=body))
+            continue
+        if not str(meta.get(VIEW) or "").strip():
+            continue
+        body = _ANSWER.sub("", _GENERATED.sub("", _FRONTMATTER.sub("", text, count=1))).strip()
+        view = View(view=str(meta[VIEW]), title=str(meta.get("title") or ""), path=rel, text=body)
+        entry = _Compiled(view, str(meta.get(ABOUT) or ""), compiled_versions(meta))
+        for card_id in view_names(meta):
+            found.setdefault(card_id, []).append(entry)
     return found
+
+
+def _views_of(card: Card, compiled: dict[str, list[_Compiled]]) -> list[View]:
+    """The views that name `card`, the one about it first, each marked when behind it."""
+    card_id = card_id_from(card.meta)
+    if not card_id:
+        return []
+    named = sorted(compiled.get(card_id, []), key=lambda c: (c.about != card_id, c.view.path))
+    out = []
+    for c in named:
+        version = c.versions.get(card_id, "")
+        behind = bool(version) and version != card.blob
+        out.append(View(c.view.view, c.view.title or card.title, c.view.path, c.view.text, behind))
+    return out
 
 
 def readable(path: str, audience: frozenset[str], *, shared_bucket: str = "family") -> bool:
