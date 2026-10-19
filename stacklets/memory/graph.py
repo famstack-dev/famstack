@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from stack.cards import ARCHIVE, INDEX, card_kind, card_ref
+from stack.cards import ARCHIVE, INDEX, card_kind, card_ref, is_navigation_page
 from stack.frontmatter import FrontmatterError, parse
 from stack.vault import entity_page_path
 
@@ -281,7 +281,7 @@ def load_graph(vault: Path, *, views: Path | None = None,
     cards = []
     for path in sorted(vault.rglob("*.md")):
         rel = path.relative_to(vault).as_posix()
-        if rel.startswith(".git/") or "/.git/" in rel:
+        if rel.startswith(".git/") or "/.git/" in rel or is_navigation_page(rel):
             continue
         if audience is not None and not readable(rel, audience, shared_bucket=shared_bucket):
             continue

@@ -441,7 +441,9 @@ agent) finds the card by that id. A stored path is only a hint.
 | a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
 
 The card graph behind `stack memory find`, `card` and `links`, and the
-cards API, reads its cards from the vault only (ADR-016). What the wiki
+cards API, reads its cards from the vault only (ADR-016), leaving out
+`README.md` and `index.md` wherever they are: navigation pages for Forgejo
+and the wiki, never cards (ADR-017 §6). What the wiki
 compiles into the brain (a person's `<id>/about.md`, a topic's page, a
 diary month, an index) is a view: never found, never opened as a card.
 A card comes with the views compiled about it, found where the wiki

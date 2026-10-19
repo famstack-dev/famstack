@@ -91,8 +91,22 @@ def card_id_of(fields: Mapping[str, object]) -> tuple[str, str] | None:
 # archive, and a page the wiki generates to navigate (a diary month, an index).
 ARCHIVE = "list-archive"
 INDEX = "index"
+# Navigation pages for Forgejo and the wiki, wherever they are: never cards
+# (ADR-017 §6).
+NAVIGATION_PAGES = frozenset({"README.md", "index.md"})
 # Records that carry the id of the message they were filed from, when they do.
 _CAPTURED = ("note", "bookmark", "email")
+
+
+def is_navigation_page(rel: str) -> bool:
+    """Whether the file at `rel` (vault-relative path) is a navigation page, no card.
+
+    >>> is_navigation_page("family/correspondents/README.md")
+    True
+    >>> is_navigation_page("family/notes/index-cards.md")
+    False
+    """
+    return rel.rsplit("/", 1)[-1] in NAVIGATION_PAGES
 
 
 def card_kind(rel: str, fields: Mapping[str, object]) -> str:

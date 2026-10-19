@@ -513,6 +513,19 @@ class TestWhatFindLeavesOut:
                      by="homer", message="feat(notes): zelt")
         return memory
 
+    def test_a_readme_or_an_index_in_the_memory_repo_is_no_card(self, memory, capsys):
+        """They are how Forgejo and the wiki find the way (ADR-017 §6): never
+        found, never opened, wherever they are."""
+        memory.write("README.md", "# Unser Gedächtnis\nZelt, Grill und Garten.\n",
+                     by="marge", message="docs: readme")
+        memory.write("family/camping/index.md", "# Camping\nDas Zelt.\n", by="marge", message="docs: index")
+
+        for ref in ("README.md", "family/camping/index.md", "page/README"):
+            with pytest.raises(SystemExit):
+                _run(card_cli, memory, ref)
+        with pytest.raises(SystemExit):
+            _run(find_cli, memory, "zelt")
+
     def test_navigation_pages_are_left_out_of_a_search(self, pages, capsys):
         _run(find_cli, pages, "camping")
 
