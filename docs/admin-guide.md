@@ -188,7 +188,7 @@ What it does, in order:
    - `stack.toml`: central config, gitignored, yours to edit.
    - `users.toml`: family roster, gitignored.
    - `.stack/secrets.toml`: auto-generated passwords for service accounts. Treat like a password manager export.
-8. **Brings up `messages` and `core`.** Pulls Synapse, Element and Postgres images (about 600 MB), starts them, creates Matrix accounts, seeds two default rooms (`#famchat`, `#famstack`).
+8. **Brings up `messages` and `core`.** Pulls Synapse, Element and Postgres images (about 600 MB), starts them, creates Matrix accounts, and creates a space called Family with three rooms in it: Family Room, Memories and Server Room.
 9. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
 10. **Prints a sign-in URL.** Something like `http://192.168.1.42:42030`.
 
@@ -207,11 +207,13 @@ Element runs in a browser only over HTTPS or on `localhost`. In port mode the Ma
 
 Change the password right after first login (Element > Settings > Account).
 
-You will see two rooms:
+You will see the Family space with three rooms:
 
-- `#Family Chat`: where the family talks. Photos, voice memos, life.
-- `#Server Room`: where the server talks back. Status, alerts, install confirmations.
-- `#Memories`: a place to store your memories, voice diaries, stories, funny moments. With the `memory` stacklet it becomes the family diary (see [Memory](#memory-memory-optional)).
+- **Family Room**: where the family talks. Photos, voice memos, life.
+- **Memories**: a place to store your memories, voice diaries, stories, funny moments. With the `memory` stacklet it becomes the family diary (see [Memory](#memory-memory-optional)).
+- **Server Room**: where the server talks back. Status, alerts, install confirmations. Only admins are in it.
+
+`./stack up docs` adds a fourth, **Documents Room** (see [Documents](#documents-docs)).
 
 ### 5. Connect your phones
 
@@ -291,7 +293,7 @@ Matrix homeserver (Synapse) plus the Element web client. Your family's private c
 ./stack up messages    # set up by the installer, usually already running
 ```
 
-The installer creates `#famchat` and `#famstack` and seeds an account for every family member. Default password is the first name in lowercase. Change it after first login.
+The installer creates the Family space with Family Room, Memories and Server Room, and seeds an account for every family member. Default password is the first name in lowercase. Change it after first login.
 
 | | |
 |---|---|
@@ -307,6 +309,8 @@ Useful commands:
 ./stack messages room list
 ./stack messages setup
 ```
+
+Commands that take a room name it by its alias: `famchat` is Family Room, `memories` is Memories, `famstack` is Server Room and `documents` is Documents Room. For example, `./stack messages send famstack "Back up tonight"` posts to Server Room.
 
 ### Photos (`photos`)
 
@@ -380,13 +384,13 @@ All commands support `--dry-run` to preview and `--api-key` to use a specific us
 
 Paperless-ngx archive with OCR and structured classification. Receipts, letters, contracts, tax documents. Search across everything by content.
 
-**Why Paperless?** Gold standard for self-hosted document management. Mature project, large community. famstack makes the document inbox available on every phone through the chat: photograph a receipt, send it to the `#documents` room, and it gets filed.
+**Why Paperless?** Gold standard for self-hosted document management. Mature project, large community. famstack makes the document inbox available on every phone through the chat: photograph a receipt, send it to the Documents Room, and it gets filed.
 
 ```bash
 ./stack up docs
 ```
 
-The archivist bot creates a `#documents` room in your chat. AI classifies and tags incoming documents when the `ai` stacklet is running. Without `ai`, documents are still stored and searchable by OCR text, just not auto-tagged. Type `show 42` in `#documents` to read a document; type any term to search.
+The archivist bot creates a room called Documents Room in your chat. AI classifies and tags incoming documents when the `ai` stacklet is running. Without `ai`, documents are still stored and searchable by OCR text, just not auto-tagged. Type `show 42` in the Documents Room to read a document; type any term to search.
 
 On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml).
 
@@ -582,7 +586,7 @@ account: bart
 
 Each `./stack up memory` adds a file for every account in `users.toml` that has none, so an update reaches an existing install with a restart of the memory stacklet. An existing file is never rewritten: it is the family's. Add someone without an account, such as a baby, with `./stack memory person add "Maggie Simpson" --alias Margaret --as marge`: the file is named after the first name, `--id` gives another when two people share one, and a name that already belongs to someone is refused. Add further names a person goes by to their file. A person with an account is a member of the household. The wiki gives every person a page under the names their file gives, and its home page lists the members. The archivist files a document under a person by any of their names ("Margaret" on a birth certificate is Maggie) and creates a `Person:` tag for a person without an account the first time a document names them. Transcription and the diary listen for every name in the files. A file the wiki cannot read is named in the curator's log (`docker logs stack-memory-curator`) and left out, and no page is removed until it reads again. A change to any file rebuilds the person pages within a few minutes, or right away with `./stack memory wiki update --home --members`. Edit the files in Forgejo, in Obsidian, or with `./stack memory write family/people/<id>.md --by <you> --from <file>`.
 
-**The family diary.** Everything posted in `#Memories` becomes a diary entry. Each night the curator transcribes the new recordings, has the AI read each entry (a title, a summary, the people, topics from the ontology, facts), writes one card per entry to the vault under `family/diary/entries/`, and rebuilds the diary pages in the wiki from those cards. At 07:30 local time the archivist posts each new card as a quiet notice in the thread under its memory; the first time, one notice in the room says how to correct a card, and after two weeks without a new memory one notice invites the next, once per quiet stretch (`diary_job_at` in the archivist's `bot.toml` sets the time; it catches up after a night the Mac slept through). A family member corrects a card by replying in its thread, typed or spoken; the correction is committed to the vault under their name, and a corrected or hand-edited card is never overwritten by a later run. The archivist says nothing else in `#Memories`. The user guide has the family's side: [The Memories Room](user-guide.md#the-memories-room).
+**The family diary.** Everything posted in the Memories room becomes a diary entry. Each night the curator transcribes the new recordings, has the AI read each entry (a title, a summary, the people, topics from the ontology, facts), writes one card per entry to the vault under `family/diary/entries/`, and rebuilds the diary pages in the wiki from those cards. At 07:30 local time the archivist posts each new card as a quiet notice in the thread under its memory; the first time, one notice in the room says how to correct a card, and after two weeks without a new memory one notice invites the next, once per quiet stretch (`diary_job_at` in the archivist's `bot.toml` sets the time; it catches up after a night the Mac slept through). A family member corrects a card by replying in its thread, typed or spoken; the correction is committed to the vault under their name, and a corrected or hand-edited card is never overwritten by a later run. The archivist says nothing else in the Memories room. The user guide has the family's side: [The Memories room](user-guide.md#the-memories-room).
 
 | | |
 |---|---|

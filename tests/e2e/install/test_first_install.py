@@ -278,6 +278,13 @@ def joined(hs: str, token: str) -> set[str]:
     return set(json.loads(body)["joined_rooms"])
 
 
+def room_name(hs: str, token: str, room_id: str) -> str | None:
+    """The name Element shows for the room."""
+    quoted = urllib.parse.quote(room_id, safe="")
+    status, body = _http(f"{hs}/_matrix/client/v3/rooms/{quoted}/state/m.room.name", token=token)
+    return json.loads(body).get("name") if status == 200 else None
+
+
 def lan_ip() -> str:
     """The address other devices on the network reach this Mac on."""
     route = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True)
@@ -385,15 +392,19 @@ def test_every_family_member_is_in_the_space_and_rooms(install):
     assert not missing, "\n".join(missing)
 
 
-def test_the_rooms_it_names_exist(install):
+def test_the_rooms_it_names_are_the_rooms_element_shows(install):
+    """The final screen names each room the way Element shows it, and the
+    admin who signs in is in every one of them."""
     hs = homeserver(printed_url(install))
     user, password = printed_login(install)
-    server, _ = printed_accounts(install)
     token = login(hs, user, password)
-    named = re.findall(r"#([\w-]+)", install.between("Explore your rooms", "Add more to your stack"))
-    assert named
-    missing = [a for a in named if not resolve(hs, token, f"#{a}:{server}")]
-    assert not missing, f"named but missing: {missing}"
+    # A room name, then its description after a run of spaces.
+    named = re.findall(r"^ +(\S+(?: \S+)*?) {2,}\S",
+                       install.between("Explore your rooms", "Add more to your stack"), re.M)
+    assert named, "the final screen names no rooms"
+    shown = {room_name(hs, token, rid) for rid in joined(hs, token)}
+    missing = [n for n in named if n not in shown]
+    assert not missing, f"named but not in Element: {missing} (Element shows {sorted(filter(None, shown))})"
 
 
 def test_the_secrets_file_holds_the_service_admin_password(install):
