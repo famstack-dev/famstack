@@ -18,10 +18,11 @@ import socket
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
-from access import INTERNAL_PORT, PUBLIC_PORT, serves
+import cards_page as cards_page_module
+from access import CARDS_PORT, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect
 from stack.cards import find_card
 
@@ -355,10 +356,50 @@ def _listen(port: int) -> socket.socket:
     return sock
 
 
+# ── The card browser (`/cards`, this Mac only) ──────────────────────────
+# The page and its two files, and its reads passed through to the memory
+# stacklet's cards API, GET only (`cards_page.py`).
+
+@app.get("/cards", include_in_schema=False)
+async def cards_page():
+    return Response(cards_page_module.page(), media_type="text/html; charset=utf-8")
+
+
+@app.get("/cards/static/{name}", include_in_schema=False)
+async def cards_asset(name: str):
+    found = cards_page_module.asset(name)
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    kind, body = found
+    return Response(body, media_type=kind)
+
+
+# What the cards API says about a file that core repeats: how long to keep
+# it, and that a media file is never sniffed into a page or shown inline
+# when the API sends it to download.
+_PASSED_ON = ("cache-control", "x-content-type-options", "content-disposition")
+
+
+@app.get("/cards/api/{path:path}", include_in_schema=False)
+async def cards_api(path: str, request: Request):
+    url = cards_page_module.upstream(path, dict(request.query_params),
+                                     os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL))
+    if url is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(url)
+    except httpx.HTTPError:
+        return _error("the family memory does not answer; is the memory stacklet running?")
+    headers = {k: r.headers[k] for k in _PASSED_ON if k in r.headers}
+    return Response(r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "application/json"), headers=headers)
+
+
 if __name__ == "__main__":
-    # One server on both sockets, so each request's scope names the
+    # One server on every socket, so each request's scope names the
     # listener it came in on, which is what the access rule reads.
     import uvicorn
 
     uvicorn.Server(uvicorn.Config(app, log_level="info")).run(
-        sockets=[_listen(INTERNAL_PORT), _listen(PUBLIC_PORT)])
+        sockets=[_listen(INTERNAL_PORT), _listen(PUBLIC_PORT), _listen(CARDS_PORT)])

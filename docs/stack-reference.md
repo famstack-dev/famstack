@@ -435,6 +435,37 @@ agent) finds the card by that id. A stored path is only a hint.
 | person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
 | topic | its folder, `<bucket>/<slug>/` | `/go/topic/<slug>` |
 | list | none yet: its file name is its name | `/go/list/<slug>` |
+| list archive | `<list>/<YYYY-MM>`, from `<bucket>/lists/archive/<list>/<YYYY-MM>.md`; part of its list | none |
+| correspondent | `slug`, else its file name | none yet |
+| note, bookmark written by hand | its file name (no message to name it by) | none |
+| a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
+
+The card graph behind `stack memory find`, `card` and `links`, and the
+cards API, reads its cards from the vault only (ADR-016), leaving out
+`README.md` and `index.md` wherever they are: navigation pages for Forgejo
+and the wiki, never cards (ADR-017 §6). What the wiki
+compiles into the brain (a person's `<id>/about.md`, a topic's page, a
+diary month, an index) is a view: never found, never opened as a card.
+A card comes with the views compiled about it, found where the wiki
+compiles them until views name their card: a person's at `<id>/about.md`,
+a correspondent's at the card's own path. `stack.cards.card_ref` holds
+the naming rule for every kind; `card_kind` tells a list archive and a
+navigation page from the rest.
+
+`stack memory check-format` (and the cards API's `/report`, which the
+card browser shows) lists where the vault does not meet ADR-016 and
+ADR-017 yet: cards without a `card_id`, per type; ids two files claim;
+links to a file the vault does not have; files with no frontmatter or a
+`type` that is no card type. It is the admin's, read over every card,
+and writes nothing. A vault that meets the format gives an empty report.
+
+The cards API also serves the media archive (`<data>/memory/media`) at
+`/media/<path>`, for the photos and recordings cards embed
+(`![[/media/2026/10/<event id>.png]]`). A file goes only to an audience
+that may read a card embedding or linking it; with no audience, the admin
+reads every file. Paths with `..` and anything outside the archive are
+refused. Images, audio, video and PDFs are sent as what they are; any
+other file as a download.
 
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,

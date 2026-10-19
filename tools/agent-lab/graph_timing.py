@@ -88,7 +88,7 @@ def main(sizes: list[int]) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "vault"
             build(root, n)
-            graph, load_ms = timed(lambda: load_graph(root, history=root))
+            graph, load_ms = timed(lambda: load_graph(root))
             _, find_ms = timed(lambda: graph.find("zelt werkstatt"))
             _, links_ms = timed(lambda: graph.neighbours("topic/camping", depth=2))
             versioned = sum(1 for c in graph.cards.values() if c.version)

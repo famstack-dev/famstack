@@ -1,4 +1,7 @@
-"""Shared by `find`, `card` and `links`: the graph of the family memory."""
+"""Shared by `find`, `card`, `links` and `check-format`: the graph of the family memory.
+
+Its cards are the vault's files; the brain only adds the views compiled about them.
+"""
 
 from __future__ import annotations
 
@@ -31,10 +34,8 @@ def graph_for(config, audience: frozenset[str] | None = None) -> Graph | None:
         return None
     brain = brain_path_for(Path(data_dir))
     vault = vault_path_for(Path(data_dir))
-    if not brain.exists():
-        brain = vault
-    if not brain.exists():
+    if not vault.exists():
         return None
     shared = ((config or {}).get("stack", {}).get("memory", {}) or {}).get("shared_bucket", "family")
-    return load_graph(brain, history=vault if vault.exists() else None, audience=audience,
+    return load_graph(vault, views=brain if brain.exists() else None, audience=audience,
                       shared_bucket=shared)

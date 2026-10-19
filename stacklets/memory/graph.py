@@ -5,6 +5,10 @@ date, the commit that last changed it, and its links to other cards. The
 agent asks for cards by id and follows their links, the way it would walk
 a wiki, instead of reading pages it found by text alone.
 
+**A card is a file in the vault** (ADR-016 §3). What the wiki compiles
+into the brain (a person's or a topic's page, a diary month, an index) is a
+view: never a card, and read only with the card it is about.
+
 **Node ids** are the `/go` link names (`stack.links`): `diary/<entry_id>`,
 `capture/<capture_id>`, `docs/<paperless_id>`, `person/<slug>`,
 `topic/<slug>`, `list/<name>`. A page with none of these is `page/<path>`.
@@ -43,7 +47,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+from stack.cards import ARCHIVE, INDEX, card_kind, card_ref, is_navigation_page
 from stack.frontmatter import FrontmatterError, parse
+from stack.vault import entity_page_path
 
 # How fast a card ages, in days until its weight halves. None: never.
 HALF_LIFE_DAYS: dict[str, float | None] = {
@@ -53,9 +59,32 @@ HALF_LIFE_DAYS: dict[str, float | None] = {
 }
 
 _SHORT_ID = 10
+# Found only when asked for by kind: pages to navigate by, and lists' archives.
+_LEFT_OUT = {INDEX, ARCHIVE}
 _LINK = re.compile(r"\]\(([^)\s#:]+\.md|/[^)\s#:]+)\)")
+# A media embed (`![[/media/2026/10/<event id>.png]]`, ADR-017 §3), and a
+# link to a file of the media archive (the record's `**File**` line).
+_EMBED = re.compile(r"!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+_FILE_LINK = re.compile(r"\]\(([^)\s#]+)\)")
+_MEDIA = "media/"
 _WORD = re.compile(r"[^\W_]+")
 _GENERATED = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->")
+_FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class View:
+    """A page the wiki compiles about a card: read with the card, never a card itself.
+
+    `view` says what kind of view it is (`person`, `correspondent`, as
+    ADR-017 §7 names them), `path` where it lives in the brain, `text` its
+    body without the frontmatter.
+    """
+
+    view: str
+    title: str
+    path: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -64,6 +93,7 @@ class Change:
     day: str
     who: str
     subject: str
+    at: str = ""  # the author time, to the second, for ordering within a day
 
 
 @dataclass
@@ -76,12 +106,12 @@ class Card:
     text: str
     names: tuple[str, ...] = ()
     persons: tuple[str, ...] = ()
-    # A page the wiki compiles from other cards (a profile, a topic
-    # overview): a summary whose links are its sources.
-    compiled: bool = False
     links_out: set[str] = field(default_factory=set)
     links_in: set[str] = field(default_factory=set)
     changes: list[Change] = field(default_factory=list)
+    # The card's frontmatter as written: what a reader shows per type.
+    meta: dict = field(default_factory=dict)
+    views: list[View] = field(default_factory=list)
 
     @property
     def version(self) -> str:
@@ -97,15 +127,19 @@ class Card:
 class Graph:
     """Every card of one copy of the family memory, linked.
 
-        graph = load_graph(brain, history=vault)
+        graph = load_graph(vault, views=brain)
         graph.find("zelt kaputt")      # ranked cards
-        graph.card("topic/camping")    # one card, or None
+        graph.card("person/homer")     # one card, or None
+        graph.shared_ids               # ids two files claim: {id: [path, ...]}
     """
 
     def __init__(self, cards: list[Card]):
-        cards = _unique(cards)
+        cards, self.shared_ids = _unique(cards)
         self.cards = {c.id: c for c in cards}
         self._by_path = {c.path: c.id for c in cards}
+        # The media archive's files the cards refer to (`2026/10/x.png`): what
+        # this graph's audience may open.
+        self.media = {m for c in cards for m in media_of(c)}
         self._link(cards)
 
     def card(self, ref: str) -> Card | None:
@@ -113,20 +147,43 @@ class Graph:
         if ref in self.cards:
             return self.cards[ref]
         path = ref.removeprefix("vault/").lstrip("/")
-        if path in self._by_path:
-            return self.cards[self._by_path[path]]
+        if found := self.at(path):
+            return found
         matches = [c for i, c in self.cards.items() if i.startswith(ref) and "/" in ref]
         return matches[0] if len(matches) == 1 else None
 
-    def find(self, query: str, *, kind: str = "", since: str = "", limit: int = 8,
+    def at(self, path: str) -> Card | None:
+        """The card of the file at `path` (vault-relative), or None."""
+        cid = self._by_path.get(path)
+        return self.cards[cid] if cid else None
+
+    def find(self, query: str, *, kind: str = "", since: str = "", until: str = "",
+             person: str = "", newest: bool = False, limit: int = 8,
              today: date | None = None) -> list[Card]:
+        """Cards that match `query`, best first, or newest first with `newest`.
+
+        `kind`, a stretch of days (`since`, `until`, both inclusive) and a
+        `person` (slug or any of their names: the cards about them) narrow it.
+        Navigation pages and list archives come only when `kind` names them;
+        without words the newest come first.
+        """
         today = today or date.today()
         terms = [w for w in _WORD.findall(query.lower()) if len(w) > 2]
+        about = self.person_id(person) if person else ""
+        if person and not about:
+            return []
+        newest = newest or not terms  # nothing asked: what is new
         scored = []
         for card in self.cards.values():
             if kind and card.type != kind:
                 continue
+            if not kind and card.type in _LEFT_OUT:
+                continue
             if since and (card.day or "") < since:
+                continue
+            if until and (not card.day or card.day > until):
+                continue
+            if about and not self._about(card, about):
                 continue
             match = _match(card, terms)
             if terms and match == 0:
@@ -134,8 +191,20 @@ class Graph:
             score = (match or 1.0) * (0.5 + 0.5 * _freshness(card, today)) \
                 + 0.1 * math.log1p(len(card.links_in))
             scored.append((score, card.day or "", card))
-        scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
+        order = (lambda s: (s[1], s[0])) if newest else (lambda s: (s[0], s[1]))
+        scored.sort(key=order, reverse=True)
         return [c for _, _, c in scored[:limit]]
+
+    def person_id(self, said: str) -> str:
+        """The card id of the person `said` names (slug or any name), or ""."""
+        said = said.strip().lower()
+        if f"person/{said}" in self.cards:
+            return f"person/{said}"
+        return self._names.get(said, "")
+
+    def _about(self, card: Card, person: str) -> bool:
+        return card.id == person or person in card.links_out or \
+            any(self._names.get(p.lower()) == person for p in card.persons)
 
     def neighbours(self, ref: str, depth: int = 1) -> list[tuple[int, str, Card]]:
         """(distance, how, card) for every card within `depth` links of `ref`."""
@@ -157,10 +226,11 @@ class Graph:
 
     def _link(self, cards: list[Card]) -> None:
         names = {n: c.id for c in cards if c.type == "person" for n in c.names}
+        self._names = names
         topics = {c.id.split("/", 1)[1] for c in cards if c.type == "topic"}
         for card in cards:
-            for target in _LINK.findall(card.text):
-                other = self._by_path.get(_page(target, card.path))
+            for _, target in links_of(card):
+                other = self._by_path.get(target)
                 if other and other != card.id:
                     card.links_out.add(other)
             for person in card.persons:
@@ -170,56 +240,96 @@ class Graph:
             parts = card.path.split("/")
             if len(parts) > 2 and parts[1] in topics and card.type != "topic":
                 card.links_out.add(f"topic/{parts[1]}")
+            if card.type == ARCHIVE:
+                card.links_out.add(card.id.rsplit("/", 1)[0])  # list/markt/2026-10 -> list/markt
+            for topic in card.meta.get("topics") or []:  # a list names the topics it serves
+                if str(topic) in topics and card.type != "topic":
+                    card.links_out.add(f"topic/{topic}")
         for card in cards:
             for other in card.links_out:
                 if other in self.cards:
                     self.cards[other].links_in.add(card.id)
 
 
-def _unique(cards: list[Card]) -> list[Card]:
-    """One card per id. Two can claim one: a person's compiled profile
-    (`bart/about.md`) and their entry in the people registry
-    (`family/people/bart.md`). The profile keeps the id; the other is a page."""
+def _unique(cards: list[Card]) -> tuple[list[Card], dict[str, list[str]]]:
+    """One card per id, and the ids two or more files claim.
+
+    A thing is one card (ADR-016 §3), so two files with one id are a fault
+    in the memory, which the format check reports. Until it is fixed the
+    first file in path order keeps the id and every other is named by its
+    path, so none of them is lost.
+    """
     owner: dict[str, Card] = {}
-    for card in sorted(cards, key=lambda c: (not c.path.endswith("about.md"), not c.compiled, c.path)):
+    shared: dict[str, list[str]] = {}
+    for card in sorted(cards, key=lambda c: c.path):
         if card.id in owner:
+            shared.setdefault(card.id, [owner[card.id].path]).append(card.path)
             card.id = f"page/{card.path.removesuffix('.md')}"
         owner[card.id] = card
-    return list(owner.values())
+    return list(owner.values()), shared
 
 
 # ── Reading the files ─────────────────────────────────────────────────────
 
-def load_graph(brain: Path, *, history: Path | None = None,
+def load_graph(vault: Path, *, views: Path | None = None,
                audience: frozenset[str] | None = None, shared_bucket: str = "family") -> Graph:
-    """The graph of the cards in `brain`, versioned by the git log of `history`.
+    """The graph of the cards in `vault`, each with the views `views` holds about it.
 
-    `brain` is the copy the agent reads (the family memory plus the pages
-    the wiki generates); `history` the vault, whose commits are the
-    family's. A card with no commit there gets the brain's.
+    `vault` is the memory repo: every file in it is a card, and its git log
+    is the cards' history, whose commits are the family's. `views` is the
+    brain, where the wiki compiles its pages; they are read only as the
+    views of a card, never as cards.
 
     `audience` is who will see what is read (person slugs): only the cards
-    they may all read are in the graph, so none can be found, opened or
-    seen as a link. None: everything, for the admin.
+    and views they may all read are in the graph, so none can be found,
+    opened or seen as a link. None: everything, for the admin.
     """
-    brain = Path(brain)
-    changes = git_changes(history) if history else {}
-    brain_changes = git_changes(brain)
+    vault = Path(vault)
+    changes = git_changes(vault)
     cards = []
-    for path in sorted(brain.rglob("*.md")):
-        rel = path.relative_to(brain).as_posix()
-        if rel.startswith(".git/") or "/.git/" in rel:
+    for path in sorted(vault.rglob("*.md")):
+        rel = path.relative_to(vault).as_posix()
+        if rel.startswith(".git/") or "/.git/" in rel or is_navigation_page(rel):
             continue
         if audience is not None and not readable(rel, audience, shared_bucket=shared_bucket):
             continue
         card = _card(rel, path.read_text(encoding="utf-8", errors="replace"))
-        if card is None:
-            continue
-        card.changes = changes.get(rel) or brain_changes.get(rel) or []
+        card.changes = changes.get(rel) or []
         if not card.day and card.changes:
             card.day = card.changes[0].day
+        if views is not None:
+            card.views = [v for v in _views(card, Path(views))
+                          if audience is None or readable(v.path, audience, shared_bucket=shared_bucket)]
         cards.append(card)
     return Graph(cards)
+
+
+def _views(card: Card, brain: Path) -> list[View]:
+    """The views the wiki compiled about `card`, found where it compiles them.
+
+    Until a view names its card (`about`, ADR-016 step 3), the path is the
+    only thing that ties the two: a person's view is `<slug>/about.md`, a
+    correspondent's shares the card's path.
+    """
+    if card.type == "person":
+        wanted = [("person", entity_page_path(card.id.split("/", 1)[1], "person"))]
+    elif card.type == "correspondent":
+        wanted = [("correspondent", card.path)]
+    else:
+        return []
+    found = []
+    for kind, rel in wanted:
+        file = brain / rel
+        if not file.is_file():
+            continue
+        text = file.read_text(encoding="utf-8", errors="replace")
+        try:
+            meta = parse(text) if text.startswith("---") else {}
+        except FrontmatterError:
+            meta = {}
+        body = _GENERATED.sub("", _FRONTMATTER.sub("", text, count=1)).strip()
+        found.append(View(view=kind, title=str(meta.get("title") or card.title), path=rel, text=body))
+    return found
 
 
 def readable(path: str, audience: frozenset[str], *, shared_bucket: str = "family") -> bool:
@@ -244,7 +354,7 @@ def git_changes(repo: Path) -> dict[str, list[Change]]:
     try:
         out = subprocess.run(
             ["git", "-C", str(repo), "log", "--name-only",
-             "--format=\x1e%h\x1f%ad\x1f%an\x1f%s", "--date=short"],
+             "--format=\x1e%h\x1f%ad\x1f%an\x1f%s\x1f%aI", "--date=short"],
             capture_output=True, text=True, timeout=60, check=True,
         ).stdout
     except (OSError, subprocess.SubprocessError):
@@ -252,19 +362,21 @@ def git_changes(repo: Path) -> dict[str, list[Change]]:
     changes: dict[str, list[Change]] = {}
     for block in out.split("\x1e")[1:]:
         head, _, files = block.partition("\n")
-        sha, day, who, subject = (head.split("\x1f") + ["", "", "", ""])[:4]
+        sha, day, who, subject, at = (head.split("\x1f") + ["", "", "", "", ""])[:5]
         for name in files.split():
-            changes.setdefault(name, []).append(Change(sha, day, who, subject))
+            changes.setdefault(name, []).append(Change(sha, day, who, subject, at))
     return changes
 
 
-def _card(rel: str, text: str) -> Card | None:
+def _card(rel: str, text: str) -> Card:
     try:
         meta = parse(text) if text.startswith("---") else {}
     except FrontmatterError:
         meta = {}
-    kind = str(meta.get("type") or "").strip() or _kind_from_path(rel)
-    card_id = _id(rel, meta, kind)
+    kind = card_kind(rel, meta)
+    ref_kind, ref = card_ref(rel, meta)
+    # Capture ids are Matrix event ids: shown by a unique prefix, as git shows a commit.
+    card_id = f"{ref_kind}/{ref.lstrip('$')[:_SHORT_ID] if ref_kind in ('capture', 'diary') else ref}"
     title = str(meta.get("title") or Path(rel).stem).strip()
     day = str(meta.get("date") or "")[:10] or str(meta.get("timestamp") or "")[:10]
     names = tuple(n.lower() for n in [
@@ -273,42 +385,43 @@ def _card(rel: str, text: str) -> Card | None:
         str(meta.get("title") or "").split(" ")[0],
     ] if n) if kind == "person" else ()
     persons = tuple(str(p) for p in (meta.get("persons") or []) if p)
-    compiled = str(meta.get("generated") or "").lower() == "true" or "<!-- begin: generated" in text
     return Card(id=card_id, type=kind, title=title, path=rel, day=day,
-                text=_GENERATED.sub("", text), names=names, persons=persons,
-                compiled=compiled)
+                text=_GENERATED.sub("", text), names=names, persons=persons, meta=dict(meta))
 
 
-def _id(rel: str, meta: dict, kind: str) -> str:
-    for field_name, prefix in (("entry_id", "diary"), ("capture_id", "capture"),
-                               ("paperless_id", "docs")):
-        value = str(meta.get(field_name) or "").strip()
-        if value:
-            return f"{prefix}/{value.lstrip('$')[:_SHORT_ID]}"
-    parts = rel.removesuffix(".md").split("/")
-    if kind == "person":
-        return f"person/{meta.get('slug') or (parts[0] if parts[-1] == 'about' else parts[-1])}"
-    if kind == "topic":
-        return f"topic/{meta.get('slug') or parts[-2]}"
-    if kind == "list" or (len(parts) == 3 and parts[1] == "lists"):
-        return f"list/{parts[-1]}"
-    return f"page/{rel.removesuffix('.md')}"
+def links_of(card: Card) -> list[tuple[str, str]]:
+    """(the link as written, the vault path it points at) for each link in
+    `card`'s text to another card. Links to media and to the web are not."""
+    found = []
+    for link in _LINK.findall(card.text):
+        if target := _page(link, card.path):
+            found.append((link, target))
+    return found
 
 
-def _kind_from_path(rel: str) -> str:
-    parts = rel.split("/")
-    if len(parts) == 3 and parts[1] == "lists":
-        return "list"
-    return "page"
+def media_of(card: Card) -> set[str]:
+    """The files of the media archive `card` embeds or links, as paths inside
+    the archive (`2026/10/x.png`)."""
+    found = set()
+    for link in _EMBED.findall(card.text) + _FILE_LINK.findall(card.text):
+        link = link.strip()
+        path = link.lstrip("/") if link.startswith("/") else \
+            posixpath.normpath(posixpath.join(posixpath.dirname(card.path), link))
+        if path.startswith(_MEDIA) and ".." not in path.split("/"):
+            found.add(path.removeprefix(_MEDIA))
+    return found
 
 
 def _page(link: str, here: str) -> str:
     """The card path a link points to: site paths (`/family/lists/dates.md`)
-    and paths relative to the linking card (`../../people/lisa.md`)."""
+    and paths relative to the linking card (`../../people/lisa.md`). ""
+    for a file that is no card (`/media/2026/10/photo.png`)."""
     if link.startswith("/"):
         path = link.lstrip("/")
     else:
         path = posixpath.normpath(posixpath.join(posixpath.dirname(here), link))
+    if posixpath.splitext(path)[1] not in ("", ".md"):
+        return ""
     return path if path.endswith(".md") else f"{path}.md"
 
 
