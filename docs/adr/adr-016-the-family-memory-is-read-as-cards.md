@@ -153,12 +153,23 @@ So:
 - **A list archive** is a card of its own, `list-markt-2026-10`, with
   `kind: archive` and a `list` field naming the card of the list it belongs
   to.
-- **The read operations read cards.** `find` returns cards, never views.
-  `card` shows the views derived from a card, and a view's link opens it in
-  the wiki.
 - **The audience rule reaches views through `derived_from`:** a view may be
   shown to the readers of every card it was derived from, and no one else
   (§8).
+
+**Search finds cards; reading uses views.** `find` searches the cards in the
+vault and never returns a view: a hit is a card, which a reader can link and
+a person can correct. `card` returns the card together with the views
+derived from it. The agent reads those views as its summary: a person's or a
+topic's view puts what many cards say into one text compiled for reading,
+and views can be compiled for the agent as well as for the wiki. A view's
+link opens it in the wiki.
+
+A view can be behind its cards: it is compiled after a quiet period, topic
+views at night (ADR-011). When a card in a view's `derived_from` changed
+after the view was compiled, `card` says so, and the card's word counts over
+the view's. What changed a minute ago ("what is on the list now?") is
+always answered from the card.
 
 The file format of every card type and of views, their fields and their
 links, is ADR-017.
