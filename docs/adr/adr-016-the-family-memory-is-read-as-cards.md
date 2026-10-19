@@ -165,11 +165,10 @@ topic's view puts what many cards say into one text compiled for reading,
 and views can be compiled for the agent as well as for the wiki. A view's
 link opens it in the wiki.
 
-A view can be behind its cards: it is compiled after a quiet period, topic
-views at night (ADR-011). When a card in a view's `derived_from` changed
+A view's facts follow its cards within seconds; its written summary can be
+a few minutes behind (§5). When a card in a view's `derived_from` changed
 after the view was compiled, `card` says so, and the card's word counts over
-the view's. What changed a minute ago ("what is on the list now?") is
-always answered from the card.
+the view's.
 
 The file format of every card type and of views, their fields and their
 links, is ADR-017.
@@ -202,8 +201,15 @@ holds no list of its changes.
 
 - **A regenerate keeps it.** A card rebuilt from its source gets its
   corrections applied again (ADR-015).
-- **Views follow.** When a card changes, the curator compiles again exactly
-  the views whose `derived_from` names it.
+- **Views follow, at once.** When a card changes, the curator compiles again
+  exactly the views whose `derived_from` names it, topic views included. It
+  learns of a change when it is pushed: Forgejo notifies it of every push,
+  which covers every writer, a push from a clone included, and polling stays
+  only as the fallback. A view is compiled at two speeds: what needs no
+  model (the items of a list, dates, links, which cards belong to it)
+  within seconds of the push; the text a model writes after a quiet
+  window, so a burst of filings costs one model call. The nightly sweep
+  stays as the catch-all.
 - **Nobody corrects a view.** A correction aimed at a view (a reply to a
   topic summary) goes to the card the wrong statement came from, found among
   the view's `derived_from`. When the agent cannot tell which card that is,
@@ -261,7 +267,8 @@ know which source a card came from.
 2. The audience rule in one function; `history` and `list show` take it, and
    the agent's runtime sets it.
 3. The curator compiles views from readable cards only, with
-   `derived_from`, and compiles a view again when one of its cards changes.
+   `derived_from`, and compiles a view again when one of its cards is
+   pushed, in two speeds (§5).
 4. Ontology terms in `find`.
 5. Facts as cards.
 6. `search`, `topic` and `person show` onto the interface; the old commands
