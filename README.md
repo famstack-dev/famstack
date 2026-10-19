@@ -27,7 +27,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> [**v0.4.0-rc.2**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0-rc.2) is the current Beta.
+> [**v0.4.0**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) is the current release.
 >
 > The state of this project is: **It works on my machine.™**
 > I gave my best it works on yours too. If it doesn't, come back and report it
@@ -37,6 +37,8 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > [!TIP]
 > **New in 0.4: household lists, kept in the chat.**
 > The shopping list, the packing list for the camping trip, what still has to happen before the school trip: Stacky, the family agent, keeps them for you. Type it, say it in a voice message, or send a photo of a handwritten list with a caption. Every list is a plain Markdown checklist in your family's memory, and the wiki shows what is still open on each topic and person page. The agent is beta. [How lists work](docs/user-guide.md#lists).
+> **The bots read encrypted chats.** Element X encrypts every direct chat; invite a bot and it reads and answers there too. Nothing leaves your Mac either way.
+> **Updates in one command.** `./stack update` moves your install to the newest release and names what to restart. A menu bar app shows and controls the stack.
 > **And a family diary.** famstack turns the voice messages and photos you post in the Memories room into a diary you read back month by month, in your own words. Each memory gets a card in the chat; reply to it to fix a name or a date.
 > **0.3 gave your family server a memory**: a wiki of your family life, curated from the documents, notes and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources. [Read the introduction](https://famstack.dev/blog/famstack-0-3-beta/).
 
@@ -210,7 +212,7 @@ Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklet
 
 ## Roadmap
 
-Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). 0.4 adds household lists, the family agent and backups.
+Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). [`v0.4.0`](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) adds household lists, the family agent, backups and one-command updates.
 
 | Feature                                                  | Status                       |
 |----------------------------------------------------------|------------------------------|
@@ -220,13 +222,13 @@ Document filing, photo backup, family chat with voice memos, and the family memo
 | Local AI backend (oMLX, Whisper, TTS)                    | :white_check_mark: Live      |
 | Bot runtime (archivist-bot, scribe-bot, stacker-bot)     | :white_check_mark: Live      |
 | Private Git server (Forgejo)                             | :white_check_mark: Live      |
-| Family wiki generated from your documents (memory)       | :construction: 0.3-beta      |
-| Family diary from the Memories room (memory)             | :construction: 0.3-beta      |
-| Document Q&A with citations, in chat                     | :construction: 0.3-beta      |
-| Voice memos become searchable notes                      | :construction: 0.3-beta      |
-| Topic rooms: the room name is the filing system          | :construction: 0.3-beta      |
-| Household lists, kept by the family agent (agent)        | :construction: 0.4-rc        |
-| Backups (backup stacklet, append-only to attached disk)  | :construction: 0.4-rc        |
+| Family wiki generated from your documents (memory)       | :white_check_mark: Live      |
+| Family diary from the Memories room (memory)             | :white_check_mark: Live      |
+| Document Q&A with citations, in chat                     | :white_check_mark: Live      |
+| Voice memos become searchable notes                      | :white_check_mark: Live      |
+| Topic rooms: the room name is the filing system          | :white_check_mark: Live      |
+| Household lists, kept by the family agent (agent)        | :construction: Beta          |
+| Backups (backup stacklet, append-only to attached disk)  | :construction: Beta          |
 | Nice domains setup e.g. `https://photos.home.domain.tld` | :construction: Beta          |
 | Bot interaction patterns (how a family talks to bots)    | :dart: Next                  |
 | Dream cycle (vault consolidation, richer wiki pages)     | :dart: Planned               |

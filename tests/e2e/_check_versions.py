@@ -35,9 +35,10 @@ _VERSION_RE = re.compile(r"^VERSION\s*=\s*[\"']([^\"']+)[\"']", re.MULTILINE)
 # The one README sentence that makes a claim about *which* release is
 # current. Other version mentions there are historical ("first tagged as
 # v0.3.0-beta.1") and stay put across releases, so this deliberately matches
-# the claim rather than every version-shaped string.
+# the claim rather than every version-shaped string. A prerelease is
+# announced as "the current Beta", a final one as "the current release".
 _README_RE = re.compile(
-    r"\[\*\*v(?P<label>[^\]]+)\*\*\]\((?P<url>[^)]+)\)\s+is the current Beta",
+    r"\[\*\*v(?P<label>[^\]]+)\*\*\]\((?P<url>[^)]+)\)\s+is the current (?:Beta|release)",
 )
 
 _PRE_RE = re.compile(
@@ -81,7 +82,7 @@ def _readme_version() -> str:
     match = _README_RE.search(text)
     if not match:
         raise SystemExit(
-            "README.md: no '[**vX.Y.Z**](...) is the current Beta' line found.\n"
+            "README.md: no '[**vX.Y.Z**](...) is the current Beta' (or 'release') line found.\n"
             "  If the wording changed, update _README_RE in this script to match."
         )
     label, url = match.group("label"), match.group("url")
