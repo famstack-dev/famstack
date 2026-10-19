@@ -382,6 +382,22 @@ function peopleRow(card) {
       h("span", { class: "av" }, p.name.slice(0, 1).toUpperCase()), p.name)));
 }
 
+// Tags under the date. `Person: <name>` tags repeat `persons` and are left
+// out (ADR-017 §4). A tag searches for itself.
+function tagsRow(card) {
+  const tags = [].concat((card.meta || {}).tags || [])
+    .map(String).filter((t) => t && !/^person\s*:/i.test(t));
+  if (!tags.length) return null;
+  return h("div", { class: "tags" }, tags.map((t) =>
+    h("button", { class: "tag", title: t, onclick: () => searchFor(t) }, `#${t}`)));
+}
+
+function searchFor(text) {
+  const q = document.getElementById("q");
+  q.value = text;
+  q.dispatchEvent(new Event("input"));
+}
+
 function factsGrid(pairs) {
   const shown = pairs.filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && !v.length));
   if (!shown.length) return null;
@@ -528,6 +544,7 @@ function cardElement(card) {
       card.version ? h("span", { class: "v" }, `@${card.version}`) : null,
       last ? h("span", {}, last.who) : null,
       h("span", {}, `${card.links} ${T.links}`)),
+    tagsRow(card),
     renderBody(card),
     viewsOf(card),
     details(card));
