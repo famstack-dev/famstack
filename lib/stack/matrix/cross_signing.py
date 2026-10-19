@@ -20,6 +20,13 @@ as a changed identity.
     signing = CrossSigning(http, homeserver, token, "@archivist-bot:home",
                            "ABCDEFGHIJ", password, Path("archivist-bot.cross-signing.json"))
     await signing.vouch()          # "uploaded keys, signed the device"
+
+One set of keys per account, shared by all its devices. Only the device
+that owns them makes and publishes them. Any other device of the account
+(`owner=False`) reads the same file and signs itself with it, and leaves
+everything as it is when there is no file or the server holds other keys:
+making keys there would replace the account's identity and leave the
+owner's device unsigned.
 """
 
 from __future__ import annotations
@@ -68,19 +75,24 @@ class CrossSigning:
     """A bot's cross-signing keys, published once, vouching for its device."""
 
     def __init__(self, http, homeserver: str, token: str, user_id: str, device_id: str,
-                 password: str, keys_file: Path):
+                 password: str, keys_file: Path, *, owner: bool = True):
         self._http, self._base = http, homeserver.rstrip("/") + "/_matrix/client/v3"
         self._token, self.user_id, self.device_id = token, user_id, device_id
         self._password, self._file = password, Path(keys_file)
+        self._owner = owner
 
     async def vouch(self) -> str:
         """Publish the keys if the server has others, sign this device if
         it is not yet; say what was done."""
+        if not self._owner and not self._file.exists():
+            return "no keys of the account here, the device stays unsigned"
         keys = self._keys()
         done = []
         published = await self._query()
         master = published.get("master_keys", {}).get(self.user_id, {})
         if keys["master"].id not in master.get("keys", {}):
+            if not self._owner:
+                return "the account's published keys are others, the device stays unsigned"
             await self._publish(keys)
             done.append("uploaded keys")
         device = published.get("device_keys", {}).get(self.user_id, {}).get(self.device_id)
@@ -100,6 +112,8 @@ class CrossSigning:
             seeds = {usage: base64.b64decode(seed)
                      for usage, seed in json.loads(self._file.read_text()).items()}
         except (OSError, ValueError):
+            if not self._owner:
+                raise
             seeds = {usage: os.urandom(32) for usage in USAGES}
             self._file.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(self._file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

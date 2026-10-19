@@ -502,15 +502,14 @@ class MatrixClient:
 
     # ── Messaging ────────────────────────────────────────────────────────
 
-    def send(self, room, message, html=None, mentions=None, thread_root=None, reply_to=None):
-        """Send a text message to a room (by alias or ID).
+    def text_content(self, message, html=None, mentions=None, thread_root=None, reply_to=None):
+        """The `m.room.message` content of a text message, the same for both send paths.
 
-        Resolves aliases automatically. If html is provided, sends a
-        formatted message with plain text fallback. `mentions` is a list of
-        usernames (bare or full mxid) to notify via the `m.mentions` payload.
+        With `html` it is a formatted message with the text as fallback.
+        `mentions` (usernames or full ids) notify through the `m.mentions` payload.
         That payload, not the display name in the text, is what a bot's
         mention gate keys on, so it is how you get a bot (like the agent) to
-        answer in a group room. Returns (ok, detail).
+        answer in a group room.
 
         `thread_root` posts the message inside the thread rooted at that
         event id, the way a client's "Reply in thread" does. A thread is a
@@ -521,14 +520,6 @@ class MatrixClient:
         client's "Reply" does. For the archivist a reply to its filing is a
         correction, so this is how that path is exercised.
         """
-        if room.startswith("!"):
-            room_id = room
-        else:
-            room_id = self.resolve_room(room)
-            if not room_id:
-                return False, f"Room '{room}' not found"
-
-        txn = f"{int(time.time() * 1000)}_{random.randint(0, 0xFFFFFFFF):08x}"
         body = {"msgtype": "m.text", "body": message}
         if html:
             body["format"] = "org.matrix.custom.html"
@@ -546,14 +537,37 @@ class MatrixClient:
             }
         elif reply_to:
             body["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+        return body
+
+    def send(self, room, message, html=None, mentions=None, thread_root=None, reply_to=None):
+        """Send a text message to a room (by alias or ID).
+
+        Resolves aliases automatically; the content is `text_content`'s,
+        where the flags are described. Returns (ok, event id or error).
+        """
+        room_id = room if room.startswith("!") else self.resolve_room(room)
+        if not room_id:
+            return False, f"Room '{room}' not found"
+        content = self.text_content(message, html=html, mentions=mentions,
+                                    thread_root=thread_root, reply_to=reply_to)
+        return self.send_content(room_id, content)
+
+    def send_content(self, room_id, content):
+        """Post an `m.room.message` over plain HTTP, unencrypted. Returns
+        (ok, event id or error)."""
+        txn = f"{int(time.time() * 1000)}_{random.randint(0, 0xFFFFFFFF):08x}"
         status, resp = _put(
             self._url(f"/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn}"),
-            body,
+            content,
             token=self.token,
         )
         if status == 200:
             return True, resp.get("event_id", "sent")
         return False, resp.get("error", "unknown error")
+
+    def is_encrypted(self, room_id):
+        """Whether the room encrypts its messages (it has `m.room.encryption`)."""
+        return self.get_state(room_id, "m.room.encryption") is not None
 
     def react(self, room, event_id, key):
         """React to a message with `key` (an emoji), as the logged-in user.
