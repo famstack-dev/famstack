@@ -34,16 +34,22 @@ def memory(tmp_path):
     m.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n---\n"
               "<!-- begin: generated -->\nLisa, 8, wants to be president.\n<!-- end: generated -->\n")
     m.write("family/camping/about.md", "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
-            "The family's camping trips.\n", by="homer", message="feat(topics): homer added camping")
+            "The family's camping trips.\n\n![[/media/2026/10/Abc123Def456XYZ.m4a]]\n", by="homer", message="feat(topics): homer added camping")
     m.write("family/camping/zelt.md",
-            _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT, body="Das Zelt ist gerissen.",
+            _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT,
+                  body="Das Zelt ist gerissen.",
                   persons=["Lisa"]),
             by="homer", message="feat(notes): homer filed Zelt ist kaputt")
     m.write("family/lists/markt.md", "---\ntype: list\ntitle: Wochenmarkt\n---\n"
             "- [ ] Kohlrabi\n- [x] Eier\n", by="marge", message="feat(lists): marge started Wochenmarkt")
-    m.write("marge/notes/aquarell.md", _note("Marge000000001", "Barts Aquarell", RECENT),
+    m.write("marge/notes/aquarell.md", _note("Marge000000001", "Barts Aquarell", RECENT,
+                                             body="![[/media/2026/10/Marge000000001.png]]"),
             by="marge", message="feat(notes): marge filed Barts Aquarell")
     return m
+
+
+PHOTO = b"\x89PNG Barts Aquarell"
+RECORDING = b"ftypM4A Homer on the tent"
 
 
 @pytest.fixture
@@ -51,7 +57,12 @@ def api(memory, tmp_path):
     fonts = tmp_path / "fonts"
     fonts.mkdir()
     (fonts / "inter.woff2").write_bytes(b"wOF2 not really")
-    server = serve(CardsAPI(vault=memory.vault, brain=memory.brain, fonts=fonts),
+    media = tmp_path / "memory" / "media"
+    (media / "2026" / "10").mkdir(parents=True)
+    (media / "2026" / "10" / "Marge000000001.png").write_bytes(PHOTO)
+    (media / "2026" / "10" / "Abc123Def456XYZ.m4a").write_bytes(RECORDING)
+    (tmp_path / "memory" / "secrets.toml").write_text("password = 'not for the page'\n")
+    server = serve(CardsAPI(vault=memory.vault, brain=memory.brain, fonts=fonts, media=media),
                    host="127.0.0.1", port=0)
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
@@ -173,6 +184,45 @@ class TestWhatChanged:
         _, found = _get(api, "/find?q=plane")
 
         assert [c["title"] for c in found["cards"]] == ["Neue Plane"]
+
+
+class TestTheMediaACardEmbeds:
+    """A record embeds its photo or recording from the media archive
+    (`![[/media/...]]`); the page shows it from here."""
+
+    def _file(self, base: str, path: str) -> tuple[int, str, bytes]:
+        try:
+            with urllib.request.urlopen(base + path) as r:
+                return r.status, r.headers["Content-Type"], r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers["Content-Type"], e.read()
+
+    def test_a_photo_is_served_as_the_image_it_is(self, api):
+        assert self._file(api, "/media/2026/10/Marge000000001.png") == (200, "image/png", PHOTO)
+
+    def test_a_recording_is_served_as_audio(self, api):
+        status, kind, body = self._file(api, "/media/2026/10/Abc123Def456XYZ.m4a?audience=bart")
+
+        assert (status, kind, body) == (200, "audio/mp4", RECORDING)
+
+    def test_nothing_outside_the_archive_is_served(self, api):
+        """The archive sits next to the stacklet's other data."""
+        for path in ("/media/../secrets.toml", "/media/2026/../../secrets.toml",
+                     "/media/%2e%2e/secrets.toml", "/media//etc/passwd"):
+            status, _, body = self._file(api, path)
+            assert status == 404 and b"not for the page" not in body, path
+
+    def test_another_persons_photo_is_not_served_when_viewing_as_someone_else(self, api):
+        """Marge's note is hers, so its photo is too: viewing as Bart must
+        not open it, and does not say it exists."""
+        assert self._file(api, "/media/2026/10/Marge000000001.png?audience=bart")[0] == 404
+        assert self._file(api, "/media/2026/10/Marge000000001.png?audience=marge")[0] == 200
+
+    def test_a_file_no_card_embeds_is_the_admins_alone(self, api, tmp_path):
+        (tmp_path / "memory" / "media" / "2026" / "10" / "Orphan0001.png").write_bytes(PHOTO)
+
+        assert self._file(api, "/media/2026/10/Orphan0001.png?audience=homer")[0] == 404
+        assert self._file(api, "/media/2026/10/Orphan0001.png")[0] == 200
 
 
 def test_the_famstack_faces_are_served_and_nothing_else(api):

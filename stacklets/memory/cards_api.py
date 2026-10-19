@@ -11,6 +11,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /history?limit=&audience=
     GET /people
     GET /report                where the memory does not meet its format yet
+    GET /media/<path>?audience= a photo or recording a card embeds
     GET /fonts/<file>          the famstack faces the wiki serves
 
 The cards are the files of the vault; a card comes with the views the wiki
@@ -20,6 +21,10 @@ compiled about it into the brain, which are never cards of their own.
 card in a person's own bucket only when they are the whole audience. No
 audience is the admin's view. The report is the admin's and takes none
 (`format_check.py`, the same as `stack memory check-format`).
+
+A file of the media archive is served only to an audience that may read a
+card embedding or linking it, so "view as" cannot open another person's
+photo; the admin reads every file. Nothing outside the archive is served.
 
 It listens on the stack's network only and is never published: the one
 way in from a browser is core's card page, which passes reads through.
@@ -52,6 +57,17 @@ PORT = 8090
 FIND_LIMIT = 60
 HISTORY_LIMIT = 40
 _FRONTMATTER_END = "\n---\n"
+# What a browser may show in the page from the media archive. Any other
+# file is sent as bytes to download, so nothing in the archive runs as a
+# page (an SVG or HTML a family member filed).
+_MEDIA_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+    ".webp": "image/webp", ".heic": "image/heic",
+    ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+    ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+    ".pdf": "application/pdf",
+}
+_NOT_FOUND = (404, "application/json", b'{"error": "no such file"}')
 
 
 @dataclass
@@ -65,6 +81,7 @@ class CardsAPI:
     vault: Path
     brain: Path | None = None
     fonts: Path | None = None
+    media: Path | None = None
     shared_bucket: str = "family"
     _graphs: dict = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -78,6 +95,8 @@ class CardsAPI:
             return _json(format_report(self._graph(None)))
         audience = _audience(query.get("audience"))
         graph = self._graph(audience)
+        if route == "media":
+            return self._media(unquote(rest), graph, audience)
         if route == "find":
             return _json(_found(graph, query))
         if route == "card":
@@ -125,6 +144,24 @@ class CardsAPI:
             if len(changes) == limit:
                 break
         return {"changes": changes}
+
+    def _media(self, rel: str, graph: Graph, audience: frozenset[str] | None) -> tuple[int, str, bytes]:
+        """A file of the media archive, for an audience a card refers to it for.
+
+        A file no card of theirs refers to is answered as missing, so an
+        audience cannot learn which photos another person keeps.
+        """
+        parts = rel.split("/")
+        if not self.media or not rel or "" in parts or ".." in parts:
+            return _NOT_FOUND
+        if audience is not None and rel not in graph.media:
+            return _NOT_FOUND
+        root = self.media.resolve()
+        file = (root / rel).resolve()
+        if not file.is_relative_to(root) or not file.is_file():
+            return _NOT_FOUND
+        kind = _MEDIA_TYPES.get(file.suffix.lower(), "application/octet-stream")
+        return 200, kind, file.read_bytes()
 
     def _font(self, name: str) -> tuple[int, str, bytes]:
         file = (self.fonts / Path(name).name) if self.fonts else None
@@ -267,6 +304,9 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT) -> Threadin
             self.send_header("Content-Length", str(len(body)))
             if kind.startswith("font/"):
                 self.send_header("Cache-Control", "max-age=604800")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if kind == "application/octet-stream":
+                self.send_header("Content-Disposition", "attachment")
             self.end_headers()
             self.wfile.write(body)
 

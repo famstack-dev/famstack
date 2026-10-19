@@ -62,6 +62,11 @@ _SHORT_ID = 10
 # Found only when asked for by kind: pages to navigate by, and lists' archives.
 _LEFT_OUT = {INDEX, ARCHIVE}
 _LINK = re.compile(r"\]\(([^)\s#:]+\.md|/[^)\s#:]+)\)")
+# A media embed (`![[/media/2026/10/<event id>.png]]`, ADR-017 §3), and a
+# link to a file of the media archive (the record's `**File**` line).
+_EMBED = re.compile(r"!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+_FILE_LINK = re.compile(r"\]\(([^)\s#]+)\)")
+_MEDIA = "media/"
 _WORD = re.compile(r"[^\W_]+")
 _GENERATED = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->")
 _FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
@@ -132,6 +137,9 @@ class Graph:
         cards, self.shared_ids = _unique(cards)
         self.cards = {c.id: c for c in cards}
         self._by_path = {c.path: c.id for c in cards}
+        # The media archive's files the cards refer to (`2026/10/x.png`): what
+        # this graph's audience may open.
+        self.media = {m for c in cards for m in media_of(c)}
         self._link(cards)
 
     def card(self, ref: str) -> Card | None:
@@ -388,6 +396,19 @@ def links_of(card: Card) -> list[tuple[str, str]]:
     for link in _LINK.findall(card.text):
         if target := _page(link, card.path):
             found.append((link, target))
+    return found
+
+
+def media_of(card: Card) -> set[str]:
+    """The files of the media archive `card` embeds or links, as paths inside
+    the archive (`2026/10/x.png`)."""
+    found = set()
+    for link in _EMBED.findall(card.text) + _FILE_LINK.findall(card.text):
+        link = link.strip()
+        path = link.lstrip("/") if link.startswith("/") else \
+            posixpath.normpath(posixpath.join(posixpath.dirname(card.path), link))
+        if path.startswith(_MEDIA) and ".." not in path.split("/"):
+            found.add(path.removeprefix(_MEDIA))
     return found
 
 

@@ -20,7 +20,7 @@ MEMORY_CARDS_URL = "http://stack-memory-curator:8090"
 # The page's files and what they are. Anything else under /cards/static is not one.
 _ASSETS = {"cards.css": "text/css", "cards.js": "text/javascript"}
 # The memory API's routes a page may read.
-_ROUTES = re.compile(r"^(find|people|history|report|card/.+|links/.+|fonts/[\w.-]+\.woff2)$")
+_ROUTES = re.compile(r"^(find|people|history|report|card/.+|links/.+|fonts/[\w.-]+\.woff2|media/[\w./-]+)$")
 
 
 def page() -> bytes:

@@ -459,6 +459,14 @@ links to a file the vault does not have; files with no frontmatter or a
 `type` that is no card type. It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
 
+The cards API also serves the media archive (`<data>/memory/media`) at
+`/media/<path>`, for the photos and recordings cards embed
+(`![[/media/2026/10/<event id>.png]]`). A file goes only to an audience
+that may read a card embedding or linking it; with no audience, the admin
+reads every file. Paths with `..` and anything outside the archive are
+refused. Images, audio, video and PDFs are sent as what they are; any
+other file as a download.
+
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,
 `stack.cards.find_card`. It scans the frontmatter of a copy of the

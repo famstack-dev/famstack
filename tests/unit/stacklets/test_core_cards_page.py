@@ -31,6 +31,8 @@ def test_the_reads_go_to_the_memory_stacklet_with_their_question():
     assert upstream("find", {"q": "zelt", "type": "note"}, BASE) == f"{BASE}/find?q=zelt&type=note"
     assert upstream("card/capture/Abc123", {}, BASE) == f"{BASE}/card/capture/Abc123"
     assert upstream("report", {}, BASE) == f"{BASE}/report"
+    assert upstream("media/2026/10/Abc_12-x.m4a", {"audience": "bart"}, BASE) \
+        == f"{BASE}/media/2026/10/Abc_12-x.m4a?audience=bart"
     assert upstream("fonts/inter-latin-wght-normal.woff2", {}, BASE).endswith(".woff2")
 
 

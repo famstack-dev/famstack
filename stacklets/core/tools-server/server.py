@@ -374,6 +374,12 @@ async def cards_asset(name: str):
     return Response(body, media_type=kind)
 
 
+# What the cards API says about a file that core repeats: how long to keep
+# it, and that a media file is never sniffed into a page or shown inline
+# when the API sends it to download.
+_PASSED_ON = ("cache-control", "x-content-type-options", "content-disposition")
+
+
 @app.get("/cards/api/{path:path}", include_in_schema=False)
 async def cards_api(path: str, request: Request):
     url = cards_page_module.upstream(path, dict(request.query_params),
@@ -385,7 +391,7 @@ async def cards_api(path: str, request: Request):
             r = await client.get(url)
     except httpx.HTTPError:
         return _error("the family memory does not answer; is the memory stacklet running?")
-    headers = {"Cache-Control": r.headers["cache-control"]} if "cache-control" in r.headers else {}
+    headers = {k: r.headers[k] for k in _PASSED_ON if k in r.headers}
     return Response(r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type", "application/json"), headers=headers)
 
