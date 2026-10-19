@@ -8,7 +8,6 @@
 "use strict";
 
 const API = "/cards/api";
-const MAX_OPEN = 6;
 
 // ── Words ─────────────────────────────────────────────────────────────────
 
@@ -19,12 +18,13 @@ const WORDS = {
     anyone: "Anyone", person: "Person", from: "From", to: "To", cards: (n) => `${n} cards`, details: "Details", history: "History",
     linksTo: "Links to", linkedFrom: "Linked from", nothing: "Nothing written here yet.",
     open: "open", done: "done", openPaperless: "Open in Paperless", around: "Around this card",
-    links: "links", people: "people", versions: "versions", openLinked: "Open the linked cards",
+    links: "links", people: "people", versions: "versions", bothWays: "Links both ways",
+    nothingLinksHere: "Nothing links here yet.", linksNowhere: "It links to nothing yet.",
     welcomeA: "What the family", welcomeB: "remembers", welcomeSub:
-      "Search on the left or pick a card. Open several side by side and follow their links.",
+      "Search on the left or pick a card, then walk along its links.",
     recently: "Changed lately", noGraph: "Open a card to see what it links to.",
     unreachable: "The family memory does not answer. Is the memory stacklet running? (stack up memory)",
-    file: "File", id: "Card", changedBy: (who, day) => `${who} · ${day}`, focus: "Show its links",
+    file: "File", id: "Card", changedBy: (who, day) => `${who} · ${day}`,
     close: "Close", view: "View", views: "Compiled about this card", openWiki: "Open in the wiki",
     report: "Format", toFix: (n) => `${n} to fix`, nothingToFix: "Nothing to fix: the memory meets its format.",
     reportSub: (n) => `Where the memory does not meet its format yet, over all ${n} cards (as the admin).`,
@@ -37,12 +37,13 @@ const WORDS = {
     anyone: "Alle Personen", person: "Person", from: "Von", to: "Bis", cards: (n) => `${n} Karten`, details: "Details", history: "Verlauf",
     linksTo: "Verweist auf", linkedFrom: "Verwiesen von", nothing: "Hier steht noch nichts.",
     open: "offen", done: "erledigt", openPaperless: "In Paperless öffnen", around: "Rund um diese Karte",
-    links: "Verweise", people: "Personen", versions: "Versionen", openLinked: "Verknüpfte Karten öffnen",
+    links: "Verweise", people: "Personen", versions: "Versionen", bothWays: "Verweist in beide Richtungen",
+    nothingLinksHere: "Noch nichts verweist hierher.", linksNowhere: "Verweist noch auf nichts.",
     welcomeA: "Was die Familie", welcomeB: "erinnert", welcomeSub:
-      "Links suchen oder eine Karte wählen. Mehrere nebeneinander öffnen und ihren Verweisen folgen.",
+      "Links suchen oder eine Karte wählen und ihren Verweisen folgen.",
     recently: "Zuletzt geändert", noGraph: "Eine Karte öffnen, um ihre Verweise zu sehen.",
     unreachable: "Das Familiengedächtnis antwortet nicht. Läuft das memory-Stacklet? (stack up memory)",
-    file: "Datei", id: "Karte", changedBy: (who, day) => `${who} · ${day}`, focus: "Verweise zeigen",
+    file: "Datei", id: "Karte", changedBy: (who, day) => `${who} · ${day}`,
     close: "Schließen", view: "Ansicht", views: "Über diese Karte zusammengestellt", openWiki: "Im Wiki öffnen",
     report: "Format", toFix: (n) => `${n} zu beheben`, nothingToFix: "Nichts zu beheben: das Gedächtnis hat sein Format.",
     reportSub: (n) => `Wo das Gedächtnis sein Format noch nicht hat, über alle ${n} Karten (als Admin).`,
@@ -71,8 +72,7 @@ const typeName = (type) => TYPE_NAMES[type] || type;
 const state = {
   q: "", type: "", person: "", since: "", until: "", sort: "rank", audience: "",
   report: false,   // the format report at the front of the board
-  open: [],        // card ids, left to right
-  focus: "",       // the card the graph is about
+  card: "",        // the card in the middle of the walk, and the one the graph is about
   cards: new Map(), // id -> full card, as last read
 };
 
@@ -344,7 +344,7 @@ function bodyOf(card, text = withoutMeta(withoutTitle(card.text, card.title))) {
   }
   div.innerHTML = markdown(text, card);
   div.querySelectorAll("a.card-link").forEach((a) =>
-    a.addEventListener("click", () => openCard(a.dataset.ref, { after: card.id })));
+    a.addEventListener("click", () => openCard(a.dataset.ref)));
   return div;
 }
 
@@ -378,7 +378,7 @@ function peopleRow(card) {
   const persons = (card.persons || []).map(personOf);
   if (!persons.length) return null;
   return h("div", { class: "people" }, persons.map((p) =>
-    h("span", { class: "person", title: p.title, onclick: () => openCard(p.id, { after: card.id }) },
+    h("span", { class: "person", title: p.title, onclick: () => openCard(p.id) },
       h("span", { class: "av" }, p.name.slice(0, 1).toUpperCase()), p.name)));
 }
 
@@ -492,10 +492,10 @@ function viewsOf(card) {
 
 // ── A card ────────────────────────────────────────────────────────────────
 
-function linkChips(cards, from) {
+function linkChips(cards) {
   return h("div", { class: "linkchips" }, cards.map((c) =>
     h("button", { class: "linkchip", style: `--c:${typeColor(c.type)}`, title: `${typeName(c.type)} · ${c.id}`,
-                  onclick: () => openCard(c.id, { after: from }) },
+                  onclick: () => openCard(c.id) },
       h("span", { class: "dot", style: `--c:${typeColor(c.type)}` }), h("span", {}, c.title))));
 }
 
@@ -519,13 +519,9 @@ function details(card) {
 
 function cardElement(card) {
   const last = card.changes[0];
-  const el = h("article", { class: `card${state.focus === card.id ? " focus" : ""}`,
-                            style: `--c:${typeColor(card.type)}`, "data-id": card.id },
+  return h("article", { class: "card", style: `--c:${typeColor(card.type)}`, "data-id": card.id },
     h("header", {}, kindLabel(card.type), h("span", { class: "spacer" }),
-      h("button", { class: "iconbtn", title: T.focus, "aria-label": T.focus, onclick: () => setFocus(card.id) },
-        graphIcon()),
-      h("button", { class: "iconbtn", title: T.close, "aria-label": T.close, onclick: () => closeCard(card.id) },
-        "✕")),
+      h("button", { class: "iconbtn", title: T.close, "aria-label": T.close, onclick: closeCard }, "✕")),
     h("h2", {}, card.title),
     h("div", { class: "strip" },
       card.day ? h("span", {}, niceDay(card.day)) : null,
@@ -534,28 +530,19 @@ function cardElement(card) {
       h("span", {}, `${card.links} ${T.links}`)),
     renderBody(card),
     viewsOf(card),
-    card.links_out.length ? h("div", { class: "linkset" },
-      h("h4", { class: "label" }, T.linksTo), linkChips(card.links_out, card.id)) : null,
-    card.links_in.length ? h("div", { class: "linkset" },
-      h("h4", { class: "label" }, T.linkedFrom), linkChips(card.links_in, card.id)) : null,
     details(card));
-  el.addEventListener("click", (e) => {
-    if (!e.target.closest("button, a")) setFocus(card.id, { scroll: false });
-  });
-  return el;
 }
 
-function graphIcon() {
-  return s("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
-                    "stroke-width": 2 },
-    s("circle", { cx: 12, cy: 12, r: 3 }), s("circle", { cx: 4, cy: 6, r: 2 }),
-    s("circle", { cx: 20, cy: 6, r: 2 }), s("circle", { cx: 12, cy: 21, r: 2 }),
-    s("path", { d: "M10 10.5 5.5 7.5M14 10.5l4.5-3M12 15v4" }));
-}
+// ── The walk ──────────────────────────────────────────────────────────────
+// One card in the middle, what links to it on the left, what it links to on
+// the right. Opening a card from either side is a step: the address names
+// the card, so back and forward walk the path and the address can be shared.
 
-// ── The board ─────────────────────────────────────────────────────────────
+// A kind with more cards than this starts folded, so a person's fifty notes
+// do not push the other kinds out of sight.
+const OPEN_UP_TO = 6;
 
-async function openCard(ref, { after = null, focus = true } = {}) {
+async function openCard(ref, { step = true } = {}) {
   let card;
   try {
     card = await api(`card/${refPath(ref)}`);
@@ -564,46 +551,46 @@ async function openCard(ref, { after = null, focus = true } = {}) {
   }
   if (!card) return;
   state.cards.set(card.id, card);
-  state.open = state.open.filter((id) => id !== card.id);
-  const at = after ? state.open.indexOf(after) + 1 : state.open.length;
-  state.open.splice(at > 0 ? at : state.open.length, 0, card.id);
-  while (state.open.length > MAX_OPEN) state.open.shift();
-  if (focus) state.focus = card.id;
+  state.card = card.id;
+  if (step) state.report = false;
+  document.getElementById("report").setAttribute("aria-pressed", String(state.report));
   renderBoard();
   renderResults();
   renderGraph();
-  remember();
-  document.querySelector(`.card[data-id="${CSS.escape(card.id)}"]`)
-    ?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+  remember({ step });
 }
 
-function closeCard(id) {
-  state.open = state.open.filter((x) => x !== id);
-  if (state.focus === id) state.focus = state.open[state.open.length - 1] || "";
-  renderBoard(); renderResults(); renderGraph(); remember();
-}
-
-function setFocus(id, { scroll = true } = {}) {
-  state.focus = id;
-  document.querySelectorAll(".card").forEach((c) => c.classList.toggle("focus", c.dataset.id === id));
-  renderGraph();
-  remember();
-  if (scroll) document.querySelector(`.card[data-id="${CSS.escape(id)}"]`)
-    ?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+function closeCard() {
+  state.card = "";
+  renderBoard(); renderResults(); renderGraph(); remember({ step: true });
 }
 
 function renderBoard() {
   const board = document.getElementById("board");
   board.replaceChildren();
-  if (state.report && lastReport) board.append(reportElement(lastReport));
-  if (!state.open.length) {
-    if (!state.report) renderWelcome(board);
-    return;
-  }
-  for (const id of state.open) {
-    const card = state.cards.get(id);
-    if (card) board.append(cardElement(card));
-  }
+  if (state.report && lastReport) return board.append(reportElement(lastReport));
+  const card = state.cards.get(state.card);
+  if (!card) return renderWelcome(board);
+  board.append(h("div", { class: "walk" },
+    linkSide("from", T.linkedFrom, card.linked_from, T.nothingLinksHere),
+    cardElement(card),
+    linkSide("to", T.linksTo, card.links_to, T.linksNowhere)));
+}
+
+function linkSide(side, title, groups, none) {
+  const total = groups.reduce((n, g) => n + g.count, 0);
+  return h("aside", { class: `side ${side}` },
+    h("h4", { class: "label" }, h("span", {}, title), h("span", { class: "n" }, total)),
+    total ? groups.map((g) => h("details", { class: "group", open: g.count <= OPEN_UP_TO,
+                                             style: `--c:${typeColor(g.type)}` },
+      h("summary", {}, h("span", { class: "dot" }), h("span", {}, typeName(g.type)),
+        h("span", { class: "n" }, g.count)),
+      h("ul", {}, g.cards.map((c) => h("li", {},
+        h("button", { class: "step", title: c.both ? T.bothWays : c.id, onclick: () => openCard(c.id) },
+          h("span", { class: "t" }, c.title),
+          c.both ? h("span", { class: "both", "aria-label": T.bothWays }, "⇄") : null,
+          h("span", { class: "d" }, niceDay(c.day))))))))
+      : h("p", { class: "hint" }, none));
 }
 
 async function renderWelcome(board) {
@@ -618,7 +605,7 @@ async function renderWelcome(board) {
   for (const change of history?.changes || []) {
     feed.append(h("li", {},
       h("div", { class: "who" }, h("b", {}, change.who), ` · ${niceDay(change.day)}`),
-      linkChips(change.cards.slice(0, 6), null),
+      linkChips(change.cards.slice(0, 6)),
       h("div", { class: "subj" }, change.subject)));
   }
 }
@@ -641,7 +628,7 @@ async function showReport(on) {
   document.getElementById("report").setAttribute("aria-pressed", String(on));
   if (on) await loadReport();
   renderBoard();
-  remember();
+  remember({ step: true });
 }
 
 function reportElement(report) {
@@ -711,7 +698,7 @@ function renderResults() {
   cards.forEach((c) => seen.set(c.title, (seen.get(c.title) || 0) + 1));
   document.getElementById("total").textContent = T.cards(lastFound.total);
   list.replaceChildren(...cards.map((c) => h("li", {
-    class: `result${state.open.includes(c.id) ? " open" : ""}`, style: `--c:${typeColor(c.type)}`,
+    class: `result${state.card === c.id ? " open" : ""}`, style: `--c:${typeColor(c.type)}`,
     tabindex: 0, onclick: () => openCard(c.id), onkeydown: (e) => e.key === "Enter" && openCard(c.id),
   },
     h("span", { class: "k" }, typeName(c.type)), h("span", { class: "d" }, niceDay(c.day)),
@@ -728,14 +715,14 @@ const W = 400, H = 360, CX = W / 2, CY = H / 2, R1 = 92, R2 = 142;
 
 async function renderGraph() {
   const pane = document.getElementById("graphpane");
-  const card = state.cards.get(state.focus);
+  const card = state.cards.get(state.card);
   if (!card) {
     pane.replaceChildren(h("span", { class: "label" }, T.around), h("p", { class: "hint" }, T.noGraph));
     return;
   }
   let around;
   try { around = await api(`links/${refPath(card.id)}`, { depth: 2 }); } catch { return; }
-  if (!around || state.focus !== card.id) return;
+  if (!around || state.card !== card.id) return;
 
   const first = around.around.filter((a) => a.distance === 1)
     .sort((a, b) => a.card.type.localeCompare(b.card.type) || b.card.links - a.card.links).slice(0, 18);
@@ -779,7 +766,7 @@ async function renderGraph() {
     const dy = distance === 0 ? r + 14 : Math.sin(angle) * (r + 5) + 3;
     const g = s("g", {
       class: `node${distance === 0 ? " center" : ""}`, transform: `translate(${x},${y})`,
-      onclick: () => (distance === 0 ? setFocus(c.id) : openCard(c.id, { after: card.id })),
+      onclick: () => distance && openCard(c.id),
       onmouseenter: () => (edgeFor.get(c.id) || []).forEach((l) => l.classList.add("hot")),
       onmouseleave: () => (edgeFor.get(c.id) || []).forEach((l) => l.classList.remove("hot")),
     },
@@ -813,15 +800,7 @@ async function renderGraph() {
     h("div", { class: "stats" },
       h("div", { class: "stat" }, h("b", {}, card.links), h("span", {}, T.links)),
       h("div", { class: "stat" }, h("b", {}, persons.size), h("span", {}, T.people)),
-      h("div", { class: "stat" }, h("b", {}, card.changes.length), h("span", {}, T.versions))),
-    first.length ? h("button", { class: "ghost", onclick: () => openLinked(card, first) }, T.openLinked) : null);
-}
-
-async function openLinked(card, first) {
-  for (const a of first.slice(0, MAX_OPEN - 1).reverse()) {
-    await openCard(a.card.id, { after: card.id, focus: false });
-  }
-  setFocus(card.id);
+      h("div", { class: "stat" }, h("b", {}, card.changes.length), h("span", {}, T.versions))));
 }
 
 // ── Who is looking, and the rest of the controls ──────────────────────────
@@ -846,17 +825,19 @@ function showError() {
   if (!board.querySelector(".error")) board.prepend(h("div", { class: "error" }, T.unreachable));
 }
 
-function remember() {
+// The address names the card and the search, `#card=person/homer&q=zelt`. A
+// step through the walk is a new entry in the tab's history; changing the
+// search or who is looking rewrites the current one.
+function remember({ step = false } = {}) {
   const params = new URLSearchParams();
-  if (state.open.length) params.set("open", state.open.join(","));
-  if (state.focus) params.set("focus", state.focus);
+  if (state.card) params.set("card", state.card);
   if (state.report) params.set("report", "1");
   for (const key of ["q", "type", "person", "since", "until", "audience"]) {
     if (state[key]) params.set(key, state[key]);
   }
-  writing = true;
-  history.replaceState(null, "", `#${params.toString()}`);
-  writing = false;
+  const address = `#${params.toString().replace(/%2F/g, "/")}`;
+  if (address === (location.hash || "#")) return;
+  history[step ? "pushState" : "replaceState"](null, "", address);
 }
 
 async function restore() {
@@ -867,11 +848,13 @@ async function restore() {
   document.getElementById("q").value = state.q;
   document.getElementById("since").value = state.since;
   document.getElementById("until").value = state.until;
-  const open = (params.get("open") || "").split(",").filter(Boolean);
-  const focus = params.get("focus") || "";
-  for (const id of open) await openCard(id, { focus: false });
-  if (focus && state.cards.has(focus)) setFocus(focus);
-  else document.getElementById("board").scrollTo({ left: 0 });
+  document.getElementById("audience").value = state.audience;
+  document.getElementById("person").value = state.person;
+  state.card = params.get("card") || "";
+  if (state.card) await openCard(state.card, { step: false });
+  if (state.cards.has(state.card)) return;
+  state.card = "";
+  renderBoard(); renderResults(); renderGraph();
 }
 
 function wire() {
@@ -892,12 +875,13 @@ function wire() {
   });
   document.getElementById("audience").addEventListener("change", async (e) => {
     state.audience = e.target.value;
-    const open = [...state.open];
-    state.open = []; state.cards.clear();
-    for (const id of open) await openCard(id, { focus: false });
-    if (!state.open.length) renderBoard();
-    state.focus = state.open.includes(state.focus) ? state.focus : state.open[0] || "";
-    renderGraph(); scheduleFind(); remember();
+    state.cards.clear();
+    if (state.card) await openCard(state.card, { step: false });
+    if (!state.cards.has(state.card)) {
+      state.card = "";
+      renderBoard(); renderGraph();
+    }
+    scheduleFind(); remember();
   });
   document.getElementById("report").addEventListener("click", () => showReport(!state.report));
   document.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => {
@@ -911,22 +895,22 @@ function wire() {
   });
 }
 
-// A link pasted into this tab, or back and forward: open what the address names.
-let writing = false;
-window.addEventListener("hashchange", async () => {
-  if (writing) return;
-  state.open = []; state.cards.clear(); state.focus = "";
+// Back, forward, or an address pasted into this tab: show what it names.
+// Both events come for a pasted address; the second finds nothing to do.
+async function followAddress() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  if ((params.get("card") || "") === state.card && (params.get("report") === "1") === state.report
+      && (params.get("q") || "") === state.q) return;
   await restore();
-  if (!state.open.length) renderBoard();
-  renderGraph(); find();
-});
+  find();
+}
+window.addEventListener("popstate", followAddress);
+window.addEventListener("hashchange", followAddress);
 
 (async function start() {
   wire();
   await loadPeople();
   await loadReport();
   await restore();
-  if (!state.open.length) renderBoard();
-  renderGraph();
   await find();
 })();
