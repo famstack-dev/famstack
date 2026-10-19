@@ -87,7 +87,7 @@ The AI stacklet picks an LLM at install time based on `sysctl hw.memsize`:
 
 If your household uses German (or any non-English language) and you care about how documents get tagged, transcribed and summarized, 32 GB is the sweet spot. 16 GB works but you will feel the difference. You can always switch models later by editing `[ai] default` in `stack.toml` and running `./stack setup ai`.
 
-The `chatai` stacklet (Open WebUI) is also memory-hungry. On 16 GB Macs, skip it. Local AI still works for document classification and voice transcription without a chat UI.
+The `chatai` stacklet (Open WebUI) is also memory-hungry, and it is deprecated. On 16 GB Macs, skip it. Local AI still works for document classification and voice transcription without a chat UI.
 
 ### A note on disk
 
@@ -525,9 +525,11 @@ The command checks that the server answers, picks a model it has (`--model <id>`
 
 **The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and installs only speech-to-text and text-to-speech here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
 
-### ChatAI (`chatai`) optional
+### ChatAI (`chatai`) deprecated
 
 Open WebUI: a ChatGPT-style interface for your local LLM.
+
+**Deprecated in 0.4.0, removed in 0.5.0.** It still works, and `./stack up chatai` says so on every start. Asking the AI now happens in the family chat, through Stacky, the `agent` stacklet (beta).
 
 **Why Open WebUI?** Most polished open source chat UI. Multiple models, conversation history, file uploads. Feels like ChatGPT but runs locally.
 
