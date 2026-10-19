@@ -178,14 +178,23 @@ A card type is backed by a schema: the fields every card shares, the ones
 the type adds, which are required, and the values allowed (ADR-017). Every
 writer checks against it, and so does the format check.
 
-A card type can have renderers attached, one per output format: a markdown
-layout, an HTML layout, a text layout for the chat. A renderer presents a
-card's information and never changes it. A surface picks the format it
-needs (the card browser HTML, a bot's chat message text, a view markdown)
-and uses the type's renderer for it. A type without a renderer for that
-format falls back to a generic one: the title, the fields as a list, then
-the body. Renderers belong to the type, not to a single card, so every card
-of a type looks the same on every surface.
+A card type has one renderer, and it writes markdown. A renderer presents a
+card's information and never changes it. Each surface converts that
+markdown itself:
+
+| Surface | Shows the markdown as |
+|---|---|
+| the chat | the HTML Matrix allows (`formatted_body`), with the markdown as the plain `body` for clients that show no HTML; one converter in `lib/stack` for every bot |
+| the card browser | HTML, as it shows card text |
+| the wiki | HTML, through Quartz |
+| the agent | the markdown itself |
+
+A type without a renderer of its own falls back to a generic one: the
+title, the fields as a list, then the body. Renderers belong to the type,
+not to a single card, so every card of a type looks the same everywhere.
+One layout per type instead of one per surface keeps a new card type to one
+renderer. The chat shows no images from outside the room, so a card's media
+is a link there, not an embed.
 
 This removes three findings of the card review at the source: headers that
 repeat the fields, due dates written in two languages, and a title shown
