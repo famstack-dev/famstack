@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import urllib.request
@@ -43,6 +44,35 @@ def known_voices() -> list[str]:
         elif in_tts1 and not line.startswith("   ") and line.rstrip().endswith(":"):
             voices.append(line.strip()[:-1])
     return voices
+
+
+# A Piper model as the voice map names it, `model: voices/de_DE-thorsten-high.onnx`.
+# Piper names every model after its locale, so the part before `_` is the
+# language it speaks. A pattern rather than a YAML parser, because the host
+# CLI is stdlib-only.
+_PIPER_MODEL = re.compile(
+    r"^\s+model:\s*voices/(?P<name>(?P<language>[a-z]{2,3})_[A-Za-z]{2}-[\w.-]+)\.onnx\s*$")
+
+
+def voice_models(voice_map: str, languages) -> list[str]:
+    """The Piper models the voice map uses for `tts-1` in these languages,
+    each once, in map order.
+
+    The speech server reads a model only from disk, and its image
+    downloads two English ones by itself. The rest are what a house
+    speaking these languages has to fetch. A language is matched on its
+    first part, so `de`, `de-DE` and `de_AT` all mean German.
+    """
+    wanted = {lang.lower().replace("_", "-").split("-")[0]
+              for lang in languages if lang}
+    models, in_tts1 = [], False
+    for line in voice_map.splitlines():
+        if line.strip() and not line.startswith((" ", "#")):
+            in_tts1 = line.rstrip() == "tts-1:"
+        match = _PIPER_MODEL.match(line) if in_tts1 else None
+        if match and match["language"] in wanted and match["name"] not in models:
+            models.append(match["name"])
+    return models
 
 
 def synthesize(text: str, voice: str = "alloy", speed: float = SPEED) -> bytes:

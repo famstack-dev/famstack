@@ -8,7 +8,8 @@
 #
 # thorsten-high is the best German voice in Piper (male, clear, natural).
 # libritts_r-medium is a solid English voice for general conversation.
-# Models auto-download from Hugging Face on first use.
+# A model is never fetched on first use: Piper answers with silence.
+# `stack up ai` downloads the models of [ai] and [core] language.
 
 tts-1:
   # English

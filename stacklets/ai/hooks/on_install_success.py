@@ -5,6 +5,9 @@ Runs after the AI engine containers are up. Three acts:
 2. LLM backend check — verify the configured endpoint is reachable
 3. Model check — confirm the default model is available
 4. AI intro — the LLM writes a short message, TTS speaks it
+
+Before them, the voices of the house's languages are downloaded, so the
+greeting is heard in the house's language.
 """
 
 import sys
@@ -17,6 +20,12 @@ def run(ctx):
     sys.path.insert(0, str(Path(__file__).parent.parent))
     interactive = sys.stdin.isatty()
     provider = ctx.cfg("provider", default="managed")
+
+    # ── The house's voices ───────────────────────────────────────────
+    # This hook runs before on_start_ready on the first up, so without
+    # it the greeting below would ask for a voice that is not on disk yet.
+    from voices import download_house_voices
+    download_house_voices(ctx)
 
     # ── Voice greeting demo ──────────────────────────────────────────
     if interactive:
