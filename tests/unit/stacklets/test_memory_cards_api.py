@@ -112,7 +112,7 @@ class TestOpeningACard:
         assert card["text"] == "Das Zelt ist gerissen."
         assert card["meta"]["capture_id"] == "$Abc123Def456XYZ"
         assert card["changes"][0]["who"] == "homer"
-        assert {c["id"] for c in card["links_out"]} == {"person/lisa", "topic/camping"}
+        assert {c["id"] for g in card["links_to"] for c in g["cards"]} == {"person/lisa", "topic/camping"}
 
     def test_a_list_comes_with_its_items(self, api):
         _, card = _get(api, "/card/list/markt")
@@ -144,6 +144,51 @@ class TestOpeningACard:
         assert _get(api, "/card/lisa/about.md")[0] == 404
         _, found = _get(api, "/find?q=president")
         assert found["cards"] == []
+
+
+class TestWalkingTheLinks:
+    """An opened card stands between what links to it and what it links to.
+    A page walks from one to the next, so both come grouped by kind of card:
+    a person has dozens of incoming links, and a group says how many."""
+
+    @pytest.fixture
+    def lisas_month(self, memory):
+        for capture_id, title, day in (("Early0000001", "Saxophon geübt", "2026-10-02"),
+                                       ("Late00000001", "Schulkonzert", "2026-10-16")):
+            memory.write(f"family/notes/{capture_id}.md", _note(capture_id, title, day, persons=["lisa"]),
+                         by="marge", message=f"feat(notes): marge filed {title}")
+        memory.write("family/diary/2026/10/09.md",
+                     "---\ntype: diary\ntitle: Ein Dienstag\ndate: \"2026-10-09\"\nentry_id: d-0909\n"
+                     "persons:\n  - lisa\n---\nLisa hat geübt.\n",
+                     by="marge", message="feat(diary): a tuesday")
+        return memory
+
+    def test_what_links_to_a_card_comes_by_kind_largest_first_newest_first(self, api, lisas_month):
+        _, card = _get(api, "/card/person/lisa")
+
+        groups = [(g["type"], g["count"], [c["title"] for c in g["cards"]]) for g in card["linked_from"]]
+        assert groups == [
+            ("note", 3, ["Zelt ist kaputt", "Schulkonzert", "Saxophon geübt"]),
+            ("diary", 1, ["Ein Dienstag"])]
+
+    def test_a_link_both_ways_is_shown_once_with_what_the_card_links_to(self, api, memory):
+        """Lisa's file names the tent note and the note names Lisa (review G11)."""
+        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n"
+                     "Lisa plays the saxophone. See [the tent](../camping/zelt.md).\n",
+                     by="marge", message="chore(people): marge linked the tent")
+
+        for here, there in (("person/lisa", "capture/Abc123Def4"), ("capture/Abc123Def4", "person/lisa")):
+            _, card = _get(api, f"/card/{here}")
+            linked_from = {c["id"] for g in card["linked_from"] for c in g["cards"]}
+            links_to = {c["id"]: c["both"] for g in card["links_to"] for c in g["cards"]}
+            assert there not in linked_from, here
+            assert links_to[there] is True, here
+
+    def test_a_link_one_way_is_not_marked(self, api):
+        _, card = _get(api, "/card/capture/Abc123Def4")
+
+        assert {c["id"]: c["both"] for g in card["links_to"] for c in g["cards"]} == {
+            "person/lisa": False, "topic/camping": False}
 
 
 class TestWhoIsLooking:

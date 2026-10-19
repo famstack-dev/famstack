@@ -186,8 +186,7 @@ def _full(card: Card, graph: Graph) -> dict:
     full = {**_summary(card), "meta": _plain(card.meta), "text": body.strip(),
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
-            "links_out": _linked(card.links_out, graph), "links_in": _linked(card.links_in, graph),
-            "views": [_view(v) for v in card.views]}
+            **_walk(card, graph), "views": [_view(v) for v in card.views]}
     if card.type == "list":
         full["items"] = _items(card)
     return full
@@ -201,9 +200,31 @@ def _view(view: View) -> dict:
             "go": f"/go{go}" if go else ""}
 
 
-def _linked(ids: set[str], graph: Graph) -> list[dict]:
-    cards = [graph.cards[i] for i in ids if i in graph.cards]
-    return [_summary(c) for c in sorted(cards, key=lambda c: c.day or "", reverse=True)]
+def _walk(card: Card, graph: Graph) -> dict:
+    """The cards on either side of `card`, as a page walks them: what links
+    to it (`linked_from`) and what it links to (`links_to`).
+
+    A link both ways is shown once, with what the card links to, and marked
+    `both`, so a person and their note are not listed twice (review G11).
+    """
+    both = card.links_out & card.links_in
+    return {"linked_from": _groups(card.links_in - both, graph, both=set()),
+            "links_to": _groups(card.links_out, graph, both=both)}
+
+
+def _groups(ids: set[str], graph: Graph, *, both: set[str]) -> list[dict]:
+    """`ids` by card type, the largest group first, newest first inside one:
+    `[{"type": "note", "count": 2, "cards": [...]}]`."""
+    by_type: dict[str, list[Card]] = {}
+    for cid in ids:
+        if other := graph.cards.get(cid):
+            by_type.setdefault(other.type, []).append(other)
+    groups = []
+    for kind, cards in sorted(by_type.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        cards.sort(key=lambda c: (c.day or "", c.title), reverse=True)
+        groups.append({"type": kind, "count": len(cards),
+                       "cards": [{**_summary(c), "both": c.id in both} for c in cards]})
+    return groups
 
 
 def _items(card: Card) -> list[dict]:
