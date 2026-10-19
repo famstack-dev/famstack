@@ -21,10 +21,12 @@ stdlib-only is what makes it unit-testable without standing up FastAPI.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Callable
 from urllib.parse import quote
 
-from stack.cards import CARD_ID_FIELDS
+from stack.cards import CARD_ID_FIELDS, Found, Removal
+from stack.people import person_id
 
 # A trailing `todo`/`todos` segment points at the entity's task list instead of
 # its overview page. Both spellings accepted — people type either.
@@ -102,6 +104,68 @@ def card_page_target(kind: str, path: str, card_id: str) -> str | None:
         return None
     month = "/".join(parts[:-4] + parts[-3:-1])
     return f"{month}#{quote(card_id, safe='')}"
+
+
+def card_target(path: str, fields: dict) -> str | None:
+    """Wiki target for the card at vault `path`, found by its `card_id`.
+
+    Where the older link of its kind lands: a diary card on its month at
+    its anchor (`card_page_target`), a person on their page as
+    `/person/<id>` opens it, any other card on its own page, the vault
+    path without the suffix. None for a diary card outside the diary's
+    folders, which no page shows.
+
+    >>> card_target("marge/notes/2026/10/art-supplies-5f9740.md", {"type": "note"})
+    'marge/notes/2026/10/art-supplies-5f9740'
+    >>> card_target("family/people/homer.md", {"type": "person"})
+    'homer/about'
+    >>> card_target("family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
+    ...             {"type": "diary", "entry_id": "3f9a0c1b2d"})
+    'family/diary/2026/08#3f9a0c1b2d'
+    """
+    kind = str(fields.get("type") or "")
+    if kind == "diary":
+        return card_page_target("diary", path, str(fields.get("entry_id") or ""))
+    if kind == "person":
+        return resolve_person_target([person_id(PurePosixPath(path).stem)])
+    return path.removesuffix(".md")
+
+
+def gone_text(card_id: str, removal: Removal) -> str:
+    """What a link to a removed card answers: that it is gone, and when.
+
+    A link in a chat's history keeps saying what became of the card. The
+    commit's subject is left out: it can carry the card's title, and the
+    page answers anyone who has the link.
+
+    >>> gone_text("note-7f3a9c21e4", Removal("0322e4c", "2026-10-19", "marge", "remove: x",
+    ...                                     "marge/notes/x.md"))
+    'The card note-7f3a9c21e4 is gone: marge removed it on 2026-10-19 (commit 0322e4c).'
+    """
+    return (f"The card {card_id} is gone: {removal.who} removed it on {removal.day} "
+            f"(commit {removal.sha}).")
+
+
+def card_link_answer(
+    card_id: str, *, wiki_base: str,
+    find: "Callable[[str], Found | None]",
+    removal: "Callable[[str], Removal | None]",
+) -> tuple[int, str] | None:
+    """What `/<prefix>/<card_id>` answers: `(302, url)`, `(410, text)` or None.
+
+    `find` is `stack.cards.find_by_card_id` over the tree the wiki serves,
+    so a current id and a former one land on the same page. `removal` is
+    `stack.cards.removal_of` over the memory repo, asked only when no card
+    carries the id: one did, and the answer says when it went. None (a
+    404) for an id no card ever carried. Both are injected by the HTTP
+    layer, like `build_redirect`'s `find_card`, to keep the I/O out of here.
+    """
+    found = find(card_id)
+    if found is not None:
+        target = card_target(found.path, found.fields)
+        return (302, f"{wiki_base.rstrip('/')}/{target}") if target else None
+    gone = removal(card_id)
+    return (410, gone_text(card_id, gone)) if gone else None
 
 
 def build_redirect(

@@ -19,12 +19,12 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 import cards_page as cards_page_module
 from access import CARDS_PORT, INTERNAL_PORT, PUBLIC_PORT, serves
-from resolver import build_redirect
-from stack.cards import find_card
+from resolver import build_redirect, card_link_answer
+from stack.cards import find_by_card_id, find_card, removal_of
 
 
 # ── Config from environment ──────────────────────────────────────────────
@@ -62,6 +62,9 @@ LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
 # pointing this at it would name a directory that does not exist in this
 # container. Unmounted (memory not installed) simply means card links 404.
 BRAIN_DIR = Path("/brain")
+# The memory repo, read for its history: when a card no file carries any
+# more was removed. Unmounted, such a link is a plain 404.
+VAULT_DIR = Path("/vault")
 
 
 
@@ -217,6 +220,28 @@ async def go_diary(entry_id: str):
     to another folder; the entry id stays. 404 when no card carries it.
     """
     return _go("diary", [entry_id])
+
+
+@app.get(f"/{LINK_PREFIX}/{{card_id}}", summary="Resolve a link to any card by its card id")
+def go_card(card_id: str):
+    """Redirect `/<prefix>/<card_id>` to the page that shows the card now.
+
+    A former id (`former_card_ids`) lands on the card that carries it. An
+    id no card carries any more, but one did, answers 410 with the commit
+    that removed it; an id no card ever carried is a 404. Declared without
+    `async`, so the scan and git run in a worker thread, not on the loop.
+    """
+    answer = card_link_answer(
+        card_id, wiki_base=WIKI_PUBLIC_URL,
+        find=lambda cid: find_by_card_id(cid, root=BRAIN_DIR),
+        removal=lambda cid: removal_of(cid, repo=VAULT_DIR),
+    )
+    if answer is None:
+        return _error("no such resource", status=404)
+    status, body = answer
+    if status == 410:
+        return PlainTextResponse(body, status_code=410)
+    return RedirectResponse(body, status_code=status)
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────

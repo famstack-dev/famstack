@@ -413,11 +413,12 @@ tested end-to-end (see `tests/e2e/test_archivist_e2e.py`).
 
 A link a bot posts into a room stays in the timeline for good, so it
 never points at a service or a file path. It points at
-`<home>/go/<kind>/<name or id>`, and core's tools server resolves it when
-someone opens it. `stack.links` builds these paths
-(`go_docs`, `go_topic`, `go_person`, `go_list`, `go_capture`, `go_diary`,
-and `go_page` for a page an edit touched); `stacklets/core/tools-server/resolver.py`
-is the only place that knows what they resolve to.
+`<home>/go/<card_id>` for a card, or `<home>/go/<kind>/<name or id>`, and
+core's tools server resolves it when someone opens it. `stack.links` builds
+these paths (`go_card` for a card, `go_docs`, `go_topic`, `go_person`,
+`go_list`, `go_capture`, `go_diary`, and `go_page` for a page an edit
+touched); `stacklets/core/tools-server/resolver.py` is the only place that
+knows what they resolve to.
 
 A **card** is one file in the family memory that stands for one thing. Its
 path is not a stable name: the folder follows the bucket and topic, the
@@ -480,20 +481,34 @@ curator does it for each file pushed without one, or with one another
 file carries (the file first committed later gets a new id). A file with
 no frontmatter or no `type` was written by hand and becomes a note.
 `README.md`, `index.md` and pages the wiki compiled are no cards. Readers
-take the id from `stack.cards.card_id_from`. The links above keep their
-ids until `/go/<card_id>` resolves.
+take the id from `stack.cards.card_id_from`.
+
+**`/go/<card_id>` opens any card**, on the page the link of its kind in
+the table opens: a note on its wiki page, a diary card on its month at the
+card, a person on their page, a list on the list. The links in the table
+keep resolving as before.
 
 **A card whose id changes keeps the old one.** A card that becomes another
 type is a new card with a new id: it lists the ids it had in
 `former_card_ids`, in the same commit (`stack.cards.card_identity`, which
-every writer uses, so a rebuild keeps both fields). A photo filed as a
-bookmark and refiled as a note (migration `docs/0001`) is the case today.
+every writer uses, so a rebuild keeps both fields). `/go/<former id>`
+opens the card. A photo filed as a bookmark and refiled as a note
+(migration `docs/0001`) is the case today.
+
+**A card that was removed answers as gone.** When no card carries an id,
+`stack.cards.removal_of` reads the memory repo's history for the newest
+commit that deleted a file with that `card_id`. `/go/<card_id>` then
+answers 410 with who removed it, the day and the commit (not its subject,
+which can carry the title). An id no card ever carried is a 404. Core's
+tools server reads the memory repo read-only for this, and git in its
+image; cards themselves are still found in the wiki's copy. Opening a link
+writes nothing.
 
 The kinds found by id in the vault are listed in `stack.cards`
-(`CARD_ID_FIELDS`), next to the one lookup by card id,
-`stack.cards.find_card`. It scans the frontmatter of a copy of the
-vault, with no index to go stale, and answers None for an id no card
-carries rather than guessing. Each reader runs it over the copy it reads
+(`CARD_ID_FIELDS`), next to the lookups: `stack.cards.find_card` by the id
+of a kind, `stack.cards.find_by_card_id` by a `card_id` or a former one.
+They scan the frontmatter of a copy of the vault, with no index to go
+stale, and answer None for an id no card carries rather than guessing. Each reader runs it over the copy it reads
 from: core's tools server over the wiki's copy, so a `/go/` link lands on
 a page the wiki serves (404 otherwise); the archivist over its own mount,
 before it applies a correction to a capture, falling back to the path

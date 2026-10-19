@@ -24,7 +24,9 @@ derived again. `new_card_id` makes it, for the writers, the migration
 that gave existing cards theirs, and the curator, which gives one to a
 file written by hand (`with_card_id`). Readers take it from
 `card_id_from`. A card that changes its type gets a new id and keeps the
-ones it had in `former_card_ids` (`card_identity`). Until every card carries an id, the
+ones it had in `former_card_ids` (`card_identity`). `find_by_card_id`
+finds a card by its id or a former one, and `removal_of` says when a card
+no file carries any more was removed. Until every card carries an id, the
 table above and `find_card` keep resolving the links in use.
 
 Stdlib only: the host CLI, the bot-runner and core's tools server all
@@ -52,8 +54,10 @@ from __future__ import annotations
 
 import re
 import secrets
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Container, Mapping
+from typing import Container, Iterator, Mapping
 
 from .frontmatter import RECORD_TYPES, FrontmatterError, dump, parse
 from .vault import slug
@@ -206,6 +210,8 @@ _ARCHIVE = re.compile(r"(?:^|/)lists/archive/(?P<list>[^/]+)/(?P<month>\d{4}-\d{
 # A file name that is an id already, as `stack.people.person_id` reads one.
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
+# The shape of a card id: `<type>-<value>`, as `new_card_id` makes them.
+_CARD_ID_SHAPE = re.compile(r"^[a-z]+-[a-z0-9][a-z0-9._-]*$")
 
 _OPENING = "---\n"
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
@@ -237,6 +243,17 @@ def former_card_ids(fields: Mapping[str, object]) -> list[str]:
     value = fields.get(FORMER_CARD_IDS) or []
     values = value if isinstance(value, list) else [value]
     return [str(v).strip() for v in values if str(v).strip()]
+
+
+def is_card_id(text: str) -> bool:
+    """Whether `text` has the shape of a card id, so a link may name one.
+
+    >>> is_card_id("note-7f3a9c21e4"), is_card_id("list-markt-2026-10")
+    (True, True)
+    >>> is_card_id("capture"), is_card_id("topic/camping")
+    (False, False)
+    """
+    return bool(_CARD_ID_SHAPE.match(text or ""))
 
 
 def card_identity(previous: Mapping[str, object], card_type: str, path: str) -> dict[str, object]:
@@ -408,16 +425,112 @@ def find_card(kind: str, card_id: str, *, root: Path | str) -> str | None:
     """
     field = CARD_ID_FIELDS.get(kind)
     wanted = (card_id or "").strip()
-    root = Path(root)
-    if field is None or not wanted or not root.is_dir():
+    if field is None or not wanted:
         return None
+    for rel, fields in _cards_in(Path(root)):
+        if str(fields.get(field) or "").strip() == wanted:
+            return rel
+    return None
+
+
+@dataclass(frozen=True)
+class Found:
+    """A card found by a card id: where it is, its frontmatter, and the id
+    it was asked for, which is a former id of the card when it is not its
+    current one.
+
+        found = find_by_card_id("bookmark-7f3a9c21e4", root=vault)
+        found.card_id, found.former      # ('note-0b6e2d91aa', True)
+    """
+
+    path: str
+    fields: dict
+    asked: str
+
+    @property
+    def card_id(self) -> str:
+        return card_id_from(self.fields)
+
+    @property
+    def former(self) -> bool:
+        return self.asked != self.card_id
+
+
+def find_by_card_id(card_id: str, *, root: Path | str) -> Found | None:
+    """The card in `root` that carries `card_id`, now or as a former id.
+
+    A card that carries it as its id wins over one that lists it among
+    its former ids. None for a text that is no card id, a missing `root`,
+    or an id no card carries: `removal_of` says whether one did.
+    """
+    wanted = (card_id or "").strip()
+    if not is_card_id(wanted):
+        return None
+    former: Found | None = None
+    for rel, fields in _cards_in(Path(root)):
+        if card_id_from(fields) == wanted:
+            return Found(rel, fields, wanted)
+        if former is None and wanted in former_card_ids(fields):
+            former = Found(rel, fields, wanted)
+    return former
+
+
+@dataclass(frozen=True)
+class Removal:
+    """The commit that removed the last card carrying an id, and the file
+    that card was, so a reader can tell who may hear of it."""
+
+    sha: str
+    day: str
+    who: str
+    subject: str
+    path: str
+
+
+# git can wait on a large history; a person is waiting on the answer.
+_HISTORY_TIMEOUT_SECS = 20
+
+
+def removal_of(card_id: str, *, repo: Path | str) -> Removal | None:
+    """When the card with `card_id` was removed from the git repository `repo`.
+
+    The newest commit that deleted a file whose frontmatter carried the
+    id. Ask it only for an id `find_by_card_id` did not find: a card that
+    was removed and written again is found, not gone. None for a text
+    that is no card id, a `repo` git cannot read, or an id no file ever
+    carried. The repository may belong to another user (a bind mount in
+    a container), so git is told to trust it for this one command.
+    """
+    wanted = (card_id or "").strip()
+    if not is_card_id(wanted) or not Path(repo).is_dir():
+        return None
+    line = "^card_id: " + wanted.replace(".", "\\.") + "$"
+    try:
+        out = subprocess.run(
+            ["git", "-c", "safe.directory=*", "-C", str(repo), "log", "-1",
+             "--diff-filter=D", f"-G{line}", "--name-only", "-z",
+             "--format=%h%x1f%cs%x1f%an%x1f%s"],
+            capture_output=True, text=True, timeout=_HISTORY_TIMEOUT_SECS,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # `-z` ends the commit line and each file name with a NUL.
+    head, *paths = [field.strip("\n") for field in out.split("\0") if field.strip("\n")] or [""]
+    parts = head.split("\x1f")
+    if len(parts) != 4 or not paths:
+        return None
+    sha, day, who, subject = parts
+    return Removal(sha, day, who, subject, paths[0])
+
+
+def _cards_in(root: Path) -> Iterator[tuple[str, dict]]:
+    """Each markdown file under `root` with its frontmatter, by path."""
+    if not root.is_dir():
+        return
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(root)
-        if ".git" in rel.parts:
-            continue
-        if str(_frontmatter_of(path).get(field) or "").strip() == wanted:
-            return rel.as_posix()
-    return None
+        if ".git" not in rel.parts:
+            yield rel.as_posix(), _frontmatter_of(path)
 
 
 def _frontmatter_of(path: Path) -> dict:

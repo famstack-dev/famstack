@@ -108,6 +108,10 @@ services:
       # `${DATA_DIR}` is the host path (BRAIN_REPO_DIR is the *container*
       # path the bot-runner sees, so it cannot be a bind source here).
       - ${DATA_DIR}/memory/brain:/brain:ro
+      # The memory repo, read-only, for its history alone: a link to a card
+      # no file carries any more answers with the commit that removed it
+      # (`stack.cards.removal_of`). Cards are still found in the brain.
+      - ${DATA_DIR}/memory/vault:/vault:ro
     restart: unless-stopped
 
 networks:
