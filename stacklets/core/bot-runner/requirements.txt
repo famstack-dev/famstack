@@ -1,7 +1,7 @@
 # 0.25 is the floor: reading a thread's events (`room_get_event_relations`,
 # how the bot finds the filing a correction belongs to) arrived there.
 matrix-nio[e2e]>=0.25,<1.0
-# Ed25519 for the bots' cross-signing keys (cross_signing.py). nio brings
+# Ed25519 for the bots' cross-signing keys (stack.matrix.cross_signing). nio brings
 # it already; vodozemac signs only with the device's own key.
 pycryptodome>=3.15
 aiohttp>=3.9,<4.0

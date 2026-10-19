@@ -302,7 +302,7 @@ def check_sleep(pmset: str) -> Finding | None:
         if "prevented by" in m[2] else ""
     return Finding(
         level=WARN, title=f"this Mac sleeps after {m[1]} minute(s) without use",
-        detail=("While it sleeps nothing runs: scheduled commands, the bots, the family chat."
+        detail=("While it sleeps nothing runs: scheduled commands, the bots, the chat server."
                 + held),
         fix="sudo pmset -a sleep 0")
 
