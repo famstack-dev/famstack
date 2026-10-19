@@ -170,3 +170,21 @@ class TestWithoutTheSpeechContainer:
 
         assert _downloads(docker) == []
         assert stack.output.warnings == []
+
+
+class TestTheFirstGreetingSpeaksTheHouseLanguage:
+
+    def test_the_first_install_fetches_the_voice_before_the_greeting(
+            self, tmp_path, docker):
+        """On the first `stack up ai` the greeting plays in the install
+        step, before the ready step runs, so the install step fetches the
+        voice first. A German Mac would otherwise greet with silence."""
+        stack = _instance(tmp_path, "de", "de")
+        ctx = build_hook_ctx("ai", env=stack.env("ai"),
+                             step_fn=stack.output.step, stack=stack)
+
+        HookResolver(AI).run("on_install_success", ctx)
+
+        assert (_voices(tmp_path) / f"{GERMAN}.onnx").exists()
+        _start(stack)
+        assert len(_downloads(docker)) == 1
