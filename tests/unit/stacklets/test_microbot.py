@@ -1298,12 +1298,11 @@ class TestShouldReact:
 
 
 class TestAnAttachmentFromAnEncryptedRoom:
-    """Inviting a bot into an encrypted room is the family's opt-in
-    (workspace decision 0020). A photo, PDF or voice message sent there
-    arrives encrypted: nio parses it as `RoomEncrypted*`, which no
-    handler listens for, and the file on the server is ciphertext. A
-    handler should get the same event and the same bytes as from an
-    unencrypted room."""
+    """Inviting a bot into an encrypted room is the opt-in (ADR-004). A
+    photo, PDF or voice message sent there arrives encrypted: nio parses
+    it as `RoomEncrypted*`, which no handler listens for, and the file on
+    the server is ciphertext. A handler should get the same event and the
+    same bytes as from an unencrypted room."""
 
     @pytest.mark.asyncio
     async def test_a_photo_reaches_the_photo_handler_and_downloads_decrypted(self, tmp_path,

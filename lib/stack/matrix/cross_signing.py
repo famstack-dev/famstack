@@ -3,11 +3,12 @@
 A Matrix app trusts a device when its owner signed it with their
 self-signing key, and newer apps are moving to share room keys only with
 such devices (MSC4153). A person's app sets this up by asking them to
-verify the new login. A bot has nobody to ask, so it does it itself at
-start: it makes a master key and a self-signing key once, publishes them,
-and signs its device with the self-signing key.
+verify the new login. A bot has nobody to ask, and neither has any other
+account no person logs into, so it does it itself at start: it makes a
+master key and a self-signing key once, publishes them, and signs its
+device with the self-signing key.
 
-That is the bot's half. Whether someone's app shows the bot as verified
+That is the account's half. Whether someone's app shows it as verified
 is that person's decision, made in their own app; nothing on the server
 can set it.
 
