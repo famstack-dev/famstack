@@ -440,12 +440,15 @@ agent) finds the card by that id. A stored path is only a hint.
 | note, bookmark written by hand | its file name (no message to name it by) | none |
 | a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
 
-A person is one card whatever file a link reaches: the family's file on
-them (`<bucket>/people/<id>.md`) and the profile the wiki compiles
-(`<id>/about.md`). `stack.cards.card_ref` holds the rule for every kind,
-for the readers that see the whole memory (the card graph behind
-`stack memory find`, `card` and `links`, and the cards API); `card_kind`
-tells a list archive and a navigation page from the rest.
+The card graph behind `stack memory find`, `card` and `links`, and the
+cards API, reads its cards from the vault only (ADR-016). What the wiki
+compiles into the brain (a person's `<id>/about.md`, a topic's page, a
+diary month, an index) is a view: never found, never opened as a card.
+A card comes with the views compiled about it, found where the wiki
+compiles them until views name their card: a person's at `<id>/about.md`,
+a correspondent's at the card's own path. `stack.cards.card_ref` holds
+the naming rule for every kind; `card_kind` tells a list archive and a
+navigation page from the rest.
 
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,

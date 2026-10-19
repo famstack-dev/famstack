@@ -29,8 +29,10 @@ from test_memory_graph_cli import RECENT, Memory, _note  # noqa: E402
 @pytest.fixture
 def memory(tmp_path):
     m = Memory(tmp_path)
-    m.write("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\nslug: lisa\n---\n"
+    m.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n"
             "Lisa plays the saxophone.\n", by="marge", message="chore(people): marge described Lisa")
+    m.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n---\n"
+              "<!-- begin: generated -->\nLisa, 8, wants to be president.\n<!-- end: generated -->\n")
     m.write("family/camping/about.md", "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
             "The family's camping trips.\n", by="homer", message="feat(topics): homer added camping")
     m.write("family/camping/zelt.md",
@@ -49,7 +51,7 @@ def api(memory, tmp_path):
     fonts = tmp_path / "fonts"
     fonts.mkdir()
     (fonts / "inter.woff2").write_bytes(b"wOF2 not really")
-    server = serve(CardsAPI(brain=memory.vault, vault=memory.vault, fonts=fonts),
+    server = serve(CardsAPI(vault=memory.vault, brain=memory.brain, fonts=fonts),
                    host="127.0.0.1", port=0)
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
@@ -115,6 +117,22 @@ class TestOpeningACard:
 
     def test_an_unknown_card_is_not_found(self, api):
         assert _get(api, "/card/capture/nothere")[0] == 404
+
+    def test_a_person_comes_with_the_view_compiled_about_them(self, api):
+        """The person is their file; the wiki's page on them is reached from
+        it, marked as a view, with the link that opens it in the wiki."""
+        _, card = _get(api, "/card/person/lisa")
+
+        assert card["path"] == "family/people/lisa.md"
+        [view] = card["views"]
+        assert view["view"] == "person" and view["path"] == "lisa/about.md"
+        assert view["text"] == "Lisa, 8, wants to be president."
+        assert view["go"] == "/go/person/lisa"
+
+    def test_a_view_is_no_card(self, api):
+        assert _get(api, "/card/lisa/about.md")[0] == 404
+        _, found = _get(api, "/find?q=president")
+        assert found["cards"] == []
 
 
 class TestWhoIsLooking:

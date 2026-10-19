@@ -7,8 +7,9 @@ told apart from one that did not.
 
 The family memory here is a real git repository with commits made as
 the people who made them, the way every change reaches the vault
-(ADR-015). The brain, the copy the agent reads, is the vault plus the
-pages the wiki generates; here it is the vault itself.
+(ADR-015). Every file in it is a card. The brain holds what the wiki
+compiles from the cards (a person's page, a diary month): views, read with
+the card they are about and never cards of their own (ADR-016 §3).
 """
 
 from __future__ import annotations
@@ -46,8 +47,15 @@ class Memory:
     def __init__(self, root: Path):
         self.data_dir = root
         self.vault = root / "memory" / "vault"
+        self.brain = root / "memory" / "brain"
         self.vault.mkdir(parents=True)
         self._git("init", "-q")
+
+    def compile(self, path: str, text: str) -> None:
+        """A page the wiki compiles into the brain: a view, never a card."""
+        file = self.brain / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
 
     def write(self, path: str, text: str, *, by: str, message: str) -> str:
         file = self.vault / path
@@ -82,8 +90,8 @@ class Memory:
 @pytest.fixture
 def memory(tmp_path):
     m = Memory(tmp_path)
-    m.write("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\nslug: lisa\n"
-            "synonyms:\n  - Lisa\n---\nLisa plays the saxophone.\n",
+    m.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n"
+            "aliases:\n  - Lis\n---\nLisa plays the saxophone.\n",
             by="marge", message="chore(people): marge described Lisa")
     m.write("family/camping/about.md", "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
             "The family's camping trips.\n", by="homer", message="feat(topics): homer added camping")
@@ -143,24 +151,19 @@ class TestFindingCards:
         out = capsys.readouterr().out
         assert out.index("Zelt geteilt") < out.index("Zelt allein")
 
-    def test_a_compiled_page_is_found_with_the_cards_it_was_made_from(self, memory, capsys):
-        """The wiki's pages answer most questions in one read; the cards
-        behind them say who wrote what and when. One search finds both."""
+    def test_a_search_finds_the_cards_never_the_page_compiled_from_them(self, memory, capsys):
+        """A hit is something a reader can link and a person can correct: a
+        card. The wiki's page on Lisa says what the note says, and is not one."""
         memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
                      by="homer", message="feat(notes): zelt")
-        memory.write("family/camping/about.md",
-                     "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
-                     "<!-- begin: generated -->\nDas Zelt ist kaputt "
-                     "([Zelt ist kaputt](/homer/notes/zelt.md)).\n<!-- end: generated -->\n",
-                     by="curator", message="chore(wiki): compile camping")
+        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+                       "---\nLisa found the torn tent (Zelt ist kaputt).\n")
 
         _run(find_cli, memory, "zelt")
-        found = capsys.readouterr().out
-        _run(card_cli, memory, "topic/camping")
-        page = capsys.readouterr().out
 
-        assert "topic/camping" in found and "capture/Abc123Def4" in found
-        assert "links to: capture/Abc123Def4 (Zelt ist kaputt)" in page
+        found = capsys.readouterr().out
+        assert "capture/Abc123Def4" in found and "Lisa found the torn tent" not in found
+        assert len(found.splitlines()) == 1
 
     def test_a_word_inside_a_longer_one_is_found(self, memory, capsys):
         """German writes its words together: "zelt" has to find "Zeltplatz"."""
@@ -216,7 +219,7 @@ class TestOpeningACard:
         they live; such a link is an edge like a site path."""
         memory.write("family/camping/zelt.md",
                      _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT,
-                           body="Lisa hat es gemerkt ([Lisa](../../lisa/about.md))."),
+                           body="Lisa hat es gemerkt ([Lisa](../people/lisa.md))."),
                      by="homer", message="feat(notes): zelt")
 
         _run(card_cli, memory, "person/lisa")
@@ -281,14 +284,20 @@ class TestOpeningACard:
 
         assert "by marge" in capsys.readouterr().out
 
-    def test_a_persons_card_is_their_profile_not_their_registry_entry(self, memory, capsys):
-        """Both name the person; the profile is what a question about them needs."""
-        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n",
-                     by="marge", message="chore(people): marge registered Lisa")
+    def test_a_persons_card_is_their_file_and_names_the_page_compiled_about_them(self, memory,
+                                                                                 capsys):
+        """The page the wiki compiles on Lisa is what a question about her
+        reads first; it is reached from her card, as a view, not opened as one."""
+        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+                       "---\nLisa, 8, plays the saxophone and wants to be president.\n")
 
         _run(card_cli, memory, "person/lisa")
+        card = capsys.readouterr().out
 
-        assert "Lisa plays the saxophone" in capsys.readouterr().out
+        assert card.splitlines()[1] == "file: family/people/lisa.md"
+        assert "view: lisa/about.md (person, compiled by the wiki)" in card
+        with pytest.raises(SystemExit):
+            _run(card_cli, memory, "lisa/about.md")
 
     def test_a_path_outside_the_family_memory_is_no_card(self, memory, tmp_path, capsys):
         """The agent opens pages with `card`; only the memory's cards exist for it."""
@@ -342,11 +351,10 @@ class TestWhoIsListening:
     def private(self, memory):
         memory.write("marge/notes/aquarell.md",
                      _note("Marge000000001", "Barts Aquarell", RECENT,
-                           body="Bart malt nass in nass. Siehe [Lisa](../../lisa/about.md)."),
+                           body="Bart malt nass in nass. Siehe [Lisa](../../family/people/lisa.md)."),
                      by="marge", message="feat(notes): marge filed Barts Aquarell")
-        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n"
-                     "Lisa, 8, the family's saxophonist.\n",
-                     by="marge", message="chore(people): marge registered Lisa")
+        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+                       "---\nLisa, 8, the family's saxophonist.\n")
         return memory
 
     def test_in_a_room_with_others_a_persons_own_note_is_not_found(self, private, capsys):
@@ -383,13 +391,15 @@ class TestWhoIsListening:
 
         assert "topic/camping" in capsys.readouterr().out
 
-    def test_a_profile_kept_in_the_persons_bucket_falls_back_to_the_familys_entry(self, private,
-                                                                                capsys):
-        """Lisa's compiled page lives in her bucket; others read the family's file on her."""
+    def test_the_page_compiled_in_a_persons_bucket_is_left_out_for_others(self, private, capsys):
+        """Lisa's compiled page lives in her bucket; others read her card without it."""
         _run(card_cli, private, "person/lisa", "--audience", "bart,homer")
+        others = capsys.readouterr().out
+        _run(card_cli, private, "person/lisa", "--audience", "lisa")
+        hers = capsys.readouterr().out
 
-        out = capsys.readouterr().out
-        assert "the family's saxophonist" in out and "Lisa plays the saxophone" not in out
+        assert "Lisa plays the saxophone" in others and "lisa/about.md" not in others
+        assert "view: lisa/about.md" in hers
 
     def test_the_admin_without_an_audience_sees_everything(self, private, capsys):
         _run(find_cli, private, "aquarell")
@@ -442,11 +452,11 @@ class TestEveryThingIsOneCard:
     when a person, a list or a correspondent is one node, whatever file
     a link points at."""
 
-    def test_a_person_is_one_card_of_their_file_and_their_profile(self, memory, capsys):
-        """Records link the family's file on a person; the wiki compiles their
-        profile. Both are the person: one card, linked from either."""
-        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n"
-                     "aliases:\n  - Lis\n---\n", by="marge", message="chore(people): marge registered Lisa")
+    def test_a_person_is_one_card_however_much_the_wiki_compiles_about_them(self, memory, capsys):
+        """Records link the family's file on a person; the wiki compiles a
+        page from it and every record about them. The person is one card."""
+        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+                       "---\nLisa plays the saxophone.\n")
         memory.write("family/camping/zelt.md",
                      _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT,
                            body="Siehe [Lisa](../people/lisa.md)."),
@@ -454,9 +464,7 @@ class TestEveryThingIsOneCard:
 
         _run(card_cli, memory, "person/lisa")
 
-        out = capsys.readouterr().out
-        assert "Lisa plays the saxophone" in out
-        assert "linked from: capture/Abc123Def4" in out
+        assert "linked from: capture/Abc123Def4" in capsys.readouterr().out
         _run(find_cli, memory, "lisa", "--type", "person")
         assert capsys.readouterr().out.count("Lisa Simpson") == 1
 
@@ -499,8 +507,8 @@ class TestWhatFindLeavesOut:
 
     @pytest.fixture
     def pages(self, memory):
-        memory.write("family/diary/2026/10.md", "---\ntitle: October 2026\ngenerated: true\n---\n"
-                     "The family's month: camping, the tent.\n", by="curator", message="chore(wiki): month")
+        memory.compile("family/diary/2026/10.md", "---\ntitle: October 2026\ngenerated: true\n---\n"
+                       "The family's month: camping, the tent.\n")
         memory.write("family/camping/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
                      by="homer", message="feat(notes): zelt")
         return memory
@@ -510,10 +518,12 @@ class TestWhatFindLeavesOut:
 
         assert "October 2026" not in capsys.readouterr().out
 
-    def test_they_are_found_when_asked_for(self, pages, capsys):
-        _run(find_cli, pages, "camping", "--type", "index")
+    def test_nor_found_when_asked_for_by_kind(self, pages, capsys):
+        """The wiki compiles them to find the way; they are no card of their own."""
+        with pytest.raises(SystemExit):
+            _run(find_cli, pages, "camping", "--type", "index")
 
-        assert "index/family/diary/2026/10  index" in capsys.readouterr().out
+        assert "October 2026" not in capsys.readouterr().out
 
     def test_without_words_the_newest_come_first(self, pages, capsys):
         memory = pages

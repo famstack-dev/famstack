@@ -12,6 +12,9 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /people
     GET /fonts/<file>          the famstack faces the wiki serves
 
+The cards are the files of the vault; a card comes with the views the wiki
+compiled about it into the brain, which are never cards of their own.
+
 `audience` is who will see the answer (person slugs, comma-separated): a
 card in a person's own bucket only when they are the whole audience. No
 audience is the admin's view.
@@ -38,7 +41,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from graph import Card, Graph, load_graph  # noqa: E402
+from graph import Card, Graph, View, load_graph  # noqa: E402
+from stack.links import go_page  # noqa: E402
 
 PORT = 8090
 # What a result page lists at most; a page asks for more by narrowing.
@@ -51,12 +55,12 @@ _FRONTMATTER_END = "\n---\n"
 class CardsAPI:
     """Answers the routes above for one copy of the family memory.
 
-        api = CardsAPI(brain=Path("/data/memory/brain"), vault=Path("/data/memory/vault"))
-        status, kind, body = api.answer("/card/topic/camping", {})
+        api = CardsAPI(vault=Path("/data/memory/vault"), brain=Path("/data/memory/brain"))
+        status, kind, body = api.answer("/card/person/homer", {})
     """
 
-    brain: Path
-    vault: Path | None = None
+    vault: Path
+    brain: Path | None = None
     fonts: Path | None = None
     shared_bucket: str = "family"
     _graphs: dict = field(default_factory=dict, repr=False)
@@ -88,11 +92,11 @@ class CardsAPI:
         return 404, "application/json", b'{"error": "no such route"}'
 
     def _graph(self, audience: frozenset[str] | None) -> Graph:
-        key = (_head(self.brain), _head(self.vault), audience)
+        key = (_head(self.vault), _head(self.brain), audience)
         with self._lock:
             if key not in self._graphs:
                 self._graphs = {k: g for k, g in self._graphs.items() if k[:2] == key[:2]}
-                self._graphs[key] = load_graph(self.brain, history=self.vault, audience=audience,
+                self._graphs[key] = load_graph(self.vault, views=self.brain, audience=audience,
                                                shared_bucket=self.shared_bucket)
             return self._graphs[key]
 
@@ -101,7 +105,7 @@ class CardsAPI:
 
         A change touching no card the audience may read is left out.
         """
-        r = subprocess.run(["git", "-C", str(self.vault or self.brain), "log", f"-{limit * 3}",
+        r = subprocess.run(["git", "-C", str(self.vault), "log", f"-{limit * 3}",
                             "--name-only", "--format=\x1e%h\x1f%ad\x1f%an\x1f%s",
                             "--date=short"], capture_output=True, text=True)
         changes = []
@@ -133,17 +137,26 @@ def _summary(card: Card) -> dict:
 
 
 def _full(card: Card, graph: Graph) -> dict:
-    """A card with everything a reader can show: its fields, text, history, links."""
+    """A card with everything a reader can show: its fields, text, history,
+    links, and the views compiled about it."""
     body = card.text.split(_FRONTMATTER_END, 1)[1] if card.text.startswith("---") \
         and _FRONTMATTER_END in card.text else card.text
     full = {**_summary(card), "meta": _plain(card.meta), "text": body.strip(),
-            "compiled": card.compiled, "files": list(card.files or (card.path,)),
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
-            "links_out": _linked(card.links_out, graph), "links_in": _linked(card.links_in, graph)}
+            "links_out": _linked(card.links_out, graph), "links_in": _linked(card.links_in, graph),
+            "views": [_view(v) for v in card.views]}
     if card.type == "list":
         full["items"] = _items(card)
     return full
+
+
+def _view(view: View) -> dict:
+    """A view as a page shows it: what it is, its text, and its `/go` link
+    into the wiki where it has one (`/go/person/homer`)."""
+    go = go_page(view.path)
+    return {"view": view.view, "title": view.title, "path": view.path, "text": view.text,
+            "go": f"/go{go}" if go else ""}
 
 
 def _linked(ids: set[str], graph: Graph) -> list[dict]:

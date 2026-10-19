@@ -914,7 +914,8 @@ def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None
 def _serve_cards(brain_dir: Path, vault_dir: Path, shared_bucket: str) -> None:
     """The cards as JSON for core's card page, on the stack network (`memory/cards_api.py`).
 
-    The curator holds the brain and the vault, so it serves their cards.
+    The curator holds the vault and the brain, so it serves the vault's cards
+    with the views it compiled about them.
     A failure to start is logged, never fatal: the wiki is the curator's job.
     """
     from memory.cards_api import PORT, CardsAPI, serve
