@@ -77,14 +77,14 @@ one release and say which command replaced them.
 
 ### 2. Every card carries its own id: `card_id`
 Every card has a `card_id` in its frontmatter: our own id for the card,
-`<kind>-<value>`, made once when the card is first written and never
-derived again.
+`<type>-<value>`, made once when the card is first written and never
+derived again. The prefix is the card's `type`; a card that becomes another
+type is a new card with a new id (below).
 
-| Kind | Example | Value at creation |
+| Type | Example | Value at creation |
 |---|---|---|
-| note, bookmark, email, document, diary entry | `note-7f3a9c21e4` | ten random hex digits |
-| person, topic, list | `person-homer`, `list-markt` | its slug |
-| correspondent | `corr-springfield-elementary` | its slug |
+| note, bookmark, email, document, diary | `note-7f3a9c21e4`, `diary-0b6e2d91aa` | ten random hex digits |
+| person, topic, list, correspondent | `person-homer`, `list-markt`, `correspondent-springfield-elementary` | its slug |
 | list archive | `list-markt-2026-10` | its list and month |
 
 It stands next to the ids of where a card came from, which stay as they are:
@@ -136,7 +136,7 @@ are compiled again at will. A view names the cards it was derived from
 | View | About | Derived from |
 |---|---|---|
 | a person (`homer/about.md`) | `person-homer` | the person card and every record about Homer |
-| a correspondent | `corr-moe-s-tavern` | the correspondent card and its documents |
+| a correspondent | `correspondent-moe-s-tavern` | the correspondent card and its documents |
 | a topic | `topic-itchy-scratchy-land` | the topic card and its records and lists |
 | a diary month | | the month's diary entries |
 | the home page, a folder listing | | the cards it lists |
