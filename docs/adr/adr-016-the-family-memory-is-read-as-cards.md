@@ -123,20 +123,21 @@ commit.
 Until every card has its id, readers name a card by the rule in `stack.cards`
 (`card_ref`), as the card graph does now.
 
-### 3. Cards and pages
+### 3. Cards and views
 **A card is a file in the memory repo and stands for one thing.** Each thing
 the memory knows about is exactly one card.
 
-**A page is compiled from one or more cards and is not a card.** Pages live
-in the brain and are rebuilt at will. A page names the cards it was compiled
-from (`cites`, card ids) and, when it is about one thing, that thing's card
-(`about`). It carries no `card_id`.
+**A view is derived from one or more cards and is not a card.** The curator
+projects cards into views (ADR-011); the brain is the set of views, and they
+are compiled again at will. A view names the cards it was derived from
+(`derived_from`, card ids) and, when it is about one thing, that thing's card
+(`about`). It carries no `type` and no `card_id` (ADR-017).
 
-| Page | About | Compiled from |
+| View | About | Derived from |
 |---|---|---|
-| a person's page (`homer/about.md`) | `person-homer` | the person card and every record about Homer |
-| a correspondent's page | `corr-moe-s-tavern` | the correspondent card and its documents |
-| a topic page | `topic-itchy-scratchy-land` | the topic card and its records and lists |
+| a person (`homer/about.md`) | `person-homer` | the person card and every record about Homer |
+| a correspondent | `corr-moe-s-tavern` | the correspondent card and its documents |
+| a topic | `topic-itchy-scratchy-land` | the topic card and its records and lists |
 | a diary month | | the month's diary entries |
 | the home page, a folder listing | | the cards it lists |
 
@@ -152,30 +153,69 @@ So:
 - **A list archive** is a card of its own, `list-markt-2026-10`, with
   `kind: archive` and a `list` field naming the card of the list it belongs
   to.
-- **The read operations read cards.** `find` returns cards, never pages.
-  `card` shows the pages compiled from a card, and a page link opens it in
+- **The read operations read cards.** `find` returns cards, never views.
+  `card` shows the views derived from a card, and a view's link opens it in
   the wiki.
-- **The audience rule reaches pages through `cites`:** a page may be shown to
-  the readers of every card it cites, and no one else (§6).
+- **The audience rule reaches views through `derived_from`:** a view may be
+  shown to the readers of every card it was derived from, and no one else
+  (§8).
 
-The file format of every card and page type, its fields and its links, is
-ADR-017.
+The file format of every card type and of views, their fields and their
+links, is ADR-017.
 
-### 4. The ontology widens a search
+### 4. Each card type has a schema and renderers
+A card type is backed by a schema: the fields every card shares, the ones
+the type adds, which are required, and the values allowed (ADR-017). Every
+writer checks against it, and so does the format check.
+
+A card type can have renderers attached, one per output format: a markdown
+layout, an HTML layout, a text layout for the chat. A renderer presents a
+card's information and never changes it. A surface picks the format it
+needs (the card browser HTML, a bot's chat message text, a view markdown)
+and uses the type's renderer for it. A type without a renderer for that
+format falls back to a generic one: the title, the fields as a list, then
+the body. Renderers belong to the type, not to a single card, so every card
+of a type looks the same on every surface.
+
+This removes three findings of the card review at the source: headers that
+repeat the fields, due dates written in two languages, and a title shown
+twice. The links Obsidian needs stay in the file.
+
+### 5. Corrections belong to cards; views follow
+A correction is made to a card, never to a view or a source. Wherever a
+person makes it (a reply to a filing in the chat, a reply in a diary thread,
+the agent through `stack memory write`, a hand edit in Forgejo or Obsidian),
+it lands as that person's commit on the card, found by its `card_id`, with
+`Correction:` and `Set:` (ADR-015). It is attached through git; the card
+holds no list of its changes.
+
+- **A regenerate keeps it.** A card rebuilt from its source gets its
+  corrections applied again (ADR-015).
+- **Views follow.** When a card changes, the curator compiles again exactly
+  the views whose `derived_from` names it.
+- **Nobody corrects a view.** A correction aimed at a view (a reply to a
+  topic summary) goes to the card the wrong statement came from, found among
+  the view's `derived_from`. When the agent cannot tell which card that is,
+  it asks.
+- **The source stays as it was.** The chat message, the PDF in Paperless and
+  the email are never rewritten; the card says what they mean.
+
+### 6. The ontology widens a search
 `find` matches a word and every name, synonym and keyword the ontology gives
 for the same topic or document type, in every language. "Versicherung" finds
 the English insurance letter.
 
-### 5. Facts are cards
+### 7. Facts are cards
 Each row of `facts.toml` is a card, `fact-<kind>-<n>`, found by `find` and
 opened by `card`. Facts are still written with `stack facts`.
 
-### 6. One rule for who may read a card
+### 8. One rule for who may read a card
 A card in a person's own bucket is read only when that person is the whole
 audience; the family's bucket is read by everyone. The rule lives in one
 function, every read operation takes the audience, and the curator applies it
-when it compiles a page: a page is made only from the cards its readers may
-read, and its `cites` say which those were. The CLI without an audience is the admin's and reads everything.
+when it compiles a view: a view is made only from the cards its readers may
+read, and its `derived_from` says which those were. The CLI without an
+audience is the admin's and reads everything.
 
 **The agent never chooses its audience.** The agent's runtime sets it from
 the room the turn belongs to: the room's members, bots excluded. The model
@@ -191,11 +231,11 @@ guide says so. Narrower audiences (a card readable only by the people of its
 room) can come later without losing anything: the room each card was filed
 from is in the Matrix timeline, so a reprocess can rebuild them.
 
-### 7. Writes stay as they are
+### 9. Writes stay as they are
 Capture, the list verbs, `write`, `person add` and the diary compile keep
 their commands. Every change is the person's commit (ADR-015).
 
-### 8. Sources plug in as cards
+### 10. Sources plug in as cards
 A source (a chat room, the diary room, email, Paperless) delivers cards to
 the vault through the front door. A document is the one source whose content
 lives elsewhere: its card holds the summary, the correspondent and the link,
@@ -209,7 +249,8 @@ know which source a card came from.
    one. Until then the graph names cards by the rule in `stack.cards`.
 2. The audience rule in one function; `history` and `list show` take it, and
    the agent's runtime sets it.
-3. The curator compiles from readable cards only.
+3. The curator compiles views from readable cards only, with
+   `derived_from`, and compiles a view again when one of its cards changes.
 4. Ontology terms in `find`.
 5. Facts as cards.
 6. `search`, `topic` and `person show` onto the interface; the old commands
@@ -217,8 +258,8 @@ know which source a card came from.
 
 Steps 1 to 3 are the base of 0.5, step 4 follows when there is time, steps 5
 and 6 come after 0.5. Steps 1 to 3 change no command's output for the admin.
-Step 3 changes compiled pages: a person's page loses what it quoted from
-someone else's bucket.
+Step 3 changes views: a person's view loses what it quoted from someone
+else's bucket.
 
 **The card browser comes first and checks each step.** Core's tools server
 shows the card graph on the server Mac (#257), and the same graph answers as
@@ -226,7 +267,8 @@ JSON through the cards API and `memory card`. It reports what the steps are
 meant to remove: cards without a `card_id`, two files with one id, a thing
 that is two cards, links to nothing. The admin reads it in the browser, an
 agent reads it as JSON, and a step is done when its report is empty on the
-test instance.
+test instance. It is also the first surface built on renderers (§4): its
+HTML layout per card type is where they start.
 
 ## Consequences
 - One place to make reading faster. The graph is built from the files and the
@@ -250,5 +292,9 @@ test instance.
 
 ## Open
 - Whether `ask` stays a memory command or becomes a skill of the agent.
-- How a person's page is compiled for that person alone, from their own
+- How a person's view is compiled for that person alone, from their own
   bucket, once step 3 leaves it with the family's cards only.
+- How the wiki uses the renderers. It is rendered by Quartz, in TypeScript;
+  most likely the curator writes the rendered cards into the views.
+- Whether a correction to a document card (its date, its correspondent) also
+  goes to Paperless through the archivist, so the two agree.
