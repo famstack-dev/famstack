@@ -492,14 +492,17 @@ keep resolving as before.
 type is a new card with a new id: it lists the ids it had in
 `former_card_ids`, in the same commit (`stack.cards.card_identity`, which
 every writer uses, so a rebuild keeps both fields). `/go/<former id>`
-opens the card. A photo filed as a bookmark and refiled as a note
+opens the card, and `stack memory card <former id>` shows it and says which
+id it was asked for. A photo filed as a bookmark and refiled as a note
 (migration `docs/0001`) is the case today.
 
 **A card that was removed answers as gone.** When no card carries an id,
 `stack.cards.removal_of` reads the memory repo's history for the newest
 commit that deleted a file with that `card_id`. `/go/<card_id>` then
 answers 410 with who removed it, the day and the commit (not its subject,
-which can carry the title). An id no card ever carried is a 404. Core's
+which can carry the title), and `stack memory card` says the same to an
+audience that could have read the card. An id no card ever carried is a
+404. Core's
 tools server reads the memory repo read-only for this, and git in its
 image; cards themselves are still found in the wiki's copy. Opening a link
 writes nothing.

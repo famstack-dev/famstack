@@ -8,12 +8,13 @@ with the commit that removed it; an id no card ever carried is a 404.
 
 The family memory here is a real git repository with commits made as the
 people who made them, and the wiki's copy of it (the brain) is the same
-tree, so the resolver reads what it reads on an
+tree, so the resolver and `stack memory card` read what they read on an
 instance: frontmatter for where a card is, git history for when it went.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -32,6 +33,16 @@ from resolver import build_redirect, card_link_answer  # noqa: E402
 from stack.cards import find_by_card_id, find_card, removal_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
+
+def _load_card_cli():
+    path = _REPO_ROOT / "stacklets" / "memory" / "cli" / "card.py"
+    spec = importlib.util.spec_from_file_location("memory_cli_card_ids", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+card_cli = _load_card_cli()
 
 WIKI = "http://wiki.example"
 LINKS = dict(docs_base="http://docs.example", wiki_base=WIKI, shared_bucket="family")
@@ -232,3 +243,45 @@ class TestAPhotoRefiledAsANote:
                      message="notes: file the photos filed as bookmarks as notes")
         assert _open(memory, "bookmark-a1b2c3d4e5") == (
             302, f"{WIKI}/{PHOTO_PATH.removesuffix('.md')}")
+
+
+# ── stack memory card ────────────────────────────────────────────────────
+
+def _card(memory: Memory, *args: str):
+    return card_cli.run(list(args), None, {"data_dir": str(memory.data_dir)})
+
+
+class TestStackMemoryCard:
+    def test_opens_a_card_by_its_card_id(self, memory, capsys):
+        result = _card(memory, "note-7f3a9c21e4")
+        assert "Campsite booked at Lake Springfield" in capsys.readouterr().out
+        assert "asked" not in result
+
+    def test_answers_a_former_id_with_the_card_and_says_which_id_it_was_asked_for(
+            self, memory, capsys):
+        result = _card(memory, "bookmark-a1b2c3d4e5")
+        out = capsys.readouterr().out
+        assert "Bart's drawing" in out
+        assert "Asked for bookmark-a1b2c3d4e5: an id this card had before; " \
+               "it is note-5d0c3e8a71 now." in out
+        assert result["asked"] == {"bookmark-a1b2c3d4e5": "Asked for bookmark-a1b2c3d4e5: an id "
+                                   "this card had before; it is note-5d0c3e8a71 now."}
+
+    def test_says_a_removed_card_is_gone_and_when(self, memory, capsys):
+        sha = memory.remove(NOTE_PATH, by="homer", message="remove: the old campsite")
+        with pytest.raises(SystemExit) as exit_:
+            _card(memory, "note-7f3a9c21e4")
+        assert exit_.value.code == 1
+        assert capsys.readouterr().out.strip() == (
+            f"Card note-7f3a9c21e4 is gone: homer removed it on 2026-10-19 "
+            f"(@{sha}: remove: the old campsite).")
+
+    def test_tells_no_one_of_a_removed_card_they_could_not_read(self, memory, capsys):
+        """Marge's removed note is hers: Bart hears of no such card, not who removed it."""
+        memory.write({"marge/notes/x.md": "---\ntype: note\ncard_id: note-1234567890\n---\n"},
+                     by="marge", message="a note of her own")
+        memory.remove("marge/notes/x.md", by="marge", message="remove: the birthday plan")
+        with pytest.raises(SystemExit):
+            _card(memory, "note-1234567890", "--audience", "bart")
+        out = capsys.readouterr().out
+        assert "gone" not in out and "No card 'note-1234567890'" in out
