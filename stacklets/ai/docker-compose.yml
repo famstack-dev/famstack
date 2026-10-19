@@ -29,7 +29,8 @@ services:
     volumes:
       # Bind-mounted so voice mappings can be changed without rebuilding
       - ./config/voice_to_speaker.yaml:/app/config/voice_to_speaker.yaml:ro
-      # Voice models auto-download from Hugging Face on first TTS request
+      # Voice models: the image fetches two English ones on start, the
+      # ai stacklet's on_start_ready hook those of the house's languages
       - ${SPEECH_DATA_DIR}/voices:/app/voices
     environment:
       TTS_HOME: voices
