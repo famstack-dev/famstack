@@ -503,7 +503,7 @@ was asked for. A photo filed as a bookmark and refiled as a note
 (migration `docs/0001`) is the case today.
 
 **A card that was removed answers as gone.** When no card carries an id,
-`stack.cards.removal_of` reads the memory repo's history for the newest
+`stack.card_lookup.removal_of` reads the memory repo's history for the newest
 commit that deleted a file with that `card_id`. `/go/<card_id>` then
 answers 410 with who removed it, the day and the commit (not its subject,
 which can carry the title), and `stack memory card` says the same to an
@@ -513,8 +513,8 @@ in its image; cards themselves are still found in the wiki's copy.
 Opening a link writes nothing.
 
 The kinds found by id in the vault are listed in `stack.cards`
-(`CARD_ID_FIELDS`), next to the lookups: `stack.cards.find_card` by the id
-of a kind, `stack.cards.find_by_card_id` by a `card_id` or a former one.
+(`CARD_ID_FIELDS`); the lookups are in `stack.card_lookup`: `find_card` by
+the id of a kind, `find_by_card_id` by a `card_id` or a former one.
 They scan the frontmatter of a copy of the vault, with no index to go
 stale, and answer None for an id no card carries rather than guessing. Each reader runs it over the copy it reads
 from: core's tools server over the wiki's copy, so a `/go/` link lands on

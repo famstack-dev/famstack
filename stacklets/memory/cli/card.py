@@ -31,7 +31,8 @@ from _graph import graph_for, take_audience  # noqa: E402
 from graph import readable  # noqa: E402
 
 from lib import vault_path_for  # noqa: E402
-from stack.cards import find_by_card_id, is_card_id, removal_of  # noqa: E402
+from stack.card_lookup import find_by_card_id, removal_of  # noqa: E402
+from stack.cards import is_card_id  # noqa: E402
 
 HELP = "Show cards of the family memory by id, with their links and history"
 
