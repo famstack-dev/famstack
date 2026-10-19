@@ -55,6 +55,8 @@ You can create as many rooms as you like. Any room you invite the archivist into
 
 ## File documents
 
+> The whole flow, from the photo to the answer months later: [Documents](use/documents.md) ([Deutsch](de/use/documents.md)).
+
 > Needs the `docs` stacklet. Auto-tagging needs `ai`.
 
 Photograph a letter, a receipt, a contract, an insurance policy. Send the photo (or PDF) to **#Documents**. That's it.
