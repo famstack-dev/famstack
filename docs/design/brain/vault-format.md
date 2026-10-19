@@ -24,9 +24,12 @@ A vault entry is a UTF-8 markdown file:
 
 - Identity is the file path (OKF rule). No UUIDs in frontmatter.
 - The body is CommonMark. Links between entries are **relative markdown
-  links** (`[Homer](../homer/about.md)`), never Obsidian `[[wikilinks]]`
+  links** (`[Homer](../../people/homer.md)`), never Obsidian `[[wikilinks]]`
   — relative links are the one syntax Obsidian, Forgejo, and OKF parsers
-  all understand.
+  all understand. A link points at the thing's own file in the vault: a
+  person's declared file, a correspondent's card (ADR-017 §3). Records
+  linked a person's generated page (`homer/about.md`) until migration
+  `memory/0003`.
 
 ## 2. Frontmatter grammar (the strict subset — this IS the schema)
 
@@ -116,7 +119,10 @@ one-deep string lists per §2.
 
 Two person fields recur on records and mean different things:
 `persons` lists the household members the record belongs to, by
-display name; `mentions` lists the people outside the household it
+person id (`homer`, the declared file's name; display names until
+migration `memory/0003`, and still on diary cards); a name no declared
+person goes by is left out and shown as a plain name in the body.
+Records carry no `Person: <name>` tags. `mentions` lists the people outside the household it
 names, each by the most specific name the record gives, or a
 description through a member when it gives none ("Marge's mother").
 Both come from the call that classifies the record. The person
@@ -250,6 +256,27 @@ Whether someone is a member is never a field: it is derived from the
 declared file's `account`. The tier the wiki shows (broader family, close, other) is
 not stored either; the wiki derives it from `relation_kind` and
 presence.
+
+### `correspondent` (declared)
+The card of one correspondent, `<shared_bucket>/correspondents/<slug>.md`,
+written by the archivist the first time a document names it (or by
+migration `memory/0004` for those named before) and never rewritten.
+
+| Field | | Notes |
+|---|---|---|
+| `type` | R | `correspondent` |
+| `card_id` | R | `correspondent-<slug>` |
+| `title` | R | the name documents carry in `correspondent`. |
+| `aliases` | O | list; the classifier's `correspondent_aliases` on the first document. |
+
+A file of the older shape (`kind: correspondent`, `canonical`, no `type`)
+got `type: correspondent` and its card id from migration `memory/0004`.
+The wiki fills the generated region of the brain's copy at the same path.
+
+### `topic` (declared)
+The card of one topic, `<bucket>/<slug>/topic.md`, written the first time
+a record is filed into the topic's folder (or by `memory/0004`) and never
+rewritten: `type: topic`, `card_id: topic-<slug>`, `title`.
 
 ### `correspondent` (generated)
 | Field | | Notes |
