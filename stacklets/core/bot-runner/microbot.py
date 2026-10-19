@@ -14,7 +14,7 @@ The base class then handles:
   - Login with password, or restore a saved session (survives restarts)
   - E2E encryption: a bot reads the encrypted rooms it was invited to
     (Element X encrypts DMs); its key store survives restarts
-  - Auto-trust all device keys (family LAN — no verification needed)
+  - Auto-trust all device keys (the invite is the opt-in, ADR-004)
   - Initial sync that skips old messages (bots don't replay history)
   - Auto-accept room invitations
   - The sync loop with error recovery
@@ -642,7 +642,7 @@ class MicroBot:
         becomes a ``<br>`` — chat behaviour (Slack/WhatsApp), needed for a
         pasted email body where single newlines would otherwise collapse.
 
-        ``msgtype`` is ``m.text`` for anything the family reads as a normal
+        ``msgtype`` is ``m.text`` for anything people read as a normal
         answer; the framework's own error notices pass ``m.notice`` so
         Element renders them in the muted bot styling.
         """
@@ -925,7 +925,7 @@ class MicroBot:
 
         famstack's bots all thread, so one room carries several
         conversations at once: the archivist's filing under an upload,
-        the mail bot's email under its card, the family agent answering a
+        the mail bot's email under its card, the agent answering a
         question. Inside a thread nobody repeats a name on every line —
         the thread *is* the tie between a message and its responder — so
         a bot that treats every thread it can see as its own ends up
@@ -940,13 +940,13 @@ class MicroBot:
         question; the reply is the bot's claim on it. Being first is also
         a fact that never changes, which is what makes ownership stable —
         a bot that merely spoke most recently could take a thread away
-        from the bot the family is actually mid-conversation with.
+        from the bot people are actually in conversation with.
 
         *Other than the starter*, because a producer posting under its
         own root is still publishing, not conversing. The mail bot posts
         an email's card, then its full body and attachments underneath;
         the archivist's filing is the first real answer there, and the
-        family must be able to correct it in that thread.
+        people must be able to correct it in that thread.
 
         Returns a bot mxid (possibly this bot's own), or None when no bot
         has answered — a thread between people, which belongs to nobody.
@@ -1281,7 +1281,7 @@ class MicroBot:
     #
     # Per-room bot settings live in the bot's *room account data*, not a
     # room state event. Writing room state needs power level 50 (a room
-    # moderator), which a bot invited to a family room does not have, so a
+    # moderator), which a bot invited to a room does not have, so a
     # state-event write is silently rejected. Account data is the bot's
     # own: writable regardless of power level, server-stored (survives
     # restarts), and read fresh — no local cache. nio has no high-level
@@ -1363,7 +1363,7 @@ class MicroBot:
           ``!config``                 show the current config + options
           ``!config <option> <value>``  set an option (from CONFIG_OPTIONS)
 
-        Any room member may set it; families are high-trust. Dispatched
+        Any room member may set it; the room's members trust each other. Dispatched
         ahead of the room-mode gate so a room can always be switched back
         out of react mode.
         """
