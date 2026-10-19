@@ -314,12 +314,16 @@ Useful commands:
 ```bash
 ./stack messages users
 ./stack messages send <room> "<message>"
+./stack messages send --to <member> "<message>"
 ./stack messages room list
 ./stack messages setup
 ```
 
 `messages send` posts as the system account by default; `--as agent`
-posts as the agent, `--as <member>` as that family member.
+posts as the agent, `--as <member>` as that family member. `--to <member>`
+sends to the member's private chat with the sender, the room with just the
+two of them. When there is none, nothing is sent and the command fails:
+the stack does not create rooms for a message.
 
 An encrypted room, such as a private chat started in Element X, gets the
 message encrypted. It comes from a device of the sending account's own,

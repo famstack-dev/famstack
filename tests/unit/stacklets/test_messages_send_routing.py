@@ -2,7 +2,10 @@
 
 Three decisions, in this order:
 
-  1. The room: an alias or a room id as given.
+  1. The room: an alias or a room id as given, or with `--to <person>`
+     that person's private chat with the sender, the room whose only
+     members are the two of them. No such room: nothing is sent, and the
+     command fails so a scheduled send shows up as failed.
   2. The sender: the system account, or the one `--as` names.
   3. The path: an unencrypted room gets plain HTTP from the host. An
      encrypted room gets the message from the sender's command-line
@@ -74,8 +77,9 @@ class Synapse:
             ).respond_with_handler(self._route)
         self.port = httpserver.port
 
-    def room(self, room_id, *members, alias=None, encrypted=False):
-        self.rooms[room_id] = {"members": {mxid(m) for m in members}, "encrypted": encrypted}
+    def room(self, room_id, *members, alias=None, encrypted=False, last_active=0):
+        self.rooms[room_id] = {"members": {mxid(m) for m in members},
+                               "encrypted": encrypted, "last_active": last_active}
         if alias:
             self.aliases[f"#{alias}:{SERVER}"] = room_id
 
@@ -88,6 +92,7 @@ class Synapse:
                            "user_id": mxid(user)})
 
     def _route(self, request):
+        user = mxid(request.headers.get("Authorization", "").removeprefix("Bearer token-"))
         path = request.path.removeprefix("/_matrix/client/v3")
         parts = path.strip("/").split("/")
         if parts[0] == "join":
@@ -95,7 +100,14 @@ class Synapse:
         if parts[0] == "directory":
             room_id = self.aliases.get(parts[2])
             return self._json({"room_id": room_id}) if room_id else self._json({}, 404)
+        if parts[0] == "joined_rooms":
+            return self._json({"joined_rooms": [r for r, room in self.rooms.items()
+                                                if user in room["members"]]})
         room = self.rooms[parts[1]]
+        if parts[2] == "joined_members":
+            return self._json({"joined": {m: {} for m in room["members"]}})
+        if parts[2] == "messages":
+            return self._json({"chunk": [{"origin_server_ts": room["last_active"]}]})
         if parts[2] == "state":
             if room["encrypted"]:
                 return self._json({"algorithm": "m.megolm.v1.aes-sha2"})
@@ -240,3 +252,42 @@ def test_with_core_down_an_encrypted_send_says_to_start_core(send, synapse, dock
 
     assert "stack up core" in result["error"]
     assert docker.execs == [] and synapse.sent == []
+
+
+# ── --to: a person's private chat with the sender ─────────────────────────
+
+def test_to_a_person_finds_their_private_chat_with_the_sender(send, synapse):
+    synapse.room("!chat:simpson", "stacky-bot", "homer", "marge", alias="chat")
+    synapse.room("!homer-dm:simpson", "stacky-bot", "homer")
+    synapse.room("!marge-dm:simpson", "stacky-bot", "marge")
+
+    result = send("--to", "homer", "--as", "agent", "Dentist", "tomorrow")
+
+    assert result["room_id"] == "!homer-dm:simpson"
+    assert synapse.sent == [("!homer-dm:simpson", {"msgtype": "m.text", "body": "Dentist tomorrow"})]
+
+
+def test_to_a_person_without_a_private_chat_sends_nothing(send, synapse, docker):
+    """A group room with the person in it is not their private chat."""
+    synapse.room("!chat:simpson", "stacky-bot", "homer", "marge", alias="chat")
+
+    result = send("--to", "homer", "--as", "agent", "Dentist tomorrow")
+
+    assert result == {"error": "Homer has no private chat with Stacky yet."}
+    assert synapse.sent == [] and docker.execs == []
+
+
+def test_of_two_private_chats_the_one_used_last_gets_the_message(send, synapse):
+    synapse.room("!old:simpson", "stacker-bot", "homer", last_active=1_000)
+    synapse.room("!recent:simpson", "stacker-bot", "homer", last_active=2_000)
+
+    assert send("--to", "homer", "Backup done")["room_id"] == "!recent:simpson"
+
+
+def test_an_encrypted_private_chat_gets_the_message_encrypted(send, synapse, docker):
+    synapse.room("!homer-dm:simpson", "stacky-bot", "homer", encrypted=True)
+
+    result = send("--to", "homer", "--as", "agent", "Dentist tomorrow")
+
+    assert result["event_id"] == "$sent-encrypted"
+    assert json.loads(docker.execs[0]["stdin"])["room_id"] == "!homer-dm:simpson"
