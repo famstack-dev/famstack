@@ -473,7 +473,7 @@ class TestActionItemsOnTheTopicsList:
         )
 
         written = client.files["family/lists/camping.md"]["content"]
-        assert written.startswith("---\ntype: list\ntitle: Camping\n"
+        assert written.startswith("---\ntype: list\ncard_id: list-camping\ntitle: Camping\n"
                                   "description: What is still to do for Camping\n"
                                   "topics:\n  - camping\n")
         assert ("- [ ] book pitch [Campsite booking]"

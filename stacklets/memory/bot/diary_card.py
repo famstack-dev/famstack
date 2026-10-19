@@ -33,6 +33,7 @@ from pathlib import Path
 
 import diary
 from stack.briefing import read_briefing, render_briefing
+from stack.cards import CARD_ID, card_id_from, new_card_id
 from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
 from stack.media import safe_name
@@ -182,7 +183,9 @@ class Card:
     `entry_id` is the card's identity. It comes from the entry's first
     message, which never changes, so a recompile finds the same card
     whatever the model calls it this time. `at` is when that message
-    reached the room, in epoch milliseconds.
+    reached the room, in epoch milliseconds. `card_id` is the card's own
+    id in the vault (ADR-016), made when the card is first written
+    (`plan`) and kept by every later compile and correction.
     """
 
     entry_id: str
@@ -207,6 +210,7 @@ class Card:
     facts: list[str] = field(default_factory=list)
     quotes: list[str] = field(default_factory=list)
     model: str = ""
+    card_id: str = ""
 
 
 def entry_id_for(first_event_id: str) -> str:
@@ -351,7 +355,9 @@ _BODY_HEADINGS = {"voice": "Transcript", "text": "Text"}
 _CAPTION = "Caption"
 _QUOTES = "## Quotes"
 _REPLIES = "## Replies"
-_DIGEST_LINE = re.compile(r"^digest: .*\n", re.MULTILINE)
+# The lines a digest does not cover: its own, and the card id, which the
+# stack gives a card that has none without making it the family's.
+_UNSIGNED_LINES = re.compile(r"^(?:digest|card_id): .*\n", re.MULTILINE)
 _REPLY_HEAD = re.compile(r"^\*\*(.+)\*\*$")
 
 
@@ -368,6 +374,7 @@ def _ms(iso: str) -> int:
 def _frontmatter(card: Card) -> dict:
     fm: dict = {
         "type": DIARY_TYPE,
+        CARD_ID: card.card_id,
         "title": card.title,
         "date": card.on.isoformat(),
         "date_basis": card.confidence,
@@ -430,9 +437,9 @@ def _unsigned(card: Card) -> str:
 
 
 def _digest_of(text: str) -> str:
-    """A hash of the file's content, blind to the digest line itself and
-    to trailing whitespace an editor may add or trim on save."""
-    unsigned = _DIGEST_LINE.sub("", text)
+    """A hash of the file's content, blind to the digest line itself, the
+    card id, and trailing whitespace an editor may add or trim on save."""
+    unsigned = _UNSIGNED_LINES.sub("", text)
     normal = "\n".join(ln.rstrip() for ln in unsigned.splitlines()).strip()
     return hashlib.sha256(normal.encode("utf-8")).hexdigest()[:16]
 
@@ -529,6 +536,7 @@ def parse(text: str) -> Card:
         facts=facts,
         quotes=quotes,
         model=str(fm.get("model") or ""),
+        card_id=card_id_from(fm),
     )
 
 
@@ -556,7 +564,8 @@ def plan(existing: "dict[str, str]", cards, *, bucket: str,
 
     `existing` maps each diary file in the vault to its content. Files
     are matched to cards by `entry_id`, not by path, so a card whose day
-    changed is moved rather than duplicated. `complete` says the compile
+    changed is moved rather than duplicated, and keeps its card id. A
+    card new to the vault gets its id here. `complete` says the compile
     read the whole room; only then does a card with no entry mean its
     messages are gone.
     """
@@ -570,11 +579,14 @@ def plan(existing: "dict[str, str]", cards, *, bucket: str,
     seen: set[str] = set()
     for card in cards:
         seen.add(card.entry_id)
-        path, text = card_path(card, bucket=bucket), render(card)
-        if card.entry_id not in on_disk:
+        path = card_path(card, bucket=bucket)
+        old_path, old_text = on_disk.get(card.entry_id, ("", ""))
+        kept = card_id_from(frontmatter_parse(old_text)) if old_text else ""
+        card = replace(card, card_id=kept or card.card_id or new_card_id(DIARY_TYPE, path))
+        text = render(card)
+        if not old_path:
             out.writes[path] = text
             continue
-        old_path, old_text = on_disk[card.entry_id]
         if edited_by_hand(old_text):
             # The digest a hand-edited file still carries is the one the
             # compiler signed it with, so it says whether the room has

@@ -51,6 +51,7 @@ import posixpath
 import re
 from dataclasses import dataclass, field, replace
 
+from .cards import CARD_ID, new_card_id
 from .frontmatter import FrontmatterError, dump, parse, validate
 from .people import person_path
 
@@ -333,10 +334,15 @@ def read_list(text: str, *, path: str) -> FamilyList:
     )
 
 
-def new_list(title: str, *, description: str = "", topics: list[str] | None = None,
+def new_list(title: str, *, path: str, description: str = "", topics: list[str] | None = None,
              sections: list[str] | None = None, kind: str = TODO) -> str:
-    """The text of a new, empty list file; a todo list leaves `kind` out."""
-    fm = {"type": "list", "title": title, "description": description,
+    """The text of a new, empty list file at `path`; a todo list leaves `kind` out.
+
+    Its card id is made here, once (`stack.cards.new_card_id`): the list's
+    slug, or for an archive the list's slug and month.
+    """
+    fm = {"type": "list", CARD_ID: new_card_id("list", path), "title": title,
+          "description": description,
           "topics": list(topics or []), "sections": list(sections or [])}
     if kind != TODO:
         fm["kind"] = kind
@@ -605,7 +611,7 @@ def archive_over(text: str, archives: dict[str, str], *, path: str, today: str,
         month = archive_month(item)
         target = archive_path(lst.slug, month, bucket=bucket)
         current = changed.get(target) or archives.get(target) or \
-            new_list(f"{lst.title}, {month}", sections=lst.sections)
+            new_list(f"{lst.title}, {month}", path=target, sections=lst.sections)
         changed[target] = insert_item(current, item, path=target)
     # Last line first, so removing one item never moves the lines of the next.
     for item in sorted(moving, key=lambda i: i.line, reverse=True):

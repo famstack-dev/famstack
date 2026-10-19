@@ -57,6 +57,7 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
+from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, new_card_id, with_card_id
 from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
@@ -2441,7 +2442,7 @@ def todos_as_list(text: str, topic: str, *, shared_bucket: str = DEFAULT_SHARED_
             line = format_item(replace(item, text=old[1], due=old[2]), path=path)
         if line.strip() or lines:
             lines.append(line)
-    head = new_list(title, topics=[topic],
+    head = new_list(title, path=path, topics=[topic],
                     description=topic_list_description(title, language))
     rest = "\n".join(lines).strip("\n")
     return f"{head}\n{rest}\n" if rest else head
@@ -2497,3 +2498,166 @@ def move_todos_to_lists(client: ForgejoClient, *,
     )
     return moved, ((response or {}).get("commit") or {}).get("sha")
 
+
+
+# ─── Card ids ────────────────────────────────────────────────────────────
+#
+# Every card in the memory repo carries an id of its own (ADR-016 §2).
+# Writers give a new card its id; this pass gives one to every card that
+# has none, over a git working copy of the repo: migration 0002 over all
+# of it once, the curator over the files each push changed. Both apply
+# `stack.cards.with_card_id`, the rule a writer follows too. Two files
+# with one id (a note copied by hand) are told apart by their first
+# commit: the earlier keeps the id, the later gets a new one.
+
+@dataclass
+class CardIds:
+    """What a pass over the memory repo changes to give every card its id.
+
+    `changes` maps a path to the file's new text. `left` holds each file
+    the rule cannot place without guessing, with the reason, for the
+    admin: it is reported and left as it is.
+
+    >>> CardIds().changes
+    {}
+    """
+
+    changes: dict[str, str] = field(default_factory=dict)
+    left: list[str] = field(default_factory=list)
+
+
+def card_ids_for(vault: Path, *, since: str | None = None) -> CardIds:
+    """What gives the cards in the working copy `vault` an id of their own.
+
+    `since` is a commit: only the files changed after it get an id, as
+    the curator sees a push. None gives every file one, as migration 0002
+    does. Ids two files share are told apart wherever the files are.
+    """
+    texts = _markdown_files(vault)
+    ids = {path: _stored_card_id(text) for path, text in texts.items()}
+    taken = {card_id for card_id in ids.values() if card_id}
+    found = CardIds()
+
+    def give(path: str, card_id: str = "") -> None:
+        text = found.changes.get(path, texts[path])
+        try:
+            new = with_card_id(text, path, card_id, taken=taken)
+        except CardIdError as e:
+            found.left.append(f"{path}: {e}")
+            return
+        if new != text:
+            found.changes[path] = new
+            ids[path] = _stored_card_id(new)
+            taken.add(ids[path])
+
+    changed = _changed_since(vault, since) if since else None
+    for path in sorted(texts):
+        if changed is None or path in changed:
+            give(path)
+
+    shared = _shared_ids(ids)
+    born = _first_commits(vault) if shared else {}
+    for paths in shared.values():
+        oldest_first = sorted(paths, key=lambda p: (born.get(p, math.inf), p))
+        for path in oldest_first[1:]:
+            fields = _parse_frontmatter(found.changes.get(path, texts[path]))
+            card_type = str(fields.get("type") or "").strip() or HAND_WRITTEN
+            give(path, new_card_id(card_type, path, taken=taken))
+    return found
+
+
+def give_card_ids(client: ForgejoClient, vault: Path, *, since: str | None = None,
+                  trailer: str = "") -> tuple[CardIds, str | None]:
+    """Give the cards in the working copy `vault` an id; see `card_ids_for`.
+
+    One commit by the memory bot, written against the blob each file was
+    read at, so an edit pushed meanwhile makes Forgejo refuse it and
+    nothing is written. Returns what the pass found and the commit's sha,
+    None when there was nothing to change. `trailer` ends the message.
+    """
+    from stack.forgejo import FileChange
+
+    found = card_ids_for(vault, since=since)
+    if not found.changes:
+        return found, None
+    paths = sorted(found.changes)
+    shas = _blob_shas(vault, paths)
+    message = f"cards: give {len(paths)} card(s) an id of their own"
+    response = client.change_files(
+        REPO_OWNER, REPO_NAME,
+        [FileChange("update", p, found.changes[p], sha=shas[p]) for p in paths],
+        message=f"{message}\n\n{trailer}" if trailer else message,
+        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+    )
+    return found, ((response or {}).get("commit") or {}).get("sha")
+
+
+def _markdown_files(vault: Path) -> dict[str, str]:
+    """Every tracked markdown file in `vault` and its text."""
+    rc, out, err = run_git(vault, "ls-files", "-z")
+    if rc != 0:
+        raise OSError(f"cannot list the files in {vault}: {err}")
+    texts: dict[str, str] = {}
+    for path in out.split("\0"):
+        if path.endswith(".md"):
+            try:
+                texts[path] = (vault / path).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+    return texts
+
+
+def _stored_card_id(text: str) -> str:
+    return card_id_from(_parse_frontmatter(text))
+
+
+def _shared_ids(ids: dict[str, str]) -> dict[str, list[str]]:
+    """Each id more than one file carries, with those files."""
+    holders: dict[str, list[str]] = {}
+    for path, card_id in ids.items():
+        if card_id:
+            holders.setdefault(card_id, []).append(path)
+    return {card_id: paths for card_id, paths in holders.items() if len(paths) > 1}
+
+
+def _changed_since(vault: Path, since: str) -> set[str] | None:
+    """The files changed after commit `since`; None when git cannot tell
+    (a history rewritten under it), which makes the pass look at all."""
+    rc, out, _ = run_git(vault, "diff", "-z", "--name-only", since, "HEAD")
+    return set(filter(None, out.split("\0"))) if rc == 0 else None
+
+
+def _first_commits(vault: Path) -> dict[str, float]:
+    """When each file in `vault` was first committed, carried along its renames.
+
+    One pass over the history, oldest first. A rename (`-M`) keeps the
+    file's date, so a document the archivist moved to a new title is as
+    old as its first filing. A copy does not: `git log --follow` would
+    pair an exact copy with its original and give both the original's
+    date, which is the one case this is asked to tell apart.
+    """
+    rc, out, _ = run_git(vault, "-c", "core.quotePath=false", "log", "--reverse", "-M",
+                         "--name-status", "--format=@%ct")
+    born: dict[str, float] = {}
+    when = math.inf
+    for line in out.splitlines() if rc == 0 else []:
+        if line.startswith("@"):
+            when = float(line[1:])
+            continue
+        status, *paths = line.split("\t")
+        if status.startswith("R") and len(paths) == 2:
+            born[paths[1]] = born.pop(paths[0], when)
+        elif status == "A" and paths:
+            born.setdefault(paths[0], when)
+        elif status == "D" and paths:
+            born.pop(paths[0], None)
+    return born
+
+
+def _blob_shas(vault: Path, paths: list[str]) -> dict[str, str]:
+    """The git blob sha of each file as it is in the working copy."""
+    rc, out, err = run_git(vault, "hash-object", "--", *paths)
+    shas = out.split()
+    if rc != 0 or len(shas) != len(paths):
+        raise OSError(f"cannot hash the files in {vault}: {err}")
+    return dict(zip(paths, shas))

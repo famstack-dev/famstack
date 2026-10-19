@@ -18,6 +18,14 @@ over the wiki's copy, so a `/go/` link lands on a page the wiki serves;
 the archivist over its own mount, before it corrects a capture. One
 implementation, and no reader waits on another's copy to catch up.
 
+Every card also carries an id of its own, `card_id` (ADR-016 §2):
+`<type>-<value>`, made once when the card is first written and never
+derived again. `new_card_id` makes it, for the writers, the migration
+that gave existing cards theirs, and the curator, which gives one to a
+file written by hand (`with_card_id`). Readers take it from
+`card_id_from`. Until every card carries one, the table above and
+`find_card` keep resolving the links in use.
+
 Stdlib only: the host CLI, the bot-runner and core's tools server all
 import it, so emitter and resolver read one table.
 
@@ -41,10 +49,13 @@ wrong) answers to no id rather than to a guess.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Mapping
+import re
+import secrets
+from pathlib import Path, PurePosixPath
+from typing import Container, Mapping
 
-from .frontmatter import FrontmatterError, parse
+from .frontmatter import RECORD_TYPES, FrontmatterError, dump, parse
+from .vault import slug
 
 
 # ── The table ─────────────────────────────────────────────────────────
@@ -165,6 +176,176 @@ def card_ref(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
     if kind == INDEX:
         return INDEX, "/".join(parts)
     return "page", "/".join(parts)
+
+
+# ── A card's own id ───────────────────────────────────────────────────
+#
+# A record's value is random, because nothing about a record is both
+# stable and ours: Paperless numbers documents anew on a re-import, and a
+# Matrix event id belongs to Matrix. Any other card's value is its slug,
+# the name it already goes by.
+
+CARD_ID = "card_id"
+
+# The closed vocabulary of `type` (ADR-017 §6).
+CARD_TYPES = frozenset({
+    "document", "note", "bookmark", "email", "diary", "list", "person", "correspondent", "topic",
+})
+
+# What a file that says nothing of what it is was written as: a note by hand.
+HAND_WRITTEN = "note"
+
+# Ten hex digits, the length ADR-016 gives a record's id.
+_RANDOM_BYTES = 5
+
+# A list's archive for one month, as `stack.lists.archive_path` names it.
+_ARCHIVE = re.compile(r"(?:^|/)lists/archive/(?P<list>[^/]+)/(?P<month>\d{4}-\d{2})\.md$")
+
+# A file name that is an id already, as `stack.people.person_id` reads one.
+_ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+_OPENING = "---\n"
+_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+_TYPE_LINE = re.compile(r"^type:.*\n", re.MULTILINE)
+_CARD_ID_LINE = re.compile(r"^card_id:.*\n", re.MULTILINE)
+
+
+class CardIdError(ValueError):
+    """A file `with_card_id` cannot give an id without guessing what it is."""
+
+
+def card_id_from(fields: Mapping[str, object]) -> str:
+    """The card's own id from its frontmatter, "" while it has none.
+
+    >>> card_id_from({"type": "note", "card_id": "note-7f3a9c21e4"})
+    'note-7f3a9c21e4'
+    >>> card_id_from({"type": "note", "capture_id": "$abc"})
+    ''
+    """
+    return str(fields.get(CARD_ID) or "").strip()
+
+
+def new_card_id(card_type: str, path: str, *, taken: Container[str] = ()) -> str:
+    """The id a card of `card_type` gets when it is first written at `path`.
+
+    A record (document, note, bookmark, email, diary) gets ten random hex
+    digits. Any other card gets its file's slug, and a list's archive its
+    list's slug and month. `taken` holds the ids other cards carry: a
+    slug two buckets share gets a number after it the second time.
+
+    >>> new_card_id("person", "family/people/homer.md")
+    'person-homer'
+    >>> new_card_id("list", "family/lists/archive/markt/2026-10.md")
+    'list-markt-2026-10'
+    >>> new_card_id("list", "homer/lists/markt.md", taken={"list-markt"})
+    'list-markt-2'
+    """
+    if card_type in RECORD_TYPES:
+        while (card_id := f"{card_type}-{secrets.token_hex(_RANDOM_BYTES)}") in taken:
+            pass
+        return card_id
+    archive = _ARCHIVE.search(path) if card_type == "list" else None
+    if archive:
+        value = f"{_slug(archive['list'])}-{archive['month']}"
+    else:
+        value = _slug(PurePosixPath(path).stem)
+    card_id, n = f"{card_type}-{value}", 1
+    while card_id in taken:
+        n += 1
+        card_id = f"{card_type}-{value}-{n}"
+    return card_id
+
+
+def with_card_id(text: str, path: str, card_id: str = "", *,
+                 taken: Container[str] = ()) -> str:
+    """The file at vault path `path` with its card id, nothing else changed.
+
+    A card that carries an id keeps it, and one without gets a new one
+    (`new_card_id`, clear of `taken`). Given `card_id`, the card gets that
+    one in place of any it carries: how a copy is told apart from the card
+    it was copied from, and how a rewrite that dropped the id gets it back.
+
+    A file that says nothing of what it is, with no frontmatter or no
+    `type`, was written by hand and is a note (ADR-017 §6). It gets
+    `type: note`, the id, and a `title` from its first heading or else its
+    file name when it has none. Only the lines added are new; every other
+    byte of the file stays as it was.
+
+    A page that is no card comes back as it is: a navigation page, a file
+    in a hidden folder, a view the wiki compiled. `CardIdError` when the
+    rule cannot place the file without guessing: its frontmatter does not
+    parse, its `type` is no card type, or it has a `kind` and no `type`.
+    """
+    if not _may_be_card(path):
+        return text
+    if not text.startswith("---"):
+        return _as_note("", text, path, {}, card_id, taken)
+    end = text.find("\n---\n", 3)
+    if not text.startswith(_OPENING) or end < 0:
+        raise CardIdError("its frontmatter has no closing `---` line")
+    try:
+        fields = parse(text)
+    except FrontmatterError as e:
+        raise CardIdError(f"its frontmatter does not parse: {e}") from e
+    if _is_view(fields):
+        return text
+    head, rest = text[:end + 1], text[end + 1:]
+    card_type = str(fields.get("type") or "").strip()
+    if not card_type:
+        if str(fields.get("kind") or "").strip():
+            raise CardIdError(f"it says `kind: {fields['kind']}` but has no `type`")
+        return _as_note(head, rest, path, fields, card_id, taken)
+    if card_type not in CARD_TYPES:
+        raise CardIdError(f"`type: {card_type}` is no card type")
+
+    current = card_id_from(fields)
+    wanted = card_id or current or new_card_id(card_type, path, taken=taken)
+    if wanted == current:
+        return text
+    line = f"{dump({CARD_ID: wanted})}\n"
+    if current:
+        return _CARD_ID_LINE.sub(lambda _: line, head, count=1) + rest
+    after_type = _TYPE_LINE.search(head)
+    at = after_type.end() if after_type else len(_OPENING)
+    return head[:at] + line + head[at:] + rest
+
+
+def _as_note(head: str, rest: str, path: str, fields: Mapping[str, object],
+             card_id: str, taken: Container[str]) -> str:
+    """A hand-written file as a note: the lines it lacks, first in its frontmatter.
+
+    `head` is the frontmatter up to its closing line, "" for a file without
+    any; `rest` is the closing line and what follows, or the whole file.
+    """
+    added = {"type": HAND_WRITTEN, CARD_ID: card_id or new_card_id(HAND_WRITTEN, path, taken=taken)}
+    if "title" not in fields:
+        heading = _HEADING.search(rest)
+        added["title"] = heading[1] if heading else PurePosixPath(path).stem
+    lines = f"{dump(added)}\n"
+    if not head:
+        return f"{_OPENING}{lines}{_OPENING}{rest}"
+    return f"{_OPENING}{lines}{head[len(_OPENING):]}{rest}"
+
+
+def _may_be_card(path: str) -> bool:
+    """False for a path no card has: not markdown, a navigation page, hidden."""
+    parts = PurePosixPath(path).parts
+    return (path.endswith(".md") and parts[-1] not in NAVIGATION_PAGES
+            and not any(part.startswith(".") for part in parts))
+
+
+def _is_view(fields: Mapping[str, object]) -> bool:
+    """A page the wiki compiled: it names cards and is none (ADR-016 §3)."""
+    generated = fields.get("generated")
+    return (generated is True or str(generated).strip().lower() == "true"
+            or fields.get("type") == "index")
+
+
+def _slug(name: str) -> str:
+    """`name` as the value of an id: as it is when it is one already."""
+    if _ID.match(name):
+        return name
+    return slug(name) or secrets.token_hex(_RANDOM_BYTES)
 
 
 # ── The lookup ────────────────────────────────────────────────────────

@@ -467,6 +467,22 @@ reads every file. Paths with `..` and anything outside the archive are
 refused. Images, audio, video and PDFs are sent as what they are; any
 other file as a download.
 
+Every card also carries an id of its own in its frontmatter, `card_id`
+(ADR-016): `<type>-<value>`, made once when the card is first written and
+never derived again. A document, note, bookmark, email or diary card gets
+ten random hex digits (`note-7f3a9c21e4`), a person or a list its file's
+slug (`person-homer`, `list-markt`), a list's monthly archive its list's
+slug and month (`list-markt-2026-10`). `stack.cards.new_card_id` makes it
+for every writer; a writer that rebuilds a card from its source keeps the
+one the file has. `stack.cards.with_card_id` gives one to a file that has
+none: migration `memory/0002` did so for the cards already there, and the
+curator does it for each file pushed without one, or with one another
+file carries (the file first committed later gets a new id). A file with
+no frontmatter or no `type` was written by hand and becomes a note.
+`README.md`, `index.md` and pages the wiki compiled are no cards. Readers
+take the id from `stack.cards.card_id_from`. The links above keep their
+ids until `/go/<card_id>` resolves.
+
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,
 `stack.cards.find_card`. It scans the frontmatter of a copy of the

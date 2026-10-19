@@ -25,6 +25,7 @@ the compiler really produces for a messy room.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import replace
 from datetime import date
@@ -181,7 +182,39 @@ class TestACardLivesAtOnePath:
 
 
 def _vault(cards) -> dict[str, str]:
-    return {diary_card.card_path(c, bucket=BUCKET): diary_card.render(c) for c in cards}
+    """The diary files as a compile of `cards` writes them into an empty vault."""
+    return diary_card.plan({}, cards, bucket=BUCKET, complete=True).writes
+
+
+class TestADiaryCardKeepsItsId:
+    """A diary card gets `card_id` when the compile first writes it (ADR-016),
+    and every later compile and correction keeps it."""
+
+    def test_a_new_card_gets_one(self):
+        cards = _cards(_compile())
+        for text in _vault(cards).values():
+            assert re.fullmatch(r"diary-[0-9a-f]{10}", parse_frontmatter(text)["card_id"])
+
+    def test_a_card_whose_date_moves_keeps_it(self):
+        cards = _cards(_compile())
+        vault = _vault(cards)
+        before = parse_frontmatter(vault[diary_card.card_path(cards[0], bucket=BUCKET)])["card_id"]
+        moved = replace(cards[0], on=date(2026, 3, 1), confidence="corrected")
+        plan = diary_card.plan(vault, [moved, *cards[1:]], bucket=BUCKET, complete=True)
+        after = plan.writes[diary_card.card_path(moved, bucket=BUCKET)]
+        assert parse_frontmatter(after)["card_id"] == before
+
+    def test_an_id_the_migration_added_leaves_the_card_the_compilers(self):
+        """Migration 0002 adds the line to a card the compiler signed before
+        ids existed. The card must still read as the compiler's, or every
+        later compile would leave it alone as a person's."""
+        card = _cards(_compile())[0]
+        signed = diary_card.render(card)
+        with_id = signed.replace("type: diary\n", "type: diary\ncard_id: diary-0b6e2d91aa\n", 1)
+        assert not diary_card.edited_by_hand(with_id)
+        plan = diary_card.plan({diary_card.card_path(card, bucket=BUCKET): with_id}, [card],
+                               bucket=BUCKET, complete=True)
+        assert plan.writes == {} and plan.kept == []
 
 
 class TestAPersonsEditWins:
@@ -212,10 +245,12 @@ class TestAPersonsEditWins:
         """A reply arrives, a message is edited in the room: the card is
         rewritten, because nobody has put anything of their own in it."""
         cards = _cards(_compile())
+        vault = _vault(cards)
         changed = replace(cards[0], replies=[("homer", "Mmm, report card.")])
-        plan = diary_card.plan(_vault(cards), [changed, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = diary_card.plan(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
         path = diary_card.card_path(changed, bucket=BUCKET)
-        assert plan.writes == {path: diary_card.render(changed)}
+        card_id = parse_frontmatter(vault[path])["card_id"]
+        assert plan.writes == {path: diary_card.render(replace(changed, card_id=card_id))}
 
     def test_an_edited_card_is_never_overwritten(self):
         """The family fixed a misheard name. The room changes afterwards

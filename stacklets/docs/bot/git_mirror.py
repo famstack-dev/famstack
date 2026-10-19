@@ -591,9 +591,10 @@ class GitMirror:
         if not (topic and items):
             return False
         title = topic_name or topic.replace("-", " ").title()
+        path = list_path(topic, bucket=self.shared_bucket)
         return await self._put_on_list(
-            client, path=list_path(topic, bucket=self.shared_bucket),
-            start=new_list(title, topics=[topic], description=topic_list_description(
+            client, path=path,
+            start=new_list(title, path=path, topics=[topic], description=topic_list_description(
                 title, os.environ.get("LANGUAGE", ""))),
             items=items, record_path=record_path, previous_path=previous_path,
             message=message, author_name=author_name, author_email=author_email,
@@ -716,7 +717,8 @@ class GitMirror:
             (list_path(calendar_slug(language), bucket=self.shared_bucket), calendar_title(language))
         return await self._put_on_list(
             client, path=path,
-            start=new_list(title, description=calendar_description(language), kind=CALENDAR),
+            start=new_list(title, path=path, description=calendar_description(language),
+                           kind=CALENDAR),
             items=entries, record_path=record_path, previous_path=previous_path,
             message="chore(lists): archivist added dates to the calendar",
             author_name=BOT_USERNAME, author_email=BOT_EMAIL,

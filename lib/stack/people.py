@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .cards import CARD_ID, new_card_id
 from .frontmatter import FrontmatterError, dump, parse, validate
 from .vault import DEFAULT_SHARED_BUCKET, slug
 
@@ -228,9 +229,10 @@ def people_from_accounts(users: list[dict]) -> list[Person]:
 
 
 def render_person(person: Person) -> str:
-    """A person's file as famstack first writes it."""
+    """A person's file as famstack first writes it, with its card id, `person-<id>`."""
     fm = dump({
         "type": "person",
+        CARD_ID: new_card_id("person", person_path(person.id)),
         "title": person.name,
         "aliases": list(person.aliases),
         "account": person.account,
