@@ -10,6 +10,13 @@ diary entries, lists, people, topics, emails, and a card for every document
 has a lasting id (`stack.cards`); together with the links between them they
 are a graph of cards.
 
+The wiki shows pages compiled from those cards: a person's page from the
+person and every record about them, a topic page from the topic's records,
+a diary month from its entries (ADR-011: the memory repo is the source, the
+brain a projection). Today both carry the same `type` and are read as the
+same thing, so a person is two nodes of the graph and a page compiled from
+twenty cards answers a search next to them.
+
 How that memory is read grew one command at a time. Today eight commands
 read it, each in its own way:
 
@@ -87,8 +94,8 @@ not control: Paperless numbers documents anew on a re-import, a Matrix event
 id belongs to Matrix, a slug changes with a rename. Stored, the card id
 outlives all three. Every reader reads one field instead of a rule per kind.
 
-Every writer sets it (the archivist, capture, the diary, the curator for the
-pages it compiles, the list and person commands). A writer that rebuilds a
+Every writer of a card sets it (the archivist, capture, the diary, the list,
+person and topic commands). A writer that rebuilds a
 card from its source (ADR-010) finds the existing card by its source id
 (`stack.cards.find_card`) and keeps its `card_id`. A migration gives every
 existing card its id, in one commit; the curator gives one to a card written
@@ -116,25 +123,43 @@ commit.
 Until every card has its id, readers name a card by the rule in `stack.cards`
 (`card_ref`), as the card graph does now.
 
-### 3. One thing, one card
-Each thing the memory knows about is one card, whatever pages are compiled
-from it:
+### 3. Cards and pages
+**A card is a file in the memory repo and stands for one thing.** Each thing
+the memory knows about is exactly one card.
+
+**A page is compiled from one or more cards and is not a card.** Pages live
+in the brain and are rebuilt at will. A page names the cards it was compiled
+from (`cites`, card ids) and, when it is about one thing, that thing's card
+(`about`). It carries no `card_id`.
+
+| Page | About | Compiled from |
+|---|---|---|
+| a person's page (`homer/about.md`) | `person-homer` | the person card and every record about Homer |
+| a correspondent's page | `corr-moe-s-tavern` | the correspondent card and its documents |
+| a topic page | `topic-itchy-scratchy-land` | the topic card and its records and lists |
+| a diary month | | the month's diary entries |
+| the home page, a folder listing | | the cards it lists |
+
+So:
 
 - **A person** is the declared file, `<shared>/people/<id>.md`, card
-  `person-homer`. The compiled page in the brain (`homer/about.md`) is that
-  card's page, not a second card: it carries the same `card_id`, and every
-  reader shows it as the card's compiled view. Records link to the declared
-  file, and their `persons` field holds person ids (`homer`), not display
-  names (ADR-017). The same holds for a correspondent and its compiled page.
+  `person-homer`. Records link to it, and their `persons` field holds person
+  ids (`homer`), not display names (ADR-017). The same holds for a
+  correspondent.
+- **A topic** gets a card of its own in the memory repo, written when the
+  topic is first filed into and never rewritten, like a person or a
+  correspondent. Today a topic is only a folder and a compiled page.
 - **A list archive** is a card of its own, `list-markt-2026-10`, with
   `kind: archive` and a `list` field naming the card of the list it belongs
   to.
-- **Navigation pages** (the home page, folder listings, the diary's front,
-  year and month pages) are not cards. They carry a `type` (`index`,
-  `diary-page`) and no `card_id`, `find` leaves them out, and they stay
-  reachable as links.
+- **The read operations read cards.** `find` returns cards, never pages.
+  `card` shows the pages compiled from a card, and a page link opens it in
+  the wiki.
+- **The audience rule reaches pages through `cites`:** a page may be shown to
+  the readers of every card it cites, and no one else (§6).
 
-The file format of every card type, its fields and its links, is ADR-017.
+The file format of every card and page type, its fields and its links, is
+ADR-017.
 
 ### 4. The ontology widens a search
 `find` matches a word and every name, synonym and keyword the ontology gives
@@ -150,7 +175,7 @@ A card in a person's own bucket is read only when that person is the whole
 audience; the family's bucket is read by everyone. The rule lives in one
 function, every read operation takes the audience, and the curator applies it
 when it compiles a page: a page is made only from the cards its readers may
-read. The CLI without an audience is the admin's and reads everything.
+read, and its `cites` say which those were. The CLI without an audience is the admin's and reads everything.
 
 **The agent never chooses its audience.** The agent's runtime sets it from
 the room the turn belongs to: the room's members, bots excluded. The model
