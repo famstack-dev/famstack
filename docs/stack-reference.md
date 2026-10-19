@@ -341,6 +341,38 @@ Bot passwords are declared in the stacklet's `[env].generate` (e.g.
 `"ARCHIVIST_BOT_PASSWORD"` in `docs/stacklet.toml`). The bot runner reads
 passwords from `.stack/secrets.toml` on startup.
 
+### Devices and keys
+
+A Matrix login is a device with a key store of its own
+(`stack.matrix.device`). A bot keeps its device across restarts in its
+stacklet's data dir, `~/famstack-data/<id>/bot/`:
+
+```
+archivist-bot.session.json        the login: token, user id, device id
+archivist-bot_crypto/             the device's key store
+archivist-bot.cross-signing.json  the account's cross-signing keys
+```
+
+The cross-signing keys belong to the account, not the device, so the file
+is named after the account. The bot's device owns them: it makes them
+once, publishes them and signs itself with them, so apps show the bot as
+verified. Any other device of the account only signs itself with the same
+file. It never makes keys, and it stays unsigned when the file is missing
+or the server holds other keys, because new keys would replace the
+account's identity and leave the bot's own device unsigned.
+
+`stack messages send` into an encrypted room uses such a second device.
+The host CLI cannot encrypt, so it runs `python -m stack.matrix.send` in
+the bot runner, the request (password included) on stdin. That device is
+`<account>-cli` next to the bot's files, shown in apps as
+`<account> (command line)`. It is never the running bot's device: two
+processes on one key store break each other's encryption sessions. Two
+sends as one account take turns on a lock. A person's command-line device
+keeps its state in `~/famstack-data/messages/cli/` and stays unverified,
+since the stack does not hold a person's keys. An unencrypted room gets
+the message over plain HTTP from the host, as before, and no device of
+this kind is created.
+
 ### Bot Events
 
 Matrix is famstack's canonical event ledger — every stacklet emits

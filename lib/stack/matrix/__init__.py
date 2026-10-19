@@ -8,6 +8,10 @@ this package. Import the module you need explicitly:
     from stack.matrix.media import Media     # files, from encrypted rooms too
     from stack.matrix.cross_signing import CrossSigning
 
+`python -m stack.matrix.send` is the one-shot sender: one message as an
+account, from a command-line device of its own (`stack messages send`
+runs it in the bot runner for an encrypted room).
+
 Nothing here knows about bots: a bot's sync loop and a one-shot sender
 log in, keep their keys and send the same way.
 """

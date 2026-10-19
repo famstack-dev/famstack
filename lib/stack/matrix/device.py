@@ -9,9 +9,16 @@ and a password login happens only when the kept one is no longer valid.
 
 Everything lives in one state directory, under the name the caller gives:
 
-    <state_dir>/<name>.session.json        access token, user id, device id
-    <state_dir>/<name>_crypto/             the device's key store (nio's)
-    <state_dir>/<name>.cross-signing.json  the keys vouching for the device
+    <state_dir>/<name>.session.json           access token, user id, device id
+    <state_dir>/<name>_crypto/                the device's key store (nio's)
+    <state_dir>/<account>.cross-signing.json  the keys vouching for the device
+
+The cross-signing keys belong to the account, not the device, so their
+file is named after the account (`archivist-bot` for
+`@archivist-bot:home`). A second device of the account, under a name of
+its own, finds the same file. Only the device that owns the keys
+(`owns_keys`, the default) makes and publishes them; any other one only
+signs itself with them.
 
 Every caller uses it the same way, a bot's sync loop or a one-shot sender:
 
@@ -37,6 +44,11 @@ from nio import AsyncClient, AsyncClientConfig, LoginResponse
 from stack.matrix.cross_signing import CrossSigning
 
 
+def account_name(user_id: str) -> str:
+    """The account's local part: `archivist-bot` for `@archivist-bot:home`."""
+    return user_id.removeprefix("@").split(":", 1)[0]
+
+
 class TrustingClient(AsyncClient):
     """nio's client, sending into an encrypted room without verifying each device first.
 
@@ -60,13 +72,16 @@ class Device:
     nio client, which encrypts for the rooms that need it.
     """
 
-    def __init__(self, homeserver: str, user_id: str, password: str, state_dir: Path, name: str):
+    def __init__(self, homeserver: str, user_id: str, password: str, state_dir: Path, name: str,
+                 *, device_name: str = "", owns_keys: bool = True):
         self.homeserver = homeserver
         self.user_id = user_id
         self.name = name
         self._password = password
+        self._device_name = device_name
+        self._owns_keys = owns_keys
         self._session_file = state_dir / f"{name}.session.json"
-        self._keys_file = state_dir / f"{name}.cross-signing.json"
+        self._keys_file = state_dir / f"{account_name(user_id)}.cross-signing.json"
         store_path = state_dir / f"{name}_crypto"
         store_path.mkdir(parents=True, exist_ok=True)
         config = AsyncClientConfig(store_sync_tokens=True, encryption_enabled=True)
@@ -85,12 +100,16 @@ class Device:
         await self._vouch(http)
         return True
 
-    async def sync(self, timeout: int, full_state: bool | None = None):
+    async def sync(self, timeout: int, full_state: bool | None = None,
+                   sync_filter: dict | None = None):
         """One sync, then the key upkeep, then trust for the devices it brought.
 
-        Returns nio's sync response.
+        `sync_filter` narrows what the server sends (a Matrix filter), for a
+        caller that needs one room rather than all of them. Returns nio's
+        sync response.
         """
-        resp = await self.client.sync(timeout=timeout, full_state=full_state)
+        resp = await self.client.sync(timeout=timeout, full_state=full_state,
+                                      sync_filter=sync_filter)
         await self._keep_keys()
         self._trust_all_devices()
         return resp
@@ -130,7 +149,7 @@ class Device:
             return False
 
         for attempt in range(1, retries + 1):
-            resp = await self.client.login(self._password)
+            resp = await self.client.login(self._password, device_name=self._device_name)
             if isinstance(resp, LoginResponse):
                 logger.info("[{}] Logged in (device {})", self.name, resp.device_id)
                 self._save_session()
@@ -220,7 +239,8 @@ class Device:
         try:
             outcome = await CrossSigning(
                 http, self.homeserver, self.client.access_token, self.user_id,
-                self.client.device_id, self._password, self._keys_file).vouch()
+                self.client.device_id, self._password, self._keys_file,
+                owner=self._owns_keys).vouch()
             logger.info("[{}] Cross-signing: {}", self.name, outcome)
         except Exception as e:  # an unsigned device still works with most apps today
             logger.warning("[{}] Cross-signing failed, the device stays unsigned: {}", self.name, e)

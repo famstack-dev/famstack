@@ -325,6 +325,14 @@ Commands that take a room name it by its alias: `famchat` is Family Room, `memor
 `messages send` posts as the system account by default; `--as agent`
 posts as the agent, `--as <member>` as that family member.
 
+An encrypted room, such as a private chat started in Element X, gets the
+message encrypted. It comes from a device of the sending account's own,
+listed in Element as `<account> (command line)`, which runs in the core
+bot runner: core has to be up (`./stack up core`). For the agent and the
+bots that device is signed with the account's own keys, so Element shows
+it as verified. A family member's command-line device shows as unverified,
+because their keys stay on their phone.
+
 ### Photos (`photos`)
 
 Immich-based photo library, with native mobile apps and automatic background upload.
