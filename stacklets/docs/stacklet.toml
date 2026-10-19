@@ -18,7 +18,8 @@ port        = 42020
 login_field = "username"
 
 hints = [
-    "Open {url}",
+    "In the chat: send a photo or PDF to the Documents Room, and the archivist files it",
+    "Open {url} to browse the archive in Paperless",
 ]
 
 [upstream]

@@ -114,7 +114,7 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
 
 **Get started:**
 
-- You should see a new 'Documents' room here. 
+- You should see a new room in your chat: Documents Room.
 - Head over and check it out.
 - Drop a document into the room.
 
