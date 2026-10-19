@@ -111,6 +111,15 @@ Chat.
 In jedem anderen Raum sprichst du ihn mit Namen an: „Archivist, wann verlängert
 sich die Autoversicherung?“ Mehr unter [Fragen stellen](../../user-guide.md#ask-questions).
 
+## 6. Je mehr du ablegst, desto wertvoller wird es
+
+Ein abgelegtes Dokument hilft dir weiter. Seine Fakten kommen ins
+Familiengedächtnis, famstack macht daraus im Familien-Wiki eine Seite für jede
+Person und jedes Thema, und beim nächsten Schreiben von der Schule, der
+Versicherung oder der Hausarztpraxis erkennt der Archivist den Absender wieder,
+auch wenn der Name anders geschrieben ist. So landet alles unter dem richtigen
+Namen, und jede Antwort kann auf mehr zurückgreifen.
+
 ## Wo deine Dokumente liegen
 
 | Was | Wo |

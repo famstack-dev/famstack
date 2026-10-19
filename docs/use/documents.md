@@ -104,6 +104,14 @@ can check. `show 57` posts the document itself into the chat.
 In any other room, start with its name: "Archivist, when does the car insurance
 renew?" More in [Ask questions](../user-guide.md#ask-questions).
 
+## 6. The more you file, the more valuable it gets
+
+A filed document keeps helping you. Its facts go into the family memory,
+famstack turns them into a page for each person and each topic in the family
+wiki, and the next time the school, the insurer or the doctor writes, the
+archivist recognizes the sender, even when the name is spelled differently.
+Everything lands under the right name, and every answer has more to draw on.
+
 ## Where your documents are
 
 | What | Where |
