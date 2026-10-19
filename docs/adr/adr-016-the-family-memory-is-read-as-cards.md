@@ -1,7 +1,7 @@
 # ADR-016: The Family Memory Is Read as Cards, Through One Interface
 
 ## Status
-Proposed.
+Accepted, 2026-10-19.
 
 ## Context
 Everything the family keeps ends up as a file in the memory vault: captures,
