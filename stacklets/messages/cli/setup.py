@@ -144,14 +144,14 @@ def _setup(client, users, config, secrets=None):
             room_ids[alias] = rid
             if space_id:
                 client.add_space_child(space_id, rid)
-            results.append({"item": f"#{alias}", "action": "ready"})
+            results.append({"item": room["name"], "action": "ready"})
         else:
             existing = client.resolve_room(alias)
             if existing:
                 room_ids[alias] = existing
-                results.append({"item": f"#{alias}", "action": "ready"})
+                results.append({"item": room["name"], "action": "ready"})
             else:
-                results.append({"item": f"#{alias}", "action": "failed to create"})
+                results.append({"item": room["name"], "action": "failed to create"})
 
     # Build lookup: which rooms should everyone join vs admin-only
     everyone_rooms = [room_ids[r["alias"]] for r in ROOMS if r["everyone"] and r["alias"] in room_ids]
@@ -197,7 +197,8 @@ def _setup(client, users, config, secrets=None):
     # and in every room of the space, not only the ones created above:
     # re-running setup brings an older install up to date. Members keep
     # the preset's power level 0.
-    labels = {rid: f"#{alias}" for alias, rid in room_ids.items()}
+    names = {r["alias"]: r["name"] for r in ROOMS}
+    labels = {rid: names[alias] for alias, rid in room_ids.items()}
     if space_id:
         labels[space_id] = space_name
     results += ensure_admins(
@@ -341,7 +342,7 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None,
         # nothing saying what it is for, which is the one thing this
         # message exists to prevent.
         results.append({
-            "item": "#memories welcome",
+            "item": "Memories welcome",
             "action": "posted" if ok else f"failed: {detail}",
         })
 

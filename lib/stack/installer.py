@@ -690,8 +690,9 @@ def wizard():
 
     bold("4. Explore your rooms")
     nl()
-    out(f"   {TEAL}#famchat{RESET}    Your private family conversations")
-    out(f"   {TEAL}#famstack{RESET}   Notifications about your server")
+    out(f"   {TEAL}Family Room{RESET}    Your private family conversations")
+    out(f"   {TEAL}Memories{RESET}       Voice messages and photos for your family diary")
+    out(f"   {TEAL}Server Room{RESET}    Notifications about your server")
     nl()
 
     rule()
