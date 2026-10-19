@@ -9,7 +9,9 @@ The family memory is two git repos (ADR-011). The **memory repo**
 (`family/memory`, cloned at `<data>/memory/vault`) is the source, written by
 the bots and by people. The **brain** (`family/brain`) is the memory repo
 plus every compiled page, rendered by the wiki, and can be rebuilt at any
-time. A **card** is one file that stands for one thing (ADR-016).
+time. A **card** is a file in the memory repo that stands for one thing; a
+**page** is compiled from one or more cards, lives in the brain and is not a
+card (ADR-016).
 
 The memory repo is meant to be readable without famstack: in Obsidian, in
 Forgejo, by any tool that reads markdown with frontmatter, and as an Open
@@ -69,21 +71,30 @@ Paperless, `capture_id` is the Matrix event a note was filed from,
   household's language comes from `ontology.toml`.
 
 ### 5. `type` and `kind`
-`type` is a closed vocabulary:
+`type` is a closed vocabulary, one for cards and one for pages.
 
-| `type` | `kind` (absent means the first) | Lives in |
+Cards, in the memory repo:
+
+| `type` | `kind` (absent means the first) | Class (§7) |
 |---|---|---|
-| `document` | | memory repo |
-| `note`, `bookmark`, `email` | | memory repo |
-| `diary` | `text`, `voice`, `image`, `video`, `file` | memory repo |
-| `list` | `todo`, `checklist`, `calendar`, `archive` | memory repo |
-| `person`, `correspondent` | | memory repo (declared), brain (compiled) |
-| `page` | | memory repo: anything a person writes by hand |
-| `topic` | | brain (compiled) |
-| `diary-page` | `front`, `year`, `month` | brain |
-| `index` | `home`, `folder` | brain, and the memory repo's root |
+| `document` | | record |
+| `note`, `bookmark`, `email` | | record |
+| `diary` | `text`, `voice`, `image`, `video`, `file` | record |
+| `list` | `todo`, `checklist`, `calendar`, `archive` | state |
+| `person`, `correspondent`, `topic` | | state, declared once, never rewritten |
+| `page` | | state: anything a person writes by hand |
 
-Reserved for later: `pet`, `vehicle`, `place`.
+Pages, in the brain, all with `generated: true`, `cites` (the card ids they
+were compiled from) and, when about one thing, `about` (its card id):
+
+| `type` | `kind` | About |
+|---|---|---|
+| `person-page`, `correspondent-page`, `topic-page` | | the person, correspondent or topic |
+| `diary-page` | `front`, `year`, `month` | |
+| `index` | `home`, `folder` | |
+
+A page never carries a card type, so no reader takes it for a card. Reserved
+for later: `pet`, `vehicle`, `place`.
 
 `kind` is a fixed variant that changes behaviour or rendering, checked like
 an enum. `document_type` stays: it is an open classification the household
@@ -107,13 +118,14 @@ check.
 |---|---|---|
 | Record | `document`, `note`, `bookmark`, `email`, `diary` | Derived from a source and regenerated from it. A person's change is a commit and is applied again on every regenerate (ADR-015). |
 | State | `list`, `person`, `correspondent`, `page` | The household's. Machines change only the lines they are about, or create a missing file and never rewrite it. |
-| Compiled | everything with `generated: true` | Brain only, rebuilt at will. |
-| Mixed | the memory repo's `index.md`, a declared correspondent | The file is the household's; the brain fills only the region between `<!-- begin: generated -->` and `<!-- end: generated -->` in its copy. |
+| Page | everything with `generated: true` | Brain only, rebuilt at will, never a card. A page that shares its path with a card (a correspondent, the root `index.md`) keeps the card's text and fills only the region between `<!-- begin: generated -->` and `<!-- end: generated -->`. |
 
-### 8. Correspondents are declared like people
+### 8. Correspondents and topics are declared like people
 The archivist writes `<shared>/correspondents/<slug>.md` the first time a
 document names a correspondent, with `type`, `title` and the aliases the
-classifier returned, and never rewrites it.
+classifier returned, and never rewrites it. A topic gets
+`<bucket>/<slug>/topic.md` the same way, the first time something is filed
+into it.
 
 ### 9. Compatibility
 **Obsidian.** Deliberate deviations: no nested properties (Obsidian's
@@ -143,9 +155,9 @@ complete and every clone large.
    valid, every relative link resolves, every `card_id` is unique.
 2. One migration, together with ADR-016 step 1: `card_id` on every card,
    person links to the person's file, `persons` as ids, declared
-   correspondents, tags.
-3. `kind` on archives and diary cards, `type` on navigation pages,
-   `types.json`, the root `index.md`.
+   correspondents and topics, tags.
+3. `kind` on archives and diary cards; the page types, `about` and `cites`
+   on every compiled page; `types.json`; the root `index.md`.
 
 ## Verification
 - The format check over the test instance's memory repo: no errors. Over
