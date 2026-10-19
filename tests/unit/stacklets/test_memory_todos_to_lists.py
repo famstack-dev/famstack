@@ -167,7 +167,7 @@ class TestTheMigration:
 
         outcome, record = self._run(tmp_path, httpserver)
 
-        assert outcome == {"applied": ["memory/0001"]}
+        assert outcome["applied"] == ["memory/0001"]
         assert _commit(httpserver)["message"].endswith("\n\nMigration: memory/0001")
         assert record.applied["0001"]["commit"] == "c0ffee"
 

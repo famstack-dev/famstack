@@ -744,7 +744,7 @@ class CapturePipeline:
         # shared with URL/note captures. Body is always kept: the
         # conversation IS the content.
         if kind == "email" and email_meta is not None:
-            vault_path = await self._mirror.publish_email_message(
+            filed = await self._mirror.publish_email_message(
                 entity=entity_slug,
                 thread_uri=source.source_uri,
                 message_id=email_meta.get("message_id"),
@@ -762,7 +762,7 @@ class CapturePipeline:
             # the content); notes always keep the body.
             keep_body = kind == "note" or self.capture_keep_body
             body_for_mirror = source.text if keep_body else ""
-            vault_path = await self._mirror.publish_capture(
+            filed = await self._mirror.publish_capture(
                 entity=entity_slug,
                 kind=kind,
                 source_uri=source.source_uri,
@@ -779,6 +779,7 @@ class CapturePipeline:
                 caption=caption,
                 replies=replies,
             )
+        vault_path = filed.path if filed else None
 
         # Feed topic tags (not the derived Person: X) back into the
         # vocabulary cache so the next capture's prompt sees them.
@@ -800,6 +801,7 @@ class CapturePipeline:
                 kind=kind,
                 source_uri=source.source_uri,
                 capture_id=capture_id,
+                card_id=filed.card_id if filed else "",
                 resolved_tags=topic_tags,
                 resolved_persons=[p for p in persons if isinstance(p, str)],
                 actor=actor,

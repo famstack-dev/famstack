@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from stack.frontmatter import parse
 from stack.lists import (
     Item,
     Link,
@@ -45,7 +46,7 @@ STORE = ["Gemüse & Obst", "Brot & Backwaren", "Milchprodukte & Eier", "Drogerie
 
 
 def _groceries() -> str:
-    return new_list("Einkaufsliste", description="Was wir im Supermarkt brauchen",
+    return new_list("Einkaufsliste", path=GROCERIES, description="Was wir im Supermarkt brauchen",
                     topics=["einkaeufe-besorgungen"], sections=STORE)
 
 
@@ -148,15 +149,15 @@ class TestAList:
         assert [i.text for i in read_list(text, path=GROCERIES).open_items] == ["Eier"]
 
     def test_a_list_needs_only_a_title(self):
-        text = new_list("Garage aufräumen")
-        assert text == "---\ntype: list\ntitle: Garage aufräumen\n---\n"
+        text = new_list("Garage aufräumen", path="family/lists/garage.md")
+        assert text == "---\ntype: list\ncard_id: list-garage\ntitle: Garage aufräumen\n---\n"
         assert read_list(text, path="family/lists/garage.md").items == []
 
     def test_a_list_is_a_todo_list_unless_its_kind_says_otherwise(self):
         """`kind` is the family memory's field for the variant of a type."""
         path = "family/lists/packliste.md"
-        assert read_list(new_list("Garage aufräumen"), path=path).kind == "todo"
-        checklist = new_list("Packliste", kind="checklist")
+        assert read_list(new_list("Garage aufräumen", path=path), path=path).kind == "todo"
+        checklist = new_list("Packliste", path=path, kind="checklist")
         assert "kind: checklist\n" in checklist
         assert read_list(checklist, path=path).kind == "checklist"
 
@@ -200,7 +201,7 @@ class TestTheWalkingOrder:
         assert _body(text).endswith("## Drogerie\n- [ ] Zahnpasta\n\n## Deko\n- [ ] Kerzen\n")
 
     def test_a_list_without_sections_keeps_items_in_the_order_they_came(self):
-        text = new_list("Garage aufräumen")
+        text = new_list("Garage aufräumen", path="family/lists/garage.md")
         for name in ["Werkbank leeren", "Fahrräder aufhängen"]:
             text = insert_item(text, Item(name), path="family/lists/garage.md")
         assert _body(text) == "\n- [ ] Werkbank leeren\n- [ ] Fahrräder aufhängen\n"
@@ -253,6 +254,14 @@ class TestTheArchive:
         assert [(i.text, i.section, i.done_on) for i in lst.items] == \
             [("Äpfel", "Gemüse & Obst", "2026-10-11")]
 
+    def test_a_month_s_archive_is_a_card_of_its_own(self):
+        """`list-<slug>-<YYYY-MM>` (ADR-016): the list's card stays `list-<slug>`."""
+        _, archives, _ = archive_over(self._shopped(), {}, path=GROCERIES,
+                                        today=self.TODAY, bucket="family")
+        october = archive_path("einkaufsliste", "2026-10", bucket="family")
+        assert parse(archives[october])["card_id"] == "list-einkaufsliste-2026-10"
+        assert parse(_groceries())["card_id"] == "list-einkaufsliste"
+
     def test_an_emptied_section_loses_its_heading(self):
         text, _, _ = archive_over(self._shopped(), {}, path=GROCERIES,
                                     today="2026-10-13", bucket="family")
@@ -260,7 +269,7 @@ class TestTheArchive:
 
     def test_a_month_already_archived_gains_the_new_items(self):
         october = archive_path("einkaufsliste", "2026-10", bucket="family")
-        earlier = insert_item(new_list("Einkaufsliste, 2026-10", sections=STORE),
+        earlier = insert_item(new_list("Einkaufsliste, 2026-10", path=october, sections=STORE),
                               Item("Milch", done=True, done_on="2026-10-02",
                                    section="Milchprodukte & Eier"), path=october)
         _, archives, _ = archive_over(self._shopped(), {october: earlier}, path=GROCERIES,
@@ -269,8 +278,8 @@ class TestTheArchive:
             ["Äpfel", "Milch"]
 
     def test_a_checklist_keeps_its_ticks_for_the_next_reset(self):
-        packing = new_list("Packliste", kind="checklist") + "\n- [x] Zelt ✅ 2026-10-01\n"
         path = "family/lists/packliste.md"
+        packing = new_list("Packliste", path=path, kind="checklist") + "\n- [x] Zelt ✅ 2026-10-01\n"
         assert archive_over(packing, {}, path=path, today=self.TODAY,
                               bucket="family") == (packing, {}, [])
 
@@ -288,7 +297,7 @@ class TestACalendar:
     PATH = list_path("termine", bucket="family")
 
     def _dates(self, *entries: tuple[str, str]) -> str:
-        text = new_list("Termine", kind="calendar")
+        text = new_list("Termine", path=self.PATH, kind="calendar")
         for name, due in entries:
             text = insert_item(text, Item(name, due=due), path=self.PATH)
         return text
@@ -322,7 +331,7 @@ class TestACalendar:
 class TestKnownItems:
     def _archive(self, slug, *items) -> tuple[str, object]:
         path = archive_path(slug, "2026-10", bucket="family")
-        text = new_list(f"{slug}, 2026-10")
+        text = new_list(f"{slug}, 2026-10", path=path)
         for name, section, day in items:
             text = insert_item(text, Item(name, done=True, done_on=day, section=section),
                                path=path)

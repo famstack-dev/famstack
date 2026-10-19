@@ -361,8 +361,9 @@ function learnPeople(cards) {
   for (const p of cards) {
     for (const key of [p.title, firstName(p.title)]) if (key) knownPeople.set(key.toLowerCase(), p);
   }
-  // An id wins over a name another person happens to share.
-  for (const p of cards) knownPeople.set(p.id.split("/")[1].toLowerCase(), p);
+  // A slug wins over a name another person happens to share. `name` is
+  // `person/<slug>` whatever id the card carries (`person-homer`).
+  for (const p of cards) knownPeople.set((p.name || p.id).split("/").pop().toLowerCase(), p);
 }
 
 function personOf(value) {

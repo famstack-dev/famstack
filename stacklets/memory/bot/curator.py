@@ -18,6 +18,10 @@ container is a pure view that just watches the files). Jobs:
    while the GPU is idle. It also means the incremental person/topic
    mapping only has to be *helpful*, never load-bearing. Worst case
    for a missed page is "stale until tonight".
+3. **Card ids, on every push.** A file pushed without a `card_id`, or
+   with one another file carries (a note copied by hand), gets its id
+   from the memory bot in one commit (`memory.lib.give_card_ids`, the
+   rule migration 0002 applied to the files that were there before).
 
 Rebuilds run the CLI entrypoint as a subprocess (same code path as
 `stack memory wiki`), so a wedged LLM call dies with the child, not
@@ -70,6 +74,7 @@ from memory.lib import (  # noqa: E402
     SyncResult,
     _parse_frontmatter,
     authenticated_remote,
+    give_card_ids,
     record_failed_rebuild,
     report_progress,
     brain_remote_url,
@@ -78,6 +83,7 @@ from memory.lib import (  # noqa: E402
     run_git,
     vault_remote_url,
 )
+from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 
 from wiki import COMMIT_PREFIX  # noqa: E402
@@ -93,6 +99,9 @@ ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
 # owned projection, so its commit log names the curator, not a human.
 _BRAIN_AUTHOR_NAME = "memory-curator"
 _BRAIN_AUTHOR_EMAIL = "memory-curator@local"
+
+# The memory commit up to which every pushed card has its id.
+CARD_IDS_SHA_NAME = "last-card-ids-sha"
 
 # Subject line for the curator's per-cycle brain commit. One commit
 # carries the whole cycle: mirrored source plus any regenerated pages.
@@ -560,7 +569,9 @@ class Vault:
     Reads only, with one exception: `sync` may replay local commits
     onto the remote to get out of a divergence. It never authors vault
     content — memory's writers stay the archivist, the CLI, and humans
-    (ADR-011). The bind-mounted repo belongs to the host user, so git's
+    (ADR-011). The card ids the curator gives go through Forgejo
+    (`give_ids_since`), never through this working copy. The
+    bind-mounted repo belongs to the host user, so git's
     dubious-ownership check is satisfied via a private
     GIT_CONFIG_GLOBAL rather than touching any shared config.
     """
@@ -909,6 +920,45 @@ def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None
         logger.warning("[curator] could not record progress: {}", e)
 
 
+# ── Card ids ─────────────────────────────────────────────────────────────
+
+def give_ids_since(vault_dir: Path, since: str | None) -> bool:
+    """Give the cards pushed after `since` an id of their own; True when done.
+
+    `since` None looks at every file, for a curator with no commit on record.
+
+    False when Forgejo refused or could not be reached, so the next cycle
+    tries again from the same commit. A file the rule cannot place is
+    logged once and counts as done: it waits for a person, not a retry.
+    """
+    client = _vault_writer()
+    if client is None:
+        return True
+    try:
+        found, commit = give_card_ids(client, vault_dir, since=since)
+    except (ForgejoError, OSError) as e:
+        logger.warning("[curator] card ids not given yet: {}", e)
+        return False
+    for line in found.left:
+        logger.warning("[curator] no card id for {}; left as it is", line)
+    if commit:
+        logger.info("[curator] gave {} card(s) an id: {}", len(found.changes),
+                    ", ".join(sorted(found.changes)))
+    return True
+
+
+def _vault_writer() -> ForgejoClient | None:
+    """A Forgejo client for the memory repo, from the same admin
+    credentials the curator's git remote uses; None without them."""
+    code_url = os.environ.get("CODE_URL", "").rstrip("/")
+    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
+    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
+    if not (code_url and admin_user and admin_password):
+        return None
+    return ForgejoClient(url=code_url, admin_user=admin_user,
+                         admin_password=admin_password, timeout=60)
+
+
 # ── Main loop ────────────────────────────────────────────────────────────
 
 def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str) -> None:
@@ -938,6 +988,7 @@ async def main() -> None:
     state_dir = Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator"))
     sha_file = state_dir / REBUILT_SHA_NAME
     mirror_file = state_dir / MIRROR_SHA_NAME
+    card_ids_file = state_dir / CARD_IDS_SHA_NAME
     nightly_file = state_dir / "last-nightly-date"
 
     while not (vault_dir / ".git").exists():
@@ -992,6 +1043,13 @@ async def main() -> None:
     # the first real sweep runs tomorrow night.
     if not _read(nightly_file):
         _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+    # Card ids follow the same contract: the cards already there are
+    # migration 0002's, the curator looks at what is pushed after it.
+    card_ids_sha = _read(card_ids_file)
+    if not card_ids_sha:
+        head = await vault.head()
+        if head:
+            card_ids_sha = _write(card_ids_file, head)
 
     async def mirror_incremental(since: str, until: str) -> bool:
         """Replay memory's `since..until` source diff onto brain, then
@@ -1046,6 +1104,13 @@ async def main() -> None:
         head = await vault.head()
         if not head:
             continue
+
+        # ── Card ids for what was pushed ──────────────────────────────
+        # Before the mirror, so a card reaches brain with its id the
+        # cycle after; the commit it makes is pulled on the next tick.
+        if card_ids_sha != head and await asyncio.to_thread(
+                give_ids_since, vault_dir, card_ids_sha or None):
+            card_ids_sha = _write(card_ids_file, head)
 
         # Brain has to start the cycle on top of the remote it is about
         # to push to. Skip this and a remote that moved — or was

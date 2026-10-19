@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -47,6 +48,8 @@ def _load(name: str, path: Path):
     spec.loader.exec_module(module)
     return module
 
+
+from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 
 write_cli = _load("memory_cli_write",
                   _REPO_ROOT / "stacklets" / "memory" / "cli" / "write.py")
@@ -441,3 +444,32 @@ def test_adding_or_ticking_items_through_a_page_write_is_refused(store, tmp_path
     assert "Wetter checken" in ticked["error"]
     assert store.commits == []
 
+
+
+# ── the card id ──────────────────────────────────────────────────────────
+
+def test_a_new_page_gets_a_card_id_of_its_own(store, tmp_path):
+    """A page written by hand says nothing of what it is: it is a note (ADR-017)."""
+    store.page = ""
+    _run(store, "# Ideas for Lisa's birthday\n\n- a saxophone reed\n",
+         path="marge/lisa-birthday.md", tmp=tmp_path)
+    fields = parse_frontmatter(store.page)
+    assert (fields["type"], fields["title"]) == ("note", "Ideas for Lisa's birthday")
+    assert re.fullmatch(r"note-[0-9a-f]{10}", fields["card_id"])
+    assert store.page.endswith("---\n# Ideas for Lisa's birthday\n\n- a saxophone reed\n")
+
+
+def test_a_rewrite_that_drops_the_card_id_gets_it_back(store, tmp_path):
+    """The id is made once; links and the chat name the card by it."""
+    store.page = "---\ntype: list\ncard_id: list-camping\ntitle: Camping\n---\n\n- [ ] Zelt\n"
+    _run(store, "---\ntype: list\ntitle: Camping trip\n---\n\n- [ ] Zelt\n",
+         path="family/lists/camping.md", tmp=tmp_path)
+    assert store.page == "---\ntype: list\ncard_id: list-camping\ntitle: Camping trip\n---\n\n- [ ] Zelt\n"
+
+
+def test_a_page_already_there_without_an_id_is_written_as_it_comes(store, tmp_path):
+    """The curator gives it its id; the write changes only what it says."""
+    store.page = "# Camping\n\nThe big tent leaks.\n"
+    _run(store, "# Camping\n\nThe big tent leaks. Bring the tarp.\n",
+         path="marge/camping.md", tmp=tmp_path)
+    assert store.page == "# Camping\n\nThe big tent leaks. Bring the tarp.\n"

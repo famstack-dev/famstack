@@ -100,7 +100,7 @@ services:
       - ./tools-server/cards_page.py:/app/cards_page.py:ro
       - ./tools-server/cards:/app/cards:ro
       # Shared library: the card-id table and the lookup by card id
-      # (`stack.cards`). Mounted only, like the bot-runner's copy.
+      # (`stack.cards`, `stack.card_lookup`). Mounted only, like the bot-runner's copy.
       - ../../lib/stack:/app/stack:ro
       # The brain projection, read-only: `/go/capture/<id>` and
       # `/go/diary/<id>` find where a card is filed now by reading the same
@@ -108,6 +108,10 @@ services:
       # `${DATA_DIR}` is the host path (BRAIN_REPO_DIR is the *container*
       # path the bot-runner sees, so it cannot be a bind source here).
       - ${DATA_DIR}/memory/brain:/brain:ro
+      # The memory repo, read-only, for its history alone: a link to a card
+      # no file carries any more answers with the commit that removed it
+      # (`stack.card_lookup.removal_of`). Cards are still found in the brain.
+      - ${DATA_DIR}/memory/vault:/vault:ro
     restart: unless-stopped
 
 networks:

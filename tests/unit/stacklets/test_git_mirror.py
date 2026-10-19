@@ -8,6 +8,7 @@ stubbed here.
 
 from __future__ import annotations
 
+import re
 import sys
 import yaml
 from pathlib import Path
@@ -473,7 +474,7 @@ class TestActionItemsOnTheTopicsList:
         )
 
         written = client.files["family/lists/camping.md"]["content"]
-        assert written.startswith("---\ntype: list\ntitle: Camping\n"
+        assert written.startswith("---\ntype: list\ncard_id: list-camping\ntitle: Camping\n"
                                   "description: What is still to do for Camping\n"
                                   "topics:\n  - camping\n")
         assert ("- [ ] book pitch [Campsite booking]"
@@ -999,14 +1000,14 @@ class TestACaptureKeepsItsPath:
         monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
         mirror._setup_done = True
         mirror._creds = SimpleNamespace(token="t")
-        path = await mirror.publish_capture(
+        filed = await mirror.publish_capture(
             entity=entity, kind="bookmark", source_uri="mxc://home.test/x",
             title_hint=None, body_text="",
             classification={"title": title, "summary": "s"},
             captured_at="2026-10-13", model=None,
             existing_path=self.PATH, capture_id="$x",
         )
-        return path, client
+        return filed.path, client
 
     async def test_a_new_title_keeps_the_file(self, mirror, monkeypatch):
         path, client = await self._refile(
@@ -1029,9 +1030,94 @@ class TestACaptureKeepsItsPath:
         monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
         mirror._setup_done = True
         mirror._creds = SimpleNamespace(token="t")
-        path = await mirror.publish_capture(
+        path, _ = await mirror.publish_capture(
             entity="family/painting", kind="bookmark", source_uri="mxc://home.test/y",
             title_hint=None, body_text="", classification={"title": "Tent", "summary": "s"},
             captured_at="2026-10-13", model=None,
         )
         assert path.startswith("family/painting/bookmarks/2026/10/tent-")
+
+
+class TestACardKeepsItsId:
+    """Every card the archivist files carries `card_id`, made when it is
+    first filed (ADR-016). Rebuilding the card from its source, a
+    reprocess, a correction or a reply in an email thread, keeps it: links
+    and the chat name the card by it."""
+
+    DOC = "family/documents/2026/10/2026-10-13-duff-beer-invoice-p247.md"
+
+    def _wire(self, mirror, monkeypatch, files=None) -> _FakeVaultClient:
+        client = _FakeVaultClient(files)
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        return client
+
+    @staticmethod
+    def _card_id(client, path) -> str:
+        from stack.frontmatter import parse
+        return str(parse(client.files[path]["content"]).get("card_id") or "")
+
+    async def _document(self, mirror, title):
+        return await mirror.publish(
+            paperless_id=247, classification={"title": title, "date": "2026-10-13"},
+            body_text="Two cases of Duff.", processing="ai_formatted", model=None,
+            paperless_url="http://docs.home.test",
+        )
+
+    async def test_a_new_document_gets_an_id_and_a_reprocess_keeps_it(self, mirror, monkeypatch):
+        client = self._wire(mirror, monkeypatch)
+        await self._document(mirror, "Duff Beer invoice")
+        card_id = self._card_id(client, self.DOC)
+        assert re.fullmatch(r"document-[0-9a-f]{10}", card_id)
+
+        await self._document(mirror, "Duff Beer invoice, October")
+        [moved] = list(client.files)
+        assert moved != self.DOC and self._card_id(client, moved) == card_id
+
+    async def test_a_capture_rebuilt_from_its_source_keeps_its_id(self, mirror, monkeypatch):
+        client = self._wire(mirror, monkeypatch)
+        capture = dict(entity="marge", kind="note", source_uri=None, title_hint=None,
+                       body_text="Brushes and paper for the next trip.",
+                       captured_at="2026-10-13", model=None, capture_id="$r-Plk")
+        path, card_id = await mirror.publish_capture(classification={"title": "Art supplies"},
+                                                     **capture)
+        assert re.fullmatch(r"note-[0-9a-f]{10}", card_id)
+        assert self._card_id(client, path) == card_id
+
+        again = await mirror.publish_capture(classification={"title": "Art supplies for Lisa"},
+                                             existing_path=path, **capture)
+        assert again == (path, card_id) and self._card_id(client, path) == card_id
+
+    async def test_a_note_refiled_from_a_bookmark_keeps_its_former_id(self, mirror, monkeypatch):
+        """A correction rebuilds the card from its source; a link to the id it
+        had as a bookmark must still find it afterwards."""
+        path = "marge/notes/2026/10/bart-s-drawing-454811.md"
+        client = self._wire(mirror, monkeypatch, {path: {"sha": "s1", "content": (
+            "---\ntype: note\ncard_id: note-0b6e2d91aa\nformer_card_ids:\n"
+            "  - bookmark-7f3a9c21e4\ntitle: Bart's drawing\n---\n")}})
+        await mirror.publish_capture(
+            entity="marge", kind="note", source_uri="mxc://home.test/x", title_hint=None,
+            body_text="", classification={"title": "Bart's watercolour"},
+            captured_at="2026-10-13", model=None, existing_path=path, capture_id="$x")
+        from stack.frontmatter import parse
+        fields = parse(client.files[path]["content"])
+        assert (fields["card_id"], fields["former_card_ids"]) == (
+            "note-0b6e2d91aa", ["bookmark-7f3a9c21e4"])
+
+    async def test_an_email_thread_keeps_its_id_as_replies_arrive(self, mirror, monkeypatch):
+        client = self._wire(mirror, monkeypatch)
+        message = dict(entity="marge", thread_uri="mid:abc@springfield-elementary.test",
+                       from_addr="skinner@springfield-elementary.test", title_hint=None,
+                       captured_at="2026-10-13", model=None)
+        path, card_id = await mirror.publish_email_message(
+            message_id="abc@springfield-elementary.test", body_text="Field trip on Friday.",
+            classification={"title": "Field trip"}, **message)
+        assert re.fullmatch(r"email-[0-9a-f]{10}", card_id)
+        assert self._card_id(client, path) == card_id
+
+        again = await mirror.publish_email_message(
+            message_id="def@springfield-elementary.test", body_text="Bring a lunch.",
+            classification={"title": "Field trip lunch"}, **message)
+        assert again == (path, card_id) and self._card_id(client, path) == card_id
+        assert "Bring a lunch." in client.files[path]["content"]

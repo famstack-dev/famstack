@@ -172,4 +172,5 @@ class TestTheFilesFamstackWrites:
 
     def test_a_written_file_follows_the_vault_format(self):
         page = render_person(Person("homer", "Homer Simpson", account="homer"))
-        assert page.startswith("---\ntype: person\ntitle: Homer Simpson\naccount: homer\n---\n")
+        assert page.startswith(
+            "---\ntype: person\ncard_id: person-homer\ntitle: Homer Simpson\naccount: homer\n---\n")

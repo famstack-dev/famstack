@@ -187,7 +187,7 @@ def envelope(card: dict, kind: str, *, actor: str) -> dict:
         "type": kind,
         "summary": card.get("title", ""),
         "data": {k: card.get(k) for k in (
-            "entry_id", "path", "root", "date", "title", "persons", "tags")},
+            "entry_id", "card_id", "path", "root", "date", "title", "persons", "tags")},
         "actor": actor,
         "ts": datetime.now(timezone.utc).isoformat(),
     }

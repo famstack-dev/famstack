@@ -413,11 +413,12 @@ tested end-to-end (see `tests/e2e/test_archivist_e2e.py`).
 
 A link a bot posts into a room stays in the timeline for good, so it
 never points at a service or a file path. It points at
-`<home>/go/<kind>/<name or id>`, and core's tools server resolves it when
-someone opens it. `stack.links` builds these paths
-(`go_docs`, `go_topic`, `go_person`, `go_list`, `go_capture`, `go_diary`,
-and `go_page` for a page an edit touched); `stacklets/core/tools-server/resolver.py`
-is the only place that knows what they resolve to.
+`<home>/go/<card_id>` for a card, or `<home>/go/<kind>/<name or id>`, and
+core's tools server resolves it when someone opens it. `stack.links` builds
+these paths (`go_card` for a card, `go_docs`, `go_topic`, `go_person`,
+`go_list`, `go_capture`, `go_diary`, and `go_page` for a page an edit
+touched); `stacklets/core/tools-server/resolver.py` is the only place that
+knows what they resolve to.
 
 A **card** is one file in the family memory that stands for one thing. Its
 path is not a stable name: the folder follows the bucket and topic, the
@@ -448,13 +449,16 @@ compiles into the brain (a person's `<id>/about.md`, a topic's page, a
 diary month, an index) is a view: never found, never opened as a card.
 A card comes with the views compiled about it, found where the wiki
 compiles them until views name their card: a person's at `<id>/about.md`,
-a correspondent's at the card's own path. `stack.cards.card_ref` holds
-the naming rule for every kind; `card_kind` tells a list archive and a
-navigation page from the rest.
+a correspondent's at the card's own path. A card is named by its
+`card_id` when it has one (`stack.cards.card_ref`); one without is named
+by the rule in the table above (`card_name`), and that name still opens
+a card that has an id since. The graph links people, topics and lists by
+those names. `card_kind` tells a list archive and a navigation page from
+the rest.
 
 `stack memory check-format` (and the cards API's `/report`, which the
 card browser shows) lists where the vault does not meet ADR-016 and
-ADR-017 yet: cards without a `card_id`, per type; ids two files claim;
+ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
 links to a file the vault does not have; files with no frontmatter or a
 `type` that is no card type. It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
@@ -467,11 +471,52 @@ reads every file. Paths with `..` and anything outside the archive are
 refused. Images, audio, video and PDFs are sent as what they are; any
 other file as a download.
 
+Every card also carries an id of its own in its frontmatter, `card_id`
+(ADR-016): `<type>-<value>`, made once when the card is first written and
+never derived again. A document, note, bookmark, email or diary card gets
+ten random hex digits (`note-7f3a9c21e4`), a person or a list its file's
+slug (`person-homer`, `list-markt`), a list's monthly archive its list's
+slug and month (`list-markt-2026-10`). `stack.cards.new_card_id` makes it
+for every writer; a writer that rebuilds a card from its source keeps the
+one the file has. `stack.cards.with_card_id` gives one to a file that has
+none: migration `memory/0002` did so for the cards already there, and the
+curator does it for each file pushed without one, or with one another
+file carries (the file first committed later gets a new id). A file with
+no frontmatter or no `type` was written by hand and becomes a note.
+`README.md`, `index.md` and pages the wiki compiled are no cards. Readers
+take the id from `stack.cards.card_id_from`.
+
+**`/go/<card_id>` opens any card**, on the page the link of its kind in
+the table opens: a note on its wiki page, a diary card on its month at the
+card, a person on their page, a list on the list. Bots post it wherever
+they link a card (a filing reply, a search hit, the reply to an edit;
+`go_card`), and fall back to the link of the kind for a card that has no
+id yet. The links in the table keep resolving as before. A document's
+filing reply still opens Paperless (`/go/docs/<paperless_id>`).
+
+**A card whose id changes keeps the old one.** A card that becomes another
+type is a new card with a new id: it lists the ids it had in
+`former_card_ids`, in the same commit (`stack.cards.card_identity`, which
+every writer uses, so a rebuild keeps both fields). `/go/<former id>` opens
+the card, and `stack memory card <former id>` shows it and says which id it
+was asked for. A photo filed as a bookmark and refiled as a note
+(migration `docs/0001`) is the case today.
+
+**A card that was removed answers as gone.** When no card carries an id,
+`stack.card_lookup.removal_of` reads the memory repo's history for the newest
+commit that deleted a file with that `card_id`. `/go/<card_id>` then
+answers 410 with who removed it, the day and the commit (not its subject,
+which can carry the title), and `stack memory card` says the same to an
+audience that could have read the card. An id no card ever carried is a
+404. Core's tools server reads the memory repo read-only for this, and git
+in its image; cards themselves are still found in the wiki's copy.
+Opening a link writes nothing.
+
 The kinds found by id in the vault are listed in `stack.cards`
-(`CARD_ID_FIELDS`), next to the one lookup by card id,
-`stack.cards.find_card`. It scans the frontmatter of a copy of the
-vault, with no index to go stale, and answers None for an id no card
-carries rather than guessing. Each reader runs it over the copy it reads
+(`CARD_ID_FIELDS`); the lookups are in `stack.card_lookup`: `find_card` by
+the id of a kind, `find_by_card_id` by a `card_id` or a former one.
+They scan the frontmatter of a copy of the vault, with no index to go
+stale, and answer None for an id no card carries rather than guessing. Each reader runs it over the copy it reads
 from: core's tools server over the wiki's copy, so a `/go/` link lands on
 a page the wiki serves (404 otherwise); the archivist over its own mount,
 before it applies a correction to a capture, falling back to the path

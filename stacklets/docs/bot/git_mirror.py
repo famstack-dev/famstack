@@ -49,12 +49,14 @@ import re
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 
 from stack.forgejo import ForgejoClient, ForgejoError
+from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
+from stack.frontmatter import parse as frontmatter_parse
 
 from diary_room import household_now
 
@@ -66,6 +68,7 @@ from vault_entry import (
     document_filepath,
     document_resource_url,
     capture_filepath,
+    identity_for,
     document_frontmatter,
     capture_frontmatter,
     render_document,
@@ -158,6 +161,14 @@ def _commit_author(submitter: str | None) -> tuple[str, str]:
     return BOT_USERNAME, BOT_EMAIL
 
 
+def _card_id_in(content: str | None) -> str:
+    """The card id in a file's frontmatter, "" for none that parses."""
+    try:
+        return card_id_from(frontmatter_parse(content or ""))
+    except FrontmatterError:
+        return ""
+
+
 def _filer_localpart(submitter: str | None) -> str | None:
     """The submitter's Matrix localpart, for the `filed_by` frontmatter field."""
     if not submitter:
@@ -165,6 +176,17 @@ def _filer_localpart(submitter: str | None) -> str | None:
     return submitter.split(":")[0].lstrip("@").strip().lower() or None
 TOKEN_NAME = "archivist-git-mirror"
 TOKEN_SCOPES = ["write:repository", "read:repository", "read:user"]
+
+
+class Filed(NamedTuple):
+    """Where a capture landed in the memory and the card id it carries there.
+
+        filed = await mirror.publish_capture(...)
+        filed.path, filed.card_id   # ('marge/notes/2026/10/tent-3a338e.md', 'note-7f3a9c21e4')
+    """
+
+    path: str
+    card_id: str
 
 
 @dataclass
@@ -463,6 +485,7 @@ class GitMirror:
         paperless_url: str,
         processing: str,
         model: str | None,
+        identity: dict | None = None,
     ) -> dict:
         """Document frontmatter. Delegates to ``vault_entry.document_frontmatter``,
         injecting this mirror's known Paperless server version."""
@@ -473,6 +496,7 @@ class GitMirror:
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             paperless_version=self.paperless_version,
+            identity=identity,
         )
         _validate_on_write(fm)
         return fm
@@ -591,9 +615,10 @@ class GitMirror:
         if not (topic and items):
             return False
         title = topic_name or topic.replace("-", " ").title()
+        path = list_path(topic, bucket=self.shared_bucket)
         return await self._put_on_list(
-            client, path=list_path(topic, bucket=self.shared_bucket),
-            start=new_list(title, topics=[topic], description=topic_list_description(
+            client, path=path,
+            start=new_list(title, path=path, topics=[topic], description=topic_list_description(
                 title, os.environ.get("LANGUAGE", ""))),
             items=items, record_path=record_path, previous_path=previous_path,
             message=message, author_name=author_name, author_email=author_email,
@@ -716,7 +741,8 @@ class GitMirror:
             (list_path(calendar_slug(language), bucket=self.shared_bucket), calendar_title(language))
         return await self._put_on_list(
             client, path=path,
-            start=new_list(title, description=calendar_description(language), kind=CALENDAR),
+            start=new_list(title, path=path, description=calendar_description(language),
+                           kind=CALENDAR),
             items=entries, record_path=record_path, previous_path=previous_path,
             message="chore(lists): archivist added dates to the calendar",
             author_name=BOT_USERNAME, author_email=BOT_EMAIL,
@@ -823,6 +849,7 @@ class GitMirror:
             category=category, persons=persons, tags=tags or [],
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
+            identity=identity_for((existing or {}).get("content"), "document", target_path),
         )
 
         # The briefing's "Show Document" link wants the per-document
@@ -970,12 +997,14 @@ class GitMirror:
         model: str | None,
         capture_id: str | None = None,
         filed_by: str | None = None,
+        identity: dict | None = None,
     ) -> dict:
         """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``."""
         fm = capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
             model=model, capture_id=capture_id, filed_by=filed_by,
+            identity=identity,
         )
         _validate_on_write(fm)
         return fm
@@ -1019,7 +1048,7 @@ class GitMirror:
         kept_media: dict | None = None,
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
-    ) -> str | None:
+    ) -> Filed | None:
         """Create or update a capture entry in the mirror.
 
         `entity` is the sender's slug — the Matrix localpart, lowercased.
@@ -1049,8 +1078,8 @@ class GitMirror:
         ``existing_path`` is the reprocess hook: the entry is rewritten
         where it is, whatever its new title.
 
-        Returns the path where the capture landed (relative to the
-        repo root) on success, None when Forgejo is unreachable or
+        Returns where the capture landed (its path relative to the repo
+        root) and its card id on success, None when Forgejo is unreachable or
         the write failed. Failures are logged but never raised —
         captures are best-effort.
         """
@@ -1108,6 +1137,7 @@ class GitMirror:
             model=model,
             capture_id=capture_id,
             filed_by=_filer_localpart(submitter),
+            identity=identity_for((existing or {}).get("content"), kind, target_path),
         )
 
         briefing_summary = classification.get("summary")
@@ -1169,7 +1199,7 @@ class GitMirror:
             author_email=author_email,
             previous_path=existing_path or "",
         )
-        return target_path
+        return Filed(target_path, str(fm.get("card_id") or ""))
 
     # ── Email threads ─────────────────────────────────────────────────────
     #
@@ -1223,15 +1253,15 @@ class GitMirror:
         model: str | None,
         tags: list[str] | None = None,
         capture_id: str | None = None,
-    ) -> str | None:
+    ) -> Filed | None:
         """Fold one email message into its thread file.
 
         `entity` is the routed bucket (mailbox binding) or the sender's
         slug. `thread_uri` is the ``mid:`` URI of the thread root — it keys
         the file, so every reply lands in the same entry. Returns the path
-        the thread lives at (even when the message was already folded, an
-        idempotent no-op), or None when Forgejo is unreachable or the write
-        failed. Best-effort like the rest of the mirror.
+        the thread lives at and its card id (even when the message was
+        already folded, an idempotent no-op), or None when Forgejo is
+        unreachable or the write failed. Best-effort like the rest of the mirror.
         """
         if not await self.ensure_setup():
             return None
@@ -1287,6 +1317,7 @@ class GitMirror:
             tags=tags or [],
             model=model,
             capture_id=capture_id,
+            identity=identity_for(existing_content, "email", target_path),
         )
 
         try:
@@ -1314,7 +1345,7 @@ class GitMirror:
         if content is None:
             # Already folded into this thread — nothing to write.
             logger.info("[git-mirror] email already folded → {}", target_path)
-            return target_path
+            return Filed(target_path, _card_id_in(existing_content))
 
         verb = "update" if existing_content else "capture"
         summary = classification.get("summary")
@@ -1352,4 +1383,4 @@ class GitMirror:
             author_name=BOT_USERNAME,
             author_email=BOT_EMAIL,
         )
-        return target_path
+        return Filed(target_path, _card_id_in(content))

@@ -100,7 +100,7 @@ def groceries(run):
 
 class TestStartingAList:
     def test_a_new_list_is_a_file_in_the_lists_folder(self, run, store, groceries):
-        assert store.text(groceries).startswith("---\ntype: list\ntitle: Einkaufsliste\n")
+        assert store.text(groceries).startswith("---\ntype: list\ncard_id: list-einkaufsliste\ntitle: Einkaufsliste\n")
         assert store.commits[-1][:2] == (groceries, "marge")
 
     def test_show_names_every_list_with_what_is_open(self, run, groceries):
@@ -293,7 +293,7 @@ class TestTheFamilyCalendar:
         result = run_in("de", "add", "calendar", "Elternabend", "--due", "2026-11-17",
                         "--as", "marge")
         page = store.text("family/lists/termine.md")
-        assert page.startswith("---\ntype: list\ntitle: Termine\n")
+        assert page.startswith("---\ntype: list\ncard_id: list-termine\ntitle: Termine\n")
         assert "kind: calendar\n" in page and "- [ ] Elternabend" in page
         assert result["summary"] == "added Elternabend to Termine"
         assert len(store.commits) == 1
