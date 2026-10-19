@@ -23,8 +23,9 @@ Every card also carries an id of its own, `card_id` (ADR-016 §2):
 derived again. `new_card_id` makes it, for the writers, the migration
 that gave existing cards theirs, and the curator, which gives one to a
 file written by hand (`with_card_id`). Readers take it from
-`card_id_from`. Until every card carries one, the table above and
-`find_card` keep resolving the links in use.
+`card_id_from`. A card that changes its type gets a new id and keeps the
+ones it had in `former_card_ids` (`card_identity`). Until every card carries an id, the
+table above and `find_card` keep resolving the links in use.
 
 Stdlib only: the host CLI, the bot-runner and core's tools server all
 import it, so emitter and resolver read one table.
@@ -186,6 +187,7 @@ def card_ref(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
 # the name it already goes by.
 
 CARD_ID = "card_id"
+FORMER_CARD_IDS = "former_card_ids"
 
 # The closed vocabulary of `type` (ADR-017 §6).
 CARD_TYPES = frozenset({
@@ -203,6 +205,7 @@ _ARCHIVE = re.compile(r"(?:^|/)lists/archive/(?P<list>[^/]+)/(?P<month>\d{4}-\d{
 
 # A file name that is an id already, as `stack.people.person_id` reads one.
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
 
 _OPENING = "---\n"
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
@@ -223,6 +226,44 @@ def card_id_from(fields: Mapping[str, object]) -> str:
     ''
     """
     return str(fields.get(CARD_ID) or "").strip()
+
+
+def former_card_ids(fields: Mapping[str, object]) -> list[str]:
+    """The ids a card had before its current one, oldest first.
+
+    >>> former_card_ids({"card_id": "note-0b6e2d91aa", "former_card_ids": ["bookmark-7f3a9c21e4"]})
+    ['bookmark-7f3a9c21e4']
+    """
+    value = fields.get(FORMER_CARD_IDS) or []
+    values = value if isinstance(value, list) else [value]
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
+def card_identity(previous: Mapping[str, object], card_type: str, path: str) -> dict[str, object]:
+    """The id fields of a card written as `card_type` at `path`.
+
+    `previous` is the frontmatter of the file the write replaces, {} for
+    a new card. A rebuild keeps the card's id and its former ids. A card
+    whose type changes is a new card (ADR-016): it gets a new id of its
+    new type and lists the one it had in `former_card_ids`, so a link to
+    the old id still finds it.
+
+    >>> card_identity({"card_id": "note-7f3a9c21e4"}, "note", "marge/notes/a.md")
+    {'card_id': 'note-7f3a9c21e4'}
+    >>> retyped = card_identity({"card_id": "bookmark-7f3a9c21e4"}, "note", "marge/notes/a.md")
+    >>> retyped["card_id"].startswith("note-"), retyped["former_card_ids"]
+    (True, ['bookmark-7f3a9c21e4'])
+    """
+    current, former = card_id_from(previous), former_card_ids(previous)
+    if current.startswith(f"{card_type}-"):
+        identity: dict[str, object] = {CARD_ID: current}
+    else:
+        identity = {CARD_ID: new_card_id(card_type, path)}
+        if current and current not in former:
+            former = [*former, current]
+    if former:
+        identity[FORMER_CARD_IDS] = former
+    return identity
 
 
 def new_card_id(card_type: str, path: str, *, taken: Container[str] = ()) -> str:

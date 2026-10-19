@@ -19,7 +19,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 
-from stack.cards import CardIdError, card_id_from, new_card_id, with_card_id  # noqa: E402
+from stack.cards import (  # noqa: E402
+    CardIdError,
+    card_id_from,
+    card_identity,
+    new_card_id,
+    with_card_id,
+)
 from stack.frontmatter import parse  # noqa: E402
 
 NOTE = (
@@ -136,3 +142,23 @@ class TestWhatTheRuleWillNotGuess:
     def test_says_why_and_changes_nothing(self, text, reason):
         with pytest.raises(CardIdError, match=re.escape(reason)):
             with_card_id(text, "family/odd.md")
+
+
+class TestACardWrittenAgain:
+    """`card_identity`: the id fields a writer puts on a card it writes."""
+
+    def test_a_new_card_gets_a_new_id(self):
+        assert re.fullmatch(r"note-[0-9a-f]{10}", card_identity({}, "note", "marge/n.md")["card_id"])
+
+    def test_a_rebuild_keeps_the_id_and_the_ids_it_had_before(self):
+        previous = {"type": "note", "card_id": "note-0b6e2d91aa",
+                    "former_card_ids": ["bookmark-7f3a9c21e4"]}
+        assert card_identity(previous, "note", "marge/n.md") == {
+            "card_id": "note-0b6e2d91aa", "former_card_ids": ["bookmark-7f3a9c21e4"]}
+
+    def test_a_card_that_changes_type_is_a_new_card_that_names_its_old_id(self):
+        """ADR-016: the prefix is the type, so a bookmark refiled as a note gets a note's id."""
+        identity = card_identity({"type": "bookmark", "card_id": "bookmark-7f3a9c21e4"},
+                                 "note", "marge/n.md")
+        assert re.fullmatch(r"note-[0-9a-f]{10}", identity["card_id"])
+        assert identity["former_card_ids"] == ["bookmark-7f3a9c21e4"]

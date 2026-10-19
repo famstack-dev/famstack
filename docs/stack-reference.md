@@ -483,6 +483,12 @@ no frontmatter or no `type` was written by hand and becomes a note.
 take the id from `stack.cards.card_id_from`. The links above keep their
 ids until `/go/<card_id>` resolves.
 
+**A card whose id changes keeps the old one.** A card that becomes another
+type is a new card with a new id: it lists the ids it had in
+`former_card_ids`, in the same commit (`stack.cards.card_identity`, which
+every writer uses, so a rebuild keeps both fields). A photo filed as a
+bookmark and refiled as a note (migration `docs/0001`) is the case today.
+
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,
 `stack.cards.find_card`. It scans the frontmatter of a copy of the

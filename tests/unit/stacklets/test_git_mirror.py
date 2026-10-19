@@ -1088,6 +1088,22 @@ class TestACardKeepsItsId:
                                              existing_path=path, **capture)
         assert again == path and self._card_id(client, path) == card_id
 
+    async def test_a_note_refiled_from_a_bookmark_keeps_its_former_id(self, mirror, monkeypatch):
+        """A correction rebuilds the card from its source; a link to the id it
+        had as a bookmark must still find it afterwards."""
+        path = "marge/notes/2026/10/bart-s-drawing-454811.md"
+        client = self._wire(mirror, monkeypatch, {path: {"sha": "s1", "content": (
+            "---\ntype: note\ncard_id: note-0b6e2d91aa\nformer_card_ids:\n"
+            "  - bookmark-7f3a9c21e4\ntitle: Bart's drawing\n---\n")}})
+        await mirror.publish_capture(
+            entity="marge", kind="note", source_uri="mxc://home.test/x", title_hint=None,
+            body_text="", classification={"title": "Bart's watercolour"},
+            captured_at="2026-10-13", model=None, existing_path=path, capture_id="$x")
+        from stack.frontmatter import parse
+        fields = parse(client.files[path]["content"])
+        assert (fields["card_id"], fields["former_card_ids"]) == (
+            "note-0b6e2d91aa", ["bookmark-7f3a9c21e4"])
+
     async def test_an_email_thread_keeps_its_id_as_replies_arrive(self, mirror, monkeypatch):
         client = self._wire(mirror, monkeypatch)
         message = dict(entity="marge", thread_uri="mid:abc@springfield-elementary.test",
