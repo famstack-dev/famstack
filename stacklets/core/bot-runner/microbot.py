@@ -78,9 +78,9 @@ from nio.api import RelationshipType
 from nio.crypto.attachments import decrypt_attachment
 
 import voice
-from cross_signing import CrossSigning
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
+from stack.matrix.cross_signing import CrossSigning
 from stack.users import TECH_ADMIN_USERNAME
 from stack.name_trigger import addressed_by_name, strip_address
 
