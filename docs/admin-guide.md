@@ -322,6 +322,9 @@ Useful commands:
 
 Commands that take a room name it by its alias: `famchat` is Family Room, `memories` is Memories, `famstack` is Server Room and `documents` is Documents Room. For example, `./stack messages send famstack "Back up tonight"` posts to Server Room.
 
+`messages send` posts as the system account by default; `--as agent`
+posts as the agent, `--as <member>` as that family member.
+
 ### Photos (`photos`)
 
 Immich-based photo library, with native mobile apps and automatic background upload.

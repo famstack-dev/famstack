@@ -21,7 +21,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+from stack.stack import agent_handle, agent_name
 
 # ── TLS ──────────────────────────────────────────────────────────────────────
 # Synapse is on the LAN — skip certificate verification.
@@ -31,25 +33,57 @@ _SSL.check_hostname = False
 _SSL.verify_mode = ssl.CERT_NONE
 
 
-def resolve_login(sender, secrets):
-    """`(username, password, error)` for a message sender.
+class Account(NamedTuple):
+    """An account the CLI sends as.
 
-    `--as <user>` reads `global__USER_<NAME>_PASSWORD` so the message shows up
-    as that family member; the default is stacker-bot, the system account.
-    Shared by `stack messages send` and `upload` so both attribute the same
-    way — a family member's text or file lands under their name, which is what
-    the archivist routes and attributes on.
+    `stacklet` is whose data dir keeps the account's devices: a bot's own
+    stacklet, `messages` for a person. `label` names it in a message to
+    whoever runs the command.
     """
-    if sender:
-        key = f"global__USER_{sender.upper()}_PASSWORD"
-        password = secrets.get(key, "")
+    login: str
+    password: str
+    stacklet: str
+    label: str
+    is_person: bool = False
+
+
+def resolve_login(sender, secrets, stack_cfg=None):
+    """`(account, error)` for a message sender, one of them None.
+
+    No sender is stacker-bot, the system account. `--as agent` (or the
+    agent's handle) is the agent, `--as <id>-bot` the bot of that id, and
+    any other name a person, read from `global__USER_<NAME>_PASSWORD` so
+    the message shows up as that person. Shared by `send`, `upload` and
+    `react`, so all three attribute the same way: what a person sends
+    lands under their name, which is what the archivist routes and
+    attributes on.
+    """
+    if not sender:
+        return _bot("stacker-bot", secrets, "stacker-bot not set up. Run 'stack up core' first.")
+    stack_cfg = stack_cfg or {}
+    handle = agent_handle(stack_cfg)
+    if sender in ("agent", handle):
+        password = secrets.get("agent__AGENT_BOT_PASSWORD", "")
         if not password:
-            return None, None, f"No password for '{sender}' in secrets ({key})"
-        return sender, password, None
-    bot_pass = secrets.get("core__STACKER_BOT_PASSWORD", "")
-    if not bot_pass:
-        return None, None, "stacker-bot not set up. Run 'stack up core' first."
-    return "stacker-bot", bot_pass, None
+            return None, "The agent is not set up. Run 'stack up agent' first."
+        return Account(handle, password, "agent", agent_name(stack_cfg)), None
+    if sender.endswith("-bot"):
+        return _bot(sender, secrets, f"No password for '{sender}' in secrets")
+    key = f"global__USER_{sender.upper()}_PASSWORD"
+    password = secrets.get(key, "")
+    if not password:
+        return None, f"No password for '{sender}' in secrets ({key})"
+    return Account(sender, password, "messages", sender.capitalize(), is_person=True), None
+
+
+def _bot(bot_id, secrets, missing):
+    """A bot's account, found by its `<stacklet>__<ID>_PASSWORD` secret."""
+    suffix = f"__{bot_id.upper().replace('-', '_')}_PASSWORD"
+    for key, password in secrets.items():
+        stacklet = key.removesuffix(suffix)
+        if stacklet != key and stacklet != "global" and password:
+            return Account(bot_id, password, stacklet, bot_id), None
+    return None, missing
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────

@@ -111,6 +111,24 @@ def stage_warning(stage: str, name: str) -> str:
     return template.format(name=name, stage=stage)
 
 
+AGENT_DEFAULT_NAME = "Stacky"
+
+
+def agent_name(config: dict) -> str:
+    """The agent's display name, `[agent] name` in stack.toml."""
+    name = config.get("agent", {}).get("name")
+    return AGENT_DEFAULT_NAME if name is None else str(name)
+
+
+def agent_handle(config: dict) -> str:
+    """The agent's Matrix login, derived from its name: "Stacky" is `stacky-bot`.
+
+    The bot runner provisions the account under this handle and the agent
+    logs in with it, so everything that addresses the account derives it here.
+    """
+    return agent_name(config).strip().lower().replace(" ", "-") + "-bot"
+
+
 class StackletNotHealthyError(RuntimeError):
     """wait_for_healthy timed out waiting for the declared [health] probe."""
 
@@ -483,11 +501,10 @@ class Stack:
         # "Stacky") drives its persona, Matrix display name, handle, and home
         # room. An instance renames it (e.g. "Merlin" -> @merlin-bot, #merlin)
         # with one stack.toml line and no code edits.
-        agent_name = self._cfg("agent", "name", "Stacky")
-        agent_slug = agent_name.strip().lower().replace(" ", "-")
-        template_vars["agent_name"] = agent_name
-        template_vars["agent_handle"] = f"{agent_slug}-bot"
-        template_vars["agent_room"] = agent_slug
+        handle = agent_handle(self.config)
+        template_vars["agent_name"] = agent_name(self.config)
+        template_vars["agent_handle"] = handle
+        template_vars["agent_room"] = handle.removesuffix("-bot")
         # Drop automated/marketing mail before it reaches the brain (default on).
         template_vars["mail_filter_noise"] = str(
             mail_cfg.get("filter_noise", True)

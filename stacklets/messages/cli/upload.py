@@ -93,8 +93,8 @@ def run(args, stacklet, config):
     secrets = config.get("secrets", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
 
-    username, password, err = resolve_login(sender, secrets)
-    if err:
+    account, err = resolve_login(sender, secrets, stack_cfg)
+    if account is None:
         return {"error": err}
 
     manifest = config.get("manifest", {})
@@ -102,8 +102,8 @@ def run(args, stacklet, config):
     base_url = f"http://localhost:{synapse_port}"
 
     client = MatrixClient(base_url, server_name, instance_dir)
-    if not client.login(username, password):
-        return {"error": f"{username} can't log in — check the password in secrets."}
+    if not client.login(account.login, account.password):
+        return {"error": f"{account.login} can't log in: check the password in secrets."}
 
     # Best-effort join so a family member who isn't yet in the room can
     # still post. Harmless if already a member.
@@ -119,6 +119,6 @@ def run(args, stacklet, config):
         caption=caption,
     )
     if ok:
-        return {"ok": True, "room": room, "as": username,
+        return {"ok": True, "room": room, "as": account.login,
                 "file": path.name, "event_id": detail}
     return {"error": f"Failed to post file: {detail}"}
