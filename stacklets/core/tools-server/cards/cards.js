@@ -147,7 +147,15 @@ function kindLabel(type) {
 // The text is escaped first; only the tags written here appear in the HTML.
 
 function inline(text, card) {
+  // Media is held out of the text until the end, so the markup below never
+  // reads into an address (an event id's underscores are no emphasis).
+  const held = [];
+  const hold = (html) => `\u0000${held.push(html) - 1}\u0000`;
   let out = escapeHtml(text);
+  out = out.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (whole, target) => {
+    const file = mediaPath(target.trim(), card?.path || "");
+    return file ? hold(mediaElement(file)) : whole;
+  });
   out = out.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) =>
     `<span class="figure">▣ ${alt || "image"}</span>`);
   out = out.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, label) =>
@@ -156,6 +164,8 @@ function inline(text, card) {
     if (/^https?:\/\//.test(href)) {
       return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
     }
+    const file = mediaPath(href, card?.path || "");
+    if (file) return hold(`<a href="${escapeHtml(mediaUrl(file))}" target="_blank" rel="noopener">${label}</a>`);
     const ref = resolvePath(href, card?.path || "");
     return ref ? `<a class="card-link" data-ref="${ref}">${label}</a>` : label;
   });
@@ -165,10 +175,45 @@ function inline(text, card) {
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
   out = out.replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
-  return out;
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => held[Number(i)]);
+}
+
+// ── Media ─────────────────────────────────────────────────────────────────
+// A record embeds its photo or recording from the media archive
+// (`![[/media/2026/10/<event id>.png]]`, ADR-017 §3). The cards API serves
+// the file to whoever may read the card, so the address carries "view as".
+
+const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "heic"]);
+const AUDIO = new Set(["m4a", "mp3", "wav", "ogg"]);
+const VIDEO = new Set(["mp4", "mov", "webm"]);
+
+// The file inside the media archive a link points at (`2026/10/x.png`), or "".
+function mediaPath(href, here) {
+  const path = vaultPath(href, here);
+  return path.startsWith("media/") && /^[\w./-]+$/.test(path) && !path.split("/").includes("..")
+    ? path.slice("media/".length) : "";
+}
+
+const mediaUrl = (file) => `${API}/media/${refPath(file)}${audienceQuery()}`;
+
+function mediaElement(file) {
+  const ext = file.split(".").pop().toLowerCase();
+  const src = escapeHtml(mediaUrl(file));
+  const name = escapeHtml(file.split("/").pop());
+  if (IMAGE.has(ext)) return `<img class="media" src="${src}" alt="${name}" loading="lazy">`;
+  if (AUDIO.has(ext)) return `<audio class="media" controls preload="metadata" src="${src}"></audio>`;
+  if (VIDEO.has(ext)) return `<video class="media" controls preload="metadata" src="${src}"></video>`;
+  return `<a class="file" href="${src}" target="_blank" rel="noopener">${name} ↗</a>`;
 }
 
 function resolvePath(href, here) {
+  const path = vaultPath(href, here);
+  if (!path) return "";
+  return path.endsWith(".md") ? path : `${path}.md`;
+}
+
+// The vault path a link points at, from the card at `here`; "" for the web or an anchor.
+function vaultPath(href, here) {
   if (/^[a-z]+:/i.test(href) || href.startsWith("#")) return "";
   let path = href.split("#")[0];
   if (!path) return "";
@@ -180,8 +225,7 @@ function resolvePath(href, here) {
     }
     path = parts.join("/");
   }
-  path = path.replace(/^\/+/, "");
-  return path.endsWith(".md") ? path : `${path}.md`;
+  return path.replace(/^\/+/, "");
 }
 
 function markdown(text, card) {

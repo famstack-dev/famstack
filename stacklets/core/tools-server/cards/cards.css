@@ -298,6 +298,10 @@ a { color: var(--teal); text-underline-offset: 2px; }
   display: inline-flex; gap: 6px; align-items: center; font: .74rem var(--mono); color: var(--charcoal);
   border: 1px dashed var(--line-strong); border-radius: 6px; padding: 3px 8px;
 }
+.body .media { display: block; max-width: 100%; margin: 0 0 .8em; border-radius: 8px; }
+.body img.media, .body video.media { height: auto; }
+.body audio.media { width: 100%; }
+.body .file { font: .82rem var(--mono); }
 .body a.card-link { color: var(--slate); text-decoration-color: var(--c); text-decoration-thickness: 2px; cursor: pointer; }
 .empty-text { color: var(--charcoal); opacity: .7; font-style: italic; }
 
