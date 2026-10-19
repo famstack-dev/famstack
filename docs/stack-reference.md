@@ -1108,7 +1108,8 @@ Check a new command, or a changed one, against them.
 3. **Flags narrow or modify, and one word means one thing everywhere.**
    `--all` everything, `--dry-run` preview and write nothing, `--yes`
    skip the confirmation, `--as <member>` act as that family member
-   (on `messages` commands also `--as agent` or `--as <id>-bot`).
+   (on `messages` commands also `--as agent` or `--as <id>-bot`),
+   `--to <member>` address that family member's private chat.
    `--json` belongs to the framework. Flags that contradict each other
    are refused in one line that names both.
 4. **A command that changes something applies by default.** `--dry-run`

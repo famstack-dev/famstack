@@ -318,6 +318,18 @@ class MatrixClient:
         status, body = _get(self._url("/_matrix/client/v3/joined_rooms"), token=self.token)
         return set(body.get("joined_rooms", [])) if status == 200 else set()
 
+    def private_chat(self, person):
+        """The room whose only members are this account and the person, or None.
+
+        The rule the bots use to tell a private chat (`RoomContext.is_dm`).
+        An app can leave two such rooms behind; the one used last is the
+        one the person reads.
+        """
+        pair = {self.user_id, self._full_user(person)}
+        chats = sorted(room_id for room_id in self.joined_rooms()
+                       if self.joined_members(room_id) == pair)
+        return max(chats, key=self.last_active) if chats else None
+
     def room_name(self, room_id):
         """The room's display name, or its id when it has none."""
         return (self.get_state(room_id, "m.room.name") or {}).get("name") or room_id
@@ -568,6 +580,23 @@ class MatrixClient:
     def is_encrypted(self, room_id):
         """Whether the room encrypts its messages (it has `m.room.encryption`)."""
         return self.get_state(room_id, "m.room.encryption") is not None
+
+    def joined_members(self, room_id):
+        """User ids of the room's joined members, empty when unreadable."""
+        status, body = _get(
+            self._url(f"/_matrix/client/v3/rooms/{room_id}/joined_members"), token=self.token,
+        )
+        return set(body.get("joined", {})) if status == 200 else set()
+
+    def last_active(self, room_id):
+        """When the room's latest event was sent, in ms since the epoch; 0 if unknown."""
+        status, body = _get(
+            self._url(f"/_matrix/client/v3/rooms/{room_id}/messages?dir=b&limit=1"),
+            token=self.token,
+        )
+        if status != 200 or not body.get("chunk"):
+            return 0
+        return body["chunk"][0].get("origin_server_ts", 0)
 
     def react(self, room, event_id, key):
         """React to a message with `key` (an emoji), as the logged-in user.
