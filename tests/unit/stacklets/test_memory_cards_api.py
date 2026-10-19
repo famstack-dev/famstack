@@ -148,6 +148,14 @@ class TestWhoIsLooking:
 
         assert [c["title"] for c in found["cards"]] == ["Barts Aquarell"]
 
+    def test_the_format_report_is_the_admins_whoever_is_looking(self, api):
+        """It says what needs fixing in the whole memory; Marge's own note
+        counts in it even when the page is viewed as Bart."""
+        _, as_admin = _get(api, "/report")
+        _, as_bart = _get(api, "/report?audience=bart")
+
+        assert as_bart == as_admin and as_admin["cards"] == 5
+
 
 class TestWhatChanged:
 

@@ -10,6 +10,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /links/<id>?depth=2&audience=
     GET /history?limit=&audience=
     GET /people
+    GET /report                where the memory does not meet its format yet
     GET /fonts/<file>          the famstack faces the wiki serves
 
 The cards are the files of the vault; a card comes with the views the wiki
@@ -17,7 +18,8 @@ compiled about it into the brain, which are never cards of their own.
 
 `audience` is who will see the answer (person slugs, comma-separated): a
 card in a person's own bucket only when they are the whole audience. No
-audience is the admin's view.
+audience is the admin's view. The report is the admin's and takes none
+(`format_check.py`, the same as `stack memory check-format`).
 
 It listens on the stack's network only and is never published: the one
 way in from a browser is core's card page, which passes reads through.
@@ -41,6 +43,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from format_check import format_report  # noqa: E402
 from graph import Card, Graph, View, load_graph  # noqa: E402
 from stack.links import go_page  # noqa: E402
 
@@ -71,6 +74,8 @@ class CardsAPI:
         route, _, rest = path.strip("/").partition("/")
         if route == "fonts":
             return self._font(rest)
+        if route == "report":
+            return _json(format_report(self._graph(None)))
         audience = _audience(query.get("audience"))
         graph = self._graph(audience)
         if route == "find":

@@ -450,6 +450,13 @@ a correspondent's at the card's own path. `stack.cards.card_ref` holds
 the naming rule for every kind; `card_kind` tells a list archive and a
 navigation page from the rest.
 
+`stack memory check-format` (and the cards API's `/report`, which the
+card browser shows) lists where the vault does not meet ADR-016 and
+ADR-017 yet: cards without a `card_id`, per type; ids two files claim;
+links to a file the vault does not have; files with no frontmatter or a
+`type` that is no card type. It is the admin's, read over every card,
+and writes nothing. A vault that meets the format gives an empty report.
+
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`), next to the one lookup by card id,
 `stack.cards.find_card`. It scans the frontmatter of a copy of the
