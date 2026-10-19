@@ -1344,3 +1344,58 @@ class TestAnAttachmentFromAnEncryptedRoom:
                 await bot._http.close()
 
         assert downloaded == [photo]
+
+
+# ── Stopping ─────────────────────────────────────────────────────────────
+
+class _WaitingDevice:
+    """A device whose sync waits as long as the homeserver's long-poll does."""
+
+    def __init__(self, first_returns_at_once: bool = False):
+        self.first_returns_at_once = first_returns_at_once
+        self.syncs = 0
+
+    async def sync(self, timeout: int, full_state: bool = False):
+        self.syncs += 1
+        if self.first_returns_at_once and self.syncs == 1:
+            return None
+        await asyncio.sleep(timeout / 1000)
+
+
+class TestStop:
+    """A container runtime gives a stopping container a few seconds before it
+    kills it. A bot must close its connections inside that time, so `stop()`
+    cannot wait out a sync that only returns after thirty seconds."""
+
+    def test_a_waiting_bot_stops_at_once(self, tmp_path):
+        bot, _ = _build_bot(tmp_path, handler=lambda room, event: None)
+
+        async def run():
+            bot._running = True
+            loop = asyncio.create_task(bot._sync_until_stopped(_WaitingDevice()))
+            await asyncio.sleep(0.05)
+            await bot.stop()
+            await asyncio.wait_for(loop, timeout=1)
+
+        asyncio.run(run())
+
+    def test_work_under_way_is_finished_before_the_bot_stops(self, tmp_path):
+        bot, _ = _build_bot(tmp_path, handler=lambda room, event: None)
+        finished = []
+
+        async def slow_drain():
+            await asyncio.sleep(0.2)
+            finished.append(True)
+
+        bot._drain = slow_drain
+
+        async def run():
+            bot._running = True
+            loop = asyncio.create_task(
+                bot._sync_until_stopped(_WaitingDevice(first_returns_at_once=True)))
+            await asyncio.sleep(0.05)  # the first sync returned; the drain runs
+            await bot.stop()
+            await asyncio.wait_for(loop, timeout=1)
+
+        asyncio.run(run())
+        assert finished == [True]

@@ -79,6 +79,11 @@ from stack.matrix.media import Media
 from stack.users import TECH_ADMIN_USERNAME
 from stack.name_trigger import addressed_by_name, strip_address
 
+# How long one sync waits for activity before it returns empty, and how
+# long the loop waits after a failed sync. `stop()` ends the wait early.
+SYNC_WAIT_MS = 30000
+SYNC_RETRY_SECONDS = 5
+
 # The framework's "I picked this up and I'm working on it" signal. A
 # bot reacts with 👀 on the source message the moment it starts a
 # capture — the same liveness role the typing indicator plays, but
@@ -153,6 +158,9 @@ class MicroBot:
         # framework so its lifecycle is tied to start()/teardown.
         self._http: aiohttp.ClientSession | None = None
         self._running = False
+        # The sync wait in progress, so `stop()` can end it: a long-poll
+        # outlasts the container runtime's stop timeout.
+        self._waiting: asyncio.Future | None = None
 
     @property
     def client(self) -> AsyncClient:
@@ -267,9 +275,20 @@ class MicroBot:
         # the timeout); `_drain()` does the work, reading the timeline from
         # the durable cursor so nothing is lost to a limited sync.
         logger.info("[{}] Running", self.name)
+        await self._sync_until_stopped(device)
+        await self._aclose()
+        logger.info("[{}] Stopped", self.name)
+
+    async def _sync_until_stopped(self, device) -> None:
+        """Wait for activity and work through it, until `stop()`.
+
+        `stop()` ends a wait at once; work already under way (a drain)
+        finishes first, so a message is never half handled.
+        """
         while self._running:
+            self._waiting = asyncio.ensure_future(device.sync(timeout=SYNC_WAIT_MS))
             try:
-                resp = await device.sync(timeout=30000)
+                resp = await self._waiting
                 # Bare `sync()` does NOT dispatch nio response callbacks
                 # (only `sync_forever()` does), so the pending-joins
                 # hand-off must be driven from here explicitly.
@@ -280,10 +299,9 @@ class MicroBot:
             except Exception as e:
                 logger.warning("[{}] Sync error: {}", self.name, e)
                 if self._running:
-                    await asyncio.sleep(5)
-
-        await self._aclose()
-        logger.info("[{}] Stopped", self.name)
+                    await asyncio.sleep(SYNC_RETRY_SECONDS)
+            finally:
+                self._waiting = None
 
     async def _aclose(self) -> None:
         """Close framework-owned network resources. Idempotent — safe on
@@ -1511,8 +1529,10 @@ class MicroBot:
             return False
 
     async def stop(self) -> None:
-        """Signal the sync loop to exit."""
+        """End the sync loop: at once while it waits, after the work in hand."""
         self._running = False
+        if self._waiting is not None and not self._waiting.done():
+            self._waiting.cancel()
 
     # ── Message cursor ───────────────────────────────────────────────
     # Per-room timestamp of the last processed message. Callbacks
