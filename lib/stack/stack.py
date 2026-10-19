@@ -82,6 +82,12 @@ _STAGE_WARNINGS = {
         "change between releases. Back up before you upgrade. "
         "Not for production."
     ),
+    # A deprecated stacklet is finished, just on its way out, so the
+    # generic "not finished" wording would be wrong for it.
+    "deprecated": (
+        "{name} is deprecated: it still works, but it will be removed in "
+        "a future release. Do not build on it."
+    ),
 }
 
 _UNKNOWN_STAGE_WARNING = (
@@ -94,9 +100,9 @@ def stage_warning(stage: str, name: str) -> str:
     """What to tell someone starting a stacklet at this stage.
 
     Empty for a stable stacklet, which is the default and the silent
-    case. Every other value is a claim of unfinishedness, so an
-    unrecognised one warns too: the runtime repeats what the manifest
-    says instead of policing a list of allowed words.
+    case. Every other value warns, an unrecognised one included: the
+    runtime repeats what the manifest says instead of policing a list
+    of allowed words.
     """
     if not stage or stage == STABLE:
         return ""

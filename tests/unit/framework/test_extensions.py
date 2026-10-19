@@ -217,7 +217,8 @@ class TestStage:
         assert stck.output.warnings == []
 
     def test_an_unknown_stage_still_warns(self, make_stack):
-        """Anything but 'stable' is a claim of unfinishedness. Repeat it."""
+        """Anything but 'stable' is a claim the runtime repeats, even a
+        stage it has no wording for."""
         stck = make_stack()
         ext = stck.mounted_extension_dir / "alpha_thing"
         ext.mkdir(parents=True)
@@ -227,6 +228,25 @@ class TestStage:
         result = stck.up("alpha_thing")
         assert result["source"] == "extension"
         assert "alpha" in " ".join(result["warnings"]).lower()
+
+    def test_up_warns_that_a_deprecated_stacklet_will_be_removed(self, make_stack):
+        """A deprecated stacklet is on its way out, not half-built. The
+        person starting it needs to hear that it goes away, and must not
+        be told it is unfinished, which would send them waiting for a
+        version that never comes."""
+        stck = make_stack()
+        ext = stck.mounted_extension_dir / "old_thing"
+        ext.mkdir(parents=True)
+        (ext / "stacklet.toml").write_text(
+            'id = "old_thing"\nname = "Old Thing"\nstage = "deprecated"\n')
+
+        result = stck.up("old_thing")
+
+        warning = " ".join(result["warnings"]).lower()
+        assert "deprecated" in warning
+        assert "removed" in warning
+        assert "finished" not in warning
+        assert warning in " ".join(stck.output.warnings).lower()
 
 
 class TestListRendering:

@@ -190,19 +190,19 @@ Messages allows you to operate the stack from your smartphone.
 
 famstack comes with a lightweight bot runtime. The bots are tiny helpers that automate tasks in your family chat: filing documents, transcribing voice memos, managing your stack. The agent stacklet (beta) adds Stacky, a family agent built on [nanobot](https://github.com/HKUDS/nanobot) that keeps your lists and answers from your own notes.
 
-| Stacklet | Status  | Service                | What it does                                             |
-|----------|---------|------------------------|----------------------------------------------------------|
-| core     | working | Bot Runner, Watchtower | Reverse proxy and the famstack Bot runner                |
-| messages | working | Matrix + Element       | The famstack central WhatsApp-like communication center. |
-| photos   | working | Immich                 | Family photo library and mobile backup                   |
-| docs     | working | Paperless-ngx          | Document archive with OCR                                |
-| ai       | working | TTS, Whisper, oMLX     | Turns your Mac into an AI Machine                        |
-| memory   | working | Forgejo, Quartz        | Family wiki, diary and lists, kept as plain files        |
-| backup   | beta    | rsync                  | Append-only backups of photos, documents and the chat    |
-| agent    | beta    | nanobot                | Stacky, the family agent in your chat                    |
-| chatai   | beta    | Open WebUI             | ChatGPT-like chat interface                              |
-| code     | beta    | Forgejo                | Private Git server                                       |
-| infra    | beta    | Caddy, AdGuard         | Domain mode: your own names, with HTTPS                  |
+| Stacklet | Status     | Service                | What it does                                             |
+|----------|------------|------------------------|----------------------------------------------------------|
+| core     | working    | Bot Runner, Watchtower | Reverse proxy and the famstack Bot runner                |
+| messages | working    | Matrix + Element       | The famstack central WhatsApp-like communication center. |
+| photos   | working    | Immich                 | Family photo library and mobile backup                   |
+| docs     | working    | Paperless-ngx          | Document archive with OCR                                |
+| ai       | working    | TTS, Whisper, oMLX     | Turns your Mac into an AI Machine                        |
+| memory   | working    | Forgejo, Quartz        | Family wiki, diary and lists, kept as plain files        |
+| backup   | beta       | rsync                  | Append-only backups of photos, documents and the chat    |
+| agent    | beta       | nanobot                | Stacky, the family agent in your chat                    |
+| chatai   | deprecated | Open WebUI             | ChatGPT-like chat interface, removed in 0.5.0            |
+| code     | beta       | Forgejo                | Private Git server                                       |
+| infra    | beta       | Caddy, AdGuard         | Domain mode: your own names, with HTTPS                  |
 
 Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklets.md) takes about 15 minutes.
 

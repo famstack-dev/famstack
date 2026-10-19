@@ -10,6 +10,9 @@ name        = "ChatAI"
 description = "Chat with your AI in the browser (Open WebUI)"
 version     = "0.2.1"
 category    = "ai"
+# Deprecated in 0.4.0, removed from the shipped stacklets in 0.5.0.
+# Asking the AI moves into the chat, through the agent stacklet.
+stage       = "deprecated"
 port        = 42050
 
 login_field = "email"
