@@ -348,15 +348,38 @@ function bodyOf(card, text = withoutMeta(withoutTitle(card.text, card.title))) {
   return div;
 }
 
+// ── People ────────────────────────────────────────────────────────────────
+// `persons` holds person ids (`bart`), older cards their names (`Bart`).
+// Either way a person is shown by their card's name, never by the bare id.
+
+const knownPeople = new Map(); // id, name or first name, lowercased -> the person's card
+
+const firstName = (title) => String(title || "").trim().split(/\s+/)[0];
+
+function learnPeople(cards) {
+  knownPeople.clear();
+  for (const p of cards) {
+    for (const key of [p.title, firstName(p.title)]) if (key) knownPeople.set(key.toLowerCase(), p);
+  }
+  // An id wins over a name another person happens to share.
+  for (const p of cards) knownPeople.set(p.id.split("/")[1].toLowerCase(), p);
+}
+
+function personOf(value) {
+  const known = knownPeople.get(String(value).toLowerCase());
+  if (known) return { id: known.id, name: firstName(known.title) || known.title, title: known.title };
+  const name = String(value);
+  return { id: `person/${name.toLowerCase()}`, name: name.charAt(0).toUpperCase() + name.slice(1), title: name };
+}
+
 // ── One renderer per kind of card ─────────────────────────────────────────
 
 function peopleRow(card) {
-  const names = card.persons || [];
-  if (!names.length) return null;
-  return h("div", { class: "people" }, names.map((name) =>
-    h("span", { class: "person", onclick: () => openCard(`person/${String(name).toLowerCase()}`,
-                                                          { after: card.id }) },
-      h("span", { class: "av" }, String(name).slice(0, 1).toUpperCase()), name)));
+  const persons = (card.persons || []).map(personOf);
+  if (!persons.length) return null;
+  return h("div", { class: "people" }, persons.map((p) =>
+    h("span", { class: "person", title: p.title, onclick: () => openCard(p.id, { after: card.id }) },
+      h("span", { class: "av" }, p.name.slice(0, 1).toUpperCase()), p.name)));
 }
 
 function factsGrid(pairs) {
@@ -779,8 +802,8 @@ async function renderGraph() {
     edges, nodes);
 
   const types = [...new Set([card, ...first.map((a) => a.card), ...second.map((a) => a.card)].map((c) => c.type))];
-  const persons = new Set(card.persons || []);
-  first.filter((a) => a.card.type === "person").forEach((a) => persons.add(a.card.title));
+  const persons = new Set((card.persons || []).map((p) => personOf(p).id));
+  first.filter((a) => a.card.type === "person").forEach((a) => persons.add(a.card.id));
   pane.replaceChildren(
     h("span", { class: "label" }, T.around),
     h("div", { class: "focusinfo" }, h("h3", {}, card.title)),
@@ -806,6 +829,7 @@ async function openLinked(card, first) {
 async function loadPeople() {
   let people = [];
   try { people = (await api("people"))?.people || []; } catch { /* the select stays at its default */ }
+  learnPeople(people);
   const slugs = people.map((p) => p.id.split("/")[1]).filter(Boolean).sort();
   const audience = document.getElementById("audience");
   audience.replaceChildren(h("option", { value: "" }, T.everyone),
