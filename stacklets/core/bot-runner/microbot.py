@@ -217,7 +217,7 @@ class MicroBot:
 
         # ── Undecryptable message handler ────────────────────────────
         # A bot reads the encrypted rooms it was invited to: the invite is
-        # the family's opt-in. A message nio could not decrypt came without
+        # the opt-in. A message nio could not decrypt came without
         # its room key, which the sender's app usually shares a moment
         # later. Say so once per room (per process) instead of answering
         # nothing.

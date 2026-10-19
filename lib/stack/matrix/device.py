@@ -2,7 +2,7 @@
 
 A Matrix login is a device: an access token, a device id, and the key
 store that lets it read and write encrypted rooms. An account that logs
-in afresh on every start gets a new device each time, and the family's
+in afresh on every start gets a new device each time, and other users'
 apps cannot encrypt for a device they have not seen yet. So the login is
 kept in a file and restored on the next start, the key store with it,
 and a password login happens only when the kept one is no longer valid.
@@ -37,13 +37,13 @@ from nio import AsyncClient, AsyncClientConfig, LoginResponse
 from stack.matrix.cross_signing import CrossSigning
 
 
-class FamilyClient(AsyncClient):
+class TrustingClient(AsyncClient):
     """nio's client, sending into an encrypted room without verifying each device first.
 
     nio refuses to encrypt for a device nobody verified. `Device.sync`
     marks every device it knows as trusted after each sync, but one that
-    appeared since would fail the send. On the family's own server every
-    device is a family member's, so a send never waits on verification.
+    appeared since would fail the send. On the stack's own homeserver every
+    device belongs to one of its users, so a send never waits on verification.
     """
 
     async def room_send(self, *args, ignore_unverified_devices: bool = True, **kwargs):
@@ -70,7 +70,7 @@ class Device:
         store_path = state_dir / f"{name}_crypto"
         store_path.mkdir(parents=True, exist_ok=True)
         config = AsyncClientConfig(store_sync_tokens=True, encryption_enabled=True)
-        self.client = FamilyClient(homeserver, user_id, store_path=str(store_path), config=config)
+        self.client = TrustingClient(homeserver, user_id, store_path=str(store_path), config=config)
 
     async def connect(self, http: aiohttp.ClientSession) -> bool:
         """Log in, bring the device's keys up to date and vouch for it.
@@ -192,7 +192,7 @@ class Device:
     async def _keep_keys(self) -> None:
         """The key upkeep nio's `sync_forever` does and a bare `sync()` does not.
 
-        One-time keys are topped up (the family's clients use one each to
+        One-time keys are topped up (other users' clients use one each to
         open a session and send the device a room's key), other people's
         devices are queried and their sessions claimed, and queued
         to-device messages go out. Failures are logged; the next sync tries
@@ -214,7 +214,7 @@ class Device:
 
     async def _vouch(self, http: aiohttp.ClientSession) -> None:
         """Sign this login with the account's own cross-signing keys (`cross_signing`),
-        so the family's apps share room keys with it as with a verified device."""
+        so other users' apps share room keys with it as with a verified device."""
         if not self.client.olm:
             return
         try:

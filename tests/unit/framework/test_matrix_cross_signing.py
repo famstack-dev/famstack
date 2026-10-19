@@ -1,4 +1,4 @@
-"""A bot vouches for its own device, so the family's apps treat it as signed.
+"""A bot vouches for its own device, so other users' apps treat it as signed.
 
 Newer Matrix apps share room keys only with devices their owner signed
 (MSC4153). A bot has no person to verify its login, so at start it

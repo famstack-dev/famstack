@@ -189,7 +189,7 @@ class TestTheCommandLine:
 
 
 class TestWhoAndWhat:
-    """A family's schedule is read by person: what Homer set up, what is for
+    """A schedule is read by person: what Homer set up, what is for
     Lisa, and in words, not as command lines."""
 
     def test_the_list_by_who_created_it_and_who_it_is_for(self, instance):
