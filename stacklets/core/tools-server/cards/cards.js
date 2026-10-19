@@ -248,9 +248,9 @@ function markdown(text, card) {
     const rows = table.filter((cells) => !cells.every((c) => /^:?-{2,}:?$/.test(c)));
     if (rows.length) {
       const [head, ...body] = rows;
-      html.push(`<table><thead><tr>${head.map((c) => `<th>${inline(c, card)}</th>`).join("")}</tr></thead>`
+      html.push(`<div class="table"><table><thead><tr>${head.map((c) => `<th>${inline(c, card)}</th>`).join("")}</tr></thead>`
         + `<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c, card)}</td>`).join("")}</tr>`)
-          .join("")}</tbody></table>`);
+          .join("")}</tbody></table></div>`);
     }
     table = [];
   };

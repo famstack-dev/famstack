@@ -253,6 +253,8 @@ a { color: var(--teal); text-underline-offset: 2px; }
   box-shadow: var(--shadow);
   animation: rise .25s ease-out;
   position: relative;
+  /* A path, an address or an mxc id breaks inside the card instead of widening it. */
+  overflow-wrap: anywhere;
 }
 .card.focus { border-color: color-mix(in srgb, var(--c) 60%, transparent); }
 .card::before {
@@ -290,6 +292,8 @@ a { color: var(--teal); text-underline-offset: 2px; }
   border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
 }
 .body .callout .label { display: block; margin-bottom: 6px; color: var(--c); }
+.body .table { overflow-x: auto; margin: 0 0 1em; }
+.body .table table { margin: 0; overflow-wrap: normal; }
 .body table { width: 100%; border-collapse: collapse; margin: 0 0 1em; font-size: .86rem; }
 .body th { text-align: left; font: 500 .66rem var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--teal); }
 .body th, .body td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
