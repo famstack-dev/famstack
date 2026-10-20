@@ -6,7 +6,8 @@ so every consumer gets back what it speaks:
 
   * JSON object in  → runs `./stack <cmd> --json`  → JSON out.
     A lifecycle surface (status/list/up/down/logs) for trusted core tools —
-    the stacker bot and the tools-server.
+    the stacker bot and the tools-server. `room-create` runs the stacker
+    bot's `stack room create` as `stack messages room create`.
   * plaintext line in → runs `./stack <args>` in text mode → plaintext out.
     A curated read/domain surface (memory, docs, and the stacklet commands
     in stack.toml `[agent] allow`) for the agent, which wants a token-lean
@@ -41,7 +42,8 @@ STACK_BIN = REPO_ROOT / "stack"
 API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
-ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "discover"}
+ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs",
+                    "room-create", "discover"}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
@@ -145,6 +147,7 @@ def handle_request(data):
                 "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
                 "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
                 "logs":     {"needs_stacklet": True,  "description": "Get container logs", "options": ["tail", "grep"]},
+                "room-create": {"needs_stacklet": False, "description": "Create an unencrypted family room", "options": ["name"]},
             },
         }
 
@@ -153,9 +156,17 @@ def handle_request(data):
         return {"error": f"'{cmd}' requires a 'stacklet' field"}
 
     # Build the CLI command
-    args = [str(STACK_BIN), cmd, "--json"]
-    if sid:
-        args.insert(2, sid)
+    if cmd == "room-create":
+        # Stacker's `stack room create <name>`. The name is one argument
+        # and never reaches a shell.
+        name = (req.get("name") or "").strip()
+        if not name:
+            return {"error": "'room-create' requires a 'name' field"}
+        args = [str(STACK_BIN), "messages", "room", "create", name, "--json"]
+    else:
+        args = [str(STACK_BIN), cmd, "--json"]
+        if sid:
+            args.insert(2, sid)
 
     # Logs-specific options
     if cmd == "logs":
