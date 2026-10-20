@@ -75,6 +75,7 @@ import tomllib
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from typing import TypeAlias
 
 
 # Sibling stacklets — memory.lib gives us summary callout extraction
@@ -105,6 +106,7 @@ from stack.ai.client import LLM, LLMError  # noqa: E402
 # module object and therefore one selected language. The home and
 # person pages' templates and prompts live beside it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import brain_lock  # noqa: E402
 import diary  # noqa: E402
 import home_page  # noqa: E402
 import open_items  # noqa: E402
@@ -293,19 +295,58 @@ class _NoAnswer(Exception):
     """A compile without the model, for a view that has no answer to reuse."""
 
 
-async def _ask(llm: "LLM | None", target_path: str, prompt: str,
+class _RenderLater:
+    """A model whose answer is rendered later, over the cards as they are then.
+
+    `_compile` hands one to every page generator: the model's turn can
+    take minutes, and the cards the compile read before it may have moved
+    by its end.
+    """
+
+    def __init__(self, llm: "LLM"):
+        self.llm = llm
+
+
+class _Answered(Exception):
+    """The model answered for a view: render it now over the cards as they are.
+
+    Raised by `_ask` for a `_RenderLater` model once it has answered, so
+    nothing the compile read before the model's turn is written.
+    `compiled` in `_compile` catches it, reads the cards again under the
+    brain's writer lock and compiles the view once more with this as its
+    model (`_ask` gives back `raw`, renumbered from `refs` to the cards as
+    they are then).
+    """
+
+    def __init__(self, raw: str, refs: list[tuple[str, str]]):
+        super().__init__("the model answered")
+        self.raw, self.refs = raw, refs
+
+
+# What a page generator takes as its model.
+Model: TypeAlias = "LLM | _RenderLater | _Answered | None"
+
+
+async def _ask(llm: Model, target_path: str, prompt: str,
                refs: list[tuple[str, str]]) -> str:
     """The model's answer for one view, as raw JSON.
 
-    `refs` are the view's sources in the order `prompt` numbers them. With
-    no model (`--fast`), the answer is the one the view keeps, its `[N]`
-    citations moved to where their sources are now and dropped where a
-    source is gone: what the cards say is current at once, the model's
-    wording follows when it is next asked. A view that does not exist yet
-    starts from an empty answer, as does one the model never wrote for; a
-    page compiled before views kept answers raises `_NoAnswer` and stays
-    as it is until the model's turn.
+    `refs` are the view's sources in the order `prompt` numbers them. A
+    model is asked and its answer returned; a `_RenderLater` one's answer
+    is raised as `_Answered`, and given that back, it is returned with its
+    citations moved to the sources as they are now. With no model
+    (`--fast`), the answer is the one the view
+    keeps, moved the same way: `[N]` citations follow their sources and
+    are dropped where a source is gone, so what the cards say is current
+    at once and the model's wording follows when it is next asked. A view
+    that does not exist yet starts from an empty answer, as does one the
+    model never wrote for; a page compiled before views kept answers
+    raises `_NoAnswer` and stays as it is until the model's turn.
     """
+    if isinstance(llm, _Answered):
+        return _moved(llm.raw, llm.refs, refs, target_path)
+    if isinstance(llm, _RenderLater):
+        raise _Answered(await _ask(llm.llm, target_path, prompt, refs), refs)
     if llm is not None:
         return await llm.complete("overview", prompt, json_mode=True,
                                   temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
@@ -318,7 +359,12 @@ async def _ask(llm: "LLM | None", target_path: str, prompt: str,
         return "{}"  # a view the model has not written for yet
     if kept is None:
         raise _NoAnswer(target_path)
-    raw, before = kept
+    return _moved(*kept, refs, target_path)
+
+
+def _moved(raw: str, before: list[tuple[str, str]], refs: list[tuple[str, str]],
+           target_path: str) -> str:
+    """Answer `raw`, cited against sources `before`, renumbered to sources `refs`."""
     now = {ref: n for n, ref in enumerate(refs, start=1)}
     remap = {old: now[ref] for old, ref in enumerate(before, start=1) if ref in now}
     try:
@@ -398,13 +444,6 @@ async def run(llm: LLM, argv: list[str]) -> int:
             brain=Path(brain_dir), dry_run=dry_run, assume_yes=assume_yes,
         )
 
-    home_sel = "--home" in argv
-    topics_only = "--topics" in argv
-    members_sel = _arg_values(argv, "--member")
-    members_all = "--members" in argv
-    topics_sel = _arg_values(argv, "--topic")
-    correspondents_sel = _arg_values(argv, "--correspondent")
-
     if not brain_dir:
         _err("BRAIN_REPO_DIR not set — is the memory stacklet installed?")
         return 1
@@ -412,6 +451,33 @@ async def run(llm: LLM, argv: list[str]) -> int:
     if not vault.exists():
         _err(f"brain working copy does not exist: {vault}")
         return 1
+
+    # A compile without the model holds the brain's writer lock from
+    # reading the cards to writing the last view: it takes seconds, and a
+    # compile with the model in another process must not write between.
+    # One with the model takes the lock only per view, after the model's
+    # turn (`compiled` below).
+    if model is None:
+        with brain_lock.held(vault):
+            return await _compile(None, vault, argv, dry_run=dry_run)
+    return await _compile(model, vault, argv, dry_run=dry_run)
+
+
+async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run: bool) -> int:
+    """Compile the views `argv` selects, every view without a selection.
+
+    A view the model writes is compiled in two steps: the model is asked
+    from the cards as they were read here, and its answer is rendered over
+    the cards as they are when the view is written, read again under the
+    brain's writer lock. A compile without the model that ran meanwhile
+    is never written over with what the cards said minutes before.
+    """
+    home_sel = "--home" in argv
+    topics_only = "--topics" in argv
+    members_sel = _arg_values(argv, "--member")
+    members_all = "--members" in argv
+    topics_sel = _arg_values(argv, "--topic")
+    correspondents_sel = _arg_values(argv, "--correspondent")
 
     # In the default install the org name and the in-repo bucket
     # directory are the same slug (both "family"). Custom installs may
@@ -456,6 +522,17 @@ async def run(llm: LLM, argv: list[str]) -> int:
         vault, shared_bucket=shared_bucket, member_slugs=roster,
     )
 
+    async def compiled(generate) -> int:
+        """`generate(model, index)` for one view, its model text over the cards as they are."""
+        try:
+            return await generate(_RenderLater(model) if model is not None else None, index)
+        except _Answered as answered:
+            with brain_lock.held(vault):
+                now = _index_vault(vault)
+                if people is not None:
+                    _resolve_persons(now, people)
+                return await generate(answered, now)
+
     # ── Selection mode ────────────────────────────────────────────────
     # Any selection flag (--home, --member, --topic, --topics,
     # --correspondent) switches from the full sweep to "generate exactly
@@ -471,10 +548,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
         generated = 0
 
         if home_sel:
-            rc = await _generate_home(
-                model, index, roster=roster, people=persons,
+            rc = await compiled(lambda m, ix: _generate_home(
+                m, ix, roster=roster, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-            )
+            ))
             if rc == 0:
                 generated += 1
 
@@ -487,10 +564,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
             if slug not in roster:
                 _err(f"no member bucket for '{slug}' — skipping")
                 continue
-            rc = await _generate_member(
-                model, slug, index, vault, person=persons.get(slug), people=persons,
+            rc = await compiled(lambda m, ix, slug=slug: _generate_member(
+                m, slug, ix, vault, person=persons.get(slug), people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-            )
+            ))
             if rc == 0:
                 generated += 1
         if members_all and retire:
@@ -525,10 +602,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
                 _err(f"no topic folder found with slug '{t_slug}' — skipping")
             topic_set = [t for t in topics if t[1] in wanted]
         for bucket_prefix, topic_slug in topic_set:
-            rc = await _generate_topic(
-                model, bucket_prefix, topic_slug, index, people=persons,
+            rc = await compiled(lambda m, ix, b=bucket_prefix, t=topic_slug: _generate_topic(
+                m, b, t, ix, people=persons,
                 shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-            )
+            ))
             if rc == 0:
                 generated += 1
 
@@ -539,10 +616,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
 
     # ── Default loop ──────────────────────────────────────────────────
     # Bare invocation: home, every member, every correspondent, every topic.
-    rc = await _generate_home(
-        model, index, roster=roster, people=persons,
+    rc = await compiled(lambda m, ix: _generate_home(
+        m, ix, roster=roster, people=persons,
         shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-    )
+    ))
     if rc != 0:
         return rc
     if retire:
@@ -553,10 +630,10 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # returns 1 for skipped-empty, which we deliberately swallow
     # here -- the overall run still succeeds.
     for member_slug in roster:
-        await _generate_member(
-            model, member_slug, index, vault, person=persons.get(member_slug), people=persons,
+        await compiled(lambda m, ix, slug=member_slug: _generate_member(
+            m, slug, ix, vault, person=persons.get(slug), people=persons,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-        )
+        ))
 
     # Correspondent leaf pages, one per name across all documents.
     for corr_slug, canonical in _correspondent_roster(index):
@@ -566,16 +643,16 @@ async def run(llm: LLM, argv: list[str]) -> int:
         )
 
     for bucket_prefix, topic_slug in topics:
-        await _generate_topic(
-            model, bucket_prefix, topic_slug, index, people=persons,
+        await compiled(lambda m, ix, b=bucket_prefix, t=topic_slug: _generate_topic(
+            m, b, t, ix, people=persons,
             shared_bucket=shared_bucket, lang=lang, write=not dry_run,
-        )
+        ))
     return 0
 
 # ── Generation ───────────────────────────────────────────────────────────
 
 async def _generate_home(
-    llm: LLM | None, index: list[dict], *,
+    llm: Model, index: list[dict], *,
     roster: list[str], people: dict[str, Person],
     shared_bucket: str, lang: str, write: bool, today: date | None = None,
 ) -> int:
@@ -676,7 +753,7 @@ _PERSON_PAGE_STAMP = "<!-- person page: 4 -->"
 
 
 async def _generate_member(
-    llm: LLM | None, slug: str, index: list[dict], vault: Path, *,
+    llm: Model, slug: str, index: list[dict], vault: Path, *,
     person: Person | None = None, people: dict[str, Person] | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
@@ -772,7 +849,7 @@ async def _generate_member(
 
 
 async def _generate_topic(
-    llm: LLM | None, bucket_prefix: str, topic_slug: str, index: list[dict], *,
+    llm: Model, bucket_prefix: str, topic_slug: str, index: list[dict], *,
     people: dict[str, Person] | None = None,
     shared_bucket: str, lang: str, write: bool,
 ) -> int:
@@ -1809,6 +1886,13 @@ def _publish(page: str, *, target_path: str, view: ViewFields, answer: str = "")
     except RuntimeError as e:
         _err(f"{e} — refusing to write generated wiki pages")
         return 1
+    with brain_lock.held(_brain_dir()):
+        return _write_view(page, page_path, target_path, view, answer)
+
+
+def _write_view(page: str, page_path: Path, target_path: str, view: ViewFields,
+                answer: str) -> int:
+    """`_publish`'s read, merge and write, with the brain's writer lock held."""
     try:
         prior = page_path.read_text(encoding="utf-8")
     except OSError:

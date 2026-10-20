@@ -517,7 +517,13 @@ its diary month), in two speeds. At once, with the mirror, without the
 model (`stack memory wiki update ... --fast`, `diary pages --fast`):
 which cards belong, list items, dates and links, with the model's last
 wording renumbered to the cards as they are. After the quiet window
-(`wiki_rebuild_quiet_secs`), once per burst, with the model. Forgejo
+(`wiki_rebuild_quiet_secs`), once per burst, with the model. That
+compile runs in the background, one at a time, so a push during the
+model's turn is compiled at once all the same and joins the next model
+compile. The model is asked from the cards as they were, and its answer
+is rendered over each view as it is when written, the cards read again
+under the brain's writer lock (`memory/bot/brain_lock.py`), which every
+writer of the brain takes, the commit included. Forgejo
 tells the curator of each push to `family/memory` through a webhook to
 `http://stack-memory-curator:8090/push` (the cards API), which `stack up
 memory` adds once; the code stacklet allows webhooks to `stack-*` hosts

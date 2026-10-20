@@ -100,17 +100,28 @@ CARDS = {
 
 
 class Model:
-    """The stub model: one answer for every page it is asked for, each call recorded."""
+    """The stub model: one answer for every page it is asked for, each call recorded.
+
+    `wording` is what it writes on a page and `opening` a diary month's
+    paragraph, so a test can tell which compile wrote a view. With
+    `answering` cleared it takes a while: it answers once the test sets it,
+    as a real model answers minutes later.
+    """
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.wording = "As the cards say."
+        self.opening = "A month of camping, and a torn tent."
+        self.answering = asyncio.Event()
+        self.answering.set()
 
     async def complete(self, role, prompt, **kwargs) -> str:
         self.calls.append(role)
+        await self.answering.wait()
         if role == "writer":  # a diary month's opening paragraph
-            return "A month of camping, and a torn tent."
-        return json.dumps({"tagline": "A Simpson.", "about": "As the cards say. [1]",
-                           "summary": "As the cards say. [1]", "welcome": "Welcome home."})
+            return self.opening
+        return json.dumps({"tagline": "A Simpson.", "about": f"{self.wording} [1]",
+                           "summary": f"{self.wording} [1]", "welcome": "Welcome home."})
 
 
 class Family:
@@ -297,9 +308,11 @@ class TestAPushedCard:
             for second, body in enumerate(("Homer fell.", "Homer fell twice.", "Homer gave up.")):
                 before, head = _edit_tent(family, body)
                 await recompile.pushed(before, head)
-                assert await recompile.settled(last, head, now=float(second)) is None
+                await recompile.settle(last, head, now=float(second))
+                assert not recompile.busy
             assert family.model.calls == []
-            assert await recompile.settled(last, family.head, now=2.0 + 180) is True
+            await recompile.settle(last, family.head, now=2.0 + 180)
+            assert await recompile.wait(now=2.0 + 180) == (family.head, True)
 
         asyncio.run(burst())
 
@@ -312,10 +325,60 @@ class TestAPushedCard:
         recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
         before = family.views()
 
-        assert asyncio.run(recompile.settled(family.head, family.head, now=0.0, forced=True))
+        async def nothing() -> tuple[str, bool] | None:
+            await recompile.settle(family.head, family.head, now=0.0, forced=True)
+            return await recompile.wait(now=0.0)
+
+        assert asyncio.run(nothing()) == (family.head, True)
         asyncio.run(family.compile_everything())
 
         assert family.views() == before
+        assert family.model.calls.count("writer") == 0
+
+    def test_a_push_during_a_model_compile_gets_its_facts_at_once_and_the_models_text_after(
+            self, family):
+        """The model's turn takes minutes on a real model. A push meanwhile is
+        compiled at once all the same; when the model answers, its text is
+        put over the view as it is then, and the view that changed meanwhile
+        is compiled with the model once more after the next quiet window."""
+        recompile = curator.Recompile(family.select, family.compile, curator.Debounce(0))
+        model = family.model
+        model.wording, model.opening = "Homer and the tent, retold.", "The month of the tent."
+        model.answering.clear()
+        october = "family/diary/2026/10.md"
+
+        async def scenario() -> None:
+            last = family.head
+            first = _edit_tent(family, "Homer fell on the tent.")
+            await recompile.pushed(*first)
+            await recompile.settle(last, first[1], now=0.0, forced=True)
+            await asyncio.sleep(0)  # the model is asked, and takes its time
+            assert recompile.busy and model.calls
+
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            await recompile.pushed(*_edit_tent(family, "Homer patched the tent."))
+            assert loop.time() - started < 5 and recompile.busy
+            assert "Homer patched the tent." in family.views()[october]
+
+            model.answering.set()
+            assert await recompile.wait(now=1.0) == (first[1], True)
+
+            views = family.views()
+            assert "Homer patched the tent." in views[october]
+            assert "The month of the tent." in views[october]
+            assert "Homer and the tent, retold." in views["homer/about.md"]
+            behind = [v.path for v in load_graph(family.vault, views=family.brain)
+                      .card("diary-0a0a0a0a0a").views if v.behind]
+            assert behind == []
+
+            asked = len(model.calls)
+            await recompile.settle(first[1], family.head, now=2.0)  # the quiet window opens
+            await recompile.settle(first[1], family.head, now=3.0)  # and has passed
+            assert await recompile.wait(now=3.0) == (family.head, True)
+            assert len(model.calls) > asked
+
+        asyncio.run(scenario())
 
 
 # ── What a reader of the card sees ────────────────────────────────────────
@@ -365,6 +428,13 @@ class TestLearningOfAPush:
         forced, waited = asyncio.run(_timed(curator.sleep_until_tick(0.2, tmp_path)))
 
         assert forced is False and waited >= 0.2
+
+    def test_a_model_compile_that_ended_wakes_the_curator_to_commit_it(self, tmp_path):
+        """Its views reach the wiki with the commit after it, not a poll later."""
+        forced, waited = asyncio.run(_timed(curator.sleep_until_tick(30, tmp_path,
+                                                                     wake=lambda: True)))
+
+        assert forced is False and waited < 1.0
 
     def test_the_memory_repo_is_set_up_to_notify_the_curator_once(self, httpserver):
         hooks: list[dict] = []

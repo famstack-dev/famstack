@@ -17,7 +17,11 @@ container is a pure view that just watches the files). Jobs:
    are current within seconds. Once the burst has settled for the
    quiet window, every view it touched is compiled with the model,
    once: "I filed Homer's letter, Homer's page knows", for one model
-   call per view.
+   call per view. That compile runs in the background, one at a time,
+   and the loop goes on: a push during the model's turn, which takes
+   minutes on a real model, is compiled at once all the same. The
+   model's text is put over each view as it is when written, and every
+   writer of the brain takes its writer lock (`brain_lock`).
 2. **Nightly full sweep.** Home, every member, every topic, at
    WIKI_NIGHTLY local time. This is the self-healing catch-all:
    cross-references go stale invisibly during the day and are corrected
@@ -95,6 +99,7 @@ from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 from stack.vault import TOPIC_CARD, correspondents_dir  # noqa: E402
 
+import brain_lock  # noqa: E402
 from wiki import COMMIT_PREFIX  # noqa: E402
 from stack.people import PEOPLE_DIR  # noqa: E402
 
@@ -481,14 +486,23 @@ class Recompile:
 
     `pushed` runs on every cycle the memory repo moved: the views it
     touched are compiled at once without the model, so which cards belong,
-    list items, dates and links are current within seconds. `settled`
-    runs on every cycle after: once the head has stood still for the quiet
-    window, every view the burst touched is compiled once more with the
-    model. Three pushes in a row cost one model call per view.
+    list items, dates and links are current within seconds. `settle` runs
+    on every cycle after: once the head has stood still for the quiet
+    window, it starts the compile with the model of every view the burst
+    touched, in the background, one at a time. Three pushes in a row cost
+    one model call per view.
+
+    The model's turn can take minutes, and the loop does not wait for it:
+    a push meanwhile is compiled at once all the same, and joins the next
+    compile with the model, which `settle` starts after the next quiet
+    window. The compile with the model renders its text over the views as
+    they are when it writes them (`wiki._compile`), so the facts of the
+    quick compile stay. `finished` says when it has ended.
 
         recompile = Recompile(select, compile, Debounce(180))
         await recompile.pushed(before, head)           # at once, no model
-        await recompile.settled(last, head, now)       # after the quiet window
+        await recompile.settle(last, head, now)        # after the quiet window
+        recompile.finished(now)                        # (head, ok) once it ended
 
     `select(since, until)` returns the `Selection` for a range of the
     memory repo; `compile(selection, fast=)` compiles it, True on success.
@@ -498,10 +512,25 @@ class Recompile:
         self.select = select
         self.compile = compile
         self.debounce = debounce
-        # What the burst touched so far. A view a push takes a card out of
-        # no longer names it once compiled at once, so the model's turn
-        # cannot find it again by `derived_from`.
+        # What the pushes since the last compile with the model touched. A
+        # view a push takes a card out of no longer names it once compiled
+        # at once, so the model's turn cannot find it again by
+        # `derived_from`.
         self.pending = Selection()
+        self._running: asyncio.Task | None = None
+        self._selection = Selection()
+        self._head = ""
+        # Asked for at once (`stack memory sync`) while one was running.
+        self._forced = False
+
+    @property
+    def busy(self) -> bool:
+        """A compile with the model is running, or has ended and not been collected."""
+        return self._running is not None
+
+    @property
+    def ended(self) -> bool:
+        return self._running is not None and self._running.done()
 
     async def pushed(self, since: str, until: str) -> bool:
         """Compile at once, without the model, what `since..until` touched."""
@@ -509,25 +538,55 @@ class Recompile:
         self.pending.update(selection)
         return await self.compile(selection, fast=True) if selection else True
 
-    async def settled(self, since: str, head: str, now: float, *,
-                      forced: bool = False) -> bool | None:
-        """Compile with the model what the burst since `since` touched, once it is quiet.
+    async def settle(self, since: str, head: str, now: float, *, forced: bool = False) -> None:
+        """Start the compile with the model of what touched views since `since`, once quiet.
 
-        None while the burst may go on, True when compiled or when there
-        was nothing to compile, False when the compile failed and waits
-        for a wider window.
+        Never waits for it. While one runs, nothing else starts; one asked
+        for at once meanwhile starts as soon as it has ended.
         """
+        if self.busy:
+            self._forced = self._forced or forced
+            return
+        forced, self._forced = forced or self._forced, False
         if not forced and not self.debounce.observe(head, now):
-            return None
+            return
         selection = Selection()
         selection.update(self.pending)
         selection.update(await self.select(since, head))
-        if selection and not await self.compile(selection, fast=False):
-            self.debounce.retry_later(now)
-            return False
         self.pending = Selection()
-        self.debounce.reset()
-        return True
+        self._selection, self._head = selection, head
+        self._running = asyncio.create_task(self._compile(selection))
+
+    async def _compile(self, selection: Selection) -> bool:
+        return await self.compile(selection, fast=False) if selection else True
+
+    def finished(self, now: float) -> tuple[str, bool] | None:
+        """(the head it compiled, whether it worked) once a compile with the model ended.
+
+        None while it runs or when none ran. A failed one gives its views
+        back to the next, after a wider window.
+        """
+        task = self._running
+        if task is None or not task.done():
+            return None
+        self._running = None
+        try:
+            ok = bool(task.result())
+        except Exception as e:  # a crash in the compile is a failed compile
+            logger.warning("[curator] the compile with the model crashed: {}", e)
+            ok = False
+        if ok:
+            self.debounce.reset()
+        else:
+            self.pending.update(self._selection)
+            self.debounce.retry_later(now)
+        return self._head, ok
+
+    async def wait(self, now: float) -> tuple[str, bool] | None:
+        """Wait for a running compile with the model to end, then `finished`."""
+        if self._running is not None:
+            await asyncio.wait({self._running})
+        return self.finished(now)
 
 
 # ── Source mirror (memory -> brain projection) ───────────────────────────
@@ -696,21 +755,22 @@ def consume_trigger(state_dir: Path, name: str = TRIGGER_NAME) -> bool:
 
 
 async def sleep_until_tick(secs: float, state_dir: Path,
-                           slice_secs: float = 1.0) -> bool:
+                           slice_secs: float = 1.0, wake=lambda: False) -> bool:
     """Sleep up to `secs`, waking early when a trigger lands.
 
     Returns True when a mirror-now trigger woke it, which asks for the
     model's compile at once too. A push trigger (Forgejo's notice) wakes
     it without that and returns False, as the poll does when `secs` run
-    out: the poll is what still finds a push whose notice never came. The
-    sleep is sliced so either trigger is seen within about a second
-    instead of a full poll interval.
+    out: the poll is what still finds a push whose notice never came.
+    `wake()` true ends it the same way: a compile with the model that has
+    ended. The sleep is sliced so either trigger is seen within about a
+    second instead of a full poll interval.
     """
     deadline = time.monotonic() + secs
     while time.monotonic() < deadline:
         if consume_trigger(state_dir):
             return True
-        if consume_trigger(state_dir, PUSH_TRIGGER_NAME):
+        if consume_trigger(state_dir, PUSH_TRIGGER_NAME) or wake():
             return False
         await asyncio.sleep(min(slice_secs, max(deadline - time.monotonic(), 0.0)))
     return consume_trigger(state_dir)
@@ -979,7 +1039,18 @@ class Brain:
     def _commit_push(self, message: str) -> bool:
         """Stage everything, commit if there is a change, push. Returns
         True when a commit was made and pushed (or there was nothing to
-        commit, which is still a success)."""
+        commit, which is still a success).
+
+        Staging and committing hold the brain's writer lock, so a commit
+        never takes a view a compile is writing at that moment.
+        """
+        with brain_lock.held(self.path):
+            if not self._commit(message):
+                return False
+        return self._push()
+
+    def _commit(self, message: str) -> bool:
+        """Stage everything and commit when there is a change; False when git refused."""
         self._run("add", "-A")
         # `diff --cached --quiet` exits 1 when staged changes exist, so its
         # exit code is the answer to "is there anything to commit?" rather
@@ -995,6 +1066,9 @@ class Brain:
             )
             if rc != 0:
                 return False
+        return True
+
+    def _push(self) -> bool:
         # Push even with nothing newly committed: a prior cycle may have
         # committed locally and lost the push (Forgejo briefly down), and
         # "nothing to commit" must not report that state as in-sync.
@@ -1364,7 +1438,7 @@ async def main() -> None:
         # The debounce exists to batch a burst of filings into one
         # rebuild; an explicit trigger means "I want it current now",
         # which is what the test rig needs for a fast feedback loop.
-        forced = await sleep_until_tick(POLL_SECS, state_dir)
+        forced = await sleep_until_tick(POLL_SECS, state_dir, wake=lambda: recompile.ended)
         if forced:
             logger.info("[curator] mirror-now trigger received")
         # The curator owns the pull — the wiki container only watches
@@ -1412,6 +1486,26 @@ async def main() -> None:
             last = _write(sha_file, head)
             continue
 
+        # ── A compile with the model that ended ───────────────────────
+        if (ended := recompile.finished(time.monotonic())) is not None:
+            compiled_to, ok = ended
+            if ok:
+                # Commit + push the views the wiki CLI wrote into brain's
+                # working tree.
+                await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
+                last = _write(sha_file, compiled_to)
+            else:
+                record_failed_rebuild(state_dir, retry_in=debounce.window())
+                # Say the shape of the failure, not just that there was one.
+                # A per-cycle line at the same interval reads as a
+                # heartbeat; a widening gap with a count on it reads as an
+                # outage.
+                logger.warning(
+                    "[curator] rebuild failed {}x in a row; next attempt in {}m "
+                    "(source is still mirrored, only generated pages are stale)",
+                    debounce.failures, round(debounce.window() / 60),
+                )
+
         # ── Nightly full sweep ────────────────────────────────────────
         # Runs regardless of pending changes — it covers everything an
         # incremental pass would, so it also clears the debounce. The
@@ -1420,8 +1514,10 @@ async def main() -> None:
         # source reconcile precedes the regen so brain self-heals any
         # drift the incremental mirror missed. `stack memory wiki update --all`
         # asks for the same sweep now; that does not count as tonight's.
-        asked = consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
-        if asked or nightly_due(NIGHTLY, _read(nightly_file), time.localtime()):
+        # It waits while a compile with the model runs: one at a time.
+        asked = not recompile.busy and consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
+        if asked or (not recompile.busy
+                     and nightly_due(NIGHTLY, _read(nightly_file), time.localtime())):
             if not asked:
                 _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
             _progress(state_dir, "rebuilding the whole wiki", fresh=True)
@@ -1450,32 +1546,17 @@ async def main() -> None:
 
         # ── Incremental: the views the burst touched, with the model ──
         if head == last:
-            debounce.reset()
+            if not recompile.busy:
+                debounce.reset()
             continue
 
-        if only_own_commits(await vault.subjects(last, head)):
+        if not recompile.busy and only_own_commits(await vault.subjects(last, head)):
             last = _write(sha_file, head)
             debounce.reset()
             continue
 
-        compiled = await recompile.settled(last, head, time.monotonic(), forced=forced)
-        if compiled is None:
-            continue
-        if compiled:
-            # Commit + push the views the wiki CLI wrote into brain's
-            # working tree.
-            await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
-            last = _write(sha_file, head)
-        else:
-            record_failed_rebuild(state_dir, retry_in=debounce.window())
-            # Say the shape of the failure, not just that there was one. A
-            # per-cycle line at the same interval reads as a heartbeat; a
-            # widening gap with a count on it reads as an outage.
-            logger.warning(
-                "[curator] rebuild failed {}x in a row; next attempt in {}m "
-                "(source is still mirrored, only generated pages are stale)",
-                debounce.failures, round(debounce.window() / 60),
-            )
+        # Starts it in the background; `finished` above collects it.
+        await recompile.settle(last, head, time.monotonic(), forced=forced)
 
 
 if __name__ == "__main__":

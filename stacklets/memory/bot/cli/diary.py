@@ -75,6 +75,7 @@ sys.path.append("/stacklets/core/bot-runner")
 # pages, the repository's name), as the archivist imports them.
 sys.path.append("/stacklets")
 
+import brain_lock  # noqa: E402
 import diary  # noqa: E402
 import diary_card  # noqa: E402
 import diary_store  # noqa: E402
@@ -1394,13 +1395,39 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
     pages, their years' and the front page, and asks the model about no
     other month; None publishes every page.
     """
+    on_file, entries = _entries_on_file(records)
+    summaries = await _summaries(entries, llm, summaries_cache, rebuild=rebuild, only=only)
+
+    pages = diary.pages_for(entries, bucket=bucket, room_id=room_id, summaries=summaries,
+                            media=diary_card.media_of(on_file))
+    if only is not None:
+        wanted = {f"{diary.DIARY_DIR}/about.md"}
+        for month in only:
+            year, _, number = month.partition("-")
+            wanted |= {f"{diary.DIARY_DIR}/{year}/about.md", f"{diary.DIARY_DIR}/{year}/{number}.md"}
+        pages = [page for page in pages if page.path in wanted]
+    return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
+
+
+def _entries_on_file(records) -> tuple[list, list]:
+    """The cards in `records` (path to text) and their entries, in date order."""
     on_file = [diary_card.parse(t) for t in records.values()]
     versions = {c.card_id: card_version(t.encode("utf-8"))
                 for c, t in zip(on_file, records.values())}
     entries = sorted((replace(e, version=versions.get(e.card_id, ""))
                       for e in map(diary_card.to_entry, on_file)),
                      key=lambda e: (e.on, e.at))
+    return on_file, entries
 
+
+async def _summaries(entries, llm, summaries_cache, *, rebuild: bool,
+                     only: "list[str] | None") -> dict[str, str]:
+    """The paragraph opening each month, by month (`2026-10`).
+
+    The cached one when the month's entries are the ones it was written
+    from; otherwise the model's, and without `llm` the last one written.
+    A month outside `only` is never sent to the model.
+    """
     months: dict[str, list] = {}
     for entry in entries:
         key = f"{diary.year_key(entry.on)}-{diary.month_key(entry.on)}"
@@ -1422,16 +1449,7 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
             summaries_cache.put(key, digest, summaries[key])
             summaries_cache.save()
     summaries_cache.save()
-
-    pages = diary.pages_for(entries, bucket=bucket, room_id=room_id, summaries=summaries,
-                            media=diary_card.media_of(on_file))
-    if only is not None:
-        wanted = {f"{diary.DIARY_DIR}/about.md"}
-        for month in only:
-            year, _, number = month.partition("-")
-            wanted |= {f"{diary.DIARY_DIR}/{year}/about.md", f"{diary.DIARY_DIR}/{year}/{number}.md"}
-        pages = [page for page in pages if page.path in wanted]
-    return _publish_pages(pages, bucket=bucket, dry_run=dry_run)
+    return summaries
 
 
 async def pages(llm, argv: list[str]) -> int:
@@ -1441,20 +1459,34 @@ async def pages(llm, argv: list[str]) -> int:
     room: what the curator runs when a diary card was pushed, a hand edit
     or a correction. `--fast` asks no model; a month whose entries changed
     keeps its paragraph until the next compile with one.
+
+    With the model, the month's paragraph is written first and the pages
+    after, from the records as they are by then, under the brain's writer
+    lock: the model's turn can take minutes, and a compile without the
+    model may have written newer entries meanwhile.
     """
     bucket = os.environ.get("SHARED_BUCKET", "family")
     diary.configure_language(os.environ.get("LANGUAGE", ""))
     vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
-    root = vault / bucket / diary.DIARY_DIR / diary_card.ENTRIES_DIR
-    records = {path.relative_to(vault).as_posix(): path.read_text(encoding="utf-8")
-               for path in sorted(root.rglob("*.md"))}
-    room_id = next((r for r in (_room_of(diary_card.parse(t)) for t in records.values()) if r), "")
     _, summaries_cache = diary_store.open_stores(
         summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
-    months = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--month"]
-    return await _project(records, None if "--fast" in argv else llm, summaries_cache,
-                          room_id=room_id, bucket=bucket, rebuild=False,
-                          dry_run="--dry-run" in argv, only=months or None)
+    months = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--month"] or None
+    if "--fast" not in argv:
+        _, entries = _entries_on_file(_records_on_file(vault, bucket))
+        await _summaries(entries, llm, summaries_cache, rebuild=False, only=months)
+    with brain_lock.held(Path(os.environ.get("BRAIN_REPO_DIR", ""))):
+        records = _records_on_file(vault, bucket)
+        room_id = next((r for r in (_room_of(diary_card.parse(t)) for t in records.values())
+                        if r), "")
+        return await _project(records, None, summaries_cache, room_id=room_id, bucket=bucket,
+                              rebuild=False, dry_run="--dry-run" in argv, only=months)
+
+
+def _records_on_file(vault: Path, bucket: str) -> dict[str, str]:
+    """Every diary record in the memory repo's working copy: path to text."""
+    root = vault / bucket / diary.DIARY_DIR / diary_card.ENTRIES_DIR
+    return {path.relative_to(vault).as_posix(): path.read_text(encoding="utf-8")
+            for path in sorted(root.rglob("*.md"))}
 
 
 def _card_json(card, *, path: str, room_id: str) -> dict:
