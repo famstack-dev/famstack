@@ -2864,3 +2864,60 @@ def tag_topics_by_id(client: ForgejoClient, vault: Path, *,
     found = topic_tags_for(vault)
     message = f"cards: tag topics by id in {len(found.changes)} card(s)"
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+
+
+# ─── Kinds ───────────────────────────────────────────────────────────────
+#
+# A card's `kind` is one of its type's fixed set (ADR-017 §6,
+# `stack.cards.CARD_KINDS`). The writers write it: the nightly move every
+# archive it adds to (`stack.lists.as_archive`), the diary compile every
+# card. Migration 0006 brings the files written before to the same shape.
+
+# A diary card's line from before kinds: what it was recorded as.
+_MEDIUM_LINE = re.compile(r"^medium:", re.MULTILINE)
+
+
+def card_kinds_for(vault: Path) -> CardLinks:
+    """What gives the cards in the working copy `vault` their kind.
+
+    A list's archive gets `kind: archive` (`stack.lists.as_archive`). A
+    diary card's `medium` line becomes its `kind` line where it is; a card
+    the compile still owns is signed again (`stack.digest.signed`) and
+    stays the compile's, one a person changed stays theirs. A `kind` that
+    only repeats a type that has none (`type: correspondent` with
+    `kind: correspondent`, from before types) goes. Any other `kind`
+    outside its type's set is left as it is and listed in `left`.
+    """
+    from stack.cards import ARCHIVE, CARD_KINDS, card_kind, kind_problem
+    from stack.digest import changed_by_hand, signed
+    from stack.frontmatter import with_field
+    from stack.lists import as_archive
+
+    found = CardLinks()
+    for path, text in sorted(_markdown_files(vault).items()):
+        fields = _parse_frontmatter(text)
+        card_type = str(fields.get("type") or "").strip()
+        new = text
+        if card_type == "list" and card_kind(path, fields) == ARCHIVE:
+            new = as_archive(text)
+        elif card_type == "diary" and fields.get("medium") and not fields.get("kind"):
+            head, sep, rest = text.partition("\n---\n")
+            new = _MEDIUM_LINE.sub("kind:", head, count=1) + sep + rest
+            if not changed_by_hand(text):
+                new = signed(new)
+        elif card_type not in CARD_KINDS and str(fields.get("kind") or "").strip() == card_type:
+            new = with_field(text, "kind", "")
+        if problem := kind_problem(path, _parse_frontmatter(new)):
+            found.left.append(f"{path}: {problem}")
+        if new != text:
+            found.changes[path] = new
+    return found
+
+
+def give_card_kinds(client: ForgejoClient, vault: Path, *,
+                    trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Give the cards in `vault` their kind (`card_kinds_for`), in one commit
+    by the memory bot; what the pass found and the commit's sha."""
+    found = card_kinds_for(vault)
+    message = f"cards: give {len(found.changes)} card(s) their kind"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)

@@ -263,7 +263,7 @@ tags:
   - "Topic:School"
   - "Person:Bart"
 filed_by: marge
-medium: voice
+kind: voice
 entry_id: "00c674191f"
 ---
 
@@ -347,6 +347,15 @@ Was wir am Samstag kaufen.
 - [ ] Kohlrabi [Marge](../people/marge.md) 📅 2026-10-17
 - [x] Eier ✅ 2026-10-10
 """
+
+
+def test_an_archive_shows_its_items_as_past_ticked_or_not():
+    """Everything in a list's archive is over (ADR-017 §6, `kind: archive`):
+    an appointment nobody ticked is past, not open, so no box is shown."""
+    archive = ("---\ntype: list\ncard_id: list-termine-2026-10\ntitle: Termine, 2026-10\n"
+               "kind: archive\n---\n\n- [ ] Zahnarzt 📅 2026-10-01\n- [x] Elternabend 📅 2026-10-08 ✅ 2026-10-08\n")
+    assert _shown(archive) == ("# Termine, 2026-10\n\narchive\n\n"
+                               "- Zahnarzt 📅 2026-10-01\n- Elternabend 📅 2026-10-08 ✅ 2026-10-08\n")
 
 
 def test_a_person_shows_the_other_names_they_go_by_and_their_account():
