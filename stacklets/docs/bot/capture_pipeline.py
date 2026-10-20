@@ -742,7 +742,7 @@ class CapturePipeline:
             current_list=current_list,
             write_in=write_in,
             extract_action_items=extract_action_items,
-            short_text=short_text,
+            kind=kind, short_text=short_text,
         )
         if short_text:
             classification["summary"] = ""
@@ -903,6 +903,7 @@ class CapturePipeline:
         extract_action_items: bool = False,
         current_list: str = "",
         write_in: str | None = None,
+        kind: str = "note",
         short_text: bool = False,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
@@ -934,6 +935,7 @@ class CapturePipeline:
                 extract_action_items=extract_action_items,
                 current_list=current_list,
                 write_in=write_in,
+                kind=kind,
                 short_text=short_text,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:

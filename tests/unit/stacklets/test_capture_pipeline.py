@@ -71,7 +71,7 @@ class FakeClassifier:
                                initial_classification=None,
                                extract_action_items=False,
                                current_list="", write_in=None,
-                               short_text=False):
+                               kind="note", short_text=False):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
@@ -80,6 +80,7 @@ class FakeClassifier:
         self.saw_user_hint = user_hint
         self.saw_write_in = write_in
         self.saw_extract_action_items = extract_action_items
+        self.saw_kind = kind
         self.saw_short_text = short_text
         if self._raises:
             raise self._raises
@@ -1627,3 +1628,16 @@ class TestAShortNoteIsItsOwnSummary:
         assert classifier.saw_short_text is True
         assert not mirror.captures[-1]["classification"]["summary"]
 
+
+class TestABookmarkIsClassifiedAsOne:
+    """A bookmark's summary says why it was kept, then what the page is,
+    which the classifier can only do knowing it is reading a bookmark."""
+
+    @pytest.mark.asyncio
+    async def test_a_shared_link_reaches_the_classifier_as_a_bookmark(self):
+        classifier = FakeClassifier()
+        await _pipeline(classifier=classifier).capture_url(
+            url="http://src", sender_mxid="@marge:s", notifier=FakeNotifier(),
+            user_hint="for the trip in June")
+        assert classifier.saw_kind == "bookmark"
+        assert classifier.saw_short_text is False
