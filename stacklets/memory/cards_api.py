@@ -93,7 +93,7 @@ class CardsAPI:
     fonts: Path | None = None
     media: Path | None = None
     shared_bucket: str = "family"
-    # The household's, for the one label a rendered card shows.
+    # The instance's, for the one label a rendered card shows.
     language: str = "en"
     _graphs: dict = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)

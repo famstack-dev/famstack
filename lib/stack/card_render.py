@@ -50,13 +50,13 @@ class Rendered:
     `facts` is the one line under the title, "" when the type has none to
     show; `body` is everything after it.
 
-        >>> r = Rendered("Zelt ist kaputt", "2026-10-13 · Homer", "Das Zelt ist gerissen.")
+        >>> r = Rendered("The tent is torn", "2026-10-13 · Homer", "A seam split in the rain.")
         >>> print(r.markdown, end="")
-        # Zelt ist kaputt
+        # The tent is torn
         <BLANKLINE>
         2026-10-13 · Homer
         <BLANKLINE>
-        Das Zelt ist gerissen.
+        A seam split in the rain.
     """
 
     title: str
@@ -78,7 +78,7 @@ def render(fields: Fields, body: str, *, names: Mapping[str, str] | None = None,
 
     `names` maps a person id to the name a reader knows them by
     (`{"homer": "Homer"}`); a person it does not name is shown as written.
-    `language` is the household's, for the one label a card shows.
+    `language` is the instance's, for the one label a card shows.
     """
     title = str(fields.get("title") or "").strip() or _first_heading(body)
     renderer = _RENDERERS.get(str(fields.get("type") or "").strip())
@@ -248,7 +248,7 @@ def _list_layout(body: str, card: _Card) -> str:
 
 
 def _declared_layout(body: str, _card: _Card) -> str:
-    """A person, a correspondent or a topic: what the family wrote about it."""
+    """A person, a correspondent or a topic: what people wrote about it."""
     return _without_heading(_COMMENT.sub("", body)).strip()
 
 
@@ -410,7 +410,7 @@ def _first_heading(body: str) -> str:
 # ── Small parts ───────────────────────────────────────────────────────
 
 # The one label a card shows: over the to-dos, which would otherwise run
-# into the facts list above them. In the household's language.
+# into the facts list above them. In the instance's language.
 _TODO = {"en": "To do", "de": "Zu erledigen"}
 
 
