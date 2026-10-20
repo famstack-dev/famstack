@@ -44,23 +44,30 @@ Room** schicken. Fertig.
 - **Fotos und Scans liest der Mac selbst** (OCR). PDFs mit Textebene übernimmt
   er direkt.
 
+![Marges Foto vom Elternbrief im Documents Room. Der Archivist markiert es mit 👀, solange er liest, und mit ✅, wenn es abgelegt ist, und antwortet im Thread.](../../assets/documents-sent-de.png)
+
 ## 3. Der Archivist legt es ab
 
 Der Archivist setzt 👀 auf deine Nachricht, solange er liest, ✅, wenn er fertig
 ist, und antwortet im Thread darunter:
 
-> ✅ Abgelegt: Grundschule Springfield, Infos zum neuen Schuljahr (#57)
+> ✅ Abgelegt: Terminplan Grundschule Springfield (#40)
 >
-> Bildung | Bart | Brief | Grundschule Springfield | 2026-09-01
+> Bildung | Kind | Bart | Merkblatt | Springfield Elementary School | 2026-09-01
 >
-> Start ins Schuljahr: Sprechzeiten, Ansprechpartner und der erste Elternabend.
+> Merkblatt der Grundschule Springfield mit dem Terminplan für das Schuljahr
+> 2026. Es enthält wichtige Termine wie die Einverständniserklärung, den ersten
+> Elternabend und den Wandertag.
 >
-> - Sekretariat: 555-0134
-> - Elternabend: 17.09.2026, 19 Uhr
+> - Einverständniserklärung Fotos zurückgeben: 12.09.2026
+> - Erster Elternabend: 17.09.2026, 19:00 Uhr
+> - Wandertag: 02.10.2026
 >
-> Unterschriebene Einverständniserklärung für Fotos zurückgeben (bis 12.09.2026)
+> Einverständniserklärung Fotos zurückgeben (due 2026-09-12)
 >
-> http://192.168.1.42:42020/documents/57/details
+> http://192.168.188.50:42000/go/docs/40
+
+<img src="../../assets/documents-filed-de.png" width="320" alt="Die Antwort des Archivists im Thread: Titel, Themen, Zusammenfassung, die Termine und die Aufgabe, mit Link zum Dokument.">
 
 Von oben nach unten: der Titel und die Nummer des Dokuments, dann Thema,
 Familienmitglied, Dokumentart, Absender und Datum. Darunter eine kurze
@@ -98,9 +105,17 @@ Weboberfläche, falls du stöbern willst, aber du musst sie nicht öffnen.
 
 Im Documents Room tippst du ein Suchwort oder stellst eine Frage:
 
-> **du**: Wie ist die Telefonnummer von Barts Schule?
+> **Marge**: Ist Autofahren unter Einfluss von Duff laut unserer Versicherung erlaubt?
 >
-> **archivist**: Das Sekretariat der Grundschule Springfield erreichst du unter 555-0134 [1].
+> **archivist**: Nein, die Autofahrt unter Einfluss von Duff ist laut Ihrer
+> Versicherung nicht erlaubt und wird ausdrücklich nicht abgedeckt, da sie den
+> Ausnahmeregelungen wie „Fahren unter dem Einfluss von Alkohol oder Drogen"
+> entspricht. [1]
+
+Die Police wurde Monate vorher abgelegt. Der Archivist hat sie gefunden,
+vollständig gelesen und die Klausel genannt, mit dem Dokument als Quelle.
+
+![Marges Frage im Documents Room und die Antwort des Archivists, mit der Ausschlussklausel aus der Auto Insurance Policy 2026 als Quelle.](../../assets/documents-answer-de.png)
 
 Ein, zwei Wörter (`Versicherung`, `Impfung Bart`) zeigen die passenden
 Dokumente. Alles mit Fragezeichen bekommt eine Antwort: Der Archivist durchsucht
