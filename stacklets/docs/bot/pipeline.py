@@ -775,6 +775,7 @@ class Classifier:
         extract_action_items: bool = False,
         current_list: str = "",
         write_in: str | None = None,
+        short_text: bool = False,
     ) -> dict:
         """Capture-specific classification.
 
@@ -813,6 +814,7 @@ class Classifier:
             current_list=current_list,
             lang=examples,
             write_in=target,
+            short_text=short_text,
         )
         valid_images = [
             img for img in (images or [])
@@ -1267,6 +1269,71 @@ def _language_rule(write_in: str, household: str, *, fields: str, subject: str) 
     )
 
 
+# ── What a capture's summary and facts say ───────────────────────────
+#
+# A card shows a note's words, so the summary is only worth its place
+# when it adds to them (memory cards review, C1). A short note gets none:
+# its words are shorter than any summary of them. Everything else gets
+# the digest a reader reads instead of reopening the source.
+
+_DIGEST_SUMMARY = (
+    "Markdown summary. Length scales with input — short paste (under ~300 "
+    "chars): 1-2 sentences. Long content (articles, threads, posts): 200-400 "
+    "words covering key points, claims, named entities, and conclusions. The "
+    "user reads this instead of reopening the source."
+)
+_DIGEST_SUMMARY_RULE = (
+    "- summary: write a real digest, not a teaser. Match length to input — "
+    "terse for short pastes, fuller for long-form. Do NOT include the source "
+    "URL; it's surfaced separately in the vault entry."
+)
+_DIGEST_FACTS = (
+    "Concrete facts extracted from the content. Each fact MUST anchor on a "
+    "number, date, named entity, or proper noun — a sentence without one of "
+    "those is filler and belongs in the summary instead. Count scales with "
+    "content: 0 for a short note with nothing to extract, 1-3 for a homepage "
+    "bookmark, 4-8 for a typical article, more for data-heavy content. Don't "
+    "pad, don't cap."
+)
+_DIGEST_FACTS_RULE = (
+    "- facts: each fact carries an anchor (number, date, named entity, proper "
+    "noun). \"X is widely used\" is not a fact; \"X is used by 600K+ agents\" "
+    "is. Don't pad to hit a count; an empty list beats invented facts."
+)
+
+
+def _summary_field(*, short_text: bool) -> tuple[str, str]:
+    """The summary's description in the JSON structure, and its rule.
+
+    ``short_text`` is the caller's verdict that a note is too short for a
+    summary (`stack.briefing.is_short_text`); the caller also drops any
+    summary the model returns anyway.
+    """
+    if short_text:
+        return (
+            "Always an empty string. This note is short and its card shows "
+            "the writer's words as they are, so a summary would only repeat them.",
+            "- summary: \"\" for this note, whatever it says.",
+        )
+    return _DIGEST_SUMMARY, _DIGEST_SUMMARY_RULE
+
+
+def _facts_field(*, short_text: bool) -> tuple[str, str]:
+    """The facts' description in the JSON structure, and its rule."""
+    if short_text:
+        return (
+            "Only what the note holds that someone would look up on its own: "
+            "a date (as a concrete date), an amount, or the name of a person, "
+            "place or business. Each says what its value is for, so it reads "
+            "on its own (\"Dentist: 2026-03-04, 09:30\"). Never restate the note "
+            "in other words. [] when it holds none of these, which is common.",
+            "- facts: a fact adds to the note's words, such as a concrete date "
+            "for \"Thursday\"; a sentence that says the note again is not one. "
+            "An empty list is the usual answer.",
+        )
+    return _DIGEST_FACTS, _DIGEST_FACTS_RULE
+
+
 def _build_capture_prompt(
     *,
     text: str,
@@ -1279,12 +1346,16 @@ def _build_capture_prompt(
     current_list: str = "",
     lang: str = "en",
     write_in: str | None = None,
+    short_text: bool = False,
 ) -> str:
     """The capture prompt — smaller and focused on summary + tags.
 
     ``lang`` picks the worked examples, ``write_in`` the language the
     answer is written in (a code or `SOURCE_LANGUAGE`; the examples'
     language when not given). See `_language_rule`.
+
+    ``short_text`` says a note is too short for a summary, which decides
+    what the summary and the facts say (`_summary_field`, `_facts_field`).
 
     Captures are bookmarks (URL pointers with a digest) and notes
     (pasted text with a digest). Unlike documents, they don't carry a
@@ -1345,6 +1416,8 @@ def _build_capture_prompt(
         if extract_action_items and current_list.strip() else ""
     )
     ex = _examples_for(lang)
+    summary_field, summary_rule = _summary_field(short_text=short_text)
+    facts_field, facts_rule = _facts_field(short_text=short_text)
     tags_hint = (
         f"Existing tags in use: {json.dumps(existing_tags, ensure_ascii=False)}\n"
         "Prefer these when they fit. Only invent new tags when nothing existing matches.\n"
@@ -1365,16 +1438,16 @@ Family members: {json.dumps(person_names, ensure_ascii=False)}
 Return this exact JSON structure:
 {{
   "title": "scannable title under 80 chars. Capture what this is *about*, not just the source name.",
-  "summary": "Markdown summary. Length scales with input — short paste (under ~300 chars): 1-2 sentences. Long content (articles, threads, posts): 200-400 words covering key points, claims, named entities, and conclusions. The user reads this instead of reopening the source.",
-  "facts": ["Concrete facts extracted from the content. Each fact MUST anchor on a number, date, named entity, or proper noun — a sentence without one of those is filler and belongs in the summary instead. Count scales with content: 0 for a short note with nothing to extract, 1-3 for a homepage bookmark, 4-8 for a typical article, more for data-heavy content. Don't pad, don't cap."],
+  "summary": "{summary_field}",
+  "facts": ["{facts_field}"],
   "tags": ["3-5 content-specific tags. Format: lowercase, hyphen-separated (kebab-case). DERIVE tags from concrete nouns, named activities, named items, places, and seasons that appear in the content. PREFER SPECIFIC over generic: {ex['specific_tags']}. Tags follow the LANGUAGE rule. MINIMUM 3 entries — if a short note has only one obvious specific (e.g. '{ex['single_tag_example']}'), add adjacent ones (the activity, the gear named, the season, the place). Existing-tag reuse: only when an existing tag is content-specific itself; ignore generic categories from the list."],
   "persons": ["which family members this is for or about. Pick from the family members list. Empty list if unclear — the caller will default to the sender."]{action_items_field}
 }}
 
 Rules:
 {_language_rule(write_in or lang, lang, fields="title, summary, facts and tags", subject="content")}
-- summary: write a real digest, not a teaser. Match length to input — terse for short pastes, fuller for long-form. Do NOT include the source URL; it's surfaced separately in the vault entry.
-- facts: each fact carries an anchor (number, date, named entity, proper noun). "X is widely used" is not a fact; "X is used by 600K+ agents" is. Don't pad to hit a count; an empty list beats invented facts.
+{summary_rule}
+{facts_rule}
 - tags: 3-5 entries, no exceptions. Each tag must be content-specific: {ex['tag_rule']}. The retrieval test for a good tag: would the user, six months from now, type this word to search for this specific content? If no, replace it with a more specific one. Lowercase, hyphen-separated, 1-3 words. Follow the LANGUAGE rule.
 - persons: only if the content explicitly names a family member. Don't guess from sender.{action_items_rule}
 {current_list_block}

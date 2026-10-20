@@ -13,6 +13,27 @@ from __future__ import annotations
 
 from .lists import DUE, action_item
 
+# A text under this many characters gets no summary. Its card shows the
+# words themselves, and a summary of a text this short is as long as the
+# text: on the demo instance every diary entry (95 to 250 characters)
+# and every typed note under 250 characters had a summary about as long
+# as its words or longer (memory cards review, C1). 400 is a short
+# paragraph, read in the ten seconds a summary is meant to save.
+SHORT_TEXT_MAX_CHARS = 400
+
+
+def is_short_text(text: str) -> bool:
+    """Whether `text` is too short to be worth a summary of its own.
+
+    Whitespace is not counted, so a note's line breaks do not decide it.
+
+        >>> is_short_text("Bart's dentist moved to Thursday.")
+        True
+        >>> is_short_text("word " * 100)
+        False
+    """
+    return len(" ".join(text.split())) < SHORT_TEXT_MAX_CHARS
+
 
 def render_briefing(
     *,
