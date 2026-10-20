@@ -85,6 +85,7 @@ from stack.ai.language import LANGUAGES, language_code  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
+from stack.briefing import is_short_text  # noqa: E402
 from stack.cards import card_version  # noqa: E402
 from stack import media  # noqa: E402
 from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
@@ -862,27 +863,9 @@ Reply with a JSON object with these keys:
 
 "description": one sentence in {language} saying what this entry is.
 
-"summary": one to three short sentences in {language} saying what the
-  entry is about. Write with verbs, as things that happened, never as a
-  list of topics. You may name a conversation participant only when the
-  words address them by name. No marketing words.
-  Wanted register (invented examples, not this family):
-    "Anna erzählt mit einem der Kinder vom Tag am See und vom Schuh,
-    der im Wasser landete."
-    "Anna and one of the kids talk about the day at the lake and the
-    shoe that landed in the water."
-  Not wanted: "Anna und ein Kind berichten über einen Ausflug, ein
-  Picknick, einen verlorenen Schuh und das Wetter."
+{summary}
 
-"facts": what someone would want to look up about this entry later, in
-  {language}, each as "Label: value". The label is who or what the fact
-  is about: a family member's name ("Maggie: first tooth"), a place
-  ("Place: Springfield Lake"), a thing ("Swimming badge: 25 metres"),
-  never the kind of fact ("Action", "Event", "Detail", "Date", "Person").
-  Milestones first: a first step, a first word, a badge, a birthday, a
-  new school. Leave out what the summary already says in a sentence and
-  the day the entry happened. At most five. An empty list when the entry
-  holds nothing worth looking up, which is often.
+{facts}
 
 "persons": the family members the entry is about or spoken to, using
   the names from the family list above. Only names from that list.
@@ -894,6 +877,52 @@ Reply with a JSON object with these keys:
   three short passages copied word for word from them, complete
   sentences only, the lines most worth keeping. Otherwise an empty list.
 """
+
+
+_SUMMARY_FIELD = """\
+"summary": one to three short sentences in {language} saying what the
+  entry is about. Write with verbs, as things that happened, never as a
+  list of topics. You may name a conversation participant only when the
+  words address them by name. No marketing words.
+  Wanted register (invented examples, not this family):
+    "Anna erzählt mit einem der Kinder vom Tag am See und vom Schuh,
+    der im Wasser landete."
+    "Anna and one of the kids talk about the day at the lake and the
+    shoe that landed in the water."
+  Not wanted: "Anna und ein Kind berichten über einen Ausflug, ein
+  Picknick, einen verlorenen Schuh und das Wetter.\""""
+
+_FACTS_FIELD = """\
+"facts": what someone would want to look up about this entry later, in
+  {language}, each as "Label: value". The label is who or what the fact
+  is about: a family member's name ("Maggie: first tooth"), a place
+  ("Place: Springfield Lake"), a thing ("Swimming badge: 25 metres"),
+  never the kind of fact ("Action", "Event", "Detail", "Date", "Person").
+  Milestones first: a first step, a first word, a badge, a birthday, a
+  new school. Leave out what the summary already says in a sentence and
+  the day the entry happened. At most five. An empty list when the entry
+  holds nothing worth looking up, which is often."""
+
+# A short entry's card shows its words, and a summary of them would be as
+# long as they are (`stack.briefing.is_short_text`). `diary_card` drops
+# one the model writes anyway.
+_SHORT_SUMMARY_FIELD = """\
+"summary": an empty string. The entry is short and its card shows its
+  words as they are, so a summary would only repeat them."""
+
+_SHORT_FACTS_FIELD = _FACTS_FIELD + """
+  The card shows the entry's words, so a fact is only worth it for what
+  someone would look up on its own: a milestone, a date, an amount, a
+  name. Never a line that says part of the entry again."""
+
+
+def _reading_fields(entry, language: str) -> dict[str, str]:
+    """The prompt's summary and facts keys, for a short or a long entry."""
+    short = is_short_text(entry.body)
+    return {
+        "summary": (_SHORT_SUMMARY_FIELD if short else _SUMMARY_FIELD).format(language=language),
+        "facts": (_SHORT_FACTS_FIELD if short else _FACTS_FIELD).format(language=language),
+    }
 
 
 def _entry_prompt(entry) -> str:
@@ -912,6 +941,15 @@ def _entry_prompt(entry) -> str:
     for who, text in entry.comments:
         lines += ["", f"{who.title()} replied: {text.strip()}"]
     return "\n".join(lines)
+
+
+def _extract_prompt(entry, *, vocabulary: str, people_section: str) -> str:
+    """The prompt that reads one entry for its card."""
+    language = _household_language()
+    return _EXTRACT_PROMPT.format(
+        vocabulary=vocabulary, people=people_section or "",
+        entry=_entry_prompt(entry), language=language,
+        **_reading_fields(entry, language))
 
 
 def _unsure_words(event_ids) -> set[str]:
@@ -954,9 +992,7 @@ async def _extract_all(entries, llm, cache, *, ontology, people: dict,
     # to the ontology or a new person page changes what the model is
     # offered, and every entry is read again under the new vocabulary.
     def prompt_for(entry) -> str:
-        return _EXTRACT_PROMPT.format(
-            vocabulary=vocabulary, people=people_section or "",
-            entry=_entry_prompt(entry), language=_household_language())
+        return _extract_prompt(entry, vocabulary=vocabulary, people_section=people_section)
 
     out = []
     todo = len(entries) if force else sum(

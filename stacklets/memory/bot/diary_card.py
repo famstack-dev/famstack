@@ -32,7 +32,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import diary
-from stack.briefing import read_briefing, render_briefing
+from stack.briefing import is_short_text, read_briefing, render_briefing
 from stack.card_links import About
 from stack.cards import CARD_ID, card_id_from, new_card_id
 from stack.digest import changed_by_hand, digest_of, signed
@@ -228,6 +228,16 @@ def entry_id_for(first_event_id: str) -> str:
     return hashlib.sha256(first_event_id.encode("utf-8")).hexdigest()[:10]
 
 
+def _summary(words: str, extraction: Extraction) -> str:
+    """The model's summary of an entry, or none for an entry too short for one.
+
+    A short entry's card shows its words, and a summary of them says the
+    same again at the same length. The prompt asks for none; this holds
+    the card to it whatever the model wrote.
+    """
+    return "" if is_short_text(words) else " ".join(extraction.summary.split())
+
+
 def to_card(entry: "diary.Entry", extraction: Extraction, *, room_id: str,
             media: "dict[str, str]") -> Card:
     """An entry and what a model read out of it, as a vault record.
@@ -259,7 +269,7 @@ def to_card(entry: "diary.Entry", extraction: Extraction, *, room_id: str,
         description=extraction.description.strip(),
         persons=list(extraction.persons),
         tags=list(extraction.tags),
-        summary=" ".join(extraction.summary.split()),
+        summary=_summary(entry.body, extraction),
         facts=[f.strip() for f in extraction.facts if f.strip()],
         quotes=[" ".join(q.split()) for q in extraction.quotes if q.strip()],
         model=extraction.model,
@@ -287,7 +297,7 @@ def correct(card: Card, extraction: Extraction, *, event_id: str) -> Card:
         description=extraction.description.strip(),
         persons=list(extraction.persons),
         tags=list(extraction.tags),
-        summary=" ".join(extraction.summary.split()),
+        summary=_summary(card.body, extraction),
         facts=[f.strip() for f in extraction.facts if f.strip()],
         quotes=[" ".join(q.split()) for q in extraction.quotes if q.strip()],
         model=extraction.model or card.model,
