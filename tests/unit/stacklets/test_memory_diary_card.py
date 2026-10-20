@@ -354,6 +354,13 @@ def _read(**raw) -> diary_card.Extraction:
                                       people=PEOPLE, declared=DECLARED, model="test-model")
 
 
+def _read_with_lisa(**raw) -> diary_card.Extraction:
+    return diary_card.extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
+                                      people={**PEOPLE, "lisa": "Lisa"},
+                                      declared=[*DECLARED, Person("lisa", "Lisa Simpson")],
+                                      model="test-model")
+
+
 class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
     """The card's tags and people mean the same thing as a document's:
     topics from the ontology, people from the household's own pages.
@@ -414,6 +421,25 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
                             "Swimming badge: 25 metres"])
         assert read.facts == ["Maggie: first tooth", "Place: Springfield Lake",
                               "Swimming badge: 25 metres"]
+
+    def test_everyone_the_card_names_is_someone_it_is_about(self):
+        """A card that says "Marge and Bart or Lisa talk about school" is
+        about all three until a reply settles who it was, whatever the
+        model put in its list of people."""
+        ex = _read_with_lisa(persons=["Marge"], title="School fire drill",
+                             summary="Marge and Bart or Lisa talk about a fire drill.")
+        assert ex.persons == ["marge", "bart", "lisa"]
+
+    def test_a_name_inside_another_word_names_no_one(self):
+        ex = _read_with_lisa(persons=[], summary="Marge bakes Bartlett pears.")
+        assert ex.persons == ["marge"]
+
+    def test_a_name_written_as_an_ordinary_word_names_no_one(self):
+        ex = diary_card.extraction_from(
+            {"summary": "Marge will bake a cake."}, ontology=SEED_ONTOLOGY,
+            language="en", people={**PEOPLE, "will": "Will"},
+            declared=[*DECLARED, Person("will", "Will")], model="test-model")
+        assert ex.persons == ["marge"]
 
     def test_an_answer_that_is_not_an_object_reads_as_nothing(self):
         empty = diary_card.extraction_from(None, ontology=SEED_ONTOLOGY, language="en",
