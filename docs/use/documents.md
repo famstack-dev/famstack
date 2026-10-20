@@ -41,23 +41,29 @@ Photograph it with your phone, or forward the PDF, and send it to the
 - **Photos and scans are read on the Mac** (OCR). PDFs that already contain
   text are used directly.
 
+![Homer's photo of the school letter in the Documents Room. The archivist marks it with 👀 while it reads and ✅ when it is filed, and answers in a thread.](../assets/documents-sent.png)
+
 ## 3. The archivist files it
 
 The archivist puts 👀 on your upload while it reads, ✅ when it's done, and
 answers in the thread under your upload:
 
-> ✅ Filed: Springfield Elementary, the new school year (#57)
+> ✅ Filed: Springfield Elementary School Notice (#39)
 >
-> Education | Bart | Letter | Springfield Elementary | 2026-09-01
+> Education | Child | Bart | Notice | Springfield Elementary School | 2026-09-01
 >
-> Start of the school year: office hours, contacts and the first parents' evening.
+> Notice from Springfield Elementary School dated 2026-09-01 regarding upcoming
+> school events and deadlines for Bart Simpson.
 >
-> - School office: 555-0134
-> - Parents' evening: 2026-09-17, 7 pm
+> - Deadline for photo consent form: 2026-09-12
+> - First parents' evening: 2026-09-17, 7:00 PM
+> - Class hiking day: 2026-10-02
 >
 > Return the signed photo consent form (due 2026-09-12)
 >
-> http://192.168.1.42:42020/documents/57/details
+> http://192.168.188.50:42000/go/docs/39
+
+<img src="../assets/documents-filed.png" width="320" alt="The archivist's reply in the thread: title, tags, a summary, the dates and the to-do, with a link to the document.">
 
 From the top: the title and the document's number, then the topic, the family
 member, the type of document, who sent it and its date. Below that a short
@@ -92,9 +98,16 @@ browse, but you don't have to open it.
 
 In the Documents Room, type a word to search, or ask a question:
 
-> **you**: What's the phone number of Bart's school?
+> **Homer**: Is driving under the influence of Duff allowed according to our insurance?
 >
-> **archivist**: The school office of Springfield Elementary is on 555-0134 [1].
+> **archivist**: No, driving under the influence of Duff is not allowed, as the
+> insurance policy explicitly excludes coverage for "Driving under the influence
+> of alcohol or drugs, including after visiting Moe's Tavern" [2].
+
+The policy was filed months earlier. The archivist found it, read it in full and
+quoted the clause, with the document as the source.
+
+![Homer's question in the Documents Room and the archivist's answer, quoting the exclusion from the Auto Insurance Policy 2026 as its source.](../assets/documents-answer.png)
 
 A word or two (`insurance`, `vaccination Bart`) lists the matching documents.
 Anything with a question mark gets an answer: the archivist searches the archive
