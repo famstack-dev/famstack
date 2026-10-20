@@ -51,6 +51,7 @@ repeated sends don't create new devices or require re-authentication.
 HELP = "Send a message to a chat room or a person's private chat"
 
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -79,52 +80,37 @@ _BOT_RUNNER_DATA = "/data"
 
 
 def _simple_markdown_to_html(text):
-    """Convert a small subset of markdown to HTML. No dependencies.
+    """`text` as the HTML a bot would send for it, for the markdown it uses most.
 
-    Supports: **bold**, `code`, - list items, blank line paragraphs.
-    Returns None if the text has no formatting (send as plain text).
+    The bots convert with `stack.matrix.html.matrix_html`, which needs the
+    `markdown` package; the host has the standard library only. This is the
+    part of it a message from the command line uses: paragraphs whose
+    newlines stay breaks, `- ` lists, **bold** and `code`. For those it
+    gives what `matrix_html(text, line_breaks=True)` gives, and a test
+    holds it to that. Returns None for text with no formatting, which is
+    sent as plain text.
     """
-    import re
     if not any(c in text for c in ("**", "- ", "`", "\n")):
         return None
+    blocks = [b for b in _BLANK_LINES.split(text.strip()) if b.strip()]
+    return "\n".join(_html_block(b.strip().split("\n")) for b in blocks)
 
-    lines = text.split("\n")
-    html_lines = []
-    in_list = False
 
-    for line in lines:
-        stripped = line.strip()
+_BLANK_LINES = re.compile(r"\n\s*\n")
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_CODE = re.compile(r"`(.+?)`")
 
-        # List item
-        if stripped.startswith("- "):
-            if not in_list:
-                html_lines.append("<ul>")
-                in_list = True
-            item = stripped[2:]
-            item = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", item)
-            item = re.sub(r"`(.+?)`", r"<code>\1</code>", item)
-            html_lines.append(f"<li>{item}</li>")
-            continue
 
-        # Close list if we were in one
-        if in_list:
-            html_lines.append("</ul>")
-            in_list = False
+def _html_block(lines):
+    """One block of lines: a list when every line is an item, else a paragraph."""
+    if all(ln.strip().startswith("- ") for ln in lines):
+        items = "".join(f"<li>{_inline(ln.strip()[2:])}</li>\n" for ln in lines)
+        return f"<ul>\n{items}</ul>"
+    return "<p>" + "<br />\n".join(_inline(ln.strip()) for ln in lines) + "</p>"
 
-        # Blank line
-        if not stripped:
-            continue
 
-        # Regular line — apply inline formatting
-        line_html = stripped
-        line_html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line_html)
-        line_html = re.sub(r"`(.+?)`", r"<code>\1</code>", line_html)
-        html_lines.append(f"<p>{line_html}</p>")
-
-    if in_list:
-        html_lines.append("</ul>")
-
-    return "\n".join(html_lines)
+def _inline(text):
+    return _CODE.sub(r"<code>\1</code>", _BOLD.sub(r"<strong>\1</strong>", text))
 
 
 # ── The request ──────────────────────────────────────────────────────────
