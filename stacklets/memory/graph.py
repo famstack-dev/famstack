@@ -71,6 +71,10 @@ from stack.cards import (
 )
 from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
+from stack.ontology import Ontology
+from stack.tags import tag_words
+
+from lib import get_ontology
 
 # How fast a card ages, in days until its weight halves. None: never.
 HALF_LIFE_DAYS: dict[str, float | None] = {
@@ -142,6 +146,9 @@ class Card:
     # The git blob id of the file as it is: the version a view records of
     # each card it was compiled from (`stack.cards.card_version`).
     blob: str = ""
+    # What a search finds the card's tags by besides the tags themselves: a
+    # topic's id and its label in every language (`stack.tags.tag_words`).
+    tag_labels: tuple[str, ...] = ()
 
     @property
     def version(self) -> str:
@@ -161,10 +168,12 @@ class Graph:
         graph.find("zelt kaputt")      # ranked cards
         graph.card("person-homer")     # one card by its id or its name, or None
         graph.shared_ids               # ids two files claim: {id: [path, ...]}
+        graph.ontology                 # the topics its cards' tags name
     """
 
-    def __init__(self, cards: list[Card]):
+    def __init__(self, cards: list[Card], ontology: Ontology | None = None):
         cards, self.shared_ids = _unique(cards)
+        self.ontology = ontology or Ontology()
         self.cards = {c.id: c for c in cards}
         self._by_path = {c.path: c.id for c in cards}
         # The name each card had before card ids, to its id: what the graph
@@ -338,6 +347,7 @@ def load_graph(vault: Path, *, views: Path | None = None,
     """
     vault = Path(vault)
     changes = git_changes(vault)
+    ontology = get_ontology(vault)
     compiled = _views(Path(views)) if views is not None else {}
     cards = []
     for path in sorted(vault.rglob("*.md")):
@@ -349,13 +359,14 @@ def load_graph(vault: Path, *, views: Path | None = None,
         data = path.read_bytes()
         card = _card(rel, data.decode("utf-8", errors="replace"))
         card.blob = card_version(data)
+        card.tag_labels = tuple(w for tag in tags_of(card) for w in tag_words(tag, ontology))
         card.changes = changes.get(rel) or []
         if not card.day and card.changes:
             card.day = card.changes[0].day
         card.views = [v for v in _views_of(card, compiled)
                       if audience is None or readable(v.path, audience, shared_bucket=shared_bucket)]
         cards.append(card)
-    return Graph(cards)
+    return Graph(cards, ontology)
 
 
 @dataclass(frozen=True)
@@ -465,6 +476,12 @@ def _card(rel: str, text: str) -> Card:
                 text=_GENERATED.sub("", text), names=names, persons=persons, meta=dict(meta))
 
 
+def tags_of(card: Card) -> list[str]:
+    """`card`'s tags as written; none when it has no list of them."""
+    tags = card.meta.get("tags")
+    return [str(t) for t in tags if t] if isinstance(tags, list) else []
+
+
 def links_of(card: Card) -> list[tuple[str, str]]:
     """(the link as written, the vault path it points at) for each link in
     `card`'s text to another card. Links to media and to the web are not."""
@@ -509,7 +526,9 @@ def _match(card: Card, terms: list[str]) -> float:
     """
     if not terms:
         return 0.0
-    title, text = card.title.lower(), card.text.lower()
+    title = card.title.lower()
+    # A topic tag is found by its label in any language, as well as by its id.
+    text = "\n".join((card.text, *card.tag_labels)).lower()
     score = 0.0
     for term in terms:
         if term in title:

@@ -373,13 +373,17 @@ function peopleRow(card) {
 }
 
 // Tags under the date. `Person: <name>` tags repeat `persons` and are left
-// out (ADR-017 §4). A tag searches for itself.
+// out (ADR-017 §4). A topic's id shows as its label in the instance's
+// language (`tag_labels`); a tag searches for what it shows.
 function tagsRow(card) {
   const tags = [].concat((card.meta || {}).tags || [])
     .map(String).filter((t) => t && !/^person\s*:/i.test(t));
   if (!tags.length) return null;
-  return h("div", { class: "tags" }, tags.map((t) =>
-    h("button", { class: "tag", title: t, onclick: () => searchFor(t) }, `#${t}`)));
+  const labels = card.tag_labels || {};
+  return h("div", { class: "tags" }, tags.map((t) => {
+    const label = labels[t] || t;
+    return h("button", { class: "tag", title: t, onclick: () => searchFor(label) }, `#${label}`);
+  }));
 }
 
 function searchFor(text) {
