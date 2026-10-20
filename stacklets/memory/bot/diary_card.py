@@ -34,6 +34,7 @@ from pathlib import Path
 import diary
 from stack.briefing import read_briefing, render_briefing
 from stack.cards import CARD_ID, card_id_from, new_card_id
+from stack.digest import changed_by_hand, digest_of, signed
 from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
 from stack.media import safe_name
@@ -356,9 +357,6 @@ _BODY_HEADINGS = {"voice": "Transcript", "text": "Text"}
 _CAPTION = "Caption"
 _QUOTES = "## Quotes"
 _REPLIES = "## Replies"
-# The lines a digest does not cover: its own, and the card id, which the
-# stack gives a card that has none without making it the family's.
-_UNSIGNED_LINES = re.compile(r"^(?:digest|card_id): .*\n", re.MULTILINE)
 _REPLY_HEAD = re.compile(r"^\*\*(.+)\*\*$")
 
 
@@ -437,14 +435,6 @@ def _unsigned(card: Card) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _digest_of(text: str) -> str:
-    """A hash of the file's content, blind to the digest line itself, the
-    card id, and trailing whitespace an editor may add or trim on save."""
-    unsigned = _UNSIGNED_LINES.sub("", text)
-    normal = "\n".join(ln.rstrip() for ln in unsigned.splitlines()).strip()
-    return hashlib.sha256(normal.encode("utf-8")).hexdigest()[:16]
-
-
 def render(card: Card, *, family_owned: bool = False) -> str:
     """The card as a vault file, signed with the digest of its content.
 
@@ -452,10 +442,7 @@ def render(card: Card, *, family_owned: bool = False) -> str:
     from then on, and the compile leaves it alone (`edited_by_hand`).
     """
     unsigned = _unsigned(card)
-    if family_owned:
-        return unsigned
-    head, sep, rest = unsigned.partition("\n---\n")
-    return f"{head}\ndigest: {_digest_of(unsigned)}{sep}{rest}"
+    return unsigned if family_owned else signed(unsigned)
 
 
 def edited_by_hand(text: str) -> bool:
@@ -466,8 +453,7 @@ def edited_by_hand(text: str) -> bool:
     matches its digest was changed after the compiler wrote it. Either
     way it is the family's, and the compiler leaves it alone.
     """
-    stored = str(frontmatter_parse(text).get("digest") or "")
-    return not stored or stored != _digest_of(text)
+    return changed_by_hand(text)
 
 
 def _sections(body: str):
@@ -594,8 +580,8 @@ def plan(existing: "dict[str, str]", cards, *, bucket: str,
             # moved on since. Only then is there anything to report. A
             # file with no digest (written or corrected by the family)
             # is theirs by design and kept without a word.
-            signed = str(frontmatter_parse(old_text).get("digest") or "")
-            if signed and signed != _digest_of(text):
+            signed_with = str(frontmatter_parse(old_text).get("digest") or "")
+            if signed_with and signed_with != digest_of(text):
                 out.kept.append(old_path)
             continue
         if old_path != path:
