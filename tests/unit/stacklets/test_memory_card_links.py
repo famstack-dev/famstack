@@ -286,7 +286,8 @@ class TestStackUpMemory:
                                        env={"CODE_URL": httpserver.url_for("")}),
             lambda msg: None)
 
-        assert outcome["applied"] == ["memory/0001", "memory/0002", "memory/0003", "memory/0004"]
+        assert outcome["applied"] == ["memory/0001", "memory/0002", "memory/0003", "memory/0004",
+                                      "memory/0005"]
         log = _git(memory, "log", "--format=%H %(trailers:key=Migration,valueonly)").splitlines()
         commits = dict(reversed(line.split()) for line in log if len(line.split()) == 2)
         record = migrations.record().applied

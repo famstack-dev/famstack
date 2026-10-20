@@ -2826,3 +2826,41 @@ def declare_cards(client: ForgejoClient, vault: Path, *,
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
                           created=frozenset(found.created))
 
+
+# ─── Topic tags by id ────────────────────────────────────────────────────
+#
+# A card tags a topic by the ontology's id and its keywords lowercase with
+# hyphens (ADR-017 §4). The archivist writes new records' tags that way
+# (`stack.tags.card_tags`); migration 0005 brings the files that were
+# there before to the same shape with the same rule (`stack.tags.tag_for`).
+
+def topic_tags_for(vault: Path) -> CardLinks:
+    """What tags the topics of the working copy `vault`'s cards by id.
+
+    Each tag that names a topic of the vault's ontology (`ontology.toml`,
+    else the shipped seed), by its id or its label in any language,
+    becomes the id; every other tag is lowercased with hyphens; two that
+    become one are one, in the place of the first. A tag that is no
+    keyword even so stays as it is and is listed in `left`. Diary cards
+    are left alone (`stack.tags.with_topic_tags`).
+    """
+    from stack.tags import with_topic_tags
+
+    ontology = get_ontology(vault)
+    texts = _markdown_files(vault)
+    found = CardLinks()
+    for path in sorted(texts):
+        text, left = with_topic_tags(texts[path], ontology)
+        found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
+        if text != texts[path]:
+            found.changes[path] = text
+    return found
+
+
+def tag_topics_by_id(client: ForgejoClient, vault: Path, *,
+                     trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Tag the topics of `vault`'s cards by id (`topic_tags_for`), in one
+    commit by the memory bot; what the pass found and the commit's sha."""
+    found = topic_tags_for(vault)
+    message = f"cards: tag topics by id in {len(found.changes)} card(s)"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
