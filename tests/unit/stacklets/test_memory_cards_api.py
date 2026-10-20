@@ -115,6 +115,13 @@ class TestOpeningACard:
         assert card["changes"][0]["who"] == "homer"
         assert {c["id"] for g in card["links_to"] for c in g["cards"]} == {"person/lisa", "topic/camping"}
 
+    def test_a_card_comes_as_its_type_renders_it_for_the_page_to_show(self, api):
+        """The same markdown the chat and `stack memory card` show (ADR-016 §4):
+        the page shows it as the card's body."""
+        _, card = _get(api, "/card/capture/Abc123Def4")
+
+        assert card["rendered"] == f"# Zelt ist kaputt\n\n{RECENT} · Lisa\n\nDas Zelt ist gerissen.\n"
+
     def test_a_list_comes_with_its_items(self, api):
         _, card = _get(api, "/card/list/markt")
 

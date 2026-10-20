@@ -15,8 +15,9 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /fonts/<file>          the famstack faces the wiki serves
     POST /push                 Forgejo's notice of a push to the memory repo
 
-The cards are the files of the vault; a card comes with the views the wiki
-compiled from it into the brain (those whose `about` or `derived_from` names
+The cards are the files of the vault. A card comes as its type's renderer
+writes it (`rendered`, markdown: the same the chat and `stack memory card`
+show, ADR-016 §4), and with the views the wiki compiled from it into the brain (those whose `about` or `derived_from` names
 it), which are never cards of their own. A view compiled from an older
 version of the card is marked `behind`: the card's own text counts.
 
@@ -92,6 +93,8 @@ class CardsAPI:
     fonts: Path | None = None
     media: Path | None = None
     shared_bucket: str = "family"
+    # The household's, for the one label a rendered card shows.
+    language: str = "en"
     _graphs: dict = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -110,7 +113,7 @@ class CardsAPI:
             return _json(_found(graph, query))
         if route == "card":
             card = graph.card(unquote(rest))
-            return _json(_full(card, graph)) if card else _missing(rest)
+            return _json(_full(card, graph, self.language)) if card else _missing(rest)
         if route == "links":
             card = graph.card(unquote(rest))
             if card is None:
@@ -188,12 +191,14 @@ def _summary(card: Card) -> dict:
             "links": len(card.links_out | card.links_in)}
 
 
-def _full(card: Card, graph: Graph) -> dict:
-    """A card with everything a reader can show: its fields, text, history,
-    links, and the views compiled about it."""
+def _full(card: Card, graph: Graph, language: str) -> dict:
+    """A card with everything a reader can show: its fields, its text and
+    the markdown its type's renderer writes from them, its history, links,
+    and the views compiled about it."""
     body = card.text.split(_FRONTMATTER_END, 1)[1] if card.text.startswith("---") \
         and _FRONTMATTER_END in card.text else card.text
     full = {**_summary(card), "meta": _plain(card.meta), "text": body.strip(),
+            "rendered": graph.rendered(card, language=language).markdown,
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
             **_walk(card, graph), "views": [_view(v) for v in card.views]}
