@@ -186,6 +186,7 @@ reader takes it for a card. Its frontmatter is:
 | `title` | Its heading. |
 | `about` | The card it is about, when it is about one thing. |
 | `derived_from` | The card ids it was compiled from. When one of them changes, the view is compiled again. |
+| `compiled_from` | Each card of `derived_from` with the version it was compiled from, `<card id>@<version>`; the version is the git blob id of the card's file. A card whose version moved since is one the view is behind, and the card's text counts. |
 
 | `view` | About |
 |---|---|

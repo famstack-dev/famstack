@@ -5,13 +5,23 @@ Runs as the `stack-memory-curator` sidecar (own slim image, see
 `git pull` that keeps the working copy in sync with Forgejo (the wiki
 container is a pure view that just watches the files). Jobs:
 
-1. **Incremental, after filings settle.** New commits land — an
-   archivist filing, a learn commit, a hand edit pushed from Obsidian.
-   The curator debounces the burst, reads which persons the changed
-   files involve (`persons:` frontmatter plus the bucket owner), and
-   regenerates exactly those member pages plus home. A typical burst
-   costs 2-3 LLM calls, so freshness where it's felt — "I filed
-   Homer's letter, Homer's page knows" — is nearly free.
+1. **Views follow their cards, in two speeds** (ADR-016 §5). New
+   commits land — an archivist filing, a learn commit, a hand edit
+   pushed from Obsidian — and Forgejo tells the curator of the push
+   (`POST /push` on the cards API; the poll stays as the fallback).
+   The views to compile again are exactly those whose `derived_from`
+   names a changed card, before or after the change, plus the ones a
+   new card would now be in (its persons, its topic, its correspondent,
+   its diary month). At once, with the mirror, they are compiled
+   without the model: which cards belong, list items, dates and links
+   are current within seconds. Once the burst has settled for the
+   quiet window, every view it touched is compiled with the model,
+   once: "I filed Homer's letter, Homer's page knows", for one model
+   call per view. That compile runs in the background, one at a time,
+   and the loop goes on: a push during the model's turn, which takes
+   minutes on a real model, is compiled at once all the same. The
+   model's text is put over each view as it is when written, and every
+   writer of the brain takes its writer lock (`brain_lock`).
 2. **Nightly full sweep.** Home, every member, every topic, at
    WIKI_NIGHTLY local time. This is the self-healing catch-all:
    cross-references go stale invisibly during the day and are corrected
@@ -24,8 +34,8 @@ container is a pure view that just watches the files). Jobs:
    rule migration 0002 applied to the files that were there before).
 
 Rebuilds run the CLI entrypoint as a subprocess (same code path as
-`stack memory wiki`), so a wedged LLM call dies with the child, not
-inside this loop. The wiki's own publish commits are filtered by
+`stack memory wiki` and `diary pages`), so a wedged LLM call dies with
+the child, not inside this loop. The wiki's own publish commits are filtered by
 their subject prefix (`wiki.COMMIT_PREFIX`) — the rebuild must not
 trigger itself. The last-rebuilt SHA persists across restarts, so an
 interrupted rebuild is simply redone.
@@ -52,6 +62,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Sibling imports. The wiki module is loaded straight off its directory
@@ -83,9 +94,12 @@ from memory.lib import (  # noqa: E402
     run_git,
     vault_remote_url,
 )
+from stack.cards import card_id_from, is_view, view_names  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
+from stack.vault import TOPIC_CARD, correspondents_dir  # noqa: E402
 
+import brain_lock  # noqa: E402
 from wiki import COMMIT_PREFIX  # noqa: E402
 from stack.people import PEOPLE_DIR  # noqa: E402
 
@@ -116,10 +130,10 @@ REBUILD_TIMEOUT_SECS = 3600
 # bucket. Mirrors the wiki's `_NON_MEMBER_DIRS` plus git itself.
 _SKIP_TOP = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
 
-# Legacy generated page filenames. Live files are now classified by the
-# `generated: true` frontmatter marker. Delete/rename diffs cannot read
-# frontmatter from a gone file, so these names remain authoritative for
-# removal operations.
+# Legacy generated page filenames. Live files are classified by their
+# view frontmatter (`stack.cards.is_view`). Delete/rename diffs cannot
+# read frontmatter from a gone file, so these names remain authoritative
+# for removal operations.
 _GENERATED_NAMES = {"about.md", "index.md"}
 
 # Both ends of the trigger protocol live in `memory.lib`: every writer
@@ -127,6 +141,11 @@ _GENERATED_NAMES = {"about.md", "index.md"}
 # there, and this loop is what answers. The curator stays brain's only
 # writer; callers only ask and wait (one-writer invariant, ADR-011).
 TRIGGER_NAME = MIRROR_TRIGGER_NAME
+
+# Left by Forgejo's notice of a push to the memory repo (`POST /push` on
+# the cards API): the next cycle starts at once, but unlike the trigger
+# above it asks for no compile with the model before the quiet window.
+PUSH_TRIGGER_NAME = "pushed"
 
 # The curator's own git remote. `origin` belongs to the host plane
 # (hooks and the host CLI reach Forgejo on a localhost/LAN port); this
@@ -191,16 +210,6 @@ class Debounce:
         self._since = now
 
 
-def _has_generated_marker(frontmatter: dict | None) -> bool:
-    """True when frontmatter declares a page as generated."""
-    if not frontmatter:
-        return False
-    value = frontmatter.get("generated")
-    if value is True:
-        return True
-    return isinstance(value, str) and value.strip().lower() == "true"
-
-
 def _is_generated_name(path: str) -> bool:
     parts = [p for p in path.split("/") if p]
     return bool(parts) and parts[-1] in _GENERATED_NAMES
@@ -220,8 +229,10 @@ def member_selection(
     Collects the bucket owner for personal captures plus every name in
     `persons:` frontmatter (`fm_reader(path) -> dict`, fed by
     `git show` so the mapping matches the commit), and adds topic
-    folders touched by captures. Returns e.g. `["--home", "--member",
-    "Homer Simpson", "--topic", "camping"]`, or `[]` when nothing
+    folders touched by captures or whose card changed, and the
+    correspondent a document names or whose card changed. Returns e.g.
+    `["--home", "--member", "Homer Simpson", "--topic", "camping"]`, or
+    `[]` when nothing
     relevant changed (only generated pages or skipped dirs). Home is
     included whenever anything relevant changed at all. A change to a
     person file adds `--members`: who the family knows changed, so every
@@ -233,6 +244,7 @@ def member_selection(
     """
     members: list[str] = []
     topics: list[str] = []
+    correspondents: list[str] = []
     relevant = False
     people_changed = False
 
@@ -241,7 +253,7 @@ def member_selection(
         if not parts or parts[0] in _SKIP_TOP:
             continue
         fm = fm_reader(path) if path.endswith(".md") else {}
-        if _has_generated_marker(fm):
+        if is_view(fm):
             continue
         relevant = True
         if path.startswith(f"{shared_bucket}/{PEOPLE_DIR}/"):
@@ -249,9 +261,15 @@ def member_selection(
             continue
         if parts[0] != shared_bucket and len(parts) > 1 and parts[0] not in members:
             members.append(parts[0])
-        topic = _topic_slug_from_capture_path(parts, shared_bucket=shared_bucket)
+        topic = (_topic_slug_from_capture_path(parts, shared_bucket=shared_bucket)
+                 or _topic_of_card(parts))
         if topic and topic not in topics:
             topics.append(topic)
+        named = fm.get("correspondent") if path.endswith(".md") else ""
+        if path.startswith(f"{correspondents_dir(shared_bucket)}/") and len(parts) == 3:
+            named = parts[2].removesuffix(".md")
+        if isinstance(named, str) and named.strip() and named.strip() not in correspondents:
+            correspondents.append(named.strip())
         if _is_list_path(parts):
             people, named = list_reach(list_texts(path), path)
             members += [p for p in people if p not in members]
@@ -273,6 +291,8 @@ def member_selection(
         argv += ["--member", member]
     for topic in topics:
         argv += ["--topic", topic]
+    for name in correspondents:
+        argv += ["--correspondent", name]
     return argv
 
 
@@ -312,6 +332,263 @@ def _topic_slug_from_capture_path(parts: list[str], *, shared_bucket: str) -> st
     return ""
 
 
+def _topic_of_card(parts: list[str]) -> str:
+    """The topic whose own card is at `parts` (`<bucket>/<topic>/topic.md`), else ""."""
+    return parts[1] if len(parts) == 3 and parts[2] == TOPIC_CARD else ""
+
+
+# ── Views to compile again (ADR-016 §5) ──────────────────────────────────
+#
+# A view names the cards it was compiled from (`derived_from`). When a card
+# is pushed, the views that name it, before or after the change, are the
+# ones to compile again; `member_selection` adds the views a new card would
+# now be in, which name nothing yet. Both arrive as the arguments the wiki
+# and the diary commands take.
+
+@dataclass
+class Selection:
+    """The views to compile again: `wiki` arguments, and diary months (`2026-10`)."""
+
+    wiki: list[str] = field(default_factory=list)
+    months: list[str] = field(default_factory=list)
+
+    def add(self, argv: list[str], month: str = "") -> None:
+        """Take `argv` (`--home`, `--member homer`, ...) and `month`, each once."""
+        have = set(_pairs(self.wiki))
+        for pair in _pairs(argv):
+            if pair not in have:
+                have.add(pair)
+                self.wiki += [p for p in pair if p]
+        if month and month not in self.months:
+            self.months.append(month)
+
+    def update(self, other: "Selection") -> None:
+        self.add(other.wiki)
+        for month in other.months:
+            self.add([], month)
+
+    def __bool__(self) -> bool:
+        return bool(self.wiki or self.months)
+
+
+def _pairs(argv: list[str]) -> list[tuple[str, str]]:
+    """`argv` as (flag, value) pairs; a flag that takes no value pairs with ""."""
+    pairs, i = [], 0
+    while i < len(argv):
+        takes_value = argv[i] in _VALUE_FLAGS and i + 1 < len(argv)
+        pairs.append((argv[i], argv[i + 1] if takes_value else ""))
+        i += 2 if takes_value else 1
+    return pairs
+
+
+_VALUE_FLAGS = {"--member", "--topic", "--correspondent"}
+
+
+def view_args(path: str, fields: dict, *, shared_bucket: str) -> tuple[list[str], str]:
+    """How the view at brain `path` is compiled: (wiki arguments, diary month).
+
+    A folder listing is compiled with the page of the folder it lists, a
+    diary year and the diary's front page with any of their months.
+    """
+    parts = path.removesuffix(".md").split("/")
+    kind = str(fields.get("view") or "")
+    if kind == "home":
+        return ["--home"], ""
+    if kind == "person":
+        return ["--member", parts[0]], ""
+    if kind == "topic" and len(parts) >= 3:
+        return ["--topic", parts[-2]], ""
+    if kind == "correspondent":
+        return ["--correspondent", parts[-1]], ""
+    if kind == "diary-month" and len(parts) >= 2:
+        return [], f"{parts[-2]}-{parts[-1]}"
+    owner = parts[:-2]
+    if kind == "folder" and owner == [shared_bucket]:
+        return ["--home"], ""
+    if kind == "folder" and len(owner) == 1:
+        return ["--member", owner[0]], ""
+    if kind == "folder" and len(owner) == 2:
+        return ["--topic", owner[1]], ""
+    return [], ""
+
+
+def views_naming(brain: Path, ids: set[str]) -> list[tuple[str, dict]]:
+    """Every view in `brain` whose `about` or `derived_from` names one of `ids`."""
+    if not ids:
+        return []
+    found = []
+    for md in sorted(brain.rglob("*.md")):
+        rel = md.relative_to(brain).as_posix()
+        if rel.startswith(".git/"):
+            continue
+        try:
+            text = md.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        # A view's frontmatter opens with its kind (`wiki.ViewFields`), so
+        # the cards mirrored beside the views are passed over unparsed.
+        if not text.startswith("---\nview:"):
+            continue
+        fields = _parse_frontmatter(text, rel)
+        if view_names(fields) & ids:
+            found.append((rel, fields))
+    return found
+
+
+def diary_month_of(path: str) -> str:
+    """The month of a diary record at `path` (`2026-10`), else ""."""
+    parts = path.split("/")
+    if len(parts) == 6 and parts[1:3] == ["diary", "entries"] and parts[5].endswith(".md"):
+        return f"{parts[3]}-{parts[4]}"
+    return ""
+
+
+def select_views(paths: list[str], fm_reader, *, shared_bucket: str,
+                 list_texts=lambda path: [], ids_of=lambda path: set(),
+                 named=lambda ids: []) -> Selection:
+    """The views a change to the vault `paths` compiles again.
+
+    The views that name a changed card (`ids_of(path)`: its card ids
+    before and after the change; `named(ids)`: the views naming them, as
+    `views_naming` finds them), and the views the changed cards would now
+    be in (`member_selection`, and a diary record's month).
+    """
+    selection = Selection()
+    selection.add(member_selection(paths, fm_reader, shared_bucket=shared_bucket,
+                                   list_texts=list_texts))
+    for path in paths:
+        selection.add([], diary_month_of(path))
+    ids = set().union(*(ids_of(path) for path in paths)) if paths else set()
+    for rel, fields in named(ids):
+        selection.add(*view_args(rel, fields, shared_bucket=shared_bucket))
+    return selection
+
+
+async def views_pushed(vault: "Vault", brain: Path, since: str, until: str, *,
+                       shared_bucket: str) -> Selection:
+    """The views the commits `since..until` of the memory repo touched (`select_views`)."""
+    paths = await vault.changed_paths(since, until)
+
+    def ids_of(path: str) -> set[str]:
+        if not path.endswith(".md"):
+            return set()
+        return {card_id_from(vault.frontmatter_at(rev, path)) for rev in (since, until)} - {""}
+
+    return await asyncio.to_thread(
+        select_views, paths, lambda p: vault.frontmatter_at(until, p),
+        shared_bucket=shared_bucket,
+        list_texts=lambda p: [vault.text_at(since, p), vault.text_at(until, p)],
+        ids_of=ids_of, named=lambda ids: views_naming(brain, ids))
+
+
+class Recompile:
+    """When the views a push touched are compiled again, in two speeds.
+
+    `pushed` runs on every cycle the memory repo moved: the views it
+    touched are compiled at once without the model, so which cards belong,
+    list items, dates and links are current within seconds. `settle` runs
+    on every cycle after: once the head has stood still for the quiet
+    window, it starts the compile with the model of every view the burst
+    touched, in the background, one at a time. Three pushes in a row cost
+    one model call per view.
+
+    The model's turn can take minutes, and the loop does not wait for it:
+    a push meanwhile is compiled at once all the same, and joins the next
+    compile with the model, which `settle` starts after the next quiet
+    window. The compile with the model renders its text over the views as
+    they are when it writes them (`wiki._compile`), so the facts of the
+    quick compile stay. `finished` says when it has ended.
+
+        recompile = Recompile(select, compile, Debounce(180))
+        await recompile.pushed(before, head)           # at once, no model
+        await recompile.settle(last, head, now)        # after the quiet window
+        recompile.finished(now)                        # (head, ok) once it ended
+
+    `select(since, until)` returns the `Selection` for a range of the
+    memory repo; `compile(selection, fast=)` compiles it, True on success.
+    """
+
+    def __init__(self, select, compile, debounce: Debounce):
+        self.select = select
+        self.compile = compile
+        self.debounce = debounce
+        # What the pushes since the last compile with the model touched. A
+        # view a push takes a card out of no longer names it once compiled
+        # at once, so the model's turn cannot find it again by
+        # `derived_from`.
+        self.pending = Selection()
+        self._running: asyncio.Task | None = None
+        self._selection = Selection()
+        self._head = ""
+        # Asked for at once (`stack memory sync`) while one was running.
+        self._forced = False
+
+    @property
+    def busy(self) -> bool:
+        """A compile with the model is running, or has ended and not been collected."""
+        return self._running is not None
+
+    @property
+    def ended(self) -> bool:
+        return self._running is not None and self._running.done()
+
+    async def pushed(self, since: str, until: str) -> bool:
+        """Compile at once, without the model, what `since..until` touched."""
+        selection = await self.select(since, until)
+        self.pending.update(selection)
+        return await self.compile(selection, fast=True) if selection else True
+
+    async def settle(self, since: str, head: str, now: float, *, forced: bool = False) -> None:
+        """Start the compile with the model of what touched views since `since`, once quiet.
+
+        Never waits for it. While one runs, nothing else starts; one asked
+        for at once meanwhile starts as soon as it has ended.
+        """
+        if self.busy:
+            self._forced = self._forced or forced
+            return
+        forced, self._forced = forced or self._forced, False
+        if not forced and not self.debounce.observe(head, now):
+            return
+        selection = Selection()
+        selection.update(self.pending)
+        selection.update(await self.select(since, head))
+        self.pending = Selection()
+        self._selection, self._head = selection, head
+        self._running = asyncio.create_task(self._compile(selection))
+
+    async def _compile(self, selection: Selection) -> bool:
+        return await self.compile(selection, fast=False) if selection else True
+
+    def finished(self, now: float) -> tuple[str, bool] | None:
+        """(the head it compiled, whether it worked) once a compile with the model ended.
+
+        None while it runs or when none ran. A failed one gives its views
+        back to the next, after a wider window.
+        """
+        task = self._running
+        if task is None or not task.done():
+            return None
+        self._running = None
+        try:
+            ok = bool(task.result())
+        except Exception as e:  # a crash in the compile is a failed compile
+            logger.warning("[curator] the compile with the model crashed: {}", e)
+            ok = False
+        if ok:
+            self.debounce.reset()
+        else:
+            self.pending.update(self._selection)
+            self.debounce.retry_later(now)
+        return self._head, ok
+
+    async def wait(self, now: float) -> tuple[str, bool] | None:
+        """Wait for a running compile with the model to end, then `finished`."""
+        if self._running is not None:
+            await asyncio.wait({self._running})
+        return self.finished(now)
+
+
 # ── Source mirror (memory -> brain projection) ───────────────────────────
 #
 # The curator polls memory (source) and writes brain (projection). The
@@ -322,7 +599,8 @@ def _topic_slug_from_capture_path(parts: list[str], *, shared_bucket: str) -> st
 #
 # `is_source_path` is the guard that keeps generation's own output from
 # being treated as source to mirror: generated pages carry
-# `generated: true` frontmatter, and `.git` internals are always skipped.
+# view frontmatter (`stack.cards.is_view`), and `.git` internals are
+# always skipped.
 
 # Git diff status letters the mirror acts on. `A`dded and `M`odified
 # copy the file in; `D`eleted removes it; `R`enamed moves it (old path
@@ -334,7 +612,7 @@ _COPY_STATUSES = {"A", "M", "C", "T"}
 def is_source_path(path: str, frontmatter: dict | None = None) -> bool:
     """True when a vault path is source the mirror should replay to brain.
 
-    Excludes git internals and pages that declare `generated: true`.
+    Excludes git internals and views (`stack.cards.is_view`).
     Filename is not source of truth for live files: a hand-written
     `about.md` with no generated marker is source and must be mirrored
     into brain. The generation step sees that source page and skips
@@ -343,7 +621,7 @@ def is_source_path(path: str, frontmatter: dict | None = None) -> bool:
     parts = [p for p in path.split("/") if p]
     if not parts or parts[0] == ".git":
         return False
-    if _has_generated_marker(frontmatter):
+    if is_view(frontmatter or {}):
         return False
     return True
 
@@ -386,7 +664,7 @@ def diff_to_fileops(
     Renames (`R<score>\\told\\tnew`) become an `rm old` + `copy new`
     pair, so a re-slugged capture lands at its new path with no stale
     file left behind. Added/copied/modified files are filtered by their
-    `generated: true` marker. Delete and old-rename paths use the legacy
+    view frontmatter. Delete and old-rename paths use the legacy
     filename backstop because git cannot provide frontmatter for a gone
     file. Blank and malformed lines are skipped.
     """
@@ -443,7 +721,7 @@ def reconcile_fileops(
         edit missed by the incremental path is healed), and
       - every brain source file that memory no longer has is removed.
 
-    Generated pages in brain carry `generated: true`, so they never
+    Views in brain carry their view frontmatter, so they never
     appear on either side. The reconcile leaves them untouched for
     generation to manage. This is the nightly self-heal, rsync
     `--delete` semantics scoped to source.
@@ -477,19 +755,31 @@ def consume_trigger(state_dir: Path, name: str = TRIGGER_NAME) -> bool:
 
 
 async def sleep_until_tick(secs: float, state_dir: Path,
-                           slice_secs: float = 1.0) -> bool:
-    """Sleep up to `secs`, waking early when a mirror-now trigger lands.
+                           slice_secs: float = 1.0, wake=lambda: False) -> bool:
+    """Sleep up to `secs`, waking early when a trigger lands.
 
-    Returns True when the wake-up was triggered rather than timed. The
-    sleep is sliced so `stack memory sync` sees a tick within about a
+    Returns True when a mirror-now trigger woke it, which asks for the
+    model's compile at once too. A push trigger (Forgejo's notice) wakes
+    it without that and returns False, as the poll does when `secs` run
+    out: the poll is what still finds a push whose notice never came.
+    `wake()` true ends it the same way: a compile with the model that has
+    ended. The sleep is sliced so either trigger is seen within about a
     second instead of a full poll interval.
     """
     deadline = time.monotonic() + secs
     while time.monotonic() < deadline:
         if consume_trigger(state_dir):
             return True
+        if consume_trigger(state_dir, PUSH_TRIGGER_NAME) or wake():
+            return False
         await asyncio.sleep(min(slice_secs, max(deadline - time.monotonic(), 0.0)))
     return consume_trigger(state_dir)
+
+
+def request_push(state_dir: Path) -> None:
+    """Leave the push trigger: Forgejo says the memory repo moved."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / PUSH_TRIGGER_NAME).write_text(str(time.time()), encoding="utf-8")
 
 
 def nightly_due(nightly: str, last_run_date: str, now_local: time.struct_time) -> bool:
@@ -749,7 +1039,18 @@ class Brain:
     def _commit_push(self, message: str) -> bool:
         """Stage everything, commit if there is a change, push. Returns
         True when a commit was made and pushed (or there was nothing to
-        commit, which is still a success)."""
+        commit, which is still a success).
+
+        Staging and committing hold the brain's writer lock, so a commit
+        never takes a view a compile is writing at that moment.
+        """
+        with brain_lock.held(self.path):
+            if not self._commit(message):
+                return False
+        return self._push()
+
+    def _commit(self, message: str) -> bool:
+        """Stage everything and commit when there is a change; False when git refused."""
         self._run("add", "-A")
         # `diff --cached --quiet` exits 1 when staged changes exist, so its
         # exit code is the answer to "is there anything to commit?" rather
@@ -765,6 +1066,9 @@ class Brain:
             )
             if rc != 0:
                 return False
+        return True
+
+    def _push(self) -> bool:
         # Push even with nothing newly committed: a prior cycle may have
         # committed locally and lost the push (Forgejo briefly down), and
         # "nothing to commit" must not report that state as in-sync.
@@ -854,6 +1158,28 @@ async def rebuild(selection: list[str], state_dir: Path | None = None) -> bool:
     LLM call dies with the child instead of inside this loop."""
     label = " ".join(selection) if selection else "every page"
     return await _run_command("wiki", selection, f"regenerating wiki pages: {label}", state_dir)
+
+
+async def compile_views(selection: Selection, *, fast: bool,
+                        state_dir: Path | None = None) -> bool:
+    """Compile the views in `selection` through the CLI entrypoint.
+
+    `fast` asks no model: the views show the cards as they are now, in the
+    model's last wording. The diary's months are compiled from the diary
+    records on file, without reading the room again.
+    """
+    flag = ["--fast"] if fast else []
+    speed = "at once" if fast else "with the model"
+    ok = True
+    if selection.wiki:
+        ok = await _run_command("wiki", [*selection.wiki, *flag],
+                                f"compiling {speed}: {' '.join(selection.wiki)}", state_dir)
+    if selection.months:
+        months = [arg for month in selection.months for arg in ("--month", month)]
+        ok = await _run_command("diary", ["pages", *flag, *months],
+                                f"compiling {speed}: diary {' '.join(selection.months)}",
+                                state_dir) and ok
+    return ok
 
 
 async def _run_command(command: str, selection: list[str], what: str,
@@ -961,19 +1287,22 @@ def _vault_writer() -> ForgejoClient | None:
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
-def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str) -> None:
+def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str,
+                 state_dir: Path) -> None:
     """The cards as JSON for core's card page, on the stack network (`memory/cards_api.py`).
 
     The curator holds the vault and the brain, so it serves the vault's cards
     with the views it compiled about them, and the media archive's files
-    those cards embed.
+    those cards embed. The same server takes Forgejo's notice of a push to
+    the memory repo, which wakes the loop below.
     A failure to start is logged, never fatal: the wiki is the curator's job.
     """
     from memory.cards_api import PORT, CardsAPI, serve
     fonts = Path(__file__).resolve().parents[1] / "quartz" / "static" / "fonts"
     try:
         serve(CardsAPI(brain=brain_dir, vault=vault_dir, fonts=fonts, media=media_dir,
-                       shared_bucket=shared_bucket))
+                       shared_bucket=shared_bucket),
+              on_push=lambda: request_push(state_dir))
         logger.info("[curator] cards API on :{}", PORT)
     except OSError as e:
         logger.warning("[curator] cards API not started: {}", e)
@@ -1001,8 +1330,21 @@ async def main() -> None:
     vault = Vault(vault_dir)
     brain = Brain(brain_dir, vault_dir)
     _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
-                 shared_bucket)
+                 shared_bucket, state_dir)
     debounce = Debounce(QUIET_SECS)
+
+    async def select(since: str, until: str) -> Selection:
+        return await views_pushed(vault, brain_dir, since, until, shared_bucket=shared_bucket)
+
+    async def compile(selection: Selection, *, fast: bool) -> bool:
+        # The quick compile follows every push, so it reports to the log
+        # only; the progress file is for a `stack memory wiki update`
+        # waiting on the model's compile.
+        if not fast:
+            _progress(state_dir, "regenerating the pages new filings touched", fresh=True)
+        return await compile_views(selection, fast=fast, state_dir=None if fast else state_dir)
+
+    recompile = Recompile(select, compile, debounce)
 
     # The working copies' `origin` carries a host-plane URL (hooks and
     # the host CLI set and use it); it is unreachable from inside this
@@ -1052,14 +1394,16 @@ async def main() -> None:
             card_ids_sha = _write(card_ids_file, head)
 
     async def mirror_incremental(since: str, until: str) -> bool:
-        """Replay memory's `since..until` source diff onto brain, then
-        commit + push. One commit. Returns True on success (incl. a
-        no-op range)."""
+        """Replay memory's `since..until` source diff onto brain, compile
+        the views it touched without the model, then commit + push. One
+        commit. Returns True on success (incl. a no-op range)."""
         ops = diff_to_fileops(
             await vault.name_status(since, until),
             lambda path: vault.frontmatter_at(until, path),
         )
         await brain.apply(ops)
+        if rebuild_enabled:
+            await recompile.pushed(since, until)
         return await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} sync source")
 
     async def mirror_reconcile() -> bool:
@@ -1094,7 +1438,7 @@ async def main() -> None:
         # The debounce exists to batch a burst of filings into one
         # rebuild; an explicit trigger means "I want it current now",
         # which is what the test rig needs for a fast feedback loop.
-        forced = await sleep_until_tick(POLL_SECS, state_dir)
+        forced = await sleep_until_tick(POLL_SECS, state_dir, wake=lambda: recompile.ended)
         if forced:
             logger.info("[curator] mirror-now trigger received")
         # The curator owns the pull — the wiki container only watches
@@ -1127,7 +1471,8 @@ async def main() -> None:
         # Data-plane like the pull: brain must always carry memory's
         # current source so Quartz renders fresh captures, even with LLM
         # rebuilds disabled. Cheap (file copies, one commit) so it runs
-        # every cycle the source moved, undebounced.
+        # every cycle the source moved, undebounced, and with it the
+        # views the push touched, compiled without the model.
         if mirror_sha and head != mirror_sha:
             if await mirror_incremental(mirror_sha, head):
                 mirror_sha = _write(mirror_file, head)
@@ -1141,6 +1486,26 @@ async def main() -> None:
             last = _write(sha_file, head)
             continue
 
+        # ── A compile with the model that ended ───────────────────────
+        if (ended := recompile.finished(time.monotonic())) is not None:
+            compiled_to, ok = ended
+            if ok:
+                # Commit + push the views the wiki CLI wrote into brain's
+                # working tree.
+                await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
+                last = _write(sha_file, compiled_to)
+            else:
+                record_failed_rebuild(state_dir, retry_in=debounce.window())
+                # Say the shape of the failure, not just that there was one.
+                # A per-cycle line at the same interval reads as a
+                # heartbeat; a widening gap with a count on it reads as an
+                # outage.
+                logger.warning(
+                    "[curator] rebuild failed {}x in a row; next attempt in {}m "
+                    "(source is still mirrored, only generated pages are stale)",
+                    debounce.failures, round(debounce.window() / 60),
+                )
+
         # ── Nightly full sweep ────────────────────────────────────────
         # Runs regardless of pending changes — it covers everything an
         # incremental pass would, so it also clears the debounce. The
@@ -1149,8 +1514,10 @@ async def main() -> None:
         # source reconcile precedes the regen so brain self-heals any
         # drift the incremental mirror missed. `stack memory wiki update --all`
         # asks for the same sweep now; that does not count as tonight's.
-        asked = consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
-        if asked or nightly_due(NIGHTLY, _read(nightly_file), time.localtime()):
+        # It waits while a compile with the model runs: one at a time.
+        asked = not recompile.busy and consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
+        if asked or (not recompile.busy
+                     and nightly_due(NIGHTLY, _read(nightly_file), time.localtime())):
             if not asked:
                 _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
             _progress(state_dir, "rebuilding the whole wiki", fresh=True)
@@ -1171,53 +1538,25 @@ async def main() -> None:
                 await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} nightly rebuild")
                 last = _write(sha_file, head)
                 debounce.reset()
+                recompile.pending = Selection()
             # The record a waiting `stack memory wiki update --all` reads.
             _write(state_dir / NIGHTLY_RUN_NAME,
                    json.dumps({"at": time.time(), "ok": rebuilt, "asked": asked}))
             continue
 
-        # ── Incremental: persons + home, debounced ────────────────────
+        # ── Incremental: the views the burst touched, with the model ──
         if head == last:
-            debounce.reset()
+            if not recompile.busy:
+                debounce.reset()
             continue
 
-        if only_own_commits(await vault.subjects(last, head)):
+        if not recompile.busy and only_own_commits(await vault.subjects(last, head)):
             last = _write(sha_file, head)
             debounce.reset()
             continue
 
-        if not forced and not debounce.observe(head, time.monotonic()):
-            continue
-
-        paths = await vault.changed_paths(last, head)
-        selection = member_selection(
-            paths, lambda p: vault.frontmatter_at(head, p),
-            shared_bucket=shared_bucket,
-            list_texts=lambda p: [vault.text_at(last, p), vault.text_at(head, p)],
-        )
-        if not selection:
-            last = _write(sha_file, head)
-            debounce.reset()
-            continue
-
-        _progress(state_dir, "regenerating the pages new filings touched", fresh=True)
-        if await rebuild(selection, state_dir):
-            # Commit + push the regenerated pages the wiki CLI wrote into
-            # brain's working tree.
-            await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
-            last = _write(sha_file, head)
-            debounce.reset()
-        else:
-            debounce.retry_later(time.monotonic())
-            record_failed_rebuild(state_dir, retry_in=debounce.window())
-            # Say the shape of the failure, not just that there was one. A
-            # per-cycle line at the same interval reads as a heartbeat; a
-            # widening gap with a count on it reads as an outage.
-            logger.warning(
-                "[curator] rebuild failed {}x in a row; next attempt in {}m "
-                "(source is still mirrored, only generated pages are stale)",
-                debounce.failures, round(debounce.window() / 60),
-            )
+        # Starts it in the background; `finished` above collects it.
+        await recompile.settle(last, head, time.monotonic(), forced=forced)
 
 
 if __name__ == "__main__":

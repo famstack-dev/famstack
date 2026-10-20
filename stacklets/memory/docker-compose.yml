@@ -69,9 +69,10 @@ services:
       - "${PORT_BIND_IP:-127.0.0.1}:42070:8080"
     restart: unless-stopped
 
-  # Curator — the vault keeper. Owns the `git pull` from Forgejo,
-  # runs debounced incremental rebuilds (member pages + home) after
-  # filings settle, plus a nightly full sweep as the self-healing
+  # Curator — the vault keeper. Owns the `git pull` from Forgejo
+  # (woken by Forgejo's push webhook, polling as the fallback), compiles
+  # the views a push touched (at once without the model, with it once
+  # filings settle), plus a nightly full sweep as the self-healing
   # catch-all. Own slim image (python + git + the LLM client deps) —
   # see curator.Dockerfile; code arrives by bind mount like the
   # bot-runner's, the env is memory's own. See `bot/curator.py`.

@@ -31,7 +31,8 @@ def memory(tmp_path):
     m = Memory(tmp_path)
     m.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n---\n"
             "Lisa plays the saxophone.\n", by="marge", message="chore(people): marge described Lisa")
-    m.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n---\n"
+    m.compile("lisa/about.md", "---\nview: person\ntitle: Lisa Simpson\nabout: person-lisa\n"
+              "derived_from:\n  - person-lisa\ncompiled_from:\n  - person-lisa@0000000000\n---\n"
               "<!-- begin: generated -->\nLisa, 8, wants to be president.\n<!-- end: generated -->\n")
     m.write("family/camping/about.md", "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
             "The family's camping trips.\n\n![[/media/2026/10/Abc123Def456XYZ.m4a]]\n", by="homer", message="feat(topics): homer added camping")
@@ -129,16 +130,22 @@ class TestOpeningACard:
     def test_an_unknown_card_is_not_found(self, api):
         assert _get(api, "/card/capture/nothere")[0] == 404
 
-    def test_a_person_comes_with_the_view_compiled_about_them(self, api):
+    def test_a_person_comes_with_the_view_compiled_about_them(self, api, memory):
         """The person is their file; the wiki's page on them is reached from
-        it, marked as a view, with the link that opens it in the wiki."""
-        _, card = _get(api, "/card/person/lisa")
+        it, marked as a view, with the link that opens it in the wiki. The
+        view was compiled from another version of her card than the one on
+        file, so it says it is behind her card."""
+        memory.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n"
+                     "card_id: person-lisa\n---\nLisa plays the saxophone.\n",
+                     by="marge", message="chore(people): marge gave Lisa her id")
+        _, card = _get(api, "/card/person-lisa")
 
         assert card["path"] == "family/people/lisa.md"
         [view] = card["views"]
         assert view["view"] == "person" and view["path"] == "lisa/about.md"
         assert view["text"] == "Lisa, 8, wants to be president."
         assert view["go"] == "/go/person/lisa"
+        assert view["behind"] is True
 
     def test_a_view_is_no_card(self, api):
         assert _get(api, "/card/lisa/about.md")[0] == 404

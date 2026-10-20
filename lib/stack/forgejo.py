@@ -466,6 +466,24 @@ class ForgejoClient:
             allow_404=True,
         )
 
+    # ── Webhooks ────────────────────────────────────────────────────────
+
+    def list_hooks(self, owner: str, repo: str) -> list[dict]:
+        """The webhooks of `owner/repo`, as Forgejo describes them (`config.url`, `events`)."""
+        return self._req("GET", f"/api/v1/repos/{owner}/{repo}/hooks",
+                         headers=self._admin_header(), params={"limit": "50"}) or []
+
+    def create_hook(self, owner: str, repo: str, url: str, *,
+                    events: tuple[str, ...] = ("push",)) -> None:
+        """Have Forgejo POST each of `events` in `owner/repo` to `url`, as JSON.
+
+        Forgejo delivers only to hosts its `[webhook] ALLOWED_HOST_LIST`
+        names; the code stacklet allows the stack's own containers.
+        """
+        self._req("POST", f"/api/v1/repos/{owner}/{repo}/hooks", headers=self._admin_header(),
+                  body={"type": "forgejo", "active": True, "events": list(events),
+                        "config": {"url": url, "content_type": "json"}})
+
     def list_commits(self, owner: str, repo: str, *,
                      path: str | None = None, limit: int = 20) -> list[dict]:
         params: dict[str, str] = {"limit": str(limit), "stat": "false"}

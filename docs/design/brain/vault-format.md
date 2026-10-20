@@ -85,7 +85,7 @@ Producers and the conformance validator MUST agree on this set. Adding a
 type is a spec change (bump nothing below v2 until 1.0; pre-1.0 edits are
 cheap).
 
-**Records** (source; things that happened; never carry `generated`):
+**Records** (source; things that happened; never carry `view`):
 - `document` — a Paperless-mirrored document.
 - `note` — a captured note (verbatim paste).
 - `bookmark` — a captured URL.
@@ -94,20 +94,20 @@ cheap).
   with its joined fragments and replies).
 
 **State documents** (the family's current truth; mutable through the
-CLI or by hand; never carry `generated`; see §7):
+CLI or by hand; never carry `view`; see §7):
 - `list`: a family list, such as groceries, a store or things to do (§5, §7).
 - `person` (declared) — someone the family knows, one file each under
   `<shared_bucket>/people/`.
 
-**Entities & structure** (generated projections; MUST carry
-`generated: true`):
-- `person` — the wiki page for a person: the declared file compiled
-  with what the records say, and later anyone the records mention (the
-  person registry). `person` is the one type that is both: declared in
-  `people/`, generated everywhere else, told apart by `generated`.
-- `correspondent` — an external party page.
-- `topic` — a topic overview page.
-- `index` — a folder navigation page.
+**Cards of entities** (declared; written once and never rewritten by a
+machine; see §5):
+- `correspondent` — an external party, `<shared_bucket>/correspondents/<slug>.md`.
+- `topic` — a topic, `<bucket>/<slug>/topic.md`.
+
+**Views** are not cards and carry no `type` (§6): what the curator
+compiles into the brain from the cards, a person's, a correspondent's or
+a topic's page, the diary's pages, the home page, a folder listing.
+`type: index` is how the brain marked a navigation page before views.
 
 Reserved for future (declare before use): `pet`, `vehicle`, `place`.
 
@@ -237,25 +237,10 @@ field the family sets. A file that breaks the §2 subset or this table
 is reported by path and left out, and the wiki retires no member page
 while any file is reported.
 
-### `person` (generated)
-| Field | | Notes |
-|---|---|---|
-| `type` | R | `person` |
-| `generated` | R | `true` |
-| `title` | R | canonical display name (OKF `title`). |
-| `slug` | R | the person's id: the declared file's name (== Matrix localpart and bucket slug for a member); otherwise derived from the canonical name. |
-| `canonical` | R | canonical name (our H1/canonicalization logic). |
-| `aliases` | O | list of known surface forms (the EntityRegistry coupling field). |
-| `relation_kind` | O | `relative` \| `friend` \| `neighbor` \| `teacher` \| `doctor` \| `employer` \| `colleague` \| `service` \| `other`; absent for members. |
-| `relation` | O | the relation in words, through a member ("Marge's sister"). |
-| `first_seen`, `last_seen` | O | dates of the first and last record that mentions the person. |
-| `sources` | O | list of the vault paths of the records it cites. |
-| `birthday`, `employer`, `owners` | O | family-semantic custom fields. |
-
-Whether someone is a member is never a field: it is derived from the
-declared file's `account`. The tier the wiki shows (broader family, close, other) is
-not stored either; the wiki derives it from `relation_kind` and
-presence.
+The fields the person registry is to add (`relation_kind`, `relation`,
+`first_seen`, `last_seen`, `sources`) were drafted for the person page the
+wiki generated. That page is a view now (§6); where they go is decided
+with the registry.
 
 ### `correspondent` (declared)
 The card of one correspondent, `<shared_bucket>/correspondents/<slug>.md`,
@@ -271,32 +256,13 @@ migration `memory/0004` for those named before) and never rewritten.
 
 A file of the older shape (`kind: correspondent`, `canonical`, no `type`)
 got `type: correspondent` and its card id from migration `memory/0004`.
-The wiki fills the generated region of the brain's copy at the same path.
+Its view in the brain shares the path: the card's text under the view's
+frontmatter (§6), then the region the wiki fills.
 
 ### `topic` (declared)
 The card of one topic, `<bucket>/<slug>/topic.md`, written the first time
 a record is filed into the topic's folder (or by `memory/0004`) and never
 rewritten: `type: topic`, `card_id: topic-<slug>`, `title`.
-
-### `correspondent` (generated)
-| Field | | Notes |
-|---|---|---|
-| `type` | R | `correspondent` |
-| `generated` | R | `true` |
-| `title` / `canonical` | R | canonical name. |
-| `aliases` | O | list; the classifier reads these to reconcile mentions. |
-
-### `topic` (generated)
-| Field | | Notes |
-|---|---|---|
-| `type` | R | `topic` |
-| `generated` | R | `true` |
-| `slug` | R | |
-| `scope` | R | `shared` \| `personal`. |
-| `title` | O | |
-
-### `index` (generated)
-`type: index`, `generated: true`, `title` optional. Body is navigation.
 
 ### `list`
 The family's file for one list, `<bucket>/lists/<slug>.md`. The file
@@ -364,14 +330,37 @@ day's date first. A `recurring` list is left alone. The archive is where
 `stack memory list add` learns where an item was last bought, its
 section and its spelling.
 
-## 6. The `generated` invariant (from B3 / ADR-011)
+## 6. Views (ADR-016 §3, ADR-017 §7)
 
-- A generated projection page MUST carry `generated: true`.
-- A source record MUST NOT carry `generated`.
-- This marker — not the filename — is the authoritative source-vs-
-  projection signal for the mirror and for generation's skip-over-hand-
-  written-pages rule. (Filename remains a backstop only for delete/rename
-  diffs where content is unavailable.)
+What the curator compiles into the brain is a view, never a card. Its
+frontmatter:
+
+| Field | | Notes |
+|---|---|---|
+| `view` | R | `person`, `correspondent`, `topic`, `diary-front`, `diary-year`, `diary-month`, `home`, `folder`. |
+| `title` | R | its heading. |
+| `about` | O | the card id of the one thing it is about: a person's, correspondent's or topic's card. |
+| `derived_from` | R | list of the card ids it was compiled from. |
+| `compiled_from` | R | list, each card of `derived_from` as `<card id>@<version>`; the version is the git blob id of the file, 10 hex digits (`stack.cards.card_version`). |
+| `canonical`, `synonyms` | O | a person's view: the names the archivist and the diary recognise them by. |
+
+- A view MUST NOT carry `type`, `card_id` or `generated`; a card MUST NOT
+  carry `view`.
+- `view` — not the filename — is the authoritative card-versus-view
+  signal for the mirror, for the compiler's skip-over-hand-written-pages
+  rule and for every reader (`stack.cards.is_view`, which still reads the
+  `generated: true` older brains carry). Filename remains a backstop only
+  for delete/rename diffs where content is unavailable.
+- A view that shares its path with a card (a correspondent, the root
+  `index.md`) keeps the card's text and fills only the region between
+  `<!-- begin: generated -->` and `<!-- end: generated -->`.
+- A view the model wrote keeps the model's last answer after that region,
+  one line, `<!-- answer: <base64 JSON> -->`, so the curator can compile
+  it again without the model, with the cards as they are now.
+- When a card in `derived_from` is pushed, the curator compiles the view
+  again: at once without the model, then with it once the pushes settle.
+  When the vault holds another version of a card than `compiled_from`
+  records, the view is behind that card, and the card's text counts.
 
 ## 7. State documents
 

@@ -25,7 +25,8 @@ const WORDS = {
     recently: "Changed lately", noGraph: "Open a card to see what it links to.",
     unreachable: "The family memory does not answer. Is the memory stacklet running? (stack up memory)",
     file: "File", id: "Card", changedBy: (who, day) => `${who} · ${day}`,
-    close: "Close", view: "View", views: "Compiled about this card", openWiki: "Open in the wiki",
+    close: "Close", view: "View", views: "Compiled from this card", openWiki: "Open in the wiki",
+    behind: "behind this card, whose own text counts",
     report: "Format", toFix: (n) => `${n} to fix`, nothingToFix: "Nothing to fix: the memory meets its format.",
     reportSub: (n) => `Where the memory does not meet its format yet, over all ${n} cards (as the admin).`,
     noCardId: "Without a card_id", sharedIds: "One id, several files",
@@ -44,7 +45,8 @@ const WORDS = {
     recently: "Zuletzt geändert", noGraph: "Eine Karte öffnen, um ihre Verweise zu sehen.",
     unreachable: "Das Familiengedächtnis antwortet nicht. Läuft das memory-Stacklet? (stack up memory)",
     file: "Datei", id: "Karte", changedBy: (who, day) => `${who} · ${day}`,
-    close: "Schließen", view: "Ansicht", views: "Über diese Karte zusammengestellt", openWiki: "Im Wiki öffnen",
+    close: "Schließen", view: "Ansicht", views: "Aus dieser Karte zusammengestellt", openWiki: "Im Wiki öffnen",
+    behind: "älter als diese Karte, ihr eigener Text gilt",
     report: "Format", toFix: (n) => `${n} zu beheben`, nothingToFix: "Nichts zu beheben: das Gedächtnis hat sein Format.",
     reportSub: (n) => `Wo das Gedächtnis sein Format noch nicht hat, über alle ${n} Karten (als Admin).`,
     noCardId: "Ohne card_id", sharedIds: "Eine ID, mehrere Dateien",
@@ -495,13 +497,15 @@ function renderBody(card) {
   return (RENDER[card.type] || ((c) => [peopleRow(c), bodyOf(c)]))(card);
 }
 
-// The pages the wiki compiled about a card (a person's page): read with the
-// card, marked as views, never opened as cards of their own.
+// The pages the wiki compiled from a card (a person's page, a topic's, a
+// diary month): read with the card, marked as views, never opened as cards
+// of their own. One compiled from an older version of the card says so.
 function viewsOf(card) {
   if (!card.views?.length) return null;
   return h("div", { class: "linkset" }, h("h4", { class: "label" }, T.views),
     card.views.map((view) => h("details", { class: "more view" },
-      h("summary", {}, h("span", { class: "kind label" }, T.view), h("span", {}, view.title)),
+      h("summary", {}, h("span", { class: "kind label" }, T.view), h("span", {}, view.title),
+        view.behind ? h("span", { class: "label" }, " · ", T.behind) : null),
       bodyOf({ id: card.id, path: view.path }, withoutTitle(view.text, view.title)),
       view.go ? h("a", { class: "action", href: goUrl(view.go), target: "_blank",
                          rel: "noopener noreferrer" }, T.openWiki, " ↗") : null)));

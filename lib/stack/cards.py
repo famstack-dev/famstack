@@ -30,6 +30,7 @@ import it, so emitter and resolver read one table.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 from pathlib import PurePosixPath
@@ -111,7 +112,7 @@ def card_kind(rel: str, fields: Mapping[str, object]) -> str:
         return kind
     if len(parts) == 3 and parts[1] == "lists":
         return "list"
-    if str(fields.get("generated") or "").lower() == "true":
+    if is_view(fields):
         return INDEX
     return "page"
 
@@ -342,7 +343,7 @@ def with_card_id(text: str, path: str, card_id: str = "", *,
         fields = parse(text)
     except FrontmatterError as e:
         raise CardIdError(f"its frontmatter does not parse: {e}") from e
-    if _is_view(fields):
+    if is_view(fields):
         return text
     head, rest = text[:end + 1], text[end + 1:]
     card_type = str(fields.get("type") or "").strip()
@@ -389,11 +390,81 @@ def _may_be_card(path: str) -> bool:
             and not any(part.startswith(".") for part in parts))
 
 
-def _is_view(fields: Mapping[str, object]) -> bool:
-    """A page the wiki compiled: it names cards and is none (ADR-016 §3)."""
+# ── Views ─────────────────────────────────────────────────────────────
+#
+# A view is what the curator compiles from cards into the brain: a
+# person's page, a topic's, a diary month, the home page. It is never a
+# card (ADR-016 §3): it carries `view` instead of a `type`, and names the
+# cards it was compiled from (ADR-017 §7).
+
+VIEW = "view"
+ABOUT = "about"
+DERIVED_FROM = "derived_from"
+# Each card of `derived_from` with the version it was compiled from,
+# `<card id>@<version>`, so a reader can tell a card that changed since.
+COMPILED_FROM = "compiled_from"
+
+# How many hex digits of a git blob id name a card's version.
+_VERSION_DIGITS = 10
+
+
+def is_view(fields: Mapping[str, object]) -> bool:
+    """Whether a file with `fields` is a view, never a card.
+
+    `generated: true` and `type: index` are how the brain marked its pages
+    before views had their own fields; a brain that has not been compiled
+    again since still carries them.
+
+    >>> is_view({"view": "person", "about": "person-homer"})
+    True
+    >>> is_view({"type": "person", "generated": True}), is_view({"type": "person"})
+    (True, False)
+    """
     generated = fields.get("generated")
-    return (generated is True or str(generated).strip().lower() == "true"
+    return (bool(str(fields.get(VIEW) or "").strip())
+            or generated is True or str(generated).strip().lower() == "true"
             or fields.get("type") == "index")
+
+
+def view_names(fields: Mapping[str, object]) -> set[str]:
+    """Every card id a view names: what it is about and what it was compiled from.
+
+    >>> sorted(view_names({"view": "topic", "about": "topic-camping",
+    ...                    "derived_from": ["topic-camping", "note-7f3a9c21e4"]}))
+    ['note-7f3a9c21e4', 'topic-camping']
+    """
+    derived = fields.get(DERIVED_FROM) or []
+    names = {str(v).strip() for v in (derived if isinstance(derived, list) else [derived])}
+    names.add(str(fields.get(ABOUT) or "").strip())
+    return {n for n in names if n}
+
+
+def compiled_versions(fields: Mapping[str, object]) -> dict[str, str]:
+    """The version of each card a view was compiled from, by card id.
+
+    >>> compiled_versions({"compiled_from": ["note-7f3a9c21e4@1a2b3c4d5e"]})
+    {'note-7f3a9c21e4': '1a2b3c4d5e'}
+    """
+    value = fields.get(COMPILED_FROM) or []
+    found: dict[str, str] = {}
+    for item in value if isinstance(value, list) else [value]:
+        card_id, sep, version = str(item).strip().rpartition("@")
+        if sep and card_id:
+            found[card_id] = version
+    return found
+
+
+def card_version(data: bytes) -> str:
+    """A card's version: the git blob id of its bytes, shortened.
+
+    The same bytes give the same id in the memory repo, in the brain's
+    copy of it and in a view that names it, with no git history to read.
+
+    >>> card_version(b"")
+    'e69de29bb2'
+    """
+    blob = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324 (git's own id)
+    return blob[:_VERSION_DIGITS]
 
 
 def _slug(name: str) -> str:

@@ -162,6 +162,17 @@ class SummaryStore(JsonStore):
         self._items[month] = {"digest": digest, "text": text,
                               "prompt": self.fingerprint}
 
+    def latest(self, month: str) -> str:
+        """The last paragraph written for `month`, whatever it was written from.
+
+        For a compile without the model: the month's entries show as they
+        are now, under the paragraph written before, until the model is
+        asked again.
+        """
+        found = self._items.get(month)
+        text = found.get("text") if isinstance(found, dict) else ""
+        return text if isinstance(text, str) else ""
+
 
 def open_stores(directory: Path | None = None, *,
                 reading_fingerprint: str = "",

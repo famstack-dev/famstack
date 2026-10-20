@@ -850,7 +850,7 @@ class TestVerifyMoments:
         assert "memories room" not in page
 
     def test_a_summary_reaches_the_month_it_describes(self):
-        pages = {path: body for path, body, _title in
+        pages = {page.path: page.body for page in
                  diary.pages_for(bucket="family", entries=_compile(),
                                  summaries={"2026-03": "Only March."})}
 
@@ -893,7 +893,7 @@ class TestVerifyMoments:
         Flat `2026-03.md` files pile every month of every year into one
         folder, which is the explorer sidebar the family actually reads.
         """
-        paths = [path for path, _body, _title in diary.pages_for(bucket="family", entries=_compile())]
+        paths = [page.path for page in diary.pages_for(bucket="family", entries=_compile())]
 
         assert "diary/about.md" in paths
         assert "diary/2026/about.md" in paths
@@ -904,14 +904,14 @@ class TestVerifyMoments:
         """Quartz renders a folder URL through a layout with no body in
         this wiki, so an `index.md` would be unreadable. Every other
         entity here is `about.md` for the same reason."""
-        paths = [path for path, _body, _title in diary.pages_for(bucket="family", entries=_compile())]
+        paths = [page.path for page in diary.pages_for(bucket="family", entries=_compile())]
 
         assert not any(p.endswith("index.md") for p in paths)
 
     def test_a_month_page_is_titled_with_its_year(self):
         """The folder gives context in the sidebar; a link or a search
         result does not, so the title carries the year itself."""
-        titles = {path: title for path, _body, title in
+        titles = {page.path: page.title for page in
                   diary.pages_for(bucket="family", entries=_compile())}
 
         assert titles["diary/2026/03.md"] == "March 2026"

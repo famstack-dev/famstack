@@ -479,15 +479,56 @@ cards API, reads its cards from the vault only (ADR-016), leaving out
 and the wiki, never cards (ADR-017 §6). What the wiki
 compiles into the brain (a person's `<id>/about.md`, a topic's page, a
 diary month, an index) is a view: never found, never opened as a card.
-A card comes with the views compiled about it, found where the wiki
-compiles them until views name their card: a person's at `<id>/about.md`,
-a correspondent's at the card's own path, a topic's at `about.md` next to
-its card. A card is named by its
+A card comes with the views that name it, the one about it first (below).
+A card is named by its
 `card_id` when it has one (`stack.cards.card_ref`); one without is named
 by the rule in the table above (`card_name`), and that name still opens
 a card that has an id since. The graph links people, topics and lists by
 those names. `card_kind` tells a list archive and a navigation page from
 the rest.
+
+**Views name their cards and follow them** (ADR-016 §3 and §5, ADR-017
+§7). Every page the curator compiles into the brain is a view: a person's
+(`<id>/about.md`), a correspondent's (at its card's path, keeping the
+card's text above the compiled region), a topic's (`about.md` beside
+`topic.md`), the diary's front, year and month pages, the home page
+(`index.md`) and a folder listing (`notes/index.md`). Its frontmatter is
+`view` (`person`, `correspondent`, `topic`, `diary-front`, `diary-year`,
+`diary-month`, `home`, `folder`), `title`, `about` (the card id of the
+one thing it is about), `derived_from` (the card ids it was compiled
+from) and `compiled_from` (each of those as `<card id>@<version>`, the
+version being the file's git blob id, `stack.cards.card_version`); a
+person's view also carries `canonical` and `synonyms`. It never carries
+`type`, `card_id` or `generated`; `stack.cards.is_view` is the one rule
+every reader uses, and still knows the older `generated: true`. A view
+the model wrote keeps the model's last answer below the compiled region
+(`<!-- answer: ... -->`).
+
+The card graph attaches to a card every view whose `about` or
+`derived_from` names its `card_id`. A view whose `compiled_from` holds
+another version of the card than the vault does is behind it: `stack
+memory card` says so on the view's line, the cards API gives the view
+`behind: true`, and the card's own text counts.
+
+When a card is pushed, the curator compiles again exactly the views
+whose `derived_from` names it before or after the change, and the ones a
+new card would now be in (the people, topic and correspondent it names,
+its diary month), in two speeds. At once, with the mirror, without the
+model (`stack memory wiki update ... --fast`, `diary pages --fast`):
+which cards belong, list items, dates and links, with the model's last
+wording renumbered to the cards as they are. After the quiet window
+(`wiki_rebuild_quiet_secs`), once per burst, with the model. That
+compile runs in the background, one at a time, so a push during the
+model's turn is compiled at once all the same and joins the next model
+compile. The model is asked from the cards as they were, and its answer
+is rendered over each view as it is when written, the cards read again
+under the brain's writer lock (`memory/bot/brain_lock.py`), which every
+writer of the brain takes, the commit included. Forgejo
+tells the curator of each push to `family/memory` through a webhook to
+`http://stack-memory-curator:8090/push` (the cards API), which `stack up
+memory` adds once; the code stacklet allows webhooks to `stack-*` hosts
+(`FORGEJO__webhook__ALLOWED_HOST_LIST`). The poll stays as the fallback,
+and the nightly sweep as the catch-all.
 
 **A record links the cards it names** (ADR-017 §3, §4, §10). Its
 frontmatter holds ids and its body the links derived from them: `persons`

@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
-from .cards import CARD_ID, new_card_id
+from .cards import CARD_ID, is_view, new_card_id
 from .frontmatter import FrontmatterError, dump, parse, validate
 from .vault import DEFAULT_SHARED_BUCKET, slug
 
@@ -116,8 +116,8 @@ def read_person(file_stem: str, text: str) -> Person:
         raise PersonError(f"frontmatter does not parse: {e}") from e
     if fm.get("type") != "person":
         raise PersonError("not a person file: it needs `type: person`")
-    if fm.get("generated") is True:
-        raise PersonError("a generated page does not belong in people/")
+    if is_view(fm):
+        raise PersonError("a page the wiki compiled does not belong in people/")
     if errors := validate(fm):
         raise PersonError("; ".join(errors))
     return Person(

@@ -41,6 +41,10 @@ FORGEJO__server__SSH_PORT              = "222"
 FORGEJO__database__DB_TYPE             = "sqlite3"
 FORGEJO__security__INSTALL_LOCK        = "true"
 FORGEJO__service__DISABLE_REGISTRATION = "false"
+# Webhooks may reach the stack's own containers (`stack-*` on the stack
+# network), such as the memory curator, which a push to the memory repo
+# wakes. Forgejo's default allows public addresses only.
+FORGEJO__webhook__ALLOWED_HOST_LIST    = "stack-*"
 # Single sign-on through the stack's OIDC provider, if one is installed.
 # Empty until the provider has registered this stacklet; then
 # hooks/on_start_ready.py creates the "family account" login source.

@@ -90,7 +90,7 @@ class Memory:
 @pytest.fixture
 def memory(tmp_path):
     m = Memory(tmp_path)
-    m.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\n"
+    m.write("family/people/lisa.md", "---\ntype: person\ntitle: Lisa Simpson\ncard_id: person-lisa\n"
             "aliases:\n  - Lis\n---\nLisa plays the saxophone.\n",
             by="marge", message="chore(people): marge described Lisa")
     m.write("family/camping/about.md", "---\ntype: topic\ntitle: Camping\nslug: camping\n---\n"
@@ -156,7 +156,7 @@ class TestFindingCards:
         card. The wiki's page on Lisa says what the note says, and is not one."""
         memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
                      by="homer", message="feat(notes): zelt")
-        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+        memory.compile("lisa/about.md", "---\nview: person\ntitle: Lisa Simpson\nabout: person-lisa\nderived_from:\n  - person-lisa\n"
                        "---\nLisa found the torn tent (Zelt ist kaputt).\n")
 
         _run(find_cli, memory, "zelt")
@@ -288,7 +288,7 @@ class TestOpeningACard:
                                                                                  capsys):
         """The page the wiki compiles on Lisa is what a question about her
         reads first; it is reached from her card, as a view, not opened as one."""
-        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+        memory.compile("lisa/about.md", "---\nview: person\ntitle: Lisa Simpson\nabout: person-lisa\nderived_from:\n  - person-lisa\n"
                        "---\nLisa, 8, plays the saxophone and wants to be president.\n")
 
         _run(card_cli, memory, "person/lisa")
@@ -353,7 +353,7 @@ class TestWhoIsListening:
                      _note("Marge000000001", "Barts Aquarell", RECENT,
                            body="Bart malt nass in nass. Siehe [Lisa](../../family/people/lisa.md)."),
                      by="marge", message="feat(notes): marge filed Barts Aquarell")
-        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+        memory.compile("lisa/about.md", "---\nview: person\ntitle: Lisa Simpson\nabout: person-lisa\nderived_from:\n  - person-lisa\n"
                        "---\nLisa, 8, the family's saxophonist.\n")
         return memory
 
@@ -455,7 +455,7 @@ class TestEveryThingIsOneCard:
     def test_a_person_is_one_card_however_much_the_wiki_compiles_about_them(self, memory, capsys):
         """Records link the family's file on a person; the wiki compiles a
         page from it and every record about them. The person is one card."""
-        memory.compile("lisa/about.md", "---\ntype: person\ntitle: Lisa Simpson\ngenerated: true\n"
+        memory.compile("lisa/about.md", "---\nview: person\ntitle: Lisa Simpson\nabout: person-lisa\nderived_from:\n  - person-lisa\n"
                        "---\nLisa plays the saxophone.\n")
         memory.write("family/camping/zelt.md",
                      _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT,
@@ -507,7 +507,7 @@ class TestWhatFindLeavesOut:
 
     @pytest.fixture
     def pages(self, memory):
-        memory.compile("family/diary/2026/10.md", "---\ntitle: October 2026\ngenerated: true\n---\n"
+        memory.compile("family/diary/2026/10.md", "---\nview: diary-month\ntitle: October 2026\n---\n"
                        "The family's month: camping, the tent.\n")
         memory.write("family/camping/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
                      by="homer", message="feat(notes): zelt")
