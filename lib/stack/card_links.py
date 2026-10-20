@@ -22,6 +22,8 @@ and a second pass finds nothing to change.
   gets the first time something names it, written once, never rewritten.
 - `people_by_id`, `moved_links`, `with_correspondent_type`: one existing
   file brought to that shape, only the lines the rule is about.
+  `persons_by_id` is the frontmatter half of `people_by_id`, which a diary
+  card takes alone (`memory/0007`): it has no links to people.
 
 Pure functions, text in and text out. Stdlib only.
 """
@@ -54,8 +56,9 @@ _PERSON_PAGE = re.compile(r"^([^/]+)/about\.md$")
 _PAPERLESS_FILE = re.compile(r"(?:^|-)p(\d+)\.md$")
 
 # The record types whose people these rules name. A diary card is one too,
-# but it is signed with a digest over its text (`diary_card.render`): an
-# edit from outside the compile makes it the family's for good.
+# but it is signed with a digest over its text (`stack.digest`) and has no
+# links to people: `memory/0007` takes `persons_by_id` alone for it and
+# signs the card again.
 LINKED_RECORDS = frozenset({"document", "note", "bookmark", "email"})
 
 
@@ -193,8 +196,41 @@ def people_by_id(text: str, path: str, people: list[Person], *, bucket: str) -> 
         return text, []
     if str(fields.get("type") or "") not in LINKED_RECORDS:
         return text, []
-    unknown: list[str] = []
+    text, unknown = persons_by_id(text, people)
 
+    def card_of(match: re.Match) -> str:
+        label, href = match[1], match[2]
+        page = _PERSON_PAGE.match(_target(href, path))
+        if page is None:
+            return match[0]
+        person = resolve(label, people) or next((p for p in people if p.id == page[1]), None)
+        if person is None:
+            unknown.append(label)
+            return match[0]
+        return f"[{label}]({relative_link(person_path(person.id, bucket), path)})"
+
+    text = _in_meta_block(text, lambda line: _LINK.sub(card_of, line))
+    return text, list(dict.fromkeys(unknown))
+
+
+def persons_by_id(text: str, people: list[Person]) -> tuple[str, list[str]]:
+    """The card with its `persons` as ids and no `Person: <name>` tags, and
+    the names no one goes by.
+
+    Each `persons` entry a declared person goes by becomes their id; a
+    name nobody goes by stays as it is and is returned. Only the `persons`
+    and `tags` lines change; a file whose frontmatter does not parse comes
+    back as it is.
+
+        >>> text = "---\\ntype: diary\\npersons:\\n  - Bart\\ntags:\\n  - \\"Person: Bart\\"\\n---\\n"
+        >>> persons_by_id(text, [Person("bart", "Bart Simpson")])
+        ('---\\ntype: diary\\npersons:\\n  - bart\\n---\\n', [])
+    """
+    try:
+        fields = parse(text)
+    except FrontmatterError:
+        return text, []
+    unknown: list[str] = []
     persons = fields.get("persons")
     if isinstance(persons, list):
         named = []
@@ -210,20 +246,7 @@ def people_by_id(text: str, path: str, people: list[Person], *, bucket: str) -> 
     tags = fields.get("tags")
     if isinstance(tags, list) and (kept := without_person_tags(tags)) != tags:
         text = with_field(text, "tags", kept)
-
-    def card_of(match: re.Match) -> str:
-        label, href = match[1], match[2]
-        page = _PERSON_PAGE.match(_target(href, path))
-        if page is None:
-            return match[0]
-        person = resolve(label, people) or next((p for p in people if p.id == page[1]), None)
-        if person is None:
-            unknown.append(label)
-            return match[0]
-        return f"[{label}]({relative_link(person_path(person.id, bucket), path)})"
-
-    text = _in_meta_block(text, lambda line: _LINK.sub(card_of, line))
-    return text, list(dict.fromkeys(unknown))
+    return text, unknown
 
 
 def moved_links(text: str, path: str, *, exists: Callable[[str], bool],
