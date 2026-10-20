@@ -5,8 +5,9 @@ job for the dream-cycle wiki rebuild. At capture time we want a
 focused prompt that returns:
 
   - title       (scannable, under 80 chars)
-  - summary     (none for a short note; otherwise length scales with
-                input, up to 200-400 words)
+  - summary     (none for a short note; a bookmark's reason for being
+                kept and what the page is, in three sentences at most;
+                otherwise length scales with input, up to 200-400 words)
   - facts       (3-6 key facts)
   - tags        (free-form, biased toward existing tags in use)
   - persons     (family members this is for/about)
@@ -446,3 +447,30 @@ class TestAShortNoteGetsNoSummary:
         assert "200-400 words" in _field(prompt, "summary")
         assert "real digest" in prompt
 
+
+class TestABookmarkSaysWhyItWasKept:
+    """A bookmark's card links the page, so the summary is not a digest
+    of it (memory cards review, C7). It says why the person kept it, from
+    what they wrote when they shared it, and then what the page is, in at
+    most three sentences."""
+
+    PAGE = dict(text="Itchy & Scratchy Land is a theme park. " * 40,
+                person_names=["Homer"], kind="bookmark")
+
+    def test_with_a_comment_the_reason_comes_first(self):
+        prompt = _build_capture_prompt(**self.PAGE, user_hint="for the trip in June")
+        summary = _field(prompt, "summary")
+        assert "three sentences" in summary
+        assert "first" in summary and "why the person kept" in summary
+        assert "for the trip in June" in prompt
+
+    def test_without_a_comment_it_says_what_the_page_is(self):
+        summary = _field(_build_capture_prompt(**self.PAGE), "summary")
+        assert "three sentences" in summary
+        assert "why the person kept" not in summary
+
+    def test_it_is_never_a_digest_of_the_page(self):
+        for hint in (None, "for the trip in June"):
+            prompt = _build_capture_prompt(**self.PAGE, user_hint=hint)
+            assert "200-400" not in _field(prompt, "summary")
+            assert "real digest" not in prompt

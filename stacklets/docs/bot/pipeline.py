@@ -775,6 +775,7 @@ class Classifier:
         extract_action_items: bool = False,
         current_list: str = "",
         write_in: str | None = None,
+        kind: str = "note",
         short_text: bool = False,
     ) -> dict:
         """Capture-specific classification.
@@ -814,6 +815,7 @@ class Classifier:
             current_list=current_list,
             lang=examples,
             write_in=target,
+            kind=kind,
             short_text=short_text,
         )
         valid_images = [
@@ -1271,10 +1273,13 @@ def _language_rule(write_in: str, household: str, *, fields: str, subject: str) 
 
 # ── What a capture's summary and facts say ───────────────────────────
 #
-# A card shows a note's words, so the summary is only worth its place
-# when it adds to them (memory cards review, C1). A short note gets none:
-# its words are shorter than any summary of them. Everything else gets
-# the digest a reader reads instead of reopening the source.
+# A card shows a note's words and a bookmark's link, so the summary is
+# only worth its place when it adds to them (memory cards review, C1 and
+# C7). A short note gets none: its words are shorter than any summary of
+# them. A bookmark says first why the person kept it, which nothing else
+# on the card records, and then what the page is, in a few sentences: the
+# page itself is one click away. Everything else, a long paste, a file, an
+# email, gets the digest a reader reads instead of reopening the source.
 
 _DIGEST_SUMMARY = (
     "Markdown summary. Length scales with input — short paste (under ~300 "
@@ -1302,7 +1307,7 @@ _DIGEST_FACTS_RULE = (
 )
 
 
-def _summary_field(*, short_text: bool) -> tuple[str, str]:
+def _summary_field(*, kind: str, short_text: bool, user_hint: str | None) -> tuple[str, str]:
     """The summary's description in the JSON structure, and its rule.
 
     ``short_text`` is the caller's verdict that a note is too short for a
@@ -1314,6 +1319,23 @@ def _summary_field(*, short_text: bool) -> tuple[str, str]:
             "Always an empty string. This note is short and its card shows "
             "the writer's words as they are, so a summary would only repeat them.",
             "- summary: \"\" for this note, whatever it says.",
+        )
+    if kind == "bookmark" and user_hint and user_hint.strip():
+        return (
+            "At most three sentences. The first says why the person kept this, "
+            "from what they said when they shared it (the user context above): "
+            "what or whom it is for. The others say what the page is and what "
+            "it is good for. Not a digest of everything on the page.",
+            "- summary: at most three sentences, the person's reason for "
+            "keeping it first. Do NOT include the source URL; it's surfaced "
+            "separately in the vault entry.",
+        )
+    if kind == "bookmark":
+        return (
+            "At most three sentences saying what the page is and what it is "
+            "good for. Not a digest of everything on the page.",
+            "- summary: at most three sentences. Do NOT include the source "
+            "URL; it's surfaced separately in the vault entry.",
         )
     return _DIGEST_SUMMARY, _DIGEST_SUMMARY_RULE
 
@@ -1346,6 +1368,7 @@ def _build_capture_prompt(
     current_list: str = "",
     lang: str = "en",
     write_in: str | None = None,
+    kind: str = "note",
     short_text: bool = False,
 ) -> str:
     """The capture prompt — smaller and focused on summary + tags.
@@ -1354,8 +1377,10 @@ def _build_capture_prompt(
     answer is written in (a code or `SOURCE_LANGUAGE`; the examples'
     language when not given). See `_language_rule`.
 
-    ``short_text`` says a note is too short for a summary, which decides
-    what the summary and the facts say (`_summary_field`, `_facts_field`).
+    ``kind`` is what the capture is filed as (``note``, ``bookmark``,
+    ``email``) and ``short_text`` says a note is too short for a summary;
+    together they decide what the summary and the facts say
+    (`_summary_field`, `_facts_field`).
 
     Captures are bookmarks (URL pointers with a digest) and notes
     (pasted text with a digest). Unlike documents, they don't carry a
@@ -1416,7 +1441,8 @@ def _build_capture_prompt(
         if extract_action_items and current_list.strip() else ""
     )
     ex = _examples_for(lang)
-    summary_field, summary_rule = _summary_field(short_text=short_text)
+    summary_field, summary_rule = _summary_field(
+        kind=kind, short_text=short_text, user_hint=user_hint)
     facts_field, facts_rule = _facts_field(short_text=short_text)
     tags_hint = (
         f"Existing tags in use: {json.dumps(existing_tags, ensure_ascii=False)}\n"
