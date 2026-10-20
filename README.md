@@ -18,10 +18,12 @@
   <img src="https://img.shields.io/github/v/tag/famstack-dev/famstack?style=flat-square&label=version&color=orange" alt="Version">
 </p>
 
-**The vision: Turn your Mac into the brain of your household and operate it from your phone.**
-Photos, memories, documents, chat, local AI: local and private by default, gets smarter over time. Open source.
+**Drop a letter in the family chat, ask about it months later, and get the answer with its source.**
+famstack files your family's documents, backs up the photos from every phone and turns voice memos into a family diary. A family wiki writes itself from all of it. Nothing leaves your home: it runs on a Mac in your house, with local AI. Open source.
 
 *"I built this because our photos, our voices, our documents: That's our life. It belongs on our hardware, not in someone else's cloud."*
+
+*"I am absolutely crazy excited about the idea of just uploading documents and then being able to ask the AI later questions about it if I need information."* (an early adopter on Discord)
 
 The reference implementation runs on a Mac Studio M1 in our living room at Lake Constance, Germany. Where is yours going to run?
 <br>
@@ -29,30 +31,32 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > [!NOTE]
 > [**v0.4.0**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) is the current release.
 >
-> The state of this project is: **It works on my machine.™**
-> I gave my best it works on yours too. If it doesn't, come back and report it
-> or join our [Discord](https://discord.gg/hfutdmmfBe).
+> famstack runs in other homes now, not just ours. If it doesn't work in yours, tell me: [open an issue](https://github.com/famstack-dev/famstack/issues), start a [discussion](https://github.com/famstack-dev/famstack/discussions) or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
 > [!TIP]
-> **New in 0.4: household lists, kept in the chat.**
-> The shopping list, the packing list for the camping trip, what still has to happen before the school trip: Stacky, the family agent, keeps them for you. Type it, say it in a voice message, or send a photo of a handwritten list with a caption. Every list is a plain Markdown checklist in your family's memory, and the wiki shows what is still open on each topic and person page. The agent is beta. [How lists work](docs/user-guide.md#lists).
-> **The bots read encrypted chats.** Element X encrypts every direct chat; invite a bot and it reads and answers there too. Nothing leaves your Mac either way.
-> **Updates in one command.** `./stack update` moves your install to the newest release and names what to restart. A menu bar app shows and controls the stack.
-> **And a family diary.** famstack turns the voice messages and photos you post in the Memories room into a diary you read back month by month, in your own words. Each memory gets a card in the chat; reply to it to fix a name or a date.
-> **0.3 gave your family server a memory**: a wiki of your family life, curated from the documents, notes and voice memos you drop in the chat. Browsable, searchable, Obsidian-compatible, on your own Mac. Ask a question in the chat and get an answer with sources. [Read the introduction](https://famstack.dev/blog/famstack-0-3-beta/).
+> **New in 0.4**
+> - **A family diary.** Post voice memos, photos and a few lines in the Memories room, and famstack keeps them as plain files you own and back up, and turns them into a diary you can keep forever, with a nice web page to browse your memories.
+> - **Lists and a calendar in the chat.** Tell Stacky, the family agent, what goes on the shopping list: by text, by voice or with a photo of a handwritten list. [How lists work](docs/user-guide.md#lists).
+> - **A wiki that starts with the family.** The home page shows the household at a glance, what happened last month and what is ahead.
+> - **Talk to the bots.** A voice message works like a typed one, and the bots answer in the encrypted chats you invite them to.
+> - **Updates in one command.** `./stack update` moves your install to the newest release, and a menu bar app shows and controls the stack.
+>
+> Stacky is beta, and the part I am most excited about: it is the main topic of 0.5. [Read the 0.4.0 release notes](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0).
 
 ## What you get today
 
-- **Private family chat** with native iOS, Android, macOS, Windows and web apps (Matrix + Element X).
+famstack takes on the everyday pain of managing a family and closes the gaps I ran into myself, like keeping our memories.
+
+- **Documents you can ask about.** Photograph a letter and send it to the chat. The local AI files it in a document archive with OCR, and when you ask about it later, the answer cites the documents (Paperless-ngx).
 - **Photo library and mobile backup** that replaces iCloud Photos for the whole family (Immich).
-- **Document archive with OCR** that you photograph from your phone and the local AI files for you (Paperless-ngx).
-- **Your family wiki**: an Obsidian-compatible second brain, generated from the documents, notes, and voice memos you file (memory).
 - **Your family diary**: voice messages, photos and notes from the Memories room, read back month by month in your own words. Correct any memory by replying to its card in the chat (memory).
-- **Household lists in the chat**: the shopping list, packing lists, a topic's to-dos. Tell Stacky, the family agent, by text, by voice or with a photo of a handwritten list (memory + agent, beta).
-- **Local AI engine** on Apple Metal GPU: voice transcription, text-to-speech, document classification (oMLX + Whisper + Piper).
-- **A bot runtime in chat** that automates the small stuff: filing receipts, transcribing voice memos, status reports.
-- **Email into the family brain**: point a mailbox at a chat room and new mail (with its attachments) lands there for the archivist to file, newsletters and marketing filtered out (IMAP, read-only, private).
+- **Your family wiki**: written from the documents, notes and voice memos you file, kept as plain Markdown files you can open in Obsidian (memory).
+- **Stacky, the family agent** (beta): keeps the shopping list, the packing list and the calendar, and answers from what the family has filed. By text or by voice (agent).
+- **Private family chat** with native iOS, Android, macOS, Windows and web apps (Matrix + Element X). Use it for more than chat: to share files and notes between your own devices.
+- **Local AI** on the Mac's GPU, or on a bigger Mac elsewhere in the house: voice transcription, text-to-speech and the language model (oMLX + Whisper + Piper).
+- **Bots in the chat** that do the small stuff: filing receipts, transcribing voice memos, status reports.
+- **Email into the family memory**: point a mailbox at a chat room and new family mail (with its attachments) lands there for the archivist to file, Stacky to answer and in your wiki to showgo. newsletters and marketing filtered out (IMAP, read-only, private).
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.
 
 <p align="center">
@@ -80,7 +84,7 @@ Everything runs on your Mac. Nothing leaves your network unless you tell it to.
 
 ## Quick Start
 
-You need a Mac with Apple Silicon (M1+), [Homebrew](https://brew.sh), and [OrbStack](https://orbstack.dev) (or Docker Desktop). The installer guides you through anything that's missing. If your `python3` is Apple's Command Line Tools build (3.9), run `brew install python` first.
+You need a Mac with Apple Silicon (M1+), [Homebrew](https://brew.sh), and [OrbStack](https://orbstack.dev) (or Docker Desktop). 16 GB of memory runs it with a smaller model: fine in English, weaker in German, and tight with voice on. 32 GB gives the best answers. The installer guides you through anything that's missing. If your `python3` is Apple's Command Line Tools build (3.9), run `brew install python` first.
 
 ```bash
 git clone https://github.com/famstack-dev/famstack.git && cd famstack
@@ -98,7 +102,7 @@ The installer checks dependencies, sets up your data directory, and gets the ner
 ./stack status         # check everything is running
 ```
 
-Mac too small for local models? Skip `./stack up ai` and point the stack at an AI server on another machine or a hosted provider instead: `./stack ai switch <url>` (see the [Admin Guide](docs/admin-guide.md#ai-on-another-machine-or-a-hosted-provider)).
+Your  Mac is too small for local models? Skip `./stack up ai` and point the stack at an AI server on another machine or a hosted provider instead: `./stack ai switch <url>` (see the [Admin Guide](docs/admin-guide.md#ai-on-another-machine-or-a-hosted-provider)).
 
 Twenty minutes from clone to a working family server. The [Admin Guide](docs/admin-guide.md) covers install, stacklets, operations, and troubleshooting in detail. The [User Guide](docs/user-guide.md) is the page you send your family: what to type in chat and what comes back.
 
@@ -129,14 +133,14 @@ No Linux experience required, no Docker knowledge assumed. If you can run a shel
 I was manually copying photos off my phone with a cable. Like a caveman. 
 Twenty years of automating things for businesses as a veteran software engineer, and my own family was running on drawers full of paper and a 15-year-old Synology NAS that hadn't seen an update in years.
 
-Four weeks ago we started recording our kids' voices in a family chat room. 
+In March 2026 we started recording our kids' voices in a family chat room. 
 Tiny moments, funny things they said, bedtime stories in their own words. 
 We wished we'd started with our first son. Those memories would be gone forever. Now they're not.
 They live on our own server, transcribed, searchable.
 
 That's what this is. An open source stack that puts photos, documents, family memories and local AI on a Mac in your home. 
 Private, no subscriptions, and no cloud provider that might shut down next year.
-But it's not just archiving. The goal is a family operating system: something that remembers, organizes, and eventually runs the boring parts of everyday life for you. Think JARVIS, built one stacklet and bot at a time.
+But it's not just archiving. The goal is an assistant for the family: something that remembers, organizes, and eventually runs the boring parts of everyday life for you. Think JARVIS, built one stacklet and bot at a time. Stacky, the family agent, is the first step.
 
 [Read more on the website](https://famstack.dev/why/).
 
@@ -159,7 +163,7 @@ famstack/
     └── photos/
         ├── stacklet.toml    Manifest: identity, env config, health check
         ├── docker-compose.yml
-        ├── setup.sh         First-run setup (idempotent)
+        ├── hooks/           Lifecycle hooks: install, start, stop (idempotent)
         ├── caddy.snippet    Reverse proxy config
         └── .env             Auto-generated by 'stack up'
 ```
@@ -173,7 +177,7 @@ No manual `.env` editing. `stack up` generates it every time from three sources:
 
 1. **stack.toml** for paths, domain, timezone
 2. **stacklet.toml `[env.defaults]`** for templates like `{data_dir}/photos/library`
-3. **.famstack/secrets.toml** for auto-generated passwords (created once, reused on re-up)
+3. **.stack/secrets.toml** for auto-generated passwords (created once, reused on re-up)
 
 Change something in `stack.toml`, run `stack up` again, and the `.env` regenerates to match.
 
@@ -212,7 +216,7 @@ Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklet
 
 ## Roadmap
 
-Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). [`v0.4.0`](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) adds household lists, the family agent, backups and one-command updates.
+Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). [`v0.4.0`](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) adds the family diary, household lists, the family agent, encrypted chats with the bots, backups and one-command updates. 0.5 is about Stacky as the family's assistant and an even better family wiki.
 
 | Feature                                                  | Status                       |
 |----------------------------------------------------------|------------------------------|
@@ -224,15 +228,18 @@ Document filing, photo backup, family chat with voice memos, and the family memo
 | Private Git server (Forgejo)                             | :white_check_mark: Live      |
 | Family wiki generated from your documents (memory)       | :white_check_mark: Live      |
 | Family diary from the Memories room (memory)             | :white_check_mark: Live      |
+| Family memory bank (voice + photos matched by day)       | :white_check_mark: Live      |
 | Document Q&A with citations, in chat                     | :white_check_mark: Live      |
 | Voice memos become searchable notes                      | :white_check_mark: Live      |
 | Topic rooms: the room name is the filing system          | :white_check_mark: Live      |
+| Bots answer in encrypted chats                           | :white_check_mark: Live      |
 | Household lists, kept by the family agent (agent)        | :construction: Beta          |
 | Backups (backup stacklet, append-only to attached disk)  | :construction: Beta          |
 | Nice domains setup e.g. `https://photos.home.domain.tld` | :construction: Beta          |
+| Stacky as the family's assistant (0.5)                   | :construction: Beta                  |
+| An even better family wiki (0.5)                         | :dart: Next                  |
 | Bot interaction patterns (how a family talks to bots)    | :dart: Next                  |
-| Dream cycle (vault consolidation, richer wiki pages)     | :dart: Planned               |
-| Family memory bank (voice + photos matched by day)       | :dart: Planned               |
+| Dream cycle (memory consolidation, richer wiki pages)    | :dart: Planned               |
 | Home Assistant                                           | :dart: Planned               |
 | Talk to your Mac                                         | :dart: Planned               |
 | Living room display (memories from this day, years ago)  | :dart: Planned               |
@@ -282,11 +289,11 @@ famstack is young and shaped by daily family usage. The most useful contribution
 
 - **Run it and report.** A fresh install on hardware I don't have is worth more than code. [Open an issue](https://github.com/famstack-dev/famstack/issues) with what broke.
 - **Build a stacklet.** [Creating a stacklet](docs/creating-stacklets.md) takes about 15 minutes. If it's useful for your family, it's probably useful for others.
-- **Tell me what's missing.** Join the [Discord](https://discord.gg/hfutdmmfBe) and tell me what your family would actually need.
+- **Tell me what's missing.** Start a [discussion](https://github.com/famstack-dev/famstack/discussions) or join the [Discord](https://discord.gg/hfutdmmfBe) and tell me what your family would actually need.
 
 ## License
 
-[AGPLv3](LICENSE) — Copyright 2026 [arthware.dev](https://arthware.dev)
+[AGPLv3](LICENSE), Copyright 2026 [arthware.dev](https://arthware.dev)
 
 ---
 
