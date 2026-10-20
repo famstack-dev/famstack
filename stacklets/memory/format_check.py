@@ -2,8 +2,9 @@
 
 Each finding is something a step of ADR-016's order removes: cards without
 a `card_id`, ids two files claim, links to a file the memory repo does not
-have, files that are no card type, tags that are no topic id and no keyword. The report empties as the steps land, so
-a memory that meets the format gives an empty one.
+have, files that are no card type, tags that are no topic id and no
+keyword, a `kind` outside its type's set. The report empties as the
+steps land, so a memory that meets the format gives an empty one.
 
     report = format_report(load_graph(vault))
     report["findings"]            # 0: nothing to fix
@@ -18,7 +19,7 @@ what needs fixing. It writes nothing.
 from __future__ import annotations
 
 from graph import Card, Graph, links_of, tags_of
-from stack.cards import CARD_TYPES, card_id_from
+from stack.cards import CARD_TYPES, card_id_from, kind_problem
 from stack.frontmatter import FrontmatterError, parse
 from stack.tags import is_tag
 
@@ -33,10 +34,12 @@ def format_report(graph: Graph) -> dict:
         "links_to_nothing": _links_to_nothing(graph, cards),
         "no_card_type": [f for f in map(_type_problem, cards) if f],
         "invalid_tags": _invalid_tags(graph, cards),
+        "wrong_kind": [f for f in map(_kind_problem, cards) if f],
     }
     report["findings"] = (sum(report["without_card_id"].values()) + len(report["shared_ids"])
                           + len(report["links_to_nothing"]) + len(report["no_card_type"])
-                          + sum(len(f["tags"]) for f in report["invalid_tags"]))
+                          + sum(len(f["tags"]) for f in report["invalid_tags"])
+                          + len(report["wrong_kind"]))
     return report
 
 
@@ -91,4 +94,15 @@ def _type_problem(card: Card) -> dict | None:
         return {"card": card.id, "path": card.path, "problem": "no type"}
     if kind not in CARD_TYPES:
         return {"card": card.id, "path": card.path, "problem": f"type {kind!r} is not a card type"}
+    return None
+
+
+def _kind_problem(card: Card) -> dict | None:
+    """A card whose `kind` is outside its type's set, or that needs one and
+    lacks it (ADR-017 §6, `stack.cards.kind_problem`); None for a card that
+    is fine. A file that is no card type is `_type_problem`'s."""
+    if str(card.meta.get("type") or "").strip() not in CARD_TYPES:
+        return None
+    if problem := kind_problem(card.path, card.meta):
+        return {"card": card.id, "path": card.path, "problem": problem}
     return None

@@ -30,7 +30,7 @@ const WORDS = {
     report: "Format", toFix: (n) => `${n} to fix`, nothingToFix: "Nothing to fix: the memory meets its format.",
     reportSub: (n) => `Where the memory does not meet its format yet, over all ${n} cards (as the admin).`,
     noCardId: "Without a card_id", sharedIds: "One id, several files",
-    deadLinks: "Links to nothing in the memory repo", noType: "Not a card type", notThere: "is not there",
+    deadLinks: "Links to nothing in the memory repo", noType: "Not a card type", wrongKind: "Wrong kind", notThere: "is not there",
     badTags: "Tags that are no topic id and no keyword",
   },
   de: {
@@ -51,7 +51,7 @@ const WORDS = {
     report: "Format", toFix: (n) => `${n} zu beheben`, nothingToFix: "Nichts zu beheben: das Gedächtnis hat sein Format.",
     reportSub: (n) => `Wo das Gedächtnis sein Format noch nicht hat, über alle ${n} Karten (als Admin).`,
     noCardId: "Ohne card_id", sharedIds: "Eine ID, mehrere Dateien",
-    deadLinks: "Verweise ins Leere", noType: "Keine Kartenart", notThere: "gibt es nicht",
+    deadLinks: "Verweise ins Leere", noType: "Keine Kartenart", wrongKind: "Falsche Variante", notThere: "gibt es nicht",
     badTags: "Schlagwörter, die weder Themen-ID noch Stichwort sind",
   },
 };
@@ -581,7 +581,9 @@ function reportElement(report) {
     section(T.noType, report.no_card_type.map((file) =>
       h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))),
     section(T.badTags, report.invalid_tags.map((card) =>
-      h("li", {}, opens(card.card, card.path), card.tags.map((t) => h("code", {}, t))))));
+      h("li", {}, opens(card.card, card.path), card.tags.map((t) => h("code", {}, t))))),
+    section(T.wrongKind, report.wrong_kind.map((file) =>
+      h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))));
 }
 
 // ── Finding cards ─────────────────────────────────────────────────────────
