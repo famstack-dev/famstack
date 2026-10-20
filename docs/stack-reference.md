@@ -433,6 +433,13 @@ await self._send(
 )
 ```
 
+`_send` sends `body_text` as markdown in `body` and as HTML in
+`formatted_body`, converted by `stack.matrix.html.matrix_html`, the one
+converter every bot uses (task lines show as ☐ and ☑). `stack messages
+send` on the host has no `markdown` package and keeps a standard-library
+subset (paragraphs whose newlines stay breaks, `- ` lists, bold, code)
+that a test holds to that converter's output.
+
 Both paths are best-effort; transport failures are logged but never
 raised. A downstream bot being offline must not take the emitter's
 main path with it.
@@ -557,6 +564,34 @@ ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
 links to a file the vault does not have; files with no frontmatter or a
 `type` that is no card type. It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
+
+**A card type has one renderer, and it writes markdown** (ADR-016 §4,
+`stack.card_render`). `render(fields, body)` gives a card's title, one
+line of the facts that matter for its type, and its body: the type's own
+sections, then the person's own words, quoted, then the replies. Each
+field appears once: the heading, the meta block under it (`> **About** …`)
+and `Person:` tags are not shown, people are shown by name (`names` maps
+an id to one), and due dates keep the form the files write
+(`📅 2026-10-15`). The briefing callout becomes its summary, its facts
+and its to-dos, the last under one label in the household's language.
+
+| Type | Line of facts | Body |
+|---|---|---|
+| `document` | date · people · correspondent · `document_type` · `[#<paperless_id>](<resource>)` | summary, facts, to-dos, the document's text |
+| `note`, `bookmark` | date · people (· the site, for a bookmark) | summary, facts, to-dos, media, then the paste and the caption, then the replies |
+| `diary` | date · people · 🎤, 📷, 🎬 or 📎 for the medium | summary, facts, media, quotes, then the transcript or text, then the replies |
+| `email` | date · people | each message under its heading (day and sender): summary, to-dos, its words |
+| `list` | `kind` | the description, then the items as the file writes them |
+| `person`, `correspondent`, `topic` | other names · `@account` | what the family wrote |
+| any other | none | the fields as a list, then the body |
+
+Every surface shows that markdown: `stack memory card` prints it (and
+returns it in `rendered` with `--json`), the cards API returns it in
+`rendered` and the card browser shows it as the card's body, and the
+archivist's filing, capture and diary replies and its search hits show
+the card through it. In the chat, `stack.card_render.for_chat` turns
+media into a link and a link into the memory repo into its label, since
+the chat shows neither. The renderer reads the file and never changes it.
 
 The cards API also serves the media archive (`<data>/memory/media`) at
 `/media/<path>`, for the photos and recordings cards embed
