@@ -2921,3 +2921,53 @@ def give_card_kinds(client: ForgejoClient, vault: Path, *,
     found = card_kinds_for(vault)
     message = f"cards: give {len(found.changes)} card(s) their kind"
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+
+
+# ─── The people of diary cards ───────────────────────────────────────────
+#
+# A diary card names its people by id like every other record (ADR-017
+# §4). The compile writes new cards that way; migration 0007 brings the
+# cards written before to the same shape. A diary card is signed with a
+# digest (`stack.digest`): the pass changes only cards the compile still
+# owns and signs them again, so they stay the compile's.
+
+def diary_people_by_id_for(vault: Path, *,
+                           shared_bucket: str = DEFAULT_SHARED_BUCKET) -> CardLinks:
+    """What names the people of the working copy `vault`'s diary cards by id.
+
+    In each diary card the compile still owns, a `persons` entry a
+    declared person goes by becomes their id and every `Person: <name>`
+    tag goes (`stack.card_links.persons_by_id`), and the card is signed
+    again. A name no one goes by stays as it is and is listed in `left`.
+    A card a person changed is left as it is, and listed when it still
+    holds names or `Person:` tags: it is theirs.
+    """
+    from stack.card_links import persons_by_id
+    from stack.digest import changed_by_hand, signed
+    from stack.people import load_people
+
+    people = load_people(vault, shared_bucket)
+    if not people:
+        raise RuntimeError(f"no person files under {shared_bucket}/people/ to name people by")
+    found = CardLinks()
+    for path, text in sorted(_markdown_files(vault).items()):
+        if _parse_frontmatter(text).get("type") != "diary":
+            continue
+        new, unknown = persons_by_id(text, people)
+        if new != text and changed_by_hand(text):
+            found.left.append(f"{path}: a person changed it, so it keeps its names and tags")
+            continue
+        found.left += [f"{path}: no declared person goes by {name!r}" for name in unknown]
+        if new != text:
+            found.changes[path] = signed(new)
+    return found
+
+
+def name_diary_people_by_id(client: ForgejoClient, vault: Path, *,
+                            shared_bucket: str = DEFAULT_SHARED_BUCKET,
+                            trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Name the people of `vault`'s diary cards by id (`diary_people_by_id_for`),
+    in one commit by the memory bot; what the pass found and the commit's sha."""
+    found = diary_people_by_id_for(vault, shared_bucket=shared_bucket)
+    message = f"cards: name people by id in {len(found.changes)} diary card(s)"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)

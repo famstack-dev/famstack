@@ -120,8 +120,9 @@ one-deep string lists per §2.
 Two person fields recur on records and mean different things:
 `persons` lists the household members the record belongs to, by
 person id (`homer`, the declared file's name; display names until
-migration `memory/0003`, and still on diary cards); a name no declared
-person goes by is left out and shown as a plain name in the body.
+migration `memory/0003`, on diary cards until `memory/0007`); a name no
+declared person goes by is left out and shown as a plain name in the
+body (a diary card logs it instead).
 Records carry no `Person: <name>` tags. `mentions` lists the people outside the household it
 names, each by the most specific name the record gives, or a
 description through a member when it gives none ("Marge's mother").
@@ -201,9 +202,9 @@ again on every compile, applied to the card, and recorded in the vault
 commit (`correct: <title>`, authored by whoever wrote it), not on the
 card; its event id joins `event_ids`.
 | `description` | O | one sentence. |
-| `persons` | O | list. |
+| `persons` | O | list; person ids, as on every record. A diary card a person changed before `memory/0007` may still hold first names. |
 | `mentions` | O | list. |
-| `tags` | O | list; still topic labels and `Person:` tags (not migrated, see above). |
+| `tags` | O | list; topic labels, not yet ids (see above); no `Person:` tags. |
 | `filed_by` | O | Matrix localpart of the sender. |
 | `addressee` | O | who the message is spoken to, as it names them; a correction can change it. |
 | `kind` | O | `text` \| `voice` \| `image` \| `video` \| `file`: what the entry was recorded as. Called `medium` until migration `memory/0006`. |

@@ -127,10 +127,21 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
 
     def test_a_card_about_margaret_is_about_maggie(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        _ontology, people, section, _lang = cli._vocabulary("family")
+        _ontology, people, section, _lang, _declared = cli._vocabulary("family")
         assert people["margaret"] == "Maggie"
         assert people["maggie simpson"] == "Maggie"
         assert "  - Maggie (Maggie Simpson, Margaret)" in section
+
+    def test_a_card_names_the_person_by_their_id(self, tmp_path, monkeypatch):
+        """ADR-017 §4: the card's `persons` holds Maggie's id, whatever name
+        the entry used for her."""
+        import diary_card
+
+        cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
+        ontology, people, _section, _lang, declared = cli._vocabulary("family")
+        read = diary_card.extraction_from({"persons": ["Margaret", "Homer"]}, ontology=ontology,
+                                          language="en", people=people, declared=declared, model="")
+        assert read.persons == ["maggie", "homer"] and read.unknown == []
 
 
 class TestTheWikiPagesTheDiaryReads:

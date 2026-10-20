@@ -46,7 +46,7 @@ BUCKET = "family"
 def _extraction(**kw) -> diary_card.Extraction:
     base = dict(
         title="Bart's report card", description="Marge tells Bart she is proud of him.",
-        persons=["Bart", "Marge"], tags=["Topic:School", "Person:Bart"],
+        persons=["bart", "marge"], tags=["Topic:School"],
         summary="Marge records a message for Bart about his report card.",
         facts=["Bart: helped the new student", "Caller: Principal Skinner"],
         quotes=[],
@@ -339,14 +339,18 @@ class TestAPersonsEditWins:
 # ── What a model read, held to the household's vocabulary ─────────────
 
 from stack.ontology import Ontology  # noqa: E402
+from stack.people import Person  # noqa: E402
 
 SEED_ONTOLOGY = Ontology.load(_REPO_ROOT / "stacklets" / "memory" / "seeds" / "ontology.toml")
 PEOPLE = {"bart": "Bart", "bartholomew": "Bart", "marge": "Marge", "homer": "Homer"}
+# The person files. Homer's is not written yet: the household knows his name,
+# but no declared person goes by it.
+DECLARED = [Person("bart", "Bart Simpson", ("Bartholomew",)), Person("marge", "Marge Simpson")]
 
 
 def _read(**raw) -> diary_card.Extraction:
     return diary_card.extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
-                                      people=PEOPLE, model="test-model")
+                                      people=PEOPLE, declared=DECLARED, model="test-model")
 
 
 class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
@@ -368,15 +372,20 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
 
     def test_a_misheard_name_does_not_become_a_person(self):
         """Whisper heard "Bark". The household has no Bark."""
-        assert _read(persons=["Bark", "Marge"]).persons == ["Marge"]
+        assert _read(persons=["Bark", "Marge"]).persons == ["marge"]
 
-    def test_a_person_is_named_by_their_canonical_name(self):
-        read = _read(persons=["Bartholomew", "bart"])
-        assert read.persons == ["Bart"]
-        assert read.tags == ["Person: Bart"]
+    def test_a_person_is_named_by_their_id(self):
+        """ADR-017 §4: `persons` holds ids, by whatever name the entry used."""
+        assert _read(persons=["Bartholomew", "bart"]).persons == ["bart"]
 
-    def test_topics_come_before_people_in_the_tags_like_on_a_document(self):
-        assert _read(topics=["school"], persons=["Marge"]).tags == ["Education", "Person: Marge"]
+    def test_a_name_no_declared_person_goes_by_stays_off_the_card_and_is_reported(self):
+        read = _read(persons=["Homer", "Bart"])
+        assert read.persons == ["bart"]
+        assert read.unknown == ["Homer"]
+
+    def test_people_are_not_tags_like_on_a_document(self):
+        """`persons` says who; a `Person: <name>` tag would say it twice."""
+        assert _read(topics=["school"], persons=["Marge"]).tags == ["Education"]
 
     def test_the_words_come_through_trimmed_and_facts_stay_facts(self):
         read = _read(title="  Report card ", summary="Marge  records\na message.",
@@ -407,7 +416,7 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
 
     def test_an_answer_that_is_not_an_object_reads_as_nothing(self):
         empty = diary_card.extraction_from(None, ontology=SEED_ONTOLOGY, language="en",
-                                           people=PEOPLE, model="m")
+                                           people=PEOPLE, declared=DECLARED, model="m")
         assert empty == diary_card.Extraction(model="m")
 
 
@@ -427,7 +436,7 @@ class TestTheSeedOntologyCoversFamilyLife:
     def test_the_household_language_names_them(self):
         read = diary_card.extraction_from(
             {"topics": ["Konzert", "Geburtstag"]}, ontology=SEED_ONTOLOGY,
-            language="de", people=PEOPLE, model="")
+            language="de", people=PEOPLE, declared=DECLARED, model="")
         assert read.tags == ["Musik", "Feier"]
 
     def test_the_family_life_topics_share_no_word_with_anything_else(self):

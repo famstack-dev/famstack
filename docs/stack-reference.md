@@ -555,8 +555,13 @@ document that moved since, found by its Paperless id) and `memory/0004`
 (the cards of correspondents and topics). The graph links a record to the
 people its `persons` names, by id or by any name they go by, and the wiki
 sends a link to a person's or a topic's card to that card's view
-(`quartz/plugins/vaultLinks.ts`). Diary cards still name people by first
-name and tag them: their text is signed with a digest.
+(`quartz/plugins/vaultLinks.ts`). A diary card names its people by id the
+same way and carries no `Person:` tags: the diary compile resolves the
+names the model read to declared people (`stack.card_links.About`) and
+leaves a name nobody goes by off the card, logged. `memory/0007` brought
+the diary cards the compile still owned to that shape and signed them
+again (`stack.card_links.persons_by_id`); a diary card a person changed
+kept its names.
 
 **A card tags a topic by its id** (ADR-017 §4). `tags` holds the
 ontology's topic ids (`medical`) and keywords, lowercase with hyphens

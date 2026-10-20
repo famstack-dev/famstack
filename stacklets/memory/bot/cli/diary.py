@@ -939,6 +939,7 @@ def _sure_quotes(quotes, event_ids) -> list[str]:
 
 
 async def _extract_all(entries, llm, cache, *, ontology, people: dict,
+                       declared: list[DeclaredPerson] | None,
                        vocabulary: str, people_section: str,
                        language_code: str, force: bool = False) -> list:
     """What a model reads out of each entry, cached per entry.
@@ -982,7 +983,8 @@ async def _extract_all(entries, llm, cache, *, ontology, people: dict,
                 cache.save()
         extraction = diary_card.extraction_from(
             raw, ontology=ontology, language=language_code, people=people,
-            model=model)
+            declared=declared, model=model)
+        _report_unknown(entry_id, extraction)
         out.append(diary_card.Extraction(**{
             **extraction.__dict__,
             "quotes": _sure_quotes(extraction.quotes, entry.event_ids)}))
@@ -1293,9 +1295,9 @@ async def run(llm, argv: list[str]) -> int:
     _err(f"{len(entries)} diary entr{'y' if len(entries) == 1 else 'ies'}")
 
     # ── Cards: one record per entry, in the vault ──
-    ontology, people, people_section, language_code = _vocabulary(bucket)
+    ontology, people, people_section, language_code, declared = _vocabulary(bucket)
     extractions = await _extract_all(
-        entries, llm, extractions_cache, ontology=ontology, people=people,
+        entries, llm, extractions_cache, ontology=ontology, people=people, declared=declared,
         vocabulary=ontology.classifier_prompt_section(language_code),
         people_section=people_section, language_code=language_code,
         force=rebuild)
@@ -1352,7 +1354,8 @@ async def run(llm, argv: list[str]) -> int:
 def _vocabulary(bucket: str):
     """What the model is offered and held to: the ontology, the family's
     names (canonical form by every known name), the family block for the
-    prompt, and the household language code."""
+    prompt, the household language code, and the declared people the
+    names resolve to ids through (None until their files exist)."""
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
     language_code = (os.environ.get("LANGUAGE") or "en").strip().lower()[:2]
     ontology = get_ontology(vault_dir if vault_dir.is_dir() else None)
@@ -1370,7 +1373,13 @@ def _vocabulary(bucket: str):
         section = persons_prompt_section(persons) + "".join(f"\n  - {n}" for n in others)
     else:
         section = "Family members: " + ", ".join(others)
-    return ontology, people, section, language_code
+    return ontology, people, section, language_code, declared
+
+
+def _report_unknown(entry_id: str, extraction) -> None:
+    """Name each household name no declared person goes by: it stays off the card."""
+    for name in extraction.unknown:
+        _err(f"  {entry_id}: no declared person goes by {name!r}, left off the card")
 
 
 def _mirror() -> None:
@@ -1585,11 +1594,13 @@ the correction's own words such as "the kids"), otherwise null.
 """
 
 
-def _card_prompt(card) -> str:
+def _card_prompt(card, declared: list[DeclaredPerson] | None) -> str:
+    """The card as the correction prompt shows it: its people by name, not by id."""
+    names = {p.id: p.first_name for p in declared or []}
     lines = [f"Title: {card.title}", f"Date: {card.on.isoformat()}",
              f"Spoken to: {card.addressee or 'no one in particular'}",
              f"Description: {card.description}",
-             f"People: {', '.join(card.persons)}",
+             f"People: {', '.join(names.get(p) or p for p in card.persons)}",
              f"Topics: {', '.join(t for t in card.tags if not t.startswith('Person: '))}",
              f"Summary: {card.summary}"]
     lines += ["Facts:"] + [f"- {f}" for f in card.facts]
@@ -1650,10 +1661,10 @@ async def correct(llm, argv: list[str]) -> int:
                           "changed": False}, ensure_ascii=False))
         return 0
 
-    ontology, people, people_section, language_code = _vocabulary(bucket)
+    ontology, people, people_section, language_code, declared = _vocabulary(bucket)
     prompt = _CORRECT_PROMPT.format(
         vocabulary=ontology.classifier_prompt_section(language_code),
-        people=people_section, card=_card_prompt(card),
+        people=people_section, card=_card_prompt(card, declared),
         words=_words_prompt(card), who=by.title(), correction=words,
         language=_household_language())
     try:
@@ -1665,7 +1676,8 @@ async def correct(llm, argv: list[str]) -> int:
         return 1
     extraction = diary_card.extraction_from(
         raw, ontology=ontology, language=language_code, people=people,
-        model=os.environ.get("AI_DEFAULT_MODEL", ""))
+        declared=declared, model=os.environ.get("AI_DEFAULT_MODEL", ""))
+    _report_unknown(card.entry_id, extraction)
     extraction = diary_card.Extraction(**{
         **extraction.__dict__,
         "quotes": _sure_quotes(extraction.quotes, card.event_ids)})

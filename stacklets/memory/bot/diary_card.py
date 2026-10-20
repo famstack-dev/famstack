@@ -33,11 +33,13 @@ from pathlib import Path
 
 import diary
 from stack.briefing import read_briefing, render_briefing
+from stack.card_links import About
 from stack.cards import CARD_ID, card_id_from, new_card_id
 from stack.digest import changed_by_hand, digest_of, signed
 from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
 from stack.media import safe_name
+from stack.people import Person
 
 DIARY_TYPE = "diary"
 ENTRIES_DIR = "entries"
@@ -71,6 +73,9 @@ class Extraction:
     # Whom the entry is spoken to, as a correction states it. Only
     # `correct` uses it; a first reading takes the addressee from the room.
     addressee: str = ""
+    # Household names the model gave that no declared person goes by:
+    # kept off `persons`, for the caller to report.
+    unknown: list[str] = field(default_factory=list)
 
 
 _MAX_QUOTES = 3
@@ -131,23 +136,26 @@ def _unique(values: list[str]) -> list[str]:
     return out
 
 
-def extraction_from(raw, *, ontology, language: str,
-                    people: "dict[str, str]", model: str) -> Extraction:
+def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
+                    declared: list[Person] | None, model: str) -> Extraction:
     """A model's answer about one entry, held to the household's vocabulary.
 
     `people` maps every known name, lowercased, to its canonical form
     (a person page's canonical name and synonyms). A name outside it is
-    dropped: a mishearing must not become a family member. Topics go
-    through the ontology's own canonicalisation, which also rejects a
-    document type offered as a topic, and an unknown topic is dropped so
-    the diary tags with the same vocabulary as documents. Tags are the
-    topics, then `Person: <name>` for each person, as on a document.
+    dropped: a mishearing must not become a family member. `persons`
+    holds the id of the declared person (`declared`, `stack.people`) each
+    canonical name means (ADR-017 §4); a name no declared person goes by
+    stays off the card and is listed in `unknown`. Topics go through the
+    ontology's own canonicalisation, which also rejects a document type
+    offered as a topic, and an unknown topic is dropped so the diary tags
+    with the same vocabulary as documents. Tags are the topics: `persons`
+    says who.
     """
     if not isinstance(raw, dict):
         return Extraction(model=model)
 
-    persons = _unique([people[n.lower()] for n in _strings(raw.get("persons"))
-                       if n.lower() in people])
+    about = About.of([people[n.lower()] for n in _strings(raw.get("persons"))
+                      if n.lower() in people], declared)
     topics: list[str] = []
     for offered in _strings(raw.get("topics")):
         resolved = ontology.canonicalize_topic(offered, language)
@@ -162,8 +170,8 @@ def extraction_from(raw, *, ontology, language: str,
     return Extraction(
         title=text("title"),
         description=text("description"),
-        persons=persons,
-        tags=[*topics, *(f"Person: {p}" for p in persons)],
+        persons=about.ids,
+        tags=topics,
         summary=text("summary"),
         facts=[f for f in (_LIST_MARKER.sub("", f) for f in _strings(raw.get("facts")))
                if f and not _kind_only(f)],
@@ -171,6 +179,7 @@ def extraction_from(raw, *, ontology, language: str,
         model=model,
         date=_iso_day(raw.get("date")),
         addressee=_addressee(raw.get("addressee"), people),
+        unknown=about.unknown,
     )
 
 
