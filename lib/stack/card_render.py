@@ -231,7 +231,8 @@ def _captured_layout(body: str, card: _Card) -> str:
     blocks, replies = [rest], []
     for heading, lines in sections:
         if heading in _WORDS:
-            own.append(_quoted(lines))
+            if _trimmed(lines).strip() != _text(card.fields, "title"):
+                own.append(_quoted(lines))
         elif heading == _REPLIES:
             replies.append(_by_name(lines, card.names))
         elif heading == _QUOTES:

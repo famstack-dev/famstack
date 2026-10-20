@@ -149,6 +149,15 @@ Brushes and paper Marge wants for the next trip.
 """
 
 
+def test_a_caption_that_only_repeats_the_title_is_shown_once():
+    """A capture whose message was only a caption files it as the title too;
+    the title is a field, so it is not repeated at the end of the card."""
+    note = NOTE.replace("## Caption\n\nfor next time", "## Caption\n\nArt supplies for next time")
+    shown = _shown(note)
+    assert shown.count("Art supplies for next time") == 1
+    assert "> two round brushes" in shown
+
+
 def test_an_upload_not_shown_in_the_page_stays_a_link_to_the_file():
     """A PDF is not embedded; the meta block's file link is then the only
     way to it, and it is no field, so it stays."""
@@ -387,7 +396,7 @@ def test_a_person_nobody_declared_is_shown_as_written():
     assert shown.facts == "Apu, Ned Flanders"
 
 
-def test_the_to_do_label_is_in_the_households_language():
+def test_the_to_do_label_is_in_the_instances_language():
     assert "**Zu erledigen**" in _shown(DOCUMENT, language="de")
 
 
