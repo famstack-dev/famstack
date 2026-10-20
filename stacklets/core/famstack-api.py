@@ -203,6 +203,19 @@ def _with_exit(text, code):
     return f"{text}{EXIT_MARKER} {code}\n"
 
 
+# Options that name a path on the host. This API runs on the host, and the
+# agent's lines are written by a model that reads email and web pages, so a
+# path would let it read, or file into the memory, any file on the Mac.
+HOST_PATH_OPTIONS = {"--vault", "--file"}
+# Commands whose arguments are a path on the host, whoever allowed them.
+HOST_PATH_COMMANDS = [["messages", "upload"]]
+
+
+def _names_a_host_path(args):
+    return (any(a.split("=", 1)[0] in HOST_PATH_OPTIONS for a in args)
+            or any(args[:len(c)] == c for c in HOST_PATH_COMMANDS))
+
+
 def handle_plaintext(line):
     """Run one allowlisted `stack` command in the CLI's text mode.
 
@@ -221,6 +234,9 @@ def handle_plaintext(line):
         return _with_exit(f"error: could not parse command ({e})\n", 2)
     if not args:
         return _with_exit("error: empty command\n", 2)
+    if _names_a_host_path(args):
+        return _with_exit("error: a path on the host is not allowed from the agent "
+                          "(--vault, --file, messages upload)\n", 126)
     domain_allow = _domain_allow()
     if not any(args[:len(p)] == p for p in domain_allow):
         allowed = ", ".join(" ".join(p) for p in domain_allow)
