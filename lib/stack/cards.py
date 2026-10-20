@@ -192,6 +192,13 @@ CARD_TYPES = frozenset({
     "document", "note", "bookmark", "email", "diary", "list", "person", "correspondent", "topic",
 })
 
+# The fixed variants of a card type, `kind`, checked like an enum (ADR-017
+# §6). A card without one is the first. A type not named here has none.
+CARD_KINDS: dict[str, tuple[str, ...]] = {
+    "diary": ("text", "voice", "image", "video", "file"),
+    "list": ("todo", "checklist", "calendar", "archive"),
+}
+
 # What a file that says nothing of what it is was written as: a note by hand.
 HAND_WRITTEN = "note"
 
@@ -364,6 +371,32 @@ def with_card_id(text: str, path: str, card_id: str = "", *,
     after_type = _TYPE_LINE.search(head)
     at = after_type.end() if after_type else len(_OPENING)
     return head[:at] + line + head[at:] + rest
+
+
+def kind_problem(path: str, fields: Mapping[str, object]) -> str:
+    """What is wrong with the `kind` of the card at vault path `path`; "" for nothing.
+
+    A `kind` outside its type's set (`CARD_KINDS`), and a card that needs
+    one and lacks it: a list's archive without `kind: archive` reads as a
+    to-do list, and a diary card that still says `medium` reads as text.
+
+    >>> kind_problem("family/lists/archive/termine/2026-10.md", {"type": "list"})
+    'a list archive without `kind: archive`'
+    >>> kind_problem("family/lists/termine.md", {"type": "list", "kind": "calendar"})
+    ''
+    """
+    card_type = str(fields.get("type") or "").strip()
+    kind = str(fields.get("kind") or "").strip()
+    kinds = CARD_KINDS.get(card_type, ())
+    if kind and kind not in kinds:
+        if not kinds:
+            return f"a {card_type} has no kind, it says `kind: {kind}`"
+        return f"`kind: {kind}` is not one of {', '.join(kinds)}"
+    if card_type == "list" and _ARCHIVE.search(path) and kind != "archive":
+        return "a list archive without `kind: archive`"
+    if card_type == "diary" and fields.get("medium"):
+        return "`medium` in place of `kind`"
+    return ""
 
 
 def _as_note(head: str, rest: str, path: str, fields: Mapping[str, object],

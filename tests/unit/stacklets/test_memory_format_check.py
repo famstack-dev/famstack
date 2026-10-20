@@ -185,7 +185,7 @@ class TestAMemoryThatMeetsTheFormat:
         report = _from_the_page(finished)
 
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
-                          "links_to_nothing": [], "no_card_type": [], "invalid_tags": [],
+                          "links_to_nothing": [], "no_card_type": [], "invalid_tags": [], "wrong_kind": [],
                           "findings": 0}
 
     def test_and_the_command_says_there_is_nothing_to_fix(self, finished, capsys):
@@ -193,6 +193,45 @@ class TestAMemoryThatMeetsTheFormat:
 
         assert "error" not in command
         assert "Nothing to fix" in capsys.readouterr().out
+
+
+class TestEveryKindIsOneOfItsTypes:
+    """ADR-017 §6: `kind` is a fixed variant per type, checked like an enum.
+    A list's archive says `kind: archive`, or a calendar's archive reads as
+    a to-do list; a diary card says what it was recorded as in `kind`."""
+
+    ARCHIVE = "family/lists/archive/termine/2026-09.md"
+    DIARY = "family/diary/entries/2026/03/2026-03-16-00c674191f.md"
+
+    def _report(self, tmp_path, cards: dict[str, str]) -> list[tuple[str, str]]:
+        m = Memory(tmp_path)
+        for path, text in cards.items():
+            m.write(path, text, by="marge", message="feat(memory): cards")
+        return [(f["path"], f["problem"]) for f in _from_the_page(m)["wrong_kind"]]
+
+    def test_cards_of_the_old_shape_are_listed(self, tmp_path):
+        assert self._report(tmp_path, {
+            self.ARCHIVE: "---\ntype: list\ncard_id: list-termine-2026-09\ntitle: Termine, 2026-09\n---\n",
+            self.DIARY: "---\ntype: diary\ncard_id: diary-3f9a0c1b2d\ntitle: Report card\nmedium: voice\n---\n",
+            "family/correspondents/krusty-burger.md":
+                "---\ntype: correspondent\ncard_id: correspondent-krusty-burger\nkind: correspondent\n---\n",
+            "family/lists/packliste.md": "---\ntype: list\ncard_id: list-packliste\ntitle: Pack\nkind: packing\n---\n",
+        }) == [
+            ("family/correspondents/krusty-burger.md", "a correspondent has no kind, it says `kind: correspondent`"),
+            (self.DIARY, "`medium` in place of `kind`"),
+            (self.ARCHIVE, "a list archive without `kind: archive`"),
+            ("family/lists/packliste.md", "`kind: packing` is not one of todo, checklist, calendar, archive"),
+        ]
+
+    def test_cards_of_the_new_shape_are_no_finding(self, tmp_path):
+        """A list without a kind is a to-do list and a diary card without one
+        is text: absent means the type's first kind."""
+        assert self._report(tmp_path, {
+            self.ARCHIVE: ("---\ntype: list\ncard_id: list-termine-2026-09\ntitle: Termine, 2026-09\n"
+                           "kind: archive\n---\n"),
+            self.DIARY: "---\ntype: diary\ncard_id: diary-3f9a0c1b2d\ntitle: Report card\nkind: voice\n---\n",
+            "family/lists/garage.md": "---\ntype: list\ncard_id: list-garage\ntitle: Garage\n---\n",
+        }) == []
 
 
 class TestARecordLinksTheCardsItNames:
