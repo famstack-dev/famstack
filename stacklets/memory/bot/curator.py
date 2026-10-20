@@ -1301,7 +1301,7 @@ def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucke
     fonts = Path(__file__).resolve().parents[1] / "quartz" / "static" / "fonts"
     try:
         serve(CardsAPI(brain=brain_dir, vault=vault_dir, fonts=fonts, media=media_dir,
-                       shared_bucket=shared_bucket),
+                       shared_bucket=shared_bucket, language=os.environ.get("LANGUAGE", "en")),
               on_push=lambda: request_push(state_dir))
         logger.info("[curator] cards API on :{}", PORT)
     except OSError as e:

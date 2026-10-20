@@ -1,4 +1,4 @@
-"""Search-result formatters — memory and Paperless hits as Matrix blocks.
+"""Search-result formatters: memory and Paperless hits as Matrix blocks.
 
 The archivist calls these once per hit when assembling a `_handle_search`
 reply. They live here so the bot stays focused on event-loop work and
@@ -6,25 +6,27 @@ so the formatting is easy to unit-test against canned hit dicts.
 
 Visual contract (one hit per block):
 
-    1. [Title](https://forgejo.example/...) — 2026-02-10 · Homer
+    1. [Title](https://home.example/go/note-7f3a9c21e4) · 2026-02-10 · Homer
        _Brummen aus dem linken Hinterrad ab 60 km/h_
 
-Title carries the source link when a public URL is configured;
+A memory hit is a card, so its title and its line of facts come from the
+renderer every surface uses (`stack.card_render`, ADR-016 §4): the same
+date, people by name, correspondent and kind as the card shows in the
+card browser. Title carries the card's link when one can be built;
 otherwise the title is bolded and the relative path appears in
 backticks on the second line. The excerpt is rendered as a quiet
 italic line so a fast scan picks up the relevance signal without
 the path noise.
 
-The order of metadata (date · persons) mirrors how the family
-talks about documents: when something happened, then who it
-involved. Paperless hits get (date · #doc_id) for the same reason
--- date first, identifier second.
+Paperless hits get (date · #doc_id): date first, identifier second.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Optional
 
+from stack.card_render import for_chat, render
 from stack.links import go_card, go_docs, public
 
 
@@ -95,20 +97,22 @@ def format_memory_hit(
     code_public_url: str = "",
     mirror_org: str = "family",
     link_base_url: str = "",
+    names: Mapping[str, str] | None = None,
 ) -> str:
     """Render one memory hit as a Matrix-markdown block.
 
     Output is 1-3 lines depending on what the hit carries:
-      * title line (always; numbered, linked when possible)
+      * title line (always; numbered, linked when possible), with the
+        card's line of facts; `names` gives each person id the name
+        to show (`{"homer": "Homer"}`)
       * `path` line (only when no public URL -- the user still
         needs to know where to find the doc)
       * italic excerpt (only when the search hit produced one)
     """
-    title = (r.get("title") or r.get("rel") or "").strip()
+    card = render(r.get("fields") or {}, "", names=names)
     rel = r.get("rel", "")
-    date = r.get("date") or ""
-    persons = ", ".join(r.get("persons") or [])
-    meta = " · ".join(p for p in [date, persons] if p)
+    title = (card.title or r.get("title") or rel or "").strip()
+    meta = for_chat(card.facts)
 
     # Escape the dot after the number so python-markdown doesn't see
     # this as an ordered-list item. We join hits with blank lines for
@@ -124,7 +128,7 @@ def format_memory_hit(
     else:
         head = f"{n}\\. **{title}**"
     if meta:
-        head += f" — {meta}"
+        head += f" · {meta}"
 
     lines = [head]
     if not url and rel:

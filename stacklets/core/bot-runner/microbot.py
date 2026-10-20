@@ -57,7 +57,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 import aiohttp
-import markdown
 from loguru import logger
 from nio import (
     AsyncClient,
@@ -75,6 +74,7 @@ import voice
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 from stack.matrix.device import Device
+from stack.matrix.html import matrix_html
 from stack.matrix.media import Media
 from stack.users import TECH_ADMIN_USERNAME
 from stack.name_trigger import addressed_by_name, strip_address
@@ -639,10 +639,11 @@ class MicroBot:
 
         The single formatted-reply path for every bot. ``text`` is sent
         verbatim as the plaintext ``body`` and rendered to
-        ``formatted_body`` for rich clients (tables + fenced code
-        enabled). ``reply_to`` quotes a prior event; ``thread_root_event_id``
-        posts it as an ``m.thread`` reply under that root (e.g. an email's
-        full body under its card); ``metadata`` merges extra top-level keys
+        ``formatted_body`` for rich clients by ``stack.matrix.html``, the
+        one converter every bot uses (tables and fenced code enabled).
+        ``reply_to`` quotes a prior event; ``thread_root_event_id`` posts
+        it as an ``m.thread`` reply under that root (e.g. an email's full
+        body under its card); ``metadata`` merges extra top-level keys
         into the content dict.
 
         Matrix content is a JSON object, so custom keys (e.g.
@@ -656,16 +657,15 @@ class MicroBot:
         see a new bot message, so a long handler that posts an
         intermediate status would otherwise run silently afterwards.
 
-        ``line_breaks`` adds the ``nl2br`` markdown extension so every newline
-        becomes a ``<br>`` — chat behaviour (Slack/WhatsApp), needed for a
-        pasted email body where single newlines would otherwise collapse.
+        ``line_breaks`` keeps every newline as a ``<br>``, as a chat does
+        (Slack, WhatsApp): a pasted email body needs it, where single
+        newlines would otherwise collapse.
 
         ``msgtype`` is ``m.text`` for anything people read as a normal
         answer; the framework's own error notices pass ``m.notice`` so
         Element renders them in the muted bot styling.
         """
-        exts = ["tables", "fenced_code"] + (["nl2br"] if line_breaks else [])
-        html = markdown.markdown(text, extensions=exts)
+        html = matrix_html(text, line_breaks=line_breaks)
         content: dict = {
             "msgtype": msgtype,
             "body": text,
@@ -832,7 +832,7 @@ class MicroBot:
         if fields:
             source_block.update(fields)
 
-        html = markdown.markdown(body, extensions=["tables", "fenced_code"])
+        html = matrix_html(body)
         content: dict = {
             "msgtype": "m.text",
             "body": body,

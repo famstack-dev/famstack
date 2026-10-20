@@ -1,10 +1,15 @@
-"""Chat-reply rendering — pure layout, given a translator.
+"""Chat-reply rendering: pure layout, given a translator.
 
 reply_presenter takes a `t(key, **kwargs)` callable and the
 classification/enrichment data and returns the text the archivist
 sends. Keeping it pure (no Matrix, no messages.yml) means we can pin
 the layout AND prove translations flow through, in both languages,
-without booting a bot. Supersedes the English-hardcoded classify_format.
+without booting a bot.
+
+What was filed is shown as its card, through the renderer the card
+browser and the agent use (ADR-016 §4): the title once, one line of
+facts, then the summary, facts and to-dos. The bot sends it as markdown
+`body` and as HTML `formatted_body`.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from pathlib import Path
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from reply_presenter import (  # noqa: E402
@@ -21,6 +27,7 @@ from reply_presenter import (  # noqa: E402
     render_filing_reply,
     render_reprocessed_reply,
 )
+from stack.matrix.html import matrix_html  # noqa: E402
 
 
 def _en(key, **kw):
@@ -60,7 +67,6 @@ class TestRenderFilingReply:
             _en,
             display_title="Duff Insurance - Kfz-Versicherung",
             doc_id=10,
-            resolved_topics=["Insurance"],
             resolved_persons=["Homer"],
             resolved_type="Invoice",
             resolved_correspondent="Duff Insurance",
@@ -70,47 +76,76 @@ class TestRenderFilingReply:
             reformat_failed=False,
             link="http://paperless/documents/10/details",
         )
-        assert "✅ Filed: Duff Insurance - Kfz-Versicherung (#10)" in out
-        assert "Insurance | Homer | Invoice | Duff Insurance | 2026-03-15" in out
-        assert "Annual car insurance renewal at Duff Insurance." in out
-        assert "- EUR 340.00/year" in out
-        assert "Pay invoice (due 2026-03-15)" in out
-        assert "File copy" in out and "(due )" not in out
-        assert "🆕 New in Paperless: Insurance" in out
-        assert "http://paperless/documents/10/details" in out
+        assert out == """\
+✅ Filed: Duff Insurance - Kfz-Versicherung (#10)
+
+2026-03-15 · Homer · Duff Insurance · Invoice
+
+Annual car insurance renewal at Duff Insurance.
+
+- EUR 340.00/year
+- Contract KFZ-2026
+
+**To do**
+
+- Pay invoice 📅 2026-03-15
+- File copy
+
+🆕 New in Paperless: Insurance
+
+http://paperless/documents/10/details"""
+
+    def test_a_client_without_html_reads_the_markdown_and_one_with_html_the_same_card(self):
+        """The reply goes out as `body` (this markdown) and `formatted_body`
+        (its HTML, `stack.matrix.html`). The title is the first line only;
+        the facts and the to-dos are their own blocks in both."""
+        out = render_filing_reply(
+            _en, display_title="Duff Insurance - Kfz-Versicherung", doc_id=10,
+            resolved_persons=["Homer"], resolved_type="Invoice",
+            resolved_correspondent="Duff Insurance", date_applied="2026-03-15",
+            classification=FULL, created_new=[], reformat_failed=False, link="",
+        )
+        html = matrix_html(out)
+
+        assert out.count("Duff Insurance - Kfz-Versicherung") == 1
+        assert "<p>2026-03-15 · Homer · Duff Insurance · Invoice</p>" in html
+        assert "<li>EUR 340.00/year</li>" in html
+        assert "<p><strong>To do</strong></p>\n<ul>\n<li>Pay invoice 📅 2026-03-15</li>" in html
 
     def test_translator_drives_language(self):
         out = render_filing_reply(
             _de, display_title="Rechnung", doc_id=7,
-            resolved_topics=[], resolved_persons=[], resolved_type=None,
+            resolved_persons=[], resolved_type=None,
             resolved_correspondent=None, date_applied=None,
-            classification={}, created_new=[], reformat_failed=False, link="",
+            classification={"action_items": [{"action": "Bezahlen", "due": ""}]},
+            created_new=[], reformat_failed=False, link="", language="de",
         )
         assert "✅ Abgelegt: Rechnung (#7)" in out
+        assert "**Zu erledigen**" in out
 
-    def test_no_meta_line_when_empty(self):
+    def test_a_filing_with_nothing_known_is_its_title_line_alone(self):
         out = render_filing_reply(
             _en, display_title="x", doc_id=1,
-            resolved_topics=[], resolved_persons=[], resolved_type=None,
+            resolved_persons=[], resolved_type=None,
             resolved_correspondent=None, date_applied=None,
             classification={}, created_new=[], reformat_failed=False, link="",
         )
-        assert " | " not in out
+        assert out == "✅ Filed: x (#1)"
 
     def test_facts_capped_at_five(self):
         out = render_filing_reply(
             _en, display_title="x", doc_id=1,
-            resolved_topics=[], resolved_persons=[], resolved_type=None,
+            resolved_persons=[], resolved_type=None,
             resolved_correspondent=None, date_applied=None,
             classification={"facts": [f"f{i}" for i in range(10)]},
             created_new=[], reformat_failed=False, link="",
         )
-        assert out.count("  - f") == 5
+        assert out.count("- f") == 5
 
     def test_actions_capped_at_three(self):
         out = render_filing_reply(
             _en, display_title="x", doc_id=1,
-            resolved_topics=[], resolved_persons=[], resolved_type=None,
+            resolved_persons=[], resolved_type=None,
             resolved_correspondent=None, date_applied=None,
             classification={"action_items": [
                 {"action": f"a{i}", "due": ""} for i in range(10)
@@ -122,7 +157,7 @@ class TestRenderFilingReply:
     def test_reformat_failed_notice(self):
         out = render_filing_reply(
             _en, display_title="x", doc_id=1,
-            resolved_topics=[], resolved_persons=[], resolved_type=None,
+            resolved_persons=[], resolved_type=None,
             resolved_correspondent=None, date_applied=None,
             classification={}, created_new=[], reformat_failed=True, link="",
         )
@@ -131,7 +166,7 @@ class TestRenderFilingReply:
     def test_link_omitted_when_empty(self):
         out = render_filing_reply(
             _en, display_title="x", doc_id=1,
-            resolved_topics=[], resolved_persons=[], resolved_type=None,
+            resolved_persons=[], resolved_type=None,
             resolved_correspondent=None, date_applied=None,
             classification={}, created_new=[], reformat_failed=False, link="",
         )
@@ -140,22 +175,21 @@ class TestRenderFilingReply:
 
 class TestRenderReprocessedReply:
 
-    def test_title_and_meta(self):
+    def test_title_and_the_cards_line_of_facts(self):
         out = render_reprocessed_reply(
             _en, title="Duff Insurance Invoice", doc_id=42,
-            resolved_topics=["Insurance"], resolved_persons=["Homer"],
+            resolved_persons=["Homer"],
             resolved_type="Invoice", resolved_correspondent="Globex",
         )
-        assert "reprocessed" in out  # _en falls back to the bare key
-        assert "Insurance | Homer | Invoice | Globex" in out
+        assert out == "reprocessed\n\nHomer · Globex · Invoice"  # _en falls back to the bare key
 
-    def test_no_meta_line_when_empty(self):
+    def test_no_facts_line_when_empty(self):
         out = render_reprocessed_reply(
             _en, title="x", doc_id=1,
-            resolved_topics=[], resolved_persons=[],
+            resolved_persons=[],
             resolved_type=None, resolved_correspondent=None,
         )
-        assert " | " not in out
+        assert out == "reprocessed"
 
 
 class TestRenderCaptureReply:
@@ -172,8 +206,7 @@ class TestRenderCaptureReply:
             },
             link="https://reddit.com/r/LocalLLaMA/...",
         )
-        assert "✅ Captured: Local LLM benchmarks" in out
-        assert "AI | Homer" in out
+        assert "✅ Captured: Local LLM benchmarks\n\nHomer\n\nM2 numbers." in out
         assert "M2 numbers." in out
         assert "- 60 tok/s" in out
         assert "https://reddit.com/r/LocalLLaMA/..." in out
@@ -225,8 +258,7 @@ class TestRenderCaptureReply:
             },
             link="(pasted text)",
         )
-        assert "  book the pitch" in out
-        assert "  pack the stove" in out
+        assert "- book the pitch\n- pack the stove" in out
 
     def test_todo_link_renders_above_source_footer(self):
         """When the caller passes a /go todo link, the reply invites the

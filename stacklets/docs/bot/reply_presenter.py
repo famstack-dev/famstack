@@ -1,23 +1,31 @@
-"""Chat-reply rendering for the archivist — pure layout, given a translator.
+"""Chat-reply rendering for the archivist: pure layout, given a translator.
 
 Takes a `t(key, **kwargs)` callable (the archivist's bilingual lookup)
 plus the classification / enrichment data, and returns the text the bot
-sends. No Matrix, no env, no messages.yml — the archivist owns `t` and
+sends. No Matrix, no env, no messages.yml: the archivist owns `t` and
 the sending; this owns the layout.
 
-Extracted from `_process_document` / `_render_capture_reply` so the
-rendering is unit-testable in both languages and a document pipeline
-can stay Matrix-free, handing back structured data the orchestrator
-renders here. Supersedes classify_format.py, which hard-coded English
-and so could never sit on the bilingual reply path.
+What was filed is shown as a card, through the renderer every surface
+uses (`stack.card_render`, ADR-016 §4): the card the archivist wrote,
+from the same fields and the same briefing block, so the reply reads as
+the card does in the card browser and to the agent. The reply's own
+lines (what happened, what is new in Paperless, the link) go around it.
+The text is markdown; the bot sends it as the plain `body` and as HTML.
 """
 
 from __future__ import annotations
 
 from typing import Callable
 
+from stack.briefing import render_briefing
+from stack.card_render import for_chat, render
+
 # `t(key, **kwargs) -> str`: the archivist's translation lookup.
 Translator = Callable[..., str]
+
+# A reply is a glance at the card: the first few facts and to-dos.
+_FACTS_SHOWN = 5
+_TASKS_SHOWN = 3
 
 
 def render_filing_reply(
@@ -25,7 +33,6 @@ def render_filing_reply(
     *,
     display_title: str,
     doc_id: int,
-    resolved_topics: list[str],
     resolved_persons: list[str],
     resolved_type: str | None,
     resolved_correspondent: str | None,
@@ -34,59 +41,43 @@ def render_filing_reply(
     created_new: list[str] | None,
     reformat_failed: bool,
     link: str,
+    language: str = "en",
 ) -> str:
     """Render the happy-path "document filed" reply.
 
-    Layout, optimised for scanning in Element:
-
         ✅ Filed: Duff Insurance - Kfz-Versicherung (#10)
 
-        Insurance | Homer | Invoice | Duff Insurance | 2026-03-15
+        2026-03-15 · Homer · Duff Insurance · Invoice
 
         Annual car insurance renewal at Duff Insurance.
 
         - EUR 340.00/year
 
-        Pay invoice (due 2026-03-15)
+        **To do**
+
+        - Pay invoice 📅 2026-03-15
 
         🆕 New in Paperless: Insurance
 
         http://paperless/...
 
-    Translatable lines (`filed`, `new_in_paperless`, `reformat_failed`)
-    go through `t`; the metadata row, summary, facts and action items
-    are the LLM's own content and render verbatim.
+    The first line, `new_in_paperless` and `reformat_failed` go through
+    `t`; the card between them is the document card, its fields the
+    resolved values written to Paperless and the vault.
     """
-    lines = [t("filed", title=display_title, doc_id=doc_id)]
-
-    # Compact metadata row: topic(s) | person(s) | type | from | date.
-    # Built from the resolved_* values so what's on screen matches what
-    # was written to Paperless — no translation-key round-trip.
-    meta_parts: list[str] = [*resolved_topics, *resolved_persons]
-    if resolved_type:
-        meta_parts.append(resolved_type)
-    if resolved_correspondent:
-        meta_parts.append(resolved_correspondent)
-    if date_applied:
-        meta_parts.append(date_applied)
-    if meta_parts:
-        lines.extend(["", "  " + " | ".join(meta_parts)])
-
-    summary = classification.get("summary", "")
-    if summary and isinstance(summary, str):
-        lines.extend(["", f"  {summary}"])
-
-    lines.extend(_fact_lines(classification.get("facts", [])))
-    lines.extend(_action_item_lines(classification.get("action_items", [])))
-
+    card = card_in_reply(
+        {"type": "document", "title": display_title, "date": date_applied,
+         "persons": resolved_persons, "correspondent": resolved_correspondent,
+         "document_type": resolved_type},
+        classification, language=language,
+    )
+    blocks = [t("filed", title=display_title, doc_id=doc_id), card]
     if created_new:
-        lines.extend(["", f"  {t('new_in_paperless', items=', '.join(created_new))}"])
+        blocks.append(t("new_in_paperless", items=", ".join(created_new)))
     if reformat_failed:
-        lines.extend(["", f"  {t('reformat_failed')}"])
-    if link:
-        lines.extend(["", f"  {link}"])
-
-    return "\n".join(lines)
+        blocks.append(t("reformat_failed"))
+    blocks.append(link)
+    return _joined(blocks)
 
 
 def render_reprocessed_reply(
@@ -94,7 +85,6 @@ def render_reprocessed_reply(
     *,
     title: str,
     doc_id: int | None,
-    resolved_topics: list[str],
     resolved_persons: list[str],
     resolved_type: str | None,
     resolved_correspondent: str | None,
@@ -102,24 +92,20 @@ def render_reprocessed_reply(
     """Render the "reclassified" confirmation after a reply-correction.
 
     Shared between document reprocess (where ``doc_id`` is the
-    Paperless id) and capture reprocess (where ``doc_id`` is None
-    -- the capture's identity lives in the envelope's ``capture_id``
-    and isn't shown to the human). A title line plus the compact
-    metadata row -- the reprocess pass corrects classification, the
-    original filing already carried the rich detail.
+    Paperless id) and capture reprocess (where ``doc_id`` is None:
+    the capture's identity lives in the envelope's ``capture_id``
+    and isn't shown to the human). A title line plus the card's line of
+    facts: the reprocess pass corrects classification, the original
+    filing already carried the rich detail.
     """
     if doc_id is None:
-        lines = [t("reprocessed_capture", title=title)]
+        head = t("reprocessed_capture", title=title)
+        fields = {"type": "note", "persons": resolved_persons}
     else:
-        lines = [t("reprocessed", title=title, doc_id=doc_id)]
-    meta_parts: list[str] = [*resolved_topics, *resolved_persons]
-    if resolved_type:
-        meta_parts.append(resolved_type)
-    if resolved_correspondent:
-        meta_parts.append(resolved_correspondent)
-    if meta_parts:
-        lines.extend(["", "  " + " | ".join(meta_parts)])
-    return "\n".join(lines)
+        head = t("reprocessed", title=title, doc_id=doc_id)
+        fields = {"type": "document", "persons": resolved_persons,
+                  "correspondent": resolved_correspondent, "document_type": resolved_type}
+    return _joined([head, render(fields, "").facts])
 
 
 def render_capture_reply(
@@ -130,14 +116,14 @@ def render_capture_reply(
     link: str,
     transcript: str | None = None,
     todo_link: str = "",
+    language: str = "en",
 ) -> str:
     """Render the "capture saved" reply.
 
-    Mirrors the filing layout — title, optional meta row (topics |
-    persons), summary, facts, action items — but the footer is the
-    source link / "(pasted text)" placeholder rather than a Paperless
-    URL. Title falls back through the classifier title, the extractor's
-    hint, then a generic "Capture".
+    Mirrors the filing layout (title line, then the note card: people,
+    summary, facts, to-dos) but the footer is the capture's link rather
+    than a Paperless URL. Title falls back through the classifier title,
+    the extractor's hint, then a generic "Capture".
 
     ``transcript`` is the verbatim text for voice captures; when set it
     renders as a block-quoted preamble above the title so the sender
@@ -146,82 +132,53 @@ def render_capture_reply(
 
     ``todo_link`` is a `/go/topic/<scope>/todo` link the caller builds
     when a topic capture produced action items; when set it renders as
-    an "added to the todo list" line above the source footer, so the
-    family can jump to the checkable list. Empty for captures that made
-    no todos or landed outside a topic scope.
+    an "added to the todo list" line above the footer, so the family
+    can jump to the checkable list. Empty for captures that made no
+    todos or landed outside a topic scope.
     """
-    lines: list[str] = []
+    blocks: list[str] = []
     if transcript:
         # Block-quote each line so multi-sentence memos still render as
         # one quote block in Element / SchildiChat / FluffyChat. The
         # mic emoji signals "this is the spoken content."
-        lines.append("\U0001F3A4 What I heard:")
-        lines.append("")
-        for line in transcript.splitlines() or [transcript]:
-            lines.append(f"> {line}" if line else ">")
-        lines.append("")
+        quoted = "\n".join(f"> {line}" if line else ">"
+                           for line in transcript.splitlines() or [transcript])
+        blocks.append(f"\U0001F3A4 What I heard:\n\n{quoted}")
 
     title = classification.get("title") or source_title_hint or "Capture"
-    lines.append(t("captured", title=title))
-
-    # Captures classify under `tags`; the documents pipeline uses
-    # `topics`. Accept either so the same presenter works for both
-    # and we don't end up with a silent empty meta row on captures.
-    topics = classification.get("topics") or classification.get("tags") or []
-    if isinstance(topics, str):
-        topics = [topics]
     persons = classification.get("persons") or []
-    if isinstance(persons, str):
-        persons = [persons]
-    meta_parts = [x for x in (*topics, *persons) if isinstance(x, str) and x.strip()]
-    if meta_parts:
-        lines.extend(["", "  " + " | ".join(meta_parts)])
-
-    summary = classification.get("summary")
-    if summary and isinstance(summary, str):
-        lines.extend(["", f"  {summary}"])
-
-    lines.extend(_fact_lines(classification.get("facts", [])))
-    lines.extend(_action_item_lines(classification.get("action_items", [])))
-
+    card = card_in_reply({"type": "note", "title": title,
+                          "persons": [persons] if isinstance(persons, str) else persons},
+                         classification, language=language)
+    blocks += [t("captured", title=title), card]
     if todo_link:
-        lines.extend(["", f"  {t('added_to_todos')}", f"  {todo_link}"])
-
-    lines.extend(["", f"  {link}"])
-    return "\n".join(lines)
-
-
-# ── Shared section builders ──────────────────────────────────────────────
+        blocks.append(f"{t('added_to_todos')}\n{todo_link}")
+    blocks.append(link)
+    return _joined(blocks)
 
 
-def _fact_lines(facts) -> list[str]:
-    """Up to five `  - fact` bullets, preceded by a blank separator."""
-    if not isinstance(facts, list):
-        return []
-    fact_lines = [f for f in facts if isinstance(f, str) and f.strip()]
-    if not fact_lines:
-        return []
-    out = [""]
-    out.extend(f"  - {f}" for f in fact_lines[:5])
-    return out
+# ── The card in the reply ────────────────────────────────────────────────
 
 
-def _action_item_lines(action_items) -> list[str]:
-    """Up to three `  action (due DATE)` lines from the extracted items.
+def card_in_reply(fields: dict, classification: dict, *, language: str = "en") -> str:
+    """The filed card below its title, as the chat shows it.
 
-    Documents extract dicts (`{action, due}`); notes extract plain strings.
-    Render both — a note's todos belong in its chat reply the same as a
-    document's, and the string branch is what keeps them from being dropped.
+    Rendered by its type from `fields` and from the briefing block the
+    vault file carries (`stack.briefing`), built from the classifier's
+    `summary`, `facts` and `action_items`. A reply's own first line
+    names the card, so the title is not repeated.
     """
-    if not isinstance(action_items, list):
-        return []
-    rendered: list[str] = []
-    for a in action_items:
-        if isinstance(a, dict) and a.get("action"):
-            due = a.get("due", "")
-            rendered.append(f"  {a['action']}{f' (due {due})' if due else ''}")
-        elif isinstance(a, str) and a.strip():
-            rendered.append(f"  {a.strip()}")
-    if not rendered:
-        return []
-    return [""] + rendered[:3]
+    facts = [f for f in classification.get("facts") or [] if isinstance(f, str) and f.strip()]
+    tasks = classification.get("action_items")
+    briefing = render_briefing(
+        summary=classification.get("summary"),
+        facts=facts[:_FACTS_SHOWN],
+        action_items=tasks[:_TASKS_SHOWN] if isinstance(tasks, list) else None,
+    )
+    persons = [p for p in fields.get("persons") or [] if isinstance(p, str) and p.strip()]
+    present = {k: v for k, v in {**fields, "persons": persons}.items() if v}
+    return for_chat(render(present, briefing, language=language).below_title)
+
+
+def _joined(blocks: list[str]) -> str:
+    return "\n\n".join(b for b in blocks if b and b.strip())

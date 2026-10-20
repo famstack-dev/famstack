@@ -17,7 +17,7 @@ const WORDS = {
     everyone: "Everyone (admin)", types: "Kinds", all: "all", relevant: "relevant", newest: "newest",
     anyone: "Anyone", person: "Person", from: "From", to: "To", cards: (n) => `${n} cards`, details: "Details", history: "History",
     linksTo: "Links to", linkedFrom: "Linked from", nothing: "Nothing written here yet.",
-    open: "open", done: "done", openPaperless: "Open in Paperless", around: "Around this card",
+    around: "Around this card",
     links: "links", people: "people", versions: "versions", bothWays: "Links both ways",
     nothingLinksHere: "Nothing links here yet.", linksNowhere: "It links to nothing yet.",
     welcomeA: "What the family", welcomeB: "remembers", welcomeSub:
@@ -37,7 +37,7 @@ const WORDS = {
     everyone: "Alle (Admin)", types: "Arten", all: "alle", relevant: "passend", newest: "neueste",
     anyone: "Alle Personen", person: "Person", from: "Von", to: "Bis", cards: (n) => `${n} Karten`, details: "Details", history: "Verlauf",
     linksTo: "Verweist auf", linkedFrom: "Verwiesen von", nothing: "Hier steht noch nichts.",
-    open: "offen", done: "erledigt", openPaperless: "In Paperless öffnen", around: "Rund um diese Karte",
+    around: "Rund um diese Karte",
     links: "Verweise", people: "Personen", versions: "Versionen", bothWays: "Verweist in beide Richtungen",
     nothingLinksHere: "Noch nichts verweist hierher.", linksNowhere: "Verweist noch auf nichts.",
     welcomeA: "Was die Familie", welcomeB: "erinnert", welcomeSub:
@@ -132,8 +132,6 @@ async function api(path, params = {}) {
 const goUrl = (path) => `${location.protocol}//${location.hostname}:42000${path}`;
 
 const DAY = new Intl.DateTimeFormat(LANG, { day: "numeric", month: "short", year: "numeric" });
-const WEEKDAY = new Intl.DateTimeFormat(LANG, { weekday: "long" });
-const MONTH_YEAR = new Intl.DateTimeFormat(LANG, { month: "long", year: "numeric" });
 function niceDay(day) {
   if (!day) return "";
   const d = new Date(`${day}T12:00:00`);
@@ -280,7 +278,7 @@ function markdown(text, card) {
     const line = raw.trimEnd();
     if (!/^>/.test(line)) flushQuote();
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    const bullet = line.match(/^\s*[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
+    const bullet = line.match(/^\s*[-*+]\s+(?:\[([ xX])\]\s+)?(.*)$/);
     const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
     const quote = line.match(/^>\s?(.*)$/);
     const row = /^\s*\|.*\|\s*$/.test(line);
@@ -299,7 +297,10 @@ function markdown(text, card) {
       flush();
       const want = bullet ? "ul" : "ol";
       if (list !== want) { closeList(); html.push(`<${want}>`); list = want; }
-      html.push(`<li>${inline((bullet || numbered)[1], card)}</li>`);
+      const text = inline(bullet ? bullet[2] : numbered[1], card);
+      const box = bullet?.[1];
+      html.push(box === undefined ? `<li>${text}</li>`
+        : `<li class="task${box === " " ? "" : " done"}"><span class="box"></span><span class="t">${text}</span></li>`);
     } else if (quote) {
       flush(); closeList();
       quoted.push(quote[1]);
@@ -324,21 +325,7 @@ function withoutTitle(text, title) {
   return lines.join("\n");
 }
 
-function withoutMeta(text) {
-  // A record opens with a quote of its fields (`> **About** … **Captured** …`,
-  // written for Obsidian, ADR-017 §5). The header shows them already.
-  const lines = String(text || "").split("\n");
-  const first = lines.findIndex((l) => l.trim());
-  if (first < 0 || !/^>/.test(lines[first])) return lines.join("\n");
-  let end = first;
-  while (end < lines.length && /^>/.test(lines[end])) end++;
-  const fields = lines.slice(first, end).filter((l) => l.replace(/^>\s*/, "").trim());
-  const isMeta = fields.length && fields.every((l) => /^>\s*\*\*[^*\n]+\*\*/.test(l));
-  if (isMeta) lines.splice(first, end - first);
-  return lines.join("\n");
-}
-
-function bodyOf(card, text = withoutMeta(withoutTitle(card.text, card.title))) {
+function bodyOf(card, text) {
   const div = h("div", { class: "body" });
   if (!String(text || "").trim()) {
     div.append(h("p", { class: "empty-text" }, T.nothing));
@@ -375,7 +362,7 @@ function personOf(value) {
   return { id: `person/${name.toLowerCase()}`, name: name.charAt(0).toUpperCase() + name.slice(1), title: name };
 }
 
-// ── One renderer per kind of card ─────────────────────────────────────────
+// ── People and tags ───────────────────────────────────────────────────────
 
 function peopleRow(card) {
   const persons = (card.persons || []).map(personOf);
@@ -401,100 +388,14 @@ function searchFor(text) {
   q.dispatchEvent(new Event("input"));
 }
 
-function factsGrid(pairs) {
-  const shown = pairs.filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && !v.length));
-  if (!shown.length) return null;
-  return h("dl", { class: "facts-grid" }, shown.map(([k, v]) =>
-    [h("dt", {}, k), h("dd", {}, Array.isArray(v) ? v.join(", ") : String(v))]));
-}
-
-const RENDER = {
-  diary(card) {
-    const d = card.day ? new Date(`${card.day}T12:00:00`) : null;
-    return [
-      d && !Number.isNaN(d.getTime()) ? h("div", { class: "hero-day" },
-        h("span", { class: "big" }, d.getDate()),
-        h("span", { class: "rest" }, `${WEEKDAY.format(d)}, ${MONTH_YEAR.format(d)}`)) : null,
-      peopleRow(card), bodyOf(card),
-    ];
-  },
-
-  note(card) {
-    return [peopleRow(card), bodyOf(card)];
-  },
-
-  bookmark(card) {
-    const url = card.meta.url || card.meta.resource || card.meta.source || "";
-    let host = "";
-    try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
-    return [
-      url ? h("a", { class: "site", href: url, target: "_blank", rel: "noopener noreferrer" },
-        h("span", { class: "fav" }, (host || "?").slice(0, 1).toUpperCase()),
-        h("span", {}, h("div", {}, card.title), h("div", { class: "host" }, host))) : null,
-      peopleRow(card), bodyOf(card),
-    ];
-  },
-
-  document(card) {
-    const m = card.meta;
-    const id = m.paperless_id;
-    return [
-      factsGrid([
-        ["From", m.correspondent], ["Kind", m.document_type || m.doctype], ["Date", niceDay(card.day)],
-        ["Tags", m.tags], ["Amount", m.amount],
-      ]),
-      id ? h("a", { class: "action", href: goUrl(`/go/docs/${id}`), target: "_blank",
-                    rel: "noopener noreferrer" }, T.openPaperless, " ↗") : null,
-      bodyOf(card),
-    ];
-  },
-
-  list(card) {
-    const items = card.items || [];
-    const open = items.filter((i) => !i.done);
-    const done = items.filter((i) => i.done);
-    const ul = h("ul", { class: "items" });
-    let section = null;
-    for (const item of [...open, ...done]) {
-      if (!item.done && item.section && item.section !== section) {
-        section = item.section;
-        ul.append(h("li", { class: "sec" }, section));
-      }
-      ul.append(h("li", { class: `item${item.done ? " done" : ""}` },
-        h("span", { class: "box" }), h("span", { class: "t" }, item.text),
-        item.due ? h("span", { class: "due" }, niceDay(item.due)) : null));
-    }
-    return [
-      h("div", { class: "tally" }, `${open.length} ${T.open} · ${done.length} ${T.done}`),
-      items.length ? ul : bodyOf(card),
-      card.meta.description ? h("p", { class: "body hint" }, card.meta.description) : null,
-    ];
-  },
-
-  person(card) {
-    const m = card.meta;
-    return [
-      factsGrid([["Also", [...(m.aliases || []), ...(m.synonyms || [])]], ["Account", m.matrix || m.account]]),
-      bodyOf(card),
-    ];
-  },
-
-  topic(card) {
-    return [bodyOf(card)];
-  },
-
-  correspondent(card) {
-    return [factsGrid([["Also", card.meta.aliases]]), bodyOf(card)];
-  },
-
-  email(card) {
-    const m = card.meta;
-    return [factsGrid([["From", m.from], ["To", m.to], ["Subject", m.subject]]), bodyOf(card)];
-  },
-};
+// ── The card's body ───────────────────────────────────────────────────────
+// Each card type has one renderer, in the memory stacklet, and it writes
+// markdown (ADR-016 §4); the cards API sends it as `rendered`, and the chat
+// and the agent read the same. The header above shows the title, so the
+// body starts below the rendered heading.
 
 function renderBody(card) {
-  return (RENDER[card.type] || ((c) => [peopleRow(c), bodyOf(c)]))(card);
+  return [peopleRow(card), bodyOf(card, withoutTitle(card.rendered ?? card.text, card.title))];
 }
 
 // The pages the wiki compiled from a card (a person's page, a topic's, a

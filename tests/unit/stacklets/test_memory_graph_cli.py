@@ -317,6 +317,40 @@ class TestOpeningACard:
         assert "stack memory find" in capsys.readouterr().out
 
 
+class TestACardReadsAsItsTypeRendersIt:
+    """The agent reads a card as the chat and the card browser show it: the
+    markdown of its type's renderer (ADR-016 §4), not the file with the
+    links and quotes it carries for the editors."""
+
+    NOTE = ("---\ntype: note\ncard_id: note-7f3a9c21e4\ntitle: Zelt ist kaputt\n"
+            f"date: \"{RECENT}\"\npersons:\n  - lisa\n---\n\n# Zelt ist kaputt\n\n"
+            "> **About** [Lisa](../../people/lisa.md)\n> **Captured** today · **Kind** note\n\n"
+            "> [!summary]\n> The tent tore on the last trip.\n\n## Caption\n\nDas Zelt ist gerissen.\n")
+
+    def test_a_card_shows_its_title_once_its_people_by_name_and_their_words_last(self, memory,
+                                                                                capsys):
+        memory.write("family/camping/zelt.md", self.NOTE, by="homer", message="feat(notes): zelt")
+
+        _run(card_cli, memory, "note-7f3a9c21e4")
+        out = capsys.readouterr().out
+
+        text = out[out.index("# Zelt ist kaputt"):]
+        assert text.count("Zelt ist kaputt") == 1
+        assert f"{RECENT} · Lisa" in text
+        assert "**About**" not in text and "**Captured**" not in text
+        assert text.rstrip().endswith("> Das Zelt ist gerissen.")
+
+    def test_with_json_each_card_comes_with_its_rendered_markdown(self, memory, capsys):
+        memory.write("family/camping/zelt.md", self.NOTE, by="homer", message="feat(notes): zelt")
+
+        result = _run(card_cli, memory, "note-7f3a9c21e4", "person-lisa")
+
+        assert result["cards"] == ["note-7f3a9c21e4", "person-lisa"]
+        note, lisa = result["rendered"]
+        assert note.startswith("# Zelt ist kaputt\n\n" + f"{RECENT} · Lisa\n")
+        assert lisa == "# Lisa Simpson\n\nLis\n\nLisa plays the saxophone.\n"
+
+
 class TestFollowingLinks:
 
     def test_the_cards_around_a_card_come_nearest_first(self, memory, capsys):

@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from search_format import (  # noqa: E402
@@ -77,16 +78,19 @@ class TestPaperlessDocUrl:
 class TestFormatMemoryHit:
 
     @staticmethod
-    def _hit(**overrides) -> dict:
-        # A representative memory hit shape -- one of each metadata
-        # field, plus an excerpt. Tests tweak individual fields.
+    def _hit(fields=None, **overrides) -> dict:
+        # A representative memory hit shape, as `search_memory` returns
+        # it: the card's frontmatter as `fields`, plus an excerpt. Tests
+        # tweak individual fields.
+        fields = {"type": "note", "title": "Radlager Mecha Mike", "date": "2026-02-10",
+                  "persons": ["homer"], "tags": ["Topic:Car"]} | (fields or {})
         return {
             "rel": "homer/notes/2026/02/radlager.md",
-            "title": "Radlager Mecha Mike",
-            "date": "2026-02-10",
-            "persons": ["Homer"],
-            "tags": ["Topic:Car"],
+            "title": fields["title"],
+            "date": fields["date"],
+            "persons": fields["persons"],
             "excerpt": "Brummen aus dem linken Hinterrad",
+            "fields": fields,
         } | overrides
 
     def test_includes_linked_title_when_public_url_set(self):
@@ -106,23 +110,28 @@ class TestFormatMemoryHit:
         assert "**Radlager Mecha Mike**" in out
         assert "`homer/notes/2026/02/radlager.md`" in out
 
-    def test_meta_line_includes_date_and_persons(self):
+    def test_the_title_is_followed_by_the_cards_line_of_facts(self):
+        """The same line the card shows in the card browser: date, then
+        the people by the name the family knows them by."""
         out = format_memory_hit(
-            self._hit(), 1, code_public_url="https://c",
+            self._hit(), 1, code_public_url="https://c", names={"homer": "Homer"},
         )
-        # Date and persons join with the middle-dot, separated from
-        # the title by an em-dash.
-        assert "— 2026-02-10 · Homer" in out
+        assert out.split("\n", 1)[0].endswith(") · 2026-02-10 · Homer")
+
+    def test_a_document_hit_names_its_correspondent_and_kind(self):
+        out = format_memory_hit(
+            self._hit({"type": "document", "correspondent": "Duff Insurance",
+                       "document_type": "Invoice"}), 1, code_public_url="https://c",
+        )
+        assert "· 2026-02-10 · Homer · Duff Insurance · Invoice" in out
 
     def test_meta_omits_empty_segments(self):
         # A doc without persons skips the · separator -- avoids
         # awkward "2026-02-10 · " trailing nothing.
         out = format_memory_hit(
-            self._hit(persons=[]), 1, code_public_url="https://c",
+            self._hit({"persons": []}), 1, code_public_url="https://c",
         )
-        assert "— 2026-02-10" in out
-        # No bullet hanging off the end.
-        assert "·" not in out.split("\n", 1)[0]
+        assert out.split("\n", 1)[0].endswith(") · 2026-02-10")
 
     def test_excerpt_rendered_as_italic_indented_line(self):
         # The excerpt is visual quiet text: italic + two-space indent
@@ -143,7 +152,7 @@ class TestFormatMemoryHit:
         # A memory file without a `title:` frontmatter key still
         # surfaces -- the relative path is the readable identity.
         out = format_memory_hit(
-            self._hit(title=""), 1, code_public_url="https://c",
+            self._hit({"title": ""}, title=""), 1, code_public_url="https://c",
         )
         assert "homer/notes/2026/02/radlager.md" in out
 

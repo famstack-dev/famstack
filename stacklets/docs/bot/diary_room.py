@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from loguru import logger
 
 from stack.links import go_topic, public
-from reply_presenter import _fact_lines
+from reply_presenter import card_in_reply
 from text_utils import strip_reply_fallback
 
 ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
@@ -141,21 +141,18 @@ def card_text(card: dict, t, *, corrected: bool = False, hint: bool = False) -> 
     """The notice that shows a card in its thread.
 
     Shaped like the archivist's other filing replies (`reply_presenter`):
-    the title, one row of topics and people, the summary, the facts. `t`
-    is the archivist's translator, bound to the household language.
+    a first line with the title and the day in words, then the diary card
+    as its type renders it (the people, the summary, the facts). `t` is
+    the archivist's translator, bound to the household language.
     """
     head = "diary_card_corrected" if corrected else "diary_card"
-    lines = [t(head, title=card.get("title", ""), date=card.get("date_label")
-               or card.get("date", ""))]
-    about = [*card.get("tags", []), *card.get("persons", [])]
-    if about:
-        lines += ["", "  " + " | ".join(about)]
-    if card.get("summary"):
-        lines += ["", f"  {card['summary']}"]
-    lines += _fact_lines(card.get("facts", []))
+    blocks = [t(head, title=card.get("title", ""), date=card.get("date_label")
+                or card.get("date", "")),
+              # The first line says the day already.
+              card_in_reply({"type": "diary", "persons": card.get("persons") or []}, card)]
     if hint:
-        lines += ["", f"  {t('diary_card_hint')}"]
-    return "\n".join(lines)
+        blocks.append(t("diary_card_hint"))
+    return "\n\n".join(b for b in blocks if b)
 
 
 def summary_text(count: int, *, link: str, t) -> str:

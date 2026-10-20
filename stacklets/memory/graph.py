@@ -69,6 +69,7 @@ from stack.cards import (
     is_navigation_page,
     view_names,
 )
+from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
 
 # How fast a card ages, in days until its weight halves. None: never.
@@ -192,6 +193,20 @@ class Graph:
         """The card of the file at `path` (vault-relative), or None."""
         cid = self._by_path.get(path)
         return self.cards[cid] if cid else None
+
+    def rendered(self, card: Card, *, language: str = "en") -> Rendered:
+        """`card` as its type's renderer shows it, its people by first name."""
+        return render(card.meta, split_body(card.text), names=self.person_names(),
+                      language=language)
+
+    def person_names(self) -> dict[str, str]:
+        """Each declared person's id with the first name a reader knows them by.
+
+        `{"homer": "Homer"}`: what a rendered card shows for `persons: [homer]`.
+        """
+        return {c.name.removeprefix("person/"): c.title.split()[0]
+                for c in self.cards.values()
+                if c.type == "person" and c.name.startswith("person/") and c.title.strip()}
 
     def find(self, query: str, *, kind: str = "", since: str = "", until: str = "",
              person: str = "", newest: bool = False, limit: int = 8,
