@@ -1416,7 +1416,6 @@ class ArchivistBot(MicroBot):
                 self.t,
                 title=o.title,
                 doc_id=doc_id,
-                resolved_topics=o.resolved_topics,
                 resolved_persons=o.resolved_persons,
                 resolved_type=o.resolved_type,
                 resolved_correspondent=o.resolved_correspondent,
@@ -1573,7 +1572,6 @@ class ArchivistBot(MicroBot):
                 self.t,
                 display_title=o.classification.get("title") or o.display_name,
                 doc_id=o.doc_id,
-                resolved_topics=o.resolved_topics,
                 resolved_persons=o.resolved_persons,
                 resolved_type=o.resolved_type,
                 resolved_correspondent=o.resolved_correspondent,
@@ -1582,6 +1580,7 @@ class ArchivistBot(MicroBot):
                 created_new=o.created_new,
                 reformat_failed=o.reformat_failed,
                 link=o.link,
+                language=self.language,
             )
             # The `dev.famstack.event` envelope rides on the visible
             # message — one replayable timeline event per filing.
@@ -2536,8 +2535,6 @@ class ArchivistBot(MicroBot):
                 self.t,
                 title=o.classification.get("title") or o.source_title_hint or "",
                 doc_id=None,
-                resolved_topics=[t for t in (o.classification.get("tags") or [])
-                                 if isinstance(t, str)],
                 resolved_persons=[p for p in (o.classification.get("persons") or [])
                                   if isinstance(p, str)],
                 resolved_type=None,
@@ -2551,6 +2548,7 @@ class ArchivistBot(MicroBot):
                 link=self._capture_link(o) or o.display_link,
                 transcript=o.transcript,
                 todo_link=self._todo_link(o),
+                language=self.language,
             )
         # A link card filed, but the family should hear why it has no
         # summary -- and hear which obstacle it was. "Reddit wants you

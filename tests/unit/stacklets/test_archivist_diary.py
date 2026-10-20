@@ -114,17 +114,14 @@ class TestWhatIsAnnounced:
         assert [c["entry_id"] for c in fresh] == ["new"] and older == 1
 
     def test_the_card_reads_like_the_archivists_other_filings(self):
-        """The same shape as a document's filing reply: title, one row of
-        topics and people, the summary, the facts. No hashtags: a topic
-        with a space in it breaks one."""
+        """The same shape as a document's filing reply: the title and the
+        day, then the diary card as the card browser shows it: the people,
+        the summary, the facts. No hashtags: a topic with a space in it
+        breaks one."""
         text = diary_room.card_text(_card(), _t_en)
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
-        assert lines[0] == "📔 **Sandcastle at the lake** · Sunday, 20 September 2026"
-        assert lines[1] == "Family Life | Lisa | Bart"
-        assert lines[2] == "Lisa and Bart built a sandcastle."
-        assert lines[3] == "- Place: lake"
-        assert "#" not in text
+        assert text == ("📔 **Sandcastle at the lake** · Sunday, 20 September 2026\n\n"
+                        "Lisa, Bart\n\nLisa and Bart built a sandcastle.\n\n- Place: lake")
 
     def test_a_card_shows_at_most_five_facts(self):
         text = diary_room.card_text(_card(facts=[f"Fact: {i}" for i in range(8)]), _t_en)

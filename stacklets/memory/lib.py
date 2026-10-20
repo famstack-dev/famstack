@@ -1986,7 +1986,8 @@ def search_memory(
     can't read personal notes by accident.
 
     Returns dicts with keys `path`, `rel`, `title`, `date`,
-    `persons`, `tags`, `excerpt`, `matched_terms`. Sorted by relevance,
+    `persons`, `tags`, `excerpt`, `matched_terms`, and `fields` (the
+    frontmatter). Sorted by relevance,
     then by frontmatter `date` descending; files without a date sort to
     the end.
 
@@ -2144,6 +2145,9 @@ def search_memory(
             # The card's own id (ADR-016), which any card carries and its
             # link (`/go/<card_id>`) uses before the two above.
             "card_id": card_id_from(fm),
+            # The frontmatter as written, for a reader that shows the hit
+            # as its card (`stack.card_render`).
+            "fields": fm,
         })
 
     idf = [_idf(doc_count, df) for df in doc_freq]
