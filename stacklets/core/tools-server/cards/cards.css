@@ -189,11 +189,14 @@ a { color: var(--teal); text-underline-offset: 2px; }
 /* ── Layout ──────────────────────────────────────────────────────────── */
 
 .main {
-  display: grid; grid-template-columns: 330px 1fr 340px; min-height: 0;
+  display: grid; grid-template-columns: 330px 1fr auto; min-height: 0;
 }
 .rail, .graphpane { min-height: 0; overflow: auto; }
 .rail { border-right: 1px solid var(--line); padding: 18px 16px 40px; }
-.graphpane { border-left: 1px solid var(--line); padding: 18px 18px 40px; }
+.graphpane { width: 340px; border-left: 1px solid var(--line); padding: 18px 18px 40px; }
+/* An open card shows its links on both sides of it, so the graph steps
+   aside and the card gets its width. */
+.main:has(.walk) .graphpane { display: none; }
 .board {
   min-width: 0; overflow-x: auto; overflow-y: hidden;
   display: flex; gap: 18px; padding: 20px 22px; scroll-snap-type: x proximity;
