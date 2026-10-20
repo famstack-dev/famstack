@@ -20,6 +20,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from stack.people import Person  # noqa: E402
 from pipeline import (  # noqa: E402
+    DEFERRAL_MARKER,
     LLMModelNotFoundError,
     LLMTimeoutError,
     LLMUnavailableError,
@@ -104,14 +105,15 @@ class TestBuildSynthesizePrompt:
         )
         assert "language: de" in prompt or "Respond in" in prompt
 
-    def test_deferral_pattern_in_rules(self):
-        # The "need to read [N] in detail" deferral is the contract
-        # the wire-up layer keys off when surfacing follow-up hits.
+    def test_deferral_marker_in_rules_for_every_language(self):
+        # The deferral marker is the contract the bot keys off to start
+        # the deep dive. It must be asked for in a German prompt too,
+        # where the deferral sentence itself comes back in German.
         prompt = _build_synthesize_prompt(
-            "x?", [{"title": "y", "summary": "z"}], "en",
+            "x?", [{"title": "y", "summary": "z"}], "de",
             today="2026-05-23",
         )
-        assert "read [N] in detail" in prompt
+        assert f"{DEFERRAL_MARKER} [1]" in prompt
 
     def test_today_embedded_for_relative_time(self):
         # The model can't resolve "the last" / "this month" without

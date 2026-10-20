@@ -49,11 +49,13 @@ Your chat has a space called Family with these rooms:
 - **Documents Room**: the household paper inbox. Everything you drop here lands in the document archive. It appears once the admin sets up documents.
 - **Server Room**: where the server talks back. Status, alerts, install confirmations. Only admins are in it.
 
-You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). Create bot rooms **with encryption disabled** — the bots cannot read encrypted messages (see [the note below](#save-anything-capture-rooms)). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
+You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). Encrypted rooms work too: inviting a bot is your choice to let famstack read that room (see [the note below](#save-anything-capture-rooms)). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
 
 ---
 
 ## File documents
+
+> The whole flow, from the photo to the answer months later: [Documents](use/documents.md) ([Deutsch](de/use/documents.md)).
 
 > Needs the `docs` stacklet. Auto-tagging needs `ai`.
 
@@ -94,11 +96,9 @@ Archivist captures your notes, thoughts and links for you. The bot
 creates summaries, tags them so you can find them again and starts to build your 
 personal knowledge base.
 
-> ⚠️ **Create bot rooms with encryption disabled.** The bots cannot read encrypted messages: anything you send in an encrypted room stays private and is simply not processed. If the archivist answers with "I couldn't decrypt that message", the room is encrypted; create a new room and switch encryption off when Element asks (it can't be turned off afterwards).
+> 🔒 **Encrypted rooms and the bots.** A room with only people in it stays private: it is encrypted between your devices, and nothing on the server reads it. Inviting a bot (the archivist, Stacky, the scribe) is your choice to let famstack work with that room. The bot then reads it on your own Mac, encrypted or not, and files what you send like anywhere else. Element X encrypts direct chats on its own, so a direct chat with Stacky is encrypted too.
 >
-> ![The archivist in an encrypted room: "I couldn't decrypt that message. Try re-inviting me to this room, or send from a verified session."](assets/room-not-encrypted-example.png)
->
-> Everything stays on your own Mac either way; the traffic never leaves your network. Encryption protects against your own server, and the bots ARE your server.
+> If a bot answers "I couldn't read that message", your app had not given it the room's key yet. Send the message again; if it keeps happening, remove the bot from the room and invite it again.
 
 What you can drop there:
 
@@ -128,7 +128,7 @@ Everything you capture is filed under your own name in the family archive: Homer
 
 > Needs the `docs` and `code` stacklets.
 
-Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`), disable encryption, and invite the archivist. Everything captured in that room files under that subject instead of your personal notes: links, pastes, PDFs, voice memos.
+Name a room `Topic: Powerplant Picnic` (German: `Thema: ...`) and invite the archivist. Everything captured in that room files under that subject instead of your personal notes: links, pastes, PDFs, voice memos.
 
 The room becomes the filing system. Plan the picnic in chat, drop the gear list, the location ideas, the photo of the flyer. When it's over you have a complete, searchable record of the project without ever having organized anything.
 
@@ -320,7 +320,7 @@ Start now. You will wish you had started earlier.
 The archivist is software running on the family Mac, and Macs get rebooted, disks fill up, things happen.
 
 - Give it a minute. Filing a big PDF or answering a deep question takes a moment; the read receipt and typing indicator show it's working.
-- "I couldn't decrypt that message"? The room is encrypted, and the bots can't read encrypted messages. Create a new room with encryption disabled (see [capture rooms](#save-anything-capture-rooms)).
+- "I couldn't read that message"? Your app had not given the bot the room's key yet. Send it again, or remove the bot and invite it again (see [capture rooms](#save-anything-capture-rooms)).
 - Type `help` in the room. If the bot answers, it's alive and the problem is elsewhere.
 - Still nothing? Tell your admin. They'll want to run `./stack status` ([Admin Guide](admin-guide.md#troubleshooting)).
 

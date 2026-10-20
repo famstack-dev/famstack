@@ -1269,3 +1269,56 @@ class TestShouldReact:
     async def test_group_auto_reacts(self, tmp_path):
         bot = self._bot(tmp_path)
         assert await bot._should_react(self._ctx(is_dm=False), mentioned=False)
+
+
+# ── Encrypted rooms ───────────────────────────────────────────────────────
+
+
+class TestAnAttachmentFromAnEncryptedRoom:
+    """Inviting a bot into an encrypted room is the family's opt-in
+    (workspace decision 0020). A photo, PDF or voice message sent there
+    arrives encrypted: nio parses it as `RoomEncrypted*`, which no
+    handler listens for, and the file on the server is ciphertext. A
+    handler should get the same event and the same bytes as from an
+    unencrypted room."""
+
+    @pytest.mark.asyncio
+    async def test_a_photo_reaches_the_photo_handler_and_downloads_decrypted(self, tmp_path,
+                                                                             httpserver):
+        from nio import Event, RoomMessageImage
+        from nio.crypto.attachments import encrypt_attachment
+
+        photo = b"\xff\xd8 a photo of the picnic"
+        ciphertext, keys = encrypt_attachment(photo)
+        httpserver.expect_request("/_matrix/client/v1/media/download/server/picnic") \
+            .respond_with_data(ciphertext)
+        event = Event.parse_decrypted_event({
+            "type": "m.room.message", "event_id": "$photo", "sender": "@homer:server",
+            "origin_server_ts": 1, "content": {
+                "msgtype": "m.image", "body": "picnic.jpg",
+                "file": {"url": "mxc://server/picnic", "v": "v2", **keys}}})
+        downloaded = []
+
+        class _Bot(MicroBot):
+            name = "test-bot"
+
+            def register_callbacks(self, client):
+                return None
+
+        bot = _Bot(homeserver=httpserver.url_for("").rstrip("/"), user_id="@test-bot:server",
+                   password="x", session_dir=str(tmp_path))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._client.rooms = {"!r:server": _room()}
+
+        async def on_photo(room, photo_event):
+            downloaded.append(await bot._download_media(photo_event.url))
+
+        bot._handlers.append((RoomMessageImage, on_photo))
+        try:
+            await bot._dispatch("!r:server", event)
+        finally:
+            if bot._http:
+                await bot._http.close()
+
+        assert downloaded == [photo]
