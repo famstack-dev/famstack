@@ -187,6 +187,25 @@ def test_the_agent_cannot_add_a_person(api):
 
 
 
+@pytest.mark.parametrize("line", [
+    "memory search tent --vault /Users",
+    "memory search tent --vault=/Users",
+    "memory person show homer --vault /tmp",
+    "memory capture --file /etc/hosts --by homer",
+    "memory capture --file=~/.ssh/id_ed25519 --by homer",
+    "messages upload family /etc/hosts",
+])
+def test_the_agent_cannot_point_a_command_at_a_path_on_the_host(api, line):
+    """The API runs on the host, and what the agent sends is written by a
+    model that reads email and web pages. An option that names a path would
+    let it read, or file into the memory, any file on the Mac, so the line
+    is refused before anything runs, with a status the agent can tell from
+    an answer."""
+    reply = api.handle_plaintext(line)
+    assert "not allowed" in reply
+    assert reply.rstrip().endswith(f"{api.EXIT_MARKER} 126")
+
+
 def test_the_agent_can_speak_aloud_without_being_allowed_it(api):
     """Saying something aloud is one of the agent's own abilities, like a
     lookup: it works on an instance whose stack.toml allows nothing."""

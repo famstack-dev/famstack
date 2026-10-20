@@ -883,6 +883,9 @@ allow = ["kettle"]                    # every command of the kettle stacklet
 - Anything allowed runs, including commands that change something. That
   is the admin's decision. Limits ("never above 80 degrees") belong in
   the command as checks, not in the agent's prompt.
+- No command from the agent may name a path on the host, allowed or
+  not: `--vault`, `--file` and `messages upload` are refused before they
+  run, because the API runs on the host.
 
 `stack up agent` writes the allowed commands into the agent's workspace
 as an always-loaded skill, one line per command with its `HELP`, so the
