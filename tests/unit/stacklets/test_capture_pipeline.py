@@ -1471,3 +1471,52 @@ class TestACorrectionFindsTheCaptureWhereItIsNow:
         the correction says the capture is missing rather than guessing."""
         out, _ = await self._correct(tmp_path, monkeypatch, local=None)
         assert out.status == "capture_missing"
+
+
+class TestACorrectionKeepsTheNotesOwnWords:
+    """A note keeps the words its writer sent; the summary is the model's
+    reading of them. A reply that corrects the note is read against those
+    words, and the refiled note still holds them as they were sent. Read
+    back from the summary instead, the note's words would be replaced by a
+    paraphrase, and a short note, which carries no summary, by nothing."""
+
+    PATH = "homer/notes/test-capture.md"
+    WORDS = "Replace the tires on the Plymouth before winter.\n\nAsk Lenny for a dealer."
+
+    def _note(self, summary: str = "") -> str:
+        return render_capture(
+            frontmatter=capture_frontmatter(
+                title="Winter tires", captured_at="2026-10-13", kind="note",
+                source_uri=None, persons=["Homer"], tags=["car"], model=None,
+                capture_id="$note:s",
+            ),
+            body=self.WORDS, kind="note", captured_at="2026-10-13",
+            source_uri=None, persons=["Homer"], from_path=self.PATH,
+            shared_bucket="family", summary=summary, facts=[],
+        )
+
+    async def _correct(self, raw: str):
+        mirror, classifier = FakeMirror(), FakeClassifier()
+        mirror._stored = {self.PATH: raw}
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=self.PATH, user_hint="it is the station wagon",
+            sender_mxid="@homer:s",
+        )
+        return mirror.captures[-1], classifier
+
+    @pytest.mark.asyncio
+    async def test_the_corrected_note_holds_the_words_as_sent(self):
+        published, _ = await self._correct(self._note(summary="Homer plans new tires."))
+        assert published["body_text"] == self.WORDS
+
+    @pytest.mark.asyncio
+    async def test_the_model_reads_the_words_not_its_old_summary(self):
+        _, classifier = await self._correct(self._note(summary="Homer plans new tires."))
+        assert self.WORDS in classifier.saw_text
+        assert "Homer plans new tires." not in classifier.saw_text
+
+    @pytest.mark.asyncio
+    async def test_a_note_without_a_summary_is_corrected_from_its_words(self):
+        published, classifier = await self._correct(self._note())
+        assert self.WORDS in classifier.saw_text
+        assert published["body_text"] == self.WORDS

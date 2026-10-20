@@ -576,7 +576,8 @@ class CapturePipeline:
         """Re-classify an already-filed capture using a human note.
 
         Mirrors ``DocumentPipeline.reprocess`` -- read the prior entry,
-        rebuild a SourceContent from its persisted summary, run the
+        rebuild a SourceContent from a note's own words or else from the
+        persisted summary, run the
         classifier again with the reply chain as ``user_hint``, and
         rewrite the entry where it is, whatever its new title. Captures don't have a separate Paperless
         backing store, so the prior summary IS the source the LLM
@@ -621,6 +622,11 @@ class CapturePipeline:
             return CaptureOutcome(status="capture_missing")
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
+        # A note keeps the words as they were sent, and those are its
+        # source: the classifier reads them again and the refiled note
+        # keeps them. An entry without them (a bookmark, an older note)
+        # is read back from its summary.
+        words = _original_paste(raw)
         # The summary callout doesn't carry the frontmatter tag list,
         # so the classifier would otherwise have to re-derive tags
         # from prose alone -- they drift on each pass. Append them as
@@ -633,8 +639,8 @@ class CapturePipeline:
             if isinstance(t, str) and t.strip() and not t.startswith("Person: ")
         ]
         body_parts: list[str] = []
-        if summary_text:
-            body_parts.append(summary_text)
+        if words or summary_text:
+            body_parts.append(words or summary_text)
         if caption:
             body_parts.append("The sender's caption: " + caption)
         if existing_tags:
@@ -662,7 +668,7 @@ class CapturePipeline:
             initial_classification=initial_classification,
             kept_media=_kept_media_from(raw),
             caption=caption, replies=replies,
-            write_in=write_in,
+            write_in=write_in, words=words or None,
         )
 
     async def _publish(
@@ -685,8 +691,13 @@ class CapturePipeline:
         extract_action_items: bool = False,
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
+        words: str | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
+
+        ``words`` are a note's own words when ``source.text`` is not only
+        them: a correction reads them with the entry's tags and caption,
+        and keeps just the words on the note.
 
         ``extract_action_items`` asks the classifier for the todos in the
         source. Only a note in the writer's own words does (`capture_text`);
@@ -761,7 +772,7 @@ class CapturePipeline:
             # Bookmarks default to marker mode (body dropped, summary IS
             # the content); notes always keep the body.
             keep_body = kind == "note" or self.capture_keep_body
-            body_for_mirror = source.text if keep_body else ""
+            body_for_mirror = (words if words is not None else source.text) if keep_body else ""
             filed = await self._mirror.publish_capture(
                 entity=entity_slug,
                 kind=kind,
@@ -1065,6 +1076,25 @@ def _replies_from(raw: str) -> list[tuple[str, str]]:
         elif line.startswith(">") and replies:
             replies[-1][1].append(line[2:] if line.startswith("> ") else line[1:])
     return [(who, "\n".join(words).strip()) for who, words in replies]
+
+
+# The callout `vault_entry.render_capture` keeps a note's words in.
+_PASTE_CALLOUT = "> [!quote]- Original paste"
+
+
+def _original_paste(raw: str) -> str:
+    """The words a note was sent with, read back off the page; "" when it has none."""
+    lines = raw.splitlines()
+    try:
+        start = lines.index(_PASTE_CALLOUT)
+    except ValueError:
+        return ""
+    words: list[str] = []
+    for line in lines[start + 1:]:
+        if not line.startswith(">"):
+            break
+        words.append(line[2:] if line.startswith("> ") else line[1:])
+    return "\n".join(words).strip()
 
 
 def _with_reply(replies, sender_mxid: str, words: str) -> list[tuple[str, str]]:
