@@ -44,7 +44,7 @@ import re
 from typing import Any
 
 from search_format import memory_hit_url, paperless_doc_url
-from pipeline import extract_bot_summary
+from pipeline import DEFERRAL_MARKER, extract_bot_summary
 
 # Memory lib is a sibling stacklet. The archivist already wires the
 # path to sys.path on boot (see archivist.py's `_STACKLETS_DIR`
@@ -237,25 +237,39 @@ def select_evidence_for_display(
 DEEP_DIVE_MAX_CHARS = 4000
 
 
-# Deferral pattern the synthesis prompt asks the model to use. We
-# match a loose substring rather than the exact phrasing so a model
-# that paraphrases ("would need to read [2] more carefully") still
-# triggers the deep-dive turn. Case-insensitive so capitalization
-# variants don't slip through.
-_DEFERRAL_HINT_RE = re.compile(r"\bneed\s+to\s+read\b", re.IGNORECASE)
+# Two signals that the synthesizer deferred. The marker is what the
+# prompt asks for, and it reads the same in every household language.
+# The English phrase is what models wrote before the marker existed,
+# and still write in English households when they leave the marker
+# out; matched loosely so a paraphrase ("would need to read [2] more
+# carefully") counts too.
+_DEFERRAL_HINT_RE = re.compile(
+    rf"\b{DEFERRAL_MARKER}\b|\bneed\s+to\s+read\b", re.IGNORECASE,
+)
+
+# The marker with the hit numbers that follow it, for removal before
+# display: "NEED_TO_READ [1] [3]", "NEED_TO_READ [1][2]", "NEED_TO_READ [1, 2]".
+_DEFERRAL_MARKER_RE = re.compile(
+    rf"[ \t]*\b{DEFERRAL_MARKER}\b(?:[ \t]*\[[\d,\s]*\])*", re.IGNORECASE,
+)
 
 
 def is_deferral(answer: str) -> bool:
     """True when the synthesizer punted instead of answering.
 
-    The synthesis prompt instructs the model to reply with
-    "I'd need to read [N] in detail to answer that." when the
-    summaries alone aren't enough. The bot uses that signal as the
-    trigger for an automatic deep-dive turn -- read the cited docs
-    in full, re-synthesize against the bigger context, give the
-    family the actual answer.
+    When the summaries alone aren't enough, the synthesis prompt asks
+    the model for one sentence in the family's language followed by a
+    `NEED_TO_READ [N]` line. The bot uses that signal as the trigger
+    for an automatic deep-dive turn: read the cited docs in full,
+    re-synthesize against the bigger context, give the family the
+    actual answer.
     """
     return bool(_DEFERRAL_HINT_RE.search(answer or ""))
+
+
+def answer_for_display(answer: str) -> str:
+    """The answer as the family should read it, without the deferral marker."""
+    return _DEFERRAL_MARKER_RE.sub("", answer or "").strip()
 
 
 def expand_to_full_content(

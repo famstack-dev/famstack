@@ -17,6 +17,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from nl_query import (  # noqa: E402
+    answer_for_display,
     build_evidence,
     expand_to_full_content,
     extract_citations,
@@ -260,6 +261,55 @@ class TestIsDeferral:
     def test_empty_does_not_trigger(self):
         assert not is_deferral("")
         assert not is_deferral(None)  # type: ignore[arg-type]
+
+    def test_german_deferral_with_marker_triggers(self):
+        # A German household gets the deferral sentence in German, so
+        # no English phrase can catch it. The prompt asks for a fixed
+        # marker line in every language; that line is the signal.
+        answer = (
+            "Ich müsste [1] oder [2] detailliert lesen, um die Telefonnummer "
+            "von Barts Schule zu erfahren.\nNEED_TO_READ [1] [2]"
+        )
+        assert is_deferral(answer)
+
+    def test_marker_alone_triggers(self):
+        assert is_deferral("NEED_TO_READ [3]")
+
+    def test_marker_inline_triggers(self):
+        # A small model may append the marker to its sentence instead
+        # of putting it on a line of its own.
+        assert is_deferral("Dafür müsste ich [1] lesen. NEED_TO_READ [1]")
+
+    def test_german_answer_without_marker_does_not_trigger(self):
+        assert not is_deferral("Der erste Elternabend ist am 2026-09-18 [1].")
+
+
+# ── answer_for_display ───────────────────────────────────────────────────
+
+class TestAnswerForDisplay:
+    """The deferral marker is for the bot; the family never sees it."""
+
+    def test_marker_line_removed(self):
+        answer = (
+            "Ich müsste [1] detailliert lesen, um das zu beantworten.\n"
+            "NEED_TO_READ [1]"
+        )
+        assert answer_for_display(answer) == (
+            "Ich müsste [1] detailliert lesen, um das zu beantworten."
+        )
+
+    def test_inline_marker_removed(self):
+        assert answer_for_display(
+            "Dafür müsste ich [1] und [2] lesen. NEED_TO_READ [1][2]",
+        ) == "Dafür müsste ich [1] und [2] lesen."
+
+    def test_plain_answer_unchanged(self):
+        answer = "The school's phone number is 555-0134 [1]."
+        assert answer_for_display(answer) == answer
+
+    def test_english_deferral_unchanged(self):
+        answer = "I'd need to read [2] in detail to answer that."
+        assert answer_for_display(answer) == answer
 
 
 # ── expand_to_full_content ────────────────────────────────────────────────
