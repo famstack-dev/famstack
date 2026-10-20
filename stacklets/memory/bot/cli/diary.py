@@ -687,7 +687,7 @@ leave it out.
 Write two to four short sentences recalling that month, the way
 someone in the family would remember it later. One moment per
 sentence. Do not chain several events into one sentence with words
-like "bevor", "während" or "und dann". The summary is not a complete
+like "before", "while" or "and then". The summary is not a complete
 account: pick at most four moments and let the rest go -- the entries
 below the paragraph carry everything else.
 
@@ -705,20 +705,19 @@ Rules:
   nominalizations. Never a list of topics: pick the moments that
   matter and let the rest go.
 
-  Wanted register (invented examples, not this family):
-    German: "Im September gab es viel zu erzählen: Anna hielt fest,
-    wie der erste Zahn endlich durchkam, und am Küchentisch wurde
-    der Sommer am See noch einmal lebendig -- samt dem Schuh, der im
-    Wasser blieb."
-    English: "September had a lot to tell: Anna recorded the first
-    tooth finally coming through, and around the kitchen table the
-    summer at the lake came back to life -- including the shoe that
-    stayed in the water."
-  Not wanted: "Im September berichteten Anna und Jonas über einen
-  Urlaub, einen ersten Zahn und ein Konzert."
+  Wanted register (an invented example, not this family):
+    "September had a lot to tell: Anna recorded the first tooth
+    finally coming through, and around the kitchen table the summer
+    at the lake came back to life -- including the shoe that stayed
+    in the water."
+  Not wanted: "In September Anna and Jonas reported on a holiday, a
+  first tooth and a concert."
 - An entry marked as a conversation has no speaker labels in its text.
   Name its participants and its topics. Never attribute a statement
   inside it to a named person.
+- Never put a role in place of a name. When an entry does not say who
+  else was there, name the people it could be, joined with "or", or
+  leave them out.
 - [unclear] marks a word that was not heard clearly. Never guess what
   it was, and never treat it as a person.
 - Name people as the entries name them.
@@ -855,6 +854,17 @@ never add to them. When you quote, copy the words exactly.
 The entry:
 {entry}
 
+The people in it: name them, in the title, the description, the summary
+and "persons", and never describe someone by their place in the family
+instead. The entry says who recorded it. When the words name someone
+else who took part, or address them by name, name that person. When
+they show that someone else took part but not who, that person is not
+known, and naming one of them as if it were is wrong. Name the people it
+could be instead: every family member from the list the words do not
+rule out (by how they speak to the one recording, what they do, how old
+they must be), joined with "or". Never pick one because they seem more
+likely. A family member corrects the card when it is wrong.
+
 Reply with a JSON object with these keys:
 
 "title": a short name for the entry, three to six words, in {language}.
@@ -867,8 +877,10 @@ Reply with a JSON object with these keys:
 
 {facts}
 
-"persons": the family members the entry is about or spoken to, using
-  the names from the family list above. Only names from that list.
+"persons": the family members the entry is about, spoken to or who took
+  part, using the names from the family list above; when the words do
+  not say who took part, the people it could be. Only names from that
+  list.
 
 "topics": up to three topics from the vocabulary above that fit the
   entry. Only topics from that vocabulary. An empty list when none fits.
@@ -881,16 +893,15 @@ Reply with a JSON object with these keys:
 
 _SUMMARY_FIELD = """\
 "summary": one to three short sentences in {language} saying what the
-  entry is about. Write with verbs, as things that happened, never as a
-  list of topics. You may name a conversation participant only when the
-  words address them by name. No marketing words.
-  Wanted register (invented examples, not this family):
-    "Anna erzählt mit einem der Kinder vom Tag am See und vom Schuh,
-    der im Wasser landete."
-    "Anna and one of the kids talk about the day at the lake and the
-    shoe that landed in the water."
-  Not wanted: "Anna und ein Kind berichten über einen Ausflug, ein
-  Picknick, einen verlorenen Schuh und das Wetter.\""""
+  entry is about, naming its people as above. Write with verbs, as
+  things that happened, never as a list of topics. In a recorded
+  conversation, say who took part and what it was about, never who said
+  which line. No marketing words.
+  Wanted register (an invented example, not this family):
+    "Anna and Jonas or Mia talk about the day at the lake and the shoe
+    that landed in the water."
+  Not wanted: "Anna and Jonas report on an outing, a picnic, a lost
+  shoe and the weather.\""""
 
 _FACTS_FIELD = """\
 "facts": what someone would want to look up about this entry later, in
@@ -1615,7 +1626,10 @@ The correction, from {who}:
 
 Reply with a JSON object with these keys, all in {language} except the
 names of people and topics:
-"title", "description", "summary" (one to three short sentences),
+"title", "description", "summary" (one to three short sentences; when
+the card names the people it could be, joined with "or", and the
+correction says who it was, name that person and drop the others here,
+in the title and in "persons"),
 "facts" (each "Label: value", labelled by who or what it is about, such
 as a family member's name or "Place", never by the kind of fact such as
 "Action", "Event", "Date" or "Person"; milestones first; at most five;
