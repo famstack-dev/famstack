@@ -283,6 +283,24 @@ class TestTheArchive:
         assert archive_over(packing, {}, path=path, today=self.TODAY,
                               bucket="family") == (packing, {}, [])
 
+    def test_an_archive_says_it_is_one(self):
+        """`kind: archive` (ADR-017 §6): what is in it is over, not to do."""
+        _, archives, _ = archive_over(self._shopped(), {}, path=GROCERIES,
+                                        today=self.TODAY, bucket="family")
+        october = archive_path("einkaufsliste", "2026-10", bucket="family")
+        assert parse(archives[october])["kind"] == "archive"
+        assert read_list(archives[october], path=october).kind == "archive"
+
+    def test_an_archive_written_before_archives_had_a_kind_gains_it(self):
+        """Only the `kind` line is added; what the family wrote stays."""
+        october = archive_path("einkaufsliste", "2026-10", bucket="family")
+        earlier = ("---\ntype: list\ncard_id: list-einkaufsliste-2026-10\ntitle: Einkaufsliste, 2026-10\n---\n"
+                   "\n- [x] Milch ✅ 2026-10-02\nVom Bauern.\n")
+        _, archives, _ = archive_over(self._shopped(), {october: earlier}, path=GROCERIES,
+                                        today=self.TODAY, bucket="family")
+        assert archives[october].startswith(earlier.replace("---\n\n", "kind: archive\n---\n\n"))
+        assert "- [x] Milch ✅ 2026-10-02\nVom Bauern.\n" in archives[october]
+
     def test_a_tick_made_by_hand_gets_a_date_first(self):
         text = _groceries().rstrip("\n") + "\n\n- [x] Batterien\n"
         stamped = stamp_ticks(text, path=GROCERIES, today=self.TODAY)
@@ -322,6 +340,15 @@ class TestACalendar:
         assert list(archives) == [archive_path("termine", "2026-11", bucket="family")]
         assert read_list(kept, path=self.PATH).items == []
 
+    def test_its_archive_holds_past_appointments_not_open_ones(self):
+        """Nobody ticks an appointment that is over; in the archive it is past (review C3)."""
+        text = self._dates(("Theater", "2026-11-03"))
+        _, archives, _ = archive_over(text, {}, path=self.PATH, today="2026-12-01", bucket="family")
+        november = archive_path("termine", "2026-11", bucket="family")
+        archived = read_list(archives[november], path=november)
+        assert [(i.text, i.done) for i in archived.items] == [("Theater", False)]
+        assert archived.open_items == []
+
     def test_a_todo_past_its_due_date_stays_until_someone_ticks_it(self):
         """A deadline missed is still a thing to do; only an appointment is simply over."""
         text = _add(_groceries(), "Rezept abholen", due="2026-10-01")
@@ -343,6 +370,15 @@ class TestKnownItems:
             self._archive("einkaufsliste", ("Eier", "Milchprodukte & Eier", "2026-10-10")),
         ])
         assert known["eier"] == Known("einkaufsliste", "Milchprodukte & Eier", "Eier")
+
+    def test_a_past_appointment_in_an_archive_is_not_where_an_item_lives(self):
+        """An archive has nothing open: an entry nobody ticked counts from its date."""
+        path = archive_path("termine", "2026-09", bucket="family")
+        past = insert_item(new_list("Termine, 2026-09", path=path, kind="archive"),
+                           Item("Friseur", due="2026-09-20"), path=path)
+        known = known_items([("termine", read_list(past, path=path)),
+                             self._archive("erledigungen", ("Friseur", "", "2026-10-05"))])
+        assert known["friseur"].slug == "erledigungen"
 
     def test_an_item_open_on_a_list_lives_there(self):
         current = read_list(_add(_groceries(), "Eier", "Milchprodukte & Eier"), path=GROCERIES)

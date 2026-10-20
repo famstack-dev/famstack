@@ -146,8 +146,7 @@ def _bookmark_facts(f: Fields, names: Names) -> list[str]:
 
 
 def _diary_facts(f: Fields, names: Names) -> list[str]:
-    medium = _text(f, "kind") or _text(f, "medium")
-    return [_text(f, "date"), _people(f, names), _MEDIUM.get(medium, "")]
+    return [_text(f, "date"), _people(f, names), _MEDIUM.get(_text(f, "kind"), "")]
 
 
 def _list_facts(f: Fields, _names: Names) -> list[str]:
@@ -207,6 +206,8 @@ _ONLY_LINK = re.compile(r"^\[[^\]]+\]\(([^)\s]+)\)$")
 _MEDIA = re.compile(r"(?:^|/)media/")
 _EMBED = re.compile(r"!\[\[[^\]]+\]\]")
 _AUTHOR = re.compile(r"^\*\*(.+)\*\*$")
+# A list item's checkbox, open or ticked, at any indentation.
+_CHECKBOX = re.compile(r"^(\s*[-*+]) \[.\] ", re.MULTILINE)
 
 
 def _record_layout(body: str, card: _Card) -> str:
@@ -244,8 +245,15 @@ def _captured_layout(body: str, card: _Card) -> str:
 
 
 def _list_layout(body: str, card: _Card) -> str:
-    """A list: what it is for, then its items as the file has them."""
-    return _blocks(_text(card.fields, "description"), _without_heading(_COMMENT.sub("", body)))
+    """A list: what it is for, then its items as the file has them.
+
+    An archive's items are over, ticked or not, so they show without a
+    checkbox: an appointment nobody ticked is past, not open.
+    """
+    items = _without_heading(_COMMENT.sub("", body))
+    if _text(card.fields, "kind") == "archive":
+        items = _CHECKBOX.sub(r"\1 ", items)
+    return _blocks(_text(card.fields, "description"), items)
 
 
 def _declared_layout(body: str, _card: _Card) -> str:

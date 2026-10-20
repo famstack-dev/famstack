@@ -227,8 +227,9 @@ class TestStackUpMemory:
         httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
         outcome, record = self._up(tmp_path, httpserver)
         assert outcome["applied"][:2] == ["memory/0001", "memory/0002"]
-        assert record.applied["0002"]["commit"] == _git(memory, "rev-parse", "HEAD")
-        assert _git(memory, "log", "-1", "--format=%B").strip().endswith(TRAILER)
+        # Later migrations commit after it: its commit is the one with its trailer.
+        assert record.applied["0002"]["commit"] == _git(memory, "log", "-1", "--format=%H",
+                                                        f"--grep={TRAILER}")
         assert _card_id(memory, PERSON) == "person-homer"
 
 

@@ -572,6 +572,18 @@ through it, slugging a tag it cannot read (`Moe's` becomes `moe-s`);
 leaving a tag it cannot read as it is and naming it. Diary cards still
 carry labels and `Person:` tags, for the reason above.
 
+**A card's `kind` is one of its type's** (ADR-017 §6, `stack.cards.CARD_KINDS`):
+a list is a `todo` (no `kind`), `checklist`, `calendar` or `archive`, a
+diary card `text`, `voice`, `image`, `video` or `file`, and no other type
+has one. A list's monthly archive says `kind: archive`: everything in it
+is over, ticked or not, so it has no open items and the renderer shows its
+lines without a checkbox. The nightly move writes it on every archive it
+adds to (`stack.lists.as_archive`), the diary compile writes a card's
+`kind`, and `memory/0006` gave the files written before theirs. A diary
+card is signed with a digest of its text (`stack.digest`): the compile
+owns a card that still matches it, a person owns one that does not, and
+a migration that changes a card the compile owns signs it again.
+
 `stack memory check-format` (and the cards API's `/report`, which the
 card browser shows) lists where the vault does not meet ADR-016 and
 ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
@@ -596,9 +608,9 @@ and its to-dos, the last under one label in the household's language.
 |---|---|---|
 | `document` | date · people · correspondent · `document_type` · `[#<paperless_id>](<resource>)` | summary, facts, to-dos, the document's text |
 | `note`, `bookmark` | date · people (· the site, for a bookmark) | summary, facts, to-dos, media, then the paste and the caption, then the replies |
-| `diary` | date · people · 🎤, 📷, 🎬 or 📎 for the medium | summary, facts, media, quotes, then the transcript or text, then the replies |
+| `diary` | date · people · 🎤, 📷, 🎬 or 📎 for its `kind` | summary, facts, media, quotes, then the transcript or text, then the replies |
 | `email` | date · people | each message under its heading (day and sender): summary, to-dos, its words |
-| `list` | `kind` | the description, then the items as the file writes them |
+| `list` | `kind` | the description, then the items as the file writes them; an archive's without a checkbox |
 | `person`, `correspondent`, `topic` | other names · `@account` | what the family wrote |
 | any other | none | the fields as a list, then the body |
 

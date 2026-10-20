@@ -382,7 +382,7 @@ def _frontmatter(card: Card) -> dict:
         "tags": card.tags,
         "filed_by": card.sender,
         "addressee": card.addressee,
-        "medium": card.kind,
+        "kind": card.kind,
         "mode": card.mode,
     }
     if card.duration_ms:
@@ -504,7 +504,7 @@ def parse(text: str) -> Card:
         entry_id=str(fm.get("entry_id") or ""),
         on=date.fromisoformat(str(fm.get("date"))[:10]),
         confidence=str(fm.get("date_basis") or "sent"),
-        kind=str(fm.get("medium") or "text"),
+        kind=str(fm.get("kind") or "text"),
         sender=str(fm.get("filed_by") or ""),
         at=_ms(fm["timestamp"]) if fm.get("timestamp") else 0,
         event_ids=listed("event_ids"),

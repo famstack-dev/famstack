@@ -206,7 +206,7 @@ card; its event id joins `event_ids`.
 | `tags` | O | list; still topic labels and `Person:` tags (not migrated, see above). |
 | `filed_by` | O | Matrix localpart of the sender. |
 | `addressee` | O | who the message is spoken to, as it names them; a correction can change it. |
-| `medium` | O | `voice` \| `image` \| `video` \| `file` \| `text`. |
+| `kind` | O | `text` \| `voice` \| `image` \| `video` \| `file`: what the entry was recorded as. Called `medium` until migration `memory/0006`. |
 | `mode` | O | `monologue` \| `dialogue` \| `note`. |
 | `duration_ms` | O | integer. |
 | `resource` | O | Matrix permalink of the first message. |
@@ -285,7 +285,7 @@ name is the slug. A state document (§7), changed by hand or with
 | `description` | O | what goes on it ("Was wir im Supermarkt brauchen"); the agent picks a list by it. |
 | `topics` | O | list; the topics the list belongs to, by slug. |
 | `sections` | O | list; the sections in the order the family walks through the store. |
-| `recurring` | O | `true` for a list used again and again (a packing list, the weekly chores): its ticked items stay until it is reset. |
+| `kind` | O | `checklist`: used again and again (a packing list, the weekly chores), its ticked items stay until it is reset. `calendar`: entries in date order, each leaving the day after its date. `archive`: a list's month of items that are over (below). None: a to-do list. |
 
 ```
 ---
@@ -333,9 +333,11 @@ checkbox, because the list holds whether it is done.
 A ticked item stays on its list for the rest of the day. The night after,
 the curator moves it to the list's archive,
 `<bucket>/lists/archive/<slug>/<YYYY-MM>.md` for the month it was ticked:
-a list file of its own (`title: Einkaufsliste, 2026-10`, no topics), with
-the line and its section as they were. A tick without a date gets the
-day's date first. A `recurring` list is left alone. The archive is where
+a list file of its own (`title: Einkaufsliste, 2026-10`, `kind: archive`,
+no topics), with the line and its section as they were. Everything in it
+is over, ticked or not: a calendar's appointment nobody ticked moves there
+the day after its date and is past, not open. A tick without a date gets
+the day's date first. A checklist is left alone. The archive is where
 `stack memory list add` learns where an item was last bought, its
 section and its spelling.
 

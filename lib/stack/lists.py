@@ -51,8 +51,8 @@ import posixpath
 import re
 from dataclasses import dataclass, field, replace
 
-from .cards import CARD_ID, new_card_id
-from .frontmatter import FrontmatterError, dump, parse, validate
+from .cards import CARD_ID, CARD_KINDS, new_card_id
+from .frontmatter import FrontmatterError, dump, parse, validate, with_field
 from .people import person_path
 
 LISTS_DIR = "lists"
@@ -85,10 +85,14 @@ _PERSON_PATH = re.compile(r"^[^/]+/people/([^/]+)\.md$")
 # of a type). A todo list hands a ticked item to its archive the night
 # after; a checklist (packing, the weekly chores) keeps its ticks until
 # it is reset; a calendar keeps its entries in date order, and an entry
-# leaves the day after its date, ticked or not.
+# leaves the day after its date, ticked or not. A list's archive is the
+# fourth kind, made by the nightly move and never by hand: every item in
+# it is over, ticked or not, so a calendar's past appointments in it are
+# not read as open.
 TODO = "todo"
 CHECKLIST = "checklist"
 CALENDAR = "calendar"
+ARCHIVE = "archive"
 KINDS = (TODO, CHECKLIST, CALENDAR)
 
 
@@ -252,6 +256,9 @@ class FamilyList:
 
     @property
     def open_items(self) -> list[Item]:
+        """The items still to do; an archive has none, ticked or not."""
+        if self.kind == ARCHIVE:
+            return []
         return [i for i in self.items if not i.done]
 
 
@@ -313,8 +320,8 @@ def read_list(text: str, *, path: str) -> FamilyList:
     if errors:
         raise ListError(f"{path}: {'; '.join(errors)}")
     kind = str(fm.get("kind") or TODO)
-    if kind not in KINDS:
-        raise ListError(f"{path}: kind is {kind!r}, not one of {', '.join(KINDS)}")
+    if kind not in CARD_KINDS["list"]:
+        raise ListError(f"{path}: kind is {kind!r}, not one of {', '.join(CARD_KINDS['list'])}")
 
     items: list[Item] = []
     section = ""
@@ -556,7 +563,8 @@ def relink(text: str, old: str, new: str, *, path: str) -> str:
 # eggs?") and moves to the list's archive the night after, one file per
 # month: `<bucket>/lists/archive/<slug>/<YYYY-MM>.md`. The list then holds
 # only what is still open. The archive keeps the line as it was, section
-# included, and is where the household's known items come from.
+# included, and is where the household's known items come from. It is a
+# list of `kind: archive`: everything in it is over.
 
 def archive_path(slug: str, month: str, *, bucket: str) -> str:
     """The archive file for the items of list `slug` ticked in `month` (`YYYY-MM`)."""
@@ -591,6 +599,17 @@ def over(lst: FamilyList, today: str) -> list[Item]:
             or (lst.kind == CALENDAR and i.due and i.due < today)]
 
 
+def as_archive(text: str) -> str:
+    """An archive file's text saying `kind: archive`, every other byte as it was.
+
+    The nightly move writes it on every archive it adds to, and migration
+    `memory/0006` on the archives written before archives had a kind.
+    """
+    if parse(text).get("kind") == ARCHIVE:
+        return text
+    return with_field(text, "kind", ARCHIVE)
+
+
 def archive_month(item: Item) -> str:
     """The month (`YYYY-MM`) an item is archived under: when it was ticked, else its date."""
     return (item.done_on or item.due)[:7]
@@ -611,8 +630,8 @@ def archive_over(text: str, archives: dict[str, str], *, path: str, today: str,
         month = archive_month(item)
         target = archive_path(lst.slug, month, bucket=bucket)
         current = changed.get(target) or archives.get(target) or \
-            new_list(f"{lst.title}, {month}", path=target, sections=lst.sections)
-        changed[target] = insert_item(current, item, path=target)
+            new_list(f"{lst.title}, {month}", path=target, sections=lst.sections, kind=ARCHIVE)
+        changed[target] = insert_item(as_archive(current), item, path=target)
     # Last line first, so removing one item never moves the lines of the next.
     for item in sorted(moving, key=lambda i: i.line, reverse=True):
         text = remove_item(text, item)
@@ -636,11 +655,14 @@ def known_items(lists: list[tuple[str, FamilyList]]) -> dict[str, Known]:
     `lists` pairs a list's slug with a list or one of its archive files.
     An item open on a list now is where it lives; otherwise the most
     recent tick wins, so an item bought somewhere else lately follows.
+    An archived entry nobody ticked counts from its date: it is over.
     """
     seen: dict[str, tuple[str, Known]] = {}
     for slug, lst in lists:
+        open_now = {id(i) for i in lst.open_items}
         for item in lst.items:
-            rank = "9999-99-99" if not item.done else (item.done_on or "0000-00-00")
+            rank = "9999-99-99" if id(item) in open_now else (
+                item.done_on or item.due or "0000-00-00")
             key = item.text.casefold()
             if key not in seen or rank > seen[key][0]:
                 seen[key] = (rank, Known(slug, item.section, item.text))
