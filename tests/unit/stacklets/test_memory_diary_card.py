@@ -36,6 +36,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 
 import diary  # noqa: E402
 import diary_card  # noqa: E402
+from stack.card_render import render_file  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter, validate  # noqa: E402
 from test_memory_diary import _compile, _entry_for  # noqa: E402
 
@@ -592,15 +593,48 @@ class TestTheDiaryPageShowsTheCard:
 
         assert f'<a id="{card.entry_id}"></a>\n### A day at the lake' in page
 
+    LONG = ("We went to the lake today. " + "Bart built a sand tower by the water, "
+            "Lisa counted the ducks, and Maggie slept in the shade the whole time. " * 5)
+
     def test_the_summary_opens_the_entry_and_every_word_follows(self):
-        card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake."),
+        card = diary_card.to_card(self._note(body=self.LONG),
+                                  _extraction(summary="Marge tells of the lake."),
                                   room_id=ROOM, media={})
         page = _page_for(card)
 
         assert page.index("Marge tells of the lake.") < page.index("We went to the lake today.")
 
+    def test_a_short_entry_is_its_words_without_a_summary(self):
+        """A summary of two sentences says them again (memory cards review,
+        C1), so a short entry has none, whatever the model wrote."""
+        card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake."),
+                                  room_id=ROOM, media={})
+        page = _page_for(card)
+
+        assert card.summary == ""
+        assert "Marge tells of the lake." not in page
+        assert "We went to the lake today." in page
+
+    def test_a_short_entrys_card_has_no_empty_block(self):
+        card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake.",
+                                                            facts=[]),
+                                  room_id=ROOM, media={})
+        text = diary_card.render(card)
+        shown = render_file(text).markdown
+
+        assert "[!summary]" not in text
+        assert "We went to the lake today." in shown
+        assert "\n\n\n" not in shown
+
+    def test_a_correction_keeps_a_short_entry_without_a_summary(self):
+        card = diary_card.to_card(self._note(), _extraction(), room_id=ROOM, media={})
+        fixed = diary_card.correct(card, _extraction(summary="Lisa went to the lake."),
+                                   event_id="$fix")
+        assert fixed.summary == ""
+
     def test_a_correction_shows_on_the_page(self):
-        card = diary_card.to_card(self._note(), _extraction(summary="Bart built the tower."),
+        card = diary_card.to_card(self._note(body=self.LONG),
+                                  _extraction(summary="Bart built the tower."),
                                   room_id=ROOM, media={})
         fixed = diary_card.correct(card, _extraction(summary="Lisa built the tower.",
                                                      title="Lisa's tower"), event_id="$fix")
