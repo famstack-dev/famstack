@@ -11,7 +11,9 @@ Shows the card's line, where it lives, its last changes (who, when, what),
 the cards it links to and the cards that link to it, the views the wiki
 compiled from it (a person's page, a topic's, a diary month; one compiled
 from an older version of the card says it is behind, and the card's own
-text counts), then its text. Ids come from `stack
+text counts), then the card as its type's renderer writes it: the markdown
+the chat and the card browser show too (ADR-016 §4). With `--json` that
+markdown is in `rendered`, one per card. Ids come from `stack
 memory find`, `stack memory links` or another card, or are a card's own
 `card_id` (ADR-016). An id a card had before (`former_card_ids`) opens the
 card that has it now and says so; an id of a card that was removed says
@@ -23,7 +25,6 @@ Exit codes: 0 shown, 1 no such card.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -43,7 +44,6 @@ HELP = "Show cards of the family memory by id, with their links and history"
 _TEXT_CHARS_TOGETHER = 3000
 _TEXT_CHARS_ALONE = 6000
 _LINKS_SHOWN = 10
-_FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 
 
 def run(args, stacklet, config):
@@ -78,13 +78,17 @@ def run(args, stacklet, config):
         sys.exit(1)
     alone = len(cards) == 1
     budget = _TEXT_CHARS_ALONE if alone else _TEXT_CHARS_TOGETHER // len(cards)
-    print("\n\n".join(_shown(card, graph, budget, alone=alone) for card in cards))
+    language = ((config or {}).get("stack", {}).get("core", {}) or {}).get("language") or "en"
+    rendered = [graph.rendered(card, language=language).markdown for card in cards]
+    print("\n\n".join(_shown(card, text, graph, budget, alone=alone)
+                      for card, text in zip(cards, rendered)))
     for said in asked.values():
         print(f"\n{said}")
     if missing:
         print(f"\nNo card {', '.join(map(repr, missing))}.")
     result: dict[str, object] = {"cards": [c.id for c in cards],
-                                 "versions": [c.version for c in cards]}
+                                 "versions": [c.version for c in cards],
+                                 "rendered": rendered}
     if asked:
         result["asked"] = asked
     if gone:
@@ -116,7 +120,7 @@ def _card(ref: str, graph, vault: Path, audience, shared: str):
                   f"(@{removal.sha}: {removal.subject}).")
 
 
-def _shown(card, graph, budget: int, *, alone: bool) -> str:
+def _shown(card, text: str, graph, budget: int, *, alone: bool) -> str:
     lines = [card.line(), f"file: {card.path}"]
     for change in card.changes[:3]:
         lines.append(f"changed {change.day} by {change.who} @{change.sha}: {change.subject}")
@@ -125,7 +129,7 @@ def _shown(card, graph, budget: int, *, alone: bool) -> str:
     lines += [f"view: {v.path} ({v.view}, compiled by the wiki"
               + ("; behind this card, whose own text counts)" if v.behind else ")")
               for v in card.views]
-    text = _FRONTMATTER.sub("", card.text).strip()
+    text = text.strip()
     if len(text) > budget:
         rest = (f"`stack memory card {card.id}` alone shows more" if not alone
                 else "not shown")
