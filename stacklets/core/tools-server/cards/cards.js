@@ -31,6 +31,7 @@ const WORDS = {
     reportSub: (n) => `Where the memory does not meet its format yet, over all ${n} cards (as the admin).`,
     noCardId: "Without a card_id", sharedIds: "One id, several files",
     deadLinks: "Links to nothing in the memory repo", noType: "Not a card type", notThere: "is not there",
+    badTags: "Tags that are no topic id and no keyword",
   },
   de: {
     memory: "Gedächtnis · Karten", search: "Im Familiengedächtnis suchen", viewas: "Ansicht als",
@@ -51,6 +52,7 @@ const WORDS = {
     reportSub: (n) => `Wo das Gedächtnis sein Format noch nicht hat, über alle ${n} Karten (als Admin).`,
     noCardId: "Ohne card_id", sharedIds: "Eine ID, mehrere Dateien",
     deadLinks: "Verweise ins Leere", noType: "Keine Kartenart", notThere: "gibt es nicht",
+    badTags: "Schlagwörter, die weder Themen-ID noch Stichwort sind",
   },
 };
 const LANG = (navigator.language || "en").slice(0, 2) === "de" ? "de" : "en";
@@ -577,7 +579,9 @@ function reportElement(report) {
       h("li", {}, opens(dead.card, dead.title), h("code", {}, dead.link),
         h("span", { class: "hint" }, `${dead.target} ${T.notThere}`)))),
     section(T.noType, report.no_card_type.map((file) =>
-      h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))));
+      h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))),
+    section(T.badTags, report.invalid_tags.map((card) =>
+      h("li", {}, opens(card.card, card.path), card.tags.map((t) => h("code", {}, t))))));
 }
 
 // ── Finding cards ─────────────────────────────────────────────────────────

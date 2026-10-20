@@ -6,8 +6,9 @@
 Reads every card of the memory repo, as the admin, and lists what ADR-016
 and ADR-017 ask for that is not there yet: cards without a `card_id`
 (counted per type), ids two files claim, links to a file the memory repo
-does not have, and files with no frontmatter or a `type` that is no card
-type. The card browser shows the same report. Nothing is changed.
+does not have, files with no frontmatter or a `type` that is no card
+type, and tags that are neither a topic's id nor a keyword. The card
+browser shows the same report. Nothing is changed.
 
 Exit codes: 0 nothing to fix, 1 something to fix or no memory found.
 """
@@ -55,4 +56,7 @@ def _shown(report: dict) -> list[str]:
     if untyped := report["no_card_type"]:
         lines += ["", "Not a card type:"]
         lines += [f"  {u['path']}  {u['problem']}" for u in untyped]
+    if tags := report["invalid_tags"]:
+        lines += ["", "Tags that are no topic id and no keyword:"]
+        lines += [f"  {t['card']}  {', '.join(t['tags'])}" for t in tags]
     return lines

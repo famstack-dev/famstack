@@ -2,7 +2,7 @@
 
 Each finding is something a step of ADR-016's order removes: cards without
 a `card_id`, ids two files claim, links to a file the memory repo does not
-have, files that are no card type. The report empties as the steps land, so
+have, files that are no card type, tags that are no topic id and no keyword. The report empties as the steps land, so
 a memory that meets the format gives an empty one.
 
     report = format_report(load_graph(vault))
@@ -17,9 +17,10 @@ what needs fixing. It writes nothing.
 
 from __future__ import annotations
 
-from graph import Card, Graph, links_of
+from graph import Card, Graph, links_of, tags_of
 from stack.cards import CARD_TYPES, card_id_from
 from stack.frontmatter import FrontmatterError, parse
+from stack.tags import is_tag
 
 
 def format_report(graph: Graph) -> dict:
@@ -31,9 +32,11 @@ def format_report(graph: Graph) -> dict:
         "shared_ids": _shared_card_ids(cards),
         "links_to_nothing": _links_to_nothing(graph, cards),
         "no_card_type": [f for f in map(_type_problem, cards) if f],
+        "invalid_tags": _invalid_tags(graph, cards),
     }
     report["findings"] = (sum(report["without_card_id"].values()) + len(report["shared_ids"])
-                          + len(report["links_to_nothing"]) + len(report["no_card_type"]))
+                          + len(report["links_to_nothing"]) + len(report["no_card_type"])
+                          + sum(len(f["tags"]) for f in report["invalid_tags"]))
     return report
 
 
@@ -63,6 +66,16 @@ def _links_to_nothing(graph: Graph, cards: list[Card]) -> list[dict]:
     """Every link from a card to a file the memory repo does not have (ADR-017 §3)."""
     return [{"card": card.id, "title": card.title, "path": card.path, "link": link, "target": target}
             for card in cards for link, target in links_of(card) if graph.at(target) is None]
+
+
+def _invalid_tags(graph: Graph, cards: list[Card]) -> list[dict]:
+    """Each card's tags that are neither a topic's id nor a keyword (ADR-017 §4):
+    a topic's label (`Gesundheit`), a tag with capitals or spaces, `Person: Homer`."""
+    found = []
+    for card in cards:
+        if invalid := [t for t in tags_of(card) if not is_tag(t, graph.ontology)]:
+            found.append({"card": card.id, "path": card.path, "tags": invalid})
+    return found
 
 
 def _type_problem(card: Card) -> dict | None:

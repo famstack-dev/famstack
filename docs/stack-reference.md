@@ -562,7 +562,8 @@ name and tag them: their text is signed with a digest.
 card browser shows) lists where the vault does not meet ADR-016 and
 ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
 links to a file the vault does not have; files with no frontmatter or a
-`type` that is no card type. It is the admin's, read over every card,
+`type` that is no card type; tags that are neither a topic id nor a
+keyword. It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
 
 **A card type has one renderer, and it writes markdown** (ADR-016 §4,
