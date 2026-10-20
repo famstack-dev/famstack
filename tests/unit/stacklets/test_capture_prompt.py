@@ -5,8 +5,8 @@ job for the dream-cycle wiki rebuild. At capture time we want a
 focused prompt that returns:
 
   - title       (scannable, under 80 chars)
-  - summary     (length scales with input: short paste → 1-2 sentences,
-                long content → 200-400 words)
+  - summary     (none for a short note; otherwise length scales with
+                input, up to 200-400 words)
   - facts       (3-6 key facts)
   - tags        (free-form, biased toward existing tags in use)
   - persons     (family members this is for/about)
@@ -408,3 +408,41 @@ class TestTheLanguageACaptureIsWrittenIn:
     def test_a_language_without_a_name_is_asked_for_by_its_code(self):
         prompt = _build_capture_prompt(**COMMON, lang="en", write_in="sv")
         assert "in sv, whatever language the content is in" in prompt
+
+
+# ── What the summary and the facts are for ───────────────────────────────
+
+def _field(prompt: str, key: str) -> str:
+    """What the JSON structure asks for under `key`, lowercased."""
+    line = next(ln for ln in prompt.splitlines() if ln.strip().startswith(f'"{key}":'))
+    return line.lower()
+
+
+class TestAShortNoteGetsNoSummary:
+    """A short note's card shows the writer's words. A summary of them is
+    as long as they are and says the same again (memory cards review, C1),
+    so the model is asked for none, and for facts only where they add to
+    the words: a date made concrete, an amount, a name."""
+
+    SHORT = dict(text="Lisa's lesson moved to Thursday 4pm, 25 dollars.",
+                 person_names=["Lisa"], short_text=True)
+
+    def test_the_summary_is_asked_to_stay_empty(self):
+        summary = _field(_build_capture_prompt(**self.SHORT), "summary")
+        assert "empty" in summary
+        assert "200-400" not in summary
+
+    def test_facts_are_only_what_the_words_do_not_say_plainly(self):
+        facts = _field(_build_capture_prompt(**self.SHORT), "facts")
+        assert all(anchor in facts for anchor in ("date", "amount", "name"))
+        assert "never restate" in facts
+
+    def test_the_rules_do_not_ask_for_a_digest_after_all(self):
+        assert "real digest" not in _build_capture_prompt(**self.SHORT)
+
+    def test_a_long_paste_is_digested_as_before(self):
+        prompt = _build_capture_prompt(text="x" * 2000, person_names=["Lisa"])
+        assert "empty" not in _field(prompt, "summary")
+        assert "200-400 words" in _field(prompt, "summary")
+        assert "real digest" in prompt
+

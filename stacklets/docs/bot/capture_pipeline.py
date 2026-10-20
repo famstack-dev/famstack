@@ -30,6 +30,7 @@ from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from notifier import Notifier
 from own_words import in_own_words
+from stack.briefing import is_short_text
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
     has_ocr_text_layer,
@@ -288,6 +289,7 @@ class CapturePipeline:
             bucket=bucket, transcribed=transcribed, write_in=write_in,
             extract_action_items=in_own_words(text, spoken=transcribed),
             user_hint=caption or None, caption=caption,
+            short_text=is_short_text(source.text),
         )
 
     async def capture_email(
@@ -669,6 +671,7 @@ class CapturePipeline:
             kept_media=_kept_media_from(raw),
             caption=caption, replies=replies,
             write_in=write_in, words=words or None,
+            short_text=bool(words) and is_short_text(words),
         )
 
     async def _publish(
@@ -692,8 +695,15 @@ class CapturePipeline:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         words: str | None = None,
+        short_text: bool = False,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
+
+        ``short_text`` marks a note whose own words are too short for a
+        summary (`stack.briefing.is_short_text`). Only a caller holding
+        the words can say so: a photo's note has none and is described by
+        its summary. The classifier is asked for no summary, and one it
+        returns anyway is dropped, so the card shows the words alone.
 
         ``words`` are a note's own words when ``source.text`` is not only
         them: a correction reads them with the entry's tags and caption,
@@ -732,7 +742,10 @@ class CapturePipeline:
             current_list=current_list,
             write_in=write_in,
             extract_action_items=extract_action_items,
+            short_text=short_text,
         )
+        if short_text:
+            classification["summary"] = ""
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
         # the classifier returned. Mutates the classification dict so
@@ -890,6 +903,7 @@ class CapturePipeline:
         extract_action_items: bool = False,
         current_list: str = "",
         write_in: str | None = None,
+        short_text: bool = False,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -920,6 +934,7 @@ class CapturePipeline:
                 extract_action_items=extract_action_items,
                 current_list=current_list,
                 write_in=write_in,
+                short_text=short_text,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

@@ -22,6 +22,7 @@ from capture_pipeline import CapturePipeline  # noqa: E402
 from git_mirror import Filed  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
 from vault_entry import capture_frontmatter, render_capture  # noqa: E402
+from stack.card_render import render_file  # noqa: E402
 from stack.web import FetchOutcome  # noqa: E402
 from stack.web.quality import Verdict  # noqa: E402
 
@@ -69,7 +70,8 @@ class FakeClassifier:
                                images=None, user_hint=None,
                                initial_classification=None,
                                extract_action_items=False,
-                               current_list="", write_in=None):
+                               current_list="", write_in=None,
+                               short_text=False):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
@@ -78,6 +80,7 @@ class FakeClassifier:
         self.saw_user_hint = user_hint
         self.saw_write_in = write_in
         self.saw_extract_action_items = extract_action_items
+        self.saw_short_text = short_text
         if self._raises:
             raise self._raises
         return self._payload
@@ -1520,3 +1523,107 @@ class TestACorrectionKeepsTheNotesOwnWords:
         published, classifier = await self._correct(self._note())
         assert self.WORDS in classifier.saw_text
         assert published["body_text"] == self.WORDS
+
+
+class TestAShortNoteIsItsOwnSummary:
+    """A short note's card shows the words its writer sent. A summary of
+    a two-line note says the same again at the same length (memory cards
+    review, C1), so a short note is filed without one, whatever the model
+    answers. A long paste keeps its summary: the reader reads that instead
+    of the paste. A photo keeps it too, because it is the only text the
+    photo has."""
+
+    SHORT = "Lisa's saxophone lesson moved to Thursday 4pm, 25 dollars, pay Mr. Largo in cash."
+    LONG = "The school newsletter lists the science fair, a field trip and a bake sale. " * 8
+    ANSWER = {"title": "Saxophone lesson", "tags": ["music"], "persons": ["Lisa"],
+              "summary": "Lisa's saxophone lesson is now on Thursday at 4pm.",
+              "facts": ["Lesson: 2026-10-22, 16:00", "Fee: 25 dollars"]}
+
+    async def _note(self, words: str):
+        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
+        await _pipeline(mirror=mirror, classifier=classifier,
+                        text_extractor=FakeExtractor(_source(text=words))).capture_text(
+            text=words, sender_mxid="@marge:s")
+        return mirror.captures[0], classifier
+
+    @staticmethod
+    def _card(published: dict) -> str:
+        """The file the mirror writes from what the pipeline published, as a card."""
+        cls = published["classification"]
+        path = "marge/notes/test-capture.md"
+        text = render_capture(
+            frontmatter=capture_frontmatter(
+                title=cls["title"], captured_at="2026-10-20", kind="note",
+                source_uri=None, persons=cls["persons"], tags=published["tags"],
+                model=None, capture_id="$n:s"),
+            body=published["body_text"], kind="note", captured_at="2026-10-20",
+            source_uri=None, persons=cls["persons"], from_path=path,
+            shared_bucket="family", summary=cls.get("summary"),
+            facts=cls.get("facts"), action_items=cls.get("action_items"),
+        )
+        return render_file(text).markdown
+
+    @pytest.mark.asyncio
+    async def test_the_model_is_asked_for_no_summary_of_a_short_note(self):
+        _, classifier = await self._note(self.SHORT)
+        assert classifier.saw_short_text is True
+
+    @pytest.mark.asyncio
+    async def test_a_summary_the_model_writes_anyway_is_not_filed(self):
+        published, _ = await self._note(self.SHORT)
+        assert not published["classification"]["summary"]
+
+    @pytest.mark.asyncio
+    async def test_the_card_shows_the_words_and_the_facts_without_a_summary(self):
+        published, _ = await self._note(self.SHORT)
+        card = self._card(published)
+        assert self.ANSWER["summary"] not in card
+        assert "- Fee: 25 dollars" in card
+        assert f"> {self.SHORT}" in card
+        assert "\n\n\n" not in card, "an empty summary leaves no empty block"
+
+    @pytest.mark.asyncio
+    async def test_a_short_note_with_nothing_to_extract_is_its_words_alone(self):
+        mirror = FakeMirror()
+        await _pipeline(
+            mirror=mirror,
+            classifier=FakeClassifier(payload={**self.ANSWER, "facts": []}),
+            text_extractor=FakeExtractor(_source(text="Buy milk."))).capture_text(
+            text="Buy milk.", sender_mxid="@marge:s")
+        card = self._card(mirror.captures[0])
+        title, _, below = card.partition("\n\n")
+        assert title == "# Saxophone lesson"
+        assert below.strip().endswith("> Buy milk.")
+        assert "\n\n\n" not in card
+
+    @pytest.mark.asyncio
+    async def test_a_long_paste_keeps_its_summary(self):
+        published, classifier = await self._note(self.LONG)
+        assert classifier.saw_short_text is False
+        assert published["classification"]["summary"] == self.ANSWER["summary"]
+
+    @pytest.mark.asyncio
+    async def test_a_photo_keeps_its_summary(self):
+        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
+        await _pipeline(mirror=mirror, classifier=classifier).capture_binary(
+            file_data=b"\x89PNG\r\n", mime="image/png", filename="IMG_1.png",
+            source_uri="mxc://home.test/x", sender_mxid="@marge:s", caption="Lisa")
+        assert classifier.saw_short_text is False
+        assert mirror.captures[0]["classification"]["summary"] == self.ANSWER["summary"]
+
+    @pytest.mark.asyncio
+    async def test_a_corrected_short_note_stays_without_a_summary(self):
+        path = "marge/notes/test-capture.md"
+        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
+        mirror._stored = {path: render_capture(
+            frontmatter=capture_frontmatter(
+                title="Saxophone lesson", captured_at="2026-10-20", kind="note",
+                source_uri=None, persons=["Lisa"], tags=["music"], model=None,
+                capture_id="$n:s"),
+            body=self.SHORT, kind="note", captured_at="2026-10-20", source_uri=None,
+            persons=["Lisa"], from_path=path, shared_bucket="family")}
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=path, user_hint="it is Friday, not Thursday", sender_mxid="@marge:s")
+        assert classifier.saw_short_text is True
+        assert not mirror.captures[-1]["classification"]["summary"]
+
