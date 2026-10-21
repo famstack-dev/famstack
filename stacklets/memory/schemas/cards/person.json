@@ -17,9 +17,10 @@
       "$ref": "urn:famstack:card:base#/$defs/aliases"
     },
     "account": {
-      "description": "The person's chat account (its localpart); a person with one is a member.",
+      "description": "The person's chat account (its localpart); a person with one is a member. It decides membership, so a card edit never changes it.",
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9._=-]*$"
+      "pattern": "^[a-z0-9][a-z0-9._=-]*$",
+      "readOnly": true
     }
   },
   "unevaluatedProperties": false

@@ -277,6 +277,15 @@ class TestWhatIsRefused:
         assert problem["errors"] == [{"pointer": "/fields/card_id", "field": "card_id",
                                       "message": "`card_id` is read-only", "allowed": ["note-7f3a9c21e4"]}]
 
+    def test_a_persons_account_which_decides_who_is_a_member(self, endpoint, forgejo):
+        _, etag = _read(endpoint, "person-maggie")
+
+        status, _, problem = _patch(endpoint, "person-maggie", {"account": "maggie"}, etag=etag)
+
+        assert status == 422
+        assert problem["errors"][0]["message"] == "`account` is read-only"
+        assert forgejo.commits == []
+
     def test_a_stale_version_and_nothing_is_written(self, endpoint, forgejo):
         _, etag = _read(endpoint, "person-bart")
         forgejo.files[BART] += "Marge changed this meanwhile.\n"
