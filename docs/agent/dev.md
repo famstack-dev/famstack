@@ -532,3 +532,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-015](../adr/adr-015-a-change-to-a-record-is-a-persons-commit.md) | A change to a record is a person's commit |
 | [adr-016](../adr/adr-016-the-family-memory-is-read-as-cards.md) | The family memory is read as cards, through one interface |
 | [adr-017](../adr/adr-017-the-memory-format.md) | The memory format: card types, fields and links |
+| [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: originals, text forms, corrections and the interpretation (proposed) |
