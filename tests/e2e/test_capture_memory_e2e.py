@@ -206,12 +206,12 @@ async def test_archivist_captures_pasted_text_to_memory(
     assert "## Action items" not in body, \
         f"captures must not render action items, body[:400]={body[:400]!r}"
 
-    bdd.and_("the original paste is preserved in a collapsible callout")
-    # `> [!quote]- Original paste` is the Obsidian-native collapsed
-    # callout. The paste is line-prefixed with `> `; this is a single
-    # line in the test, so the assertion is on the prefixed form.
-    assert "> [!quote]- Original paste" in body, (
-        f"missing callout header — first 400 chars: {body[:400]!r}"
+    bdd.and_("the original paste is kept as the note's source")
+    # A note's words are its first source, one blockquote under
+    # `## Sources` (ADR-018). The paste is line-prefixed with `> `; this is
+    # a single line in the test, so the assertion is on the prefixed form.
+    assert "## Sources" in body, (
+        f"missing sources section, first 400 chars: {body[:400]!r}"
     )
     assert f"> {pasted_text}" in body, (
         f"body missing prefixed paste — first 400 chars: {body[:400]!r}"

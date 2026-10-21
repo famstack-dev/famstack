@@ -50,10 +50,11 @@ const config: QuartzConfig = {
     baseUrl,
     // Skip git internals and Obsidian config dirs. The vault is a
     // real git clone, not a stripped checkout, so `.git` matters.
-    // `media/**/*.json` keeps the archive's sidecar records out of the
-    // published site. Each one names the room, the sender's full mxid and
-    // the original filename: useful beside the file on disk, not something
-    // to serve. The media itself is copied by the Assets emitter as usual.
+    // `**/*.json` keeps every sidecar record out of the published site:
+    // the media archive's, each naming the room, the sender's full mxid and
+    // the original filename, and a card's (ADR-018), which says where its
+    // sources came from. Useful beside the file, not something to serve,
+    // and no page. The media itself is copied by the Assets emitter as usual.
     // `media/**/.tmp-*` hides the archive's in-progress writes, which are
     // renamed into place when complete. The watcher otherwise reports
     // them, the Assets emitter copies or unlinks a path that is already
@@ -67,7 +68,7 @@ const config: QuartzConfig = {
     // topic's (`*/*/topic.md`) from its card. VaultLinks sends a link to
     // either card to its page.
     ignorePatterns: [".git", ".obsidian", "private", "templates", "README.md", "**/README.md",
-                     "media/**/*.json", "media/**/.tmp-*",
+                     "**/*.json", "media/**/.tmp-*",
                      "**/diary/entries/**", "*/people/*.md", "*/*/topic.md"],
     defaultDateType: "modified",
     theme: {

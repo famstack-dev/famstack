@@ -15,7 +15,7 @@ const WORDS = {
   en: {
     memory: "Memory · Cards", search: "Search the family memory", viewas: "View as",
     everyone: "Everyone (admin)", types: "Kinds", all: "all", relevant: "relevant", newest: "newest",
-    anyone: "Anyone", person: "Person", from: "From", to: "To", cards: (n) => `${n} cards`, details: "Details", history: "History",
+    anyone: "Anyone", person: "Person", from: "From", to: "To", cards: (n) => `${n} cards`, details: "Details", history: "History", sources: "Sources",
     linksTo: "Links to", linkedFrom: "Linked from", nothing: "Nothing written here yet.",
     around: "Around this card",
     links: "links", people: "people", versions: "versions", bothWays: "Links both ways",
@@ -31,12 +31,13 @@ const WORDS = {
     reportSub: (n) => `Where the memory does not meet its format yet, over all ${n} cards (as the admin).`,
     noCardId: "Without a card_id", sharedIds: "One id, several files",
     deadLinks: "Links to nothing in the memory repo", noType: "Not a card type", wrongKind: "Wrong kind", notThere: "is not there",
+    noteSources: "Notes whose sources and sidecar do not pair up", loneSidecars: "Sidecars without a card",
     badTags: "Tags that are no topic id and no keyword",
   },
   de: {
     memory: "Gedächtnis · Karten", search: "Im Familiengedächtnis suchen", viewas: "Ansicht als",
     everyone: "Alle (Admin)", types: "Arten", all: "alle", relevant: "passend", newest: "neueste",
-    anyone: "Alle Personen", person: "Person", from: "Von", to: "Bis", cards: (n) => `${n} Karten`, details: "Details", history: "Verlauf",
+    anyone: "Alle Personen", person: "Person", from: "Von", to: "Bis", cards: (n) => `${n} Karten`, details: "Details", history: "Verlauf", sources: "Quellen",
     linksTo: "Verweist auf", linkedFrom: "Verwiesen von", nothing: "Hier steht noch nichts.",
     around: "Rund um diese Karte",
     links: "Verweise", people: "Personen", versions: "Versionen", bothWays: "Verweist in beide Richtungen",
@@ -52,6 +53,7 @@ const WORDS = {
     reportSub: (n) => `Wo das Gedächtnis sein Format noch nicht hat, über alle ${n} Karten (als Admin).`,
     noCardId: "Ohne card_id", sharedIds: "Eine ID, mehrere Dateien",
     deadLinks: "Verweise ins Leere", noType: "Keine Kartenart", wrongKind: "Falsche Variante", notThere: "gibt es nicht",
+    noteSources: "Notizen, deren Quellen und Begleitdatei nicht zusammenpassen", loneSidecars: "Begleitdateien ohne Karte",
     badTags: "Schlagwörter, die weder Themen-ID noch Stichwort sind",
   },
 };
@@ -429,14 +431,22 @@ function linkChips(cards) {
 
 function details(card) {
   const meta = Object.entries(card.meta || {}).filter(([k]) => !["title", "type"].includes(k));
+  // A record's sidecar (ADR-018): who filed it and how it was made.
+  const made = Object.entries({ filed_by: card.filed_by, ...(card.made || {}) }).filter(([, v]) => v);
   return h("details", { class: "more" },
     h("summary", {}, h("span", { class: "label" }, T.details)),
     h("dl", { class: "facts-grid", style: "margin:0 0 12px" },
       h("dt", {}, T.id), h("dd", {}, h("code", {}, card.id)),
       h("dt", {}, T.file), h("dd", {}, h("code", {}, card.path)),
-      meta.map(([k, v]) => [h("dt", {}, k), h("dd", {},
+      [...meta, ...made].map(([k, v]) => [h("dt", {}, k), h("dd", {},
         Array.isArray(v) ? v.map((x) => typeof x === "object" ? JSON.stringify(x) : x).join(", ")
           : typeof v === "object" ? JSON.stringify(v) : String(v))])),
+    (card.sources || []).length ? h("div", {},
+      h("span", { class: "label" }, T.sources),
+      h("ul", { class: "timeline" }, card.sources.map((s) => h("li", {},
+        h("div", {}, s.quote),
+        h("span", { class: "when" }, `${s.role} · ${s.person} · ${s.time} · ${s.channel} · ${s.kind}`),
+        " ", h("span", { class: "sha" }, s.id))))) : null,
     card.changes.length ? h("div", {},
       h("span", { class: "label" }, T.history),
       h("ul", { class: "timeline" }, card.changes.map((c) => h("li", {},
@@ -583,7 +593,11 @@ function reportElement(report) {
     section(T.badTags, report.invalid_tags.map((card) =>
       h("li", {}, opens(card.card, card.path), card.tags.map((t) => h("code", {}, t))))),
     section(T.wrongKind, report.wrong_kind.map((file) =>
-      h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))));
+      h("li", {}, opens(file.card, file.path), h("span", { class: "hint" }, file.problem)))),
+    section(T.noteSources, (report.note_sources || []).map((note) =>
+      h("li", {}, opens(note.card, note.path), h("span", { class: "hint" }, note.problem)))),
+    section(T.loneSidecars, (report.lone_sidecars || []).map((path) =>
+      h("li", {}, h("code", {}, path)))));
 }
 
 // ── Finding cards ─────────────────────────────────────────────────────────

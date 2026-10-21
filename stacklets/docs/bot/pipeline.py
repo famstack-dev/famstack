@@ -60,6 +60,7 @@ from stack.ai.client import (
     ModelCapabilities,
 )
 from stack.ai.language import language_code, language_name
+from stack.ai.transcripts import fingerprint
 
 # Sibling stacklets resolve through `stacklets/` on sys.path: in the
 # bot-runner container that directory is the read-only mount, locally it
@@ -807,7 +808,7 @@ class Classifier:
         caller's ``text`` becomes the sole signal.
         """
         target, examples = self._languages(write_in)
-        prompt = _build_capture_prompt(
+        prompt_args: dict[str, Any] = dict(
             text=text,
             person_names=person_names,
             existing_tags=existing_tags or [],
@@ -821,6 +822,7 @@ class Classifier:
             kind=kind,
             clean_words=clean_words,
         )
+        prompt = _build_capture_prompt(**prompt_args)
         valid_images = [
             img for img in (images or [])
             if img.data and img.mime and img.mime.startswith("image/")
@@ -840,13 +842,20 @@ class Classifier:
         if not response:
             return {}
         try:
-            return json.loads(response)
+            answer = json.loads(response)
         except json.JSONDecodeError:
             logger.warning(
                 "[pipeline] capture: LLM returned invalid JSON: {}",
                 response[:200],
             )
             return {}
+        # Which prompt made this answer: the card's sidecar records it with
+        # the code commit (`memory.note_card`). The hash is of the prompt's
+        # skeleton, so it names the template and the branch it took, and
+        # stays the same from one day, one to-do list and one note to the next.
+        if isinstance(answer, dict) and answer:
+            answer["prompt_template"] = capture_prompt_template(**prompt_args)
+        return answer
 
     async def reformat(
         self, ocr_text: str, *, max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
@@ -1393,6 +1402,38 @@ def _corrections_block(user_hint: str | None) -> str:
         "would have read had it been written right the first time. Nothing "
         "else from the user context goes into the clean version."
     )
+
+
+# What stands in for each value a capture prompt is built from, when its
+# skeleton is hashed (`capture_prompt_template`).
+_VALUE = "<value>"
+
+
+def capture_prompt_template(**prompt_args) -> str:
+    """A short hash of the capture prompt's skeleton: the prompt
+    `_build_capture_prompt` builds from `prompt_args`, with every value
+    that varies per call (the text, the date, the people, the tags, the
+    to-do list, the hint, the classification shown) replaced by a fixed
+    placeholder.
+
+    Two calls that differ only in those values have the same template;
+    a change to the prompt's wording, or a call that takes another of its
+    branches (a note filed as its words or summarised, with a hint or
+    without), has another. A value's presence decides a branch, so a
+    placeholder stands in only where a value was given.
+    """
+    args = dict(prompt_args)
+    args["text"] = _VALUE
+    args["person_names"] = [_VALUE]
+    args["existing_tags"] = [_VALUE] if args.get("existing_tags") else []
+    args["user_hint"] = _VALUE if (args.get("user_hint") or "").strip() else None
+    args["today"] = _VALUE if args.get("today") else None
+    args["current_list"] = _VALUE if (args.get("current_list") or "").strip() else ""
+    shown = args.get("initial_classification")
+    args["initial_classification"] = (
+        {k: _VALUE for k, v in shown.items() if v not in (None, "", [], {})}
+        if isinstance(shown, dict) else None)
+    return fingerprint(_build_capture_prompt(**args))
 
 
 def _build_capture_prompt(

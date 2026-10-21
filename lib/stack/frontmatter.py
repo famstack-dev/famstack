@@ -56,8 +56,9 @@ SCHEMAS: dict[str, TypeSchema] = {
         required={"type", "title", "timestamp", "source", "paperless_id"},
         list_fields={"persons", "tags"},
     ),
+    # Where a note came from is in its sidecar (ADR-018 §3), not here.
     "note": TypeSchema(
-        required={"type", "title", "timestamp"},
+        required={"type", "title"},
         list_fields={"persons", "tags"},
     ),
     "bookmark": TypeSchema(

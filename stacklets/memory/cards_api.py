@@ -59,6 +59,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from format_check import format_report  # noqa: E402
+from note_card import SourcesMismatch, card_sources  # noqa: E402
 from graph import Card, Graph, View, load_graph, tags_of  # noqa: E402
 from stack.links import go_page  # noqa: E402
 from stack.tags import tag_label  # noqa: E402
@@ -207,7 +208,26 @@ def _full(card: Card, graph: Graph, language: str) -> dict:
             **_walk(card, graph), "views": [_view(v) for v in card.views]}
     if card.type == "list":
         full["items"] = _items(card)
+    if card.sidecar is not None:
+        full.update(_provenance(card))
     return full
+
+
+def _provenance(card: Card) -> dict:
+    """Where a card's sources came from and how it was made, from its sidecar
+    (ADR-018 §3): each source with its quote, the filer, and `made`.
+
+    The same list a refile reads (`note_card.card_sources`), so a reader
+    shows what the model was given. A card whose quotes and sources do
+    not pair up shows none; the format report names it.
+    """
+    try:
+        sources = [s.shown() for s in card_sources(card.text, card.sidecar or {})]
+    except SourcesMismatch:
+        sources = []
+    side = card.sidecar or {}
+    return {"sources": sources, "filed_by": str(side.get("filed_by") or ""),
+            "made": dict(side.get("made") or {})}
 
 
 def _view(view: View) -> dict:

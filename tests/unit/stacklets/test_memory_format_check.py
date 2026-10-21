@@ -46,6 +46,15 @@ DONUT = (f"---\ntype: note\ntitle: Donuts for the plant\ndate: \"{RECENT}\"\n"
          "> **About** [Homer](../../../../homer/about.md)\n\nTwo dozen, sprinkled.\n")
 
 MOE = "---\ntype: note\ncard_id: note-0b6e2d91aa\ntitle: Moe's opening hours\n---\nAlways.\n"
+# The donut note as it is filed today (ADR-018): its words under `## Sources`,
+# where they came from in its sidecar.
+DONUT_NOW = (f"---\ntype: note\ncard_id: note-7f3a9c21e4\ntitle: Donuts for the plant\n"
+             f"date: \"{RECENT}\"\n---\n"
+             "> **About** [Homer](../../../../family/people/homer.md)\n\nTwo dozen, sprinkled.\n\n"
+             "## Sources\n\n> two dozen sprinkled for the plant\n")
+DONUT_SIDECAR = json.dumps({"card_id": "note-7f3a9c21e4", "filed_by": "homer", "sources": [
+    {"role": "original", "person": "homer", "time": f"{RECENT}T08:00:00+00:00",
+     "channel": "chat", "kind": "text", "id": "$Donut000000001"}], "made": {}})
 
 
 @pytest.fixture
@@ -78,10 +87,8 @@ def finished(tmp_path):
     m = Memory(tmp_path)
     m.write("family/people/homer.md", HOMER.replace("type: person\n", "type: person\ncard_id: person-homer\n"),
             by="homer", message="chore(people): homer")
-    m.write("homer/notes/2026/10/donut.md",
-            DONUT.replace("type: note\n", "type: note\ncard_id: note-7f3a9c21e4\n")
-            .replace("../../../../homer/about.md", "../../../../family/people/homer.md"),
-            by="homer", message="feat(notes): donuts")
+    m.write("homer/notes/2026/10/donut.md", DONUT_NOW, by="homer", message="feat(notes): donuts")
+    m.write("homer/notes/2026/10/donut.json", DONUT_SIDECAR, by="homer", message="feat(notes): donuts")
     for path, text in NAVIGATION.items():
         m.write(path, text, by="marge", message="docs: navigation")
     return m
@@ -138,7 +145,8 @@ class TestWhatIsNotThereYet:
         assert report["cards"] == 7  # people, donut, kopie, two of Moe's, grill, stew
 
     def test_every_finding_counts(self, unfinished):
-        assert _from_the_page(unfinished)["findings"] == 5 + 1 + 1 + 2
+        # The two donut notes are in the format before ADR-018 as well.
+        assert _from_the_page(unfinished)["findings"] == 5 + 1 + 1 + 2 + 2
 
 
 def test_a_tag_that_is_a_topic_label_or_no_keyword_is_listed(tmp_path):
@@ -186,7 +194,7 @@ class TestAMemoryThatMeetsTheFormat:
 
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
                           "links_to_nothing": [], "no_card_type": [], "invalid_tags": [], "wrong_kind": [],
-                          "findings": 0}
+                          "note_sources": [], "lone_sidecars": [], "findings": 0}
 
     def test_and_the_command_says_there_is_nothing_to_fix(self, finished, capsys):
         command = _from_the_command(finished)
@@ -275,3 +283,51 @@ class TestARecordLinksTheCardsItNames:
 
     def test_the_report_finds_no_link_to_nothing(self, memory):
         assert _from_the_command(memory)["links_to_nothing"] == []
+
+
+class TestANotesSourcesPairWithItsSidecar:
+    """A note keeps its sources as quotes on the card and records in its
+    sidecar, quote n with `sources[n]` (ADR-018 §3). The report names a
+    note without a sidecar, one in the format before, one whose counts
+    differ, and a sidecar whose card is gone."""
+
+    def _report(self, tmp_path, files: dict[str, str]) -> dict:
+        m = Memory(tmp_path)
+        for path, text in files.items():
+            m.write(path, text, by="homer", message="feat(notes): donuts")
+        return _from_the_page(m)
+
+    def _problems(self, report) -> list[tuple[str, str]]:
+        return [(n["path"], n["problem"]) for n in report["note_sources"]]
+
+    def test_a_note_with_sources_and_no_sidecar(self, tmp_path):
+        report = self._report(tmp_path, {"homer/notes/donut.md": DONUT_NOW})
+        assert self._problems(report) == [("homer/notes/donut.md", "no sidecar for its sources")]
+
+    def test_a_note_whose_quotes_and_sources_differ_in_number(self, tmp_path):
+        report = self._report(tmp_path, {
+            "homer/notes/donut.md": DONUT_NOW + "\n> and coffee\n",
+            "homer/notes/donut.json": DONUT_SIDECAR})
+        assert self._problems(report) == [(
+            "homer/notes/donut.md", "2 quote(s) under ## Sources and 1 source(s) in its sidecar")]
+
+    def test_a_note_in_the_format_before(self, tmp_path):
+        report = self._report(tmp_path, {"homer/notes/donut.md": DONUT})
+        [(path, problem)] = self._problems(report)
+        assert "format before ADR-018" in problem
+
+    def test_a_sidecar_whose_card_is_gone(self, tmp_path):
+        report = self._report(tmp_path, {"homer/notes/gone.json": DONUT_SIDECAR,
+                                         "family/people/homer.md": HOMER})
+        assert report["lone_sidecars"] == ["homer/notes/gone.json"]
+        assert report["findings"] >= 1
+
+    def test_a_note_written_in_the_memory_needs_none(self, tmp_path):
+        report = self._report(tmp_path, {"homer/notes/moe.md": MOE})
+        assert report["note_sources"] == []
+
+    def test_the_command_names_them_too(self, tmp_path, capsys):
+        m = Memory(tmp_path)
+        m.write("homer/notes/gone.json", DONUT_SIDECAR, by="homer", message="feat(notes): x")
+        _from_the_command(m)
+        assert "Sidecars without a card:\n  homer/notes/gone.json" in capsys.readouterr().out

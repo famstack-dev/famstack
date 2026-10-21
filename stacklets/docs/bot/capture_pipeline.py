@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import hashlib
 import io
+import mimetypes
 import re
+import sys
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from loguru import logger
@@ -28,6 +32,7 @@ from loguru import logger
 from document_pipeline import utc_now_isoformat
 from extractors import SourceContent, email_to_source
 from matching import build_capture_event
+from git_mirror import code_commit
 from notifier import Notifier
 from clean_words import is_cleanable, kept
 from own_words import in_own_words
@@ -45,11 +50,24 @@ from pipeline import (
     LLMTimeoutError,
     LLMUnavailableError,
 )
-from stack import resolve_model
+from stack import media, resolve_model
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as parse_frontmatter
 from stack.lists import list_path
 from stack.vault import topic_of
+
+# Sibling stacklets resolve through `stacklets/` on sys.path: in the
+# bot-runner container that directory is the read-only mount, locally it
+# is the source tree. The path goes on here, before the import that needs
+# it, rather than relying on who loads whom (as in `pipeline.py`).
+_STACKLETS_DIR = Path(__file__).resolve().parents[2]
+if str(_STACKLETS_DIR) not in sys.path:
+    sys.path.insert(0, str(_STACKLETS_DIR))
+# A note's card and sidecar are the memory stacklet's format (ADR-018).
+from memory.note_card import (  # noqa: E402
+    ORIGINAL, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
+    new_id, now, read_sidecar, sidecar_path, words_of,
+)
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -262,6 +280,7 @@ class CapturePipeline:
         transcribed: bool = False,
         write_in: str | None = None,
         caption: str = "",
+        sent_at: str = "",
     ) -> CaptureOutcome:
         """File a message body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
@@ -282,6 +301,9 @@ class CapturePipeline:
         A note of up to `clean_words.CLEAN_MAX_CHARS` is filed as a clean
         version of its words, with the words after it; a longer one, which
         is usually pasted from elsewhere, gets a summary.
+
+        ``sent_at`` is when the message was sent (ISO 8601), the time its
+        source records; now when not given.
         """
         source = await self._text_extractor.extract(text)
         if source is None:
@@ -298,6 +320,7 @@ class CapturePipeline:
             extract_action_items=in_own_words(text, spoken=transcribed),
             user_hint=caption or None, caption=caption,
             clean_words=is_cleanable(source.text),
+            source_kind="voice" if transcribed else "text", sent_at=sent_at,
         )
 
     async def capture_email(
@@ -358,6 +381,7 @@ class CapturePipeline:
         kept_media: dict | None = None,
         write_in: str | None = None,
         caption: str = "",
+        sent_at: str = "",
     ) -> CaptureOutcome:
         """File a PDF as a bookmark, or a photo as a note.
 
@@ -398,6 +422,8 @@ class CapturePipeline:
             capture_id=capture_id, seed_topics=seed_topics,
             bucket=bucket, default_person=default_person,
             kept_media=kept_media, write_in=write_in,
+            source_kind="image" if mime.startswith("image/") else "file", sent_at=sent_at,
+            media_hash=f"sha256:{hashlib.sha256(file_data).hexdigest()}",
         )
 
     def _cap_pdf_body(self, source: SourceContent) -> SourceContent:
@@ -582,43 +608,29 @@ class CapturePipeline:
         caption: str = "",
         reply_text: str = "",
         capture_id: str | None = None,
+        reply_id: str = "",
+        reply_at: str = "",
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
-        Mirrors ``DocumentPipeline.reprocess`` -- read the prior entry,
-        rebuild a SourceContent from a note's own words or else from the
-        persisted summary, run the
-        classifier again with the reply chain as ``user_hint``, and
-        rewrite the entry where it is, whatever its new title. Captures don't have a separate Paperless
-        backing store, so the prior summary IS the source the LLM
-        re-reads; this stays cheap (no vision round-trip, no re-fetch
-        of the original binary) at the cost of corrections having to
-        work against the model's own paraphrase rather than the raw
-        page. Pure text corrections (Homer's "It is a Mac Studio")
-        compose cleanly under that constraint.
+        A note is refiled from its sources (ADR-018): the words it was
+        sent as, the replies and notes added since, never its summary or
+        its clean version (`_reprocess_note`). ``reply_text`` is the reply
+        that asked for this refile, by the sender, sent as ``reply_id`` at
+        ``reply_at``: it is appended as a source first.
 
-        The archived file is the one thing that cannot be recovered
-        that way: the bytes are long gone from this path, so the
-        reference is read back off the entry being replaced.
-
-        ``caption`` is the caption on the upload the capture was filed
-        from, when the caller could read it there. It wins over the
-        entry's, which an older filing may have left out; without it,
-        the entry's caption is kept.
-
-        ``reply_text`` is the words of the reply that asked for this
-        refile. The entry keeps them under the replier's name, after the
-        replies it already had.
+        A bookmark mirrors ``DocumentPipeline.reprocess``: the prior
+        summary IS the source the LLM re-reads, with the reply chain as
+        ``user_hint``; this stays cheap (no re-fetch of the page) at the
+        cost of corrections working against the model's own paraphrase.
+        The archived file cannot be recovered that way, so its reference
+        is read back off the entry being replaced. ``caption`` is the
+        caption on the upload it was filed from, when the caller could
+        read it there; it wins over the entry's.
 
         ``capture_id`` names the capture for good; ``vault_path`` is where
         the filing message saw it, which a move makes stale. The capture
         is looked up by its id first (`_find_capture`).
-
-        A note whose words are its source, and that keeps no file, is
-        refiled as a clean version of them (`clean_words`), as it would
-        be filed today. The classifier then reads the words alone, and
-        the entry's tags and its topic are carried over as tags rather
-        than as text, which it would otherwise clean into the note.
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -636,47 +648,40 @@ class CapturePipeline:
                 vault_path, e,
             )
             return CaptureOutcome(status="capture_missing")
+        if meta.get("type") == "note":
+            return await self._reprocess_note(
+                vault_path=vault_path, raw=raw, meta=meta, sender_mxid=sender_mxid,
+                initial_classification=initial_classification, write_in=write_in,
+                reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
+                             reply_id or new_id("chat"), quote=reply_text.strip()),
+            )
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
-        # A note keeps the words as they were sent, and those are its
-        # source: the classifier reads them again and the refiled note
-        # keeps them. An entry without them (a bookmark, an older note)
-        # is read back from its summary.
-        words = _original_paste(raw)
         # The summary callout doesn't carry the frontmatter tag list,
         # so the classifier would otherwise have to re-derive tags
         # from prose alone -- they drift on each pass. Append them as
         # a short context line that the prompt naturally treats as
         # part of the entry's content, anchoring stable tags while
         # leaving the LLM free to add/remove via the hint.
-        raw_tags = meta.get("tags") or []
-        existing_tags = [
-            t for t in raw_tags
-            if isinstance(t, str) and t.strip() and not t.startswith("Person: ")
-        ]
+        existing_tags = _tags_of(meta)
         body_parts: list[str] = []
-        if words or summary_text:
-            body_parts.append(words or summary_text)
+        if summary_text:
+            body_parts.append(summary_text)
         if caption:
             body_parts.append("The sender's caption: " + caption)
         if existing_tags:
             body_parts.append(
                 "Existing tags on this entry: " + ", ".join(existing_tags)
             )
-        source_text = "\n\n".join(body_parts) or meta.get("title", "") or ""
-        kept_media = _kept_media_from(raw)
-        clean_words = bool(words) and kept_media is None and is_cleanable(words)
-        found_topic = topic_of(vault_path)
         source = SourceContent(
-            text=words if clean_words else source_text,
+            text="\n\n".join(body_parts) or meta.get("title", "") or "",
             title_hint=meta.get("title") or None,
             source_uri=meta.get("resource") or None,
         )
-        kind = meta.get("type") or "bookmark"
         captured_at = meta.get("date") or _dt.date.today().isoformat()
         capture_id = meta.get("capture_id")
         return await self._publish(
-            source=source, kind=str(kind), sender_mxid=sender_mxid,
+            source=source, kind=str(meta.get("type") or "bookmark"), sender_mxid=sender_mxid,
             display_link=meta.get("resource") or "(capture)",
             user_hint=user_hint,
             existing_path=vault_path,
@@ -685,13 +690,77 @@ class CapturePipeline:
             actor=sender_mxid,
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
-            kept_media=kept_media,
+            kept_media=_kept_media_from(raw),
             caption=caption, replies=replies,
-            write_in=write_in, words=words or None,
-            clean_words=clean_words,
-            seed_topics=[found_topic[1]] if clean_words and found_topic else None,
-            prefer_tags=existing_tags if clean_words else None,
+            write_in=write_in,
         )
+
+    async def _reprocess_note(
+        self, *, vault_path: str, raw: str, meta: dict, sender_mxid: str,
+        initial_classification: dict | None, write_in: str | None,
+        reply: Source,
+    ) -> CaptureOutcome:
+        """Refile a note from its sources, as it would be filed today.
+
+        The sources are the card's and its sidecar's (`memory.note_card`),
+        an old-format note read as the migration converts it, with the
+        reply appended unless the note holds it already. The classifier
+        reads the original's words, the replies and notes as corrections,
+        a photo from the media store; never the summary or the clean
+        version. A note whose words are typed or spoken is refiled as a
+        clean version of them (`clean_words`). Its tags and its topic are
+        carried over as tags.
+        """
+        side = await self._mirror.read_capture(sidecar_path(vault_path))
+        try:
+            sources = card_sources(raw, read_sidecar(side))
+        except SourcesMismatch as e:
+            logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
+            return CaptureOutcome(status="capture_missing")
+        if reply.quote and (reply.person, reply.words) not in {
+                (s.person, s.words) for s in sources}:
+            sources = [*sources, reply]
+        original = next((s for s in sources if s.role == ORIGINAL), None)
+        if original is None:
+            return CaptureOutcome(status="capture_missing")
+        words = words_of(sources)
+        clean_words = original.kind in ("text", "voice") and is_cleanable(words)
+        found_topic = topic_of(vault_path)
+        return await self._publish(
+            source=SourceContent(text=words or str(meta.get("title") or ""),
+                                 title_hint=meta.get("title") or None),
+            kind="note", sender_mxid=_filer(sources, meta) or sender_mxid,
+            display_link="(capture)",
+            user_hint=corrections_of(sources) or None,
+            existing_path=vault_path,
+            captured_at=str(meta.get("date") or _dt.date.today().isoformat()),
+            reclassified=True,
+            actor=sender_mxid,
+            capture_id=original.id,
+            initial_classification=initial_classification,
+            images=self._images_of(original) if original.kind == "image" else None,
+            write_in=write_in,
+            clean_words=clean_words,
+            seed_topics=[found_topic[1]] if found_topic else None,
+            prefer_tags=_tags_of(meta),
+            sources=sources,
+            requested_by=_localpart(sender_mxid),
+        )
+
+    @staticmethod
+    def _images_of(original: Source) -> list[ImageAttachment] | None:
+        """The photo a note was filed from, read back from the media store,
+        so a refile looks at it again instead of at its own summary."""
+        root = media.open_archive()
+        link = original.media_link
+        if root is None or not link:
+            return None
+        try:
+            data = (root / link.removeprefix("/media/")).read_bytes()
+        except OSError:
+            return None
+        mime = mimetypes.guess_type(link)[0] or "image/jpeg"
+        return [ImageAttachment(data=data, mime=mime)]
 
     async def _publish(
         self, *, source, kind: str, sender_mxid: str, display_link: str,
@@ -713,11 +782,22 @@ class CapturePipeline:
         extract_action_items: bool = False,
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
-        words: str | None = None,
         clean_words: bool = False,
         prefer_tags: list[str] | None = None,
+        sources: "list[Source] | None" = None,
+        source_kind: str = "text",
+        sent_at: str = "",
+        media_hash: str = "",
+        requested_by: str = "",
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
+
+        A note is written as its card and its sidecar (ADR-018): what it
+        was made from, ``sources``, and how. A new note's one source is its
+        original (`_original_of`): ``source_kind`` says what it is,
+        ``sent_at`` when it was sent, ``media_hash`` the hash of its bytes. A
+        refile passes the note's sources. ``requested_by`` is who asked for
+        this interpretation, the sender when not given.
 
         ``clean_words`` marks a note in its writer's own words, filed as a
         clean version of them (`clean_words`). Only a caller holding the
@@ -729,10 +809,6 @@ class CapturePipeline:
 
         ``prefer_tags`` are tags the classifier is shown first in its
         vocabulary: a refile's own, so it keeps them where they fit.
-
-        ``words`` are a note's own words when ``source.text`` is not only
-        them: a correction reads them with the entry's tags and caption,
-        and keeps just the words on the note.
 
         ``extract_action_items`` asks the classifier for the todos in the
         source. Only a note in the writer's own words does (`capture_text`);
@@ -773,8 +849,7 @@ class CapturePipeline:
         if clean_words:
             classification["summary"], classification["facts"] = "", []
             clean, clean_rejected = kept(
-                words if words is not None else source.text,
-                str(classification.pop("clean", "") or ""),
+                source.text, str(classification.pop("clean", "") or ""),
                 corrections=user_hint or "")
             if clean_rejected:
                 logger.warning(
@@ -791,6 +866,8 @@ class CapturePipeline:
             model = resolve_model(f"{self._name}/classifier")
         except ValueError:
             model = None
+        # Which prompt template made this; it goes into the note's sidecar.
+        template = str(classification.pop("prompt_template", "") or "")
 
         tags = self._tag_list(classification)
         captured_at = captured_at or _dt.date.today().isoformat()
@@ -817,9 +894,16 @@ class CapturePipeline:
             )
         else:
             # Bookmarks default to marker mode (body dropped, summary IS
-            # the content); notes always keep the body.
+            # the content); a note's words are its first source.
             keep_body = kind == "note" or self.capture_keep_body
-            body_for_mirror = (words if words is not None else source.text) if keep_body else ""
+            body_for_mirror = source.text if keep_body else ""
+            note_sources = (sources or [self._original_of(
+                source, sender_mxid=sender_mxid, capture_id=capture_id, kind=source_kind,
+                kept_media=kept_media, caption=caption, sent_at=sent_at, media=media_hash,
+            )]) if kind == "note" else []
+            made = {"at": now(), "model": model or "", "code_commit": code_commit(),
+                    "prompt_template": template,
+                    "requested_by": requested_by or localpart.lower()}
             filed = await self._mirror.publish_capture(
                 entity=entity_slug,
                 kind=kind,
@@ -837,6 +921,8 @@ class CapturePipeline:
                 caption=caption,
                 replies=replies,
                 clean=clean,
+                sources=note_sources,
+                made=made if kind == "note" else None,
             )
         vault_path = filed.path if filed else None
 
@@ -887,6 +973,30 @@ class CapturePipeline:
             transcript=transcript,
             scope=entity_slug,
             clean_rejected=clean_rejected,
+        )
+
+    @staticmethod
+    def _original_of(source, *, sender_mxid: str, capture_id: str | None, kind: str,
+                     kept_media: dict | None, caption: str, sent_at: str,
+                     media: str) -> Source:
+        """A new note's original: what was sent, by whom, when, on which channel.
+
+        A chat message keeps its event id; a capture from the command line
+        gets an id of its own (ADR-018 §3). A photo is embedded in its
+        quote, a file linked, and either is followed by its text and the
+        sender's caption.
+        """
+        channel = "chat" if capture_id and capture_id.startswith("$") else "cli"
+        kept = kept_media or {}
+        media_line = (f"![[{kept['embed']}]]" if kept.get("embed") else
+                      f"[{kept.get('name') or 'original'}]({kept['original']})"
+                      if kept.get("original") else "")
+        text = source.text if kind != "image" else ""
+        quote = "\n\n".join(p for p in (media_line, text.strip(), caption.strip()) if p)
+        return Source(
+            ORIGINAL, _localpart(sender_mxid), sent_at or now(), channel, kind,
+            capture_id or new_id(channel), quote=quote or "(no words)", media=media,
+            text={"form": "transcript"} if kind == "voice" else {},
         )
 
     async def _find_capture(
@@ -1122,7 +1232,7 @@ def _caption_from(raw: str) -> str:
 
 
 def _replies_from(raw: str) -> list[tuple[str, str]]:
-    """The ``(author, words)`` of each reply an entry keeps, in order."""
+    """The ``(author, words)`` of each reply a bookmark keeps, in order."""
     found = _REPLIES_SECTION.search(raw)
     replies: list[tuple[str, list[str]]] = []
     for line in (found.group(1) if found else "").splitlines():
@@ -1133,23 +1243,22 @@ def _replies_from(raw: str) -> list[tuple[str, str]]:
     return [(who, "\n".join(words).strip()) for who, words in replies]
 
 
-# The callout `vault_entry.render_capture` keeps a note's words in.
-_PASTE_CALLOUT = "> [!quote]- Original paste"
+def _localpart(mxid: str) -> str:
+    """`@marge:simpson` → `marge`, a person's id."""
+    return mxid.split(":")[0].lstrip("@").strip().lower()
 
 
-def _original_paste(raw: str) -> str:
-    """The words a note was sent with, read back off the page; "" when it has none."""
-    lines = raw.splitlines()
-    try:
-        start = lines.index(_PASTE_CALLOUT)
-    except ValueError:
-        return ""
-    words: list[str] = []
-    for line in lines[start + 1:]:
-        if not line.startswith(">"):
-            break
-        words.append(line[2:] if line.startswith("> ") else line[1:])
-    return "\n".join(words).strip()
+def _filer(sources: "list[Source]", meta: dict) -> str:
+    """Who filed a note: its original's sender."""
+    original = next((s for s in sources if s.role == ORIGINAL), None)
+    person = original.person if original else str(meta.get("filed_by") or "")
+    return "" if person == "unknown" else person
+
+
+def _tags_of(meta: dict) -> list[str]:
+    """A card's tags, without the `Person:` tags older cards carried."""
+    return [t for t in meta.get("tags") or []
+            if isinstance(t, str) and t.strip() and not t.startswith("Person: ")]
 
 
 def _with_reply(replies, sender_mxid: str, words: str) -> list[tuple[str, str]]:

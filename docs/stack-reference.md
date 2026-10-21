@@ -599,6 +599,34 @@ keyword; a `kind` outside its type's set, a list archive without
 admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
 
+**A note is its card and its sidecar** (ADR-018, `memory.note_card`). The
+card keeps what it is about: the frontmatter `type`, `card_id`, `title`,
+`kind`, `description`, `date`, `persons`, `tags`; the title, the meta block,
+the interpretation (the clean version, or the briefing), then
+`## Sources`, one blockquote per source in order, a photo embedded inside
+its quote followed by its caption. The sidecar `<stem>.json` beside it
+holds `card_id`, `filed_by`, `sources` (each `role` `original`, `reply` or
+`note`, `person`, `time`, `channel`, `kind`, `id`, and `media` as
+`sha256:<hex>`, `text`, `reconstructed` where they apply) and `made` (`at`,
+`model`, `code_commit` from `STACK_COMMIT`, `prompt_template`, a short
+hash of the prompt's skeleton, and `requested_by`). The skeleton is the
+prompt built with a fixed placeholder for every value that varies per
+call (the note's text, the date, the people, the tags, the to-do list, the
+hint), so `prompt_template` stays the same across days and notes and
+changes with the template's wording or the branch it took; with
+`code_commit` it names the template that made the card. Quote n belongs to
+`sources[n]`. Filing and a correction in the chat write both in one
+commit (`FileChange`); a refile reads the sources, never the
+interpretation, and appends to them. A note is found by a source's id
+(`stack.card_lookup.find_by_source_id`, through `find_card("capture", …)`),
+so a correction to a chat message finds its note. Migration `memory/0008`
+converts every note filed before, photo notes included, in one commit and
+without a model call: the old sections become quotes, the fields move into
+the sidecar, and a reply's missing time and id, a photo the media store
+has no record of and words that carry prompt text are kept, marked
+`reconstructed` and named. Bookmarks, emails, documents and diary cards
+keep their earlier shape until their step of ADR-018.
+
 **A card type has one renderer, and it writes markdown** (ADR-016 §4,
 `stack.card_render`). `render(fields, body)` gives a card's title, one
 line of the facts that matter for its type, and its body: the type's own
@@ -612,7 +640,7 @@ and its to-dos, the last under one label in the household's language.
 | Type | Line of facts | Body |
 |---|---|---|
 | `document` | date · people · correspondent · `document_type` · `[#<paperless_id>](<resource>)` | summary, facts, to-dos, the document's text |
-| `note`, `bookmark` | date · people (· the site, for a bookmark) | summary, facts, to-dos, media, then the paste and the caption, then the replies |
+| `note`, `bookmark` | date · people (· the site, for a bookmark) | summary, facts, to-dos, media, then the paste and the caption, then the replies; a note filed from a person's words has the clean version of them instead of a summary, facts and to-dos |
 | `diary` | date · people · 🎤, 📷, 🎬 or 📎 for its `kind` | summary, facts, media, quotes, then the transcript or text, then the replies |
 | `email` | date · people | each message under its heading (day and sender): summary, to-dos, its words |
 | `list` | `kind` | the description, then the items as the file writes them; an archive's without a checkbox |

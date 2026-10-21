@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -32,6 +33,15 @@ from stack.forgejo import FileChange, ForgejoClient
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as dump_frontmatter
 from stack.frontmatter import parse as parse_frontmatter
+
+# Sibling stacklets resolve through `stacklets/` on sys.path: in the
+# bot-runner container that directory is the read-only mount, locally it
+# is the source tree. The path goes on here, before the import that needs
+# it, rather than relying on who loads whom (as in `pipeline.py`).
+_STACKLETS_DIR = Path(__file__).resolve().parents[2]
+if str(_STACKLETS_DIR) not in sys.path:
+    sys.path.insert(0, str(_STACKLETS_DIR))
+from memory.note_card import legacy_note, sidecar_path  # noqa: E402
 
 # As `vault_entry.render_capture` writes them.
 _SHOWN = re.compile(r"^!\[\[/media/[^\]]+\]\]", re.M)
@@ -70,19 +80,25 @@ def verdict(text: str) -> str | None:
     return UNKNOWN
 
 
-def as_note(text: str, path: str) -> str:
-    """The entry at `path` as a note, and its Kind line saying so.
+def as_note(text: str, path: str, *,
+            media_sha: Callable[[str], str] = lambda link: "") -> tuple[str, str]:
+    """The entry at `path` as a note: its card and its sidecar (ADR-018).
 
     A card that changes its type is a new card (ADR-016): it gets a note's
     card id and lists the bookmark's in `former_card_ids`, in the same
-    commit, so a link to the bookmark still finds it.
+    commit, so a link to the bookmark still finds it. The photo and its
+    caption become the note's source, as migration memory/0008 converts
+    every older note (`memory.note_card.legacy_note`); `media_sha` answers
+    for the hash of the archived photo.
     """
     fm = parse_frontmatter(text)
     identity = card_identity(fm, "note", path)
     rest = {k: v for k, v in fm.items() if k not in ("type", *identity)}
     body = text[text.index("\n---\n", 4) + len("\n---\n"):]
-    return ("---\n" + dump_frontmatter({"type": "note", **identity, **rest}) + "\n---\n"
+    note = ("---\n" + dump_frontmatter({"type": "note", **identity, **rest}) + "\n---\n"
             + _KIND.sub(r"\1note", body, count=1))
+    converted = legacy_note(note, path=path, media_sha=media_sha)
+    return converted.card, converted.sidecar
 
 
 def note_path(path: str) -> str:
@@ -94,6 +110,7 @@ async def migrate_photos_to_notes(
     client: ForgejoClient, owner: str, repo: str, *, root: Path,
     is_picture: Callable[[str], Awaitable[bool]],
     author_name: str, author_email: str, trailer: str = "",
+    media_sha: Callable[[str], str] = lambda link: "",
 ) -> tuple[list[tuple[str, str]], str | None]:
     """Move every photo bookmark to notes.
 
@@ -102,8 +119,8 @@ async def migrate_photos_to_notes(
     of the vault, which says what to look at; each file is read from
     Forgejo before it is changed, so the commit is refused rather than
     overwriting an edit made since. `is_picture` answers for an `mxc://`
-    address an entry alone cannot place. `trailer` ends the commit
-    message.
+    address an entry alone cannot place, `media_sha` for the hash of an
+    archived photo (`as_note`). `trailer` ends the commit message.
     """
     async def read(path: str) -> dict | None:
         return await asyncio.to_thread(client.get_file, owner, repo, path)
@@ -123,7 +140,9 @@ async def migrate_photos_to_notes(
         current, new = await read(rel), note_path(rel)
         if not current or await read(new):
             continue
-        changes.append(FileChange("create", new, as_note(current.get("content") or "", new)))
+        card, sidecar = as_note(current.get("content") or "", new, media_sha=media_sha)
+        changes.append(FileChange("create", new, card))
+        changes.append(FileChange("create", sidecar_path(new), sidecar))
         changes.append(FileChange("delete", rel, sha=current.get("sha") or ""))
         moved.append((rel, new))
 

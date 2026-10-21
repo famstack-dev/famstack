@@ -535,6 +535,20 @@ class TestIndexFiledBy:
         assert len(index) == 1
         assert index[0]["filed_by"] == "marge"
 
+    def test_a_note_says_who_filed_it_in_its_sidecar(self, tmp_path):
+        """A note keeps where it came from in its sidecar (ADR-018), and
+        the page still names who filed it."""
+        d = tmp_path / "family" / "camping" / "notes" / "2026" / "06"
+        d.mkdir(parents=True)
+        (d / "n.md").write_text("---\ntype: note\ntitle: Zelt\n---\n# Zelt\n\n"
+                                "> **About** [Homer](../../../../people/homer.md)\n\n"
+                                "The tent is torn.\n\n## Sources\n\n> zelt kaputt\n",
+                                encoding="utf-8")
+        (d / "n.json").write_text('{"card_id": "note-1a2b3c4d5e", "filed_by": "homer"}', encoding="utf-8")
+        [entry] = _index_vault(tmp_path)
+        assert entry["filed_by"] == "homer"
+        assert entry["summary"] == "The tent is torn.", "a clean version stands for the summary"
+
 
 # ── Folder index pages (notes/ and bookmarks/ landing pages) ────────────────
 

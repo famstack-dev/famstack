@@ -37,6 +37,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sys
+from collections.abc import Sequence
+from pathlib import Path
 
 
 # Frontmatter writer uses the shared stdlib module so reader/writer agree.
@@ -55,6 +58,16 @@ from stack.people import Person
 from stack.vault import correspondent_path, relative_link, slug  # noqa: F401  (slug re-exported for callers/tests)
 from stack.email_message import defang_links
 from stack.briefing import render_briefing
+
+# Sibling stacklets resolve through `stacklets/` on sys.path: in the
+# bot-runner container that directory is the read-only mount, locally it
+# is the source tree. The path goes on here, before the import that needs
+# it, rather than relying on who loads whom (as in `pipeline.py`).
+_STACKLETS_DIR = Path(__file__).resolve().parents[2]
+if str(_STACKLETS_DIR) not in sys.path:
+    sys.path.insert(0, str(_STACKLETS_DIR))
+# The note card's format is the memory stacklet's (ADR-018).
+from memory.note_card import Source, render_sources  # noqa: E402
 
 
 def document_filepath(
@@ -463,7 +476,6 @@ def render_document(
 def render_capture(
     *,
     frontmatter: dict,
-    body: str,
     kind: str,
     captured_at: str | None,
     source_uri: str | None,
@@ -477,27 +489,19 @@ def render_capture(
     caption: str = "",
     replies: "list[tuple[str, str]] | tuple" = (),
     people: list[Person] | None = None,
-    clean: str | None = None,
 ) -> str:
-    """Assemble the mirror file for a capture entry (kind=note|bookmark).
+    """Assemble the mirror file for a bookmark. A note is `render_note`.
 
-    Captures diverge from documents in three ways:
+    A bookmark differs from a document in two ways:
 
       1. The meta block uses Captured/Kind/Source instead of the
          document's From/About/Date/Type/Category.
-      2. Action items ride in the briefing callout only when the caller
-         extracted them — human-typed notes opt in, bookmarks never do
-         (a saved Reddit thread is not a todo).
-      3. ``kind: note`` keeps the user's pasted text but tucks it inside
-         an Obsidian collapsible callout. The summary is what the eye
-         lands on; verifying the original is one click away.
-         ``kind: bookmark`` has no body at all — the URL plus the
-         summary IS the entry.
+      2. It has no body: the URL plus the summary IS the entry. Action
+         items never ride on it (a saved Reddit thread is not a todo).
 
     Args:
         frontmatter: YAML frontmatter dict.
-        body: Capture body text (empty for bookmarks, pasted text for notes).
-        kind: "bookmark" or "note".
+        kind: "bookmark".
         captured_at: Capture date.
         source_uri: Original source URL, or None.
         persons: The names the classifier gave, for the About line.
@@ -505,8 +509,7 @@ def render_capture(
         shared_bucket: The institutional bucket slug (for people's cards).
         summary: Prose summary for the briefing callout.
         facts: List of fact strings for the briefing.
-        action_items: Tasks the note records (notes only); [] / None for
-            bookmarks. Rendered as `- [ ]` lines in the briefing callout.
+        action_items: [] / None for bookmarks.
         kept_media: The archived copy of the uploaded file, as
             ``{"name", "original", "embed"}``. ``original`` is where the
             bytes live in the site; ``embed`` is the version worth
@@ -517,11 +520,6 @@ def render_capture(
         replies: ``(author, words)`` for each reply in the capture's thread,
             in the order they came, kept as written for the same reason.
         people: The declared people the names resolve through.
-        clean: For a note filed as its own words (`clean_words`), the
-            clean version of them, "" when there is none worth showing.
-            Such a note has no briefing: the clean version is its own
-            section, the words follow it, and its action items go to
-            the topic's list only. None for every other capture.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -552,15 +550,7 @@ def render_capture(
     parts.extend(f"> {ln}" for ln in meta_lines)
     parts.append("")
 
-    # Briefing — summary + facts, plus action items when the note carried
-    # any (bookmarks pass None, so nothing changes for them). A note filed
-    # as its own words has none: the clean version is what the eye lands
-    # on, and the words follow it.
-    if clean is not None:
-        if clean.strip():
-            parts.append(clean.strip())
-            parts.append("")
-    elif briefing := render_briefing(
+    if briefing := render_briefing(
         summary=summary, facts=facts, action_items=action_items,
     ):
         parts.append(briefing)
@@ -573,17 +563,6 @@ def render_capture(
     if kept.get("embed"):
         parts.append(f"![[{kept['embed']}]]")
         parts.append("")
-
-    # Notes: collapsible callout around the verbatim paste. The `-`
-    # after [!quote] tells Obsidian to default-collapse the section.
-    # Forgejo's renderer falls back to a labeled blockquote.
-    if kind == "note":
-        body_stripped = body.strip() if body else ""
-        if body_stripped:
-            parts.append("> [!quote]- Original paste")
-            for ln in body_stripped.split("\n"):
-                parts.append(f"> {ln}" if ln else ">")
-            parts.append("")
 
     # The family's own words close the page, so a correction can read
     # them back by their headings (`capture_pipeline._caption_from`,
@@ -598,6 +577,47 @@ def render_capture(
             parts.append("")
 
     return "\n".join(parts)
+
+
+def render_note(
+    *,
+    frontmatter: dict,
+    sources: Sequence[Source],
+    persons: list[str],
+    from_path: str,
+    shared_bucket: str,
+    clean: str | None = None,
+    summary: str | None = None,
+    facts: list | None = None,
+    action_items: list | None = None,
+    people: list[Person] | None = None,
+) -> str:
+    """The card of a note (ADR-018 §2): what it is about, then its sources.
+
+    The title, the meta block, the interpretation, then `## Sources`, one
+    blockquote per source in the order of the sidecar's `sources`
+    (`memory.note_card`). A photo is embedded inside its quote, followed
+    by its caption.
+
+    The interpretation is the clean version of the note's words when it
+    was filed as its own words (`clean_words`): ``clean`` is a string then,
+    "" when there is none worth showing, and the note has no briefing; its
+    action items go to the topic's list only. Otherwise (``clean`` None)
+    it is the briefing: summary, facts and action items.
+
+    `frontmatter` holds only what the card is about; where it came from
+    and how it was made are in the sidecar.
+    """
+    parts = ["---", frontmatter_dump(frontmatter), "---", "",
+             f"# {frontmatter.get('title', 'Untitled')}", ""]
+    if about := About.of(persons, people):
+        parts += ["> **About** " + about.links(from_path, bucket=shared_bucket), ""]
+    if clean is not None:
+        if clean.strip():
+            parts += [clean.strip(), ""]
+    elif briefing := render_briefing(summary=summary, facts=facts, action_items=action_items):
+        parts += [briefing, ""]
+    return "\n".join([*parts, render_sources(sources), ""])
 
 
 # ── Email threads ──────────────────────────────────────────────────────

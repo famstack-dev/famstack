@@ -254,6 +254,21 @@ def keep(root, artifact_id: str, data: bytes, *, ext: str, when,
 _SIDECAR_EXT = "json"
 
 
+def recorded_sha256(root, link: str) -> str:
+    """The sha256 the archive recorded for the file `link` addresses, "" for none.
+
+    `link` is a page's address of an archived file or of a copy derived
+    from it (`/media/2026/10/<id>.w1600.jpg` is a copy of `<id>.png`);
+    both share the record `<id>.json`, which holds the original's hash.
+    """
+    rel = str(link or "").removeprefix(f"/{ARCHIVE_DIR}/")
+    if not rel or rel == link or ".." in Path(rel).parts:
+        return ""
+    folder, name = Path(root) / Path(rel).parent, Path(rel).name
+    record = _read_sidecar(folder / f"{name.split('.', 1)[0]}.{_SIDECAR_EXT}")
+    return str(record.get("sha256") or "")
+
+
 def _read_sidecar(path: Path) -> dict:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))

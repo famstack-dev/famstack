@@ -9,6 +9,7 @@ real renderer, so the move recognises them as the archivist writes them.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def _entry(path: str, *, source: str, kept: dict | None = None) -> str:
             title="X", captured_at="2026-10-13", kind="bookmark", source_uri=source,
             persons=[], tags=[], model=None, capture_id=f"${Path(path).stem}",
         ),
-        body="", kind="bookmark", captured_at="2026-10-13", source_uri=source,
+        kind="bookmark", captured_at="2026-10-13", source_uri=source,
         persons=[], from_path=path, shared_bucket="family", summary="s", facts=[],
         kept_media=kept,
     )
@@ -106,9 +107,21 @@ async def test_a_moved_photo_says_it_is_a_note(tmp_path):
 
     note = client.files["family/painting/notes/2026/10/raku-aaaaaa.md"]["content"]
     assert parse_frontmatter(note)["type"] == "note"
-    assert parse_frontmatter(note)["capture_id"] == "$raku-aaaaaa"
-    assert "**Kind** note" in note
-    assert "![[/media/2026/10/a.webp]]" in note
+    assert "## Sources\n\n> ![[/media/2026/10/a.webp]]" in note
+
+
+@pytest.mark.asyncio
+async def test_a_moved_photo_is_a_note_of_today_with_its_sidecar(tmp_path):
+    """A note is its card and its sidecar (ADR-018), so a photo moved
+    after migration memory/0008 ran is not left in the older format."""
+    client = _Forgejo(ENTRIES)
+    await _move(tmp_path, client)
+
+    sidecar = json.loads(client.files["family/painting/notes/2026/10/raku-aaaaaa.json"]["content"])
+    [original] = sidecar["sources"]
+    assert (original["role"], original["kind"], original["id"]) == ("original", "image", "$raku-aaaaaa")
+    assert sidecar["card_id"] == parse_frontmatter(
+        client.files["family/painting/notes/2026/10/raku-aaaaaa.md"]["content"])["card_id"]
 
 
 @pytest.mark.asyncio

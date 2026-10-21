@@ -13,6 +13,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
+from memory.note_card import Source  # noqa: E402
 from vault_entry import (
     slug,
     capture_hash,
@@ -22,6 +23,7 @@ from vault_entry import (
     capture_frontmatter,
     render_document,
     render_capture,
+    render_note,
     email_mid_marker,
     render_email_message_section,
     render_email_thread,
@@ -549,7 +551,6 @@ class TestRenderCapture:
         content = render_capture(
             from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
             frontmatter=fm,
-            body="",  # bookmarks have no body
             kind="bookmark",
             captured_at="2025-03-27",
             source_uri="https://reddit.com/r/famstack/...",
@@ -567,93 +568,60 @@ class TestRenderCapture:
         assert "Discussion about document filing" in content
         assert "> [!quote]" not in content  # bookmarks don't have quote block
 
-    def test_note_render(self):
-        fm = capture_frontmatter(
-            title="Meeting notes",
-            captured_at="2025-03-27",
-            kind="note",
-            source_uri=None,
-            persons=["Marge"],
-            tags=["Notes"],
-            model=None,
-        )
-        content = render_capture(
-            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
-            frontmatter=fm,
-            body="Discussed Q2 budget.\nAction: review expenses.",
-            kind="note",
-            captured_at="2025-03-27",
-            source_uri=None,
-            persons=["Marge"], people=PEOPLE,
-            summary="Q2 budget discussion notes.",
-            facts=[],
-        )
-        assert "---" in content
-        assert "# Meeting notes" in content
-        assert "**About** [Marge](../../../../family/people/marge.md)" in content
-        assert "**Kind** note" in content
-        assert "**Captured** 2025-03-27" in content
-        assert "Q2 budget discussion notes" in content
-        # Notes get the collapsible quote block
-        assert "> [!quote]- Original paste" in content
-        assert "> Discussed Q2 budget." in content
-        assert "> Action: review expenses." in content
 
-    def test_note_renders_action_items(self):
-        """A note that opted into extraction lists its action items in the
-        briefing callout, without checkboxes: the topic's list holds whether
-        they are done."""
-        fm = capture_frontmatter(
-            title="Ausflug", captured_at="2026-06-26", kind="note",
-            source_uri=None, persons=["Marge"], tags=["ausflug"], model=None,
-        )
-        content = render_capture(
-            from_path="family/itchy/notes/2026/06/e.md", shared_bucket="family",
-            frontmatter=fm, body="Liste:\nTickets buchen", kind="note",
-            captured_at="2026-06-26", source_uri=None, persons=["Marge"],
-            summary="Ausflugscheckliste.", facts=[],
-            action_items=["Tickets buchen", "Snacks einpacken"],
-        )
-        assert "- Tickets buchen" in content
-        assert "- Snacks einpacken" in content
 
-    def test_note_without_action_items_has_no_task_lines(self):
-        """An idle note (or any bookmark) carries no action items, so none
-        are manufactured."""
-        fm = capture_frontmatter(
-            title="Schöner Tag", captured_at="2026-06-26", kind="note",
-            source_uri=None, persons=[], tags=[], model=None,
-        )
-        content = render_capture(
-            from_path="family/itchy/notes/2026/06/e.md", shared_bucket="family",
-            frontmatter=fm, body="War ein schöner Tag.", kind="note",
-            captured_at="2026-06-26", source_uri=None, persons=[],
-            summary="Ein schöner Tag.", facts=[], action_items=[],
-        )
-        assert "Action items" not in content
+class TestRenderNote:
+    """A note's card holds what it is about (ADR-018 §2): the title, the
+    meta block, the interpretation, then `## Sources`, one blockquote per
+    source in the sidecar's order. A photo is embedded in its quote,
+    followed by its caption."""
 
-    def test_note_without_body(self):
-        fm = capture_frontmatter(
-            title="Empty note",
-            captured_at="2025-03-27",
-            kind="note",
-            source_uri=None,
-            persons=[],
-            tags=[],
-            model=None,
-        )
-        content = render_capture(
-            from_path="homer/bookmarks/2026/05/entry.md", shared_bucket="family",
-            frontmatter=fm,
-            body="",
-            kind="note",
-            captured_at="2025-03-27",
-            source_uri=None,
-            persons=[],
-            summary="No content.",
-            facts=[],
-        )
-        assert "> [!quote]" not in content  # no body → no quote block
+    PATH = "family/itchy/notes/2026/06/e.md"
+
+    def _render(self, sources, **over) -> str:
+        args = dict(frontmatter={"type": "note", "card_id": "note-7f3a9c21e4",
+                                 "title": "Trip", "persons": ["marge"]},
+                    sources=sources, persons=["Marge"], people=PEOPLE,
+                    from_path=self.PATH, shared_bucket="family")
+        args.update(over)
+        return render_note(**args)
+
+    def _source(self, role, quote, kind="text"):
+        return Source(role, "marge", "2026-06-26T08:55:00+00:00", "chat", kind, "$e", quote=quote)
+
+    def test_the_clean_version_then_one_quote_per_source_in_order(self):
+        card = self._render([self._source("original", "trip: call hotel b4 sat"),
+                             self._source("reply", "its friday not sat")],
+                            clean="Trip: call the hotel before Saturday.")
+        about = card.index("> **About** [Marge]")
+        clean = card.index("Trip: call the hotel before Saturday.")
+        sources = card.index("## Sources")
+        assert about < clean < sources
+        assert card[sources:] == ("## Sources\n\n> trip: call hotel b4 sat\n\n"
+                                  "> its friday not sat\n")
+
+    def test_a_photo_is_embedded_in_its_quote_followed_by_its_caption(self):
+        card = self._render([self._source("original", "![[/media/2026/06/e.webp]]\n\nBart drew this",
+                                          kind="image")], summary="A crayon dog.")
+        assert "## Sources\n\n> ![[/media/2026/06/e.webp]]\n>\n> Bart drew this\n" in card
+        assert "> [!summary]\n> A crayon dog." in card
+
+    def test_a_note_with_a_summary_keeps_its_action_items_in_the_briefing(self):
+        card = self._render([self._source("original", "long paste")], summary="Ausflug.",
+                            action_items=["Tickets buchen"])
+        assert "**Action items**" in card and "- Tickets buchen" in card
+
+    def test_no_clean_version_worth_showing_leaves_no_empty_block(self):
+        card = self._render([self._source("original", "Buy milk.")], clean="",
+                            action_items=["Buy milk"])
+        assert "\n\n\n" not in card
+        assert "Action items" not in card, "a note filed as its words keeps its to-dos on the list"
+        assert card.split("\n---\n", 1)[1].strip().startswith("# Trip")
+
+    def test_the_old_sections_are_gone(self):
+        card = self._render([self._source("original", "words")], clean="Words.")
+        assert "Original paste" not in card and "## Replies" not in card
+        assert "## Caption" not in card
 
 
 class TestCaptureKeepsTheFileItDescribes:
@@ -677,7 +645,7 @@ class TestCaptureKeepsTheFileItDescribes:
         args = dict(
             from_path="marge/bookmarks/2026/03/entry.md",
             shared_bucket="family", frontmatter=self._fm("Screenshot"),
-            body="", kind="bookmark", captured_at="2026-03-14",
+            kind="bookmark", captured_at="2026-03-14",
             source_uri="mxc://home.local/abcdef", persons=[],
             summary="A screenshot of the school calendar.", facts=[],
             kept_media=kept,
@@ -750,7 +718,7 @@ class TestTheCaptionStaysOnTheEntry:
                 kind="bookmark", source_uri="mxc://home.local/abcdef",
                 persons=[], tags=[], model=None,
             ),
-            body="", kind="bookmark", captured_at="2026-03-14",
+            kind="bookmark", captured_at="2026-03-14",
             source_uri="mxc://home.local/abcdef", persons=[],
             summary="Bart rides his first bike.", facts=[],
             kept_media={"name": "IMG_1.jpg", "original": "/media/2026/03/evt.jpg",

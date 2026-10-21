@@ -58,6 +58,7 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # command both run with the bot's runtime deps available.
 
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
+from stack import media
 from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
@@ -2921,6 +2922,54 @@ def give_card_kinds(client: ForgejoClient, vault: Path, *,
     found = card_kinds_for(vault)
     message = f"cards: give {len(found.changes)} card(s) their kind"
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+
+
+# ─── A note's sources ────────────────────────────────────────────────────
+#
+# A note keeps what it is about on its card and where it came from in a
+# sidecar beside it (ADR-018). The archivist writes new notes that way;
+# migration 0008 brings the notes filed before to the same shape, without
+# a model call (`note_card.legacy_note`).
+
+def note_sources_for(vault: Path, *, media_root: Path | None = None) -> CardLinks:
+    """What gives the notes in the working copy `vault` their sources and a sidecar.
+
+    Each note filed in the format before (its words, caption and replies in
+    sections of their own, where it came from in the frontmatter) becomes
+    a card with `## Sources` and a new sidecar beside it. A photo's hash
+    comes from the media store under `media_root`. What the old card did
+    not record (a reply's time, a photo the store has no record of) and
+    words that carry prompt text are kept, marked and listed in `left`. A
+    note written in the memory, one already converted, and every other
+    card stay as they are.
+    """
+    from note_card import is_legacy_note, legacy_note, sidecar_path
+
+    def media_sha(link: str) -> str:
+        return media.recorded_sha256(media_root, link) if media_root is not None else ""
+
+    found = CardLinks()
+    for path, text in sorted(_markdown_files(vault).items()):
+        side = sidecar_path(path)
+        if not is_legacy_note(text) or (vault / side).exists():
+            continue
+        converted = legacy_note(text, path=path, media_sha=media_sha)
+        found.changes[path] = converted.card
+        found.changes[side] = converted.sidecar
+        found.created.add(side)
+        found.left += converted.problems
+    return found
+
+
+def give_notes_their_sources(client: ForgejoClient, vault: Path, *,
+                             media_root: Path | None = None,
+                             trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Give the notes in `vault` their sources and a sidecar (`note_sources_for`),
+    in one commit by the memory bot; what the pass found and the commit's sha."""
+    found = note_sources_for(vault, media_root=media_root)
+    message = f"cards: give {len(found.created)} note(s) their sources and a sidecar"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
+                          created=frozenset(found.created))
 
 
 # ─── The people of diary cards ───────────────────────────────────────────

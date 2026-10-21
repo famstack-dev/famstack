@@ -26,6 +26,12 @@ _LIB_DIR = REPO_ROOT / "lib"
 if str(_LIB_DIR) not in sys.path:
     sys.path.insert(0, str(_LIB_DIR))
 
+# One stacklet reaches another by package (`memory.note_card`, `memory.lib`),
+# as the bot runner allows by putting the stacklets directory on its path.
+_STACKLETS_DIR = REPO_ROOT / "stacklets"
+if str(_STACKLETS_DIR) not in sys.path:
+    sys.path.append(str(_STACKLETS_DIR))
+
 # Stacklet runtime modules (e.g. the agent's nanobot shims) live on the
 # container's PYTHONPATH, not on any package path a test can reach. Register
 # them here once, by convention, so a test importing one is a plain import

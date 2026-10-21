@@ -46,6 +46,7 @@ the truth that can go stale. One can be added behind `load_graph` later.
 
 from __future__ import annotations
 
+import json
 import math
 import posixpath
 import re
@@ -69,6 +70,7 @@ from stack.cards import (
     is_navigation_page,
     view_names,
 )
+from stack.card_lookup import SIDECAR_SUFFIX
 from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
 from stack.ontology import Ontology
@@ -149,6 +151,9 @@ class Card:
     # What a search finds the card's tags by besides the tags themselves: a
     # topic's id and its label in every language (`stack.tags.tag_words`).
     tag_labels: tuple[str, ...] = ()
+    # The sidecar beside the card (ADR-018): where its sources came from and
+    # how it was made. None for a card that has none.
+    sidecar: dict | None = None
 
     @property
     def version(self) -> str:
@@ -169,9 +174,12 @@ class Graph:
         graph.card("person-homer")     # one card by its id or its name, or None
         graph.shared_ids               # ids two files claim: {id: [path, ...]}
         graph.ontology                 # the topics its cards' tags name
+        graph.lone_sidecars            # sidecars whose card is gone: [path, ...]
     """
 
-    def __init__(self, cards: list[Card], ontology: Ontology | None = None):
+    def __init__(self, cards: list[Card], ontology: Ontology | None = None,
+                 lone_sidecars: list[str] | None = None):
+        self.lone_sidecars = list(lone_sidecars or [])
         cards, self.shared_ids = _unique(cards)
         self.ontology = ontology or Ontology()
         self.cards = {c.id: c for c in cards}
@@ -365,8 +373,36 @@ def load_graph(vault: Path, *, views: Path | None = None,
             card.day = card.changes[0].day
         card.views = [v for v in _views_of(card, compiled)
                       if audience is None or readable(v.path, audience, shared_bucket=shared_bucket)]
+        card.sidecar = _sidecar(path)
         cards.append(card)
-    return Graph(cards, ontology)
+    return Graph(cards, ontology, _lone_sidecars(vault) if audience is None else [])
+
+
+def _sidecar(card_file: Path) -> dict | None:
+    """The sidecar beside `card_file`, None for none; {} for one that does not parse."""
+    side = card_file.with_suffix(SIDECAR_SUFFIX)
+    if not side.is_file():
+        return None
+    try:
+        loaded = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _lone_sidecars(vault: Path) -> list[str]:
+    """Card sidecars whose card is gone (ADR-018 §3): a `.json` beside no `.md`.
+
+    The media archive keeps its own sidecars and is no card's.
+    """
+    lone = []
+    for side in sorted(vault.rglob(f"*{SIDECAR_SUFFIX}")):
+        rel = side.relative_to(vault).as_posix()
+        if ".git" in side.relative_to(vault).parts or rel.startswith("media/"):
+            continue
+        if not side.with_suffix(".md").is_file():
+            lone.append(rel)
+    return lone
 
 
 @dataclass(frozen=True)

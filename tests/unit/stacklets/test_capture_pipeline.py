@@ -8,6 +8,8 @@ is e2e-verified by test_capture_memory_e2e.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,10 +23,38 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 from capture_pipeline import CapturePipeline  # noqa: E402
 from git_mirror import Filed  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
-from vault_entry import capture_frontmatter, render_capture  # noqa: E402
+from vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
+from stack.frontmatter import dump as frontmatter_dump  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.web import FetchOutcome  # noqa: E402
 from stack.web.quality import Verdict  # noqa: E402
+
+
+def _old_note(title: str, words: str = "", *, capture_id: str, path: str,
+              persons=(), tags=(), summary: str = "", caption: str = "",
+              replies=(), embed: str = "", filed_by: str = "marge") -> str:
+    """A note as the archivist filed it before ADR-018: where it came from
+    in the frontmatter, its words, caption and replies in sections of their
+    own. A refile still reads one, the way migration memory/0008 converts it."""
+    fm = {"type": "note", **identity_for(None, "note", path), "title": title,
+          "date": "2026-10-13", "persons": list(persons), "filed_by": filed_by,
+          "tags": list(tags), "capture_id": capture_id, "timestamp": "2026-10-13T08:00:00Z"}
+    parts = ["---", frontmatter_dump(fm), "---", "", f"# {title}", "",
+             "> **Captured** 2026-10-13 · **Kind** note", ""]
+    if summary:
+        parts += [f"> [!summary]\n> {summary}", ""]
+    if embed:
+        parts += [f"![[{embed}]]", ""]
+    if words:
+        parts += ["> [!quote]- Original paste",
+                  *(f"> {ln}" if ln else ">" for ln in words.split("\n")), ""]
+    if caption:
+        parts += ["## Caption", "", caption, ""]
+    if replies:
+        parts += ["## Replies", ""]
+        for who, text in replies:
+            parts += [f"**{who}**", f"> {text}", ""]
+    return "\n".join(parts)
 
 
 def _source(*, text="article body", source_uri=None, title_hint="A Title"):
@@ -82,6 +112,7 @@ class FakeClassifier:
         self.saw_write_in = write_in
         self.saw_extract_action_items = extract_action_items
         self.saw_kind = kind
+        self.saw_images = images
         self.saw_clean_words = clean_words
         if self._raises:
             raise self._raises
@@ -1109,7 +1140,7 @@ class TestCorrectingAnEntryKeepsItsFile:
             tags=["schule"], model=None, capture_id="$shot:home.local",
         )
         return render_capture(
-            frontmatter=fm, body="", kind="bookmark",
+            frontmatter=fm, kind="bookmark",
             captured_at="2026-03-14", source_uri="mxc://home.local/abc",
             persons=["Marge"], from_path=self.PATH, shared_bucket="family",
             summary="The school calendar for March.", facts=[],
@@ -1177,7 +1208,7 @@ class TestACorrectionReadsTheHeaderOrLeavesTheEntryAlone:
             tags=["schule"], model=None, capture_id="$cal:home.local",
         )
         return render_capture(
-            frontmatter=fm, body="", kind="bookmark",
+            frontmatter=fm, kind="bookmark",
             captured_at="2026-03-14", source_uri="https://school.example/kalender",
             persons=["Marge"], from_path=self.PATH, shared_bucket="family",
             summary="The school calendar for March.", facts=[],
@@ -1268,7 +1299,7 @@ class TestAPhotosCaption:
                 source_uri="mxc://home.test/x", persons=["Marge"],
                 tags=["familie"], model=None, capture_id="$img:home.test",
             ),
-            body="", kind="bookmark", captured_at="2026-03-14",
+            kind="bookmark", captured_at="2026-03-14",
             source_uri="mxc://home.test/x", persons=["Marge"],
             from_path=path, shared_bucket="family",
             summary="Ein Kind auf einem Fahrrad.", facts=[],
@@ -1300,7 +1331,7 @@ class TestARepliesWordsStayOnTheEntry:
                 source_uri="mxc://home.test/x", persons=["Marge"],
                 tags=["keramik"], model=None, capture_id="$img:home.test",
             ),
-            body="", kind="bookmark", captured_at="2026-10-13",
+            kind="bookmark", captured_at="2026-10-13",
             source_uri="mxc://home.test/x", persons=["Marge"],
             from_path=self.PATH, shared_bucket="family",
             summary="Eine Raku-Schale.", facts=[],
@@ -1436,16 +1467,8 @@ class TestACorrectionFindsTheCaptureWhereItIsNow:
     ID = "$img:home.test"
 
     def _entry(self, path: str) -> str:
-        return render_capture(
-            frontmatter=capture_frontmatter(
-                title="Raku", captured_at="2026-10-13", kind="note",
-                source_uri="mxc://home.test/x", persons=[], tags=[],
-                model=None, capture_id=self.ID,
-            ),
-            body="", kind="note", captured_at="2026-10-13",
-            source_uri="mxc://home.test/x", persons=[], from_path=path,
-            shared_bucket="family", summary="Eine Schale.", facts=[],
-        )
+        return _old_note("Raku", capture_id=self.ID, path=path, summary="Eine Schale.",
+                         embed="/media/2026/10/img.webp", caption="Raku im Garten")
 
     async def _correct(self, tmp_path, monkeypatch, *, local: str | None):
         if local:
@@ -1469,6 +1492,19 @@ class TestACorrectionFindsTheCaptureWhereItIsNow:
         assert mirror.captures[-1]["existing_path"] == self.NEW
 
     @pytest.mark.asyncio
+    async def test_a_note_is_found_by_the_id_its_sidecar_records(self, tmp_path, monkeypatch):
+        """A note filed today keeps its source ids in its sidecar, not in
+        its frontmatter (ADR-018)."""
+        card = (tmp_path / self.NEW)
+        card.parent.mkdir(parents=True)
+        card.write_text("---\ntype: note\ncard_id: note-0b6e2d91aa\ntitle: Raku\n---\n\n# Raku\n")
+        card.with_suffix(".json").write_text(json.dumps(
+            {"card_id": "note-0b6e2d91aa", "sources": [{"role": "original", "id": self.ID}]}))
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path))
+        vault = VaultContext(language="de", shared_bucket="family")
+        assert vault.card_path("capture", self.ID) == self.NEW
+
+    @pytest.mark.asyncio
     async def test_without_the_id_on_disk_the_recorded_path_is_tried(
         self, tmp_path, monkeypatch,
     ):
@@ -1489,16 +1525,8 @@ class TestACorrectionKeepsTheNotesOwnWords:
     WORDS = "Replace the tires on the Plymouth before winter.\n\nAsk Lenny for a dealer."
 
     def _note(self, summary: str = "") -> str:
-        return render_capture(
-            frontmatter=capture_frontmatter(
-                title="Winter tires", captured_at="2026-10-13", kind="note",
-                source_uri=None, persons=["Homer"], tags=["car"], model=None,
-                capture_id="$note:s",
-            ),
-            body=self.WORDS, kind="note", captured_at="2026-10-13",
-            source_uri=None, persons=["Homer"], from_path=self.PATH,
-            shared_bucket="family", summary=summary, facts=[],
-        )
+        return _old_note("Winter tires", self.WORDS, capture_id="$note:s", path=self.PATH,
+                         persons=["homer"], tags=["car"], summary=summary, filed_by="homer")
 
     async def _correct(self, raw: str):
         mirror, classifier = FakeMirror(), FakeClassifier()
@@ -1512,7 +1540,7 @@ class TestACorrectionKeepsTheNotesOwnWords:
     @pytest.mark.asyncio
     async def test_the_corrected_note_holds_the_words_as_sent(self):
         published, _ = await self._correct(self._note(summary="Homer plans new tires."))
-        assert published["body_text"] == self.WORDS
+        assert published["sources"][0].words == self.WORDS
 
     @pytest.mark.asyncio
     async def test_the_model_reads_the_words_not_its_old_summary(self):
@@ -1524,7 +1552,7 @@ class TestACorrectionKeepsTheNotesOwnWords:
     async def test_a_note_without_a_summary_is_corrected_from_its_words(self):
         published, classifier = await self._correct(self._note())
         assert self.WORDS in classifier.saw_text
-        assert published["body_text"] == self.WORDS
+        assert published["sources"][0].words == self.WORDS
 
 
 class TestANoteIsFiledAsACleanVersionOfItsWords:
@@ -1563,13 +1591,9 @@ class TestANoteIsFiledAsACleanVersionOfItsWords:
         """The file the mirror writes from what the pipeline published, as a card."""
         cls = published["classification"]
         path = "marge/notes/test-capture.md"
-        text = render_capture(
-            frontmatter=capture_frontmatter(
-                title=cls["title"], captured_at="2026-10-20", kind="note",
-                source_uri=None, persons=cls["persons"], tags=published["tags"],
-                model=None, capture_id="$n:s"),
-            body=published["body_text"], kind="note", captured_at="2026-10-20",
-            source_uri=None, persons=cls["persons"], from_path=path,
+        text = render_note(
+            frontmatter={"type": "note", "title": cls["title"], "tags": published["tags"]},
+            sources=published["sources"], persons=cls["persons"], from_path=path,
             shared_bucket="family", summary=cls.get("summary"),
             facts=cls.get("facts"), action_items=cls.get("action_items"),
             clean=published.get("clean"),
@@ -1647,13 +1671,9 @@ class TestACorrectedNoteIsRefiledFromItsWords:
 
     async def _correct(self):
         mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
-        mirror._stored = {self.PATH: render_capture(
-            frontmatter=capture_frontmatter(
-                title="Trip", captured_at="2026-10-20", kind="note", source_uri=None,
-                persons=["homer"], tags=["itchy-scratchy-land", "hotel"], model=None,
-                capture_id="$n:s"),
-            body=self.WORDS, kind="note", captured_at="2026-10-20", source_uri=None,
-            persons=["homer"], from_path=self.PATH, shared_bucket="family")}
+        mirror._stored = {self.PATH: _old_note(
+            "Trip", self.WORDS, capture_id="$n:s", path=self.PATH, persons=["homer"],
+            tags=["itchy-scratchy-land", "hotel"])}
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="Marge: it is Friday, not Thursday",
             sender_mxid="@marge:s", reply_text="it is Friday, not Thursday")
@@ -1671,8 +1691,13 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         published, _ = await self._correct()
         assert published["tags"][0] == "itchy-scratchy-land"
         assert published["clean"] == self.ANSWER["clean"]
-        assert published["body_text"] == self.WORDS
-        assert published["replies"] == [("Marge", "it is Friday, not Thursday")]
+        assert [(s.role, s.person, s.words) for s in published["sources"]] == [
+            ("original", "marge", self.WORDS), ("reply", "marge", "it is Friday, not Thursday")]
+
+    @pytest.mark.asyncio
+    async def test_the_reply_is_read_as_a_correction(self):
+        _, classifier = await self._correct()
+        assert classifier.saw_user_hint == "Marge: it is Friday, not Thursday"
 
 
 class TestABookmarkIsClassifiedAsOne:
@@ -1687,3 +1712,118 @@ class TestABookmarkIsClassifiedAsOne:
             user_hint="for the trip in June")
         assert classifier.saw_kind == "bookmark"
         assert classifier.saw_clean_words is False
+
+
+class TestANoteIsFiledWithItsOriginal:
+    """A new note's one source is what was sent (ADR-018 §3): by whom,
+    when, on which channel, under the channel's own id."""
+
+    @pytest.mark.asyncio
+    async def test_a_chat_message_keeps_its_event_id_and_its_time(self):
+        mirror = FakeMirror()
+        await _pipeline(mirror=mirror, text_extractor=FakeExtractor(_source(text="buy milk"))
+                        ).capture_text(text="buy milk", sender_mxid="@marge:simpson",
+                                       capture_id="$m1:simpson",
+                                       sent_at="2026-10-21T08:55:00+00:00")
+        [original] = mirror.captures[0]["sources"]
+        assert original.record() == {"role": "original", "person": "marge",
+                                     "time": "2026-10-21T08:55:00+00:00", "channel": "chat",
+                                     "kind": "text", "id": "$m1:simpson"}
+        assert original.quote == "buy milk"
+
+    @pytest.mark.asyncio
+    async def test_a_capture_from_the_command_line_gets_an_id_of_its_own(self):
+        mirror = FakeMirror()
+        await _pipeline(mirror=mirror, text_extractor=FakeExtractor(_source(text="buy milk"))
+                        ).capture_text(text="buy milk", sender_mxid="homer")
+        [original] = mirror.captures[0]["sources"]
+        assert original.channel == "cli" and original.id.startswith("cli:")
+
+    @pytest.mark.asyncio
+    async def test_a_photo_is_embedded_in_its_quote_with_its_caption_and_its_hash(self):
+        mirror = FakeMirror()
+        await _pipeline(mirror=mirror).capture_binary(
+            file_data=b"\x89PNG\r\n", mime="image/png", filename="IMG_1.png",
+            source_uri="mxc://home.test/x", sender_mxid="@marge:s", caption="Bart drew this",
+            capture_id="$p1:s",
+            kept_media={"name": "IMG_1.png", "original": "/media/2026/10/p1.png",
+                        "embed": "/media/2026/10/p1.jpg"})
+        [original] = mirror.captures[0]["sources"]
+        assert (original.kind, original.quote) == ("image", "![[/media/2026/10/p1.jpg]]\n\nBart drew this")
+        assert original.media == "sha256:" + hashlib.sha256(b"\x89PNG\r\n").hexdigest()
+
+    @pytest.mark.asyncio
+    async def test_how_it_was_made_goes_with_it(self, monkeypatch):
+        monkeypatch.setenv("STACK_COMMIT", "9a5bdc9")
+        mirror = FakeMirror()
+        await _pipeline(mirror=mirror, classifier=FakeClassifier(payload={
+            "title": "Milk", "tags": ["milk"], "prompt_template": "3f9a1c2b7d4e"}),
+            text_extractor=FakeExtractor(_source(text="buy milk"))).capture_text(
+            text="buy milk", sender_mxid="@marge:s")
+        made = mirror.captures[0]["made"]
+        assert (made["code_commit"], made["prompt_template"], made["requested_by"]) == (
+            "9a5bdc9", "3f9a1c2b7d4e", "marge")
+        assert "prompt_template" not in mirror.captures[0]["classification"]
+
+
+class TestANoteIsRefiledFromItsSources:
+    """A refile reads the note's sources from its card and its sidecar,
+    never its interpretation (ADR-018 §6). A reply is appended as a source
+    with its event id and time; sources are only appended."""
+
+    PATH = "family/trip/notes/2026/10/trip-3a338e.md"
+    CARD = ("---\ntype: note\ncard_id: note-0b6e2d91aa\ntitle: Trip\ntags:\n  - hotel\n---\n\n"
+            "# Trip\n\nHomer calls the hotel on Thursday.\n\n## Sources\n\n"
+            "> homer calls the hotel thu\n\n> and my swimsuit\n")
+    SIDECAR = json.dumps({"card_id": "note-0b6e2d91aa", "filed_by": "marge", "sources": [
+        {"role": "original", "person": "marge", "time": "2026-10-20T08:00:00+00:00",
+         "channel": "chat", "kind": "text", "id": "$n:s"},
+        {"role": "reply", "person": "bart", "time": "2026-10-20T09:00:00+00:00",
+         "channel": "chat", "kind": "text", "id": "$r1:s"}]})
+
+    async def _correct(self, reply="it is Friday"):
+        mirror, classifier = FakeMirror(), FakeClassifier(payload={"title": "Trip", "tags": []})
+        mirror._stored = {self.PATH: self.CARD, self.PATH.removesuffix(".md") + ".json": self.SIDECAR}
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=self.PATH, user_hint="ignored", sender_mxid="@marge:s",
+            reply_text=reply, reply_id="$r2:s", reply_at="2026-10-21T10:00:00+00:00")
+        return mirror.captures[-1], classifier
+
+    @pytest.mark.asyncio
+    async def test_the_model_reads_the_words_and_the_replies_never_the_clean_version(self):
+        _, classifier = await self._correct()
+        assert classifier.saw_text == "homer calls the hotel thu"
+        assert classifier.saw_user_hint == "Bart: and my swimsuit\nMarge: it is Friday"
+        assert "Thursday" not in classifier.saw_text
+
+    @pytest.mark.asyncio
+    async def test_the_reply_is_appended_with_its_event_and_its_time(self):
+        published, _ = await self._correct()
+        assert [s.id for s in published["sources"]] == ["$n:s", "$r1:s", "$r2:s"]
+        assert published["sources"][-1].time == "2026-10-21T10:00:00+00:00"
+        assert published["made"]["requested_by"] == "marge"
+
+    @pytest.mark.asyncio
+    async def test_a_card_whose_quotes_and_sidecar_do_not_pair_is_left_alone(self):
+        mirror = FakeMirror()
+        mirror._stored = {self.PATH: self.CARD.replace("\n\n> and my swimsuit", ""),
+                          self.PATH.removesuffix(".md") + ".json": self.SIDECAR}
+        out = await _pipeline(mirror=mirror).reprocess(
+            vault_path=self.PATH, user_hint="", sender_mxid="@marge:s", reply_text="x")
+        assert out.status == "capture_missing"
+        assert mirror.captures == []
+
+    @pytest.mark.asyncio
+    async def test_a_photo_is_looked_at_again_from_the_media_store(self, tmp_path, monkeypatch):
+        (tmp_path / "2026" / "10").mkdir(parents=True)
+        (tmp_path / "2026" / "10" / "p1.jpg").write_bytes(b"\xff\xd8\xff photo")
+        monkeypatch.setenv("MEDIA_ARCHIVE_DIR", str(tmp_path))
+        card = self.CARD.replace("> homer calls the hotel thu",
+                                 "> ![[/media/2026/10/p1.jpg]]\n>\n> Bart drew this")
+        sidecar = self.SIDECAR.replace('"kind": "text", "id": "$n:s"', '"kind": "image", "id": "$n:s"')
+        mirror, classifier = FakeMirror(), FakeClassifier(payload={"title": "Drawing", "tags": []})
+        mirror._stored = {self.PATH: card, self.PATH.removesuffix(".md") + ".json": sidecar}
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=self.PATH, user_hint="", sender_mxid="@marge:s")
+        assert classifier.saw_text == "Bart drew this"
+        assert [i.data for i in classifier.saw_images] == [b"\xff\xd8\xff photo"]
