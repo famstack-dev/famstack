@@ -382,8 +382,9 @@ def _listen(port: int) -> socket.socket:
 
 
 # ── The card browser (`/cards`, this Mac only) ──────────────────────────
-# The page and its two files, and its reads passed through to the memory
-# stacklet's cards API, GET only (`cards_page.py`).
+# The page and its two files, its reads passed through to the memory
+# stacklet's cards API, and a change to one card passed on the same way,
+# with the headers it is decided by (`cards_page.py`).
 
 @app.get("/cards", include_in_schema=False)
 async def cards_page():
@@ -402,18 +403,35 @@ async def cards_asset(name: str):
 # What the cards API says about a file that core repeats: how long to keep
 # it, and that a media file is never sniffed into a page or shown inline
 # when the API sends it to download.
-_PASSED_ON = ("cache-control", "x-content-type-options", "content-disposition")
+# A card's version (`etag`) is what a client sends back to change it.
+_PASSED_ON = ("cache-control", "x-content-type-options", "content-disposition", "etag")
+
+
+def _memory_cards_url() -> str:
+    return os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL)
 
 
 @app.get("/cards/api/{path:path}", include_in_schema=False)
 async def cards_api(path: str, request: Request):
-    url = cards_page_module.upstream(path, dict(request.query_params),
-                                     os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL))
+    url = cards_page_module.upstream(path, dict(request.query_params), _memory_cards_url())
     if url is None:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await _pass_on("GET", url, request)
+
+
+@app.api_route("/cards/api/{path:path}", methods=["PATCH", "PUT"], include_in_schema=False)
+async def cards_api_write(path: str, request: Request):
+    url = cards_page_module.write_upstream(path, _memory_cards_url())
+    if url is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await _pass_on(request.method, url, request, body=await request.body())
+
+
+async def _pass_on(method: str, url: str, request: Request, *, body: bytes = b"") -> Response:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(url)
+            r = await client.request(method, url, content=body or None,
+                                     headers=cards_page_module.forwarded(request.headers))
     except httpx.HTTPError:
         return _error("the family memory does not answer; is the memory stacklet running?")
     headers = {k: r.headers[k] for k in _PASSED_ON if k in r.headers}
