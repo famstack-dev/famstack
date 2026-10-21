@@ -129,13 +129,18 @@ def _required(name: str) -> bool:
 
 
 def _load(toml: Path, container: dict[str, Path]) -> dict:
-    """Load the bot `toml` declares in a fresh interpreter; its report."""
-    shipped = container["stacklets"] / toml.relative_to(REPO / "stacklets")
+    """Load the shipped bot `toml` declares from the container's copy."""
+    return _run_runner(container["stacklets"] / toml.relative_to(REPO / "stacklets"),
+                       container)
+
+
+def _run_runner(bot_toml: Path, container: dict[str, Path]) -> dict:
+    """Load the bot `bot_toml` declares in a fresh interpreter; its report."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
            "HOME": str(container["state"]), **RUNNER_ENV}
     result = subprocess.run(
         [sys.executable, "-I", str(DRIVER), str(container["app"]),
-         str(container["stacklets"]), str(container["state"]), str(shipped)],
+         str(container["stacklets"]), str(container["state"]), str(bot_toml)],
         capture_output=True, text=True, timeout=60, env=env, cwd=container["state"])
     lines = result.stdout.strip().splitlines()
     assert result.returncode == 0 and lines, result.stderr
@@ -165,24 +170,50 @@ def test_the_bot_loads_in_the_runner(toml, container):
     assert report["outcome"] == "loaded", report.get("error", report)
 
 
+# A bot module is ordinary Python. This one defines a frozen dataclass under
+# postponed annotations, and dataclasses looks the class's module up in
+# `sys.modules` while it builds the class.
+DATACLASS_BOT = '''
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Receipt:
+    what: str
+    count: int
+
+
+class ReceiptBot:
+    first = Receipt("donuts", 12)
+'''
+
+
+def test_a_bot_that_defines_a_dataclass_loads(container, tmp_path):
+    """Given a bot whose module defines a dataclass, when the bot runner
+    loads it, then its class is there.
+
+    Whatever a module may do while it is imported, a bot module may do
+    too. A runner that executes the file without registering the module
+    loses such a bot with one log line, before it ever reaches its room.
+    """
+    stacklets, state = tmp_path / "stacklets", tmp_path / "setup-state"
+    bot = stacklets / "receipts" / "bot"
+    bot.mkdir(parents=True)
+    (bot / "bot.toml").write_text('id = "receipt-bot"\n')
+    (bot / "receipt.py").write_text(DATACLASS_BOT)
+    (state / "extensions").mkdir(parents=True)
+    (state / "receipts.setup-done").touch()
+
+    report = _run_runner(bot / "bot.toml",
+                         {"app": container["app"], "stacklets": stacklets, "state": state})
+
+    assert report == {"outcome": "loaded", "class": "ReceiptBot"}, report.get("error", report)
+
+
 def test_every_shipped_bot_is_a_case():
     """Guards the parametrisation: no declarations found would pass by
     testing nothing."""
     assert {t.parent.parent.name for t in _declarations()} >= {"core", "docs"}
 
-
-def test_the_runner_still_loads_bots_this_way():
-    """`bot_runner_load.py` replays the load lines of the runner's `main()`.
-
-    Those lines sit inside one loop with nothing to call, so they are
-    copied, and this fails when they change and the copy has to follow.
-    """
-    runner = (RUNNER / "main.py").read_text()
-    for line in ('sys.path.insert(0, bot_dir)',
-                 'module_path = Path(bot_dir) / f"{cfg[\'module_stem\']}.py"',
-                 'spec = importlib.util.spec_from_file_location(cfg["module_stem"], module_path)',
-                 'mod = importlib.util.module_from_spec(spec)',
-                 'spec.loader.exec_module(mod)',
-                 'bot_class = getattr(mod, cfg["class_name"])'):
-        assert line in runner, f"main.py no longer has: {line}"
-        assert line in DRIVER.read_text(), f"bot_runner_load.py lost: {line}"

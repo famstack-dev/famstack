@@ -11,10 +11,9 @@ service in stacklets/core/docker-compose.yml). The runner starts as
 `python -u main.py` in `/app`, so `/app` is the first entry on its path,
 and so it is here.
 
-Discovery is the runner's own `discover_bots`, pointed at the copy. The
-load is `main()`'s, replayed line for line for the one bot asked for:
-`main()` loads every bot in one loop with nothing to call in between.
-`test_the_runner_still_loads_bots_this_way` fails when those lines change.
+Discovery is the runner's own `discover_bots`, pointed at the copy, and
+the load is its own `load_bot_class`, the function `main()` calls for
+every bot it launches.
 
 Prints one JSON line on stdout:
     {"outcome": "loaded", "class": "ArchivistBot"}
@@ -23,7 +22,6 @@ Prints one JSON line on stdout:
     {"outcome": "error", "error": "<traceback>"}
 """
 
-import importlib.util
 import json
 import os
 import sys
@@ -65,25 +63,15 @@ cfg = next((c for c in main.discover_bots() if c["bot_id"] == bot_id), None)
 if cfg is None:
     _report(outcome="error", error=f"the runner did not discover {bot_id!r} from {bot_toml}")
 
-# ── main.main(), the load of one bot ─────────────────────────────────────
+# ── the runner's load of one bot ─────────────────────────────────────────
 try:
-    bot_dir = cfg["bot_dir"]
-    if bot_dir not in sys.path:
-        sys.path.insert(0, bot_dir)
-
-    module_path = Path(bot_dir) / f"{cfg['module_stem']}.py"
-    if not module_path.exists():
-        _report(outcome="no-module", module=str(module_path))
-
-    spec = importlib.util.spec_from_file_location(cfg["module_stem"], module_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    bot_class = getattr(mod, cfg["class_name"])
+    bot_class = main.load_bot_class(cfg)
 except ModuleNotFoundError as e:
     _report(outcome="missing", module=(e.name or "").split(".")[0],
             error=traceback.format_exc())
 except Exception:  # noqa: BLE001 - the runner logs and skips any failure
     _report(outcome="error", error=traceback.format_exc())
+if bot_class is None:
+    _report(outcome="no-module", module=str(main.bot_module_path(cfg)))
 
 _report(outcome="loaded", **{"class": bot_class.__name__})
