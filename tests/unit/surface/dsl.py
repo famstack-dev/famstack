@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
@@ -73,6 +75,35 @@ class Memory:
     def __init__(self, repo: Path):
         self.repo = Path(repo)
         self._start = self._git("rev-parse", "HEAD")
+
+    @classmethod
+    def new(cls, repo: Path) -> Memory:
+        """A memory repository whose one commit touches no card, as a fresh
+        install leaves it before anything is filed."""
+        repo = Path(repo)
+        repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        (repo / ".gitattributes").write_text("*.md text\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=stackadmin",
+                        "-c", "user.email=stackadmin@springfield.example",
+                        "commit", "-q", "-m", "seed: initial memory"], check=True)
+        return cls(repo)
+
+    def changes(self, subject: str, *, by: str, at: datetime, files: dict[str, str],
+                trailers: tuple[str, ...] = ()) -> None:
+        """One commit by `by`, made at `at`, writing `files` (path to text),
+        its message ending in `trailers` (`Migration: memory/0002`)."""
+        for path, text in files.items():
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text, encoding="utf-8")
+        message = subject + ("\n\n" + "\n".join(trailers) if trailers else "")
+        when = at.isoformat()
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", f"user.name={by}",
+                        "-c", f"user.email={by}@springfield.example", "commit", "-q", "-m", message],
+                       check=True, env={**os.environ, "GIT_AUTHOR_DATE": when,
+                                        "GIT_COMMITTER_DATE": when})
 
     def __fspath__(self) -> str:
         return str(self.repo)

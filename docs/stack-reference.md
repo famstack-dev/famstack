@@ -737,6 +737,15 @@ merge patch (`--add` and `--remove` change a list, sent whole; `--remove f`
 removes the field), sends it, and prints the change or each refused field
 with what it may hold.
 
+`/history` is the memory's activity, newest first, read from the repo's
+log (`stacklets/memory/activity.py`): each change with its time, who made
+it (`machine` for a bot), its kind in a word (`filed`, `replied`,
+`corrected`, `edited`, `refiled`, `migrated`, ...; from the subject prefix
+and the `Migration:` trailer) and the cards it touched, each with its
+`/go` link path. A card and its sidecar count once; a change over many
+cards lists the first few, a `count` and how many of each type. A change
+touching no card the audience may read is left out.
+
 Every card also carries an id of its own in its frontmatter, `card_id`
 (ADR-016): `<type>-<value>`, made once when the card is first written and
 never derived again. A document, note, bookmark, email or diary card gets
