@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:diary",
+  "title": "diary",
+  "description": "A diary card compiled from the memories room (ADR-017 §6, record). Its tags are still the topic labels the compile writes (diary_card.canonicalize_topic), which the base's tag rule refuses: the one field no schema here describes as written.",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "diary"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^diary-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "enum": [
+        "text",
+        "voice",
+        "image",
+        "video",
+        "file"
+      ]
+    },
+    "medium": {
+      "not": {}
+    },
+    "date_basis": {
+      "enum": [
+        "spoken",
+        "sent",
+        "uncertain",
+        "corrected"
+      ]
+    },
+    "filed_by": {
+      "type": "string",
+      "readOnly": true
+    },
+    "addressee": {
+      "description": "Who the entry speaks to, as said.",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "monologue",
+        "dialogue",
+        "note"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "readOnly": true
+    },
+    "resource": {
+      "type": "string",
+      "readOnly": true
+    },
+    "entry_id": {
+      "description": "The diary entry, ten hex digits.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{10}$",
+      "readOnly": true
+    },
+    "event_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:famstack:card:base#/$defs/event_id"
+      },
+      "minItems": 1,
+      "readOnly": true
+    },
+    "media": {
+      "description": "The media archive's files the card embeds.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "readOnly": true
+    },
+    "model": {
+      "description": "The model that read the source.",
+      "type": "string",
+      "readOnly": true
+    },
+    "timestamp": {
+      "$ref": "urn:famstack:card:base#/$defs/timestamp",
+      "readOnly": true
+    },
+    "digest": {
+      "description": "Exception to ADR-017 §8: written outside the serializer, unquoted, so sixteen hex digits that are all digits parse as an integer.",
+      "type": [
+        "string",
+        "integer"
+      ],
+      "readOnly": true
+    }
+  },
+  "required": [
+    "date",
+    "entry_id",
+    "event_ids",
+    "timestamp"
+  ]
+}

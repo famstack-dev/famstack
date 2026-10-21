@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:list",
+  "title": "list",
+  "description": "A list: the household's state (ADR-017 §6). A list's monthly archive is kind archive, which its path decides and this schema cannot see.",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "list"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^list-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "enum": [
+        "todo",
+        "checklist",
+        "calendar",
+        "archive"
+      ]
+    },
+    "topics": {
+      "description": "The topic folders the list belongs to (their slugs, not ontology ids).",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      }
+    },
+    "sections": {
+      "description": "The list's sections in walking order.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

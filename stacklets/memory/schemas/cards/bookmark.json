@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:bookmark",
+  "title": "bookmark",
+  "description": "A web page kept from the chat (ADR-017 §6, record).",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "bookmark"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^bookmark-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "not": {}
+    },
+    "filed_by": {
+      "description": "The chat account that filed it (its localpart).",
+      "type": "string",
+      "readOnly": true
+    },
+    "capture_id": {
+      "description": "The Matrix event the card was filed from; absent on a card written in the memory repo.",
+      "$ref": "urn:famstack:card:base#/$defs/event_id",
+      "readOnly": true
+    },
+    "resource": {
+      "description": "The page's URL.",
+      "type": "string",
+      "pattern": "^https?://",
+      "readOnly": true
+    },
+    "model": {
+      "description": "The model that read the source.",
+      "type": "string",
+      "readOnly": true
+    },
+    "timestamp": {
+      "$ref": "urn:famstack:card:base#/$defs/timestamp",
+      "readOnly": true
+    }
+  },
+  "required": [
+    "resource",
+    "timestamp"
+  ]
+}
