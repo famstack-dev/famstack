@@ -548,6 +548,9 @@ keeps its own. The archivist writes a correspondent's card the first time
 a document names it (`type`, `card_id`, `title`, the classifier's
 `correspondent_aliases`), and a topic's, `<bucket>/<topic>/topic.md`, the
 first time a record is filed into the topic; it never rewrites either.
+What the household knows of a correspondent goes on its card as
+`address`, `website`, `phone`, `email` and `topics` (the ontology's
+topic ids).
 `stack.card_links` holds these rules, for the archivist and for the
 migrations that brought the files written before to the same shape:
 `memory/0003` (people by id, `Person:` tags dropped, and links to a

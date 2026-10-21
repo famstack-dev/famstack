@@ -71,6 +71,17 @@ class TestTheCardsTheStackWrites:
         assert _problems(parse(CARDS["homer/notes/grill.md"])) == []
 
 
+    def test_a_correspondent_keeps_what_the_household_wrote_about_it(self):
+        """Where a correspondent is, how to reach it and the topics it writes
+        about are the household's own words, kept as fields of its card."""
+        fields = {**parse(CARDS["family/correspondents/duff-insurance.md"]),
+                  "address": "Hansastraße 19, 80686 München", "phone": "+49 89 555 0199",
+                  "email": "claims@duff-insurance.example",
+                  "website": "https://www.duff-insurance.example", "topics": ["medical"]}
+
+        assert _problems(fields) == []
+
+
 class TestWhatAFaultSays:
 
     def test_a_kind_outside_its_types_set_names_the_kinds(self):
@@ -100,6 +111,11 @@ class TestWhatAFaultSays:
         problem = _field(_problems(fields), "tags")
 
         assert problem["allowed"] == ["itchy-scratchy-land", "medical", KEYWORD]
+
+    def test_a_correspondents_topic_is_one_of_the_ontologys(self):
+        fields = {**parse(CARDS["family/correspondents/duff-insurance.md"]), "topics": ["beer"]}
+
+        assert _field(_problems(fields), "topics")["allowed"] == ["itchy-scratchy-land", "medical"]
 
     def test_a_missing_required_field_is_named(self):
         fields = parse(CARDS["family/documents/2026/10/duff-insurance-policy-p72.md"])
