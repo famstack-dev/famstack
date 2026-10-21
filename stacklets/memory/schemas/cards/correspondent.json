@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:famstack:card:correspondent",
   "title": "correspondent",
-  "description": "Someone the household corresponds with, declared the first time a document names them (ADR-017 §10).",
+  "description": "Someone the household corresponds with, declared the first time a document names them or written by the household (ADR-017 §10).",
   "$ref": "urn:famstack:card:base",
   "properties": {
     "type": {
@@ -15,6 +15,29 @@
     },
     "aliases": {
       "$ref": "urn:famstack:card:base#/$defs/aliases"
+    },
+    "address": {
+      "description": "Where they are, as the household writes it.",
+      "type": "string"
+    },
+    "website": {
+      "description": "Their website, as the household writes it.",
+      "type": "string"
+    },
+    "phone": {
+      "description": "Their phone number, as the household writes it.",
+      "type": "string"
+    },
+    "email": {
+      "description": "Their email address, as the household writes it.",
+      "type": "string"
+    },
+    "topics": {
+      "description": "The topics the household corresponds with them about, by the ontology's id.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:famstack:vault#/$defs/topic_id"
+      }
     }
   },
   "unevaluatedProperties": false
