@@ -1,0 +1,188 @@
+"""Every bot a stacklet ships loads the way the bot runner loads it.
+
+The bot runner (stacklets/core/bot-runner/main.py) finds each
+`stacklets/<id>/bot/bot.toml` and `<name>.bot.toml`, puts that bot's
+directory first on `sys.path` and executes `<name>.py` from it. Nothing
+else of the stacklets is on its path: the container has `/app` (the runner
+and the framework) and `/stacklets`, and a bot that needs another
+stacklet's code has to say so itself. The archivist did not, imported
+`memory.*` first, and did not load on the rig, while every unit test,
+which sets its own `sys.path`, passed.
+
+So each bot is loaded here by the runner's own code, in a fresh `python -I`
+per bot, from a copy of the tree the container mounts. One interpreter per
+bot is the point: in the container they share one, and a bot that only
+loads because another one was loaded first is broken the day that one is
+switched off.
+
+A bot that imports a package the container installs
+(stacklets/core/bot-runner/requirements.txt) and the test environment
+does not is skipped, naming the package. It is never passed.
+
+Each case starts an interpreter and imports a bot with its dependencies,
+which is why one takes up to about a second: that is the price of the
+isolation, and the whole file runs in a few.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from .conftest import REPO
+
+RUNNER = REPO / "stacklets" / "core" / "bot-runner"
+DRIVER = Path(__file__).with_name("bot_runner_load.py")
+
+# What the Dockerfile copies into /app, and the compose file mounts over it.
+RUNNER_FILES = ("main.py", "microbot.py", "room_context.py", "accounts.py", "voice.py")
+
+# Declarations with no module, on purpose: the runner provisions the
+# Matrix account and room and launches nothing. The agent runs in its own
+# container and connects with the account this provisions (see its bot.toml).
+PROVISION_ONLY = {"agent"}
+
+# A bot that does not load today, with the reason. Strict: when it loads
+# again the test fails until its entry here is removed.
+KNOWN_BROKEN: dict[str, str] = {}
+
+# What core renders into the runner's environment, for the declarations
+# that read it (the agent's id, name and room).
+RUNNER_ENV = {
+    "MATRIX_SERVER_NAME": "springfield.example",
+    "MATRIX_HOMESERVER": "http://127.0.0.1:9",
+    "AGENT_BOT_ID": "stacky-bot",
+    "AGENT_NAME": "Stacky",
+    "AGENT_ROOM": "stacky",
+}
+
+
+def _declarations() -> list[Path]:
+    """Every bot declaration, found as the runner finds them."""
+    found = []
+    for bot_dir in sorted((REPO / "stacklets").glob("*/bot")):
+        if (bot_dir / "bot.toml").exists():
+            found.append(bot_dir / "bot.toml")
+        found.extend(sorted(bot_dir.glob("*.bot.toml")))
+    return found
+
+
+def _cases():
+    for toml in _declarations():
+        sid = toml.parent.parent.name
+        name = f"{sid} {toml.name}"
+        marks = []
+        if name in KNOWN_BROKEN:
+            marks.append(pytest.mark.xfail(reason=KNOWN_BROKEN[name], strict=True))
+        yield pytest.param(toml, id=name, marks=marks)
+
+
+@pytest.fixture(scope="session")
+def container(tmp_path_factory) -> dict[str, Path]:
+    """The bot runner's filesystem, copied once for the session.
+
+    A copy, not the repo: the repo has `lib/` next to `stacklets/` and the
+    container does not, so a bot that reached for the framework through a
+    relative path would load here and nowhere else.
+    """
+    root = tmp_path_factory.mktemp("bot-runner")
+    app, stacklets, state = root / "app", root / "stacklets", root / "setup-state"
+    app.mkdir()
+    for name in RUNNER_FILES:
+        shutil.copy2(RUNNER / name, app / name)
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "node_modules")
+    shutil.copytree(REPO / "lib" / "stack", app / "stack", ignore=ignore)
+    shutil.copytree(REPO / "stacklets", stacklets, ignore=ignore)
+    (state / "extensions").mkdir(parents=True)
+    # Every stacklet is enabled: the runner only looks at those with a marker.
+    for manifest in stacklets.glob("*/stacklet.toml"):
+        (state / f"{manifest.parent.name}.setup-done").touch()
+    return {"app": app, "stacklets": stacklets, "state": state}
+
+
+def _ours(name: str, container: dict[str, Path]) -> bool:
+    """A module name the container tree itself provides, as a file or a
+    directory anywhere in it, rather than a package pip installs."""
+    for root in (container["app"], container["stacklets"]):
+        if any(root.rglob(f"{name}.py")) or any(p.is_dir() for p in root.rglob(name)):
+            return True
+    return False
+
+
+def _required(name: str) -> bool:
+    """Whether the runner's requirements.txt names the package.
+
+    Matched loosely, because a distribution and its import name differ
+    (`matrix-nio` is `nio`, `PyYAML` is `yaml`): the import name has to
+    appear in a requirement's name.
+    """
+    text = (RUNNER / "requirements.txt").read_text().lower()
+    names = re.findall(r"^([a-z0-9_.\-]+)", text, flags=re.MULTILINE)
+    return any(name.lower().replace("_", "-") in n.replace("_", "-") for n in names)
+
+
+def _load(toml: Path, container: dict[str, Path]) -> dict:
+    """Load the bot `toml` declares in a fresh interpreter; its report."""
+    shipped = container["stacklets"] / toml.relative_to(REPO / "stacklets")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
+           "HOME": str(container["state"]), **RUNNER_ENV}
+    result = subprocess.run(
+        [sys.executable, "-I", str(DRIVER), str(container["app"]),
+         str(container["stacklets"]), str(container["state"]), str(shipped)],
+        capture_output=True, text=True, timeout=60, env=env, cwd=container["state"])
+    lines = result.stdout.strip().splitlines()
+    assert result.returncode == 0 and lines, result.stderr
+    return json.loads(lines[-1])
+
+
+@pytest.mark.parametrize("toml", list(_cases()))
+def test_the_bot_loads_in_the_runner(toml, container):
+    """Given the stacklets as the container mounts them, when the bot
+    runner loads this bot on its own, then its class is there.
+
+    A bot that does not load is skipped by the runner with one log line,
+    and the family's room goes quiet with nothing else to say why.
+    """
+    sid = toml.parent.parent.name
+    report = _load(toml, container)
+
+    if sid in PROVISION_ONLY:
+        assert report["outcome"] == "no-module", report
+        return
+    if report["outcome"] == "missing" and not _ours(report["module"], container):
+        assert _required(report["module"]), (
+            f"imports {report['module']}, which neither the container's tree nor "
+            f"requirements.txt provides\n{report['error']}")
+        pytest.skip(f"needs {report['module']}, which the container installs from "
+                    "requirements.txt and the test environment does not")
+    assert report["outcome"] == "loaded", report.get("error", report)
+
+
+def test_every_shipped_bot_is_a_case():
+    """Guards the parametrisation: no declarations found would pass by
+    testing nothing."""
+    assert {t.parent.parent.name for t in _declarations()} >= {"core", "docs"}
+
+
+def test_the_runner_still_loads_bots_this_way():
+    """`bot_runner_load.py` replays the load lines of the runner's `main()`.
+
+    Those lines sit inside one loop with nothing to call, so they are
+    copied, and this fails when they change and the copy has to follow.
+    """
+    runner = (RUNNER / "main.py").read_text()
+    for line in ('sys.path.insert(0, bot_dir)',
+                 'module_path = Path(bot_dir) / f"{cfg[\'module_stem\']}.py"',
+                 'spec = importlib.util.spec_from_file_location(cfg["module_stem"], module_path)',
+                 'mod = importlib.util.module_from_spec(spec)',
+                 'spec.loader.exec_module(mod)',
+                 'bot_class = getattr(mod, cfg["class_name"])'):
+        assert line in runner, f"main.py no longer has: {line}"
+        assert line in DRIVER.read_text(), f"bot_runner_load.py lost: {line}"
