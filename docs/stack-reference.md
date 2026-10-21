@@ -710,6 +710,12 @@ memory repo for each check: `person_id` (the declared people), `topic_id`
 `format: keyword` by `stack.tags.is_tag`). The validator needs
 `jsonschema` and runs in the curator's container only.
 
+`stack memory card edit <card_id> --set f=v --add f=v --remove f[=v] --as
+<person>` reads the card and its `ETag` through core's door, builds the
+merge patch (`--add` and `--remove` change a list, sent whole; `--remove f`
+removes the field), sends it, and prints the change or each refused field
+with what it may hold.
+
 Every card also carries an id of its own in its frontmatter, `card_id`
 (ADR-016): `<type>-<value>`, made once when the card is first written and
 never derived again. A document, note, bookmark, email or diary card gets

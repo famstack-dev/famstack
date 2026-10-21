@@ -12,7 +12,8 @@ Forgejo is an external service, so it is a stand-in here
 blob id as its `sha`, refuses a write against a `sha` that is no longer
 the file's, and records every commit. The memory stacklet's side is real:
 its HTTP server, its schemas, the clone of the memory repo it finds cards
-and people in.
+and people in. The command that is its client is described in
+`tests/unit/surface/test_memory_card_edit.py`.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from werkzeug import Request, Response
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO / "lib"))
 sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO / "stacklets" / "memory" / "cli"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from card_edit import CardEditor  # noqa: E402
