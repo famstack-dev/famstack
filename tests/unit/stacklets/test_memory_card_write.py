@@ -49,6 +49,7 @@ CONTENTS = re.compile(r"^/api/v1/repos/family/memory/contents/(?P<path>.+)$")
 BART = "family/people/bart.md"
 NOTE = "marge/notes/2026/10/art-supplies.md"
 SIDECAR = "marge/notes/2026/10/art-supplies.json"
+BOOKMARK = "family/bookmarks/2026/10/krusty-burger.md"
 
 
 def _blob(text: str) -> str:
@@ -136,6 +137,12 @@ def _patch(base: str, card_id: str, fields: dict, *, etag: str, actor: str = "ma
     return _send(base, "PATCH", card_id, body=json.dumps({"fields": fields}).encode(), headers=headers)
 
 
+def _put(base: str, card_id: str, text: str, *, etag: str, actor: str = "memory-bot"):
+    return _send(base, "PUT", card_id, body=text.encode(), headers={
+        "Content-Type": "text/markdown", "If-Match": etag, "Famstack-Actor": actor,
+        "Authorization": f"Bearer {TOKEN}"})
+
+
 class TestReadingACard:
 
     def test_a_card_comes_with_its_fields_its_text_and_its_version(self, endpoint, forgejo):
@@ -218,17 +225,51 @@ class TestChangingACard:
         assert "tags" not in forgejo.fields(NOTE)
         assert "tags: (removed)" in forgejo.commits[0]["message"]
 
-    def test_a_whole_card_can_be_put(self, endpoint, forgejo):
+
+
+class TestTheReprocessApply:
+    """A reprocess derives a card from its source again and puts it whole, as
+    the memory bot. It is the one client that sends a whole card: a person
+    changes fields, so each of their changes can be applied again."""
+
+    def test_it_puts_the_card_it_derived_and_commits_it_as_a_reprocess(self, endpoint, forgejo):
+        _, etag = _read(endpoint, "note-7f3a9c21e4")
+        text = forgejo.files[NOTE].replace("Brushes and paper.", "Brushes, paper and a palette.")
+
+        status, _, card = _put(endpoint, "note-7f3a9c21e4", text, etag=etag)
+
+        assert status == 200
+        assert "a palette" in card["body"]
+        [commit] = forgejo.commits
+        assert commit["author"] == {"name": "memory-bot", "email": "memory-bot@local"}
+        assert commit["message"] == "reprocess: Art supplies for next time\n\nThe text changed.\n"
+
+    def test_it_may_change_what_only_a_derivation_writes(self, endpoint, forgejo):
+        """When a card was made is read-only to a person; a card derived
+        again is made again."""
+        _, etag = _read(endpoint, "bookmark-5c4d3e2f1a")
+        text = forgejo.files[BOOKMARK].replace("2026-10-11T18:00:00Z", "2026-10-21T09:00:00Z")
+
+        status, _, _ = _put(endpoint, "bookmark-5c4d3e2f1a", text, etag=etag)
+
+        assert status == 200
+        assert forgejo.commits[0]["message"] == "reprocess: Krusty Burger menu\n\ntimestamp: 2026-10-21T09:00:00Z\n"
+
+    def test_it_keeps_the_cards_id(self, endpoint, forgejo):
+        _, etag = _read(endpoint, "note-7f3a9c21e4")
+        text = forgejo.files[NOTE].replace("card_id: note-7f3a9c21e4", "card_id: note-0000000000")
+
+        status, _, problem = _put(endpoint, "note-7f3a9c21e4", text, etag=etag)
+
+        assert status == 422 and problem["errors"][0]["field"] == "card_id"
+        assert forgejo.commits == []
+
+    def test_a_person_cannot_put_a_whole_card(self, endpoint, forgejo):
         _, etag = _read(endpoint, "person-bart")
         text = forgejo.files[BART].replace("# Bart Simpson\n", "# Bart Simpson\n\nSkateboards.\n")
 
-        status, _, card = _send(endpoint, "PUT", "person-bart", body=text.encode(), headers={
-            "Content-Type": "text/markdown", "If-Match": etag, "Famstack-Actor": "homer",
-            "Authorization": f"Bearer {TOKEN}"})
-
-        assert status == 200
-        assert "Skateboards." in card["body"]
-        assert forgejo.commits[0]["message"].startswith("edit: Bart Simpson\n\nThe text changed.")
+        assert _put(endpoint, "person-bart", text, etag=etag, actor="homer")[0] == 403
+        assert forgejo.commits == []
 
 
 class TestWhatIsRefused:
