@@ -91,9 +91,25 @@ class NoEngineCtx(FakeCtx):
         self.shell_calls.append(cmd)
 
 
+@pytest.fixture
+def engine_not_answering(monkeypatch):
+    """The engine as the start hook's probe sees it right after an install:
+    not answering yet.
+
+    The install writes the managed engine's fixed address,
+    `localhost:42060`, over `[ai] openai_url`, so a stand-in server cannot
+    be handed to the hook, and none can listen there: on a Mac running the
+    test rig that port is the rig's own engine. The stand-in replaces the
+    probe instead, the hook's one call over the network.
+    """
+    probe = importlib.import_module("stack.ai.probe")
+    monkeypatch.setattr(probe, "probe",
+                        lambda url, key="", **_: probe.ProbeResult(reachable=False))
+
+
 class TestManagedProviderNeedsItsEngine:
 
-    def test_a_missing_engine_is_installed(self, monkeypatch):
+    def test_a_missing_engine_is_installed(self, monkeypatch, engine_not_answering):
         """After `stack ai switch managed` on a Mac with only the voice
         services, or a brew cleanup that took the binary: the stack
         manages the engine, so it installs it rather than refusing."""
@@ -105,10 +121,19 @@ class TestManagedProviderNeedsItsEngine:
 
         assert any(c.endswith("brew install omlx --with-grammar") for c in ctx.shell_calls)
 
-    def test_an_installed_engine_starts_normally(self, monkeypatch):
+    def test_an_installed_engine_starts_normally(self, monkeypatch, httpserver):
+        """An engine that is installed and answering at the address in
+        `[ai] openai_url` is neither installed again nor restarted."""
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
-        on_start.run(FakeCtx(provider="managed"))  # must not raise
+        httpserver.expect_request("/v1/models").respond_with_json(
+            {"data": [{"id": "qwen3"}]})
+        ctx = FakeCtx(provider="managed", openai_url=httpserver.url_for("/v1"))
+
+        on_start.run(ctx)  # must not raise
+
+        assert not any("brew install" in c or "brew services" in c
+                       for c in ctx.shell_calls)
 
 
 
