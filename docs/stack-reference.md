@@ -459,6 +459,12 @@ these paths (`go_card` for a card, `go_docs`, `go_topic`, `go_person`,
 touched); `stacklets/core/tools-server/resolver.py` is the only place that
 knows what they resolve to.
 
+The same published port serves the dashboard at `/dashboard`, open to the
+home network until there is a login: a page whose widgets arrive rendered
+and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md`).
+Its first widget is the memory's activity, read from the cards API's
+`/history`. Everything else on that port stays internal.
+
 A **card** is one file in the family memory that stands for one thing. Its
 path is not a stable name: the folder follows the bucket and topic, the
 file name often follows the title, and a refile or a correction can move

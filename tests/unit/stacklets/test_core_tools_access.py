@@ -10,7 +10,7 @@ apart by the listener a request arrives on, never by address:
 
 - the internal listener is reachable only over the Docker network and
   serves everything
-- the published listener serves the links and nothing else
+- the published listener serves the links and the dashboard, nothing else
 """
 
 from __future__ import annotations
@@ -72,3 +72,11 @@ def test_the_card_page_listener_serves_nothing_else():
 
 def test_the_network_does_not_get_the_card_page():
     assert not serves(PUBLIC_PORT, "/cards")
+
+
+def test_the_network_gets_the_dashboard():
+    """Open on the network until the login lands (access.py)."""
+    for path in ("/dashboard", "/dashboard/api/activity", "/dashboard/static/tokens.css"):
+        assert serves(PUBLIC_PORT, path)
+    assert not serves(PUBLIC_PORT, "/dashboardx")
+    assert not serves(CARDS_PORT, "/dashboard")

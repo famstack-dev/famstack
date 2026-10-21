@@ -8,21 +8,26 @@ Each tool wraps an existing service API (Paperless, Immich) or the
 famstack TCP API for host-side CLI control. No business logic here —
 just translation between what the LLM needs and what the services provide.
 
-It listens twice (see access.py): an internal port for the stack's own
-containers, and the published port, which serves only the persistent links.
+It listens three times (see access.py): an internal port for the stack's
+own containers, the published port, which serves the persistent links and
+the dashboard, and the card browser's port on this Mac.
 """
 
 import json
 import os
 import socket
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
+import activity_widget
 import cards_page as cards_page_module
-from access import CARDS_PORT, INTERNAL_PORT, PUBLIC_PORT, serves
+import dashboard_page
+from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
 from stack.card_lookup import find_by_card_id, find_card, removal_of
 
@@ -77,7 +82,7 @@ app = FastAPI(
 
 @app.middleware("http")
 async def links_only_from_the_network(request, call_next):
-    """Answer the published port with the links and nothing else. A path
+    """Answer the published port with the links and the dashboard. A path
     that is not served there gets the same 404 as one that does not exist,
     so the network cannot tell which endpoints the server has. The listener
     a request arrived on is in the ASGI scope; without one it counts as the
@@ -437,6 +442,84 @@ async def _pass_on(method: str, url: str, request: Request, *, body: bytes = b""
     headers = {k: r.headers[k] for k in _PASSED_ON if k in r.headers}
     return Response(r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type", "application/json"), headers=headers)
+
+
+# ── The dashboard (`/dashboard`, on the network) ───────────────────────────
+# The page with its widgets already rendered, each widget's data for its
+# script, and the files the page loads (`dashboard_page.py`). Its reads go
+# to the memory stacklet's cards API, GET only, like the card browser's.
+
+def _zone():
+    """The instance's time zone, which decides what "today" is."""
+    try:
+        return ZoneInfo(os.environ.get("TIMEZONE", ""))
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _memory_url() -> str:
+    return os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL)
+
+
+async def _activity(request: Request) -> dict:
+    """The activity widget's view for this request: its audience and length,
+    in the browser's language, with card links for where it is."""
+    query = request.query_params
+    limit = dashboard_page.limit_of(query.get("limit"), activity_widget.LIMIT, activity_widget.MOST)
+    audience = query.get("audience", "")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(dashboard_page.history_url(_memory_url(), limit=limit,
+                                                            audience=audience))
+        r.raise_for_status()
+        history = r.json()
+    except (httpx.HTTPError, ValueError):
+        history = None
+    zone = _zone()
+    return activity_widget.view(
+        history, now=datetime.now(zone) if zone else datetime.now().astimezone(),
+        language=dashboard_page.language_of(request.headers.get("accept-language", "")),
+        href=dashboard_page.card_link(request.headers.get("host", ""), LINK_PREFIX),
+        base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""))
+
+
+@app.get(DASHBOARD_PREFIX, include_in_schema=False)
+async def dashboard(request: Request):
+    view = await _activity(request)
+    widget = dashboard_page.shell(view, activity_widget.html(view), name="activity",
+                                  size=request.query_params.get("size", ""))
+    body = dashboard_page.page([widget], base=DASHBOARD_PREFIX, language=view["language"])
+    return Response(body, media_type="text/html; charset=utf-8")
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/activity", include_in_schema=False)
+async def dashboard_activity(request: Request):
+    view = await _activity(request)
+    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
+
+
+@app.get(f"{DASHBOARD_PREFIX}/static/{{path:path}}", include_in_schema=False)
+async def dashboard_asset(path: str):
+    found = dashboard_page.asset(path)
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    kind, body = found
+    return Response(body, media_type=kind)
+
+
+@app.get(f"{DASHBOARD_PREFIX}/fonts/{{name}}", include_in_schema=False)
+async def dashboard_font(name: str):
+    url = dashboard_page.font_url(_memory_url(), name)
+    if url is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(url)
+    except httpx.HTTPError:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return Response(r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "font/woff2"),
+                    headers={"cache-control": r.headers.get("cache-control", "max-age=604800")})
 
 
 if __name__ == "__main__":

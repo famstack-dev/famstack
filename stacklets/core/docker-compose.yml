@@ -83,8 +83,8 @@ services:
     # up without a rebuild.
     command: ["python", "server.py"]
     ports:
-      # Only the public listener is published, and it serves only the /go
-      # links. The stack's containers use the internal one,
+      # The public listener serves the /go links and the dashboard
+      # (/dashboard). The stack's containers use the internal one,
       # stack-core-tools:8000, which serves everything.
       - "${PORT_BIND_IP:-127.0.0.1}:42000:8001"
       # The card browser: this Mac only, in every mode. Nothing on it knows
@@ -99,6 +99,9 @@ services:
       - ./tools-server/resolver.py:/app/resolver.py:ro
       - ./tools-server/cards_page.py:/app/cards_page.py:ro
       - ./tools-server/cards:/app/cards:ro
+      - ./tools-server/dashboard_page.py:/app/dashboard_page.py:ro
+      - ./tools-server/activity_widget.py:/app/activity_widget.py:ro
+      - ./tools-server/dashboard:/app/dashboard:ro
       # Shared library: the card-id table and the lookup by card id
       # (`stack.cards`, `stack.card_lookup`). Mounted only, like the bot-runner's copy.
       - ../../lib/stack:/app/stack:ro
