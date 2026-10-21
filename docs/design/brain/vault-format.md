@@ -128,6 +128,15 @@ description through a member when it gives none ("Marge's mother").
 Both come from the call that classifies the record. The person
 registry is compiled from `mentions`; the record never links to it.
 
+`tags` holds the ontology's topic ids (`medical`, `tax_office`) and
+keywords, lowercase with hyphens between their words (`cropper-paper`),
+each once (ADR-017 §4). A topic is never tagged by its label: the label
+a reader sees comes from `ontology.toml` in the instance's language.
+Writers map a topic's label in any language to its id and slug anything
+else (`stack.tags`); migration `memory/0005` did the same for the files
+written before, except that a tag it could not read stays and is
+reported. Diary cards still carry labels and `Person:` tags.
+
 ### `document`
 | Field | | Notes |
 |---|---|---|
@@ -143,7 +152,7 @@ registry is compiled from `mentions`; the record never links to it.
 | `category` | O | |
 | `persons` | O | list. |
 | `mentions` | O | list. |
-| `tags` | O | list. |
+| `tags` | O | list of topic ids and keywords (above). |
 | `paperless_url` | O | base URL. |
 | `processing` | O | `ai_formatted` \| `ocr` \| `original`. |
 | `model` | O | model that classified it. |
@@ -158,7 +167,7 @@ registry is compiled from `mentions`; the record never links to it.
 | `persons` | O | list. |
 | `mentions` | O | list. |
 | `filed_by` | O | Matrix localpart of the filer (mirrors the git author). |
-| `tags` | O | list. |
+| `tags` | O | list of topic ids and keywords (above). |
 | `resource` | O | source URL (OKF `resource`; bookmarks always have one). |
 | `capture_id` | O | the `dev.famstack.event` envelope id. |
 | `date` | O | capture date. |
@@ -194,7 +203,7 @@ card; its event id joins `event_ids`.
 | `description` | O | one sentence. |
 | `persons` | O | list. |
 | `mentions` | O | list. |
-| `tags` | O | list. |
+| `tags` | O | list; still topic labels and `Person:` tags (not migrated, see above). |
 | `filed_by` | O | Matrix localpart of the sender. |
 | `addressee` | O | who the message is spoken to, as it names them; a correction can change it. |
 | `medium` | O | `voice` \| `image` \| `video` \| `file` \| `text`. |

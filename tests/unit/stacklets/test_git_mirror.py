@@ -1164,7 +1164,7 @@ class TestARecordLinksTheCardsItNames:
         text = await self._document(mirror, client, 31, persons=["Homer", "Bart"])
         fields = parse(text)
         assert fields["persons"] == ["homer", "bart"]
-        assert fields["tags"] == ["Leisure"]
+        assert fields["tags"] == ["leisure"]
         assert ("**About:** [Homer](../../../people/homer.md), "
                 "[Bart](../../../people/bart.md)") in text
 
@@ -1202,3 +1202,51 @@ class TestARecordLinksTheCardsItNames:
             "type": "topic", "card_id": "topic-itchy-scratchy-land", "title": "Itchy Scratchy Land"}
         assert [p["path"] for p in client.puts].count(self.TOPIC) == 1
 
+
+
+class TestARecordTagsItsTopicsById:
+    """A record's tags hold the ontology's topic ids and the classifier's
+    keywords, lowercase with hyphens (ADR-017 §4). On a German instance a
+    document's Paperless tags are German labels; the card holds the id, and
+    a reader shows the label from the ontology. The vault here has no
+    `ontology.toml`, so the shipped seed is the ontology, as on a new
+    instance."""
+
+    @pytest.fixture
+    def client(self, tmp_path, monkeypatch, mirror) -> _FakeVaultClient:
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))  # memory.lib, for VaultContext
+        from vault_context import VaultContext
+
+        (tmp_path / "vault").mkdir()
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "vault"))
+        mirror.vault = VaultContext(language="de", shared_bucket="family")
+        client = _FakeVaultClient()
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        return client
+
+    async def test_a_document_tags_its_topics_by_id_and_its_keywords_in_lowercase(self, mirror, client):
+        from stack.frontmatter import parse
+
+        await mirror.publish(
+            paperless_id=41, body_text="Impfung.", processing="ai_formatted", model=None,
+            paperless_url="", tags=["Gesundheit", "Cropper Paper", "Medical", "Person: Bart", "Moe's"],
+            classification={"title": "Impfpass Bart", "date": "2026-10-13"},
+        )
+        text = next(f["content"] for p, f in client.files.items() if p.endswith("-p41.md"))
+        # `Medical` is the same topic in English: one tag. `Moe's` is no keyword
+        # as it stands, so the writer slugs it.
+        assert parse(text)["tags"] == ["medical", "cropper-paper", "moe-s"]
+
+    async def test_a_note_keeps_its_keywords_as_keywords(self, mirror, client):
+        from stack.frontmatter import parse
+
+        await mirror.publish_capture(
+            entity="family/itchy-scratchy-land", kind="note", source_uri=None, title_hint=None,
+            body_text="Lisa paints the park.", classification={"title": "Watercolours", "summary": "s"},
+            captured_at="2026-10-13", model=None,
+            tags=["itchy-scratchy-land", "Watercolour", "Reise", "watercolour"],
+        )
+        text = next(f["content"] for p, f in client.files.items() if "/notes/" in p)
+        assert parse(text)["tags"] == ["itchy-scratchy-land", "watercolour", "travel"]

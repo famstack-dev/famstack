@@ -59,8 +59,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from format_check import format_report  # noqa: E402
-from graph import Card, Graph, View, load_graph  # noqa: E402
+from graph import Card, Graph, View, load_graph, tags_of  # noqa: E402
 from stack.links import go_page  # noqa: E402
+from stack.tags import tag_label  # noqa: E402
 
 PORT = 8090
 # What a result page lists at most; a page asks for more by narrowing.
@@ -199,6 +200,8 @@ def _full(card: Card, graph: Graph, language: str) -> dict:
         and _FRONTMATTER_END in card.text else card.text
     full = {**_summary(card), "meta": _plain(card.meta), "text": body.strip(),
             "rendered": graph.rendered(card, language=language).markdown,
+            # A topic tag is its id; a reader sees its label (ADR-017 §4).
+            "tag_labels": {t: tag_label(t, graph.ontology, language) for t in tags_of(card)},
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
             **_walk(card, graph), "views": [_view(v) for v in card.views]}

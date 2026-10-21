@@ -141,6 +141,22 @@ class TestWhatIsNotThereYet:
         assert _from_the_page(unfinished)["findings"] == 5 + 1 + 1 + 2
 
 
+def test_a_tag_that_is_a_topic_label_or_no_keyword_is_listed(tmp_path):
+    """A card tags a topic by the ontology's id and its keywords lowercase
+    with hyphens (ADR-017 §4). The memory has no `ontology.toml` here, so
+    the shipped one decides: `Gesundheit` is the label of `medical`."""
+    m = Memory(tmp_path)
+    m.write("family/notes/zelt.md", "---\ntype: note\ncard_id: note-1a2b3c4d5e\ntitle: Zelt\n"
+            "tags:\n  - Gesundheit\n  - medical\n  - Cropper Paper\n  - cropper-paper\n---\n",
+            by="marge", message="feat(notes): zelt")
+
+    report = _from_the_page(m)
+
+    assert report["invalid_tags"] == [{"card": "note-1a2b3c4d5e", "path": "family/notes/zelt.md",
+                                       "tags": ["Gesundheit", "Cropper Paper"]}]
+    assert report["findings"] == 2
+
+
 class TestOneReportTwoSurfaces:
 
     def test_the_command_says_what_the_page_says(self, unfinished, capsys):
@@ -169,7 +185,8 @@ class TestAMemoryThatMeetsTheFormat:
         report = _from_the_page(finished)
 
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
-                          "links_to_nothing": [], "no_card_type": [], "findings": 0}
+                          "links_to_nothing": [], "no_card_type": [], "invalid_tags": [],
+                          "findings": 0}
 
     def test_and_the_command_says_there_is_nothing_to_fix(self, finished, capsys):
         command = _from_the_command(finished)

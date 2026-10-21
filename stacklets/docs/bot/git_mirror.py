@@ -58,6 +58,7 @@ from stack.card_links import About, correspondent_card, topic_card, without_pers
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
+from stack.tags import card_tags
 
 from diary_room import household_now
 
@@ -823,6 +824,16 @@ class GitMirror:
         """The declared people names resolve through; none without a local copy."""
         return (self.vault.people() if self.vault else None) or []
 
+    def _tags(self, tags: list[str] | None) -> list[str]:
+        """The tags a record is written with: topics by the ontology's id, the
+        rest as keywords, no `Person:` tags (ADR-017 §4, `stack.tags`)."""
+        if self.vault:
+            ontology = self.vault.ontology()
+        else:
+            from memory.lib import get_ontology
+            ontology = get_ontology()
+        return card_tags(without_person_tags(tags or []), ontology)
+
     async def _declare(self, client: ForgejoClient, path: str, text: str) -> None:
         """Write the card at `path` when the memory repo has none there yet.
 
@@ -907,7 +918,7 @@ class GitMirror:
         fm = self._frontmatter(
             title=title, date=date,
             correspondent=correspondent, document_type=document_type,
-            category=category, persons=about.ids, tags=without_person_tags(tags or []),
+            category=category, persons=about.ids, tags=self._tags(tags),
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             identity=identity_for((existing or {}).get("content"), "document", target_path),
@@ -1198,7 +1209,7 @@ class GitMirror:
             kind=kind,
             source_uri=source_uri,
             persons=about.ids,
-            tags=without_person_tags(tags or []),
+            tags=self._tags(tags),
             model=model,
             capture_id=capture_id,
             filed_by=_filer_localpart(submitter),
@@ -1375,13 +1386,14 @@ class GitMirror:
             action_items=classification.get("action_items") or [],
         )
 
+        tags = self._tags(tags)
         new_fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
             kind="email",
             source_uri=thread_uri,
             persons=about.ids,
-            tags=without_person_tags(tags or []),
+            tags=tags,
             model=model,
             capture_id=capture_id,
             identity=identity_for(existing_content, "email", target_path),
@@ -1397,7 +1409,7 @@ class GitMirror:
                 captured_at=captured_at,
                 source_uri=thread_uri,
                 persons=persons,
-                tags=without_person_tags(tags or []),
+                tags=tags,
                 from_path=target_path,
                 shared_bucket=self.shared_bucket,
                 people=people,

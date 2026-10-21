@@ -1975,8 +1975,9 @@ def search_memory(
     narrow against the structured frontmatter: a doc passes when,
     for every supplied axis, at least one of its frontmatter values
     matches at least one requested value. Persons compare
-    case-insensitively; tags through `_norm_tag` (whitespace-and-case
-    normalized).
+    case-insensitively; tags as the rule writes them
+    (`stack.tags.tag_for`: a topic's label in any language is its id),
+    else through `_norm_tag` (whitespace-and-case normalized).
 
     `scopes` is a list of allowed path prefixes (entity-rooted, e.g.
     `["family/", "marge/"]`). A doc passes when its vault-relative
@@ -2004,7 +2005,8 @@ def search_memory(
     the text before matching, so "Kase" reaches "Käse" and the reverse.
     `search_frontmatter` matches the title, tag and person *values*
     alongside the body, so a page titled "Elternabend" is found by
-    searching for Elternabend. Both are on by default; passing False
+    searching for Elternabend, and one tagged `medical` by searching for
+    the topic's label in any language (`stack.tags.tag_words`). Both are on by default; passing False
     restores the older behaviour, which is what the retrieval lab
     measures against.
 
@@ -2029,10 +2031,17 @@ def search_memory(
         term_patterns = []
     term_patterns = term_patterns or [pattern]
 
+    from stack.tags import tag_for, tag_words
+
+    ontology = get_ontology(vault)
+
+    def tag_key(tag: str) -> str:
+        return tag_for(tag, ontology) or _norm_tag(tag)
+
     persons = persons or []
     tags = tags or []
     want_persons = {p.lower() for p in persons}
-    want_tags = {_norm_tag(t) for t in tags}
+    want_tags = {tag_key(t) for t in tags}
 
     # Normalize scopes: ensure each prefix ends with "/" so "marge"
     # doesn't accidentally match "margery/...". `None` keeps the
@@ -2089,7 +2098,7 @@ def search_memory(
         if search_frontmatter:
             haystack = "\n".join((
                 str(fm.get("title") or ""),
-                " ".join(doc_tags),
+                " ".join(w for t in doc_tags for w in tag_words(t, ontology)),
                 body,
             ))
         if fold_diacritics:
@@ -2104,7 +2113,7 @@ def search_memory(
         if persons and not any(p.lower() in want_persons for p in doc_persons):
             continue
         if tags:
-            doc_norm = {_norm_tag(t) for t in doc_tags}
+            doc_norm = {tag_key(t) for t in doc_tags}
             if not (doc_norm & want_tags):
                 continue
 
@@ -2816,3 +2825,42 @@ def declare_cards(client: ForgejoClient, vault: Path, *,
     message = f"cards: declare {len(found.changes)} correspondent and topic card(s)"
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
                           created=frozenset(found.created))
+
+
+# ─── Topic tags by id ────────────────────────────────────────────────────
+#
+# A card tags a topic by the ontology's id and its keywords lowercase with
+# hyphens (ADR-017 §4). The archivist writes new records' tags that way
+# (`stack.tags.card_tags`); migration 0005 brings the files that were
+# there before to the same shape with the same rule (`stack.tags.tag_for`).
+
+def topic_tags_for(vault: Path) -> CardLinks:
+    """What tags the topics of the working copy `vault`'s cards by id.
+
+    Each tag that names a topic of the vault's ontology (`ontology.toml`,
+    else the shipped seed), by its id or its label in any language,
+    becomes the id; every other tag is lowercased with hyphens; two that
+    become one are one, in the place of the first. A tag that is no
+    keyword even so stays as it is and is listed in `left`. Diary cards
+    are left alone (`stack.tags.with_topic_tags`).
+    """
+    from stack.tags import with_topic_tags
+
+    ontology = get_ontology(vault)
+    texts = _markdown_files(vault)
+    found = CardLinks()
+    for path in sorted(texts):
+        text, left = with_topic_tags(texts[path], ontology)
+        found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
+        if text != texts[path]:
+            found.changes[path] = text
+    return found
+
+
+def tag_topics_by_id(client: ForgejoClient, vault: Path, *,
+                     trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Tag the topics of `vault`'s cards by id (`topic_tags_for`), in one
+    commit by the memory bot; what the pass found and the commit's sha."""
+    found = topic_tags_for(vault)
+    message = f"cards: tag topics by id in {len(found.changes)} card(s)"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)

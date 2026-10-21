@@ -558,11 +558,26 @@ sends a link to a person's or a topic's card to that card's view
 (`quartz/plugins/vaultLinks.ts`). Diary cards still name people by first
 name and tag them: their text is signed with a digest.
 
+**A card tags a topic by its id** (ADR-017 §4). `tags` holds the
+ontology's topic ids (`medical`) and keywords, lowercase with hyphens
+(`cropper-paper`). A topic's id or its label in any of the ontology's
+languages, in any case and spacing, is written as the id; anything else
+is lowercased with hyphens between its words. The label a reader sees
+comes from the ontology in the instance's language, never from the file:
+the card browser shows it, and `stack memory find`, memory search and the
+wiki find a topic by its id and by its label in every language.
+`stack.tags` holds the rule. The archivist writes every record's tags
+through it, slugging a tag it cannot read (`Moe's` becomes `moe-s`);
+`memory/0005` brought the files written before to the same shape,
+leaving a tag it cannot read as it is and naming it. Diary cards still
+carry labels and `Person:` tags, for the reason above.
+
 `stack memory check-format` (and the cards API's `/report`, which the
 card browser shows) lists where the vault does not meet ADR-016 and
 ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
 links to a file the vault does not have; files with no frontmatter or a
-`type` that is no card type. It is the admin's, read over every card,
+`type` that is no card type; tags that are neither a topic id nor a
+keyword. It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
 
 **A card type has one renderer, and it writes markdown** (ADR-016 §4,
