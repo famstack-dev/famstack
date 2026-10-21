@@ -8,6 +8,7 @@ stubbed here.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import yaml
@@ -23,6 +24,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stack.people import Person  # noqa: E402
+from memory.note_card import Source  # noqa: E402
 from git_mirror import (  # noqa: E402
     BOT_EMAIL,
     BOT_USERNAME,
@@ -454,6 +456,23 @@ class _FakeTodoClient:
             "author_email": author_email,
         })
 
+    def change_files(self, owner, repo, changes, *, message, author_name=None, author_email=None):
+        """Several files in one commit, all or nothing, as Forgejo does."""
+        for change in changes:
+            held = self.files.get(change.path)
+            if (change.operation == "create") == (held is not None) or (
+                    held and change.sha != held["sha"]):
+                raise AssertionError(f"Forgejo would refuse {change.operation} {change.path}")
+        self.commits = [*getattr(self, "commits", []), [c.path for c in changes]]
+        for change in changes:
+            if change.operation == "delete":
+                self.files.pop(change.path, None)
+            else:
+                self.put_file(owner, repo, change.path, content=change.content, message=message,
+                              sha=change.sha or None, author_name=author_name,
+                              author_email=author_email)
+        return {"commit": {"sha": f"c{len(self.commits)}"}}
+
 
 class TestActionItemsOnTheTopicsList:
     """A record's action items land on its topic's list, linked back to the record."""
@@ -821,19 +840,19 @@ class TestCaptureFrontmatter:
             )
             assert fm_validate(fm) == [], (kind, fm_validate(fm))
 
-    def test_note_with_source_uri(self, mirror):
-        # Pasted Reddit thread with the URL in the body — kind=note,
-        # source_uri kept for round-tripping back to the original.
+    def test_a_notes_frontmatter_keeps_only_what_it_is_about(self, mirror):
+        """Where a note came from and how it was made are in its sidecar
+        (ADR-018 §3); the link in its words stays in its words."""
         fm = mirror._capture_frontmatter(
             title="Reddit thread title",
             captured_at="2026-05-17",
             kind="note",
             source_uri="https://reddit.com/r/x/comments/y",
-            persons=["Homer"], tags=["LLMs"], model=None,
+            persons=["Homer"], tags=["LLMs"], model="m", capture_id="$x", filed_by="homer",
         )
         assert fm["type"] == "note"
-        assert fm["resource"] == "https://reddit.com/r/x/comments/y"
         assert fm["tags"] == ["LLMs"]
+        assert not {"resource", "capture_id", "model", "timestamp", "filed_by"} & set(fm)
 
     def test_note_without_source_uri(self, mirror):
         # Pure paste — no URL anywhere. Frontmatter omits source_uri so
@@ -1055,19 +1074,75 @@ class TestANoteFiledAsItsOwnWords:
             classification={"title": "Campsite", "summary": "", "facts": [],
                             "action_items": ["Call the campsite"]},
             captured_at="2026-10-13", model=None, capture_id="$x", clean=clean,
+            sources=[Source("original", "marge", "2026-10-13T08:00:00+00:00", "chat", "text",
+                            "$x", quote="call the campsite b4 fri")],
         )
         return client.files[filed.path]["content"], client
 
     async def test_the_card_has_the_clean_version_and_the_words(self, mirror, monkeypatch):
         note, _ = await self._file(mirror, monkeypatch, clean="Call the campsite before Friday.")
         clean_at = note.index("Call the campsite before Friday.")
-        assert clean_at < note.index("> [!quote]- Original paste\n> call the campsite b4 fri")
+        assert clean_at < note.index("## Sources\n\n> call the campsite b4 fri")
         assert "[!summary]" not in note
 
     async def test_its_to_dos_are_on_the_list_and_not_on_the_card(self, mirror, monkeypatch):
         note, client = await self._file(mirror, monkeypatch, clean="")
         assert "Action items" not in note
         assert "- [ ] Call the campsite" in client.files["family/lists/camping.md"]["content"]
+
+
+class TestANoteIsItsCardAndItsSidecar:
+    """A note is written as two files in one commit (ADR-018): the card
+    with what it is about, and the sidecar with where its sources came
+    from and how the card was made, the code commit and the prompt's
+    template among it."""
+
+    PATH = "family/camping/notes/2026/10/campsite-3a338e.md"
+
+    async def _file(self, mirror, monkeypatch, client=None):
+        client = client or _FakeVaultClient()
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        filed = await mirror.publish_capture(
+            entity="family/camping", kind="note", source_uri=None, title_hint=None,
+            body_text="call the campsite", classification={"title": "Campsite", "summary": ""},
+            captured_at="2026-10-13", model="m", capture_id="$x", existing_path=self.PATH,
+            submitter="@marge:simpson", clean="Call the campsite.",
+            sources=[Source("original", "marge", "2026-10-13T08:00:00+00:00", "chat", "text",
+                            "$x", quote="call the campsite")],
+            made={"at": "2026-10-13T08:00:05+00:00", "model": "m", "code_commit": "9a5bdc9",
+                  "prompt_template": "3f9a1c2b7d4e", "requested_by": "marge"},
+        )
+        return filed, client
+
+    async def test_card_and_sidecar_land_in_one_commit(self, mirror, monkeypatch):
+        filed, client = await self._file(mirror, monkeypatch)
+        assert client.commits == [[self.PATH, self.PATH.removesuffix(".md") + ".json"]]
+        sidecar = json.loads(client.files[self.PATH.removesuffix(".md") + ".json"]["content"])
+        assert sidecar["card_id"] == filed.card_id
+        assert sidecar["filed_by"] == "marge"
+        assert sidecar["sources"] == [{"role": "original", "person": "marge",
+                                       "time": "2026-10-13T08:00:00+00:00", "channel": "chat",
+                                       "kind": "text", "id": "$x"}]
+        assert sidecar["made"]["code_commit"] == "9a5bdc9"
+        assert sidecar["made"]["prompt_template"] == "3f9a1c2b7d4e"
+
+    async def test_the_card_has_no_machine_fields(self, mirror, monkeypatch):
+        from stack.frontmatter import parse
+        _, client = await self._file(mirror, monkeypatch)
+        fields = parse(client.files[self.PATH]["content"])
+        assert not {"capture_id", "model", "timestamp", "filed_by", "code_commit",
+                    "prompt_template"} & set(fields)
+
+    async def test_a_note_in_the_old_format_gets_its_sidecar_and_keeps_its_id(
+            self, mirror, monkeypatch):
+        old = ("---\ntype: note\ncard_id: note-0b6e2d91aa\ntitle: Campsite\n"
+               "capture_id: \"$x\"\n---\n\n# Campsite\n")
+        client = _FakeVaultClient({self.PATH: {"content": old, "sha": "s1"}})
+        filed, client = await self._file(mirror, monkeypatch, client)
+        assert filed.card_id == "note-0b6e2d91aa"
+        assert client.commits == [[self.PATH, self.PATH.removesuffix(".md") + ".json"]]
 
 
 class TestACardKeepsItsId:

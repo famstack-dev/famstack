@@ -122,6 +122,26 @@ class TestOpeningACard:
 
         assert card["rendered"] == f"# Zelt ist kaputt\n\n{RECENT} · Lisa\n\nDas Zelt ist gerissen.\n"
 
+    def test_a_note_comes_with_its_sources_and_how_it_was_made(self, tmp_path):
+        """What the sidecar says (ADR-018 §3), each source with its quote: the
+        same list a refile gives the model."""
+        m = Memory(tmp_path)
+        m.write("marge/notes/milk.md", "---\ntype: note\ncard_id: note-1a2b3c4d5e\ntitle: Milk\n---\n"
+                "\n# Milk\n\nBuy milk.\n\n## Sources\n\n> buy milk\n", by="marge", message="capture: Milk")
+        m.write("marge/notes/milk.json", json.dumps({
+            "card_id": "note-1a2b3c4d5e", "filed_by": "marge",
+            "sources": [{"role": "original", "person": "marge", "time": "2026-10-21T08:00:00+00:00",
+                         "channel": "chat", "kind": "text", "id": "$m1"}],
+            "made": {"at": "2026-10-21T08:00:05+00:00", "code_commit": "9a5bdc9"}}),
+            by="marge", message="capture: Milk")
+        status, _, body = CardsAPI(vault=m.vault, brain=m.brain).answer("/card/note-1a2b3c4d5e", {})
+        card = json.loads(body)
+        assert status == 200
+        assert card["sources"] == [{"role": "original", "person": "marge",
+                                    "time": "2026-10-21T08:00:00+00:00", "channel": "chat",
+                                    "kind": "text", "id": "$m1", "quote": "buy milk"}]
+        assert (card["filed_by"], card["made"]["code_commit"]) == ("marge", "9a5bdc9")
+
     def test_a_list_comes_with_its_items(self, api):
         _, card = _get(api, "/card/list/markt")
 

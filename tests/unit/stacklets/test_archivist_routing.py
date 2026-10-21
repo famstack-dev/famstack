@@ -312,7 +312,7 @@ class TestReactionDispatch:
             cap.append({"url": url, "sender": sender, "reply_to": reply_to,
                         "capture_id": capture_id, "hint": user_hint})
 
-        async def _txt(room_id, text, sender, reply_to, *, capture_id=None):
+        async def _txt(room_id, text, sender, reply_to, *, capture_id=None, sent_at=""):
             txt.append({"text": text, "sender": sender, "reply_to": reply_to,
                         "capture_id": capture_id})
 
@@ -800,7 +800,7 @@ def bot_with_recorder(tmp_path):
 
     async def _record_text_capture(room_id, text, sender, reply_to=None,
                                    *, capture_id=None, transcribed=False,
-                                   caption=""):
+                                   caption="", sent_at=""):
         calls.append(("capture_text", text))
 
     async def _record_url(room_id, url, reply_to=None, **kw):
@@ -1057,7 +1057,7 @@ class TestSpokenMessagesAreDeliberate:
         flags: list[bool] = []
 
         async def _record(room_id, text, sender, reply_to=None, *,
-                          capture_id=None, transcribed=False, caption=""):
+                          capture_id=None, transcribed=False, caption="", sent_at=""):
             flags.append(transcribed)
 
         bot._handle_text_capture = _record
@@ -1076,7 +1076,7 @@ class TestSpokenMessagesAreDeliberate:
         captions: list[str] = []
 
         async def _record(room_id, text, sender, reply_to=None, *,
-                          capture_id=None, transcribed=False, caption=""):
+                          capture_id=None, transcribed=False, caption="", sent_at=""):
             captions.append(caption)
 
         bot._handle_text_capture = _record

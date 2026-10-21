@@ -47,13 +47,14 @@ import json
 import os
 import re
 import secrets
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 
-from stack.forgejo import ForgejoClient, ForgejoError
+from stack.forgejo import FileChange, ForgejoClient, ForgejoError
 from stack.card_links import About, correspondent_card, topic_card, without_person_tags
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
@@ -63,8 +64,19 @@ from stack.tags import card_tags
 from diary_room import household_now
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from vault_context import VaultContext
-from vault_entry import (
+# Sibling stacklets resolve through `stacklets/` on sys.path: in the
+# bot-runner container that directory is the read-only mount, locally it
+# is the source tree. The path goes on here, before the import that needs
+# it, rather than relying on who loads whom (as in `pipeline.py`).
+_STACKLETS_DIR = Path(__file__).resolve().parents[2]
+if str(_STACKLETS_DIR) not in sys.path:
+    sys.path.insert(0, str(_STACKLETS_DIR))
+# A note's card and sidecar are the memory stacklet's format (ADR-018).
+from memory.note_card import Source, card_fields, sidecar_path, sidecar_text  # noqa: E402
+from vault_entry import (  # noqa: E402
     slug,
     capture_hash,
     document_filepath,
@@ -75,6 +87,7 @@ from vault_entry import (
     capture_frontmatter,
     render_document,
     render_capture,
+    render_note,
     render_email_message_section,
     fold_email_message,
 )
@@ -148,6 +161,15 @@ def _validate_on_write(frontmatter: dict) -> None:
         )
 
 
+def code_commit() -> str:
+    """The famstack commit this process runs, as `stack up` stamped it.
+
+    `STACK_COMMIT` is rendered into every stacklet's env, the bot runner's
+    included; a process started some other way says `unknown`.
+    """
+    return os.environ.get("STACK_COMMIT", "").strip() or "unknown"
+
+
 def _commit_author(submitter: str | None) -> tuple[str, str]:
     """`(author_name, author_email)` for a capture commit.
 
@@ -211,6 +233,21 @@ class Filed(NamedTuple):
 
     path: str
     card_id: str
+
+
+class CaptureEntry(NamedTuple):
+    """A capture's file as it would be written, and the people it names.
+
+        entry = mirror.capture_entry(target_path=path, existing=text, ...)
+        entry.content                 # the whole file, frontmatter first
+        entry.frontmatter["card_id"]  # 'note-7f3a9c21e4'
+    """
+
+    frontmatter: dict
+    content: str
+    about: About
+    # A note's sidecar (`memory.note_card`), "" for every other capture.
+    sidecar: str = ""
 
 
 @dataclass
@@ -551,7 +588,6 @@ class GitMirror:
     def _render_capture(
         self, *,
         frontmatter: dict,
-        body: str,
         kind: str,
         captured_at: str | None,
         source_uri: str | None,
@@ -564,16 +600,15 @@ class GitMirror:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         people: list[Person] | None = None,
-        clean: str | None = None,
     ) -> str:
-        """Capture mirror markdown. Delegates to ``vault_entry.render_capture``."""
+        """Bookmark mirror markdown. Delegates to ``vault_entry.render_capture``."""
         return render_capture(
-            frontmatter=frontmatter, body=body, kind=kind,
+            frontmatter=frontmatter, kind=kind,
             captured_at=captured_at, source_uri=source_uri, persons=persons,
             from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts, action_items=action_items,
             kept_media=kept_media, caption=caption, replies=replies,
-            people=people, clean=clean,
+            people=people,
         )
 
     def _commit_message(
@@ -1077,13 +1112,19 @@ class GitMirror:
         filed_by: str | None = None,
         identity: dict | None = None,
     ) -> dict:
-        """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``."""
+        """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``.
+
+        A note's keeps only what the card is about; where it came from
+        goes into its sidecar (ADR-018 §3, `memory.note_card`).
+        """
         fm = capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
             model=model, capture_id=capture_id, filed_by=filed_by,
             identity=identity,
         )
+        if kind == "note":
+            fm = card_fields(fm)
         _validate_on_write(fm)
         return fm
 
@@ -1109,6 +1150,79 @@ class GitMirror:
             return None
         return data.get("content") or ""
 
+    def capture_entry(
+        self, *,
+        target_path: str,
+        existing: str | None,
+        kind: str,
+        source_uri: str | None,
+        title_hint: str | None,
+        body_text: str,
+        classification: dict,
+        captured_at: str,
+        model: str | None,
+        tags: list[str] | None = None,
+        capture_id: str | None = None,
+        submitter: str | None = None,
+        kept_media: dict | None = None,
+        caption: str = "",
+        replies: "list[tuple[str, str]] | tuple" = (),
+        clean: str | None = None,
+        sources: "Sequence[Source]" = (),
+        made: dict | None = None,
+    ) -> "CaptureEntry":
+        """The files a capture is written as at `target_path`, without writing them.
+
+        ``existing`` is the file there now, whose card id the entry keeps
+        (`identity_for`). `publish_capture` writes what this returns. The
+        other arguments are `publish_capture`'s. A note's entry carries its
+        sidecar too.
+        """
+        title = classification.get("title") or title_hint or "Capture"
+        persons = _classified_persons(classification)
+        people = self._people()
+        about = About.of(persons, people)
+        fm = self._capture_frontmatter(
+            title=title,
+            captured_at=captured_at,
+            kind=kind,
+            source_uri=source_uri,
+            persons=about.ids,
+            tags=self._tags(tags),
+            model=model,
+            capture_id=capture_id,
+            filed_by=_filer_localpart(submitter),
+            identity=identity_for(existing, kind, target_path),
+        )
+        if kind == "note":
+            return CaptureEntry(fm, render_note(
+                frontmatter=fm, sources=sources, persons=persons, people=people,
+                from_path=target_path, shared_bucket=self.shared_bucket, clean=clean,
+                summary=classification.get("summary"),
+                facts=classification.get("facts") or [],
+                action_items=classification.get("action_items") or [],
+            ), about, sidecar_text(
+                card_id=str(fm.get("card_id") or ""), filed_by=_filer_localpart(submitter) or "",
+                sources=sources, made=made or {}))
+        content = self._render_capture(
+            frontmatter=fm,
+            kind=kind,
+            captured_at=captured_at,
+            source_uri=source_uri,
+            persons=persons,
+            people=people,
+            from_path=target_path,
+            summary=classification.get("summary"),
+            facts=classification.get("facts") or [],
+            # Action items only when the classifier extracted them — notes
+            # that opted in (kind == "note"); bookmarks never carry the field.
+            action_items=classification.get("action_items") or [],
+            kept_media=kept_media,
+            caption=caption,
+            replies=replies,
+        )
+        return CaptureEntry(fm, content, about)
+
     async def publish_capture(
         self, *,
         entity: str,
@@ -1127,6 +1241,8 @@ class GitMirror:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         clean: str | None = None,
+        sources: "Sequence[Source]" = (),
+        made: dict | None = None,
     ) -> Filed | None:
         """Create or update a capture entry in the mirror.
 
@@ -1154,9 +1270,11 @@ class GitMirror:
         ``replies`` the ``(author, words)`` written in its thread; the
         entry keeps both word for word.
 
-        ``clean`` is the clean version of a note's words, for a note filed
-        as its own words (`vault_entry.render_capture`); None for every
-        other capture.
+        A note is written as its card and its sidecar, in one commit
+        (ADR-018): ``sources`` are what it was made from, in order, and
+        ``made`` how it was made. ``clean`` is the clean version of its
+        words when it was filed as its own words (`vault_entry.render_note`).
+        ``body_text`` then only names it, for its path.
 
         ``existing_path`` is the reprocess hook: the entry is rewritten
         where it is, whatever its new title.
@@ -1173,10 +1291,6 @@ class GitMirror:
 
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Capture"
-
-        persons = _classified_persons(classification)
-        people = self._people()
-        about = About.of(persons, people)
 
         hash_key = source_uri or body_text
         target_path = self._capture_filepath(
@@ -1209,42 +1323,16 @@ class GitMirror:
         # `filed_by` frontmatter, and the same identity becomes the git commit
         # author (committer stays the bot). Both come from `submitter`.
         author_name, author_email = _commit_author(submitter)
-        fm = self._capture_frontmatter(
-            title=title,
-            captured_at=captured_at,
-            kind=kind,
-            source_uri=source_uri,
-            persons=about.ids,
-            tags=self._tags(tags),
-            model=model,
-            capture_id=capture_id,
-            filed_by=_filer_localpart(submitter),
-            identity=identity_for((existing or {}).get("content"), kind, target_path),
+        entry = self.capture_entry(
+            target_path=target_path, existing=(existing or {}).get("content"),
+            kind=kind, source_uri=source_uri, title_hint=title_hint,
+            body_text=body_text, classification=classification,
+            captured_at=captured_at, model=model, tags=tags,
+            capture_id=capture_id, submitter=submitter, kept_media=kept_media,
+            caption=caption, replies=replies, clean=clean, sources=sources, made=made,
         )
-
+        fm, content, about = entry.frontmatter, entry.content, entry.about
         briefing_summary = classification.get("summary")
-        briefing_facts = classification.get("facts") or []
-        # Action items only when the classifier extracted them — notes that
-        # opted in (kind == "note"); bookmarks never carry the field.
-        briefing_actions = classification.get("action_items") or []
-
-        content = self._render_capture(
-            frontmatter=fm,
-            body=body_text,
-            kind=kind,
-            captured_at=captured_at,
-            source_uri=source_uri,
-            persons=persons,
-            people=people,
-            from_path=target_path,
-            summary=briefing_summary,
-            facts=briefing_facts,
-            action_items=briefing_actions,
-            kept_media=kept_media,
-            caption=caption,
-            replies=replies,
-            clean=clean,
-        )
 
         verb = "update" if existing else "capture"
         message_lines = [f"{verb}: {title}", ""]
@@ -1260,13 +1348,18 @@ class GitMirror:
         message = "\n".join(message_lines)
 
         try:
-            await asyncio.to_thread(
-                client.put_file,
-                self.repo_owner, REPO_NAME, target_path,
-                content=content, message=message,
-                sha=existing["sha"] if existing else None,
-                author_name=author_name, author_email=author_email,
-            )
+            if kind == "note":
+                await self._write_note(client, target_path, existing, content, entry.sidecar,
+                                       message=message, author_name=author_name,
+                                       author_email=author_email)
+            else:
+                await asyncio.to_thread(
+                    client.put_file,
+                    self.repo_owner, REPO_NAME, target_path,
+                    content=content, message=message,
+                    sha=existing["sha"] if existing else None,
+                    author_name=author_name, author_email=author_email,
+                )
         except ForgejoError as e:
             logger.warning(
                 "[git-mirror] Capture publish failed for {}: {}",
@@ -1286,6 +1379,24 @@ class GitMirror:
             previous_path=existing_path or "",
         )
         return Filed(target_path, str(fm.get("card_id") or ""))
+
+    async def _write_note(self, client: ForgejoClient, path: str, existing: dict | None,
+                          card: str, sidecar: str, *, message: str,
+                          author_name: str, author_email: str) -> None:
+        """A note's card and its sidecar, in one commit, each against the
+        blob it was read at, so neither changes without the other."""
+        side_path = sidecar_path(path)
+        side = await asyncio.to_thread(client.get_file, self.repo_owner, REPO_NAME, side_path)
+        changes = [
+            FileChange("update", path, card, sha=existing["sha"]) if existing
+            else FileChange("create", path, card),
+            FileChange("update", side_path, sidecar, sha=side["sha"]) if side
+            else FileChange("create", side_path, sidecar),
+        ]
+        await asyncio.to_thread(
+            client.change_files, self.repo_owner, REPO_NAME, changes,
+            message=message, author_name=author_name, author_email=author_email,
+        )
 
     # ── Email threads ─────────────────────────────────────────────────────
     #

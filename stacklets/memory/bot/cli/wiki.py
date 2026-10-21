@@ -85,6 +85,7 @@ from memory.lib import (  # noqa: E402
     _parse_frontmatter,
     extract_summary_callout,
 )
+from memory.note_card import has_sources, interpretation_of, sidecar_of  # noqa: E402
 from stack.cards import (  # noqa: E402
     ABOUT,
     COMPILED_FROM,
@@ -975,9 +976,10 @@ def _family_lists(bucket: str) -> list[tuple[str, FamilyList]]:
 # ── Vault index (single walk) ──────────────────────────────────────────────
 
 def _index_vault(vault: Path) -> list[dict]:
-    """Walk the vault once; index every file that carries a summary callout.
+    """Walk the vault once; index every file that carries a summary callout,
+    or a note's clean version in its place.
 
-    Files without a `> [!summary]` block are skipped -- they don't carry
+    Files without either are skipped -- they don't carry
     the structured signal the LLM needs and would only add noise. Each
     entry holds `title`, `date`, `summary`, `rel`, `persons` (frontmatter
     person list, slugified to match member buckets), and `person_names`
@@ -994,7 +996,10 @@ def _index_vault(vault: Path) -> list[dict]:
         except OSError:
             continue
         text = data.decode("utf-8", errors="ignore")
-        summary = extract_summary_callout(text)
+        # A note filed as its own words has no summary: its clean version
+        # says what it is about (ADR-018 §2).
+        summary = extract_summary_callout(text) or (
+            interpretation_of(text) if has_sources(text) else "")
         if not summary:
             continue
         fm = _parse_frontmatter(text, md)
@@ -1011,7 +1016,8 @@ def _index_vault(vault: Path) -> list[dict]:
         ]
         slugged = [(slugify_person(p), p) for p in raw_persons]
         _corr = fm.get("correspondent")
-        _fb = fm.get("filed_by")
+        # A note keeps who filed it in its sidecar (ADR-018).
+        _fb = fm.get("filed_by") or sidecar_of(md).get("filed_by")
         out.append({
             # The card, as the views compiled from it name it (`ViewFields`).
             "card_id": card_id_from(fm),

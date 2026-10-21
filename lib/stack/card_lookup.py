@@ -23,8 +23,9 @@ lookup happens when a person clicks a link or replies to a filing, so the
 cost lands in the right place. An index can be added behind `find_card`
 later without touching its callers or the link format.
 
-Only frontmatter counts: it is the machine-readable half of a page, and
-an id someone quoted in prose must not make that page answer to it. It
+Only frontmatter and a record's sidecar count: they are the machine-
+readable half of a card, and an id someone quoted in prose must not make
+that page answer to it. It
 is parsed with `stack.frontmatter`, the parser every writer of these
 files uses, so a file whose frontmatter it rejects (a hand edit gone
 wrong) answers to no id rather than to a guess.
@@ -32,6 +33,7 @@ wrong) answers to no id rather than to a guess.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +41,9 @@ from typing import Iterator
 
 from .cards import CARD_ID_FIELDS, card_id_from, former_card_ids, is_card_id
 from .frontmatter import FrontmatterError, parse
+
+# A record's sidecar, beside its card (ADR-018 §3).
+SIDECAR_SUFFIX = ".json"
 
 
 # ── The lookup ────────────────────────────────────────────────────────
@@ -65,7 +70,38 @@ def find_card(kind: str, card_id: str, *, root: Path | str) -> str | None:
     for rel, fields in _cards_in(Path(root)):
         if str(fields.get(field) or "").strip() == wanted:
             return rel
+    return find_by_source_id(wanted, root=root) if kind == "capture" else None
+
+
+def find_by_source_id(source_id: str, *, root: Path | str) -> str | None:
+    """Path of the card one of whose sources has `source_id`, or None.
+
+    A record keeps where it came from in a sidecar, `<stem>.json` beside
+    the card (ADR-018 §3): `sources`, each with the channel's `id` for it,
+    a Matrix event id for a chat message. So the message a note was filed
+    from, or a reply to it, finds the note. None for an empty or unknown
+    id, or a sidecar whose card is gone.
+    """
+    wanted = (source_id or "").strip()
+    base = Path(root)
+    if not wanted or not base.is_dir():
+        return None
+    for sidecar in sorted(base.rglob(f"*{SIDECAR_SUFFIX}")):
+        card = sidecar.with_suffix(".md")
+        if ".git" in sidecar.relative_to(base).parts or not card.is_file():
+            continue
+        if wanted in _source_ids(sidecar):
+            return card.relative_to(base).as_posix()
     return None
+
+
+def _source_ids(sidecar: Path) -> set[str]:
+    try:
+        loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return set()
+    sources = loaded.get("sources") if isinstance(loaded, dict) else None
+    return {str(s.get("id")) for s in sources or [] if isinstance(s, dict) and s.get("id")}
 
 
 @dataclass(frozen=True)

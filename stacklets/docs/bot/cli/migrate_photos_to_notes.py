@@ -27,6 +27,7 @@ import aiohttp
 from git_mirror import BOT_EMAIL, BOT_USERNAME
 from git_mirror import REPO_NAME as MEMORY_REPO
 from migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes
+from stack import media
 
 from cli._mirror import _DATA_DIR, build_mirror_like_bot
 from cli._shared import err
@@ -58,10 +59,16 @@ async def run(argv: list[str]) -> int:
         moved, commit = await migrate_photos_to_notes(
             client, mirror.repo_owner, MEMORY_REPO, root=Path(vault),
             is_picture=is_picture, author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-            trailer=trailer,
+            trailer=trailer, media_sha=_media_sha,
         )
     _answer(moved, commit)
     return 0
+
+
+def _media_sha(link: str) -> str:
+    """The hash the media archive recorded for an archived photo, "" for none."""
+    root = media.open_archive()
+    return media.recorded_sha256(root, link) if root is not None else ""
 
 
 def _answer(moved: list[tuple[str, str]], commit: str | None) -> None:

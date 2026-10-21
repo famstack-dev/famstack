@@ -80,6 +80,7 @@ from stack.ai.language import LANGUAGES, language_name
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
+from memory.note_card import time_of_ms  # noqa: E402
 from room_context import normalize_alias  # noqa: E402
 from text_utils import (  # noqa: E402
     attachment_caption as _attachment_caption,
@@ -1270,6 +1271,8 @@ class ArchivistBot(MicroBot):
                 initial_classification=initial,
                 capture_id=envelope.get("data", {}).get("capture_id"),
                 reply_text=_strip_reply_fallback(event.body or ""),
+                reply_id=getattr(event, "event_id", "") or "",
+                reply_at=time_of_ms(getattr(event, "server_timestamp", 0)),
             )
             return True
         return False
@@ -1431,6 +1434,8 @@ class ArchivistBot(MicroBot):
         *, initial_classification: dict | None = None,
         capture_id: str | None = None,
         reply_text: str = "",
+        reply_id: str = "",
+        reply_at: str = "",
     ) -> None:
         """Re-classify a capture with the user's reply as a hint.
 
@@ -1442,7 +1447,8 @@ class ArchivistBot(MicroBot):
         ``capture_id`` is the event the capture was filed from. Its
         caption is read off that event again, so a correction restores
         a caption an earlier filing dropped. ``reply_text`` is the words
-        of this reply, which the entry keeps as written.
+        of this reply, which the entry keeps as written; a note keeps it as
+        a source sent as ``reply_id`` at ``reply_at``.
         """
         upload = await self._fetch_event(room_id, capture_id)
         caption = (
@@ -1457,6 +1463,7 @@ class ArchivistBot(MicroBot):
             caption=caption,
             reply_text=reply_text,
             capture_id=capture_id,
+            reply_id=reply_id, reply_at=reply_at,
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
@@ -1930,6 +1937,7 @@ class ArchivistBot(MicroBot):
             await self._handle_text_capture(
                 room.room_id, query, event.sender, reply_to,
                 capture_id=event.event_id, transcribed=transcribed,
+                sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
                 caption=_attachment_caption(
                     event.source.get("content", {}).get(voice.TRANSCRIPT_KEY) or {}
                 ),
@@ -2023,6 +2031,7 @@ class ArchivistBot(MicroBot):
         else:
             await self._handle_text_capture(
                 room.room_id, body, author, target_id, capture_id=target_id,
+                sent_at=time_of_ms(getattr(target, "server_timestamp", 0)),
             )
 
     async def _react_archive_source(self, room, event, target, target_id) -> None:
@@ -2362,7 +2371,7 @@ class ArchivistBot(MicroBot):
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
         reply_to: str | None = None, *, capture_id: str | None = None,
-        transcribed: bool = False, caption: str = "",
+        transcribed: bool = False, caption: str = "", sent_at: str = "",
     ) -> None:
         # 👀 before the work, like every other capture shape: a link gets
         # it from the pipeline's notifier, an upload from the handler. A
@@ -2382,7 +2391,7 @@ class ArchivistBot(MicroBot):
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
             write_in=await self._write_in(room_id),
-            caption=caption,
+            caption=caption, sent_at=sent_at,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -2492,7 +2501,7 @@ class ArchivistBot(MicroBot):
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
             write_in=await self._write_in(room_id),
-            caption=caption,
+            caption=caption, sent_at=time_of_ms(captured_ts),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 

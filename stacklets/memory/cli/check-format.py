@@ -63,4 +63,10 @@ def _shown(report: dict) -> list[str]:
     if kinds := report["wrong_kind"]:
         lines += ["", "Wrong kind:"]
         lines += [f"  {k['path']}  {k['problem']}" for k in kinds]
+    if sources := report["note_sources"]:
+        lines += ["", "Notes whose sources and sidecar do not pair up:"]
+        lines += [f"  {n['path']}  {n['problem']}" for n in sources]
+    if lone := report["lone_sidecars"]:
+        lines += ["", "Sidecars without a card:"]
+        lines += [f"  {path}" for path in lone]
     return lines

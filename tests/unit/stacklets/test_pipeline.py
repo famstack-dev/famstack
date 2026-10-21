@@ -1903,3 +1903,50 @@ class TestPaperlessDuplicateAcross3xShapes:
             }],
         })
         assert await paperless_over_http.wait_task("abc", timeout=5) == 6
+
+
+class TestACaptureAnswerSaysWhichPromptTemplateMadeIt:
+    """The card's sidecar records a short hash of the prompt's skeleton
+    (ADR-018 §3, `made.prompt_template`): the same for every note, day and
+    to-do list the same template is used for, another when the template's
+    wording changes or the prompt takes another of its branches."""
+
+    NOTE = dict(person_names=["Marge"], extract_action_items=True, clean_words=True)
+
+    async def _template(self, **call) -> str:
+        c = _make_classifier()
+        return (await c.classify_capture(**{**self.NOTE, **call}))["prompt_template"]
+
+    @pytest.mark.asyncio
+    async def test_other_notes_and_to_do_lists_have_the_same_template(self):
+        one = await self._template(text="buy milk b4 sat", current_list="- [ ] Eier",
+                                   existing_tags=["groceries"], user_hint="for the party")
+        two = await self._template(text="call Moe abt the tab", current_list="- [ ] Zelt\n- [x] Grill",
+                                   existing_tags=["bar", "moe"], user_hint="Marge: it is Friday",
+                                   person_names=["Homer", "Bart"])
+        assert one == two
+
+    def test_another_day_has_the_same_template(self):
+        from pipeline import capture_prompt_template
+        args = dict(text="buy milk", person_names=["Marge"], clean_words=False)
+        assert (capture_prompt_template(**args, today="2026-10-21")
+                == capture_prompt_template(**args, today="2026-12-24"))
+
+    @pytest.mark.asyncio
+    async def test_a_change_to_the_templates_wording_is_another_template(self, monkeypatch):
+        import pipeline
+        before = await self._template(text="buy milk")
+        monkeypatch.setattr(pipeline, "_CLEAN_RULE", pipeline._CLEAN_RULE + " Keep it short.")
+        assert await self._template(text="buy milk") != before
+
+    @pytest.mark.asyncio
+    async def test_another_branch_of_the_prompt_is_another_template(self):
+        clean = await self._template(text="buy milk")
+        digest = await self._template(text="buy milk", clean_words=False)
+        hinted = await self._template(text="buy milk", user_hint="for the party")
+        assert len({clean, digest, hinted}) == 3
+
+    @pytest.mark.asyncio
+    async def test_no_answer_has_no_template(self):
+        c = _make_classifier(response="")
+        assert await c.classify_capture(text="x", person_names=[]) == {}

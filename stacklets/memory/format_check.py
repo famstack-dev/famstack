@@ -3,8 +3,10 @@
 Each finding is something a step of ADR-016's order removes: cards without
 a `card_id`, ids two files claim, links to a file the memory repo does not
 have, files that are no card type, tags that are no topic id and no
-keyword, a `kind` outside its type's set. The report empties as the
-steps land, so a memory that meets the format gives an empty one.
+keyword, a `kind` outside its type's set, a note whose sources and sidecar
+do not pair up and a sidecar whose card is gone (ADR-018 §3). The report
+empties as the steps land, so a memory that meets the format gives an
+empty one.
 
     report = format_report(load_graph(vault))
     report["findings"]            # 0: nothing to fix
@@ -19,6 +21,7 @@ what needs fixing. It writes nothing.
 from __future__ import annotations
 
 from graph import Card, Graph, links_of, tags_of
+from note_card import has_sources, is_legacy_note, quotes_of
 from stack.cards import CARD_TYPES, card_id_from, kind_problem
 from stack.frontmatter import FrontmatterError, parse
 from stack.tags import is_tag
@@ -35,11 +38,14 @@ def format_report(graph: Graph) -> dict:
         "no_card_type": [f for f in map(_type_problem, cards) if f],
         "invalid_tags": _invalid_tags(graph, cards),
         "wrong_kind": [f for f in map(_kind_problem, cards) if f],
+        "note_sources": [f for f in map(_sources_problem, cards) if f],
+        "lone_sidecars": list(graph.lone_sidecars),
     }
     report["findings"] = (sum(report["without_card_id"].values()) + len(report["shared_ids"])
                           + len(report["links_to_nothing"]) + len(report["no_card_type"])
                           + sum(len(f["tags"]) for f in report["invalid_tags"])
-                          + len(report["wrong_kind"]))
+                          + len(report["wrong_kind"]) + len(report["note_sources"])
+                          + len(report["lone_sidecars"]))
     return report
 
 
@@ -105,4 +111,28 @@ def _kind_problem(card: Card) -> dict | None:
         return None
     if problem := kind_problem(card.path, card.meta):
         return {"card": card.id, "path": card.path, "problem": problem}
+    return None
+
+
+def _sources_problem(card: Card) -> dict | None:
+    """A note whose sources do not meet ADR-018 §3, None for one that does.
+
+    A note filed in the format before (its words in the old sections),
+    one with `## Sources` and no sidecar, and one whose quotes and sidecar
+    sources differ in number, so that which quote is whose is a guess. A
+    note written in the memory has neither and is fine.
+    """
+    if card.type != "note":
+        return None
+    def found(problem: str) -> dict:
+        return {"card": card.id, "title": card.title, "path": card.path, "problem": problem}
+    if card.sidecar is None:
+        if is_legacy_note(card.text):
+            return found("in the format before ADR-018: its sources are not in a sidecar yet")
+        return found("no sidecar for its sources") if has_sources(card.text) else None
+    records = [r for r in card.sidecar.get("sources") or [] if isinstance(r, dict)]
+    quotes = quotes_of(card.text)
+    if len(records) != len(quotes):
+        return found(f"{len(quotes)} quote(s) under ## Sources and {len(records)} "
+                     "source(s) in its sidecar")
     return None

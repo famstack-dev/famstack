@@ -427,3 +427,14 @@ def test_in_the_chat_media_is_a_link_to_the_card_and_card_links_are_names():
     assert "Homer\n> mmm, paper" in chat
     assert for_chat("[Duff](https://duff.example)") == "[Duff](https://duff.example)"
     assert for_chat("![[/media/2026/10/a.m4a]]") == "📎 a.m4a"
+
+
+def test_a_note_shows_its_sources_last_as_its_card_keeps_them():
+    """A note's sources are its own section (ADR-018 §2): one quote each,
+    a photo inside its quote, after the interpretation."""
+    card = ("---\ntype: note\ntitle: Bart's drawing\ndate: \"2026-10-20\"\npersons:\n  - bart\n---\n\n"
+            "# Bart's drawing\n\n> **About** [Bart](../../people/bart.md)\n\n> [!summary]\n> A dog.\n\n"
+            "## Sources\n\n> ![[/media/2026/10/p.jpg]]\n>\n> Bart drew this\n\n> it is a cat\n")
+    assert render_file(card, names={"bart": "Bart"}).markdown == (
+        "# Bart's drawing\n\n2026-10-20 · Bart\n\nA dog.\n\n## Sources\n\n"
+        "> ![[/media/2026/10/p.jpg]]\n>\n> Bart drew this\n\n> it is a cat\n")

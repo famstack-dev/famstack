@@ -14,6 +14,8 @@ instance: frontmatter for where a card is, git history for when it went.
 
 from __future__ import annotations
 
+import json
+
 import importlib.util
 import os
 import subprocess
@@ -236,14 +238,17 @@ class TestAPhotoRefiledAsANote:
                 "resource: mxc://home.test/x\n---\n\n> **Kind** bookmark\n\n![[/media/x.jpg]]\n")
 
     def test_gets_a_notes_id_and_lists_the_bookmarks(self):
-        fields = parse(as_note(self.BOOKMARK, PHOTO_PATH))
+        card, sidecar = as_note(self.BOOKMARK, PHOTO_PATH)
+        fields = parse(card)
         assert fields["type"] == "note" and fields["card_id"].startswith("note-")
         assert fields["former_card_ids"] == ["bookmark-a1b2c3d4e5"]
-        assert fields["resource"] == "mxc://home.test/x"
+        assert "resource" not in fields, "where it came from is in its sidecar (ADR-018)"
+        assert json.loads(sidecar)["card_id"] == fields["card_id"]
 
     def test_its_old_link_still_opens_it(self, memory):
-        memory.write({PHOTO_PATH: as_note(self.BOOKMARK, PHOTO_PATH)}, by="archivist-bot",
-                     message="notes: file the photos filed as bookmarks as notes")
+        card, sidecar = as_note(self.BOOKMARK, PHOTO_PATH)
+        memory.write({PHOTO_PATH: card, PHOTO_PATH.removesuffix(".md") + ".json": sidecar},
+                     by="archivist-bot", message="notes: file the photos filed as bookmarks as notes")
         assert _open(memory, "bookmark-a1b2c3d4e5") == (
             302, f"{WIKI}/{PHOTO_PATH.removesuffix('.md')}")
 
