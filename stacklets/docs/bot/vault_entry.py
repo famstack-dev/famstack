@@ -477,6 +477,7 @@ def render_capture(
     caption: str = "",
     replies: "list[tuple[str, str]] | tuple" = (),
     people: list[Person] | None = None,
+    clean: str | None = None,
 ) -> str:
     """Assemble the mirror file for a capture entry (kind=note|bookmark).
 
@@ -516,6 +517,11 @@ def render_capture(
         replies: ``(author, words)`` for each reply in the capture's thread,
             in the order they came, kept as written for the same reason.
         people: The declared people the names resolve through.
+        clean: For a note filed as its own words (`clean_words`), the
+            clean version of them, "" when there is none worth showing.
+            Such a note has no briefing: the clean version is its own
+            section, the words follow it, and its action items go to
+            the topic's list only. None for every other capture.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -547,11 +553,16 @@ def render_capture(
     parts.append("")
 
     # Briefing — summary + facts, plus action items when the note carried
-    # any (bookmarks pass None, so nothing changes for them).
-    briefing = render_briefing(
+    # any (bookmarks pass None, so nothing changes for them). A note filed
+    # as its own words has none: the clean version is what the eye lands
+    # on, and the words follow it.
+    if clean is not None:
+        if clean.strip():
+            parts.append(clean.strip())
+            parts.append("")
+    elif briefing := render_briefing(
         summary=summary, facts=facts, action_items=action_items,
-    )
-    if briefing:
+    ):
         parts.append(briefing)
         parts.append("")
 

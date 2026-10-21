@@ -29,8 +29,8 @@ from document_pipeline import utc_now_isoformat
 from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from notifier import Notifier
+from clean_words import is_cleanable, kept
 from own_words import in_own_words
-from stack.briefing import is_short_text
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
     has_ocr_text_layer,
@@ -49,6 +49,7 @@ from stack import resolve_model
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as parse_frontmatter
 from stack.lists import list_path
+from stack.vault import topic_of
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -121,6 +122,9 @@ class CaptureOutcome:
     # renderer uses it to build a `/go/topic/<scope>/todo` link, but only for
     # topic scopes (those carry a `/`) — a personal bucket has no todos page.
     scope: str | None = None
+    # Why a note filed without the clean version the model wrote
+    # (`clean_words.kept`), "" when it has one or needed none.
+    clean_rejected: str = ""
 
 
 def _link_card(url: str, user_hint: str | None) -> SourceContent:
@@ -274,6 +278,10 @@ class CapturePipeline:
 
         ``caption`` is what the sender wrote with a recording, handled as
         an upload's caption is (`capture_binary`).
+
+        A note of up to `clean_words.CLEAN_MAX_CHARS` is filed as a clean
+        version of its words, with the words after it; a longer one, which
+        is usually pasted from elsewhere, gets a summary.
         """
         source = await self._text_extractor.extract(text)
         if source is None:
@@ -289,7 +297,7 @@ class CapturePipeline:
             bucket=bucket, transcribed=transcribed, write_in=write_in,
             extract_action_items=in_own_words(text, spoken=transcribed),
             user_hint=caption or None, caption=caption,
-            short_text=is_short_text(source.text),
+            clean_words=is_cleanable(source.text),
         )
 
     async def capture_email(
@@ -605,6 +613,12 @@ class CapturePipeline:
         ``capture_id`` names the capture for good; ``vault_path`` is where
         the filing message saw it, which a move makes stale. The capture
         is looked up by its id first (`_find_capture`).
+
+        A note whose words are its source, and that keeps no file, is
+        refiled as a clean version of them (`clean_words`), as it would
+        be filed today. The classifier then reads the words alone, and
+        the entry's tags and its topic are carried over as tags rather
+        than as text, which it would otherwise clean into the note.
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -650,8 +664,11 @@ class CapturePipeline:
                 "Existing tags on this entry: " + ", ".join(existing_tags)
             )
         source_text = "\n\n".join(body_parts) or meta.get("title", "") or ""
+        kept_media = _kept_media_from(raw)
+        clean_words = bool(words) and kept_media is None and is_cleanable(words)
+        found_topic = topic_of(vault_path)
         source = SourceContent(
-            text=source_text,
+            text=words if clean_words else source_text,
             title_hint=meta.get("title") or None,
             source_uri=meta.get("resource") or None,
         )
@@ -668,10 +685,12 @@ class CapturePipeline:
             actor=sender_mxid,
             capture_id=str(capture_id) if capture_id else None,
             initial_classification=initial_classification,
-            kept_media=_kept_media_from(raw),
+            kept_media=kept_media,
             caption=caption, replies=replies,
             write_in=write_in, words=words or None,
-            short_text=bool(words) and is_short_text(words),
+            clean_words=clean_words,
+            seed_topics=[found_topic[1]] if clean_words and found_topic else None,
+            prefer_tags=existing_tags if clean_words else None,
         )
 
     async def _publish(
@@ -695,15 +714,21 @@ class CapturePipeline:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         words: str | None = None,
-        short_text: bool = False,
+        clean_words: bool = False,
+        prefer_tags: list[str] | None = None,
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
-        ``short_text`` marks a note whose own words are too short for a
-        summary (`stack.briefing.is_short_text`). Only a caller holding
-        the words can say so: a photo's note has none and is described by
-        its summary. The classifier is asked for no summary, and one it
-        returns anyway is dropped, so the card shows the words alone.
+        ``clean_words`` marks a note in its writer's own words, filed as a
+        clean version of them (`clean_words`). Only a caller holding the
+        words can say so: a photo's note has none and is described by its
+        summary. The classifier is asked for the clean version and no
+        summary or facts, and a summary it writes anyway is dropped. A
+        clean version that fails the check is dropped too, and the card
+        shows the words alone.
+
+        ``prefer_tags`` are tags the classifier is shown first in its
+        vocabulary: a refile's own, so it keeps them where they fit.
 
         ``words`` are a note's own words when ``source.text`` is not only
         them: a correction reads them with the entry's tags and caption,
@@ -742,10 +767,19 @@ class CapturePipeline:
             current_list=current_list,
             write_in=write_in,
             extract_action_items=extract_action_items,
-            kind=kind, short_text=short_text,
+            kind=kind, clean_words=clean_words, prefer_tags=prefer_tags,
         )
-        if short_text:
-            classification["summary"] = ""
+        clean, clean_rejected = None, ""
+        if clean_words:
+            classification["summary"], classification["facts"] = "", []
+            clean, clean_rejected = kept(
+                words if words is not None else source.text,
+                str(classification.pop("clean", "") or ""),
+                corrections=user_hint or "")
+            if clean_rejected:
+                logger.warning(
+                    "[capture] clean version not filed, it {}: the card shows the words",
+                    clean_rejected)
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
         # the classifier returned. Mutates the classification dict so
@@ -802,6 +836,7 @@ class CapturePipeline:
                 kept_media=kept_media,
                 caption=caption,
                 replies=replies,
+                clean=clean,
             )
         vault_path = filed.path if filed else None
 
@@ -851,6 +886,7 @@ class CapturePipeline:
             envelope=envelope,
             transcript=transcript,
             scope=entity_slug,
+            clean_rejected=clean_rejected,
         )
 
     async def _find_capture(
@@ -904,7 +940,8 @@ class CapturePipeline:
         current_list: str = "",
         write_in: str | None = None,
         kind: str = "note",
-        short_text: bool = False,
+        clean_words: bool = False,
+        prefer_tags: list[str] | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
@@ -920,10 +957,11 @@ class CapturePipeline:
             # minimal classification below so the capture still files.
             return {}
         person_names = await self._family_names()
-        existing_tags = (
-            self._capture_tags.top(self.capture_tag_prompt_size)
-            if self._capture_tags else []
-        )
+        existing_tags = list(dict.fromkeys([
+            *(prefer_tags or []),
+            *(self._capture_tags.top(self.capture_tag_prompt_size)
+              if self._capture_tags else []),
+        ]))
         try:
             classification = await self._classifier.classify_capture(
                 text=source.text[: self.classify_max_chars],
@@ -936,7 +974,7 @@ class CapturePipeline:
                 current_list=current_list,
                 write_in=write_in,
                 kind=kind,
-                short_text=short_text,
+                clean_words=clean_words,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

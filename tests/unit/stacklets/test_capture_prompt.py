@@ -419,34 +419,64 @@ def _field(prompt: str, key: str) -> str:
     return line.lower()
 
 
-class TestAShortNoteGetsNoSummary:
-    """A short note's card shows the writer's words. A summary of them is
-    as long as they are and says the same again (memory cards review, C1),
-    so the model is asked for none, and for facts only where they add to
-    the words: a date made concrete, an amount, a name."""
+class TestANoteInItsOwnWordsIsCleanedNotSummarised:
+    """A note in its writer's own words is filed as a clean version of
+    them (memory cards review, C1): the model is asked for that and for
+    no summary and no facts, which would only say the note again. The
+    clean version stays in the note's language, whatever language the
+    title and tags are written in."""
 
-    SHORT = dict(text="Lisa's lesson moved to Thursday 4pm, 25 dollars.",
-                 person_names=["Lisa"], short_text=True)
+    NOTE = dict(text="lisa lesson moved thu 4pm, 25 dollars", person_names=["Lisa"],
+                clean_words=True)
 
-    def test_the_summary_is_asked_to_stay_empty(self):
-        summary = _field(_build_capture_prompt(**self.SHORT), "summary")
-        assert "empty" in summary
-        assert "200-400" not in summary
+    def _keys(self, prompt: str) -> set[str]:
+        """The keys the JSON structure asks for."""
+        structure = prompt.split("Return this exact JSON structure:", 1)[1].split("Rules:", 1)[0]
+        return {ln.strip().split('"')[1] for ln in structure.splitlines()
+                if ln.strip().startswith('"')}
 
-    def test_facts_are_only_what_the_words_do_not_say_plainly(self):
-        facts = _field(_build_capture_prompt(**self.SHORT), "facts")
-        assert all(anchor in facts for anchor in ("date", "amount", "name"))
-        assert "never restate" in facts
+    def test_the_answer_is_a_clean_version_without_summary_or_facts(self):
+        keys = self._keys(_build_capture_prompt(**self.NOTE))
+        assert "clean" in keys
+        assert not keys & {"summary", "facts"}
 
-    def test_the_rules_do_not_ask_for_a_digest_after_all(self):
-        assert "real digest" not in _build_capture_prompt(**self.SHORT)
+    def test_the_clean_version_keeps_the_words_and_adds_nothing(self):
+        clean = _field(_build_capture_prompt(**self.NOTE), "clean")
+        assert "add nothing" in clean and "drop nothing" in clean
+        assert "do not summarise" in clean
 
-    def test_a_long_paste_is_digested_as_before(self):
+    def test_the_clean_version_is_never_translated(self):
+        prompt = _build_capture_prompt(**self.NOTE, lang="de", write_in="en").lower()
+        assert "note's own language" in prompt
+        assert "write title and tags in english" in prompt
+
+    def test_a_correction_is_followed_in_the_clean_version(self):
+        prompt = _build_capture_prompt(**self.NOTE, user_hint="Marge: it is Friday")
+        assert "Marge: it is Friday" in prompt
+        assert "clean version says what the correction says" in prompt
+
+    def test_a_correction_replaces_what_it_corrects_instead_of_being_appended(self):
+        """Given a correction, the clean version reads as the note written
+        right the first time: the corrected point changes where it stands.
+        Told only to follow the correction, the model on the rig kept the
+        old point and appended the correction as a new one."""
+        prompt = _build_capture_prompt(**self.NOTE, user_hint="Marge: it is 30 dollars").lower()
+        assert "replace" in prompt and "append" in prompt
+        assert "first time" in prompt
+
+    def test_the_clean_version_is_not_asked_to_resolve_dates(self):
+        prompt = _build_capture_prompt(**self.NOTE, today="2026-10-21")
+        assert "into concrete dates" not in prompt
+
+    def test_the_rules_do_not_ask_for_a_digest(self):
+        assert "real digest" not in _build_capture_prompt(**self.NOTE)
+
+    def test_other_captures_are_digested_as_before(self):
         prompt = _build_capture_prompt(text="x" * 2000, person_names=["Lisa"])
-        assert "empty" not in _field(prompt, "summary")
+        assert self._keys(prompt) >= {"summary", "facts"}
+        assert "clean" not in self._keys(prompt)
         assert "200-400 words" in _field(prompt, "summary")
         assert "real digest" in prompt
-
 
 class TestABookmarkSaysWhyItWasKept:
     """A bookmark's card links the page, so the summary is not a digest
