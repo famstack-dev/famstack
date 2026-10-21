@@ -13,12 +13,14 @@ from __future__ import annotations
 
 from .lists import DUE, action_item
 
-# A text under this many characters gets no summary. Its card shows the
-# words themselves, and a summary of a text this short is as long as the
-# text: on the demo instance every diary entry (95 to 250 characters)
+# A diary entry under this many characters gets no summary. Its card shows
+# the words themselves, and a summary of a text this short is as long as
+# the text: on the demo instance every diary entry (95 to 250 characters)
 # and every typed note under 250 characters had a summary about as long
 # as its words or longer (memory cards review, C1). 400 is a short
-# paragraph, read in the ten seconds a summary is meant to save.
+# paragraph, read in the ten seconds a summary is meant to save. A note
+# gets no summary at any length it could have been typed at: it is filed
+# as a clean version of its words (the archivist's `clean_words`).
 SHORT_TEXT_MAX_CHARS = 400
 
 

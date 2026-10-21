@@ -19,6 +19,8 @@ import pytest
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
+# `memory.lib`, for the ontology a capture's tags are read through.
+sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stack.people import Person  # noqa: E402
 from git_mirror import (  # noqa: E402
@@ -1035,6 +1037,37 @@ class TestACaptureKeepsItsPath:
             captured_at="2026-10-13", model=None,
         )
         assert path.startswith("family/painting/bookmarks/2026/10/tent-")
+
+
+class TestANoteFiledAsItsOwnWords:
+    """A note filed as a clean version of its words has no briefing: the
+    clean version, then the words. Its to-dos are on the topic's list,
+    where they are kept and ticked, and not on the card a second time."""
+
+    async def _file(self, mirror, monkeypatch, *, clean):
+        client = _FakeVaultClient()
+        monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        mirror._setup_done = True
+        mirror._creds = SimpleNamespace(token="t")
+        filed = await mirror.publish_capture(
+            entity="family/camping", kind="note", source_uri=None, title_hint=None,
+            body_text="call the campsite b4 fri",
+            classification={"title": "Campsite", "summary": "", "facts": [],
+                            "action_items": ["Call the campsite"]},
+            captured_at="2026-10-13", model=None, capture_id="$x", clean=clean,
+        )
+        return client.files[filed.path]["content"], client
+
+    async def test_the_card_has_the_clean_version_and_the_words(self, mirror, monkeypatch):
+        note, _ = await self._file(mirror, monkeypatch, clean="Call the campsite before Friday.")
+        clean_at = note.index("Call the campsite before Friday.")
+        assert clean_at < note.index("> [!quote]- Original paste\n> call the campsite b4 fri")
+        assert "[!summary]" not in note
+
+    async def test_its_to_dos_are_on_the_list_and_not_on_the_card(self, mirror, monkeypatch):
+        note, client = await self._file(mirror, monkeypatch, clean="")
+        assert "Action items" not in note
+        assert "- [ ] Call the campsite" in client.files["family/lists/camping.md"]["content"]
 
 
 class TestACardKeepsItsId:

@@ -71,17 +71,18 @@ class FakeClassifier:
                                initial_classification=None,
                                extract_action_items=False,
                                current_list="", write_in=None,
-                               kind="note", short_text=False):
+                               kind="note", clean_words=False):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
         self.saw_current_list = current_list
+        self.saw_existing_tags = existing_tags
         self.saw_text = text
         self.saw_user_hint = user_hint
         self.saw_write_in = write_in
         self.saw_extract_action_items = extract_action_items
         self.saw_kind = kind
-        self.saw_short_text = short_text
+        self.saw_clean_words = clean_words
         if self._raises:
             raise self._raises
         return self._payload
@@ -1526,26 +1527,36 @@ class TestACorrectionKeepsTheNotesOwnWords:
         assert published["body_text"] == self.WORDS
 
 
-class TestAShortNoteIsItsOwnSummary:
-    """A short note's card shows the words its writer sent. A summary of
-    a two-line note says the same again at the same length (memory cards
-    review, C1), so a short note is filed without one, whatever the model
-    answers. A long paste keeps its summary: the reader reads that instead
-    of the paste. A photo keeps it too, because it is the only text the
-    photo has."""
+class TestANoteIsFiledAsACleanVersionOfItsWords:
+    """A note in its writer's own words is filed as a clean version of
+    them, then the words themselves. People jot notes down the way they
+    type in a chat, and a summary of that says it again in other words
+    (memory cards review, C1), so the card carries no summary and no
+    facts, and its to-dos go to the topic's list only. What the model
+    cleans is checked in code: a clean version that lost a number is not
+    filed. A long paste keeps its summary, and so does a photo."""
 
-    SHORT = "Lisa's saxophone lesson moved to Thursday 4pm, 25 dollars, pay Mr. Largo in cash."
-    LONG = "The school newsletter lists the science fair, a field trip and a bake sale. " * 8
-    ANSWER = {"title": "Saxophone lesson", "tags": ["music"], "persons": ["Lisa"],
-              "summary": "Lisa's saxophone lesson is now on Thursday at 4pm.",
-              "facts": ["Lesson: 2026-10-22, 16:00", "Fee: 25 dollars"]}
+    MESSY = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
+             "bart forgot his swimsuit AGAIN buy one at the mall b4 sat, also lisa "
+             "wants the museum thing on sunday not sat. budget max 200")
+    CLEAN = ("For the trip:\n\n"
+             "- Homer needs to call the hotel about the late check-in.\n"
+             "- Bart forgot his swimsuit again; buy one at the mall before Saturday.\n"
+             "- Lisa wants the museum visit on Sunday, not Saturday.\n"
+             "- Budget: at most 200.")
+    LONG = "The school newsletter lists the science fair, a field trip and a bake sale. " * 30
+    ANSWER = {"title": "Trip to-dos", "tags": ["trip"], "persons": ["Homer"],
+              "summary": "The family plans a trip.", "facts": ["Budget: 200"],
+              "clean": CLEAN, "action_items": ["Call the hotel about the late check-in"]}
 
-    async def _note(self, words: str):
-        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
-        await _pipeline(mirror=mirror, classifier=classifier,
-                        text_extractor=FakeExtractor(_source(text=words))).capture_text(
+    async def _note(self, words: str, answer: dict | None = None):
+        mirror = FakeMirror()
+        classifier = FakeClassifier(payload=dict(answer or self.ANSWER))
+        outcome = await _pipeline(
+            mirror=mirror, classifier=classifier,
+            text_extractor=FakeExtractor(_source(text=words))).capture_text(
             text=words, sender_mxid="@marge:s")
-        return mirror.captures[0], classifier
+        return mirror.captures[0], classifier, outcome
 
     @staticmethod
     def _card(published: dict) -> str:
@@ -1561,47 +1572,56 @@ class TestAShortNoteIsItsOwnSummary:
             source_uri=None, persons=cls["persons"], from_path=path,
             shared_bucket="family", summary=cls.get("summary"),
             facts=cls.get("facts"), action_items=cls.get("action_items"),
+            clean=published.get("clean"),
         )
         return render_file(text).markdown
 
     @pytest.mark.asyncio
-    async def test_the_model_is_asked_for_no_summary_of_a_short_note(self):
-        _, classifier = await self._note(self.SHORT)
-        assert classifier.saw_short_text is True
+    async def test_the_model_is_asked_for_a_clean_version(self):
+        _, classifier, _ = await self._note(self.MESSY)
+        assert classifier.saw_clean_words is True
 
     @pytest.mark.asyncio
-    async def test_a_summary_the_model_writes_anyway_is_not_filed(self):
-        published, _ = await self._note(self.SHORT)
-        assert not published["classification"]["summary"]
-
-    @pytest.mark.asyncio
-    async def test_the_card_shows_the_words_and_the_facts_without_a_summary(self):
-        published, _ = await self._note(self.SHORT)
+    async def test_the_card_shows_the_clean_version_then_the_words(self):
+        published, _, _ = await self._note(self.MESSY)
         card = self._card(published)
+        clean_at, words_at = card.index("- Homer needs to call"), card.index(f"> {self.MESSY}")
+        assert clean_at < words_at
+        assert card.count("\n- ") == 4, "an intro line and four list items"
         assert self.ANSWER["summary"] not in card
-        assert "- Fee: 25 dollars" in card
-        assert f"> {self.SHORT}" in card
-        assert "\n\n\n" not in card, "an empty summary leaves no empty block"
+        assert "Budget: 200" not in card, "no facts"
+        assert "To do" not in card, "the to-dos are on the topic's list, not the card"
+        assert "\n\n\n" not in card, "no empty block"
 
     @pytest.mark.asyncio
-    async def test_a_short_note_with_nothing_to_extract_is_its_words_alone(self):
-        mirror = FakeMirror()
-        await _pipeline(
-            mirror=mirror,
-            classifier=FakeClassifier(payload={**self.ANSWER, "facts": []}),
-            text_extractor=FakeExtractor(_source(text="Buy milk."))).capture_text(
-            text="Buy milk.", sender_mxid="@marge:s")
-        card = self._card(mirror.captures[0])
-        title, _, below = card.partition("\n\n")
-        assert title == "# Saxophone lesson"
-        assert below.strip().endswith("> Buy milk.")
-        assert "\n\n\n" not in card
+    async def test_its_to_dos_still_reach_the_topics_list(self):
+        published, classifier, _ = await self._note(self.MESSY)
+        assert classifier.saw_extract_action_items is True
+        assert published["classification"]["action_items"] == self.ANSWER["action_items"]
+
+    @pytest.mark.asyncio
+    async def test_a_note_already_clean_shows_its_words_once(self):
+        words = "Lisa's saxophone lesson moved to Thursday at 4pm"
+        published, _, _ = await self._note(words, {**self.ANSWER, "clean": words + "."})
+        card = self._card(published)
+        assert card.count("saxophone lesson moved") == 1
+        assert card.rstrip().endswith(f"> {words}")
+
+    @pytest.mark.asyncio
+    async def test_a_clean_version_that_lost_a_number_is_not_filed(self):
+        lossy = self.CLEAN.replace("- Budget: at most 200.", "- Keep to the budget.")
+        published, _, outcome = await self._note(self.MESSY, {**self.ANSWER, "clean": lossy})
+        card = self._card(published)
+        assert "Keep to the budget" not in card
+        assert card.rstrip().endswith(f"> {self.MESSY}"), "the words alone"
+        assert "200" in outcome.clean_rejected
 
     @pytest.mark.asyncio
     async def test_a_long_paste_keeps_its_summary(self):
-        published, classifier = await self._note(self.LONG)
-        assert classifier.saw_short_text is False
+        published, classifier, _ = await self._note(self.LONG)
+        assert classifier.saw_clean_words is False
         assert published["classification"]["summary"] == self.ANSWER["summary"]
+        assert published.get("clean") is None
 
     @pytest.mark.asyncio
     async def test_a_photo_keeps_its_summary(self):
@@ -1609,24 +1629,50 @@ class TestAShortNoteIsItsOwnSummary:
         await _pipeline(mirror=mirror, classifier=classifier).capture_binary(
             file_data=b"\x89PNG\r\n", mime="image/png", filename="IMG_1.png",
             source_uri="mxc://home.test/x", sender_mxid="@marge:s", caption="Lisa")
-        assert classifier.saw_short_text is False
+        assert classifier.saw_clean_words is False
         assert mirror.captures[0]["classification"]["summary"] == self.ANSWER["summary"]
+        assert mirror.captures[0].get("clean") is None
+
+
+class TestACorrectedNoteIsRefiledFromItsWords:
+    """A correction refiles a note the way it is filed today: as a clean
+    version of its words that follows the correction. The model reads the
+    words alone, so nothing but them can end up in the clean version; the
+    entry's tags are offered as tags, and a topic's note keeps its topic."""
+
+    PATH = "family/itchy-scratchy-land/notes/2026/10/trip-3a338e.md"
+    WORDS = "homer calls the hotel thu, budget max 200"
+    ANSWER = {"title": "Trip", "tags": ["hotel"], "persons": ["Homer"],
+              "clean": "Homer calls the hotel on Friday. Budget: at most 200."}
+
+    async def _correct(self):
+        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
+        mirror._stored = {self.PATH: render_capture(
+            frontmatter=capture_frontmatter(
+                title="Trip", captured_at="2026-10-20", kind="note", source_uri=None,
+                persons=["homer"], tags=["itchy-scratchy-land", "hotel"], model=None,
+                capture_id="$n:s"),
+            body=self.WORDS, kind="note", captured_at="2026-10-20", source_uri=None,
+            persons=["homer"], from_path=self.PATH, shared_bucket="family")}
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=self.PATH, user_hint="Marge: it is Friday, not Thursday",
+            sender_mxid="@marge:s", reply_text="it is Friday, not Thursday")
+        return mirror.captures[-1], classifier
 
     @pytest.mark.asyncio
-    async def test_a_corrected_short_note_stays_without_a_summary(self):
-        path = "marge/notes/test-capture.md"
-        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
-        mirror._stored = {path: render_capture(
-            frontmatter=capture_frontmatter(
-                title="Saxophone lesson", captured_at="2026-10-20", kind="note",
-                source_uri=None, persons=["Lisa"], tags=["music"], model=None,
-                capture_id="$n:s"),
-            body=self.SHORT, kind="note", captured_at="2026-10-20", source_uri=None,
-            persons=["Lisa"], from_path=path, shared_bucket="family")}
-        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
-            vault_path=path, user_hint="it is Friday, not Thursday", sender_mxid="@marge:s")
-        assert classifier.saw_short_text is True
-        assert not mirror.captures[-1]["classification"]["summary"]
+    async def test_the_model_reads_the_words_alone(self):
+        _, classifier = await self._correct()
+        assert classifier.saw_clean_words is True
+        assert classifier.saw_text == self.WORDS
+        assert "hotel" in classifier.saw_existing_tags
+
+    @pytest.mark.asyncio
+    async def test_the_note_keeps_its_topic_and_files_the_clean_version(self):
+        published, _ = await self._correct()
+        assert published["tags"][0] == "itchy-scratchy-land"
+        assert published["clean"] == self.ANSWER["clean"]
+        assert published["body_text"] == self.WORDS
+        assert published["replies"] == [("Marge", "it is Friday, not Thursday")]
 
 
 class TestABookmarkIsClassifiedAsOne:
@@ -1640,4 +1686,4 @@ class TestABookmarkIsClassifiedAsOne:
             url="http://src", sender_mxid="@marge:s", notifier=FakeNotifier(),
             user_hint="for the trip in June")
         assert classifier.saw_kind == "bookmark"
-        assert classifier.saw_short_text is False
+        assert classifier.saw_clean_words is False

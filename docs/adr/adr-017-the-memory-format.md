@@ -149,6 +149,16 @@ timestamp: "2026-10-13T21:12:08Z"
 <the summary, then the photo, then Marge's caption>
 ```
 
+A note filed from a person's own words, typed or spoken, has one section of
+its own: a clean version of the words, in paragraphs and with a list where
+the words are one, spelling and punctuation fixed, in the language they were
+written in, nothing added and nothing dropped. The words as they were sent
+follow it, as on every card. It has no summary, no facts and no to-dos on the
+card; its to-dos are on the topic's list. When the words need no cleaning,
+or the clean version lost a number or a name of them, the section is left
+out and the card shows the words alone. A text longer than a note is typed
+(2000 characters) is summarised instead.
+
 ### 6. Card types
 `type` is a closed vocabulary:
 
