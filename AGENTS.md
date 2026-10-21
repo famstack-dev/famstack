@@ -66,15 +66,15 @@ Put each responsibility with the component that owns the resource or contract, a
 - **Split by kind of work.** Pure transformation → its own module, no I/O (unit-testable). I/O and orchestration → the bot/CLI. Domain schema → the producer of that domain.
 - **Before adding a handler, ask "is this this component's concern, or just convenient here?"** If the logic is specific to another producer, keep the generic seam and push the specifics back to where they belong. Convenience is not a reason to couple.
 
-### 6. Module tests over unit tests
-A module test exercises one coherent piece of functionality from the outside, as a client of it would. Its job is to state the *intent* and pin the *expected behaviour* at the time of writing, so both survive every later refactor. This is the single most valuable thing we produce: implementations get rewritten, intent does not.
+### 6. Surface and module tests over unit tests
+Where a surface exists (a `./stack` command, a bot as the bot runner loads it), the test drives that surface and is written first, red before the code exists: unit tests stay green while the real entry point is broken. Where there is no surface, a module test exercises one coherent piece of functionality from the outside, as a client of it would. Its job is to state the *intent* and pin the *expected behaviour* at the time of writing, so both survive every later refactor. This is the single most valuable thing we produce: implementations get rewritten, intent does not.
 
 - **Write from the caller's side.** Drive the module through its public surface. If a test reaches for a private helper, it is testing how the code works instead of what it promises, and it will break on refactors that broke nothing.
 - **Read like good API documentation.** Name the behaviour, not the function. Say why the case matters. A new reader should learn what the module is *for* from its tests alone.
 - **Prefer real collaborators.** Real stacklets, real Synapse, a real model via `stacktests ai local`. Mock only what you cannot run, and only at an external boundary.
 - **Beware self-confirming tests.** A test written alongside the code it covers proves the two agree, not that either is right. When the fixture encodes the same assumption as the implementation, both pass and reality still disagrees. Assert against an external contract (a spec, a service's real response, an invariant we promise) rather than a restatement of the code.
 - **Delete tests that only mirror the implementation.** If it could only fail when someone deliberately changes their mind, it is costing tokens and buying nothing.
-- **demo-rig and e2e sit on top.** Module tests carry the intent; the rig lanes prove the wiring holds between real containers. Neither replaces the other.
+- **demo-rig and e2e sit on top.** Surface and module tests carry the intent; the rig lanes prove the wiring holds between real containers. Neither replaces the other.
 
 ## Universal non-negotiables
 
