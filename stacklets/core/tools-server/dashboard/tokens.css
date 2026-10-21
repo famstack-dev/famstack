@@ -1,0 +1,161 @@
+/* The dashboard's design tokens: the famstack palette (famstack.dev
+   DESIGN.md), glass, radius, spacing, type and motion. The page and every
+   widget style themselves from these and nothing else, so a widget looks
+   like famstack wherever it is placed. Custom properties inherit into a
+   shadow root too, so a widget that uses one still gets them.
+
+   The faces are the card browser's, the files the wiki serves, read
+   through the memory's cards API: nothing is loaded from outside the
+   house. Relative URLs, so the dashboard's path is said in one place. */
+
+@font-face {
+  font-family: 'Inter Variable'; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(../fonts/inter-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter Variable'; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(../fonts/inter-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Newsreader Variable'; font-style: normal; font-display: swap; font-weight: 200 800;
+  src: url(../fonts/newsreader-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Space Grotesk Variable'; font-style: normal; font-display: swap; font-weight: 300 700;
+  src: url(../fonts/space-grotesk-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+:root {
+  /* ── The palette ── */
+  --lava: #F07D45;
+  --slate: #161F24;
+  --teal: #3D8FA0;
+  --parchment: #EFEEE6;
+  --charcoal: #3A4447;
+  --highlight: #F5C842;
+
+  /* ── Type ── */
+  --serif: "Newsreader Variable", Georgia, "Times New Roman", serif;
+  --grotesk: "Space Grotesk Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: clamp(1.9rem, 4vw, 2.6rem);
+
+  /* ── Space, shape, motion ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 24px;
+  --tap: 44px;               /* the smallest thing a finger has to hit */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --calm: 420ms;
+
+  /* ── Card types, as the card browser colours them ── */
+  --t-note: #3D8FA0;
+  --t-bookmark: #5E9E7E;
+  --t-document: #7C6BA8;
+  --t-diary: #F07D45;
+  --t-list: #C9962E;
+  --t-person: #C25B7A;
+  --t-topic: #2D6E7E;
+  --t-correspondent: #8C7E6A;
+  --t-email: #4F79A8;
+  --t-page: #6B7579;
+
+  /* ── People: each keeps one tone (`data-tone`), machines a quiet one ── */
+  --tone-0: #F07D45;
+  --tone-1: #3D8FA0;
+  --tone-2: #C25B7A;
+  --tone-3: #5E9E7E;
+  --tone-4: #7C6BA8;
+  --tone-5: #C9962E;
+  --tone-6: #4F79A8;
+  --tone-machine: #6B7579;
+
+  /* ── Light ── */
+  --canvas: #ECEBE3;
+  --glow-a: color-mix(in srgb, var(--lava) 22%, transparent);
+  --glow-b: color-mix(in srgb, var(--teal) 20%, transparent);
+  --glow-c: color-mix(in srgb, var(--highlight) 22%, transparent);
+  --text: var(--slate);
+  --text-secondary: var(--charcoal);
+  --text-muted: #6a7d82;
+  --accent: var(--lava);
+  --link: #2D6E7E;
+  --line: color-mix(in srgb, var(--teal) 16%, transparent);
+  --glass: rgb(251 250 245 / 58%);
+  --glass-solid: #F7F6F0;
+  --glass-edge: rgb(255 255 255 / 70%);
+  --glass-blur: blur(28px) saturate(170%);
+  --glass-shadow:
+    0 1px 1px rgb(22 31 36 / 4%),
+    0 8px 24px -8px rgb(22 31 36 / 10%),
+    0 32px 64px -24px rgb(22 31 36 / 14%);
+  --fill: rgb(22 31 36 / 5%);
+  --fill-strong: rgb(22 31 36 / 9%);
+  color-scheme: light;
+}
+
+/* ── Dark: chosen, not inverted. Slate glass over a deep canvas ── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0E1417;
+    --glow-a: color-mix(in srgb, var(--lava) 16%, transparent);
+    --glow-b: color-mix(in srgb, var(--teal) 22%, transparent);
+    --glow-c: color-mix(in srgb, var(--highlight) 8%, transparent);
+    --text: #EFEEE6;
+    --text-secondary: #C9D1CF;
+    --text-muted: #8A9A9C;
+    --link: #7CC3D2;
+    --line: rgb(239 238 230 / 9%);
+    --glass: rgb(30 41 47 / 52%);
+    --glass-solid: #1B252A;
+    --glass-edge: rgb(255 255 255 / 9%);
+    --glass-shadow:
+      0 1px 1px rgb(0 0 0 / 30%),
+      0 12px 32px -10px rgb(0 0 0 / 45%),
+      0 40px 80px -30px rgb(0 0 0 / 55%);
+    --fill: rgb(239 238 230 / 6%);
+    --fill-strong: rgb(239 238 230 / 11%);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas: #0E1417;
+  --glow-a: color-mix(in srgb, var(--lava) 16%, transparent);
+  --glow-b: color-mix(in srgb, var(--teal) 22%, transparent);
+  --glow-c: color-mix(in srgb, var(--highlight) 8%, transparent);
+  --text: #EFEEE6;
+  --text-secondary: #C9D1CF;
+  --text-muted: #8A9A9C;
+  --link: #7CC3D2;
+  --line: rgb(239 238 230 / 9%);
+  --glass: rgb(30 41 47 / 52%);
+  --glass-solid: #1B252A;
+  --glass-edge: rgb(255 255 255 / 9%);
+  --glass-shadow:
+    0 1px 1px rgb(0 0 0 / 30%),
+    0 12px 32px -10px rgb(0 0 0 / 45%),
+    0 40px 80px -30px rgb(0 0 0 / 55%);
+  --fill: rgb(239 238 230 / 6%);
+  --fill-strong: rgb(239 238 230 / 11%);
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --calm: 0ms; }
+}

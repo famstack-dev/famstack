@@ -11,9 +11,14 @@
 point (`Stack.run_cli_command`), and keeps what the last one answered and
 what it showed them. `Memory` is the memory repository behind the Forgejo
 stand-in, read the way a caller can see it: the commits since the test
-began, and a page's text. `commit(by=..., saying=...)` is the commit a test
-expects; it equals a real one by that author whose subject contains those
-words.
+began, and a page's text; `Memory.new` and `changes(...)` write a history
+as the people and bots of an instance would. `commit(by=..., saying=...)`
+is the commit a test expects; it equals a real one by that author whose
+subject contains those words.
+
+`Browser` opens a web page of the stack the way a browser does, through
+the listener it arrives on; `Page` reads it without running its scripts:
+its text by part, its links.
 
 These are plain values, so a test uses plain `assert` and pytest's own diff
 explains a failure: each repr reads like what it stands for.
@@ -179,3 +184,117 @@ class Person:
 
     def __repr__(self) -> str:
         return f"<{self.name}, last told {self.told!r}>"
+
+
+# ── A browser, and the page it shows ─────────────────────────────────────
+
+class Page:
+    """A page as a browser received it, read the way a person reads it:
+    its text by part (`texts("sentence")`), its links, its headings.
+
+    Read without running its scripts, so what it says is what a browser
+    without JavaScript shows.
+    """
+
+    def __init__(self, status: int, kind: str, body: str):
+        self.status = status
+        self.kind = kind
+        self.body = body
+        self._root = _parse(body) if "html" in kind else _Node("", {})
+
+    def texts(self, part: str) -> list[str]:
+        """The text of every element of this class, in page order."""
+        return [n.text for n in self._root.find(lambda n: part in n.classes)]
+
+    def links(self, part: str = "") -> list[tuple[str, str]]:
+        """(text, href) of every link, or of those inside elements of this class."""
+        roots = self._root.find(lambda n: part in n.classes) if part else [self._root]
+        return [(a.text, a.attrs.get("href", "")) for r in roots
+                for a in ([r] if r.tag == "a" else r.find(lambda n: n.tag == "a"))]
+
+    def attribute(self, tag: str, name: str) -> str:
+        """`name` of the first `tag` element: `page.attribute("fs-widget", "state")`."""
+        found = self._root.find(lambda n: n.tag == tag)
+        return found[0].attrs.get(name, "") if found else ""
+
+    @property
+    def text(self) -> str:
+        return self._root.text
+
+    def __repr__(self) -> str:
+        return f"<page {self.status} {self.kind}: {self.text[:120]!r}>"
+
+
+class Browser:
+    """A browser opening the core tools server's pages through one listener.
+
+    `listener` is the port the request arrives on (`access.PUBLIC_PORT` is
+    the one published to the network), `host` what the address bar says:
+    `localhost:42000` on this Mac, the Mac's LAN address on a phone.
+    """
+
+    def __init__(self, app, *, listener: int, host: str):
+        from fastapi.testclient import TestClient
+
+        self.client = TestClient(app, base_url=f"http://testserver:{listener}")
+        self.host = host
+
+    def opens(self, path: str) -> Page:
+        r = self.client.get(path, headers={"host": self.host, "accept-language": "en"},
+                            follow_redirects=False)
+        return Page(r.status_code, r.headers.get("content-type", ""), r.text)
+
+    def reads(self, path: str) -> tuple[int, dict]:
+        """The JSON a page's script reads from `path`, with its status."""
+        r = self.client.get(path, headers={"host": self.host, "accept-language": "en"})
+        return r.status_code, r.json()
+
+
+class _Node:
+    def __init__(self, tag: str, attrs: dict[str, str]):
+        self.tag, self.attrs, self.children = tag, attrs, []
+        self.classes = set(attrs.get("class", "").split())
+
+    @property
+    def text(self) -> str:
+        parts = [c if isinstance(c, str) else c.text for c in self.children
+                 if isinstance(c, str) or c.tag not in ("script", "style", "template")]
+        return " ".join("".join(parts).split())
+
+    def find(self, match) -> list[_Node]:
+        found = []
+        for c in self.children:
+            if isinstance(c, _Node):
+                if match(c):
+                    found.append(c)
+                found += c.find(match)
+        return found
+
+
+_VOID = {"meta", "link", "br", "img", "input", "hr", "source", "wbr"}
+
+
+def _parse(html: str) -> _Node:
+    from html.parser import HTMLParser
+
+    root = _Node("", {})
+    stack = [root]
+
+    class Builder(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            node = _Node(tag, {k: v or "" for k, v in attrs})
+            stack[-1].children.append(node)
+            if tag not in _VOID:
+                stack.append(node)
+
+        def handle_endtag(self, tag):
+            for i in range(len(stack) - 1, 0, -1):
+                if stack[i].tag == tag:
+                    del stack[i:]
+                    break
+
+        def handle_data(self, data):
+            stack[-1].children.append(data)
+
+    Builder(convert_charrefs=True).feed(html)
+    return root

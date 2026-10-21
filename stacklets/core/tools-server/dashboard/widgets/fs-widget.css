@@ -1,0 +1,105 @@
+/* <fs-widget>: the glass shell every widget sits in, its four states and
+   its three sizes. A widget's own CSS styles its content only; this file
+   is the same for every widget (README.md). */
+
+fs-widget {
+  display: block;
+  container: widget / inline-size;
+  position: relative;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-solid);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--glass-shadow);
+  color: var(--text);
+  font-family: var(--sans);
+}
+/* Glass where the browser can blur what is behind it; solid elsewhere. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  fs-widget {
+    background: var(--glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+
+.fs-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  min-height: 24px; margin-bottom: var(--space-3);
+}
+.fs-title {
+  margin: 0;
+  font: 600 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--accent);
+}
+.fs-link {
+  font: 500 var(--text-sm)/1 var(--sans); color: var(--link); text-decoration: none;
+  padding: 10px 2px; margin: -10px -2px;  /* a larger target than it looks */
+}
+.fs-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ── States: the shell shows the part for its `state` ─────────────────── */
+
+fs-widget [data-state] { display: none; }
+fs-widget[state="content"] > [data-state="content"],
+fs-widget[state="empty"] > [data-state="empty"],
+fs-widget[state="loading"] > [data-state="loading"] { display: block; }
+fs-widget[state="error"] > [data-state="error"] { display: flex; }
+
+.fs-empty {
+  margin: 0; padding: var(--space-5) 0 var(--space-3);
+  font: 400 var(--text-lg)/1.35 var(--serif); color: var(--text-secondary);
+}
+.fs-error {
+  flex-direction: column; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+.fs-error p { margin: 0; color: var(--text-secondary); }
+.fs-retry, .fs-more {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--tap); padding: 0 var(--space-5);
+  border-radius: 999px; border: 1px solid var(--line);
+  background: var(--fill); color: var(--text);
+  font: 500 var(--text-sm)/1 var(--sans); text-decoration: none; cursor: pointer;
+  transition: background var(--calm) var(--ease), transform var(--calm) var(--ease);
+}
+.fs-retry:hover, .fs-more:hover { background: var(--fill-strong); }
+.fs-retry:active, .fs-more:active { transform: scale(0.98); }
+:is(.fs-retry, .fs-more, .fs-link):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+
+/* Loading: a calm skeleton of the lines to come, never a spinner. */
+.fs-skeleton { padding: var(--space-2) 0; }
+.fs-skeleton span {
+  display: block; height: 14px; margin: 14px 0; border-radius: 7px;
+  background: linear-gradient(90deg, var(--fill) 0%, var(--fill-strong) 50%, var(--fill) 100%);
+  background-size: 200% 100%;
+  animation: fs-breathe 1.8s ease-in-out infinite;
+}
+.fs-skeleton span:nth-child(1) { width: 72%; }
+.fs-skeleton span:nth-child(2) { width: 88%; }
+.fs-skeleton span:nth-child(3) { width: 54%; }
+@keyframes fs-breathe { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .fs-skeleton span { animation: none; } }
+
+/* ── Sizes: what each size shows ───────────────────────────────────────
+   A part names the sizes that show it (`data-show="medium large"`); a part
+   without one shows at every size. The size is the widget's own width
+   (its content box): small below 280px, medium below 480px, large from
+   480px. `size="small|medium|large"` on the widget fixes it instead.
+   These rules only hide; a widget's CSS lays out what is left. */
+
+fs-widget[size="small"] [data-show]:not([data-show~="small"]),
+fs-widget[size="medium"] [data-show]:not([data-show~="medium"]),
+fs-widget[size="large"] [data-show]:not([data-show~="large"]) { display: none !important; }
+
+@container widget (width < 280px) {
+  fs-widget:not([size]) [data-show]:not([data-show~="small"]) { display: none !important; }
+}
+@container widget (280px <= width < 480px) {
+  fs-widget:not([size]) [data-show]:not([data-show~="medium"]) { display: none !important; }
+}
+@container widget (width >= 480px) {
+  fs-widget:not([size]) [data-show]:not([data-show~="large"]) { display: none !important; }
+}

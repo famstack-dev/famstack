@@ -1,0 +1,56 @@
+/* The dashboard page: a calm canvas with soft light behind the glass, the
+   wordmark, and a grid of slots. A slot only gives a widget its width;
+   the widget decides what to show in it (widgets/README.md). */
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--text);
+  font: 400 var(--text-md)/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+/* The light the glass blurs: three soft glows, fixed so scrolling is calm. */
+body::before {
+  content: "";
+  position: fixed; inset: -20vmax; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(38vmax 30vmax at 18% 12%, var(--glow-a), transparent 70%),
+    radial-gradient(42vmax 34vmax at 86% 28%, var(--glow-b), transparent 70%),
+    radial-gradient(36vmax 28vmax at 40% 92%, var(--glow-c), transparent 70%);
+  filter: blur(8px);
+}
+
+.topbar {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  max-width: 1120px; margin: 0 auto;
+  padding: var(--space-5) var(--space-4) 0;
+}
+.mark { font: 700 1.3rem/1 var(--grotesk); letter-spacing: -0.03em; color: var(--text); }
+.mark i { font-style: normal; color: var(--accent); }
+.label {
+  font: 500 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.dashboard {
+  max-width: 1120px; margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-7);
+}
+.dashboard h1 {
+  font: 500 var(--text-xl)/1.1 var(--serif); letter-spacing: -0.02em;
+  margin: 0 0 var(--space-5);
+}
+
+.slots {
+  display: grid; gap: var(--space-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 900px) {
+  .slots { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  .slots > :only-child { grid-column: 1 / -1; max-width: 760px; }
+}
