@@ -245,6 +245,29 @@ class TestWhatIsRefused:
         assert entry["field"] == "tags" and "medical" in entry["allowed"]
         assert forgejo.commits == []
 
+    def test_a_field_no_schema_names(self, endpoint, forgejo):
+        _, etag = _read(endpoint, "person-bart")
+
+        status, _, problem = _patch(endpoint, "person-bart", {"nickname": "Bartman"}, etag=etag)
+
+        assert status == 422
+        [entry] = problem["errors"]
+        assert entry["field"] == "nickname" and "aliases" in entry["allowed"]
+        assert forgejo.commits == []
+
+    def test_where_a_note_came_from_which_its_sidecar_keeps(self, endpoint, forgejo):
+        """Who filed a note, and from which message, is in its sidecar
+        (ADR-018), not among the card's fields, so a change cannot put it
+        back on the card."""
+        _, etag = _read(endpoint, "note-7f3a9c21e4")
+
+        status, _, problem = _patch(endpoint, "note-7f3a9c21e4", {"filed_by": "bart"}, etag=etag)
+
+        assert status == 422
+        [entry] = problem["errors"]
+        assert entry["field"] == "filed_by" and "persons" in entry["allowed"]
+        assert forgejo.commits == []
+
     def test_a_read_only_field_with_what_it_holds(self, endpoint, forgejo):
         _, etag = _read(endpoint, "note-7f3a9c21e4")
 

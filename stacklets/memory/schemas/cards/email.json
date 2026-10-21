@@ -13,12 +13,6 @@
       "pattern": "^email-[a-z0-9][a-z0-9._-]*$",
       "readOnly": true
     },
-    "kind": {
-      "not": {}
-    },
-    "capture_id": {
-      "not": {}
-    },
     "resource": {
       "description": "The thread's first message, mid:<Message-ID>.",
       "type": "string",
@@ -37,5 +31,6 @@
   },
   "required": [
     "timestamp"
-  ]
+  ],
+  "unevaluatedProperties": false
 }

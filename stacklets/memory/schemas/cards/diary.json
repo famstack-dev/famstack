@@ -22,9 +22,6 @@
         "file"
       ]
     },
-    "medium": {
-      "not": {}
-    },
     "date_basis": {
       "enum": [
         "spoken",
@@ -101,5 +98,6 @@
     "entry_id",
     "event_ids",
     "timestamp"
-  ]
+  ],
+  "unevaluatedProperties": false
 }

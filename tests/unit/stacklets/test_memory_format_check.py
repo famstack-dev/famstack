@@ -187,6 +187,22 @@ class TestOneReportTwoSurfaces:
         assert sorted(p.read_text() for p in unfinished.brain.rglob("*.md")) == before
 
 
+def test_a_field_no_schema_names_is_listed_with_its_card(tmp_path):
+    """A write refuses a card with a field its type's schema does not name,
+    so the report lists them to remove: here what a person file kept from
+    before people had cards (`slug`, `canonical`)."""
+    m = Memory(tmp_path)
+    m.write("family/people/homer.md", HOMER.replace("account: homer\n",
+            "account: homer\nslug: homer\ncanonical: Homer\ncard_id: person-homer\n"),
+            by="homer", message="chore(people): homer")
+
+    report = _from_the_page(m)
+
+    assert report["unknown_fields"] == [{"card": "person-homer", "path": "family/people/homer.md",
+                                         "fields": ["slug", "canonical"]}]
+    assert report["findings"] == 2
+
+
 class TestAMemoryThatMeetsTheFormat:
 
     def test_gives_an_empty_report(self, finished):
@@ -194,7 +210,8 @@ class TestAMemoryThatMeetsTheFormat:
 
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
                           "links_to_nothing": [], "no_card_type": [], "invalid_tags": [], "wrong_kind": [],
-                          "note_sources": [], "lone_sidecars": [], "findings": 0}
+                          "note_sources": [], "lone_sidecars": [], "unknown_fields": [],
+                          "findings": 0}
 
     def test_and_the_command_says_there_is_nothing_to_fix(self, finished, capsys):
         command = _from_the_command(finished)

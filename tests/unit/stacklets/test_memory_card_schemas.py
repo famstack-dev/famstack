@@ -83,7 +83,7 @@ class TestWhatAFaultSays:
     def test_a_kind_on_a_type_without_variants_is_refused(self):
         fields = {**parse(CARDS["family/itchy-scratchy-land/topic.md"]), "kind": "trip"}
 
-        assert _field(_problems(fields), "kind")["message"] == "a topic card has no `kind`"
+        assert _field(_problems(fields), "kind")["message"] == "a topic card has no field `kind`"
 
     def test_an_unknown_person_names_the_people_there_are(self):
         fields = {**parse(CARDS["marge/notes/2026/10/art-supplies.md"]), "persons": ["marge", "grampa"]}
@@ -107,12 +107,21 @@ class TestWhatAFaultSays:
 
         assert _field(_problems(fields), "paperless_id")["message"] == "a document card needs `paperless_id`"
 
-    def test_a_field_with_another_shape_than_a_scalar_or_a_list_of_text_is_refused(self):
-        """Frontmatter is scalars and one-deep lists of strings (ADR-017 §8),
-        on any field, named in a schema or not."""
-        fields = {**parse(CARDS["homer/notes/grill.md"]), "where": {"room": "garage"}}
+    def test_a_field_no_schema_names_is_refused_with_the_fields_there_are(self):
+        """A card holds the fields its type's schema and the base name, and no
+        other: a misspelt field is refused, not kept unchecked."""
+        fields = {**parse(PEOPLE["family/people/bart.md"]), "alias": "Bartman"}
 
-        assert _field(_problems(fields), "where")["allowed"]
+        problem = _field(_problems(fields), "alias")
+
+        assert problem["message"] == "a person card has no field `alias`"
+        assert "aliases" in problem["allowed"]
+
+    def test_a_named_field_of_another_shape_is_refused(self):
+        """Frontmatter is scalars and one-deep lists of strings (ADR-017 §8)."""
+        fields = {**parse(CARDS["homer/notes/grill.md"]), "persons": [["homer"]]}
+
+        assert _field(_problems(fields), "persons")
 
     def test_a_card_of_no_type_names_the_types(self):
         problem = _field(_problems({"type": "recipe", "title": "Duff stew"}), "type")

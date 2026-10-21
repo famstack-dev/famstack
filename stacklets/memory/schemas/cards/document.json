@@ -13,9 +13,6 @@
       "pattern": "^document-[a-z0-9][a-z0-9._-]*$",
       "readOnly": true
     },
-    "kind": {
-      "not": {}
-    },
     "correspondent": {
       "description": "The correspondent's name as the card under correspondents/ is titled.",
       "type": "string"
@@ -73,5 +70,6 @@
     "paperless_id",
     "source",
     "timestamp"
-  ]
+  ],
+  "unevaluatedProperties": false
 }

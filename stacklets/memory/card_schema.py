@@ -33,6 +33,10 @@ here with that rule; a tool without the checker reads the format as a note.
     # [{"field": "persons", "message": "...", "allowed": ["homer"]}]
     schemas.read_only("note")    # the fields no change may touch: type, card_id, ...
 
+A field neither the type's schema nor the base names is refused
+(`unevaluatedProperties`), named, with the fields the type has
+(`card_fields.py`, which the format check reads too).
+
 Runs in the curator's container, which carries `jsonschema`. The host CLI
 is stdlib-only and never imports this: it asks the card write endpoint.
 """
@@ -49,13 +53,13 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from card_fields import BASE, SCHEMA_DIR, card_fields, unknown_fields
+
 from stack.ontology import Ontology
 from stack.tags import is_tag
 
-SCHEMA_DIR = Path(__file__).resolve().parent / "schemas" / "cards"
 VAULT = "urn:famstack:vault"
 _CARD = "urn:famstack:card:"
-BASE = "base"
 
 # What a reader is told a keyword is, when a tag is none.
 KEYWORD = "a keyword: lowercase words joined by hyphens, with at least one letter"
@@ -146,6 +150,10 @@ class CardSchemas:
 def _problems_of(error: ValidationError, fields: Mapping[str, object], card_type: str) -> list[dict]:
     """The entries `error` gives: the field it is about, what is wrong, and
     what the field may hold."""
+    if error.validator == "unevaluatedProperties":
+        allowed = sorted(card_fields(card_type))
+        return [_problem(name, f"{_a(card_type)} card has no field `{name}`", allowed)
+                for name in unknown_fields(fields)]
     if error.validator == "required":
         missing = [name for name in _value(error) if name not in fields]
         return [_problem(name, f"{_a(card_type)} card needs `{name}`", []) for name in missing]
@@ -153,8 +161,6 @@ def _problems_of(error: ValidationError, fields: Mapping[str, object], card_type
         return [_problem("fields", error.message, [])]
     name = str(error.absolute_path[0])
     value = fields.get(name)
-    if error.validator == "not":
-        return [_problem(name, f"{_a(card_type)} card has no `{name}`", [])]
     where = f"`{name}`" if len(error.absolute_path) == 1 else f"`{name}` holds {error.instance!r}, which"
     return [_problem(name, f"{where} {_what_is_wrong(error, value)}", _allowed(error))]
 

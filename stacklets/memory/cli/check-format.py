@@ -7,9 +7,10 @@ Reads every card of the memory repo, as the admin, and lists what ADR-016
 and ADR-017 ask for that is not there yet: cards without a `card_id`
 (counted per type), ids two files claim, links to a file the memory repo
 does not have, files with no frontmatter or a `type` that is no card
-type, tags that are neither a topic's id nor a keyword, and cards
-whose `kind` is not one of their type's. The card browser shows the
-same report. Nothing is changed.
+type, tags that are neither a topic's id nor a keyword, cards whose
+`kind` is not one of their type's, and fields a card's type's schema
+does not name, which a change to the card is refused for. The card
+browser shows the same report. Nothing is changed.
 
 Exit codes: 0 nothing to fix, 1 something to fix or no memory found.
 """
@@ -69,4 +70,7 @@ def _shown(report: dict) -> list[str]:
     if lone := report["lone_sidecars"]:
         lines += ["", "Sidecars without a card:"]
         lines += [f"  {path}" for path in lone]
+    if unknown := report["unknown_fields"]:
+        lines += ["", "Fields no schema names:"]
+        lines += [f"  {u['path']}  {', '.join(u['fields'])}" for u in unknown]
     return lines
