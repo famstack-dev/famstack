@@ -678,7 +678,7 @@ its own (the bot runner reads core's `.env`).
 |---|---|
 | `GET /cards/<card_id>` | The card as `{"card_id", "path", "fields", "body", "rendered"}`, its version as the `ETag`; the file itself with `Accept: text/markdown` |
 | `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ...}`; a `null` removes a field, a list is sent whole |
-| `PUT /cards/<card_id>` | The whole card as `text/markdown` |
+| `PUT /cards/<card_id>` | The whole card as `text/markdown`, from the reprocess only (`Famstack-Actor: memory-bot`) |
 
 A change needs `Authorization: Bearer <memory__CARDS_WRITE_TOKEN>` (a
 secret memory generates; only the curator and the host CLI read it),
@@ -690,11 +690,21 @@ applies the change, checks the fields against the type's JSON Schema
 links from `persons` and the title heading from `title`, and commits with
 the memory bot's token, the person as author. The subject is `edit:
 <title>`, the body names each changed field with its new value, and the
-`Edit:` trailer is the merge patch from the version before. A change that
-changes nothing makes no commit.
+`Edit:` trailer is the merge patch actually applied to the fields, so a
+regenerate can apply it again (ADR-015). A change that changes nothing
+makes no commit.
+
+A person changes fields, with `PATCH`, and nothing else. `PUT` is the
+reprocess apply: the memory bot puts the card it derived from its source
+again, which keeps the card's `type` and `card_id` and may change the
+fields read-only to a person (`timestamp`, `model`). It commits as the
+memory bot, `reprocess: <title>`, without a trailer. It takes the card
+alone, so `stack memory reprocess --apply`, which writes a note's card
+and its sidecar in one commit, still goes through `write_card`.
 
 Answers: `200` the card and its new `ETag`; `401` no write token; `404`
-no such card; `412` the card changed since `If-Match` (nothing written);
+no such card; `403` a `PUT` by anyone but the reprocess; `412` the card
+changed since `If-Match` (nothing written);
 `415` another media type; `422` `application/problem+json` (RFC 9457)
 with `errors`, one `{"pointer", "field", "message", "allowed"}` per field,
 for a field outside its schema, a field no schema names, a `readOnly`
