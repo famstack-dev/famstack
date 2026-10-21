@@ -2,7 +2,7 @@
 
 The card keeps one blockquote per source under `## Sources`; the sidecar
 keeps where each came from, in the same order. A refile reads exactly
-these (`card_sources`), never the interpretation, and a note filed in the
+these (`note_sources`), never the interpretation, and a note filed in the
 format before reads the way migration memory/0008 converts it.
 """
 
@@ -19,8 +19,8 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
 from note_card import (  # noqa: E402
-    ORIGINAL, REPLY, Source, SourcesMismatch, card_sources, corrections_of, is_legacy_note,
-    legacy_note, quotes_of, read_sidecar, render_sources, sidecar_path,
+    NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, is_legacy_note,
+    legacy_note, note_sources, quotes_of, read_sidecar, render_sources, sidecar_path,
     sidecar_text, sources_of, words_of,
 )
 from stack.frontmatter import parse  # noqa: E402
@@ -79,6 +79,11 @@ Homer calls the hotel on Thursday.
 """
 
 
+def _event(event_id, sender, body, ts=1_761_000_000_000):
+    return {"type": "m.room.message", "event_id": event_id, "sender": sender,
+            "origin_server_ts": ts, "content": {"msgtype": "m.text", "body": body}}
+
+
 class TestQuoteNBelongsToSourcesN:
 
     def test_each_record_is_paired_with_its_quote(self):
@@ -112,10 +117,30 @@ class TestQuoteNBelongsToSourcesN:
 class TestWhatARefileReads:
 
     def test_the_cards_sources_never_its_interpretation(self):
-        sources = card_sources(CARD, SIDECAR)
+        sources = note_sources(CARD, SIDECAR)
         assert words_of(sources) == "homer calls the hotel thu"
         assert corrections_of(sources) == "Bart: and my swimsuit"
         assert "Thursday" not in " ".join(s.quote for s in sources)
+
+    def test_a_reply_in_the_thread_the_card_lacks_is_appended(self):
+        thread = [_event("$f", "@archivist-bot:simpson", "Filed: Trip"),
+                  _event("$r1:simpson", "@bart:simpson", "and my swimsuit"),
+                  _event("$r2", "@lisa:simpson", "> <@marge:simpson> homer\n\nme too")]
+        added = note_sources(CARD, SIDECAR, thread=thread)[2:]
+        assert [(s.role, s.person, s.id, s.quote, s.channel) for s in added] == [
+            (REPLY, "lisa", "$r2", "me too", "chat")]
+        assert added[0].time == "2025-10-20T22:40:00+00:00"
+
+    def test_the_chat_never_replaces_the_original(self):
+        sources = note_sources(CARD, SIDECAR, chat=_event("$n1:simpson", "@marge:simpson", "edited"))
+        assert words_of(sources) == "homer calls the hotel thu"
+
+    def test_a_correction_given_with_the_refile_is_a_note_by_the_person(self):
+        last = note_sources(CARD, SIDECAR, msg="it is Friday", by="@marge:simpson",
+                            at="2026-10-21T09:00:00+00:00")[-1]
+        assert (last.role, last.person, last.time, last.channel, last.quote) == (
+            NOTE, "marge", "2026-10-21T09:00:00+00:00", "cli", "it is Friday")
+        assert last.id.startswith("cli:")
 
 
 class TestANoteInTheOlderFormat:

@@ -1174,8 +1174,9 @@ class GitMirror:
         """The files a capture is written as at `target_path`, without writing them.
 
         ``existing`` is the file there now, whose card id the entry keeps
-        (`identity_for`). `publish_capture` writes what this returns. The
-        other arguments are `publish_capture`'s. A note's entry carries its
+        (`identity_for`). `publish_capture` writes what this returns; a
+        preview of a refile shows it (`stack memory reprocess`). The other
+        arguments are `publish_capture`'s. A note's entry carries its
         sidecar too.
         """
         title = classification.get("title") or title_hint or "Capture"
