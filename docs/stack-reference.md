@@ -667,7 +667,10 @@ other file as a download.
 Every surface that changes an existing card is a client of it: `stack
 memory card edit`, the card browser later, the agent through the command.
 None validates or commits on its own. The memory stacklet serves it on
-the cards API.
+the cards API; core passes it on at `/cards/api/cards/<card_id>` on
+`127.0.0.1:42002`, with the request's `Authorization`, `Content-Type`,
+`If-Match`, `Famstack-Actor` and `Accept` headers, and holds no token of
+its own (the bot runner reads core's `.env`).
 
 | Request | What it does |
 |---|---|
