@@ -663,6 +663,16 @@ reads every file. Paths with `..` and anything outside the archive are
 refused. Images, audio, video and PDFs are sent as what they are; any
 other file as a download.
 
+**The card schemas** are one JSON Schema file per type, each referring to
+`base.json`, the fields every card shares (ADR-017 §5). Closed sets are
+`enum`, the fields no change may touch are `readOnly`, any field holds a
+scalar or a list of strings (§8). Values the instance decides are a
+`$ref` into `urn:famstack:vault`, which the validator builds from the
+memory repo for each check: `person_id` (the declared people), `topic_id`
+(the ontology) and `tag` (a topic id, or a keyword checked as
+`format: keyword` by `stack.tags.is_tag`). The validator needs
+`jsonschema` and runs in the curator's container only.
+
 Every card also carries an id of its own in its frontmatter, `card_id`
 (ADR-016): `<type>-<value>`, made once when the card is first written and
 never derived again. A document, note, bookmark, email or diary card gets

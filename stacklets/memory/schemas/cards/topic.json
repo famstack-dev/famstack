@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:topic",
+  "title": "topic",
+  "description": "A topic, <bucket>/<slug>/topic.md, declared the first time something is filed into it (ADR-017 §10).",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "topic"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^topic-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "not": {}
+    }
+  }
+}

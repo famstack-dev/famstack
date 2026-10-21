@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:document",
+  "title": "document",
+  "description": "A document filed from Paperless (ADR-017 §6, record).",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "document"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^document-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "not": {}
+    },
+    "correspondent": {
+      "description": "The correspondent's name as the card under correspondents/ is titled.",
+      "type": "string"
+    },
+    "document_type": {
+      "description": "Paperless's document type, an open classification.",
+      "type": "string"
+    },
+    "category": {
+      "description": "The first topic, as Paperless's tag label.",
+      "type": "string"
+    },
+    "paperless_id": {
+      "description": "The document's id in Paperless.",
+      "type": "integer",
+      "readOnly": true
+    },
+    "paperless_url": {
+      "type": "string",
+      "readOnly": true
+    },
+    "paperless_version": {
+      "type": "string",
+      "readOnly": true
+    },
+    "resource": {
+      "description": "The document's page in Paperless.",
+      "type": "string",
+      "readOnly": true
+    },
+    "processing": {
+      "description": "How the text was got.",
+      "enum": [
+        "ai_formatted",
+        "ocr",
+        "original"
+      ],
+      "readOnly": true
+    },
+    "source": {
+      "const": "paperless",
+      "readOnly": true
+    },
+    "model": {
+      "description": "The model that read the source.",
+      "type": "string",
+      "readOnly": true
+    },
+    "timestamp": {
+      "$ref": "urn:famstack:card:base#/$defs/timestamp",
+      "readOnly": true
+    }
+  },
+  "required": [
+    "paperless_id",
+    "source",
+    "timestamp"
+  ]
+}

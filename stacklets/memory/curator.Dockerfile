@@ -23,7 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git tzdata ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir "loguru>=0.7,<1.0" "openai>=1.50,<3.0" "pyyaml>=6,<7"
+# jsonschema checks a change to a card against its type's schema
+# (`card_schema.py`); the host CLI never validates, it asks this container.
+RUN pip install --no-cache-dir "loguru>=0.7,<1.0" "openai>=1.50,<3.0" "pyyaml>=6,<7" \
+    "jsonschema>=4.18,<5"
 
 RUN adduser --disabled-password --uid 1000 curator
 USER curator

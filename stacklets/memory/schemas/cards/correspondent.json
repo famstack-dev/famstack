@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:correspondent",
+  "title": "correspondent",
+  "description": "Someone the household corresponds with, declared the first time a document names them (ADR-017 §10).",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "correspondent"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^correspondent-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "not": {}
+    },
+    "aliases": {
+      "$ref": "urn:famstack:card:base#/$defs/aliases"
+    }
+  }
+}

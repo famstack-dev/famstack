@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:card:person",
+  "title": "person",
+  "description": "A person the household declared, people/<id>.md (ADR-017 §6, state).",
+  "$ref": "urn:famstack:card:base",
+  "properties": {
+    "type": {
+      "const": "person"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^person-[a-z0-9][a-z0-9._-]*$",
+      "readOnly": true
+    },
+    "kind": {
+      "not": {}
+    },
+    "aliases": {
+      "$ref": "urn:famstack:card:base#/$defs/aliases"
+    },
+    "account": {
+      "description": "The person's chat account (its localpart); a person with one is a member.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._=-]*$"
+    }
+  }
+}
