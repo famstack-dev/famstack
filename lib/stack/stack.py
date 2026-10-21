@@ -17,6 +17,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -1486,7 +1487,15 @@ class Stack:
             with stacklet_imports(Path(stacklet["path"])):
                 spec = importlib.util.spec_from_file_location(
                     f"{stacklet_id}.cli.{command}", module_path)
+                if spec is None or spec.loader is None:
+                    return {"error": f"Command '{command}' of {stacklet_id} cannot be loaded"}
                 mod = importlib.util.module_from_spec(spec)
+                # Registered while it runs, as an import would: a module looks
+                # itself up there while it loads (a `@dataclass` under
+                # postponed annotations does). It came from the stacklet's
+                # directory, so `stacklet_imports` forgets it on the way out
+                # and the next run loads the file again.
+                sys.modules[spec.name] = mod
                 spec.loader.exec_module(mod)
                 if hasattr(mod, "run"):
                     # TODO: secrets.all() exposes every secret to every plugin.
