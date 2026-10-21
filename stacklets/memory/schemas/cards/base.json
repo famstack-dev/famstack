@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:famstack:card:base",
   "title": "card",
-  "description": "The fields every card shares (ADR-017 §5). A type's schema refers to this one, adds its own fields and never gives one of these another meaning. Values the instance decides (people, topics, tags) are references into urn:famstack:vault, which the validator builds from the memory repo.",
+  "description": "The fields every card shares (ADR-017 §5). A type's schema refers to this one, adds its own fields, never gives one of these another meaning, and refuses any field neither names (unevaluatedProperties). Values the instance decides (people, topics, tags) are references into urn:famstack:vault, which the validator builds from the memory repo. `kind` (ADR-017 §5) is named by the types that have variants, diary and list, so a type without them refuses it.",
   "type": "object",
   "required": [
     "type",
@@ -35,10 +35,6 @@
       "description": "What the card is called. Headings and renderers take it from here.",
       "type": "string",
       "minLength": 1
-    },
-    "kind": {
-      "description": "The type's variant, from a fixed set its schema names. A type without variants has no kind.",
-      "type": "string"
     },
     "description": {
       "description": "One sentence on what the card is.",
@@ -73,28 +69,7 @@
       "readOnly": true
     }
   },
-  "additionalProperties": {
-    "$ref": "#/$defs/value"
-  },
   "$defs": {
-    "value": {
-      "description": "What any field may hold (ADR-017 §8): a scalar or a one-deep list of strings.",
-      "anyOf": [
-        {
-          "type": [
-            "string",
-            "integer",
-            "boolean"
-          ]
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      ]
-    },
     "timestamp": {
       "description": "an ISO time in UTC, YYYY-MM-DDTHH:MM:SSZ, with or without milliseconds",
       "type": "string",

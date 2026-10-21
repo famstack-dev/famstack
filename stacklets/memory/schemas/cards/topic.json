@@ -12,9 +12,7 @@
       "type": "string",
       "pattern": "^topic-[a-z0-9][a-z0-9._-]*$",
       "readOnly": true
-    },
-    "kind": {
-      "not": {}
     }
-  }
+  },
+  "unevaluatedProperties": false
 }

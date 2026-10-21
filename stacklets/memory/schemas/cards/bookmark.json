@@ -13,9 +13,6 @@
       "pattern": "^bookmark-[a-z0-9][a-z0-9._-]*$",
       "readOnly": true
     },
-    "kind": {
-      "not": {}
-    },
     "filed_by": {
       "description": "The chat account that filed it (its localpart).",
       "type": "string",
@@ -45,5 +42,6 @@
   "required": [
     "resource",
     "timestamp"
-  ]
+  ],
+  "unevaluatedProperties": false
 }

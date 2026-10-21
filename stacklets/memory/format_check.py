@@ -4,9 +4,9 @@ Each finding is something a step of ADR-016's order removes: cards without
 a `card_id`, ids two files claim, links to a file the memory repo does not
 have, files that are no card type, tags that are no topic id and no
 keyword, a `kind` outside its type's set, a note whose sources and sidecar
-do not pair up and a sidecar whose card is gone (ADR-018 §3). The report
-empties as the steps land, so a memory that meets the format gives an
-empty one.
+do not pair up, a sidecar whose card is gone (ADR-018 §3), and fields the
+card type's schema does not name (`card_fields.py`). The report empties as
+the steps land, so a memory that meets the format gives an empty one.
 
     report = format_report(load_graph(vault))
     report["findings"]            # 0: nothing to fix
@@ -20,8 +20,9 @@ what needs fixing. It writes nothing.
 
 from __future__ import annotations
 
+from card_fields import unknown_fields
 from graph import Card, Graph, links_of, tags_of
-from note_card import has_sources, is_legacy_note, quotes_of
+from note_card import MACHINE_FIELDS, has_sources, is_legacy_note, quotes_of
 from stack.cards import CARD_TYPES, card_id_from, kind_problem
 from stack.frontmatter import FrontmatterError, parse
 from stack.tags import is_tag
@@ -40,12 +41,14 @@ def format_report(graph: Graph) -> dict:
         "wrong_kind": [f for f in map(_kind_problem, cards) if f],
         "note_sources": [f for f in map(_sources_problem, cards) if f],
         "lone_sidecars": list(graph.lone_sidecars),
+        "unknown_fields": _unknown_fields(cards),
     }
     report["findings"] = (sum(report["without_card_id"].values()) + len(report["shared_ids"])
                           + len(report["links_to_nothing"]) + len(report["no_card_type"])
                           + sum(len(f["tags"]) for f in report["invalid_tags"])
                           + len(report["wrong_kind"]) + len(report["note_sources"])
-                          + len(report["lone_sidecars"]))
+                          + len(report["lone_sidecars"])
+                          + sum(len(f["fields"]) for f in report["unknown_fields"]))
     return report
 
 
@@ -85,6 +88,31 @@ def _invalid_tags(graph: Graph, cards: list[Card]) -> list[dict]:
         if invalid := [t for t in tags_of(card) if not is_tag(t, graph.ontology)]:
             found.append({"card": card.id, "path": card.path, "tags": invalid})
     return found
+
+
+# Fields `wrong_kind` already reports, whose finding says more than "unknown".
+_KIND_FIELDS = frozenset({"kind", "medium"})
+
+
+def _unknown_fields(cards: list[Card]) -> list[dict]:
+    """Each card's fields its type's schema does not name: a write refuses
+    them until they are gone (`stack memory card edit --remove <field>`).
+
+    A field another finding already names is left to it: `kind` and
+    `medium` to `wrong_kind`, and the machine fields of a note in the
+    format before ADR-018 to `note_sources`, since migration `memory/0008`
+    moves them into its sidecar.
+    """
+    found = []
+    for card in cards:
+        reported = _KIND_FIELDS | (MACHINE_FIELDS if _old_note(card) else frozenset())
+        if unknown := [f for f in unknown_fields(card.meta) if f not in reported]:
+            found.append({"card": card.id, "path": card.path, "fields": unknown})
+    return found
+
+
+def _old_note(card: Card) -> bool:
+    return card.type == "note" and card.sidecar is None and is_legacy_note(card.text)
 
 
 def _type_problem(card: Card) -> dict | None:

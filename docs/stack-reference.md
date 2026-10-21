@@ -595,13 +595,15 @@ ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
 links to a file the vault does not have; files with no frontmatter or a
 `type` that is no card type; tags that are neither a topic id nor a
 keyword; a `kind` outside its type's set, a list archive without
-`kind: archive` and a diary card that still says `medium`. It is the
-admin's, read over every card,
+`kind: archive` and a diary card that still says `medium`; fields a
+card's type's schema does not name, which a change to the card is refused
+for until they are removed (`stack memory card edit <id> --remove <field>`).
+It is the admin's, read over every card,
 and writes nothing. A vault that meets the format gives an empty report.
 
 **A note is its card and its sidecar** (ADR-018, `memory.note_card`). The
 card keeps what it is about: the frontmatter `type`, `card_id`, `title`,
-`kind`, `description`, `date`, `persons`, `tags`; the title, the meta block,
+`description`, `date`, `persons`, `tags`; the title, the meta block,
 the interpretation (the clean version, or the briefing), then
 `## Sources`, one blockquote per source in order, a photo embedded inside
 its quote followed by its caption. The sidecar `<stem>.json` beside it
@@ -695,15 +697,19 @@ Answers: `200` the card and its new `ETag`; `401` no write token; `404`
 no such card; `412` the card changed since `If-Match` (nothing written);
 `415` another media type; `422` `application/problem+json` (RFC 9457)
 with `errors`, one `{"pointer", "field", "message", "allowed"}` per field,
-for a field outside its schema, a `readOnly` field changed, or an actor
+for a field outside its schema, a field no schema names, a `readOnly`
+field changed, or an actor
 who is no member; `428` no `If-Match`; `503` before the curator has the
 memory bot's Forgejo token (minted on the first start, there from the
 second `stack up memory`).
 
 **The card schemas** are one JSON Schema file per type, each referring to
-`base.json`, the fields every card shares (ADR-017 §5). Closed sets are
-`enum`, the fields no change may touch are `readOnly`, any field holds a
-scalar or a list of strings (§8). Values the instance decides are a
+`base.json`, the fields every card shares (ADR-017 §5; `kind` only on
+the types with variants). Closed sets are `enum`, the fields no change
+may touch are `readOnly`, and every field is a scalar or a list of
+strings (§8). A field neither the type nor the base names is refused
+(`unevaluatedProperties: false`, a 422 naming it); `card_fields.py` reads
+the same names with the standard library, for the format check. Values the instance decides are a
 `$ref` into `urn:famstack:vault`, which the validator builds from the
 memory repo for each check: `person_id` (the declared people), `topic_id`
 (the ontology) and `tag` (a topic id, or a keyword checked as
