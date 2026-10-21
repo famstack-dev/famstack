@@ -2,11 +2,15 @@
 
 ## What we are trying to write
 
-Module tests, first and foremost. A module test drives one coherent piece of
-functionality from the outside, the way a client would, and its purpose is to
-state the intent and pin the expected behaviour at the time of writing. That is
-what survives refactors; the implementation underneath is disposable. Write them
-to read like API documentation: name the behaviour, say why the case matters.
+Surface tests, first and foremost, written before the code and seen to fail.
+A surface test drives a change the way its user does: a command through the
+real `./stack` entry point (in process, via `Stack.run_cli_command`), a bot
+loaded the way the bot runner loads it. Where there is no surface, a module
+test drives one coherent piece of functionality from the outside, the way a
+client would. Either way the purpose is to state the intent and pin the
+expected behaviour at the time of writing. That is what survives refactors; the
+implementation underneath is disposable. Write them to read like API
+documentation: name the behaviour, say why the case matters.
 
 Two failure modes to avoid, both of which cost tokens and buy nothing:
 
@@ -18,9 +22,18 @@ Two failure modes to avoid, both of which cost tokens and buy nothing:
   at no cost per call; reach for `mock` when you need determinism, not when you
   need a pass.
 
+Host surface tests live in `tests/unit/surface/` and run in `make test-unit`
+and CI: no Docker, no model, stand-ins only at the network edge. Copy
+`test_memory_write.py`; `test_every_command_loads.py` and
+`test_every_bot_loads.py` check that every command and bot loads through its
+real loader. Together they stay under 10 seconds, the unit lane at about 50,
+and a test over 1 second says why in its docstring. Rig surface tests drive
+the running test instance with `tests/driver/driver`, before merging anything
+that touches a bot.
+
 The demo-rig and e2e lanes sit on top: they prove the wiring holds between real
-containers. They do not replace module tests, and module tests do not replace
-them.
+containers. They do not replace surface and module tests, and those do not
+replace them.
 
 ## Choosing a lane
 
