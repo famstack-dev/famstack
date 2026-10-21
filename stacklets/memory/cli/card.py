@@ -20,6 +20,12 @@ card that has it now and says so; an id of a card that was removed says
 when, and by whom. A version (`@a1b2c3d`) that moved since you last read a
 card means it changed.
 
+    stack memory card edit person-bart --set "description=Rides a skateboard." --as marge
+
+`edit` changes a card's fields through the card write endpoint
+(`_card_edit.py`): `--set f=v`, `--add f=v`, `--remove f[=v]`, as the person
+named by `--as`.
+
 Exit codes: 0 shown, 1 no such card.
 """
 
@@ -37,7 +43,7 @@ from lib import vault_path_for  # noqa: E402
 from stack.card_lookup import find_by_card_id, removal_of  # noqa: E402
 from stack.cards import is_card_id  # noqa: E402
 
-HELP = "Show cards of the family memory by id, with their links and history"
+HELP = "Show cards of the family memory by id, with their links and history; `edit` changes one"
 
 # A result is read again by every later call of a turn: several cards together
 # get what one gets, and one alone gets the most the agent's tool passes on.
@@ -47,6 +53,9 @@ _LINKS_SHOWN = 10
 
 
 def run(args, stacklet, config):
+    if args[:1] == ["edit"]:
+        import _card_edit
+        return _card_edit.run(args[1:], config)
     args, audience = take_audience(args)
     refs = [a for a in args if not a.startswith("-")]
     if not refs:

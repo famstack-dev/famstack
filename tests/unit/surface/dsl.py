@@ -126,6 +126,11 @@ class Person:
         args = [path, "--by", self.name, "--from", str(source)]
         return self.runs("memory", "write", args + (["--dry-run"] if dry_run else []))
 
+    def edits(self, card_id: str, *changes: str) -> dict:
+        """`stack memory card edit <card_id> <changes> --as <me>`, the changes
+        as typed: `marge.edits("person-bart", "--add", "aliases=Bartman")`."""
+        return self.runs("memory", "card", ["edit", card_id, *changes, "--as", self.name])
+
     def was_told(self, *words: str) -> bool:
         """Whether the last command showed them every one of these words."""
         return all(w in self.told for w in words)
