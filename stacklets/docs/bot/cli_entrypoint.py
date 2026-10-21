@@ -35,6 +35,11 @@ Commands:
                                     Reached as `stack memory capture`;
                                     it lives here only while the capture
                                     pipeline does. See cli/capture.py.
+    reprocess-note                  what a filed note would be refiled
+                                    as, written nowhere: the card in on
+                                    stdin as JSON, the proposed file out.
+                                    Reached as `stack memory reprocess`.
+                                    See cli/reprocess_note.py.
     migrate-photos-to-notes [--trailer "<line>"]
                                     move the photos filed as bookmarks
                                     to notes; run by migration
@@ -72,7 +77,8 @@ import aiohttp
 from pipeline import Classifier, PaperlessAPI
 
 from cli import (
-    capture, classify, migrate_photos_to_notes, mirror, reformat, reprocess, show, tags,
+    capture, classify, migrate_photos_to_notes, mirror, reformat, reprocess,
+    reprocess_note, show, tags,
 )
 from cli._shared import err
 
@@ -85,6 +91,7 @@ _HANDLERS = {
     "mirror": mirror.run,
     "tags": tags.run,
     "capture": capture.run,
+    "reprocess-note": reprocess_note.run,
 }
 
 

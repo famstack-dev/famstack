@@ -70,21 +70,23 @@ def dispatch(entrypoint: str, command: str, *argv: str,
     return {"ok": True}
 
 
-def call(entrypoint: str, command: str, *argv: str) -> str:
+def call(entrypoint: str, command: str, *argv: str, input_text: str | None = None) -> str:
     """Run `entrypoint <command> <argv...>` inside the bot-runner and return
     its stdout.
 
     For a caller that records the outcome rather than showing it, such
     as a migration: output is captured, and a failure raises
     RuntimeError with the last line the command wrote, instead of
-    ending the process as `dispatch` does.
+    ending the process as `dispatch` does. `input_text` goes to the
+    command's stdin, for input too large or too structured for argv.
     """
     if not bot_runner_running():
         raise RuntimeError(
             f"{BOT_RUNNER_CONTAINER} is not running, bring core up first: stack up core")
     result = subprocess.run(
-        ["docker", "exec", BOT_RUNNER_CONTAINER, "python", entrypoint, command, *argv],
-        capture_output=True, text=True, timeout=1200,
+        ["docker", "exec", *(["-i"] if input_text is not None else []),
+         BOT_RUNNER_CONTAINER, "python", entrypoint, command, *argv],
+        capture_output=True, text=True, timeout=1200, input=input_text,
     )
     if result.returncode != 0:
         lines = (result.stderr or result.stdout).strip().splitlines()

@@ -65,7 +65,7 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note's card and sidecar are the memory stacklet's format (ADR-018).
 from memory.note_card import (  # noqa: E402
-    ORIGINAL, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
+    ORIGINAL, PROMPT_RESIDUE, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
     new_id, now, read_sidecar, sidecar_path, words_of,
 )
 
@@ -610,6 +610,8 @@ class CapturePipeline:
         capture_id: str | None = None,
         reply_id: str = "",
         reply_at: str = "",
+        sources: "list[Source] | None" = None,
+        requested_by: str = "",
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -617,7 +619,10 @@ class CapturePipeline:
         sent as, the replies and notes added since, never its summary or
         its clean version (`_reprocess_note`). ``reply_text`` is the reply
         that asked for this refile, by the sender, sent as ``reply_id`` at
-        ``reply_at``: it is appended as a source first.
+        ``reply_at``: it is appended as a source first. ``sources`` are
+        the note's sources as a caller already gathered them (`stack
+        memory reprocess`), used as they are. ``requested_by`` is who asked
+        for the refile, the sender when not given.
 
         A bookmark mirrors ``DocumentPipeline.reprocess``: the prior
         summary IS the source the LLM re-reads, with the reply chain as
@@ -654,6 +659,7 @@ class CapturePipeline:
                 initial_classification=initial_classification, write_in=write_in,
                 reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
                              reply_id or new_id("chat"), quote=reply_text.strip()),
+                sources=sources, requested_by=requested_by or _localpart(sender_mxid),
             )
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
@@ -698,7 +704,7 @@ class CapturePipeline:
     async def _reprocess_note(
         self, *, vault_path: str, raw: str, meta: dict, sender_mxid: str,
         initial_classification: dict | None, write_in: str | None,
-        reply: Source,
+        reply: Source, sources: "list[Source] | None", requested_by: str,
     ) -> CaptureOutcome:
         """Refile a note from its sources, as it would be filed today.
 
@@ -711,15 +717,16 @@ class CapturePipeline:
         clean version of them (`clean_words`). Its tags and its topic are
         carried over as tags.
         """
-        side = await self._mirror.read_capture(sidecar_path(vault_path))
-        try:
-            sources = card_sources(raw, read_sidecar(side))
-        except SourcesMismatch as e:
-            logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
-            return CaptureOutcome(status="capture_missing")
-        if reply.quote and (reply.person, reply.words) not in {
-                (s.person, s.words) for s in sources}:
-            sources = [*sources, reply]
+        if sources is None:
+            side = await self._mirror.read_capture(sidecar_path(vault_path))
+            try:
+                sources = card_sources(raw, read_sidecar(side))
+            except SourcesMismatch as e:
+                logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
+                return CaptureOutcome(status="capture_missing")
+            if reply.quote and (reply.person, reply.words) not in {
+                    (s.person, s.words) for s in sources}:
+                sources = [*sources, reply]
         original = next((s for s in sources if s.role == ORIGINAL), None)
         if original is None:
             return CaptureOutcome(status="capture_missing")
@@ -744,7 +751,7 @@ class CapturePipeline:
             seed_topics=[found_topic[1]] if found_topic else None,
             prefer_tags=_tags_of(meta),
             sources=sources,
-            requested_by=_localpart(sender_mxid),
+            requested_by=requested_by,
         )
 
     @staticmethod
@@ -1259,6 +1266,32 @@ def _tags_of(meta: dict) -> list[str]:
     """A card's tags, without the `Person:` tags older cards carried."""
     return [t for t in meta.get("tags") or []
             if isinstance(t, str) and t.strip() and not t.startswith("Person: ")]
+
+
+def words_refusal(words: str, *, has_file: bool = False) -> str:
+    """Why a note cannot be refiled from `words`; "" when it can.
+
+    A refile replays the note's words (ADR-018), never its summary, so a
+    note without them, or with prompt text from an older reprocess in
+    them, is refused. A photo or a file is its own source: without a
+    caption it is refiled from the file alone. Nobody edits a card by
+    hand (ADR-018 §4), so the refusal says what a person can do instead:
+    send the note again, or refile it once the archivist can read the
+    message in the chat.
+
+        >>> words_refusal("buy milk")
+        ''
+    """
+    if not words.strip():
+        return "" if has_file else (
+            "the note keeps no words to refile it from, and its message in the chat "
+            "cannot be read; send the note again")
+    if found := next((r for r in PROMPT_RESIDUE if r in words), ""):
+        return (f"the card's copy of its words carries prompt text from an older "
+                f"reprocess ({found!r}), and its message in the chat cannot be read "
+                "to replace it; send the note again, or refile it once the archivist "
+                "can read the chat")
+    return ""
 
 
 def _with_reply(replies, sender_mxid: str, words: str) -> list[tuple[str, str]]:

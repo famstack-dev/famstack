@@ -615,8 +615,8 @@ call (the note's text, the date, the people, the tags, the to-do list, the
 hint), so `prompt_template` stays the same across days and notes and
 changes with the template's wording or the branch it took; with
 `code_commit` it names the template that made the card. Quote n belongs to
-`sources[n]`. Filing and a correction in the chat write both in one
-commit (`FileChange`); a refile reads the sources, never the
+`sources[n]`. Filing, a correction in the chat and `write_card` write both
+in one commit (`FileChange`); a refile reads the sources, never the
 interpretation, and appends to them. A note is found by a source's id
 (`stack.card_lookup.find_by_source_id`, through `find_card("capture", …)`),
 so a correction to a chat message finds its note. Migration `memory/0008`
@@ -713,6 +713,62 @@ from: core's tools server over the wiki's copy, so a `/go/` link lands on
 a page the wiki serves (404 otherwise); the archivist over its own mount,
 before it applies a correction to a capture, falling back to the path
 the filing message recorded while that copy has not caught up.
+
+**`stack memory reprocess <card_id>` refiles one note under today's
+rules**, from its sources, never its interpretation (ADR-018). They are
+`memory.note_card.note_sources`: the sources the card and its sidecar keep
+(an older note's read the way migration `memory/0008` converts it), then
+each reply in its message's thread the card does not hold yet (read in the
+bot runner as the archivist: the room is the one of its rooms that has the
+original's event, the thread its `m.thread` relations, bot accounts left
+out), then `--msg` as a `note` source. Sources are only appended: the chat
+replaces no quote. The model is given exactly this list, and the preview
+returns it in `sources`, each record with its `quote`, so a surface that
+shows a card's sources shows what the model read.
+
+The preview writes nothing to the memory: it prints the card as it is and
+as it would be (both through the card renderer), the diff of the card and
+its sidecar and a proposal id, and keeps the proposal in
+`<data>/memory/proposals/`, outside the memory's git tree. `--apply
+<proposal_id>` commits exactly the previewed card and sidecar, with no
+second model call, as one commit `reprocess: <title>` with `Replaces:
+<sha>`, so one `git revert` undoes it. A refile is a machine rebuild: the
+memory bot commits it, with `Requested-By: <person>` naming who asked,
+and the sidecar's `made.requested_by` names the same person: `--by
+<person>`, or `admin` (the admin at the terminal) when none is given.
+`--msg "<text>" --by <person>` is a correction: the refile reads it with
+the replies, the sidecar keeps it as a `note` source by that person, and
+the commit is theirs, with `Correction: stack memory reprocess` (ADR-015).
+
+Refused, with the reason and a `refusal` code: a card that is not a note
+(`not-a-note`) or a note with no sources, written in the memory rather than
+filed (`no-sources`); a note or sidecar with a commit whose subject is not
+`capture:`, `update:`, `reply:`, `reprocess:`, `cards:` or `notes:`, which
+is somebody's change by hand (`hand-edited`); a note without its words, a
+card whose quotes and sidecar sources do not pair up, or words that carry
+prompt text from an older reprocess (`words`). Preview and apply both
+refuse when the local copy of the memory has uncommitted changes
+(`uncommitted`) or is not at its remote's head (`behind`), and the apply
+when the card or its sidecar changed after the preview (`changed`). With
+`--json` a preview returns `card_id`, `path`, `proposal_id`, `current` and
+`proposed` (each `file`, `rendered` and `sidecar`), the `diff`,
+`clean_rejected` (why the model's clean version was not used, "" when it
+was or none was needed) and `sources`; an apply returns `commit` and
+`replaces`. The model half runs in the bot runner (`reprocess-note` in the
+archivist's CLI entrypoint), through a mirror that composes the files and
+writes nothing (`GitMirror.capture_entry`); the bot runner never writes to
+the memory for this command.
+
+The preview reads the card and its sidecar from Forgejo and keeps their
+blob hashes with the proposal. The apply runs on the host and commits
+through `write_card(config, card_id, text, base_sha=, actor=, message=,
+sidecar=, sidecar_sha=)` in `stacklets/memory/lib.py`: the one function
+for a reviewed change to a card, which a card write from the card browser
+calls the same way. It finds the card by its id, refuses a text or a
+sidecar that carries another `card_id`, and writes both in one commit
+(`ForgejoClient.change_files`, the memory bot's token, `actor` as the
+author) only while each is at the hash it was read at; otherwise nothing
+is written (`"moved": True` in the answer, the `changed` refusal here).
 
 ### Backup
 

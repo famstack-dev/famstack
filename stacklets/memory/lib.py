@@ -59,7 +59,8 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack import media
-from stack.forgejo import ForgejoClient, ForgejoError
+from stack.card_lookup import find_by_card_id
+from stack.forgejo import FileChange, ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
 if TYPE_CHECKING:
@@ -943,9 +944,127 @@ def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
     # Accept a bare handle or a full mxid (@homer:simpson) -- reduce to the
     # localpart so the author reads "homer", not "@homer:simpson".
     slug = (actor or "").strip().split(":")[0].lstrip("@") or "unknown"
+    # The memory bot's own commits carry its account's address, so Forgejo
+    # links them to it, as it links a migration's.
+    if slug == BOT_USERNAME:
+        return BOT_USERNAME, BOT_EMAIL
     stck = config.get("stack") if config else None
     server = stck.get("server_name") if isinstance(stck, dict) else None
     return slug, f"{slug}@{server or 'famstack'}"
+
+
+def _memory_client(config: dict | None) -> ForgejoClient | None:
+    """Forgejo as the memory bot, from the host; None without its credentials."""
+    secrets = config.get("secrets", {}) if config else {}
+    token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
+    # Host plane: `{code_url}` renders the LAN address a phone would
+    # click, and this runs on the machine Forgejo is published from.
+    # Every write went to that address until it moved. See `host_code_url`.
+    code_url = host_code_url(_code_url_from_config(config))
+    return ForgejoClient(url=code_url, token=token) if token and code_url else None
+
+
+def read_memory_file(config: dict, repo_path: str) -> dict:
+    """One vault file as Forgejo has it now: `{"content", "sha"}`.
+
+    The canonical text and the blob hash a later write is based on
+    (`write_card`), not the local clone's, which may lag. `{"error": ...}`
+    when Forgejo cannot be asked or has no such file.
+    """
+    client = _memory_client(config)
+    if client is None:
+        return {"error": "Forgejo credentials missing: run `stack up memory` first"}
+    try:
+        found = client.get_file(REPO_OWNER, REPO_NAME, repo_path)
+    except ForgejoError as e:
+        return {"error": f"Forgejo read failed: {e}"}
+    if not found:
+        return {"error": f"{repo_path} is not in the memory"}
+    return {"content": found.get("content") or "", "sha": found.get("sha") or ""}
+
+
+def write_card(config: dict, card_id: str, text: str, *, base_sha: str,
+               actor: str, message: str, sidecar: str | None = None,
+               sidecar_sha: str = "") -> dict:
+    """Replace the card `card_id` with `text`, if it is still the file at `base_sha`.
+
+    The one way a reviewed card change reaches the memory: `stack memory
+    reprocess --apply`, and a card write from the card browser. The caller
+    made `text` from the file at `base_sha` (`read_memory_file`), and a
+    record's `sidecar` from the sidecar at `sidecar_sha` ("" when it had
+    none). Card and sidecar are written in one commit (ADR-018 §4); when
+    either moved since, nothing is written and the answer says so with
+    `"moved": True`. The card is found by its id in the local clone, and
+    `text` and `sidecar` must keep that id: a write changes what a card
+    says, not which card it is. `actor` is the commit's author.
+    """
+    data_dir = config.get("data_dir") if config else None
+    if not data_dir:
+        return {"error": "no data_dir configured"}
+    found = find_by_card_id(card_id, root=vault_path_for(Path(data_dir)))
+    if found is None:
+        return {"error": f"no card {card_id}"}
+    if refused := _another_card(found.card_id, text, sidecar):
+        return {"error": refused}
+    client = _memory_client(config)
+    if client is None:
+        return {"error": "Forgejo credentials missing: run `stack up memory` first"}
+    side_path = found.path.removesuffix(".md") + ".json"
+    try:
+        card_now = client.get_file(REPO_OWNER, REPO_NAME, found.path) or {}
+        side_now = (client.get_file(REPO_OWNER, REPO_NAME, side_path) or {}) if sidecar is not None else {}
+    except ForgejoError as e:
+        return {"error": f"Forgejo read failed: {e}"}
+    moved = [p for p, now, base in ((found.path, card_now, base_sha), (side_path, side_now, sidecar_sha))
+             if (p == found.path or sidecar is not None) and (now.get("sha") or "") != base]
+    if moved:
+        return {"error": f"{', '.join(moved)} changed since it was read", "moved": True,
+                "card_id": found.card_id, "path": found.path}
+    changes = [FileChange("update", found.path, text, sha=base_sha)]
+    if sidecar is not None:
+        changes.append(FileChange("update", side_path, sidecar, sha=sidecar_sha) if sidecar_sha
+                       else FileChange("create", side_path, sidecar))
+    name, email = _actor_identity(actor, config)
+    try:
+        client.change_files(REPO_OWNER, REPO_NAME, changes, message=message,
+                            author_name=name, author_email=email)
+    except ForgejoError as e:
+        return {"error": f"Forgejo write failed: {e}", "card_id": found.card_id, "path": found.path}
+    return {"ok": True, "committed": True, "card_id": found.card_id, "path": found.path,
+            "mirrored": _after_write(config)}
+
+
+def _another_card(card_id: str, text: str, sidecar: str | None) -> str:
+    """Why `text` or `sidecar` is not the card `card_id`; "" when both are."""
+    try:
+        kept = card_id_from(_parse_frontmatter_new(text))
+    except FrontmatterError as e:
+        return f"the new text of {card_id} has frontmatter that does not parse ({e})"
+    if kept != card_id:
+        return f"the new text carries the card id {kept or 'none'}, not {card_id}"
+    if sidecar is not None:
+        try:
+            side_id = (json.loads(sidecar) or {}).get("card_id")
+        except (ValueError, AttributeError):
+            return f"the new sidecar of {card_id} is no JSON object"
+        if side_id != card_id:
+            return f"the new sidecar carries the card id {side_id or 'none'}, not {card_id}"
+    return ""
+
+
+def _after_write(config: dict) -> bool:
+    """Fast-forward the local clone, and ask the curator to carry a
+    committed write on to the trees that are read; whether it got there.
+
+    `pull_vault` only makes the *source clone* agree; the agent's mount
+    and the wiki both render the projection, which only the curator
+    writes (`propagate_write`).
+    """
+    data_dir = config.get("data_dir") if config else None
+    if not data_dir:
+        return False
+    pull_vault(vault_path_for(Path(data_dir)))
+    return propagate_write(Path(data_dir))
 
 
 def update_memory(config: dict, repo_path: str,
@@ -978,16 +1097,10 @@ def update_memory(config: dict, repo_path: str,
     wiki) by the time this returned. See `propagate_write` -- False
     there means "not yet", never "not written".
     """
-    secrets = config.get("secrets", {}) if config else {}
-    token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
-    # Host plane: `{code_url}` renders the LAN address a phone would
-    # click, and this runs on the machine Forgejo is published from.
-    # Every write went to that address until it moved. See `host_code_url`.
-    code_url = host_code_url(_code_url_from_config(config))
-    if not (token and code_url):
+    client = _memory_client(config)
+    if client is None:
         return {"error": "Forgejo credentials missing — run `stack up memory` first"}
 
-    client = ForgejoClient(url=code_url, token=token)
     name, email = _actor_identity(actor, config)
     try:
         result = client.edit_file(
@@ -1002,15 +1115,7 @@ def update_memory(config: dict, repo_path: str,
     if result is None:
         return {"ok": True, "committed": False}
 
-    data_dir = config.get("data_dir") if config else None
-    mirrored = False
-    if data_dir:
-        pull_vault(vault_path_for(Path(data_dir)))  # write-through so reads agree
-        # ...and on to the trees that are actually read. `pull_vault`
-        # only makes the *source clone* agree; the agent's mount and the
-        # wiki both render the projection, which only the curator writes.
-        mirrored = propagate_write(Path(data_dir))
-    return {"ok": True, "committed": True, "path": repo_path, "mirrored": mirrored}
+    return {"ok": True, "committed": True, "path": repo_path, "mirrored": _after_write(config)}
 
 
 # ─── Vault readers ───────────────────────────────────────────────────────
