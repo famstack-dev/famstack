@@ -49,7 +49,7 @@ _NOT_A_LETTER = re.compile(r"[\W_]+")
 
 # The cards whose tags the migration rewrites: all but the diary. A diary
 # card is signed with a digest over its text (`diary_card.render`), and an
-# edit from outside the compile makes it the family's for good.
+# edit from outside the compile makes it a person's for good.
 TAGGED_BY_ID = CARD_TYPES - {"diary"}
 
 
@@ -102,7 +102,7 @@ def tags_by_id(tags: Iterable[str], ontology: Ontology) -> tuple[list[str], list
     """`tags` as the rule writes them, each once, and those it left as they are.
 
     A tag the rule cannot read keeps its place and is returned, to be
-    reported: the family wrote it, and no slug is a sure reading of it.
+    reported: a person wrote it, and no slug is a sure reading of it.
     """
     kept: list[str] = []
     left: list[str] = []
