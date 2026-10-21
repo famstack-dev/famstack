@@ -117,29 +117,42 @@ def memory(tmp_path) -> Path:
     return repo
 
 
+def _apply(memory: Path, files: list[dict], author: dict, message: str) -> Response:
+    """One commit to `memory`, refused the way Forgejo refuses it."""
+    for f in files:
+        there = (memory / f["path"]).is_file()
+        if f["operation"] == "create" and there:
+            return Response(json.dumps({"message": "file exists"}), status=422)
+        if f["operation"] == "update" and (
+                not there or _git(memory, "hash-object", "--", f["path"]) != f.get("sha")):
+            return Response(json.dumps({"message": "sha does not match"}), status=409)
+    for f in files:
+        (memory / f["path"]).parent.mkdir(parents=True, exist_ok=True)
+        (memory / f["path"]).write_bytes(base64.b64decode(f["content"]))
+    _git(memory, "add", "-A")
+    _git(memory, "commit", "-q", f"--author={author['name']} <{author['email']}>",
+         "-m", message)
+    _git(memory, "update-server-info")
+    return Response(json.dumps({"commit": {"sha": _git(memory, "rev-parse", "HEAD")}}),
+                    content_type="application/json")
+
+
 @pytest.fixture
 def forgejo(httpserver, memory) -> ForgejoClient:
-    """Forgejo's multi-file commit endpoint, applied to `memory`."""
+    """Forgejo's commit endpoints, applied to `memory`: several files in one
+    commit, or one file created (POST) or updated (PUT) at its path."""
+    memory = Path(memory)  # a test may hand it anything path-like
 
     def commit(request):
         body = json.loads(request.data)
-        for f in body["files"]:
-            there = (memory / f["path"]).is_file()
-            if f["operation"] == "create" and there:
-                return Response(json.dumps({"message": "file exists"}), status=422)
-            if f["operation"] == "update" and (
-                    not there or _git(memory, "hash-object", "--", f["path"]) != f.get("sha")):
-                return Response(json.dumps({"message": "sha does not match"}), status=409)
-        for f in body["files"]:
-            (memory / f["path"]).parent.mkdir(parents=True, exist_ok=True)
-            (memory / f["path"]).write_bytes(base64.b64decode(f["content"]))
-        author = body["author"]
-        _git(memory, "add", "-A")
-        _git(memory, "commit", "-q", f"--author={author['name']} <{author['email']}>",
-             "-m", body["message"])
-        _git(memory, "update-server-info")
-        return Response(json.dumps({"commit": {"sha": _git(memory, "rev-parse", "HEAD")}}),
-                        content_type="application/json")
+        return _apply(memory, body["files"], body["author"], body["message"])
+
+    def write_one(request):
+        body = json.loads(request.data)
+        path = request.path.removeprefix(f"{CONTENTS}/")
+        operation = "update" if request.method == "PUT" else "create"
+        return _apply(memory, [{"operation": operation, "path": path, **body}],
+                      body["author"], body["message"])
 
     def clone(request):
         """Git's plain HTTP protocol: the repository's files, as they are."""
@@ -149,9 +162,37 @@ def forgejo(httpserver, memory) -> ForgejoClient:
         return Response(file.read_bytes(), content_type="application/octet-stream")
 
     httpserver.expect_request(CONTENTS, method="POST").respond_with_handler(commit)
+    for method in ("POST", "PUT"):
+        httpserver.expect_request(re.compile(rf"^{re.escape(CONTENTS)}/.+"),
+                                  method=method).respond_with_handler(write_one)
     httpserver.expect_request(re.compile(rf"^/{REPO_OWNER}/{REPO_NAME}\.git/.*"),
                               method="GET").respond_with_handler(clone)
     return ForgejoClient(url=httpserver.url_for(""), token="bottoken")
+
+
+@pytest.fixture
+def contents(httpserver, memory) -> None:
+    """Forgejo's contents API for reading: a directory's entries, or a file
+    with its blob sha, which an update has to name."""
+    memory = Path(memory)
+
+    def read(request):
+        path = request.path.removeprefix(f"{CONTENTS}/")
+        target = memory / path
+        if target.is_dir():
+            return Response(json.dumps([
+                {"type": "dir" if p.is_dir() else "file", "path": f"{path}/{p.name}", "name": p.name}
+                for p in sorted(target.iterdir()) if p.name != ".git"]),
+                content_type="application/json")
+        if target.is_file():
+            return Response(json.dumps({
+                "type": "file", "path": path, "sha": _git(memory, "hash-object", "--", path),
+                "content": base64.b64encode(target.read_bytes()).decode()}),
+                content_type="application/json")
+        return Response(json.dumps({"message": "not found"}), status=404)
+
+    httpserver.expect_request(re.compile(rf"^{re.escape(CONTENTS)}/.+"),
+                              method="GET").respond_with_handler(read)
 
 
 def _clone(memory: Path, tmp_path: Path, name: str) -> Path:
@@ -166,7 +207,8 @@ def _read(memory: Path, path: str) -> str:
 
 
 def _commits(httpserver) -> int:
-    return sum(1 for r, _ in httpserver.log if r.method == "POST")
+    """How many commits Forgejo was asked to make."""
+    return sum(1 for r, _ in httpserver.log if r.method in ("POST", "PUT"))
 
 
 # ── Migration 0003: people by id ─────────────────────────────────────────

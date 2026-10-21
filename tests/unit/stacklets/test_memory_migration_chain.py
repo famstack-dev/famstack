@@ -24,15 +24,11 @@ every migration reads what the one before it wrote.
 
 from __future__ import annotations
 
-import base64
-import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from werkzeug.wrappers import Response
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
@@ -44,7 +40,7 @@ from graph import load_graph  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.cards import card_id_from  # noqa: E402
 from stack.migrations import MigrationContext, Migrations  # noqa: E402
-from test_memory_card_links import CONTENTS, _commits, _git, forgejo  # noqa: E402, F401
+from test_memory_card_links import _commits, _git, contents, forgejo  # noqa: E402, F401
 
 FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "memory" / "memory-0.4.0.bundle"
 MEMORY_STACKLET = _REPO_ROOT / "stacklets" / "memory"
@@ -66,30 +62,6 @@ def memory(tmp_path) -> Path:
     subprocess.run(["git", "clone", "-q", "-b", "main", str(FIXTURE), str(repo)], check=True)
     _git(repo, "update-server-info")
     return repo
-
-
-@pytest.fixture
-def contents(httpserver, memory) -> None:
-    """Forgejo's contents API for reading, which migration 0001 lists the
-    topics with: a directory's entries, or a file with its blob sha."""
-
-    def read(request):
-        path = request.path.removeprefix(f"{CONTENTS}/")
-        target = memory / path
-        if target.is_dir():
-            return Response(json.dumps([
-                {"type": "dir" if p.is_dir() else "file", "path": f"{path}/{p.name}", "name": p.name}
-                for p in sorted(target.iterdir()) if p.name != ".git"]),
-                content_type="application/json")
-        if target.is_file():
-            return Response(json.dumps({
-                "type": "file", "path": path, "sha": _git(memory, "hash-object", "--", path),
-                "content": base64.b64encode(target.read_bytes()).decode()}),
-                content_type="application/json")
-        return Response(json.dumps({"message": "not found"}), status=404)
-
-    httpserver.expect_request(re.compile(rf"^{re.escape(CONTENTS)}/.+"),
-                              method="GET").respond_with_handler(read)
 
 
 def _migrate(tmp_path: Path, httpserver, data: str) -> tuple[dict, list[str], Migrations]:
