@@ -114,6 +114,11 @@ services:
       CODE_URL: http://stack-code:3000
       MATRIX_ADMIN_USER: ${MATRIX_ADMIN_USER}
       MATRIX_ADMIN_PASSWORD: ${MATRIX_ADMIN_PASSWORD}
+      # The card write endpoint (`card_edit.py`): it commits a change as
+      # the memory bot, and takes one only with the write token, which
+      # core's door and the host CLI hold and no other container does.
+      MEMORY_BOT_TOKEN: ${MEMORY_BOT_TOKEN}
+      CARDS_WRITE_TOKEN: ${CARDS_WRITE_TOKEN}
       # LLM endpoint (docker-side URL) + model config for the wiki
       # generation the curator subprocesses.
       OPENAI_URL: ${OPENAI_URL}
