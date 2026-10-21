@@ -8,7 +8,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /find?q=<words>&type=&person=&since=&until=&sort=newest&limit=&audience=
     GET /card/<id>?audience=
     GET /links/<id>?depth=2&audience=
-    GET /history?limit=&audience=
+    GET /history?limit=&audience=  what changed lately, newest first (`activity.py`)
     GET /people
     GET /report                where the memory does not meet its format yet
     GET /media/<path>?audience= a photo or recording a card embeds
@@ -55,6 +55,7 @@ import mimetypes
 import subprocess
 import sys
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,6 +65,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from activity import card_files, log_command, parse_log  # noqa: E402
 from format_check import format_report  # noqa: E402
 from note_card import SourcesMismatch, card_sources  # noqa: E402
 from graph import Card, Graph, View, load_graph, tags_of  # noqa: E402
@@ -74,6 +76,12 @@ PORT = 8090
 # What a result page lists at most; a page asks for more by narrowing.
 FIND_LIMIT = 60
 HISTORY_LIMIT = 40
+# How many commits a history page reads per change it answers: commits that
+# touch no card the audience may read (a removed file, another person's
+# bucket) are read and left out.
+_HISTORY_SCAN = 5
+# The cards a change lists at most; `count` says how many it touched.
+CARDS_PER_CHANGE = 6
 _FRONTMATTER_END = "\n---\n"
 # What a browser may show in the page from the media archive. Any other
 # file is sent as bytes to download, so nothing in the archive runs as a
@@ -153,22 +161,32 @@ class CardsAPI:
             return self._graphs[key]
 
     def _history(self, graph: Graph, limit: int) -> dict:
-        """The latest changes, newest first as git has them, each with its cards.
+        """The latest changes, newest first as git has them: when, who, what
+        kind of change (`activity.kind_of`) and the cards it touched.
 
-        A change touching no card the audience may read is left out.
+        A change touching no card the audience may read is left out, so
+        "view as" never shows that something private changed. A change
+        over many cards (a migration) is one entry with a `count`, how many
+        of each type (`types`) and its first few cards.
         """
-        r = subprocess.run(["git", "-C", str(self.vault), "log", f"-{limit * 3}",
-                            "--name-only", "--format=\x1e%h\x1f%ad\x1f%an\x1f%s",
-                            "--date=short"], capture_output=True, text=True)
+        r = subprocess.run(log_command(str(self.vault), limit * _HISTORY_SCAN),
+                           capture_output=True, text=True)
+        names = graph.person_names()
         changes = []
-        for block in r.stdout.split("\x1e")[1:]:
-            head, _, files = block.partition("\n")
-            sha, day, who, subject = (head.split("\x1f") + ["", "", "", ""])[:4]
-            cards = [graph.card(f) for f in files.split()]
-            cards = [_summary(c) for c in cards if c is not None]
-            if cards:
-                changes.append({"sha": sha, "day": day, "who": who, "subject": subject,
-                                "cards": cards})
+        for commit in parse_log(r.stdout):
+            cards = list({c.id: c for f in card_files(commit.files)
+                          if (c := graph.at(f)) is not None}.values())
+            if not cards:
+                continue
+            changes.append({
+                "sha": commit.sha, "at": commit.at, "day": commit.at[:10],
+                "who": commit.who, "who_name": names.get(commit.who, ""),
+                "machine": commit.machine, "kind": commit.kind,
+                "asked_by": commit.trailers.get("Requested-By", ""),
+                "subject": commit.subject, "count": len(cards),
+                "types": dict(Counter(c.type for c in cards).most_common()),
+                "cards": [{**_summary(c), "link": go_page(c.path, c.meta)}
+                          for c in cards[:CARDS_PER_CHANGE]]})
             if len(changes) == limit:
                 break
         return {"changes": changes}
