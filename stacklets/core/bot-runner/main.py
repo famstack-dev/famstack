@@ -286,6 +286,43 @@ def _ensure_bot_accounts(configs):
     )
 
 
+def bot_module_path(cfg):
+    """The file a discovered bot's module is loaded from."""
+    return Path(cfg["bot_dir"]) / f"{cfg['module_stem']}.py"
+
+
+def load_bot_class(cfg):
+    """The class of a discovered bot, loaded from its module file.
+
+    The bot's directory goes first on `sys.path`, so the module imports
+    its neighbours by their bare names. Returns None when the declaration
+    has no module file; anything the module raises while it loads is
+    raised here.
+    """
+    bot_dir = cfg["bot_dir"]
+    if bot_dir not in sys.path:
+        sys.path.insert(0, bot_dir)
+
+    module_path = bot_module_path(cfg)
+    if not module_path.exists():
+        return None
+
+    spec = importlib.util.spec_from_file_location(cfg["module_stem"], module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {module_path}")
+    mod = importlib.util.module_from_spec(spec)
+    # Registered while it runs, as an import would: a module looks itself
+    # up there while it loads (a `@dataclass` under postponed annotations
+    # does). A module that fails is removed again, as an import would.
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(spec.name, None)
+        raise
+    return getattr(mod, cfg["class_name"])
+
+
 async def main():
     """Discover bots, wait for Matrix, ensure accounts, run."""
     configs = discover_bots()
@@ -309,24 +346,12 @@ async def main():
 
     for cfg in configs:
         try:
-            # Add the bot's directory to sys.path so imports work
-            bot_dir = cfg["bot_dir"]
-            if bot_dir not in sys.path:
-                sys.path.insert(0, bot_dir)
-
-            # Load the module from the bot's directory
-            module_path = Path(bot_dir) / f"{cfg['module_stem']}.py"
-            if not module_path.exists():
-                logger.error("Bot module not found: {}", module_path)
-                continue
-
-            spec = importlib.util.spec_from_file_location(cfg["module_stem"], module_path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-
-            bot_class = getattr(mod, cfg["class_name"])
+            bot_class = load_bot_class(cfg)
         except Exception as e:
             logger.error("Failed to load {}: {}", cfg["bot_id"], e)
+            continue
+        if bot_class is None:
+            logger.error("Bot module not found: {}", bot_module_path(cfg))
             continue
 
         bot = bot_class(
