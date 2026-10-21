@@ -1285,6 +1285,21 @@ def _vault_writer() -> ForgejoClient | None:
                          admin_password=admin_password, timeout=60)
 
 
+def _card_editor(vault_dir: Path, shared_bucket: str, language: str, state_dir: Path):
+    """The card write endpoint (`memory/card_edit.py`): it writes the memory
+    repo with the memory bot's token, as the person a change is by, and asks
+    the loop to pull once it has. Without the token or the write token a
+    write is refused, never made with the admin's credentials."""
+    from memory.card_edit import CardEditor
+    code_url = os.environ.get("CODE_URL", "").rstrip("/")
+    bot_token = os.environ.get("MEMORY_BOT_TOKEN", "")
+    forgejo = ForgejoClient(url=code_url, token=bot_token) if code_url and bot_token else None
+    return CardEditor(vault=vault_dir, forgejo=forgejo, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
+                      shared_bucket=shared_bucket, language=language,
+                      server_name=os.environ.get("MATRIX_SERVER_NAME", "") or "famstack",
+                      on_write=lambda: request_push(state_dir))
+
+
 # ── Main loop ────────────────────────────────────────────────────────────
 
 def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str,
@@ -1299,10 +1314,12 @@ def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucke
     """
     from memory.cards_api import PORT, CardsAPI, serve
     fonts = Path(__file__).resolve().parents[1] / "quartz" / "static" / "fonts"
+    language = os.environ.get("LANGUAGE", "en")
     try:
         serve(CardsAPI(brain=brain_dir, vault=vault_dir, fonts=fonts, media=media_dir,
-                       shared_bucket=shared_bucket, language=os.environ.get("LANGUAGE", "en")),
-              on_push=lambda: request_push(state_dir))
+                       shared_bucket=shared_bucket, language=language),
+              on_push=lambda: request_push(state_dir),
+              editor=_card_editor(vault_dir, shared_bucket, language, state_dir))
         logger.info("[curator] cards API on :{}", PORT)
     except OSError as e:
         logger.warning("[curator] cards API not started: {}", e)

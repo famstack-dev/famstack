@@ -22,6 +22,8 @@ and a second pass finds nothing to change.
   gets the first time something names it, written once, never rewritten.
 - `people_by_id`, `moved_links`, `with_correspondent_type`: one existing
   file brought to that shape, only the lines the rule is about.
+- `with_about_from_fields`: the meta block's `**About**` derived again from
+  `persons` after a change to the fields (the card write endpoint).
   `persons_by_id` is the frontmatter half of `people_by_id`, which a diary
   card takes alone (`memory/0007`): it has no links to people.
 
@@ -298,6 +300,79 @@ def with_correspondent_type(text: str, path: str) -> str:
         return text
     added = dump({"type": "correspondent", CARD_ID: new_card_id("correspondent", path)})
     return f"---\n{added}\n{text[4:]}"
+
+
+# The `**About**` part of a meta block line: its label, written with or
+# without a colon, up to the next part (` · **From** ...`) or the line's end.
+_ABOUT_PART = re.compile(r"\*\*About(:?)\*\* .*?(?= · \*\*|$)")
+
+
+def with_about_from_fields(text: str, path: str, *, bucket: str) -> str:
+    """The record at `path` with its meta block's `**About**` derived from `persons`.
+
+    A record's frontmatter holds the ids and its body the links (ADR-017
+    §3), so after a change to `persons` the links follow: each id links its
+    person's card, read with a capital (`About`). The part is replaced where
+    it is, written first in the meta block when the record had none, and
+    removed with the people. Anything but a linked record (`LINKED_RECORDS`)
+    comes back unchanged, as does every byte outside the `**About**` part.
+
+        >>> text = "---\\ntype: note\\npersons:\\n  - bart\\n---\\n\\n# Kite\\n\\n> **About** Homer\\n\\nRed.\\n"
+        >>> print(with_about_from_fields(text, "family/notes/kite.md", bucket="family"), end="")
+        ---
+        type: note
+        persons:
+          - bart
+        ---
+        <BLANKLINE>
+        # Kite
+        <BLANKLINE>
+        > **About** [Bart](../people/bart.md)
+        <BLANKLINE>
+        Red.
+    """
+    try:
+        fields = parse(text)
+    except FrontmatterError:
+        return text
+    if str(fields.get("type") or "") not in LINKED_RECORDS:
+        return text
+    persons = fields.get("persons") or []
+    ids = [str(p) for p in (persons if isinstance(persons, list) else [persons]) if str(p).strip()]
+    links = About(tuple((pid, pid) for pid in ids)).links(path, bucket=bucket)
+    found = [False]
+
+    def about(line: str) -> str:
+        if not _ABOUT_PART.search(line):
+            return line
+        found[0] = True
+        if not links:
+            return _ABOUT_PART.sub("", line).replace("> · ", "> ").rstrip(" ·")
+        return _ABOUT_PART.sub(lambda m: f"**About{m[1]}** {links}", line)
+
+    edited = _in_meta_block(text, about)
+    if found[0]:
+        return "\n".join(line for line in edited.split("\n") if line.rstrip() != ">")
+    return _with_first_meta_line(edited, f"> **About** {links}") if links else edited
+
+
+def _with_first_meta_line(text: str, line: str) -> str:
+    """`text` with `line` first in the meta block under its title, which it
+    opens when there is none."""
+    lines = text.split("\n")
+    at = _after_frontmatter(lines)
+    while at < len(lines) and not lines[at].startswith("# "):
+        at += 1
+    if at == len(lines):
+        return text
+    after = at + 1
+    while after < len(lines) and not lines[after].strip():
+        after += 1
+    if after < len(lines) and lines[after].startswith(">") and not lines[after].startswith("> [!"):
+        lines.insert(after, line)
+    else:
+        lines[at + 1:at + 1] = ["", line]
+    return "\n".join(lines)
 
 
 def _target(href: str, here: str) -> str:

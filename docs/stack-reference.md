@@ -663,6 +663,40 @@ reads every file. Paths with `..` and anything outside the archive are
 refused. Images, audio, video and PDFs are sent as what they are; any
 other file as a download.
 
+**A card changes through one endpoint** (`stacklets/memory/card_edit.py`).
+Every surface that changes an existing card is a client of it: `stack
+memory card edit`, the card browser later, the agent through the command.
+None validates or commits on its own. The memory stacklet serves it on
+the cards API.
+
+| Request | What it does |
+|---|---|
+| `GET /cards/<card_id>` | The card as `{"card_id", "path", "fields", "body", "rendered"}`, its version as the `ETag`; the file itself with `Accept: text/markdown` |
+| `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ...}`; a `null` removes a field, a list is sent whole |
+| `PUT /cards/<card_id>` | The whole card as `text/markdown` |
+
+A change needs `Authorization: Bearer <memory__CARDS_WRITE_TOKEN>` (a
+secret memory generates; only the curator and the host CLI read it),
+`If-Match` with the `ETag` it was made on, and `Famstack-Actor` naming a
+declared person with an account. The `ETag` is the file's git blob id,
+which Forgejo calls its `sha`. The endpoint reads the file from Forgejo,
+applies the change, checks the fields against the type's JSON Schema
+(`stacklets/memory/schemas/cards/`), derives the meta block's `**About**`
+links from `persons` and the title heading from `title`, and commits with
+the memory bot's token, the person as author. The subject is `edit:
+<title>`, the body names each changed field with its new value, and the
+`Edit:` trailer is the merge patch from the version before. A change that
+changes nothing makes no commit.
+
+Answers: `200` the card and its new `ETag`; `401` no write token; `404`
+no such card; `412` the card changed since `If-Match` (nothing written);
+`415` another media type; `422` `application/problem+json` (RFC 9457)
+with `errors`, one `{"pointer", "field", "message", "allowed"}` per field,
+for a field outside its schema, a `readOnly` field changed, or an actor
+who is no member; `428` no `If-Match`; `503` before the curator has the
+memory bot's Forgejo token (minted on the first start, there from the
+second `stack up memory`).
+
 **The card schemas** are one JSON Schema file per type, each referring to
 `base.json`, the fields every card shares (ADR-017 §5). Closed sets are
 `enum`, the fields no change may touch are `readOnly`, any field holds a

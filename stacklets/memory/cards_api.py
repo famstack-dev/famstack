@@ -14,6 +14,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /media/<path>?audience= a photo or recording a card embeds
     GET /fonts/<file>          the famstack faces the wiki serves
     POST /push                 Forgejo's notice of a push to the memory repo
+    GET|PATCH|PUT /cards/<id>  one card to change, and the change (`card_edit.py`)
 
 The cards are the files of the vault. A card comes as its type's renderer
 writes it (`rendered`, markdown: the same the chat and `stack memory card`
@@ -25,6 +26,10 @@ version of the card is marked `behind`: the card's own text counts.
 calls it on every push, and the curator pulls at once instead of at its
 next poll. It carries no secret because all it can do is make the curator
 look sooner.
+
+`/cards/<id>` is the card write endpoint, the one way to change a card;
+`serve` takes it as `editor`, since it needs `jsonschema` and a Forgejo
+token, which only the curator's container has.
 
 `audience` is who will see the answer (person slugs, comma-separated): a
 card in a person's own bucket only when they are the whole audience. No
@@ -54,6 +59,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -80,6 +86,14 @@ _MEDIA_TYPES = {
     ".pdf": "application/pdf",
 }
 _NOT_FOUND = (404, "application/json", b'{"error": "no such file"}')
+_CARDS = "/cards/"
+
+
+class Editor(Protocol):
+    """What answers `/cards/<id>`: `card_edit.CardEditor`."""
+
+    def answer(self, method: str, card_id: str, headers: dict[str, str],
+               body: bytes) -> tuple[int, dict[str, str], bytes]: ...
 
 
 @dataclass
@@ -348,13 +362,48 @@ def _missing(ref: str) -> tuple[int, str, bytes]:
 # ── Serving ───────────────────────────────────────────────────────────────
 
 def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
-          on_push: Callable[[], None] | None = None) -> ThreadingHTTPServer:
+          on_push: Callable[[], None] | None = None,
+          editor: Editor | None = None) -> ThreadingHTTPServer:
     """Start answering on `host:port` in a background thread; returns the server.
 
-    `on_push` is called for each `POST /push`; without it the route is not there.
+    `on_push` is called for each `POST /push`, and `editor` answers
+    `/cards/<id>` (`card_edit.CardEditor`); without one, its route is not there.
     """
 
     class Handler(BaseHTTPRequestHandler):
+        def _card(self, method: str) -> bool:
+            """Answer a request for `/cards/<id>`; False for any other path."""
+            path = urlparse(self.path).path
+            if editor is None or not path.startswith(_CARDS):
+                return False
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            headers = {k.lower(): v for k, v in self.headers.items()}
+            try:
+                status, sent, answer = editor.answer(method, unquote(path[len(_CARDS):]), headers, body)
+            except Exception as e:  # one bad card must not take the API down
+                status, sent = 500, {"Content-Type": "application/json"}
+                answer = json.dumps({"error": str(e)}).encode()
+            self.send_response(status)
+            for name, value in sent.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(answer)))
+            self.end_headers()
+            self.wfile.write(answer)
+            return True
+
+        def do_PATCH(self):  # noqa: N802 (the stdlib's name)
+            if not self._card("PATCH"):
+                self._not_found()
+
+        def do_PUT(self):  # noqa: N802 (the stdlib's name)
+            if not self._card("PUT"):
+                self._not_found()
+
+        def _not_found(self):
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_POST(self):  # noqa: N802 (the stdlib's name)
             # Forgejo sends the push as JSON; its content is not needed,
             # the curator reads what changed from git.
@@ -367,6 +416,8 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.end_headers()
 
         def do_GET(self):  # noqa: N802 (the stdlib's name)
+            if self._card("GET"):
+                return
             url = urlparse(self.path)
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
             try:

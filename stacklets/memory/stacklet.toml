@@ -45,6 +45,12 @@ hints = [
     "Edit pages in Forgejo (`family/memory` repo) — every save is a commit",
 ]
 
+# The write token of the card endpoint (`stack memory card edit`): only
+# the curator, which checks it, and the host CLI, which sends it, read it.
+# Core passes it on without holding it: the bot runner reads core's `.env`.
+[env]
+generate = ["CARDS_WRITE_TOKEN"]
+
 # Host-side env vars are read by the install / start hooks (they run on
 # the host and talk to Forgejo over HTTP). Container-side env vars are
 # read by the wiki through `env_file: .env`. Both surfaces share this
@@ -117,6 +123,10 @@ WHISPER_KEY        = "{ai_whisper_key}"
 WHISPER_MODEL      = "{ai_whisper_model}"
 
 TIMEZONE         = "{timezone}"
+# The memory bot's Forgejo token, for the curator's card write endpoint.
+# Minted by `on_install_success`, so on a first install it is here from the
+# second `stack up memory` on.
+MEMORY_BOT_TOKEN = "{memory__MEMORY_BOT_TOKEN}"
 MATRIX_ADMIN_USER     = "{admin_username}"
 MATRIX_ADMIN_PASSWORD = "{admin_password}"
 
