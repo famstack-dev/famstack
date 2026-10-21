@@ -1150,11 +1150,13 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 # Living outside `wiki/` keeps hand-curated correspondents safe from
 # the wiki-engine's regenerate pass.
 #
-# Example shape (family/correspondents/duff-insurance.md):
+# Example shape (family/correspondents/duff-insurance.md), a card of type
+# correspondent (`schemas/cards/correspondent.json`):
 #
 #     ---
-#     kind: correspondent
-#     canonical: Duff Insurance
+#     type: correspondent
+#     card_id: correspondent-duff-insurance
+#     title: Duff Insurance
 #     aliases:
 #       - "Duff Insurance Ortsverband Springfield"
 #     topics: [insurance, vehicle]
@@ -1164,6 +1166,9 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
 #
 #     # Duff Insurance
 #     [free-form notes]
+#
+# A file of the shape before cards (`kind: correspondent`, its name in
+# `canonical`) is brought to this one by migrations 0004, 0006 and 0009.
 #
 # `aliases` rolls up everything the classifier has seen as the
 # `correspondent_aliases` field on documents from this sender. The
@@ -3075,6 +3080,58 @@ def give_notes_their_sources(client: ForgejoClient, vault: Path, *,
     message = f"cards: give {len(found.created)} note(s) their sources and a sidecar"
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
                           created=frozenset(found.created))
+
+
+# ─── Correspondents written by hand ─────────────────────────────────────
+#
+# Before correspondents were cards, this module documented a shape for a
+# correspondent's file written by hand that named it in `canonical`. A
+# card's name is its `title` (ADR-017 §5); migration 0009 brings those
+# files to it.
+
+# The line that named a correspondent before cards had a title.
+_CANONICAL_LINE = re.compile(r"^canonical:", re.MULTILINE)
+
+
+def correspondent_titles_for(vault: Path) -> CardLinks:
+    """What gives the correspondents in the working copy `vault` their title.
+
+    A correspondent with a `canonical` and no title gets its `canonical`
+    line as its `title` line, where it is, the name as written. One with a
+    title loses `canonical`; a name there that is neither the title nor an
+    alias is kept as an alias and listed in `left`. Every other line and
+    every other card stay as they are.
+    """
+    from stack.frontmatter import with_field
+
+    found = CardLinks()
+    for path, text in sorted(_markdown_files(vault).items()):
+        fields = _parse_frontmatter(text)
+        if fields.get("type") != "correspondent" or "canonical" not in fields:
+            continue
+        canonical = str(fields.get("canonical") or "").strip()
+        title = str(fields.get("title") or "").strip()
+        if canonical and "title" not in fields:
+            head, sep, rest = text.partition("\n---\n")
+            found.changes[path] = _CANONICAL_LINE.sub("title:", head, count=1) + sep + rest
+            continue
+        new = with_field(text, "canonical", "")
+        if not title:
+            new = with_field(new, "title", canonical)
+        elif canonical and canonical != title and canonical not in _fm_list(fields, "aliases"):
+            new = with_field(new, "aliases", [*_fm_list(fields, "aliases"), canonical])
+            found.left.append(f"{path}: its name {canonical!r} is kept as an alias of {title!r}")
+        found.changes[path] = new
+    return found
+
+
+def title_correspondents(client: ForgejoClient, vault: Path, *,
+                         trailer: str = "") -> tuple[CardLinks, str | None]:
+    """Give the correspondents in `vault` their title (`correspondent_titles_for`),
+    in one commit by the memory bot; what the pass found and the commit's sha."""
+    found = correspondent_titles_for(vault)
+    message = f"cards: give {len(found.changes)} correspondent(s) their title"
+    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
 
 # ─── The people of diary cards ───────────────────────────────────────────

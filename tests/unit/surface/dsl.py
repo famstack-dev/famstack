@@ -82,6 +82,13 @@ class Memory:
         log = self._git("log", "--reverse", "--format=%an%x00%s", f"{self._start}..HEAD")
         return [Commit(*line.split("\x00", 1)) for line in log.splitlines()]
 
+    def trailers(self, key: str) -> list[str]:
+        """The `key:` trailer of each commit since the test began, oldest
+        first; "" for a commit without one."""
+        log = self._git("log", "--reverse", f"--format=%(trailers:key={key},valueonly)%x00",
+                        f"{self._start}..HEAD")
+        return [entry.strip() for entry in log.split("\x00")[:-1]]
+
     def page(self, path: str) -> str:
         """The text of a page as the repository has it now."""
         return self._git("show", f"HEAD:{path}", strip=False)
@@ -130,6 +137,10 @@ class Person:
         """`stack memory card edit <card_id> <changes> --as <me>`, the changes
         as typed: `marge.edits("person-bart", "--add", "aliases=Bartman")`."""
         return self.runs("memory", "card", ["edit", card_id, *changes, "--as", self.name])
+
+    def checks_the_format(self) -> dict:
+        """`stack memory check-format`."""
+        return self.runs("memory", "check-format", [])
 
     def was_told(self, *words: str) -> bool:
         """Whether the last command showed them every one of these words."""
