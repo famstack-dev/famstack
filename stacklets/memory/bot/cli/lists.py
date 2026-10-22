@@ -30,6 +30,7 @@ sys.path.insert(0, "/app")  # stack.forgejo, stack.lists
 sys.path.append("/stacklets")
 sys.path.append(str(Path(__file__).resolve().parents[3]))
 
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import (  # noqa: E402
     LISTS_DIR,
@@ -59,7 +60,7 @@ async def run(llm, argv: list[str]) -> int:
         changes, moved = archive_lists(client, bucket=bucket, today=_today())
         if changes and "--dry-run" not in argv:
             client.change_files(REPO_OWNER, REPO_NAME, changes,
-                                message=f"lists: archive {moved} item(s) that are over",
+                                message=commit_subject("lists", f"archive {moved} item(s) that are over"),
                                 author_name=BOT_USERNAME, author_email=BOT_EMAIL)
     except (ForgejoError, OSError) as e:
         _err(f"lists not archived: {e}")

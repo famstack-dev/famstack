@@ -289,16 +289,41 @@ never from its interpretation. A card with corrections or a person's edits
 is rebuilt as a card conversation (§7), which starts from its previous
 clean version: that is what keeps a person's edit.
 
-| Commit subject | By | When |
-|---|---|---|
-| `capture: <title>` | the sender | a new card |
-| `reply: <title>` | the person who replied | a source appended from any channel, and the refile it causes |
-| `edit: <title>` | the person | a change through the card editor |
-| `transcribe: <title>` | the memory bot | a new text form in a quote |
-| `reprocess: <title>` | the memory bot | an interpret run (`made.requested_by` names who asked) |
-| `reprocess: <title>` | the person | an interpret run with their correction (`--msg`), appended as a `note` source |
-| `cards: <what>` | the memory bot | a migration |
-| any other subject | the person | a hand edit: Forgejo's editor writes `Update <file>`, a clone what the person typed |
+**The commit grammar.** Every bot builds its subject from this table
+(`stack.card_commits.commit_subject`, which refuses any other prefix), as
+its own account with the person as author (ADR-015 §1). The kind is what
+a reader takes the commit for.
+
+| Subject | Author | Kind | What happened |
+|---|---|---|---|
+| `capture: <title>` | the sender | filed | a new card from what somebody sent |
+| `learn: <title>` | the sender | filed | a document or a diary entry filed |
+| `update: <title>` | the sender | updated | a filing that grew; the diary compile writing entries again |
+| `reply: <title>` | the person who replied | replied | a source appended from any channel, and the refile it causes |
+| `reprocess: <title>` | the memory bot, or the person whose `--msg` it carries | refiled | an interpret run; `Requested-By:` names who asked |
+| `correct: <title>` | the person | corrected | a reply applied to a diary card |
+| `edit: <title>` | the person | edited | a change through the card editor |
+| `chore(memory): <person> ...` | the person | edited | `stack memory write` |
+| `chore(lists): <person> ...` | the person | edited | `stack memory list` |
+| `people: ...` | the person, or a bot | edited | the people files |
+| `forget: ...` | the memory bot | removed | diary entries deleted in the room |
+| `transcribe: <title>` | the memory bot | transcribed | a new text form in a quote |
+| `declare: <path>` | the archivist | declared | a correspondent or topic card written once |
+| `rename: <from> → <to>` | the archivist | moved | a record moved to where its new class files it |
+| `lists: ...` | the person the record is by, or a bot | listed | items put on a list from a record, or archived |
+| `cards: ...`, `notes: ...`, `chore(ontology): ...` | a bot | migrated | a migration; `Migration:` names it |
+| `seed: ...` | a bot | seeded | a new memory's first content |
+| any other subject | a person | changed | a hand edit: Forgejo's editor writes `Update <file>`, a clone what the person typed |
+
+- **A change is the machine's** when its author is a bot or the admin,
+  when its kind is `transcribed`, `declared`, `moved`, `listed`,
+  `migrated` or `seeded`, or when it is the memory bot's `update:`.
+  Otherwise it is the author's.
+- **A rebuild keeps a person's commits** of kind `edited`, `corrected` and
+  `changed` (§7). `filed`, `updated`, `replied` and `refiled` come from the
+  sources.
+- **The table is closed.** A new prefix is a change to this table, made
+  in the same commit as the writer that uses it.
 
 ### 7. Corrections and a person's edits: the card conversation
 A card's history is its event log, and the card is its projection. A
@@ -311,8 +336,9 @@ person's edit is not stored a second time: it is read from git.
 | A person's field edit (tags, persons, title, date) | the card's history: its frontmatter before and after the person's commit | an operation applied in code after the model: `add`/`remove` for a list, `set`/`unset` for a value |
 
 - **Whose commit counts** is decided by the one rule the dashboard and
-  `stack memory history` use (`activity.is_machine`): a person's change,
-  not a bot's own rebuild, a migration or a plain reprocess.
+  `stack memory history` use (§6, `stack.card_commits.is_machine`): a
+  person's change, not a bot's own rebuild, a migration or a plain
+  reprocess.
 - **Two prompts, chosen by what the card has.** A note with chat
   corrections and no person's text edit is rebuilt with the dedicated
   correction prompt (24 of 24 on `tests/e2e/eval/correction_fold.py`,

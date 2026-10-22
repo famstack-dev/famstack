@@ -61,6 +61,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_memory  # noqa: E402
 
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.cards import CardIdError, card_id_from, with_card_id  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
@@ -347,10 +348,10 @@ def _commit_message(actor: str, repo_path: str, told: str) -> str:
     case that overflows a subject line. Nothing is dropped: the long form
     moves into the body, where git and Forgejo both still show it.
     """
-    line = f"chore(memory): {actor} {told} in {_where(repo_path)}"
+    line = commit_subject("chore(memory)", f"{actor} {told} in {_where(repo_path)}")
     if len(line) <= _SUBJECT_MAX:
         return line
-    return f"chore(memory): {actor} updated {repo_path}\n\n{told}"
+    return commit_subject("chore(memory)", f"{actor} updated {repo_path}") + f"\n\n{told}"
 
 
 def _opt(argv, flag):

@@ -57,6 +57,7 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
+from stack.card_commits import commit_subject
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack import media
 from stack.card_lookup import find_by_card_id
@@ -120,7 +121,7 @@ BRAIN_SEED_README = (
 BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
 BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
-INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
+INSTALL_COMMIT_MESSAGE = commit_subject("seed", "initial memory from famstack {version}")
 
 BOT_USERNAME = "memory-bot"
 BOT_EMAIL = "memory-bot@local"
@@ -147,7 +148,7 @@ TOKEN_SCOPES = [
     "write:repository", "read:repository",
     "read:user", "write:organization",
 ]
-SEED_COMMIT_MESSAGE = "seed: initial memory from famstack"
+SEED_COMMIT_MESSAGE = commit_subject("seed", "initial memory from famstack")
 
 
 # ─── Seed loader ─────────────────────────────────────────────────────────
@@ -1591,7 +1592,7 @@ def _declares_generated(content: str) -> bool:
 def purge_generated_memory_pages(
     client: ForgejoClient,
     *,
-    message: str = "chore(memory): purge generated wiki pages from source",
+    message: str = commit_subject("cards", "purge generated wiki pages from source"),
 ) -> dict:
     """Delete legacy generated projection pages from `family/memory`.
 
@@ -1733,7 +1734,7 @@ def install_seeds(
     client: ForgejoClient,
     seed_dir: Optional[Path] = None,
     *,
-    commit_message: str = "seed: initial memory",
+    commit_message: str = commit_subject("seed", "initial memory"),
     author_name: Optional[str] = None,
     author_email: Optional[str] = None,
     shared_bucket: str = DEFAULT_SHARED_BUCKET,
@@ -1808,7 +1809,7 @@ def ensure_people(
     client.change_files(
         REPO_OWNER, REPO_NAME,
         [FileChange("create", person_path(p.id, shared_bucket), render_person(p)) for p in new],
-        message="people: add a file for each chat account",
+        message=commit_subject("people", "add a file for each chat account"),
         author_name=BOT_USERNAME, author_email=BOT_EMAIL,
     )
     return [p.id for p in new]
@@ -2686,7 +2687,7 @@ def move_todos_to_lists(client: ForgejoClient, *,
         moved.append(topic)
     if not changes:
         return moved, None
-    message = "lists: move each topic's todo list to lists/"
+    message = commit_subject("lists", "move each topic's todo list to lists/")
     response = client.change_files(
         REPO_OWNER, REPO_NAME, changes,
         message=f"{message}\n\n{trailer}" if trailer else message,
@@ -2771,7 +2772,7 @@ def give_card_ids(client: ForgejoClient, vault: Path, *, since: str | None = Non
     `trailer` ends the message.
     """
     found = card_ids_for(vault, since=since)
-    message = f"cards: give {len(found.changes)} card(s) an id of their own"
+    message = commit_subject("cards", f"give {len(found.changes)} card(s) an id of their own")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
 
@@ -2941,7 +2942,7 @@ def name_people_by_id(client: ForgejoClient, vault: Path, *,
     """Name the people in `vault`'s records by id (`people_by_id_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
     found = people_by_id_for(vault, shared_bucket=shared_bucket)
-    message = f"cards: name people by id in {len(found.changes)} card(s)"
+    message = commit_subject("cards", f"name people by id in {len(found.changes)} card(s)")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
 
@@ -2985,7 +2986,7 @@ def declare_cards(client: ForgejoClient, vault: Path, *,
     """Write the cards `vault`'s records name (`declared_cards_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
     found = declared_cards_for(vault, shared_bucket=shared_bucket)
-    message = f"cards: declare {len(found.changes)} correspondent and topic card(s)"
+    message = commit_subject("cards", f"declare {len(found.changes)} correspondent and topic card(s)")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
                           created=frozenset(found.created))
 
@@ -3025,7 +3026,7 @@ def tag_topics_by_id(client: ForgejoClient, vault: Path, *,
     """Tag the topics of `vault`'s cards by id (`topic_tags_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
     found = topic_tags_for(vault)
-    message = f"cards: tag topics by id in {len(found.changes)} card(s)"
+    message = commit_subject("cards", f"tag topics by id in {len(found.changes)} card(s)")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
 
@@ -3082,7 +3083,7 @@ def give_card_kinds(client: ForgejoClient, vault: Path, *,
     """Give the cards in `vault` their kind (`card_kinds_for`), in one commit
     by the memory bot; what the pass found and the commit's sha."""
     found = card_kinds_for(vault)
-    message = f"cards: give {len(found.changes)} card(s) their kind"
+    message = commit_subject("cards", f"give {len(found.changes)} card(s) their kind")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
 
@@ -3129,7 +3130,7 @@ def give_notes_their_sources(client: ForgejoClient, vault: Path, *,
     """Give the notes in `vault` their sources and a sidecar (`note_sources_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = note_sources_for(vault, media_root=media_root)
-    message = f"cards: give {len(found.created)} note(s) their sources and a sidecar"
+    message = commit_subject("cards", f"give {len(found.created)} note(s) their sources and a sidecar")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
                           created=frozenset(found.created))
 
@@ -3182,7 +3183,7 @@ def title_correspondents(client: ForgejoClient, vault: Path, *,
     """Give the correspondents in `vault` their title (`correspondent_titles_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = correspondent_titles_for(vault)
-    message = f"cards: give {len(found.changes)} correspondent(s) their title"
+    message = commit_subject("cards", f"give {len(found.changes)} correspondent(s) their title")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
 
 
@@ -3232,5 +3233,5 @@ def name_diary_people_by_id(client: ForgejoClient, vault: Path, *,
     """Name the people of `vault`'s diary cards by id (`diary_people_by_id_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = diary_people_by_id_for(vault, shared_bucket=shared_bucket)
-    message = f"cards: name people by id in {len(found.changes)} diary card(s)"
+    message = commit_subject("cards", f"name people by id in {len(found.changes)} diary card(s)")
     return found, _commit(client, vault, found.changes, message=message, trailer=trailer)

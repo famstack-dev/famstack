@@ -25,7 +25,7 @@ WHOSE CHANGES COUNT
 
     Filtered by who, from the fields git records: the author, the person a
     change is by or for, and the committer, the account that wrote it
-    (ADR-015). The rule is the memory's one (`activity.is_machine`), the one
+    (ADR-015). The rule is the memory's one (`stack.card_commits.is_machine`), the one
     the dashboard words its activity by: a change by a bot or the admin, or
     a rebuild a bot committed on its own with a person as author, such as
     the diary compile writing her entries again.

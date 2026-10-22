@@ -574,16 +574,28 @@ them is the committer (ADR-015). The subject starts with what happened:
 |---|---|
 | `capture: <title>` | a new card from what somebody sent |
 | `learn: <title>` | a document or a diary entry filed |
-| `update: <title>` | a filing that grew: an email thread, a document |
+| `update: <title>` | a filing that grew: an email thread, a document, the diary written again |
 | `reply: <title>` | a reply added to a note as a source |
-| `correct: <title>` | a person's correction, applied by a bot |
-| `edit: <title>` | a person changed fields through the card editor |
 | `reprocess: <title>` | a card made again from its sources; `Requested-By:` names who asked, `Replaces:` the commit it replaces. Authored by a person when they gave a correction with it |
-| `cards: ...`, `notes: ...` | a format migration; the `Migration:` trailer names it (`memory/0008`) |
-| `people: ...`, `lists: ...` | the people's files or the lists changed |
+| `correct: <title>` | a person's correction of a diary card, applied by a bot |
+| `edit: <title>` | a person changed fields through the card editor |
+| `chore(memory): <person> ...` | a person changed a file with `stack memory write` |
+| `chore(lists): <person> ...` | a person changed a list with `stack memory list` |
+| `people: ...` | the people's files changed |
+| `forget: ...` | diary entries removed |
+| `transcribe: <title>` | a better transcript of a recording |
+| `declare: <path>` | a correspondent's or a topic's card written the first time |
+| `rename: <from> → <to>` | a record moved |
+| `lists: ...` | items put on a list from a record, or archived |
+| `cards: ...`, `notes: ...`, `chore(ontology): ...` | a format migration; the `Migration:` trailer names it (`memory/0008`) |
 | `seed: ...` | a new memory's first content |
-| `forget: ...` | a card removed |
 | anything else, by a person | a change made by hand, in a git server's editor or a clone |
+
+The list is closed: famstack writes no other subject. A commit is the
+machine's own work when its author is a bot or the admin, or when it is
+one of `transcribe:`, `declare:`, `rename:`, `lists:`, a migration or a
+seed, whoever it names; so is the diary written again (`update:`,
+committed by the memory bot).
 
 You may change a card in any editor. The change is your commit. When
 famstack makes a note again from its sources, it reads your commit and
