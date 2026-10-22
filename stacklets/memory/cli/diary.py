@@ -11,6 +11,9 @@ from those cards, in the words it was recorded in.
     stack memory diary letters           read a different room
     stack memory diary --burst-window 1  tighten sync-burst detection
     stack memory diary --force           read it all again from scratch
+    stack memory diary --limit 20        only the newest 20 messages; always
+                                         a dry run, it writes and removes
+                                         no card and publishes no page
 
 WHEN IT RUNS
     The curator compiles the diary on its nightly sweep, so new
