@@ -37,7 +37,7 @@ _VALUE = "<value>"
 
 def build_correction_prompt(*, words: str, corrections: str) -> str:
     """The prompt for `words` corrected by `corrections`, one per line,
-    each after the name of who wrote it (`memory.note_card.corrections_of`).
+    each after the name of who wrote it (`stack.cards.sources.corrections_of`).
 
     It is in English whatever the household's language: the note is
     written in its own language, which the prompt asks to keep. The worked

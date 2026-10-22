@@ -61,7 +61,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_memory  # noqa: E402
 
-from stack.card_commits import commit_subject  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
 from stack.cards import CardIdError, card_id_from, with_card_id  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.links import go_page, public  # noqa: E402

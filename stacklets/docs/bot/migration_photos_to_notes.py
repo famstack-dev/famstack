@@ -28,8 +28,9 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
-from stack.card_commits import commit_subject
+from stack.cards.commits import commit_subject
 from stack.cards import card_identity
+from stack.cards.sources import sidecar_path
 from stack.forgejo import FileChange, ForgejoClient
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as dump_frontmatter
@@ -42,7 +43,7 @@ from stack.frontmatter import parse as parse_frontmatter
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.note_card import legacy_note, sidecar_path  # noqa: E402
+from memory.note_card import legacy_note  # noqa: E402
 
 # As `vault_entry.render_capture` writes them.
 _SHOWN = re.compile(r"^!\[\[/media/[^\]]+\]\]", re.M)

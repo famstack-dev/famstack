@@ -4,7 +4,7 @@ Each card's frontmatter is what its writer produces today, field for field
 and in the writer's order (the archivist's `document_frontmatter` and
 `capture_frontmatter`, a note's without the fields its sidecar holds, the
 diary's `_frontmatter`, `stack.lists`, `stack.people.render_person`,
-`stack.card_links.correspondent_card` and `topic_card`), so a schema that
+`stack.cards.links.correspondent_card` and `topic_card`), so a schema that
 accepts these accepts the memory a rig holds.
 """
 

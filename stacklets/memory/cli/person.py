@@ -35,7 +35,7 @@ from lib import (  # noqa: E402
     vault_path_for,
 )
 
-from stack.card_commits import commit_subject  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
 from stack.people import (  # noqa: E402
     Person,
     load_people,

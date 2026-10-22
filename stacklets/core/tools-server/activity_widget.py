@@ -2,7 +2,7 @@
 
 The dashboard's first widget, and the pattern the next one copies
 (`dashboard/widgets/README.md`). It reads the memory's history from the
-cards API (`GET /history`, `stacklets/memory/activity.py`), which says
+cards API (`GET /history`, `stack.cards.activity`), which says
 what each change was, and words it for the people reading the page:
 
     Marge filed a note: Trip prep

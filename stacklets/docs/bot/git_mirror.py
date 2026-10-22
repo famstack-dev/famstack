@@ -55,8 +55,11 @@ from typing import TYPE_CHECKING, NamedTuple
 from loguru import logger
 
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError
-from stack.card_commits import commit_subject
-from stack.card_links import About, correspondent_card, topic_card, without_person_tags
+from stack.cards.commits import commit_subject
+from stack.cards.fields import FieldOp, FieldValues, apply_ops
+from stack.cards.history import CardHistory, history_of, versions_from_forgejo
+from stack.cards.links import About, correspondent_card, topic_card, without_person_tags
+from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
@@ -75,10 +78,10 @@ if TYPE_CHECKING:
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-# A note's card and sidecar are the memory stacklet's format (ADR-018).
-from memory.card_history import CardHistory, history_of, versions_from_forgejo  # noqa: E402
-from memory.field_ops import FieldOp, FieldValues, apply_ops  # noqa: E402
-from memory.note_card import Source, card_fields, sidecar_path, sidecar_text  # noqa: E402
+# A note's sources are read the memory stacklet's way, its old format
+# included (ADR-018), against the memory's card schemas.
+from memory.card_fields import SCHEMA_DIR  # noqa: E402
+from memory.note_card import card_sources  # noqa: E402
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 from memory.lib import NoServerName, commit_author  # noqa: E402
 from vault_entry import (  # noqa: E402
@@ -231,9 +234,9 @@ class CaptureEntry(NamedTuple):
     frontmatter: dict
     content: str
     about: About
-    # A note's sidecar (`memory.note_card`), "" for every other capture.
+    # A note's sidecar (`stack.cards.sources`), "" for every other capture.
     sidecar: str = ""
-    # The field edits that no longer fit the card, each with why (`memory.field_ops`).
+    # The field edits that no longer fit the card, each with why (`stack.cards.fields`).
     left_out: tuple[str, ...] = ()
 
 
@@ -840,7 +843,7 @@ class GitMirror:
     # topic it names (ADR-017 §3, §10). People are declared by the family;
     # a correspondent's card and a topic's are written here the first time
     # a record names them, and never rewritten: from then on they are the
-    # family's (`stack.card_links`).
+    # family's (`stack.cards.links`).
 
     def _people(self) -> list[Person]:
         """The declared people names resolve through; none without a local copy."""
@@ -1102,7 +1105,7 @@ class GitMirror:
         """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``.
 
         A note's keeps only what the card is about; where it came from
-        goes into its sidecar (ADR-018 §3, `memory.note_card`).
+        goes into its sidecar (ADR-018 §3, `stack.cards.sources`).
         """
         fm = capture_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
@@ -1133,19 +1136,21 @@ class GitMirror:
             return versions_from_forgejo(commits, at, path=path, card_id=card_id)
 
         try:
-            return history_of(await asyncio.to_thread(versions))
+            return history_of(await asyncio.to_thread(versions), read_sources=card_sources)
         except ForgejoError as e:
             logger.warning("[git-mirror] history of {} not read: {}", path, e)
             return None
 
     def _field_values(self, people: list[Person]) -> FieldValues:
-        """What a field edit may name here: the declared people, the ontology."""
+        """What a field edit may name here: the card schemas, the declared
+        people, the ontology."""
         if self.vault:
             ontology = self.vault.ontology()
         else:
             from memory.lib import get_ontology
             ontology = get_ontology(None)
-        return FieldValues(person_ids=frozenset(p.id for p in people), ontology=ontology)
+        return FieldValues(schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people),
+                           ontology=ontology)
 
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.

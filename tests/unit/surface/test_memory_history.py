@@ -2,7 +2,7 @@
 
 The command reads the memory's clone on this Mac and leaves the machine's
 work out unless asked (`--all`). Which work is the machine's is the
-memory's one rule (`activity.is_machine`), the one the dashboard words
+memory's one rule (`stack.cards.commits.is_machine`), the one the dashboard words
 its activity by: a change by a bot or the admin, or a rebuild a bot
 committed on its own with a person as author because the records are
 theirs. A command and a page that disagreed on it would tell the family

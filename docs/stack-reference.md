@@ -540,7 +540,7 @@ memory` adds once; the code stacklet allows webhooks to `stack-*` hosts
 and the nightly sweep as the catch-all.
 
 **A record links the cards it names** (ADR-017 §3, §4, §10).
-`stack.card_links` holds the rules: `persons` as declared person ids, the
+`stack.cards.links` holds the rules: `persons` as declared person ids, the
 meta block's links derived from them, and the correspondent's and the
 topic's card written the first time a record names them, never rewritten.
 The archivist writes a correspondent's card with the classifier's
@@ -554,9 +554,9 @@ graph links a record to the people its `persons` names, by id or by any
 name they go by, and the wiki sends a link to a person's, a topic's or a
 correspondent's card to that card's view (`quartz/plugins/vaultLinks.ts`). The diary
 compile resolves the names the model read to declared people
-(`stack.card_links.About`) and leaves a name nobody goes by off the card,
+(`stack.cards.links.About`) and leaves a name nobody goes by off the card,
 logged. `memory/0007` brought the diary cards the compile still owned to
-that shape and signed them again (`stack.card_links.persons_by_id`); a
+that shape and signed them again (`stack.cards.links.persons_by_id`); a
 diary card a person changed kept its names.
 
 **A card tags a topic by its id** (ADR-017 §4). `stack.tags` holds the
@@ -592,7 +592,7 @@ the card is refused for until they are removed (`stack memory card edit
 <id> --remove <field>`). It is the admin's, read over every card, and
 writes nothing. A vault that meets the format gives an empty report.
 
-**A note is its card and its sidecar** (ADR-018, `memory.note_card`, the
+**A note is its card and its sidecar** (ADR-018, `stack.cards.sources`, the
 format in [memory-format.md](memory-format.md#a-notes-sources)). The
 sidecar's `made.code_commit` is `STACK_COMMIT`, and its template hashes
 (`prompt_template`, `correction_template`, `conversation_template`) hash a
@@ -612,7 +612,7 @@ checked by the first filing's rule, less what an event replaced
 `write_card` write card and sidecar in one commit (`FileChange`); a refile
 reads the sources, never the
 interpretation, and appends to them. A note is found by a source's id
-(`stack.card_lookup.find_by_source_id`, through `find_card("capture", …)`),
+(`stack.cards.lookup.find_by_source_id`, through `find_card("capture", …)`),
 so a correction to a chat message finds its note. Migration `memory/0008`
 converts every note filed before, photo notes included, in one commit and
 without a model call: the old sections become quotes, the fields move into
@@ -718,11 +718,11 @@ removes the field), sends it, and prints the change or each refused field
 with what it may hold.
 
 `/history` is the memory's activity, newest first, read from the repo's
-log (`stacklets/memory/activity.py`): each change with its time, who made
+log (`stack.cards.activity`): each change with its time, who made
 it, whether it is the machine's own work (`machine`), its kind in a word
 (`filed`, `replied`, `corrected`, `edited`, `refiled`, `migrated`, ...;
 from the subject prefix and the `Migration:` trailer, by the closed
-commit grammar of ADR-018 §6 in `lib/stack/card_commits.py`) and the
+commit grammar of ADR-018 §6 in `stack.cards.commits`) and the
 cards it touched, each with its
 `/go` link path. A card and its sidecar count once; a change over many
 cards lists the first few, a `count` and how many of each type. A change
@@ -758,7 +758,7 @@ carries that id as its own now. A photo filed as a bookmark and refiled as a not
 (migration `docs/0001`) is the case today.
 
 **A card that was removed answers as gone.** When no card carries an id,
-`stack.card_lookup.removal_of` reads the memory repo's history for the newest
+`stack.cards.lookup.removal_of` reads the memory repo's history for the newest
 commit that deleted a file with that `card_id`. `/go/<card_id>` then
 answers 410 with who removed it, the day and the commit (not its subject,
 which can carry the title), and `stack memory card` says the same to an
@@ -768,7 +768,7 @@ in its image; cards themselves are still found in the wiki's copy.
 Opening a link writes nothing.
 
 The kinds found by id in the vault are listed in `stack.cards`
-(`CARD_ID_FIELDS`); the lookups are in `stack.card_lookup`: `find_card` by
+(`CARD_ID_FIELDS`); the lookups are in `stack.cards.lookup`: `find_card` by
 the id of a kind, `find_by_card_id` by a `card_id` or a former one.
 They scan the frontmatter of a copy of the vault, with no index to go
 stale, and answer None for an id no card carries rather than guessing. Each reader runs it over the copy it reads
@@ -805,16 +805,16 @@ the commit is theirs, with their words in its body (ADR-018 §6).
 
 A refile keeps what people did to the note (ADR-018 §7). The host reads
 the card's history from the local memory, one `git log --follow` of the
-card, a version holding another card's id left out (`card_history`); a
+card, a version holding another card's id left out (`stack.cards.history`); a
 correction in the chat, refiled in the bot runner, which has no clone,
 reads it through Forgejo's API (the commits of the card's path and the
 card at each, `GitMirror.card_history`), so it does not follow a move. The
 same `history_of` reads both.
-Whose commit counts is `stack.card_commits.is_machine`; a person's commit that
+Whose commit counts is `stack.cards.commits.is_machine`; a person's commit that
 carries a source (a filing, a reply, a refile with `--msg`) is a
 correction, read from the sources. From every other person's commit it
 takes the change to the clean version, a message of the card
-conversation, and the change to the fields, as operations (`field_ops`):
+conversation, and the change to the fields, as operations (`stack.cards.fields`):
 `add` and `remove` for a list by set difference, so the model's other
 suggestions still come in, `set` and `unset` for a value. The host sends
 the history to the bot runner with the request (`prior`, the clean

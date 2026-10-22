@@ -60,9 +60,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from card_schema import CardSchemas, VaultValues  # noqa: E402
 
 from lib import REPO_NAME, REPO_OWNER, NoServerName, commit_author, get_ontology  # noqa: E402
-from stack.card_commits import commit_subject  # noqa: E402
-from stack.card_links import with_about_from_fields  # noqa: E402
-from stack.card_lookup import find_by_card_id  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
+from stack.cards.links import with_about_from_fields  # noqa: E402
+from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render, split_body  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.frontmatter import parse, with_field  # noqa: E402

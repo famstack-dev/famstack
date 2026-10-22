@@ -21,9 +21,9 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
-from memory.card_events import TextEdit  # noqa: E402
-from memory.card_history import CardHistory  # noqa: E402
-from memory.note_card import NOTE, Source  # noqa: E402
+from stack.cards.events import TextEdit  # noqa: E402
+from stack.cards.history import CardHistory  # noqa: E402
+from stack.cards.sources import NOTE, Source  # noqa: E402
 from git_mirror import Filed  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
 from vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
