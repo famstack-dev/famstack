@@ -16,6 +16,7 @@ bot-runner as their tools runtime.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
@@ -64,6 +65,32 @@ def dispatch(command: str, *argv: str) -> dict:
     if rc != 0:
         sys.exit(rc)
     return {"ok": True}
+
+
+def dispatch_report(command: str, *argv: str) -> dict:
+    """The same hop, for a command that answers with a JSON report.
+
+    Its progress streams to the terminal as it goes, since it can take
+    minutes of model calls; its stdout is the report, returned as a dict
+    for the caller to render. `{"error": ...}` when there is none.
+    """
+    if not _bot_runner_running():
+        return {"error": f"{BOT_RUNNER_CONTAINER} is not running, bring core up first: stack up core"}
+    cmd = ["docker", "exec", "-i", BOT_RUNNER_CONTAINER,
+           "python", ENTRYPOINT_PATH, command, *argv]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    except FileNotFoundError:
+        return {"error": "docker CLI not found on this host"}
+    except KeyboardInterrupt:
+        sys.exit(130)
+    if result.returncode != 0:
+        return {"error": f"{command} failed (exit {result.returncode}), see above"}
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"error": f"{command} answered without a report"}
+    return report if isinstance(report, dict) else {"error": f"{command} answered without a report"}
 
 
 def dispatch_capture(command: str, *argv: str,

@@ -22,7 +22,7 @@ Commands:
         without reading the room: what the curator runs when a diary
         card was pushed. `--fast` asks no model.
 
-    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>]
+    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>] [--preview <n>]
         Compile the memories room into the family diary. Walks the
         room's full history, transcribes every recording, recovers the
         date each one was made, and publishes month pages under the
@@ -33,7 +33,9 @@ Commands:
         stays cheap because transcripts, readings, and month summaries
         are all kept against the thing they describe, so only what is
         new costs anything. `--force` ignores those and reads
-        everything again, for when the model has improved.
+        everything again, for when the model has improved. `--limit`
+        and `--preview` read part of the room and write nothing;
+        `--preview` prints a JSON report of the newest entries' cards.
 
     lists [--dry-run]
         Move the items ticked before today from every list into its

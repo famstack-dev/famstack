@@ -21,6 +21,11 @@ expensive half is cached rather than repeated: transcripts live in
     stack memory diary --retranscribe       decode all recordings again
                                             (after a whisper config or
                                             vocabulary change)
+    stack memory diary --preview 3          the 3 newest entries' cards, as
+                                            they are on file and as the
+                                            compile makes them now, as JSON
+                                            (the host renders it); writes
+                                            nothing but the reading caches
     stack memory diary --limit 20           only the newest 20 messages,
                                             always a dry run: writes no
                                             card, removes none, publishes
@@ -1190,7 +1195,7 @@ def _household_zone():
 
 # Flags that consume the token after them, so the room can be picked out
 # of the rest without mistaking a flag's value for it.
-_TAKES_A_VALUE = ("--burst-window", "--limit", "--by", "--event", "--text")
+_TAKES_A_VALUE = ("--burst-window", "--limit", "--preview", "--by", "--event", "--text")
 
 
 def _opt(argv: list[str], flag: str, fallback: str) -> str:
@@ -1252,6 +1257,15 @@ async def run(llm, argv: list[str]) -> int:
     if limit and not dry_run:
         _err(f"--limit {limit} reads part of the room: a dry run, nothing is written")
     dry_run = dry_run or bool(limit)
+    try:
+        preview = int(_opt(argv, "--preview", "0"))
+    except ValueError:
+        preview = -1
+    if "--preview" in argv and preview < 1:
+        _err("--preview wants a number of entries")
+        return 2
+    # A preview writes nothing either: its report is the output.
+    dry_run = dry_run or bool(preview)
 
     zone = _household_zone()
     # Pages render in the household language. Selected once per run.
@@ -1286,6 +1300,12 @@ async def run(llm, argv: list[str]) -> int:
             return 1
 
         messages = diary.resolve(events, burst_window_s=window, zone=zone)
+        if preview:
+            messages = _newest(messages, preview)
+        if not messages and preview:
+            await transcriber.aclose()
+            print(json.dumps(_preview_report([], {}, room_id=room_id, bucket=bucket)))
+            return 0
         if not messages:
             # Still publish. The page is where the wiki's diary link
             # lands, and with nothing recorded it carries the note that
@@ -1360,16 +1380,15 @@ async def run(llm, argv: list[str]) -> int:
                                     refers_to=refers_to,
                                     card_roots=diary.card_threads(events))
     _err(f"{len(entries)} diary entr{'y' if len(entries) == 1 else 'ies'}")
+    if preview:
+        newest = sorted(entries, key=lambda e: e.at)[-preview:]
+        readings_cache.save()
+        return await _preview(newest, llm, extractions_cache, bucket=bucket,
+                              room_id=room_id, media=kept)
 
     # ── Cards: one record per entry, in the vault ──
-    ontology, people, people_section, language_code, declared = _vocabulary(bucket)
-    extractions = await _extract_all(
-        entries, llm, extractions_cache, ontology=ontology, people=people, declared=declared,
-        vocabulary=ontology.classifier_prompt_section(language_code),
-        people_section=people_section, language_code=language_code,
-        force=rebuild)
-    cards = [diary_card.to_card(e, x, room_id=room_id, media=kept)
-             for e, x in zip(entries, extractions)]
+    cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
+                             room_id=room_id, media=kept, force=rebuild)
 
     client = _vault_client()
     if client is None:
@@ -1421,6 +1440,104 @@ async def run(llm, argv: list[str]) -> int:
                                  posted=diary.card_threads(events)),
                          ensure_ascii=False))
     return rc or (1 if failed else 0)
+
+
+async def _cards_for(entries, llm, extractions_cache, *, bucket: str, room_id: str,
+                     media: "dict[str, str]", force: bool) -> list:
+    """Each entry's card, with what the model reads out of it."""
+    ontology, people, people_section, language_code, declared = _vocabulary(bucket)
+    extractions = await _extract_all(
+        entries, llm, extractions_cache, ontology=ontology, people=people, declared=declared,
+        vocabulary=ontology.classifier_prompt_section(language_code),
+        people_section=people_section, language_code=language_code,
+        force=force)
+    return [diary_card.to_card(e, x, room_id=room_id, media=media)
+            for e, x in zip(entries, extractions)]
+
+
+# ── A preview ─────────────────────────────────────────────────────────
+#
+# What new prompts do to the cards, shown on a few entries before a
+# compile applies them. The preview reads the newest entries the way the
+# compile would and compares each card it makes with the card on file.
+# It writes nothing; the readings it pays for are kept, so the compile
+# that follows does not pay for them again.
+
+# Entries read before the ones a preview shows, so an entry at the edge
+# still has the half or the photo it continues. Their cards are not shown.
+_PREVIEW_RUN_UP = _OVERLAP
+
+
+def _newest(messages, count: int) -> list:
+    """The newest part of the room, holding its `count` newest entries.
+
+    Counted in messages that can start an entry: a reply or a message in
+    a thread never does, and the archivist's own posts are already gone
+    (`diary.resolve`). A reply in the part whose entry is older than the
+    part is left out: on its own it would read as an entry of its own.
+    """
+    starts = [i for i, m in enumerate(messages) if not (m.reply_to or m.thread_root)]
+    take = count + _PREVIEW_RUN_UP
+    if len(starts) <= take:
+        return list(messages)
+    part = messages[starts[-take]:]
+    inside = {m.event_id for m in part}
+    return [m for m in part if (m.reply_to or m.thread_root or m.event_id) in inside]
+
+
+async def _preview(entries, llm, extractions_cache, *, bucket: str, room_id: str,
+                   media: "dict[str, str]") -> int:
+    """Print each entry's card as it is on file and as the compile makes it now."""
+    cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
+                             room_id=room_id, media=media, force=False)
+    client = _vault_client()
+    if client is None:
+        _err("no Forgejo address or admin credentials here; no cards to compare with")
+        return 1
+    try:
+        tree = _read_diary_tree(client, bucket)
+    except ForgejoError as e:
+        _err(f"could not read the diary records from the vault: {e}")
+        return 1
+    on_file = {p: t for p, (_, t) in tree.items()}
+    print(json.dumps(_preview_report(cards, on_file, room_id=room_id, bucket=bucket),
+                     ensure_ascii=False))
+    return 0
+
+
+def _preview_report(cards, on_file: "dict[str, str]", *, room_id: str, bucket: str) -> dict:
+    """Each card as it is on file (`before`, None for a new entry) and as
+    the compile would write it (`after`), with what the compile does:
+    `new`, `changed`, `unchanged`, or `kept` for a card a person changed."""
+    plan = diary_card.plan(on_file, cards, bucket=bucket, complete=False)
+    by_entry = {}
+    for path, text in on_file.items():
+        by_entry[diary_card.parse(text).entry_id] = text
+    out = []
+    for card in cards:
+        path = diary_card.card_path(card, bucket=bucket)
+        old = by_entry.get(card.entry_id, "")
+        before = diary_card.parse(old) if old else None
+        if path in plan.writes:
+            state, after = ("changed" if before else "new"), diary_card.parse(plan.writes[path])
+        elif before is not None and diary_card.edited_by_hand(old):
+            state, after = "kept", card
+        else:
+            state, after = "unchanged", before or card
+        out.append({"entry_id": card.entry_id, "path": path, "state": state,
+                    "before": _readable(before) if before else None,
+                    "after": _readable(after)})
+    return {"room_id": room_id, "entries": out}
+
+
+def _readable(card) -> dict:
+    """The parts of a card a person reads."""
+    return {"date": card.on.isoformat(), "title": card.title,
+            "description": card.description, "people": card.persons,
+            "topics": [t for t in card.tags if not t.startswith("Person: ")],
+            "summary": card.summary, "facts": card.facts, "quotes": card.quotes,
+            "replies": [f"{who}: {text}" for who, text in card.replies],
+            "words": card.body}
 
 
 def _vocabulary(bucket: str):

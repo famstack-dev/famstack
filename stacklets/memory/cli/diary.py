@@ -11,6 +11,8 @@ from those cards, in the words it was recorded in.
     stack memory diary letters           read a different room
     stack memory diary --burst-window 1  tighten sync-burst detection
     stack memory diary --force           read it all again from scratch
+    stack memory diary --preview 3       the 3 newest entries' cards, as they
+                                         are and as a compile makes them now
     stack memory diary --limit 20        only the newest 20 messages; always
                                          a dry run, it writes and removes
                                          no card and publishes no page
@@ -53,6 +55,17 @@ CARDS ARE THE RECORD
     The words themselves are never rewritten. Transcription and reading
     both run on the AI stacklet configured for this household.
 
+PREVIEW BEFORE A COMPILE
+    `--preview N` reads the N newest entries (people's entries, never the
+    archivist's posts) the way the compile would now, and shows each one's
+    card as it is in the memory and as the compile would write it: title,
+    description, people, topics, summary, facts, quotes and words, with
+    what changed marked - and +. It asks the model once for each entry
+    not read under the current prompts yet. It writes nothing: no card,
+    no commit, no page. It does keep the readings it paid for, so the
+    compile that follows does not pay for them again. With `--json`, both
+    cards of each entry.
+
 Runs inside `stack-core-bot-runner` (it has the whisper client, the LLM
 client, and the brain working copy); this is a thin docker-exec, the
 same shape as `stack memory wiki`.
@@ -64,9 +77,66 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import dispatch  # noqa: E402
+from _common import dispatch, dispatch_report  # noqa: E402
 
 
 def run(args, stacklet, config):
     argv = sys.argv[3:]
-    return dispatch("diary", *argv)
+    if "--preview" not in argv:
+        return dispatch("diary", *argv)
+    report = dispatch_report("diary", *argv)
+    if "error" not in report:
+        print(render_preview(report))
+    return report
+
+
+# ── The preview, for people ───────────────────────────────────────────
+
+# The parts of a card a person reads, in the order the card shows them.
+_FIELDS = ("date", "title", "description", "people", "topics", "summary",
+           "facts", "quotes", "replies", "words")
+_STATES = {
+    "new": "new, no card on file yet",
+    "changed": "changed",
+    "unchanged": "unchanged",
+    "kept": "kept, a person changed this card and the compile leaves it",
+}
+# An unchanged recording can run to pages; one line of it names it.
+_WORDS_SHOWN = 100
+
+
+def render_preview(report: dict) -> str:
+    """The preview's report as text: per entry, each field of the card on
+    file and of the card the compile makes, `-` and `+` where they differ."""
+    entries = report.get("entries") or []
+    lines = [f"The {len(entries)} newest diary entries, read with the current "
+             "prompts. Nothing was written."]
+    for entry in entries:
+        before, after = entry.get("before"), entry["after"]
+        lines += ["", f"{after['date']}  {after['title']}  ({_STATES.get(entry['state'], entry['state'])})",
+                  f"  {entry['path']}"]
+        for field in _FIELDS:
+            lines += _field(field, before.get(field) if before else None, after.get(field))
+    return "\n".join(lines)
+
+
+def _field(name: str, old, new) -> list[str]:
+    """One field: its value once when it stayed, the old and the new when not."""
+    old_lines, new_lines = _as_lines(old), _as_lines(new)
+    if old is not None and old_lines == new_lines:
+        if name == "words" and old_lines:
+            shown = " ".join(old_lines)
+            old_lines = [shown if len(shown) <= _WORDS_SHOWN else shown[:_WORDS_SHOWN] + "..."]
+        marked = [f"  {ln}" for ln in old_lines]
+    else:
+        marked = [f"- {ln}" for ln in old_lines] + [f"+ {ln}" for ln in new_lines]
+    label = f"  {name:<12}"
+    return [(label if i == 0 else " " * len(label)) + ln for i, ln in enumerate(marked)]
+
+
+def _as_lines(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return [ln for ln in str(value).splitlines() if ln.strip()]

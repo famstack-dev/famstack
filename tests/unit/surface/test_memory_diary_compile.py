@@ -126,7 +126,7 @@ class Model:
         self.entries_read: list[str] = []
 
     async def complete(self, role, prompt: str, **_) -> str:
-        if "memories room so their diary can be compiled" in prompt:
+        if prompt.startswith("You are reading a family's private memories room"):
             count = len(re.findall(r"^\[\d+\] ", prompt, re.M))
             return json.dumps({"messages": [{"n": n, "mode": "note"} for n in range(1, count + 1)]})
         if prompt.startswith("You are filing one entry"):
@@ -323,3 +323,60 @@ def test_a_limited_run_writes_no_card_and_publishes_no_page(memory, room, diary,
     assert brain.pages() == pages
     assert "3 entries in the newest 3 messages" in diary.progress
     assert "removes nothing" in diary.progress
+
+
+# ── A preview ────────────────────────────────────────────────────────────
+
+def test_a_preview_shows_the_newest_entries_cards_as_they_are_and_as_they_would_be(
+        memory, room, diary, brain, model):
+    """Given three entries compiled into cards, the archivist's card notices
+    and its daily post as the newest messages in the room, and a release
+    with new card prompts, when the admin runs `stack memory diary
+    --preview 2`, then it shows the two newest people's entries, each with
+    the card on file and the card the new prompts make, asks the model
+    about those two only, and writes nothing.
+
+    This is how an admin sees what new prompts do before a compile
+    applies them. Counting messages instead of entries showed an empty
+    diary: the newest messages in a lived-in room are the archivist's.
+    """
+    lisa = room.says("marge", "Lisa played the saxophone at the school concert.")
+    treehouse = room.says("homer", "We built a treehouse in the backyard.")
+    skateboard = room.says("bart", "I got a skateboard for my birthday.")
+    diary.runs()
+    for entry in (lisa, treehouse, skateboard):
+        room.files_the_card(entry)
+    room.posts_the_day()
+    mark, pages = head(memory), brain.pages()
+    diary.gets_new_prompts()
+    model.entries_read.clear()
+
+    printed = diary.runs("--preview", "2")
+
+    assert [(e["before"]["title"], e["after"]["title"], e["state"])
+            for e in diary.answer["entries"]] == [
+        ("We built a treehouse in the backyard", "We built a", "changed"),
+        ("I got a skateboard for my birthday", "I got a", "changed")]
+    assert "We built a treehouse in the backyard" in printed
+    assert "I got a skateboard for my birthday" in printed
+    assert "Lisa" not in printed
+    assert model.entries_read == ["We built a treehouse in the backyard.",
+                                  "I got a skateboard for my birthday."]
+    assert commits_since(memory, mark) == []
+    assert brain.pages() == pages
+
+
+def test_a_preview_with_nothing_changed_shows_the_cards_unchanged(memory, room, diary, model):
+    """Given two entries compiled into cards and nothing changed since,
+    when the admin previews them, then both show as unchanged and the
+    model is not asked again: the compile's readings are reused."""
+    room.says("marge", "Lisa played the saxophone at the school concert.")
+    room.says("homer", "We built a treehouse in the backyard.")
+    diary.runs()
+    model.entries_read.clear()
+
+    printed = diary.runs("--preview", "2")
+
+    assert [e["state"] for e in diary.answer["entries"]] == ["unchanged", "unchanged"]
+    assert printed.count("unchanged") == 2
+    assert model.entries_read == []
