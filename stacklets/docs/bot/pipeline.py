@@ -871,7 +871,7 @@ class Classifier:
         correction on a line of its own after who wrote it
         (`memory.note_card.corrections_of`). The answer is
         ``{"clean": <text>, "prompt_template": <hash>}``: the text as the
-        model wrote it, unchecked (`clean_words.kept_corrected` checks it),
+        model wrote it, unchecked (`clean_words.kept_rebuilt` checks it),
         and the hash of the prompt's skeleton for the card's sidecar.
         ``{}`` when the model answered no JSON object; transport failures
         raise as in `classify_capture`.

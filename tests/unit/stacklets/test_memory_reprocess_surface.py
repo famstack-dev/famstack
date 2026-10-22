@@ -406,7 +406,7 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
     corrected. Then the capture prompt reads that text as if it were the
     note, so the title, the tags and the persons are taken from the text
     the card shows and cannot contradict it. The corrected text is checked
-    like any clean version, and also for every value a correction gives.
+    by the rule of the first filing, less what a correction replaced.
     A note without a correction is one call, as before."""
 
     CORRECTED = ("For the trip: Homer calls the hotel about the late check-in. "
@@ -466,14 +466,31 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
         assert "200" in result["clean_rejected"]
         assert dropped not in result["proposed"]["file"]
 
-    def test_a_corrected_text_without_the_value_the_correction_gives_is_refused(self, stack, httpserver):
-        """Given "budget is 250 now", when the corrected text still says 200,
-        then it did not take the correction and is not filed."""
-        unchanged = self.CORRECTED.replace("250", "200")
-        result, _ = self._refile(stack, httpserver, {"clean": unchanged}, self.CLASSIFIED)
+    def test_two_corrections_of_one_value_file_the_later_one(self, stack, httpserver):
+        """Given a note whose budget Marge corrected to 250 in a reply, when
+        Homer corrects it to 300 and the model answers 300, then that text
+        is filed. Why: the check once required every value a correction
+        gave, so it asked for Marge's 250 and refused the right answer; the
+        later correction wins, and a value it replaced is not required."""
+        card, sidecar = _note(
+            "note-26933f6ef8", "Trip to Itchy & Scratchy Land", "For the trip: budget at most 200.",
+            TRIP_WORDS, {"role": "original", "person": "marge", "time": "2026-10-20T08:00:00+00:00",
+                         "channel": "chat", "kind": "text", "id": "$trip:simpson"})
+        reply = {"role": "reply", "person": "marge", "time": "2026-10-20T09:00:00+00:00",
+                 "channel": "chat", "kind": "text", "id": "$r1:simpson"}
+        card = card.rstrip("\n") + "\n\n> budget is 250 now\n"
+        sidecar = json.dumps({**json.loads(sidecar), "sources": [
+            json.loads(sidecar)["sources"][0], reply]}, indent=2) + "\n"
+        stck, _ = stack({TRIP: card, TRIP_SIDE: sidecar})
+        at_300 = self.CORRECTED.replace("250", "300")
+        model = _Model(httpserver, {"clean": at_300}, self.CLASSIFIED)
 
-        assert "250" in result["clean_rejected"]
-        assert unchanged not in result["proposed"]["file"]
+        result = _reprocess(stck, "note-26933f6ef8", "--msg", "no, the budget is 300", "--by", "homer")
+
+        assert "error" not in result, result
+        assert "Marge: budget is 250 now\nHomer: no, the budget is 300" in model.prompts[0]
+        assert result["clean_rejected"] == ""
+        assert at_300 in _interpretation(result["proposed"]["file"])
 
     def test_without_a_correction_the_model_is_asked_once(self, stack, httpserver):
         clean = self.CORRECTED.replace("250", "200")

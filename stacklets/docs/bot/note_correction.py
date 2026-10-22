@@ -16,7 +16,7 @@ shows. Asked of the capture prompt along with all of those, in one call,
 the model kept the old point and appended the correction as a point of
 its own (`tests/e2e/eval/correction_fold.py` measures this prompt alone).
 What it answers is checked in code before it is filed
-(`clean_words.kept_corrected`).
+(`clean_words.kept_rebuilt`).
 
     prompt = build_correction_prompt(words="budget max 200",
                                      corrections="Marge: budget is 250 now")

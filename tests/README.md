@@ -175,8 +175,8 @@ with one or two corrections each, built into the correction prompt by the
 real `correct_note` call the refile makes (the capture prompt that reads
 its answer is not asked), and checked in code: the corrected value stands
 where the old one was, the old one is gone, nothing restates the
-correction, and the filing guard (`clean_words.correction_problems`)
-finds nothing lost and every corrected value there. It needs only a model
+correction, and the filing check (`clean_words.rebuild_problems`)
+finds nothing lost. It needs only a model
 server, no rig and no `./stack`, and it is a script, so pytest never
 collects it.
 
