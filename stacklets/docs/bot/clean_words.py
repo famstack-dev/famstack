@@ -20,9 +20,10 @@ rule). A clean version that fails is not filed; the card shows the words
 alone, and the log says what was lost.
 
 A note refiled with corrections gets its clean version from a prompt of
-its own (`note_correction`), and that text must also take every
-correction: each value a correction gives that the note does not hold is
-in it (`kept_corrected`, by the rule of `correction_problems`).
+its own (`note_correction`), checked by the same rule, cut down to it
+(`kept_rebuilt`): every number and name of the words is in the rebuilt
+clean version, unless a correction replaced it. Beyond that a rebuild is
+not refused for its wording (ADR-018 §7).
 
     >>> kept("ok budget max 200, ask Homer", "Budget: at most 200. Ask Homer.")
     ('Budget: at most 200. Ask Homer.', '')
@@ -97,40 +98,54 @@ def kept(words: str, clean: str, *, corrections: str = "") -> tuple[str, str]:
     return ("", "; ".join(found)) if found else (clean, "")
 
 
-def kept_corrected(words: str, clean: str, *, corrections: str) -> tuple[str, str]:
-    """The corrected clean version to file for `words`, and why there is none.
+def kept_rebuilt(words: str, clean: str, *, events: str) -> tuple[str, str]:
+    """The rebuilt clean version to file for `words`, and why there is none.
 
-    ``clean`` is what the correction prompt answered for the note and
-    ``corrections``. It is refused when it is empty, since that prompt has
-    no "needs no change" to answer, and when it fails
-    `correction_problems`; otherwise as `kept`.
+    ``clean`` is what the correction prompt answered; ``events`` what the
+    corrections say, one per line. It is refused when it is empty, since the
+    conversation has no "needs no change" to answer, or when it fails
+    `rebuild_problems`; otherwise as `kept`.
 
-        >>> kept_corrected("budget max 200", "Budget: at most 200.",
-        ...                corrections="Marge: budget is 250 now")
-        ('', 'missing 250')
+        >>> kept_rebuilt("budget max 200", "Budget: at most 300.",
+        ...              events="budget is 250\\nno, 300")
+        ('Budget: at most 300.', '')
+        >>> kept_rebuilt("budget max 200, ask Homer", "Budget: at most 250.",
+        ...              events="budget is 250")
+        ('', 'lost Homer')
     """
     clean = (clean or "").strip()
     if not clean:
         return "", "is empty"
-    found = correction_problems(words, clean, corrections=corrections)
-    return ("", "; ".join(found)) if found else kept(words, clean, corrections=corrections)
+    if _STRUCTURE.search(clean):
+        return "", "has a heading or a quote, which the card's own would take it for"
+    found = rebuild_problems(words, clean, events=events)
+    if found:
+        return "", "; ".join(found)
+    return ("", "") if same_words(words, clean) else (clean, "")
 
 
-def correction_problems(words: str, clean: str, *, corrections: str) -> list[str]:
-    """What a corrected clean version lost, added, or did not take.
+def rebuild_problems(words: str, clean: str, *, events: str) -> list[str]:
+    """What a rebuilt clean version lost of `words`, or added to them.
 
-    `problems`, and every number and capitalised name a correction gives
-    that the words do not hold is in the clean version, named as
-    `missing <value>` when it is not. Who wrote a correction opens its
-    line, so it is never taken for a value it gives. A name the words
-    hold in shorthand ("thu" for "Thursday") is the note's own, so a
-    correction that names it as the old value ("Friday, not Thursday")
-    does not ask for it.
+    The rule of the first filing (`problems`), less what the events
+    replaced: a number or name of the words that is not in the clean
+    version is lost, unless an event mentions it (an edit names the line
+    it changed; "5, not 4"), or the events give a new value of its kind,
+    number for number and name for name, that the clean version carries
+    ("the budget is 250 now"). Several events may change one value in
+    turn, so no value an event gives is required, and none stands in for
+    just one lost value. A number of the clean version that neither the
+    words nor the events hold is added.
     """
-    given = [*(n for n in dict.fromkeys(_numbers(corrections)) if not _has(words, n)),
-             *(n for n in dict.fromkeys(_names(corrections)) if not _shorthand_in(words, n))]
-    return [*problems(words, clean, corrections=corrections),
-            *(f"missing {v}" for v in given if not _has(clean, v))]
+    gives_number = any(_has(clean, n) and not _has(words, n) for n in _numbers(events))
+    gives_name = any(_has(clean, n) and not _has(words, n) for n in _names(events))
+    lost = [*(n for n in dict.fromkeys(_numbers(words))
+              if not gives_number and not _has(clean, n) and not _has(events, n)),
+            *(n for n in dict.fromkeys(_names(words))
+              if not gives_name and not _has(clean, n) and not _has(events, n))]
+    added = [n for n in dict.fromkeys(_numbers(clean))
+             if not _has(words, n) and not _has(events, n)]
+    return [*(f"lost {t}" for t in lost), *(f"added {n}" for n in added)]
 
 
 def same_words(words: str, clean: str) -> bool:
@@ -209,14 +224,6 @@ def _has(text: str, token: str) -> bool:
     edge = r"(?<!\d)" if token.isdigit() else r"(?<!\w)"
     tail = r"(?!\d)" if token.isdigit() else r"(?!\w)"
     return re.search(edge + re.escape(token) + tail, text, re.IGNORECASE) is not None
-
-
-def _shorthand_in(text: str, name: str) -> bool:
-    """Whether `text` holds `name`, written out or cut short to its first
-    three letters or more."""
-    folded = name.casefold()
-    return _has(text, name) or any(
-        len(w) >= 3 and folded.startswith(w.casefold()) for w in _WORD.findall(text))
 
 
 def _letters(text: str) -> str:

@@ -19,9 +19,8 @@ on the clean version the model answers:
   correction restated;
 - every old value is gone;
 - a list has as many items as the corrected note should;
-- nothing else is lost or added, and every value a correction gives is
-  there, by the guard the pipeline files with
-  (`clean_words.correction_problems`).
+- nothing else is lost or added, by the check the pipeline files with
+  (`clean_words.rebuild_problems`).
 
 The prompt is built by the real code: `Classifier.correct_note` with the
 note's words and the corrections, the call the refile makes
@@ -203,7 +202,7 @@ def failures(case: Case, clean: str) -> list[str]:
         if count != case.items:
             found.append(f"{count} items, want {case.items}")
     found += [f"guard: {p}" for p in
-              clean_words.correction_problems(case.words, clean, corrections=case.hint)]
+              clean_words.rebuild_problems(case.words, clean, events=case.hint)]
     return found
 
 

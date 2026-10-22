@@ -34,7 +34,7 @@ from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from git_mirror import code_commit
 from notifier import Notifier
-from clean_words import is_cleanable, kept, kept_corrected
+from clean_words import is_cleanable, kept, kept_rebuilt
 from own_words import in_own_words
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -1069,7 +1069,7 @@ class CapturePipeline:
 
         The model writes it from the note's words and the corrections alone
         (`Classifier.correct_note`); the code then checks it
-        (`clean_words.kept_corrected`). No answer, from a model that is down
+        (`clean_words.kept_rebuilt`). No answer, from a model that is down
         or not configured, is refused as an empty one.
         """
         answer: dict = {}
@@ -1078,7 +1078,7 @@ class CapturePipeline:
                 answer = await self._classifier.correct_note(words=words, corrections=corrections)
             except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
                 logger.warning("[archivist] correcting a note failed: {}", e)
-        clean, why = kept_corrected(words, str(answer.get("clean") or ""), corrections=corrections)
+        clean, why = kept_rebuilt(words, str(answer.get("clean") or ""), events=corrections)
         return clean or None, why, str(answer.get("prompt_template") or "")
 
     async def _classify(

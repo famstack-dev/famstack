@@ -632,7 +632,8 @@ changes with the template's wording or the branch it took; with
 writer's own words that is refiled with corrections (replies, or
 `--msg`) is made in two calls: the correction prompt writes the clean
 version from the original's words and the corrections, checked in code
-like any clean version and for every value a correction gives, and the
+by the first filing's rule, less what a correction replaced
+(`clean_words.kept_rebuilt`), and the
 capture prompt reads that text as the note for the title, tags and
 persons. Quote n belongs to
 `sources[n]`. Filing, a correction in the chat and `write_card` write both

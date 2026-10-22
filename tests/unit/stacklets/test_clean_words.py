@@ -14,7 +14,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_corrected  # noqa: E402
+from clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_rebuilt  # noqa: E402
 
 MESSY = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
          "bart forgot his swimsuit AGAIN buy one at the mall b4 sat, also lisa wants "
@@ -114,40 +114,42 @@ class TestWhichNotesAreCleaned:
         assert not is_cleanable("  \n")
 
 
-class TestACorrectedTextTakesEveryCorrection:
-    """A note refiled with corrections gets a corrected text from a prompt
-    of its own (`kept_corrected`). It is checked by the clean version's
-    rule, and for every value a correction gives that the note does not
-    hold: a text without it did not take the correction."""
+class TestARebuiltTextKeepsTheNoteLessWhatWasReplaced:
+    """A note with corrections is rebuilt from them (`kept_rebuilt`,
+    ADR-018 §7). It is checked by the first
+    filing's rule, every number and name of the words is kept, less what
+    an event replaced; beyond that it is not refused for its wording. The
+    events are given as what they say, without who said it
+    (one per line)."""
 
-    def test_the_correction_worked_in_passes(self):
-        assert kept_corrected("budget max 200", "Budget: at most 250.",
-                              corrections="Marge: budget is 250 now") == ("Budget: at most 250.", "")
+    def test_a_new_value_in_place_of_the_old_passes(self):
+        assert kept_rebuilt("budget max 200", "Budget: at most 250.",
+                            events="budget is 250 now") == ("Budget: at most 250.", "")
 
-    def test_one_that_kept_the_old_value_is_refused(self):
-        clean, why = kept_corrected("budget max 200", "Budget: at most 200.",
-                                    corrections="Marge: budget is 250 now")
-        assert clean == "" and "250" in why
+    def test_of_two_corrections_of_one_value_the_later_one_passes(self):
+        """The earlier correction's 250 is not asked for: the later one replaced it."""
+        assert kept_rebuilt("budget max 200", "Budget: at most 300.",
+                            events="budget is 250 now\nno, 300") == ("Budget: at most 300.", "")
 
-    def test_a_name_the_correction_gives_must_be_in_it(self):
-        clean, why = kept_corrected("lenny brings the pizza", "Lenny brings the pizza.",
-                                    corrections="Homer: no, Carl brings it")
-        assert clean == "" and "Carl" in why
+    def test_one_that_kept_the_old_value_is_not_refused_for_it(self):
+        """Whether it took the correction is the benchmark's to watch, not the check's."""
+        assert kept_rebuilt("budget max 200", "Budget: at most 200.",
+                            events="budget is 250 now")[1] == ""
 
     def test_one_that_lost_what_nobody_corrected_is_refused(self):
-        clean, why = kept_corrected("12 kids, cake from Lard Lad", "15 kids.",
-                                    corrections="Marge: 15 kids now, not 12")
+        clean, why = kept_rebuilt("12 kids, cake from Lard Lad", "15 kids.",
+                                  events="15 kids now, not 12")
         assert clean == "" and "Lard" in why
 
+    def test_a_value_an_edit_replaced_is_not_asked_for(self):
+        assert kept_rebuilt("bring 3 sleeping bags, leave at 4", "Bring 4 sleeping bags. Leave at 4.",
+                            events="Bring 3 sleeping bags.\nBring 4 sleeping bags.")[1] == ""
+
+    def test_a_number_nobody_gave_is_refused(self):
+        clean, why = kept_rebuilt("budget max 200", "Budget: at most 250, plus 40 for gas.",
+                                  events="budget is 250 now")
+        assert clean == "" and "added 40" in why
+
     def test_an_empty_answer_is_refused(self):
-        clean, why = kept_corrected("budget max 200", "", corrections="Marge: 250")
+        clean, why = kept_rebuilt("budget max 200", "", events="250")
         assert clean == "" and why
-
-    def test_who_wrote_a_correction_is_not_a_value_it_gives(self):
-        assert kept_corrected("packing: towels", "Packing:\n- Towels\n- Fishing rods",
-                              corrections="Homer: and the fishing rods")[1] == ""
-
-    def test_the_old_value_a_correction_names_is_not_asked_for(self):
-        """"Friday, not Thursday" names the old day, which the note wrote as "thu"."""
-        assert kept_corrected("homer calls the hotel thu", "Homer calls the hotel on Friday.",
-                              corrections="Marge: it is Friday, not Thursday")[1] == ""
