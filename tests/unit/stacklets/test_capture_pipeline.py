@@ -23,6 +23,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 from capture_pipeline import CapturePipeline  # noqa: E402
 from memory.card_events import TextEdit  # noqa: E402
 from memory.card_history import CardHistory  # noqa: E402
+from memory.note_card import NOTE, Source  # noqa: E402
 from git_mirror import Filed  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
 from vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
@@ -1725,6 +1726,29 @@ class TestACorrectedNoteIsRefiledFromItsWords:
             reply_text="it is Friday, not Thursday", history=CardHistory(edits=(edit,)))
         assert classifier.saw_rebuild[1] == tidy
         assert classifier.saw_rebuild[2] == [edit.message(), "Marge: it is Friday, not Thursday"]
+
+    @pytest.mark.asyncio
+    async def test_a_reply_puts_a_hand_edited_quote_back_and_reads_the_edit_as_a_note(self):
+        """A reply in the chat refiles a note by the rule `stack memory
+        reprocess` follows (ADR-018 §4): the quote Lisa edited by hand, as
+        the card's history shows it, goes back to the words as sent, and her
+        words are her note, a correction before the reply."""
+        edited = "Homer calls the hotel on Thursday, budget max 200"
+        mirror = FakeMirror()
+        classifier = FakeClassifier(payload=dict(self.ANSWER), corrected=self.CORRECTED)
+        mirror._stored = {self.PATH: _old_note(
+            "Trip", edited, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
+        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
+                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
+            reply_text="it is Friday, not Thursday",
+            history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
+        assert [(s.role, s.person, s.words) for s in mirror.captures[-1]["sources"]] == [
+            ("original", "marge", self.WORDS), ("note", "lisa", edited),
+            ("reply", "marge", "it is Friday, not Thursday")]
+        assert classifier.saw_correction == (
+            self.WORDS, f"Lisa: {edited}\nMarge: it is Friday, not Thursday")
 
     @pytest.mark.asyncio
     async def test_the_classifier_reads_the_corrected_text_as_the_note(self):

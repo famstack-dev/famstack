@@ -6,7 +6,8 @@ model is, refiles the note through the archivist's own pipeline, and
 hands back the file it would write instead of writing it:
 
     echo '{"path": "...", "text": "...", "sidecar": "...", "msg": "", "by": "",
-           "prior": "...", "edits": [...], "ops": [...]}' | python cli_entrypoint.py reprocess-note
+           "prior": "...", "edits": [...], "ops": [...],
+           "quotes_as_sent": {...}, "quote_edits": [...]}' | python cli_entrypoint.py reprocess-note
     {"proposed": "---\\ntype: note\\n...", "proposed_sidecar": "{...}", "title": "...",
      "clean_rejected": "", "sources": [{"role": "original", "person": "marge", ...}, ...]}
     {"refused": "the note keeps no words of its own to refile it from", "sources": [...]}
@@ -23,8 +24,12 @@ edit a person made to it, and each field edit. A note a person edited is
 rebuilt as a card conversation from that clean version, and the field
 edits are applied again to the card (ADR-018 §7); `left_out` names the
 ones that no longer fit. Without them (a request with no `prior`) the
-history is not read here: the bot runner leaves that to the host. `by`
-is who asked for the refile either way, and the sidecar's
+history is not read here: the bot runner leaves that to the host.
+`quotes_as_sent` and `quote_edits` are a person's hand edits of a quote,
+which are their correction (ADR-018 §4): the quote is put back to the
+words as sent, keyed by source id, and each edit is appended as their
+`note` source (a sidecar entry with its quote) before the replies the
+chat adds. `by` is who asked for the refile either way, and the sidecar's
 `made.requested_by` names them. `sources` is that list as
 `memory.note_card.note_sources` gives it, each with its quote, so what is
 shown is what the model read.
@@ -62,7 +67,7 @@ from memory.card_history import CardHistory  # noqa: E402
 from memory.field_ops import op_from_json  # noqa: E402
 from memory.note_card import (  # noqa: E402
     ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources, note_sources, read_sidecar,
-    sidecar_path,
+    sidecar_path, source_from,
 )
 
 
@@ -144,14 +149,18 @@ class _AnsweredClassifier:
 
 
 def _history(request: dict) -> CardHistory | None:
-    """The card's history as the host read it (`prior`, `edits`, `ops`); None
-    for a request without one."""
+    """The card's history as the host read it (`prior`, `edits`, `ops`,
+    `quotes_as_sent`, `quote_edits`); None for a request without one."""
     if request.get("prior") is None:
         return None
     return CardHistory(
         prior=str(request["prior"]),
         edits=tuple(edit_from_json(e) for e in request.get("edits") or [] if isinstance(e, dict)),
-        ops=tuple(op_from_json(o) for o in request.get("ops") or [] if isinstance(o, dict)))
+        ops=tuple(op_from_json(o) for o in request.get("ops") or [] if isinstance(o, dict)),
+        quotes_as_sent=tuple((str(i), str(q))
+                             for i, q in (request.get("quotes_as_sent") or {}).items()),
+        quote_edits=tuple(source_from(s, str(s.get("quote") or ""))
+                          for s in request.get("quote_edits") or [] if isinstance(s, dict)))
 
 
 def _refusal(sources: list[Source]) -> str:
@@ -190,7 +199,9 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
     original = next((s for s in held if s.role == ORIGINAL), None)
     chat = await read_note_thread(original.id if original else "")
     sources = note_sources(text, sidecar, chat=chat.message if chat else None,
-                           thread=chat.replies if chat else (), msg=msg, by=by)
+                           thread=chat.replies if chat else (), msg=msg, by=by,
+                           quotes_as_sent=history.quotes_as_sent if history else (),
+                           quote_edits=history.quote_edits if history else ())
     shown = [s.shown() for s in sources]
     if refused := _refusal(sources):
         print(json.dumps({"refused": refused, "sources": shown}))

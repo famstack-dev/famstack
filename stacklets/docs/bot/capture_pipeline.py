@@ -70,7 +70,7 @@ from memory.card_history import CardHistory  # noqa: E402
 from memory.field_ops import FieldOp  # noqa: E402
 from memory.note_card import (  # noqa: E402
     NOTE, ORIGINAL, PROMPT_RESIDUE, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
-    new_id, now, read_sidecar, sidecar_path, words_of,
+    new_id, now, read_sidecar, sidecar_path, with_quote_edits, words_of,
 )
 
 try:
@@ -744,8 +744,11 @@ class CapturePipeline:
         """Refile a note from its sources, as it would be filed today.
 
         The sources are the card's and its sidecar's (`memory.note_card`),
-        an old-format note read as the migration converts it, with the
-        reply appended unless the note holds it already. The classifier
+        an old-format note read as the migration converts it, with a
+        person's hand edits of a quote undone and appended as their notes
+        (`with_quote_edits`, from the history), then the reply unless the
+        note holds it already. Sources a caller gathered (`stack memory
+        reprocess`, through `note_sources`) have that done. The classifier
         reads the original's words, the replies and notes as corrections,
         a photo from the media store, never the summary. A note whose
         words are typed or spoken is refiled as a clean version of them
@@ -756,6 +759,8 @@ class CapturePipeline:
         (`GitMirror.capture_entry`), so a reply in the chat keeps a tag
         somebody added in the card editor.
         """
+        if history is None:
+            history = await self._mirror.card_history(vault_path, str(meta.get("card_id") or ""))
         if sources is None:
             side = await self._mirror.read_capture(sidecar_path(vault_path))
             try:
@@ -763,6 +768,8 @@ class CapturePipeline:
             except SourcesMismatch as e:
                 logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
                 return CaptureOutcome(status="capture_missing")
+            if history is not None:
+                sources = with_quote_edits(sources, history.quotes_as_sent, history.quote_edits)
             if reply.quote and (reply.person, reply.words) not in {
                     (s.person, s.words) for s in sources}:
                 sources = [*sources, reply]
@@ -772,8 +779,6 @@ class CapturePipeline:
         words = words_of(sources)
         clean_words = original.kind in ("text", "voice") and is_cleanable(words)
         corrections = corrections_of(sources)
-        if history is None:
-            history = await self._mirror.card_history(vault_path, str(meta.get("card_id") or ""))
         rebuild = _rebuild_of(original, sources, history=history) if clean_words else None
         found_topic = topic_of(vault_path)
         return await self._publish(

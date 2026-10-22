@@ -84,6 +84,30 @@ def test_a_bots_rebuild_and_a_migration_are_no_ones_edit():
     assert history.prior == CLEAN.replace("We leave", "Leave"), "nothing happened: the card as it is"
 
 
+def test_a_quote_a_bot_wrote_is_no_ones_correction():
+    """A transcribe step replaces the quote of its own source (ADR-018 §4):
+    the machine's words as sent, not a person's correction of them."""
+    transcribed = _card(CLEAN).replace(f"> {WORDS}", "> bring three sleeping bags, we leave at four")
+    history = history_of([FILED, _version(1, transcribed, author="memory-bot",
+                                          subject="transcribe: Camping")])
+
+    assert (history.quotes_as_sent, history.quote_edits) == ((), ())
+
+
+def test_a_quote_the_machine_wrote_again_after_a_persons_edit_is_not_put_back():
+    """Marge corrected the quote, then a better transcriber wrote it again.
+    Her edit is still her note, and the newer words as sent stay: putting
+    the older ones back would undo the transcriber."""
+    edited = _card(CLEAN).replace(f"> {WORDS}", "> bring 4 sleeping bags, we leave at 4")
+    transcribed = _card(CLEAN).replace(f"> {WORDS}", "> bring three sleeping bags, we leave at four")
+    history = history_of([FILED, _version(1, edited, author="marge", subject="Update camping.md"),
+                          _version(2, transcribed, author="memory-bot", subject="transcribe: Camping")])
+
+    assert history.quotes_as_sent == ()
+    assert [(e.person, e.words) for e in history.quote_edits] == [
+        ("marge", "bring 4 sleeping bags, we leave at 4")]
+
+
 def test_a_tag_a_person_removed_stays_removed_and_the_models_others_come_in():
     proposed = _card(CLEAN, tags=("camping", "tent", "outdoors"))
     ops = [FieldOp("marge", "t", "remove", "tags", "camping")]

@@ -35,7 +35,7 @@ import datetime as _dt
 import json
 import re
 import secrets
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 
 from stack.card_lookup import SIDECAR_SUFFIX
@@ -416,8 +416,9 @@ def _trimmed(lines: list[str]) -> str:
 # chat holds that they do not: replies in the message's thread nobody
 # filed, read where a Matrix token is (the bot runner) and handed in as
 # Matrix events. Sources are only appended (ADR-018 §4), so the chat never
-# replaces a quote. A correction given with the refile comes last, as a
-# `note`.
+# replaces a quote. A person's hand edit of a quote is undone and kept as
+# their `note` (`with_quote_edits`). A correction given with the refile
+# comes last, as a `note`.
 
 # The quote of the replied-to message a client puts above a reply's words.
 _REPLY_FALLBACK = re.compile(r"\A(?:>[^\n]*\n)+\n?")
@@ -433,10 +434,13 @@ def card_sources(card_text: str, sidecar: dict | None) -> list[Source]:
 
 def note_sources(card_text: str, sidecar: dict | None = None, *, chat: dict | None = None,
                  thread: Sequence[dict] = (), msg: str = "", by: str = "",
-                 at: str = "") -> list[Source]:
+                 at: str = "", quotes_as_sent: Iterable[tuple[str, str]] = (),
+                 quote_edits: Sequence[Source] = ()) -> list[Source]:
     """What a refile of the note reads, in order.
 
-    The card's sources, then each reply in the chat `thread` they do not
+    The card's sources, with a person's hand edits of their quotes undone
+    and appended as that person's notes (`with_quote_edits`, from the
+    card's history), then each reply in the chat `thread` they do not
     hold yet (bots left out), then `msg`, a correction `by` somebody at
     `at`. `chat` is the message the note was sent as.
 
@@ -452,7 +456,7 @@ def note_sources(card_text: str, sidecar: dict | None = None, *, chat: dict | No
         sources = note_sources(card, sidecar, thread=events, msg="it is Friday", by="marge")
         words_of(sources), corrections_of(sources)
     """
-    sources = card_sources(card_text, sidecar)
+    sources = with_quote_edits(card_sources(card_text, sidecar), quotes_as_sent, quote_edits)
     original = next((s for s in sources if s.role == ORIGINAL), None)
     from_chat = _chat_source(chat, ORIGINAL) if chat else None
     if from_chat is not None and from_chat.kind != "voice":
@@ -474,6 +478,30 @@ def note_sources(card_text: str, sidecar: dict | None = None, *, chat: dict | No
         sources.append(Source(NOTE, _person(by) or UNKNOWN, at or now(), "cli", "text",
                               new_id("cli"), quote=msg.strip()))
     return sources
+
+
+def with_quote_edits(sources: Sequence[Source], quotes_as_sent: Iterable[tuple[str, str]],
+                     quote_edits: Sequence[Source]) -> list[Source]:
+    """`sources` with each quote a person edited by hand put back, and their edits appended.
+
+    A quote holds the words as sent (ADR-018 §4), so a hand edit of one
+    is the person's correction, not new words of the sender's.
+    `quotes_as_sent` pairs a source id with the quote to put back;
+    `quote_edits` are the edits as `note` sources (`card_history`). An
+    edit is appended unless a note by the same person with the same words
+    is there already: a refile that was applied holds it, and the card's
+    history still shows the edit to every later refile.
+
+        with_quote_edits(sources, (("$cast:simpson", "haybart the cast comes off"),),
+                         (Source(NOTE, "marge", "…", "cards", "text", "cards:…",
+                                 quote="Hey Bart, the cast comes off"),))
+    """
+    as_sent = dict(quotes_as_sent)
+    kept = [replace(s, quote=as_sent[s.id]) if s.id in as_sent else s for s in sources]
+    for edit in quote_edits:
+        if not any(s.role == NOTE and (s.person, s.words) == (edit.person, edit.words) for s in kept):
+            kept.append(edit)
+    return kept
 
 
 def words_of(sources: Sequence[Source]) -> str:

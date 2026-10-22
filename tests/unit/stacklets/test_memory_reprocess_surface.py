@@ -500,3 +500,87 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
         assert TRIP_WORDS in model.prompts[0]
         assert clean in _interpretation(result["proposed"]["file"])
         assert "correction_template" not in json.loads(result["proposed"]["sidecar"])["made"]
+
+
+# ── A hand edit of a quote is a correction ────────────────────────────────
+
+CAST = "homer/notes/2026/10/cast-4c1d2e.md"
+CAST_SIDE = CAST.removesuffix(".md") + ".json"
+CAST_ID = "note-4c1d2e8a7b"
+CAST_WORDS = "haybart the cast comes off on march 3rd"
+CAST_EDITED = "Hey Bart, the cast comes off on March 3rd"
+CAST_ORIGINAL = {"role": "original", "person": "homer", "time": "2026-10-20T08:00:00+00:00",
+                 "channel": "chat", "kind": "text", "id": "$cast:simpson"}
+CAST_CARD, CAST_SIDECAR = _note(CAST_ID, "Bart's cast comes off", "Hey Bart, the cast comes off on March 3rd.",
+                                CAST_WORDS, CAST_ORIGINAL)
+
+
+class TestAHandEditOfAQuoteIsACorrection:
+    """A quote under `## Sources` holds the words as sent (ADR-018 §4). A
+    person who edits one by hand, in Forgejo's editor or a clone, corrects
+    the note: the next refile puts the quote back to the words as sent and
+    keeps what they changed it to as a `note` source of theirs, read by the
+    model as a correction like one given with `--msg`. Otherwise their edit
+    would become the "original" every later rebuild reads."""
+
+    CORRECTED = {"clean": "Hey Bart, the cast comes off on March 3rd."}
+    CLASSIFIED = {"title": "Bart's cast comes off", "tags": ["health"], "persons": ["Bart"]}
+
+    def _edited(self, stack, card: str):
+        """The cast note as Homer filed it, then `card` as Marge saved it in Forgejo's editor."""
+        stck, memory = stack({CAST: CAST_CARD, CAST_SIDE: CAST_SIDECAR})
+        memory.change(CAST, card, f"Update {CAST}", author="marge")
+        memory.pull()
+        return stck, memory
+
+    def test_the_quote_goes_back_to_the_words_as_sent_and_her_words_become_her_note(
+            self, stack, httpserver):
+        """Given Homer's note and Marge's hand edit of its quote, when the
+        note is refiled, then the card quotes Homer's words as sent, then
+        Marge's words whole as a `note` source of hers, timed by her
+        commit, and the model reads her words as a correction of his."""
+        stck, memory = self._edited(stack, CAST_CARD.replace(f"> {CAST_WORDS}", f"> {CAST_EDITED}"))
+        edited_at = memory.log("-1", "--format=%aI")
+        model = _Model(httpserver, self.CORRECTED, self.CLASSIFIED)
+
+        result = _reprocess(stck, CAST_ID)
+
+        assert "error" not in result, result
+        assert f"## Sources\n\n> {CAST_WORDS}\n\n> {CAST_EDITED}\n" in result["proposed"]["file"]
+        original, note = json.loads(result["proposed"]["sidecar"])["sources"]
+        assert original == CAST_ORIGINAL
+        assert note.pop("id").startswith("cards:")
+        assert note == {"role": "note", "person": "marge", "time": edited_at,
+                        "channel": "cards", "kind": "text"}
+        assert CAST_WORDS in model.prompts[0]
+        assert f"Marge: {CAST_EDITED}" in model.prompts[0]
+
+    def test_a_second_refile_keeps_her_note_once_and_the_words_as_sent(self, stack, httpserver):
+        """Given that refile applied, when the note is refiled again, then
+        the card still holds Homer's words and Marge's one note. Why: her
+        edit stays in the card's history, and every later refile reads it
+        there again."""
+        stck, _ = self._edited(stack, CAST_CARD.replace(f"> {CAST_WORDS}", f"> {CAST_EDITED}"))
+        _Model(httpserver, self.CORRECTED, self.CLASSIFIED, self.CORRECTED, self.CLASSIFIED)
+        first = _reprocess(stck, CAST_ID)
+        assert _reprocess(stck, "--apply", first["proposal_id"]).get("ok")
+
+        again = _reprocess(stck, CAST_ID)
+
+        assert "error" not in again, again
+        assert f"## Sources\n\n> {CAST_WORDS}\n\n> {CAST_EDITED}\n" in again["proposed"]["file"]
+        sources = json.loads(again["proposed"]["sidecar"])["sources"]
+        assert sources == json.loads(first["proposed"]["sidecar"])["sources"], "her note, kept as it was"
+
+    def test_an_edit_above_the_sources_corrects_no_quote(self, stack, httpserver):
+        """Given Marge's hand edit of the clean version alone, when the note
+        is refiled, then its sources are the ones Homer's filing left."""
+        stck, _ = self._edited(stack, CAST_CARD.replace("on March 3rd.", "on Monday, March 3rd."))
+        _Model(httpserver, {"clean": "Hey Bart, the cast comes off on Monday, March 3rd."},
+               self.CLASSIFIED)
+
+        result = _reprocess(stck, CAST_ID)
+
+        assert "error" not in result, result
+        assert json.loads(result["proposed"]["sidecar"])["sources"] == [CAST_ORIGINAL]
+        assert result["proposed"]["file"].endswith(f"## Sources\n\n> {CAST_WORDS}\n")
