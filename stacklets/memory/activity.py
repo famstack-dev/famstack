@@ -13,6 +13,9 @@ and from the `Migration:` trailer a migration puts on its commit. The
 words a page shows for a kind are the page's (core's dashboard); this
 module only names it.
 
+Whether a change is a person's or the machine's is decided here, from
+the author, the committer and the kind together (`is_machine`).
+
 Pure apart from the git command line it builds: no I/O here.
 """
 
@@ -25,7 +28,7 @@ from stack.card_lookup import SIDECAR_SUFFIX
 # One commit per record, its fields apart, the trailers a kind reads last.
 # `%aI` is the author time with its offset: the moment the change was made.
 _RECORD, _FIELD, _TRAILER = "\x1e", "\x1f", "\x1d"
-LOG_FORMAT = (f"{_RECORD}%h{_FIELD}%aI{_FIELD}%an{_FIELD}%s{_FIELD}"
+LOG_FORMAT = (f"{_RECORD}%h{_FIELD}%aI{_FIELD}%an{_FIELD}%cn{_FIELD}%s{_FIELD}"
               f"%(trailers:key=Migration,key=Requested-By,separator={_TRAILER})")
 
 # The subject prefixes the memory's writers use, by the kind of change.
@@ -49,8 +52,15 @@ _KINDS = {
 # a command: `stack memory write`, `stack memory list`.
 _CHORE = "chore("
 # The framework names every bot account `<slug>-bot`; `stackadmin` is the
-# install's own account (`cli/history.py`, the same rule).
+# install's own account. `stack memory history` reads this same rule.
 _ADMIN = "stackadmin"
+# What a bot commits on its own while naming a person as author, because
+# the records it rewrites are theirs: by committing account, the kinds
+# nobody asked for. The memory bot's `update:` is the diary compile
+# writing entries again from the room. Every other commit a bot writes
+# with a person as author carries that person's change (a filing, a
+# reply, a card edit, a refile with their correction).
+_REBUILDS = {"memory-bot": frozenset({"updated"})}
 
 
 @dataclass(frozen=True)
@@ -60,6 +70,7 @@ class Commit:
     sha: str
     at: str
     who: str
+    committer: str
     subject: str
     trailers: dict[str, str] = field(default_factory=dict)
     files: tuple[str, ...] = ()
@@ -70,7 +81,7 @@ class Commit:
 
     @property
     def machine(self) -> bool:
-        return is_machine(self.who)
+        return is_machine(self.who, self.committer, self.kind)
 
 
 def log_command(repo: str, commits: int) -> list[str]:
@@ -83,8 +94,8 @@ def parse_log(out: str) -> list[Commit]:
     commits = []
     for block in out.split(_RECORD)[1:]:
         head, _, files = block.partition("\n")
-        sha, at, who, subject, trailers = (head.split(_FIELD) + [""] * 5)[:5]
-        commits.append(Commit(sha, at, who, subject, _trailers(trailers),
+        sha, at, who, committer, subject, trailers = (head.split(_FIELD) + [""] * 6)[:6]
+        commits.append(Commit(sha, at, who, committer, subject, _trailers(trailers),
                               tuple(f for f in files.splitlines() if f.strip())))
     return commits
 
@@ -107,9 +118,29 @@ def kind_of(subject: str, trailers: dict[str, str]) -> str:
     return _KINDS.get(prefix.strip(), "changed") if colon else "changed"
 
 
-def is_machine(author: str) -> bool:
-    """True for a bot or the admin account, rather than a person."""
-    name = (author or "").strip().lower()
+def is_machine(author: str, committer: str = "", kind: str = "") -> bool:
+    """True for a change no person made, false for a person's.
+
+    The author is the person a change is by or for, the committer the
+    account that wrote it (ADR-015). A change is the machine's when its
+    author is a bot or the admin account, or when a bot committed it as
+    one of its own rebuilds (`_REBUILDS`). Before bots committed as
+    themselves, the committer was the author, so an older commit reads
+    by its author alone, as it always did.
+
+    >>> is_machine("marge", "archivist-bot", "filed")
+    False
+    >>> is_machine("marge", "memory-bot", "updated")
+    True
+    >>> is_machine("marge", "marge", "updated")
+    False
+    """
+    return _is_account(author) or kind in _REBUILDS.get((committer or "").strip().lower(), ())
+
+
+def _is_account(name: str) -> bool:
+    """A bot or the admin account, rather than a person."""
+    name = (name or "").strip().lower()
     return name.endswith("-bot") or name == _ADMIN
 
 

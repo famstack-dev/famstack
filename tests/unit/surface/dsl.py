@@ -96,19 +96,27 @@ class Memory:
         return cls(repo)
 
     def changes(self, subject: str, *, by: str, at: datetime, files: dict[str, str],
-                trailers: tuple[str, ...] = ()) -> None:
+                trailers: tuple[str, ...] = (), committed_by: str = "") -> None:
         """One commit by `by`, made at `at`, writing `files` (path to text),
-        its message ending in `trailers` (`Migration: memory/0002`)."""
+        its message ending in `trailers` (`Migration: memory/0002`).
+
+        `committed_by` is the account that wrote it when that is not `by`:
+        a bot writing a change by or for a person (ADR-015). Left out, the
+        commit is `by`'s own, as every commit was before bots committed as
+        themselves."""
         for path, text in files.items():
             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_text(text, encoding="utf-8")
         message = subject + ("\n\n" + "\n".join(trailers) if trailers else "")
         when = at.isoformat()
+        committer = committed_by or by
         subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "-c", f"user.name={by}",
                         "-c", f"user.email={by}@springfield.example", "commit", "-q", "-m", message],
                        check=True, env={**os.environ, "GIT_AUTHOR_DATE": when,
-                                        "GIT_COMMITTER_DATE": when})
+                                        "GIT_COMMITTER_DATE": when,
+                                        "GIT_COMMITTER_NAME": committer,
+                                        "GIT_COMMITTER_EMAIL": f"{committer}@springfield.example"})
 
     def __fspath__(self) -> str:
         return str(self.repo)
@@ -254,22 +262,24 @@ class Browser:
     `listener` is the port the request arrives on (`access.PUBLIC_PORT` is
     the one published to the network), `host` what the address bar says:
     `localhost:42000` on this Mac, the Mac's LAN address on a phone.
+    `language` is the one the browser asks for first (`de` for German).
     """
 
-    def __init__(self, app, *, listener: int, host: str):
+    def __init__(self, app, *, listener: int, host: str, language: str = "en"):
         from fastapi.testclient import TestClient
 
         self.client = TestClient(app, base_url=f"http://testserver:{listener}")
         self.host = host
+        self.language = language
 
     def opens(self, path: str) -> Page:
-        r = self.client.get(path, headers={"host": self.host, "accept-language": "en"},
+        r = self.client.get(path, headers={"host": self.host, "accept-language": self.language},
                             follow_redirects=False)
         return Page(r.status_code, r.headers.get("content-type", ""), r.text)
 
     def reads(self, path: str) -> tuple[int, dict]:
         """The JSON a page's script reads from `path`, with its status."""
-        r = self.client.get(path, headers={"host": self.host, "accept-language": "en"})
+        r = self.client.get(path, headers={"host": self.host, "accept-language": self.language})
         return r.status_code, r.json()
 
 

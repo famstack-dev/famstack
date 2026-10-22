@@ -23,9 +23,12 @@ WHOSE CHANGES COUNT
     answered with `chore: test cleanup t-bfdaba49` and a rename by
     archivist-bot, which is true and useless.
 
-    Filtered by *author*, never by what the commit says. Who wrote a commit
-    is a field git records; the wording of a subject is a convention that has
-    already changed twice in this repo and will change again.
+    Filtered by who, from the fields git records: the author, the person a
+    change is by or for, and the committer, the account that wrote it
+    (ADR-015). The rule is the memory's one (`activity.is_machine`), the one
+    the dashboard words its activity by: a change by a bot or the admin, or
+    a rebuild a bot committed on its own with a person as author, such as
+    the diary compile writing her entries again.
 
     And filtered by naming the machinery, not by naming the family. A roster
     of known people reads better but fails the wrong way: a member whose
@@ -64,6 +67,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from activity import LOG_FORMAT, Commit, parse_log  # noqa: E402
 from lib import vault_path_for  # noqa: E402
 
 HELP = "Show what changed in the family's memory, and when"
@@ -73,10 +77,9 @@ _USAGE = ("usage: stack memory history [<topic-or-person>] [--item <text>] "
           "  e.g. stack memory history camping --since \"last week\"\n"
           "       stack memory history --item Kuehlbox")
 
-# Tab-separated so the fields survive text that contains spaces, which every
-# one of these fields does.
-_FORMAT = "--format=%ad%x09%an%x09%s"
-_SEP = "\t"
+# The memory's own reading of a commit (`activity.py`): who it is by, who
+# wrote it, its subject and the trailers its kind reads.
+_FORMAT = f"--format={LOG_FORMAT}"
 
 _DEFAULT_LIMIT = 10
 
@@ -84,16 +87,6 @@ _DEFAULT_LIMIT = 10
 # Bounded so a huge vault is never read whole, generous so a long run of bot
 # commits cannot crowd the people out of the answer.
 _MAX_SCAN = 2000
-
-# The framework names every bot account `<slug>-bot` (see `agent_handle` in
-# lib/stack/stack.py); `stackadmin` is the install's own account.
-_ADMIN = "stackadmin"
-
-
-def _is_machinery(author: str) -> bool:
-    """True for a bot or admin account, rather than a member of the family."""
-    name = (author or "").strip().lower()
-    return name.endswith("-bot") or name == _ADMIN
 
 
 def run(args, stacklet, config):
@@ -130,8 +123,7 @@ def _recent(vault, paths, *, actor, since, skip_bots, limit, scope):
     # Git can select an author but not reject one, so the machinery is
     # dropped here. Reading a bounded window rather than `-n limit` keeps a
     # run of bot commits from eating the whole answer.
-    argv = ["log", _FORMAT, "--date=short",
-            f"-n{_MAX_SCAN if skip_bots else limit}"]
+    argv = ["log", _FORMAT, f"-n{_MAX_SCAN if skip_bots else limit}"]
     if actor:
         argv += [f"--author={actor}"]
     if since:
@@ -140,17 +132,17 @@ def _recent(vault, paths, *, actor, since, skip_bots, limit, scope):
 
     rows = _rows(_git(vault, *argv))
     if skip_bots:
-        rows = [row for row in rows if not _is_machinery(row[1])]
+        rows = [row for row in rows if not row.machine]
     rows = rows[:limit]
     if not rows:
         return _nothing(scope, actor, since)
 
     where = f" in {scope}" if scope else ""
     print(f"{len(rows)} recent change{'s' if len(rows) != 1 else ''}{where}:")
-    for date, who, subject in rows:
-        print(f"  {date}  {who:<8} {subject}")
+    for c in rows:
+        print(f"  {_day(c)}  {c.who:<8} {c.subject}")
     return {"ok": True, "changes": [
-        {"date": d, "by": w, "what": s} for d, w, s in rows]}
+        {"date": _day(c), "by": c.who, "what": c.subject} for c in rows]}
 
 
 def _when_added(vault, item, paths):
@@ -172,18 +164,17 @@ def _when_added(vault, item, paths):
     touched" unanswerable here, and a number that is right only when nobody
     reorganised the page is worse than no number at all.
     """
-    argv = ["log", _FORMAT, "--date=short", "--reverse",
-            f"-G{re.escape(item)}"]
+    argv = ["log", _FORMAT, "--reverse", f"-G{re.escape(item)}"]
     argv += _pathspec(paths)
 
     rows = _rows(_git(vault, *argv))
     if not rows:
         return {"error": f"nothing in the vault's history mentions {item!r}"}
 
-    date, who, subject = rows[0]
-    print(f'"{item}" first appeared {date}, by {who}')
-    print(f"  {subject}")
-    return {"ok": True, "item": item, "added": date, "by": who}
+    first = rows[0]
+    print(f'"{item}" first appeared {_day(first)}, by {first.who}')
+    print(f"  {first.subject}")
+    return {"ok": True, "item": item, "added": _day(first), "by": first.who}
 
 
 def _nothing(scope, actor, since):
@@ -233,14 +224,14 @@ def _git(vault: Path, *argv) -> str:
     return done.stdout if done.returncode == 0 else ""
 
 
-def _rows(out: str):
-    """The log's tab-separated lines, minus the ones we cannot read."""
-    rows = []
-    for line in (out or "").splitlines():
-        parts = line.split(_SEP, 2)
-        if len(parts) == 3:
-            rows.append(tuple(p.strip() for p in parts))
-    return rows
+def _rows(out: str) -> list[Commit]:
+    """The log's commits, minus the ones we cannot read."""
+    return [c for c in parse_log(out or "") if c.at and c.who]
+
+
+def _day(commit: Commit) -> str:
+    """The day a change was made, in the time zone it was made in."""
+    return commit.at[:10]
 
 
 # ── argv ─────────────────────────────────────────────────────────────────
