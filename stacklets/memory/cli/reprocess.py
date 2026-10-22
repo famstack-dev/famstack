@@ -27,8 +27,8 @@ PREVIEW, THEN APPLY
     The refile reads the note's sources (ADR-018), never its summary: the
     ones the card keeps, then replies in its message's thread the card does
     not hold yet. `--msg` is a correction, appended as a `note` source by
-    `--by`, so the next refile reads it again, and the commit carries it
-    with `Correction: stack memory reprocess`.
+    `--by`, so the next refile reads it again; the commit is theirs, with
+    their words in its body.
 
 A PERSON'S EDITS ARE KEPT
     A note somebody edited by hand is rebuilt as a card conversation
@@ -354,13 +354,12 @@ def commit_message(proposal: Proposal) -> str:
     """`reprocess: <title>`, the commit it replaces, and who asked or what they said.
 
     A refile is derived and may be redone: the memory bot's commit, naming
-    who asked for it. One that carries a correction is a person's change,
-    and says so (ADR-015).
+    who asked for it. One that carries a correction is a person's change:
+    their commit, their words in the body (ADR-018 §6).
     """
     lines = [f"reprocess: {proposal.title}", ""]
     if proposal.msg:
-        lines += [proposal.msg, "", "Correction: stack memory reprocess",
-                  f"Replaces: {proposal.replaces}"]
+        lines += [proposal.msg, "", f"Replaces: {proposal.replaces}"]
     else:
         lines += [f"Replaces: {proposal.replaces}", f"Requested-By: {proposal.by}"]
     return "\n".join(lines) + "\n"

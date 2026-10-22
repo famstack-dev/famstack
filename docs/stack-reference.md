@@ -674,10 +674,9 @@ applies the change, checks the fields against the type's JSON Schema
 (`stacklets/memory/schemas/cards/`), derives the meta block's `**About**`
 links from `persons` and the title heading from `title`, and commits with
 the memory bot's token, the person as author. The subject is `edit:
-<title>`, the body names each changed field with its new value, and the
-`Edit:` trailer is the merge patch actually applied to the fields, so a
-regenerate can apply it again (ADR-015). A change that changes nothing
-makes no commit.
+<title>` and the body names each changed field with its new value; a
+rebuild reads the change back from the card's history, as it reads a
+hand edit (ADR-018 §7). A change that changes nothing makes no commit.
 
 A person changes fields, with `PATCH`, and nothing else. `PUT` is the
 reprocess apply: the memory bot puts the card it derived from its source
@@ -795,7 +794,7 @@ and the sidecar's `made.requested_by` names the same person: `--by
 <person>`, or `admin` (the admin at the terminal) when none is given.
 `--msg "<text>" --by <person>` is a correction: the refile reads it with
 the replies, the sidecar keeps it as a `note` source by that person, and
-the commit is theirs, with `Correction: stack memory reprocess` (ADR-015).
+the commit is theirs, with their words in its body (ADR-018 §6).
 
 A refile keeps what people did to the note (ADR-018 §7). The host reads
 the card's history from the local memory, one `git log --follow` of the

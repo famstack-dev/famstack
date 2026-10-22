@@ -252,7 +252,7 @@ class TestAnApplyCommitsWhatWasPreviewed:
         _run(memory, "--apply", proposal["proposal_id"])
         assert memory.log("--format=%an", "-1") == "homer"
         body = memory.log("--format=%b", "-1")
-        assert "it is Friday" in body and "Correction: stack memory reprocess" in body
+        assert "it is Friday" in body
 
     def test_a_note_in_the_older_format_gets_its_sidecar(self, tmp_path, monkeypatch):
         memory = _memory(tmp_path, monkeypatch, {PATH: OLD_NOTE})
