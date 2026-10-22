@@ -67,25 +67,19 @@ def test_one_commit_creates_updates_and_deletes_with_the_persons_name(httpserver
                                         "path": "family/diary/c.md", "sha": "c1"}
 
 
-def test_the_committer_is_the_account_the_client_writes_as_not_the_author(httpserver):
-    """Given an admin client acting as the memory bot, when it commits a
-    change of Marge's, then Marge is the author and the memory bot, as
-    Forgejo reports the account the client signs in as, the committer.
+def test_a_named_committer_needs_no_account(httpserver):
+    """Given an admin client that names the memory bot as committer, when
+    it commits a change of Marge's, then Marge is the author and the
+    memory bot the committer, and Forgejo is never asked who the client
+    is: the memory bot has no Forgejo account, only a name in its commits.
 
     Forgejo records an author it is given alone as committer too
     (`GetAuthorAndCommitterUsers`), so the committer is always named.
     """
-    def me(request):
-        from werkzeug import Response
-        login = request.headers.get("Sudo") or "admin"
-        return Response(json.dumps({"login": login, "email": f"{login}@local"}),
-                        content_type="application/json")
-
-    httpserver.expect_request("/api/v1/user", method="GET").respond_with_handler(me)
     httpserver.expect_request("/api/v1/repos/family/memory/contents",
                               method="POST").respond_with_json({}, status=201)
 
-    client = _client(httpserver, sudo="memory-bot")
+    client = _client(httpserver, committer=("memory-bot", "memory-bot@local"))
     for n in (1, 2):
         client.change_files("family", "memory", [FileChange("create", f"{n}.md", content="x")],
                             message="m", author_name="marge", author_email="marge@simpson")
@@ -94,7 +88,7 @@ def test_the_committer_is_the_account_the_client_writes_as_not_the_author(httpse
     assert [(b["author"], b["committer"]) for b in posts] == [
         ({"name": "marge", "email": "marge@simpson"},
          {"name": "memory-bot", "email": "memory-bot@local"})] * 2
-    assert sum(1 for r, _ in httpserver.log if r.path == "/api/v1/user") == 1
+    assert not any(r.path == "/api/v1/user" for r, _ in httpserver.log)
 
 
 def test_a_file_changed_since_it_was_read_fails_the_whole_commit(httpserver):

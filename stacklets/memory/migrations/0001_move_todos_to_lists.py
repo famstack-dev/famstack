@@ -10,8 +10,7 @@ reads again. Undo: revert the commit in family/memory.
 
 from __future__ import annotations
 
-from lib import host_code_url, move_todos_to_lists
-from stack.forgejo import ForgejoClient
+from lib import host_code_url, memory_forgejo, move_todos_to_lists
 from stack.vault import DEFAULT_SHARED_BUCKET
 
 REPO = "family/memory"
@@ -24,7 +23,7 @@ def run(ctx):
         raise RuntimeError("no Forgejo address or memory write token on file")
     bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
     moved, commit = move_todos_to_lists(
-        ForgejoClient(url=code_url, token=token), shared_bucket=bucket,
+        memory_forgejo(code_url, token=token), shared_bucket=bucket,
         language=ctx.env.get("LANGUAGE", ""), trailer=ctx.trailer)
     if moved:
         ctx.step(f"Memory: moved the todo lists of {', '.join(moved)} to {bucket}/lists/")

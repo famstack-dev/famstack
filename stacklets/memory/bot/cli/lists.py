@@ -42,7 +42,7 @@ from stack.lists import (  # noqa: E402
     stamp_ticks,
 )
 
-from memory.lib import BOT_EMAIL, BOT_USERNAME, REPO_NAME, REPO_OWNER  # noqa: E402
+from memory.lib import BOT_EMAIL, BOT_USERNAME, REPO_NAME, REPO_OWNER, memory_forgejo  # noqa: E402
 
 
 def _err(msg: str) -> None:
@@ -113,9 +113,8 @@ def _client() -> ForgejoClient | None:
     password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (url and user and password):
         return None
-    # Writes as the memory bot, whose work the archive is.
-    return ForgejoClient(url=url, admin_user=user, admin_password=password, timeout=60,
-                         sudo=BOT_USERNAME)
+    # The memory bot's commits, whose work the archive is.
+    return memory_forgejo(url, admin_user=user, admin_password=password, timeout=60)
 
 
 def _today() -> str:

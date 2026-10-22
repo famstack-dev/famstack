@@ -94,7 +94,7 @@ import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 from stack.ai.language import LANGUAGES, language_code  # noqa: E402
-from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
+from stack.forgejo import FileChange, ForgejoError  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
 from stack.briefing import is_short_text  # noqa: E402
@@ -112,6 +112,7 @@ from memory.lib import (  # noqa: E402
     commit_author,
     get_ontology,
     load_persons_from_vault,
+    memory_forgejo,
     persons_prompt_section,
     request_mirror,
 )
@@ -1109,15 +1110,14 @@ _COMMIT_BATCH = 100
 
 def _vault_client():
     """Forgejo with the admin's credentials, which the bot runner and the
-    curator both hold, writing as the memory bot: the compile is its work,
-    whoever's entries it writes."""
+    curator both hold, committing as the memory bot: the compile is its
+    work, whoever's entries it writes."""
     url = os.environ.get("CODE_URL", "").rstrip("/")
     user = os.environ.get("MATRIX_ADMIN_USER", "")
     password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (url and user and password):
         return None
-    return ForgejoClient(url=url, admin_user=user, admin_password=password,
-                         timeout=60, sudo=BOT_USERNAME)
+    return memory_forgejo(url, admin_user=user, admin_password=password, timeout=60)
 
 
 def _blob_sha(data: bytes) -> str:

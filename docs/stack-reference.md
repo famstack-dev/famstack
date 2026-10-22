@@ -866,10 +866,13 @@ sidecar that carries another `card_id`, and writes both in one commit
 author) only while each is at the hash it was read at; otherwise nothing
 is written (`"moved": True` in the answer, the `changed` refusal here).
 
-Every commit `ForgejoClient` writes names its committer: the account the
-client signs in as, which it asks Forgejo for once (`GET /user`). The
-author is the person a change is by or for, when the caller names one
-(ADR-015). An admin client given `sudo=<account>` writes as that account.
+Every commit `ForgejoClient` writes names its committer: the client's
+`committer` (a name and an address, no account needed) when it has one,
+else the account the client signs in as, which it asks Forgejo for once
+(`GET /user`). The author is the person a change is by or for, when the
+caller names one (ADR-015). The memory bot has no Forgejo account: the
+memory stacklet writes with the admin's token through `memory_forgejo`,
+which names the memory bot as committer.
 
 ### Backup
 

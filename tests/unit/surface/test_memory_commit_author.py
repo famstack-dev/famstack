@@ -371,6 +371,29 @@ def test_the_diary_compile_commits_as_the_memory_bot_with_the_sender_as_author(m
     assert memory.committers() == [MEMORY_BOT] * 2
 
 
+# A shopping list with apples ticked off on a day that is over.
+SHOPPING = {"ontology.toml": ONTOLOGY, "family/lists/einkaufsliste.md": (
+    "---\ntype: list\ncard_id: list-einkaufsliste\ntitle: Einkaufsliste\nsections:\n  - Obst\n---\n\n"
+    "## Obst\n- [x] Äpfel ✅ 2026-10-11\n- [ ] Birnen\n")}
+
+
+@pytest.mark.parametrize("memory", [SHOPPING], indirect=True)
+def test_the_list_archive_commits_as_the_memory_bot(memory, diary):
+    """Given apples ticked off a list on a day that is over, when the
+    nightly list archive runs, then it moves them in one commit, authored
+    and committed by the memory bot, whose work the archive is.
+
+    The memory bot has no Forgejo account: the archive writes with the
+    admin's credentials and names the memory bot as the committer.
+    """
+    lists = importlib.import_module("memory_bot_cli.lists")
+
+    assert asyncio.run(lists.run(None, [])) == 0
+    assert memory.new_commits() == [commit(by="memory-bot",
+                                           saying="lists: archive 1 item(s) that are over")]
+    assert memory.committers() == [MEMORY_BOT]
+
+
 @pytest.mark.parametrize("memory", [HAND_WRITTEN], indirect=True)
 def test_a_migration_is_the_memory_bots_as_author_and_as_committer(memory, simpson, httpserver):
     """Given a correspondent's file written by hand in the shape from before

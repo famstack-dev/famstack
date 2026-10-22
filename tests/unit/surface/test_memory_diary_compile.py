@@ -523,3 +523,38 @@ def as_before_the_update(memory: Memory) -> None:
     memory._git("add", "-A")
     memory._git("-c", "user.name=memory-bot", "-c", "user.email=memory-bot@local",
                 "commit", "-q", "--allow-empty", "-m", "cards as an older release wrote them")
+
+
+def test_the_first_compile_after_an_update_reads_the_cards_where_the_bot_account_is_missing(
+        memory, room, diary, model, httpserver, tmp_path):
+    """Given cards an older release wrote, on an instance whose Forgejo has
+    no `memory-bot` account (so anything asked as it, through the `Sudo`
+    header, is not found), when the diary compiles after the update, then
+    it finds every card on file and writes none.
+
+    The compile writes as the memory bot, but reading names nobody. Read
+    as the bot there, the memory looked empty and every card new: the
+    test instance planned to write all 47 again.
+    """
+    room.says("marge", LISA)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    as_before_the_update(memory)
+    (tmp_path / "diary-state" / "extractions.json").unlink()
+    mark = head(memory)
+    model.entries_read.clear()
+    the_memory_bot_account_is_gone(httpserver)
+
+    diary.runs("--dry-run")
+
+    assert "cards: 0 to write, 0 to remove" in diary.progress
+    assert model.entries_read == []
+    assert commits_since(memory, mark) == []
+
+
+def the_memory_bot_account_is_gone(httpserver) -> None:
+    """Forgejo without the memory bot's account: what is asked as it is not found.
+    Ahead of the other handlers, as Forgejo checks the account first."""
+    httpserver.expect_request(re.compile(r"^/api/v1/repos/.+"), headers={"Sudo": "memory-bot"}) \
+        .respond_with_json({"message": "user does not exist [uid: 0, name: memory-bot]"}, status=404)
+    httpserver.handlers.insert(0, httpserver.handlers.pop())
