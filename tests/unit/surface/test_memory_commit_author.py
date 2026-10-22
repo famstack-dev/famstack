@@ -39,6 +39,7 @@ import importlib
 import importlib.util
 import json
 import sys
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -351,7 +352,7 @@ def test_without_a_server_name_a_persons_change_is_refused_and_says_where_it_com
 
 def test_the_diary_compile_commits_as_the_memory_bot_with_the_sender_as_author(memory, diary):
     """Given two of Marge's memos the diary compile filed, when it compiles
-    them again with a new summary, then the update is authored by Marge,
+    them again after Homer answered both, then the update is authored by Marge,
     whose entries they are, and committed by the memory bot, which wrote
     them on its own.
 
@@ -360,8 +361,9 @@ def test_the_diary_compile_commits_as_the_memory_bot_with_the_sender_as_author(m
     from a person's change by that.
     """
     diary.writes([marges_entry(1, "Lisa plays."), marges_entry(2, "Lisa plays.")])
-    diary.writes([marges_entry(1, "Lisa plays the saxophone."),
-                  marges_entry(2, "Lisa plays the saxophone.")])
+    answered = [("homer", "Proud of her.")]
+    diary.writes([replace(marges_entry(1, "Lisa plays the saxophone."), replies=answered),
+                  replace(marges_entry(2, "Lisa plays the saxophone."), replies=answered)])
 
     assert memory.new_commits() == [commit(by="marge", saying="learn: 2 diary entries"),
                                     commit(by="marge", saying="update: 2 diary entries")]

@@ -201,7 +201,8 @@ class TestADiaryCardKeepsItsId:
         vault = _vault(cards)
         before = parse_frontmatter(vault[diary_card.card_path(cards[0], bucket=BUCKET)])["card_id"]
         moved = replace(cards[0], on=date(2026, 3, 1), confidence="corrected")
-        plan = diary_card.plan(vault, [moved, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = diary_card.plan(vault, [moved, *cards[1:]], bucket=BUCKET, complete=True,
+                               rebuild=True)
         after = plan.writes[diary_card.card_path(moved, bucket=BUCKET)]
         assert parse_frontmatter(after)["card_id"] == before
 
@@ -307,11 +308,17 @@ class TestAPersonsEditWins:
         assert "Tuesday, 17 March" in page
         assert "Principal Seymour Skinner called" in page
 
-    def test_a_moved_date_moves_the_card_the_compiler_owns(self):
+    def test_a_moved_date_moves_the_card_the_compiler_owns_on_a_rebuild(self):
+        """The date comes from the model's reading of the room. A new
+        reading of an unchanged entry rewrites no card until the admin
+        asks for a rebuild, and then the card moves to its new day."""
         cards = _cards(_compile())
         moved = replace(cards[0], on=date(2026, 1, 2))
-        plan = diary_card.plan(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True)
+        plain = diary_card.plan(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = diary_card.plan(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True,
+                               rebuild=True)
 
+        assert plain.writes == {} and plain.deletes == []
         assert plan.deletes == [diary_card.card_path(cards[0], bucket=BUCKET)]
         assert list(plan.writes) == [diary_card.card_path(moved, bucket=BUCKET)]
 

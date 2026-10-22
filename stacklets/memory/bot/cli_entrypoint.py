@@ -22,7 +22,7 @@ Commands:
         without reading the room: what the curator runs when a diary
         card was pushed. `--fast` asks no model.
 
-    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>] [--preview <n>]
+    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>] [--preview <n>] [--rebuild]
         Compile the memories room into the family diary. Walks the
         room's full history, transcribes every recording, recovers the
         date each one was made, and publishes month pages under the
@@ -32,8 +32,10 @@ Commands:
         arriving tonight can belong to an entry from years back. It
         stays cheap because transcripts, readings, and month summaries
         are all kept against the thing they describe, so only what is
-        new costs anything. `--force` ignores those and reads
-        everything again, for when the model has improved. `--limit`
+        new costs anything. A card is written again only when its
+        entry changed; `--rebuild` writes every card under the current
+        prompts. `--force` ignores every cache and reads everything
+        again, for when the model has improved. `--limit`
         and `--preview` read part of the room and write nothing;
         `--preview` prints a JSON report of the newest entries' cards.
 

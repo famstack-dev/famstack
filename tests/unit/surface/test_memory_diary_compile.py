@@ -357,6 +357,7 @@ def test_a_preview_shows_the_newest_entries_cards_as_they_are_and_as_they_would_
             for e in diary.answer["entries"]] == [
         ("We built a treehouse in the backyard", "We built a", "changed"),
         ("I got a skateboard for my birthday", "I got a", "changed")]
+    assert [e["next_compile"] for e in diary.answer["entries"]] == ["keeps", "keeps"]
     assert "We built a treehouse in the backyard" in printed
     assert "I got a skateboard for my birthday" in printed
     assert "Lisa" not in printed
@@ -380,3 +381,145 @@ def test_a_preview_with_nothing_changed_shows_the_cards_unchanged(memory, room, 
     assert [e["state"] for e in diary.answer["entries"]] == ["unchanged", "unchanged"]
     assert printed.count("unchanged") == 2
     assert model.entries_read == []
+
+
+# ── The model never rewrites a card on its own ───────────────────────────
+
+LISA = "Lisa played the saxophone at the school concert."
+TREEHOUSE = "We built a treehouse in the backyard."
+SKATEBOARD = "I got a skateboard for my birthday."
+
+
+def test_after_new_prompts_a_compile_reads_only_the_new_entry_and_rewrites_no_card(
+        memory, room, diary, model):
+    """Given three entries compiled into cards and a release with new card
+    prompts, when a new entry arrives and the diary compiles, then the
+    model reads the new entry only, only its card is written, and the run
+    says how many cards were made under older prompts and how to rebuild
+    them.
+
+    A card is what the family reads and corrects. New prompts are a
+    reason to offer a rebuild, not to rewrite a family's diary overnight.
+    """
+    room.says("marge", LISA)
+    room.says("homer", TREEHOUSE)
+    room.says("bart", SKATEBOARD)
+    diary.runs()
+    mark = head(memory)
+    diary.gets_new_prompts()
+    model.entries_read.clear()
+    room.says("marge", "Maggie said her first word today.")
+
+    diary.runs()
+
+    assert model.entries_read == ["Maggie said her first word today."]
+    assert commits_since(memory, mark) == ["learn: Maggie said her"]
+    assert cards(memory)[TREEHOUSE] == "We built a treehouse in the backyard"
+    assert "3 cards were made under older prompts" in diary.progress
+    assert "--rebuild" in diary.progress
+
+
+def test_a_new_topic_rewrites_no_card(memory, room, diary, model, vault):
+    """Given an entry about a treehouse compiled into a card, when the
+    family adds the topic "Treehouse" and the diary compiles, then no card
+    is written and the model is not asked.
+
+    The topics and the people are what the model is offered, not what an
+    entry says. A new one changes no entry."""
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    mark = head(memory)
+    model.entries_read.clear()
+    with (vault / "ontology.toml").open("a", encoding="utf-8") as f:
+        f.write('\n[topic.treehouse]\nnames = { de = "Baumhaus", en = "Treehouse" }\n')
+
+    diary.runs()
+
+    assert commits_since(memory, mark) == []
+    assert model.entries_read == []
+
+
+def test_a_rebuild_brings_the_cards_made_under_older_prompts_up_to_date(memory, room, diary, model):
+    """Given two cards made under older prompts, when the admin runs `stack
+    memory diary --rebuild`, then both are read again and rewritten under
+    the current prompts; a second rebuild asks the model nothing and
+    writes nothing."""
+    room.says("marge", LISA)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    diary.gets_new_prompts()
+    diary.runs()
+    mark = head(memory)
+    model.entries_read.clear()
+
+    diary.runs("--rebuild")
+    rebuilt = commits_since(memory, mark)
+    read = list(model.entries_read)
+    mark = head(memory)
+    model.entries_read.clear()
+    diary.runs("--rebuild")
+
+    assert sorted(rebuilt) == ["update: Lisa played the", "update: We built a"]
+    assert read == [LISA, TREEHOUSE]
+    assert cards(memory) == {LISA: "Lisa played the", TREEHOUSE: "We built a"}
+    assert commits_since(memory, mark) == []
+    assert model.entries_read == []
+
+
+def test_a_new_reply_rebuilds_the_entry_it_answers_and_no_other(memory, room, diary, model):
+    """Given two entries compiled into cards and new card prompts since,
+    when Homer answers Marge's entry, then the compile reads that entry
+    again, with his reply, and rewrites its card only.
+
+    A reply is part of the entry, so the entry changed and its card
+    follows. The other card was made from an entry that did not change."""
+    lisa = room.says("marge", LISA)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    mark = head(memory)
+    diary.gets_new_prompts()
+    model.entries_read.clear()
+    room.answers("homer", lisa, "She was the best one on stage.")
+
+    diary.runs()
+
+    assert model.entries_read == [LISA]
+    assert commits_since(memory, mark) == ["update: Lisa played the"]
+    assert cards(memory) == {LISA: "Lisa played the", TREEHOUSE: "We built a treehouse in the backyard"}
+
+
+def test_the_first_compile_after_an_update_keeps_every_card_of_an_unchanged_entry(
+        memory, room, diary, model, tmp_path):
+    """Given cards written before cards named the prompts that made them,
+    and no reading on file in the form this release keeps, when the diary
+    compiles after the update, then no card is written and the model is
+    not asked, and the run counts the cards as made under older prompts.
+
+    An updated instance has a diary the family has read for months. The
+    card on file is the reading of its entry for as long as the entry
+    does not change."""
+    room.says("marge", LISA)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    as_before_the_update(memory)
+    (tmp_path / "diary-state" / "extractions.json").unlink()
+    mark = head(memory)
+    model.entries_read.clear()
+
+    diary.runs()
+
+    assert commits_since(memory, mark) == []
+    assert model.entries_read == []
+    assert "2 cards were made under older prompts" in diary.progress
+
+
+def as_before_the_update(memory: Memory) -> None:
+    """The cards as the compile signed them before they named their prompts."""
+    from stack.digest import signed
+    for path in (memory.repo / ENTRIES).rglob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"^(prompt_template|digest): .*\n", "", text, flags=re.M)
+        path.write_text(signed(text), encoding="utf-8")
+    memory._git("add", "-A")
+    memory._git("-c", "user.name=memory-bot", "-c", "user.email=memory-bot@local",
+                "commit", "-q", "--allow-empty", "-m", "cards as an older release wrote them")

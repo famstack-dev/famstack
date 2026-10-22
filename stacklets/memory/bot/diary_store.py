@@ -185,20 +185,40 @@ def open_stores(directory: Path | None = None, *,
                          summary_fingerprint).load())
 
 
-class ExtractionStore(ReadingStore):
+class ExtractionStore(JsonStore):
     """What a model read out of each entry for its diary card.
 
-    Keyed by the entry's identity and by the words it was read from, the
-    same way a reading is: a new reply or a better transcript changes the
-    words, and the entry is read again. An unchanged entry is never sent
-    to the model twice, so a nightly compile pays for new entries only.
+    Keyed by the entry's identity and by its sources: its messages, its
+    words and its replies. A new reply or a better transcript changes
+    them, and the entry is read again. The prompt is not part of the key,
+    and neither is the vocabulary it offers (the topics, the people): a
+    reading is about the entry, and a new topic changes no entry. Each
+    reading records the template it was made under (`template`), so a
+    caller that wants one under the current prompts can ask for that.
+
+    A reading kept by an earlier release was keyed by its whole prompt.
+    It never matches here and is read again only if its entry is.
     """
 
     section = "extractions"
 
+    def get(self, entry_id: str, sources: str, template: str | None = None) -> dict | None:
+        """The reading of the entry as `sources` describe it, or None.
+        With `template`, only a reading made under that template."""
+        found = self._items.get(entry_id)
+        if not isinstance(found, dict) or found.get("said") != _said(sources):
+            return None
+        if template is not None and found.get("template") != template:
+            return None
+        return found
 
-def open_extractions(directory: Path | None = None, *,
-                     fingerprint: str = "") -> ExtractionStore:
+    def put(self, entry_id: str, reading: dict, sources: str, template: str) -> None:
+        self._items[entry_id] = {**reading, "said": _said(sources), "template": template}
+
+
+def open_extractions(directory: Path | None = None) -> ExtractionStore:
     """The extraction cache, loaded. A missing file is an empty one."""
     root = Path(directory) if directory else state_dir()
-    return ExtractionStore(root / "extractions.json", fingerprint).load()
+    store = ExtractionStore(root / "extractions.json")
+    store.load()
+    return store
