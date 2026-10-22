@@ -92,7 +92,8 @@ def capture_kind(spec: CaptureSpec) -> str:
 def parse_args(argv: list[str]) -> CaptureSpec:
     """Read the command line a caller wrote.
 
-    Bare words are the body. They are rejoined with spaces because the
+    Bare words are the body, and so is everything after `--`. They are
+    rejoined with spaces because the
     agent reaches this command through a plaintext socket that splits on
     shlex: a quoted body arrives whole, an unquoted one arrives in
     pieces, and filing only the first word of a note is worse than
@@ -110,6 +111,9 @@ def parse_args(argv: list[str]) -> CaptureSpec:
     i = 0
     while i < len(argv):
         arg = argv[i]
+        if arg == "--":  # the end of the flags: what follows is the text, whatever it starts with
+            words.extend(argv[i + 1:])
+            break
         if arg == "--by" and i + 1 < len(argv):
             sender = argv[i + 1]
             i += 2
@@ -159,12 +163,19 @@ def render_receipt(outcome) -> str:
     says plainly that nothing was filed and why, so neither a person
     skimming a terminal nor an agent relaying to a room can mistake a
     failure for a success.
+
+    The `vault:` and `card:` lines are read back by `stack memory write`,
+    which files a new note through this command and answers with both.
     """
     if outcome.status in _FILED:
         title = (outcome.classification or {}).get("title") or "(untitled)"
         lines = [f"Captured: {title}"]
         if outcome.vault_path:
             lines.append(f"  vault: {outcome.vault_path}")
+        # The card's own id (ADR-016), the name that survives a move of
+        # the file; the envelope carries it as the archivist's reply reads it.
+        if card_id := ((outcome.envelope or {}).get("data") or {}).get("card_id"):
+            lines.append(f"  card: {card_id}")
         if outcome.scope:
             lines.append(f"  scope: {outcome.scope}")
         return "\n".join(lines)
