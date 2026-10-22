@@ -6,8 +6,10 @@ edit a person made, and each field edit as an operation applied again
 after the model. Whose commit counts is `stack.cards.commits.is_machine`; a commit
 that carries a source is a correction, read from the sources instead.
 
-The versions are what `read_versions` gives for a card; one test reads
-them from a real repository, across a move.
+The versions are what `read_versions` gives for a card; the last tests
+read them from a real repository, across moves. The bot runner's reader,
+`versions_from_forgejo`, is read against a real Forgejo in
+`tests/integration/test_card_history_forgejo.py`.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from note_card import card_sources  # noqa: E402
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.fields import FieldOp, FieldValues, apply_ops  # noqa: E402
 from stack.cards.history import Version, history_of, read_versions  # noqa: E402
+from stack.cards.sources import sidecar_path  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
 ORIGINAL = {"role": "original", "person": "homer", "time": "2026-10-20T08:00:00+00:00",
@@ -166,3 +169,103 @@ def test_the_history_follows_the_card_when_it_moves(tmp_path):
                                              "Update camping.md"]
     assert all(v.sidecar for v in versions)
     assert [e.person for e in history_of(versions, read_sources=card_sources).edits] == ["marge"]
+
+
+# ── A card's history across moves ─────────────────────────────────────
+
+CARD_ID = "note-3f2a1b9c0d"
+FILED_AT = "homer/notes/2026/10/tent.md"
+IN_ITS_TOPIC = "family/camping/notes/2026/10/tent.md"
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "memory"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    return repo
+
+
+def _commit(repo: Path, subject: str, *, by: str, committer: str = "",
+            write: dict[str, str] | None = None, move: dict[str, str] | None = None) -> None:
+    """One commit by `by`, written by `committer` (a bot writing for a
+    person), that writes `write` (path to text) and moves each file of
+    `move` to its new path, card and sidecar together."""
+    for old, new in (move or {}).items():
+        (repo / new).parent.mkdir(parents=True, exist_ok=True)
+        (repo / old).rename(repo / new)
+    for path, text in (write or {}).items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(text)
+    _git(repo, "add", "-A")
+    by_committer = ["-c", f"user.name={committer or by}", "-c", f"user.email={committer or by}@simpson"]
+    subprocess.run(["git", "-C", str(repo), *by_committer, "-c", "commit.gpgsign=false", "commit",
+                    "-q", f"--author={by} <{by}@simpson>", "-m", subject],
+                   check=True, capture_output=True)
+
+
+def _filed(repo: Path, path: str, card: str, *, by: str = "homer") -> None:
+    _commit(repo, "capture: Camping", by=by, committer="archivist-bot",
+            write={path: card, sidecar_path(path): _sidecar()})
+
+
+def _moved(repo: Path, path: str, to: str, *, card: str = "", sidecar: str = "",
+           subject: str = "", by: str = "archivist-bot", committer: str = "") -> None:
+    """The archivist moves the card at `path` and its sidecar to `to`, in
+    one commit, as Forgejo writes several files; `card` and `sidecar` are
+    what that commit writes there instead, when it rewrites them too."""
+    _commit(repo, subject or f"rename: {path} → {to}", by=by, committer=committer,
+            move={path: to, sidecar_path(path): sidecar_path(to)},
+            write={**({to: card} if card else {}), **({sidecar_path(to): sidecar} if sidecar else {})})
+
+
+def test_a_move_that_rewrote_the_card_is_followed_by_its_card_id(tmp_path):
+    """Given Marge's edit of Homer's note, and then Homer's reply, whose
+    refile moved the note into the camping topic's folder and wrote it
+    anew in the same commit, when its history is read on the host, then
+    Marge's edit is in it. Why: git follows a move by how alike the file
+    is before and after, and a refile can leave too little alike; the
+    card id names the card whatever it says."""
+    repo = _repo(tmp_path)
+    _filed(repo, FILED_AT, _card(CLEAN))
+    _commit(repo, "Update tent.md", by="marge",
+            write={FILED_AT: _card(CLEAN.replace("3 sleeping", "4 sleeping"))})
+    rewritten = _card("- Camping at Lake Springfield on Saturday and Sunday.\n"
+                      "- Ned Flanders lends us his big family tent and two lamps.\n"
+                      "- Pack four sleeping bags, the cooler and the first aid kit.\n"
+                      "- The car leaves the house at five in the afternoon.",
+                      tags=("lake-springfield", "outdoors", "weekend-trip"),
+                      replies=("we leave at 5, not 4, and it is lake springfield",))
+    _moved(repo, FILED_AT, IN_ITS_TOPIC, card=rewritten.replace("title: Camping", "title: Lake trip"),
+           sidecar=_sidecar(REPLY), subject="reply: Lake trip", by="homer", committer="archivist-bot")
+
+    versions = read_versions(repo, IN_ITS_TOPIC, card_id=CARD_ID)
+
+    assert [v.subject for v in versions] == ["capture: Camping", "Update tent.md", "reply: Lake trip"]
+    assert [e.person for e in history_of(versions, read_sources=card_sources).edits] == ["marge"]
+
+
+def test_another_card_that_lived_at_the_old_path_is_not_this_cards_past(tmp_path):
+    """Given Bart's note at the path Homer's note is later filed at, moved
+    away before, and Lisa's note filed there after Homer's moved into the
+    camping topic's folder, when Homer's note's history is read, then it
+    holds Homer's note's versions and no other's. Why:
+    a path names whatever card is there at the time; only the card id
+    names this one."""
+    repo = _repo(tmp_path)
+    bart = _card(CLEAN.replace("3 sleeping", "2 sleeping")).replace(CARD_ID, "note-b4r7b4r7b4")
+    _commit(repo, "capture: Tent", by="bart", committer="archivist-bot",
+            write={FILED_AT: bart, sidecar_path(FILED_AT): _sidecar().replace(CARD_ID, "note-b4r7b4r7b4")})
+    _moved(repo, FILED_AT, "bart/notes/2026/10/tent.md")
+    _filed(repo, FILED_AT, _card(CLEAN))
+    _commit(repo, "Update tent.md", by="marge",
+            write={FILED_AT: _card(CLEAN.replace("3 sleeping", "4 sleeping"))})
+    _moved(repo, FILED_AT, IN_ITS_TOPIC)
+    lisa = bart.replace("note-b4r7b4r7b4", "note-11541154aa")
+    _commit(repo, "capture: Tent", by="lisa", committer="archivist-bot",
+            write={FILED_AT: lisa, sidecar_path(FILED_AT): _sidecar().replace(CARD_ID, "note-11541154aa")})
+
+    versions = read_versions(repo, IN_ITS_TOPIC, card_id=CARD_ID)
+
+    assert [(v.author, v.subject) for v in versions] == [
+        ("homer", "capture: Camping"), ("marge", "Update tent.md"),
+        ("archivist-bot", f"rename: {FILED_AT} → {IN_ITS_TOPIC}")]

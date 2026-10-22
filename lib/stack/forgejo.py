@@ -490,12 +490,16 @@ class ForgejoClient:
             return []
         return data.get("tree", []) or []
 
-    def get_commit(self, owner: str, repo: str, sha: str) -> dict | None:
-        """One commit, with its message under `commit.message`; None when
-        the repo has no such commit."""
+    def get_commit(self, owner: str, repo: str, sha: str, *,
+                   files: bool = False) -> dict | None:
+        """One commit, with its message under `commit.message` and its
+        `parents`; None when the repo has no such commit. With `files`,
+        also every file it added, removed or modified, under `files`, each
+        with its `status`."""
         return self._req(
             "GET", f"/api/v1/repos/{owner}/{repo}/git/commits/{sha}",
-            headers=self._content_header(), params={"stat": "false", "files": "false"},
+            headers=self._content_header(),
+            params={"stat": "false", "files": "true" if files else "false"},
             allow_404=True,
         )
 
@@ -517,11 +521,20 @@ class ForgejoClient:
                   body={"type": "forgejo", "active": True, "events": list(events),
                         "config": {"url": url, "content_type": "json"}})
 
-    def list_commits(self, owner: str, repo: str, *,
-                     path: str | None = None, limit: int = 20) -> list[dict]:
-        params: dict[str, str] = {"limit": str(limit), "stat": "false"}
+    def list_commits(self, owner: str, repo: str, *, path: str | None = None,
+                     sha: str | None = None, limit: int = 20) -> list[dict]:
+        """The commits of `owner/repo`, newest first, from `sha` back (the
+        default branch when None), only those that touched `path` when it
+        is given. Without their files: `get_commit` reads one commit's.
+
+        With a path, Forgejo ignores `limit` and answers one page of its
+        own size (50 by default).
+        """
+        params: dict[str, str] = {"limit": str(limit), "stat": "false", "files": "false"}
         if path:
             params["path"] = path
+        if sha:
+            params["sha"] = sha
         return self._req(
             "GET", f"/api/v1/repos/{owner}/{repo}/commits",
             headers=self._token_header(), params=params,

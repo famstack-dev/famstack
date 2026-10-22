@@ -36,15 +36,19 @@ Which sources a version holds is read by the caller's reader: the
 memory passes `note_card.card_sources`, which reads a note filed in the
 format before ADR-018 as well as one with a sidecar.
 
-Two readers give the versions, and the same `history_of` reads them:
+A card's versions are read one way (`card_versions`), from either of
+two places, and the same `history_of` reads them:
 
-- `read_versions`, on the host, from the local clone: one `git log
-  --follow` of the card, so a move is followed, and a version that holds
-  another card's id is left out;
+- `read_versions`, on the host, from the local clone (`git log`);
 - `versions_from_forgejo`, in the bot runner, which has no clone, from
-  Forgejo's commits of the card's path and the files at each commit. It
-  follows the path only: a note moved since it was filed is read from its
-  move on.
+  Forgejo's commits of a path, the files at each commit, and one commit
+  read on its own where the card may have moved.
+
+Either way the history follows the card across moves by its `card_id`
+(ADR-018 §7), not by how alike the file is before and after: a move is
+one commit that removes the card at its old path and adds it at the new
+one, and the removed file is the card's past only when it held the same
+`card_id` just before.
 
 Stdlib only: the host CLI and the bot runner import it.
 """
@@ -54,10 +58,10 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from ..frontmatter import FrontmatterError, parse
-from .activity import LOG_FORMAT, parse_log
 from .commits import is_machine, kind_of
 from .events import TextEdit, changes_between
 from .fields import FieldOp, ops_between
@@ -73,6 +77,9 @@ from .sources import (
     read_sidecar,
     sidecar_path,
 )
+
+if TYPE_CHECKING:
+    from ..forgejo import ForgejoClient
 
 # How the sources a version holds are read: its card's text and its
 # sidecar in, the sources out; `SourcesMismatch` when the two do not pair up.
@@ -228,49 +235,102 @@ def _fields(card: str) -> dict:
         return {}
 
 
-# ── Reading (git) ─────────────────────────────────────────────────────
+# ── Reading: one card across its paths ────────────────────────────────
 
 
-def read_versions(vault: Path, path: str, *, card_id: str) -> list[Version]:
-    """Every version of the card at `path`, oldest first, across moves.
+@dataclass(frozen=True)
+class Commit:
+    """One commit that touched a card's path, as a reader lists it.
 
-    One `git log` of the card, then one `git cat-file` for the card and
-    its sidecar at each commit.
+    `parents` and `removed` are filled where the commit is read on its own
+    (`CommitAt`): `removed` holds every file the commit removed, with
+    renames off, so a move is a removal and an addition in one commit. A
+    listing of a path's commits may leave both empty.
     """
-    out = _git(vault, "log", "--follow", "--name-only", f"--format={LOG_FORMAT}", "--", path)
-    commits = list(reversed(parse_log(out)))
-    paths = [c.files[0] if c.files else path for c in commits]
-    blobs = _blobs(vault, [spec for c, p in zip(commits, paths)
-                           for spec in (f"{c.sha}:{p}", f"{c.sha}:{sidecar_path(p)}")])
-    versions = []
-    for n, c in enumerate(commits):
-        card, side = blobs[2 * n], blobs[2 * n + 1]
-        if card and str(_fields(card).get("card_id") or card_id) == card_id:
-            versions.append(Version(c.sha, c.at, c.who, c.committer, c.subject, card, side,
-                                    tuple(c.trailers.items())))
+
+    sha: str
+    at: str
+    author: str
+    committer: str
+    message: str
+    parents: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+
+
+# The commits that touched a path, newest first, from a commit back ("":
+# the head).
+CommitsOf = Callable[[str, str], Sequence[Commit]]
+# The text of each `(commit, path)`, "" for a file a commit does not have.
+FilesAt = Callable[[Sequence[tuple[str, str]]], list[str]]
+# One commit read on its own, with its parents and the files it removed;
+# None when there is no such commit.
+CommitAt = Callable[[str], "Commit | None"]
+
+
+def card_versions(path: str, *, card_id: str, commits_of: CommitsOf, read: FilesAt,
+                  commit_at: CommitAt) -> list[Version]:
+    """Every version of card `card_id`, now at `path`, oldest first, across its moves.
+
+    One path at a time, newest first: the card's versions at a path run
+    back to the commit that put the card there, and end at a commit that
+    left no card there or another card. That commit is the card's filing,
+    which never moves a card, or else it is read on its own: when it
+    removed a card file that held `card_id` just before (`_moved_from`),
+    the card was moved, and its history goes on at that file from the
+    commit's parent back. A note that never moved is read in one round,
+    with nothing read on its own.
+
+    A version without a `card_id` counts as this card: it was filed before
+    cards had ids. A move is followed only to a file that has the id.
+    """
+    versions: list[Version] = []
+    since = ""
+    while path:
+        listed = list(commits_of(path, since))
+        texts = read([(c.sha, file) for c in listed for file in (path, sidecar_path(path))])
+        run = []
+        for n, commit in enumerate(listed):
+            card = texts[2 * n]
+            if not card or str(_fields(card).get("card_id") or card_id) != card_id:
+                break
+            run.append(_version(commit, card, texts[2 * n + 1]))
+        if not run:
+            break
+        versions[:0] = reversed(run)
+        if run[-1].kind == "filed" or not card_id:
+            break
+        path, since = _moved_from(commit_at(listed[len(run) - 1].sha), path,
+                                  card_id=card_id, read=read)
     return versions
 
 
-def versions_from_forgejo(commits: Sequence[dict], read: Callable[[str, str], str], *,
-                          path: str, card_id: str) -> list[Version]:
-    """Every version of the card at `path`, oldest first, from Forgejo.
+def _moved_from(commit: Commit | None, path: str, *, card_id: str,
+                read: FilesAt) -> tuple[str, str]:
+    """The card file `commit` moved the card at `path` from, and the
+    commit before it; ("", "") when the card did not move there.
 
-    ``commits`` is what Forgejo's commits API lists for the path, newest
-    first; ``read(sha, path)`` the text of a file at a commit, "" when it
-    has none there.
+    Each card file the commit removed is read as it was just before, the
+    one with the card's own file name first: a move into a topic folder
+    keeps it, so a move commit that moved many cards costs one read for
+    this one. Only a file that held `card_id` is this card's past; another
+    card that left in the same commit is not.
     """
-    versions = []
-    for c in reversed(commits):
-        sha, commit = str(c.get("sha") or ""), c.get("commit") or {}
-        message = str(commit.get("message") or "")
-        card = read(sha, path)
-        if not card or str(_fields(card).get("card_id") or card_id) != card_id:
-            continue
-        author, committer = commit.get("author") or {}, commit.get("committer") or {}
-        versions.append(Version(sha, str(author.get("date") or ""), str(author.get("name") or ""),
-                                str(committer.get("name") or ""), message.split("\n", 1)[0],
-                                card, read(sha, sidecar_path(path)), _trailers_of(message)))
-    return versions
+    parent = commit.parents[0] if commit and commit.parents else ""
+    if not (commit and parent):
+        return "", ""
+    name = PurePosixPath(path).name
+    removed = sorted((f for f in commit.removed if f.endswith(".md")),
+                     key=lambda f: PurePosixPath(f).name != name)
+    for old in removed:
+        [card] = read([(parent, old)])
+        if card and str(_fields(card).get("card_id") or "") == card_id:
+            return old, parent
+    return "", ""
+
+
+def _version(commit: Commit, card: str, sidecar: str) -> Version:
+    return Version(commit.sha, commit.at, commit.author, commit.committer,
+                   commit.message.split("\n", 1)[0], card, sidecar, _trailers_of(commit.message))
 
 
 def _trailers_of(message: str) -> tuple[tuple[str, str], ...]:
@@ -278,6 +338,42 @@ def _trailers_of(message: str) -> tuple[tuple[str, str], ...]:
     last = message.strip().split("\n\n")[-1] if "\n\n" in message.strip() else ""
     pairs = (line.partition(":") for line in last.splitlines())
     return tuple((k.strip(), v.strip()) for k, colon, v in pairs if colon and " " not in k.strip())
+
+
+# ── Reading on the host: the local clone ──────────────────────────────
+
+# One commit per record: its fields apart, its message, then the files it
+# changed when they are asked for, one `<status>\t<path>` line each.
+_RECORD, _FIELD, _MESSAGE_END = "\x1e", "\x1f", "\x1d"
+_LOG_FORMAT = f"{_RECORD}%H{_FIELD}%P{_FIELD}%aI{_FIELD}%an{_FIELD}%cn{_FIELD}%B{_MESSAGE_END}"
+
+
+def read_versions(vault: Path, path: str, *, card_id: str) -> list[Version]:
+    """Every version of the card at `path`, oldest first, across moves,
+    from the clone at `vault` (`card_versions`).
+
+    One `git log` of each path the card had, one `git cat-file` for the
+    card and its sidecar at each of its commits, and one `git log` of the
+    commit a move put the card at its path in.
+    """
+    return card_versions(path, card_id=card_id,
+                         commits_of=lambda file, since: _log(vault, since or "HEAD", "--", file),
+                         read=lambda specs: _blobs(vault, [f"{sha}:{file}" for sha, file in specs]),
+                         commit_at=lambda sha: next(iter(_log(vault, "-1", "--no-renames",
+                                                               "--name-status", sha)), None))
+
+
+def _log(vault: Path, *args: str) -> list[Commit]:
+    """The commits `git log <args>` lists, newest first, each with the
+    files it removed when `--name-status` is among the arguments."""
+    out = _git(vault, "-c", "core.quotePath=false", "log", f"--format={_LOG_FORMAT}", *args)
+    commits = []
+    for record in out.split(_RECORD)[1:]:
+        head, _, files = record.partition(_MESSAGE_END)
+        sha, parents, at, author, committer, message = head.split(_FIELD, 5)
+        removed = tuple(line[2:] for line in files.splitlines() if line.startswith("D\t"))
+        commits.append(Commit(sha, at, author, committer, message, tuple(parents.split()), removed))
+    return commits
 
 
 def _git(vault: Path, *args: str) -> str:
@@ -304,3 +400,52 @@ def _blobs(vault: Path, specs: list[str]) -> list[str]:
         texts.append(out[at:at + size].decode("utf-8", errors="replace"))
         at += size + 1
     return texts
+
+
+# ── Reading in the bot runner: Forgejo ────────────────────────────────
+
+# How many commits of a path one listing reads: one page of Forgejo's
+# commits API, whose size Forgejo sets itself when a path is given. A note
+# is filed, corrected and edited a handful of times.
+_FORGEJO_PAGE = 50
+
+
+def versions_from_forgejo(client: ForgejoClient, owner: str, repo: str, *,
+                          path: str, card_id: str) -> list[Version]:
+    """Every version of the card at `path` in `owner/repo`, oldest first,
+    across moves, from Forgejo (`card_versions`).
+
+    One request for the commits of each path the card had, two for each
+    of its commits (the card and its sidecar), and at a move two more: the
+    commit that put the card at its path, read on its own for its parents
+    and the files it removed (`ForgejoClient.get_commit`), and the removed
+    card read just before it. A listing's own file list is not read.
+    """
+    def commits_of(file: str, since: str) -> list[Commit]:
+        back_from = {"sha": since} if since else {}
+        return [_from_forgejo(c) for c in client.list_commits(owner, repo, path=file,
+                                                              limit=_FORGEJO_PAGE, **back_from)]
+
+    def read(specs: Sequence[tuple[str, str]]) -> list[str]:
+        return [str((client.get_file(owner, repo, file, ref=sha) or {}).get("content") or "")
+                for sha, file in specs]
+
+    def commit_at(sha: str) -> Commit | None:
+        found = client.get_commit(owner, repo, sha, files=True)
+        return _from_forgejo(found) if found else None
+
+    return card_versions(path, card_id=card_id, commits_of=commits_of, read=read,
+                         commit_at=commit_at)
+
+
+def _from_forgejo(found: dict) -> Commit:
+    """A commit as Forgejo's API gives it: `parents` and, when asked for,
+    `files`, each with its `status`."""
+    commit = found.get("commit") or {}
+    author, committer = commit.get("author") or {}, commit.get("committer") or {}
+    return Commit(str(found.get("sha") or ""), str(author.get("date") or ""),
+                  str(author.get("name") or ""), str(committer.get("name") or ""),
+                  str(commit.get("message") or ""),
+                  tuple(str(p.get("sha") or "") for p in found.get("parents") or ()),
+                  tuple(str(f.get("filename") or "") for f in found.get("files") or ()
+                        if f.get("status") == "removed"))

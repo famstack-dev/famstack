@@ -806,13 +806,18 @@ and the sidecar's `made.requested_by` names the same person: `--by
 the replies, the sidecar keeps it as a `note` source by that person, and
 the commit is theirs, with their words in its body (ADR-018 §6).
 
-A refile keeps what people did to the note (ADR-018 §7). The host reads
-the card's history from the local memory, one `git log --follow` of the
-card, a version holding another card's id left out (`stack.cards.history`); a
+A refile keeps what people did to the note (ADR-018 §7). The card's
+history is read one way (`stack.cards.history.card_versions`), from one of
+two places: the host reads it from the local memory (`git log`); a
 correction in the chat, refiled in the bot runner, which has no clone,
-reads it through Forgejo's API (the commits of the card's path and the
-card at each, `GitMirror.card_history`), so it does not follow a move. The
-same `history_of` reads both.
+reads it through Forgejo's API (the commits of a path and the card at
+each, `GitMirror.card_history`). Either way it follows the card across
+moves by its `card_id`: a move is one commit that removes the card at its
+old path and adds it at the new one, and the old file is followed only
+when it held the same `card_id`. The commit that put the card at its path
+is read on its own for the files it removed, unless it is the card's
+filing, so a note that never moved costs no extra read. Another card that lived at a path the
+card had is never read as its past. The same `history_of` reads both.
 Whose commit counts is `stack.cards.commits.is_machine`; a person's commit that
 carries a source (a filing, a reply, a refile with `--msg`) is a
 correction, read from the sources. From every other person's commit it
