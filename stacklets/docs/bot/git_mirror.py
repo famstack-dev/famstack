@@ -127,10 +127,6 @@ from stack.vault import topic_of  # noqa: E402
 # docstring), and skips mirroring entirely if memory hasn't provisioned
 # the repo yet.
 REPO_NAME = "memory"
-# How many commits of a card a refile reads: one page of Forgejo's commits
-# API. A note is filed, corrected and edited a handful of times.
-_HISTORY_COMMITS = 50
-
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
 
@@ -1119,24 +1115,17 @@ class GitMirror:
 
     async def card_history(self, path: str, card_id: str) -> CardHistory | None:
         """What a refile of the note at `path` applies again of its history
-        (ADR-018 §7), read through Forgejo: the commits of its path and its
-        card and sidecar at each. None when Forgejo cannot be read.
+        (ADR-018 §7), read through Forgejo across its moves by its
+        `card_id` (`versions_from_forgejo`). None when Forgejo cannot be
+        read.
         """
         if not await self.ensure_setup():
             return None
         client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
-
-        def at(sha: str, file: str) -> str:
-            found = client.get_file(self.repo_owner, REPO_NAME, file, ref=sha)
-            return str((found or {}).get("content") or "")
-
-        def versions():
-            commits = client.list_commits(self.repo_owner, REPO_NAME, path=path,
-                                          limit=_HISTORY_COMMITS)
-            return versions_from_forgejo(commits, at, path=path, card_id=card_id)
-
         try:
-            return history_of(await asyncio.to_thread(versions), read_sources=card_sources)
+            versions = await asyncio.to_thread(versions_from_forgejo, client, self.repo_owner,
+                                               REPO_NAME, path=path, card_id=card_id)
+            return history_of(versions, read_sources=card_sources)
         except ForgejoError as e:
             logger.warning("[git-mirror] history of {} not read: {}", path, e)
             return None
